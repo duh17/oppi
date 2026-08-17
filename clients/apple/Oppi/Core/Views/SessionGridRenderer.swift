@@ -2,8 +2,7 @@ import Foundation
 
 /// Shared cell generation logic for the session grid icon.
 ///
-/// Used by both `SessionGridView` (SwiftUI Canvas, placeholder) and
-/// `SessionGridBadgeView` (UIKit cached image, assistant row badge).
+/// Used by `SessionGridBadgeView` (UIKit cached image, assistant row badge).
 ///
 /// Pure computation — no UI framework dependencies.
 enum SessionGridRenderer {

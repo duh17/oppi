@@ -1145,13 +1145,6 @@ const rawApiRouteSpecs = [
 
   { method: "GET", path: "/skills", operationId: "listSkills", surface: "admin", auth: "owner" },
   {
-    method: "POST",
-    path: "/skills/rescan",
-    operationId: "rescanSkills",
-    surface: "internal",
-    auth: "owner",
-  },
-  {
     method: "GET",
     path: "/skills/{skillName}",
     operationId: "getSkill",

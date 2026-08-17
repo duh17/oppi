@@ -390,38 +390,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(SessionSearchResponse.self, from: data)
     }
 
-    // periphery:ignore - used by APIClientTests via @testable import
-    /// Create a new session in a target workspace.
-    ///
-    /// If `workspaceId` is nil, the first available workspace is used.
-    func createSession(
-        name: String? = nil,
-        model: String? = nil,
-        workspaceId: String? = nil,
-        ephemeral: Bool? = nil
-    ) async throws -> Session {
-        if let workspaceId, !workspaceId.isEmpty {
-            return try await createWorkspaceSession(
-                workspaceId: workspaceId,
-                name: name,
-                model: model,
-                ephemeral: ephemeral
-            ).session
-        }
-
-        let workspaces = try await listWorkspaces()
-        guard let fallbackWorkspace = workspaces.first else {
-            throw APIError.server(status: 404, message: "No workspaces available")
-        }
-
-        return try await createWorkspaceSession(
-            workspaceId: fallbackWorkspace.id,
-            name: name,
-            model: model,
-            ephemeral: ephemeral
-        ).session
-    }
-
     struct SequencedServerEvent: Sendable, Equatable {
         let seq: Int
         let message: ServerMessage
@@ -554,14 +522,6 @@ actor APIClient: ClientLogUploading {
         let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
         let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/trace-page\(query)")
         return try JSONDecoder().decode(SessionTracePageResponse.self, from: data)
-    }
-
-    /// Get a lightweight workspace session outline without full trace payloads.
-    func getWorkspaceSessionTraceOutline(
-        workspaceId: String,
-        sessionId: String
-    ) async throws -> SessionTraceOutlineResponse {
-        try await getSessionTraceOutline(scope: .workspace(workspaceId), sessionId: sessionId)
     }
 
     func getSessionTraceOutline(
@@ -810,14 +770,6 @@ actor APIClient: ClientLogUploading {
         try await listWorkspaceCatalog(includeGitSummary: false).workspaces
     }
 
-    // periphery:ignore - used by APIClientTests via @testable import
-    /// Get a single workspace.
-    func getWorkspace(id: String) async throws -> Workspace {
-        let data = try await get("/workspaces/\(id)")
-        struct Response: Decodable { let workspace: Workspace }
-        return try JSONDecoder().decode(Response.self, from: data).workspace
-    }
-
     /// List git worktrees/checkouts available inside a workspace.
     func listWorkspaceWorktrees(workspaceId: String) async throws -> [WorkspaceWorktree] {
         let data = try await get("/workspaces/\(workspaceId)/worktrees")
@@ -993,14 +945,6 @@ actor APIClient: ClientLogUploading {
         let data = try await get(
             url: try makeURL(pathSegments: ["skills"], queryItems: queryItems)
         )
-        struct Response: Decodable { let skills: [SkillInfo] }
-        return try JSONDecoder().decode(Response.self, from: data).skills
-    }
-
-    // periphery:ignore - used by APIClientTests via @testable import
-    /// Rescan host skills (e.g. after adding a new skill on the server).
-    func rescanSkills() async throws -> [SkillInfo] {
-        let data = try await post("/skills/rescan", body: EmptyBody())
         struct Response: Decodable { let skills: [SkillInfo] }
         return try JSONDecoder().decode(Response.self, from: data).skills
     }

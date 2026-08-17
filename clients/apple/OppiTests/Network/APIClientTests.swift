@@ -599,35 +599,6 @@ struct APIClientTests {
         #expect(attachment.source == .upload)
     }
 
-    @Test func createSession() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            switch request.url?.path {
-            case "/workspaces":
-                return self.mockResponse(json: """
-                {"workspaces":[{"id":"w1","name":"Dev","skills":[],"createdAt":0,"updatedAt":0}]}
-                """)
-
-            case "/workspaces/w1/sessions":
-                #expect(request.httpMethod == "POST")
-                return self.mockResponse(json: """
-                {"session":{"id":"new","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
-                """)
-
-            default:
-                Issue.record("Unexpected path: \(request.url?.path ?? "nil")")
-                return self.mockResponse(status: 404, json: "{\"error\":\"not found\"}")
-            }
-        }
-
-        let session = try await client.createSession(name: "Test", model: "claude-sonnet-4-20250514")
-        #expect(session.id == "new")
-        #expect(session.status == .ready)
-        #expect(session.workspaceId == "w1")
-    }
-
     @Test func createWorkspaceSessionIncognitoEncodesEphemeral() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -952,20 +923,6 @@ struct APIClientTests {
         #expect(catalog.summaries?.first?.latestActivity == Date(timeIntervalSince1970: 1.5))
     }
 
-    @Test func getWorkspace() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { _ in
-            self.mockResponse(json: """
-            {"workspace":{"id":"w1","name":"Dev","skills":["fetch"],"createdAt":0,"updatedAt":0}}
-            """)
-        }
-
-        let ws = try await client.getWorkspace(id: "w1")
-        #expect(ws.id == "w1")
-    }
-
     @Test func createWorkspace() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -1097,20 +1054,6 @@ struct APIClientTests {
             workspaceId: "sandbox-workspace",
             enabled: false
         )
-    }
-
-    @Test func rescanSkills() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { _ in
-            self.mockResponse(json: """
-            {"skills":[]}
-            """)
-        }
-
-        let skills = try await client.rescanSkills()
-        #expect(skills.isEmpty)
     }
 
     @Test func listExtensions() async throws {

@@ -677,11 +677,6 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
   }
 
-  function handleRescanSkills(res: ServerResponse): void {
-    const event = ctx.skillRegistry.scan();
-    helpers.json(res, { skills: ctx.skillRegistry.list(), changed: event });
-  }
-
   async function handleListExtensions(url: URL, res: ServerResponse): Promise<void> {
     try {
       const { cwd } = resolveScopedResourceCwd({
@@ -883,11 +878,6 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
   return async ({ method, path, url, req, res }) => {
     if (path === "/skills" && method === "GET") {
       await handleListSkills(url, res);
-      return true;
-    }
-
-    if (path === "/skills/rescan" && method === "POST") {
-      handleRescanSkills(res);
       return true;
     }
 

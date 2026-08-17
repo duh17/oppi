@@ -78,19 +78,6 @@ private struct ExtensionProgressBar: View {
     }
 }
 
-private struct ExtensionDisclosureChevron: View {
-    let isExpanded: Bool
-
-    var body: some View {
-        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.caption2.weight(.bold))
-            .foregroundStyle(.themeComment)
-            .frame(width: 24, height: 24)
-            .background(Color.themeFg.opacity(0.06), in: Circle())
-            .accessibilityHidden(true)
-    }
-}
-
 private struct ExtensionWidgetLinesView: View {
     let lines: [String]
     var scrollIdentifier: String? = nil

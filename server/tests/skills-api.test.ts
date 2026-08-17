@@ -195,19 +195,3 @@ describe("GET /skills/:name/file", () => {
   });
 });
 
-describe("POST /skills/rescan", () => {
-  it("re-scans and returns updated catalog with change event", async () => {
-    // Add a new skill on disk
-    mkdirSync(join(skillDir, "new-skill"), { recursive: true });
-    writeFileSync(
-      join(skillDir, "new-skill", "SKILL.md"),
-      '---\nname: new-skill\ndescription: "Brand new"\n---\n# New',
-    );
-
-    const res = await callRoute("POST", "/skills/rescan");
-    const data = res.json() as any;
-
-    expect(data.skills.map((s: any) => s.name)).toContain("new-skill");
-    expect(data.changed.added).toContain("new-skill");
-  });
-});

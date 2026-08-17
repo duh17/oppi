@@ -1235,22 +1235,6 @@ struct WorkspaceContextBar: View {
               let path = DragSelectState.pathAtLocation(location, in: rowFrames) else { return }
         dragSelect.handleRow(path, selectedPaths: &selectedPaths)
     }
-
-    // MARK: - Helpers
-
-    // periphery:ignore
-    private func statusColor(for status: String) -> Color {
-        let trimmed = status.trimmingCharacters(in: .whitespaces)
-        switch trimmed {
-        case "M": return .themeOrange
-        case "A": return .themeDiffAdded
-        case "D": return .themeDiffRemoved
-        case "R", "C": return .themeCyan
-        case "??": return .themeComment
-        case "UU", "AA", "DD": return .themeDiffRemoved
-        default: return .themeFg
-        }
-    }
 }
 
 // MARK: - Preference key for row frame collection
