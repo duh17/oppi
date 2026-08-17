@@ -928,25 +928,32 @@ enum MetricKitPayloadItemBuilder {
         "lastStreamState",
     ]
 
+    /// Build 45 TestFlight crash AFr0Lx re-encoded Apple's already-serialized
+    /// MetricKit tree and overflowed the stack (~700 JSON writer frames).
+    /// Keep `jsonRepresentation()` bytes as `raw.payload` when available.
+    static let maxJSONDepth = 32
+
     static func makeItem(
         from snapshot: [String: Any],
         kind: MetricKitPayloadItem.Kind,
         windowStartMs: Int64,
         windowEndMs: Int64,
-        context: [String: String] = [:]
+        context: [String: String] = [:],
+        rawPayload: String? = nil
     ) -> MetricKitPayloadItem {
-        var enrichedSnapshot = snapshot
+        let summary = summarize(snapshot, context: context)
+        var raw: [String: String] = [
+            "payload": rawPayload ?? jsonString(from: snapshot),
+        ]
         if !context.isEmpty {
-            enrichedSnapshot["oppiDiagnosticContext"] = context
+            raw["oppiDiagnosticContext"] = encodeJSONObject(context)
         }
-
-        let summary = summarize(enrichedSnapshot, context: context)
         return MetricKitPayloadItem(
             kind: kind,
             windowStartMs: windowStartMs,
             windowEndMs: windowEndMs,
             summary: summary,
-            raw: ["payload": jsonString(from: enrichedSnapshot)]
+            raw: raw
         )
     }
 
@@ -1009,28 +1016,36 @@ enum MetricKitPayloadItemBuilder {
             return date.ISO8601Format()
         }
         if let dict = value as? [String: Any] {
-            return String(
-                String(jsonString(from: dict).prefix(140))
-            )
+            return "object(\(dict.count) keys)"
+        }
+        if let array = value as? [Any] {
+            return "array(\(array.count) items)"
         }
         return String(String(describing: value).prefix(140))
     }
 
+    /// Fallback only for dictionary fixtures and non-Apple snapshots.
+    /// Production MetricKit payloads must pass `rawPayload` instead.
     private static func jsonString(from value: Any) -> String {
-        let jsonObject = convertForJSON(value)
-        guard JSONSerialization.isValidJSONObject(jsonObject) else {
-            return String(describing: value)
-        }
+        encodeJSONObject(convertForJSON(value, depth: 0))
+    }
 
+    private static func encodeJSONObject(_ object: Any) -> String {
+        guard JSONSerialization.isValidJSONObject(object) else {
+            return String(describing: object)
+        }
         do {
-            let data = try JSONSerialization.data(withJSONObject: jsonObject, options: [.sortedKeys])
+            let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
             return String(data: data, encoding: .utf8) ?? ""
         } catch {
-            return String(describing: value)
+            return String(describing: object)
         }
     }
 
-    private static func convertForJSON(_ value: Any) -> Any {
+    private static func convertForJSON(_ value: Any, depth: Int) -> Any {
+        if depth >= maxJSONDepth {
+            return "<truncated>"
+        }
         if let value = value as? NSNumber {
             return value
         }
@@ -1043,13 +1058,16 @@ enum MetricKitPayloadItemBuilder {
         if let value = value as? Date {
             return value.timeIntervalSince1970
         }
+        if let value = value as? [String: String] {
+            return value
+        }
         if let value = value as? [String: Any] {
             return value.reduce(into: [String: Any]()) { partial, entry in
-                partial[String(entry.key)] = convertForJSON(entry.value)
+                partial[String(entry.key)] = convertForJSON(entry.value, depth: depth + 1)
             }
         }
         if let value = value as? [Any] {
-            return value.map(convertForJSON)
+            return value.map { convertForJSON($0, depth: depth + 1) }
         }
         return String(describing: value)
     }
@@ -1064,8 +1082,9 @@ private enum MetricKitPayloadSerializer {
         windowStartMs: Int64,
         windowEndMs: Int64
     ) -> MetricKitPayloadItem {
-        MetricKitPayloadItemBuilder.makeItem(
-            from: dictionaryFrom(payload),
+        item(
+            from: payload.jsonRepresentation(),
+            fallbackType: "MXMetricPayload",
             kind: kind,
             windowStartMs: windowStartMs,
             windowEndMs: windowEndMs
@@ -1079,8 +1098,9 @@ private enum MetricKitPayloadSerializer {
         windowEndMs: Int64,
         context: [String: String] = [:]
     ) -> MetricKitPayloadItem {
-        MetricKitPayloadItemBuilder.makeItem(
-            from: dictionaryFrom(payload),
+        item(
+            from: payload.jsonRepresentation(),
+            fallbackType: "MXDiagnosticPayload",
             kind: kind,
             windowStartMs: windowStartMs,
             windowEndMs: windowEndMs,
@@ -1088,20 +1108,29 @@ private enum MetricKitPayloadSerializer {
         )
     }
 
-    private static func dictionaryFrom(_ payload: MXMetricPayload) -> [String: Any] {
-        let data = payload.jsonRepresentation()
-        if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return dict
-        }
-        return ["type": "MXMetricPayload", "error": "json_parse_failed"]
+    private static func item(
+        from data: Data,
+        fallbackType: String,
+        kind: MetricKitPayloadItem.Kind,
+        windowStartMs: Int64,
+        windowEndMs: Int64,
+        context: [String: String] = [:]
+    ) -> MetricKitPayloadItem {
+        MetricKitPayloadItemBuilder.makeItem(
+            from: dictionaryFrom(data, fallbackType: fallbackType),
+            kind: kind,
+            windowStartMs: windowStartMs,
+            windowEndMs: windowEndMs,
+            context: context,
+            rawPayload: String(data: data, encoding: .utf8)
+        )
     }
 
-    private static func dictionaryFrom(_ payload: MXDiagnosticPayload) -> [String: Any] {
-        let data = payload.jsonRepresentation()
+    private static func dictionaryFrom(_ data: Data, fallbackType: String) -> [String: Any] {
         if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             return dict
         }
-        return ["type": "MXDiagnosticPayload", "error": "json_parse_failed"]
+        return ["type": fallbackType, "error": "json_parse_failed"]
     }
 }
 

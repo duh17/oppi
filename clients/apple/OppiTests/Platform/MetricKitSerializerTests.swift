@@ -126,8 +126,12 @@ struct MetricKitSerializerTests {
         let parsed = try? JSONSerialization.jsonObject(
             with: Data(rawPayload.utf8)
         ) as? [String: Any]
-        let context = parsed?["oppiDiagnosticContext"] as? [String: String]
-        #expect(context?["lastSessionId"] == "session-1")
+        #expect(parsed?["oppiDiagnosticContext"] == nil, "context stays out of Apple payload JSON")
+
+        let sidecar = try? JSONSerialization.jsonObject(
+            with: Data((item.raw["oppiDiagnosticContext"] ?? "").utf8)
+        ) as? [String: String]
+        #expect(sidecar?["lastSessionId"] == "session-1")
     }
 
     @Test func crashContextIncludesLargeTimelinePayloadBreadcrumbs() {
@@ -554,6 +558,72 @@ struct MetricKitSerializerTests {
         let launchMetrics = parsed?["applicationLaunchMetrics"] as? [String: Any]
         let resumeTime = launchMetrics?["histogrammedResumeTime"] as? [String: Any]
         #expect(resumeTime?["histogramNumBuckets"] as? Int == 3)
+    }
+
+    @Test func appleRawPayloadIsUsedVerbatimAndContextIsSidecar() {
+        let appleJSON = """
+        {"crashDiagnostics":[{"signal":11}],"callStackTree":{"frames":[{"symbol":"leaf"}]}}
+        """.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let item = MetricKitPayloadItemBuilder.makeItem(
+            from: ["crashDiagnostics": [["signal": 11]]],
+            kind: .diagnostic,
+            windowStartMs: 1,
+            windowEndMs: 2,
+            context: ["lastSessionId": "session-raw"],
+            rawPayload: appleJSON
+        )
+
+        #expect(item.raw["payload"] == appleJSON)
+        #expect(!(item.raw["payload"] ?? "").contains("oppiDiagnosticContext"))
+        #expect(item.summary["lastSessionId"] == "session-raw")
+        #expect(item.summary["crashDiagnosticCount"] == "1")
+
+        let sidecar = try? JSONSerialization.jsonObject(
+            with: Data((item.raw["oppiDiagnosticContext"] ?? "").utf8)
+        ) as? [String: String]
+        #expect(sidecar?["lastSessionId"] == "session-raw")
+    }
+
+    @Test func deeplyNestedDiagnosticPayloadDoesNotCrashSerializer() {
+        var node: Any = ["symbol": "leaf"]
+        for _ in 0..<200 {
+            node = ["callStackRootFrames": [node]]
+        }
+
+        let item = MetricKitPayloadItemBuilder.makeItem(
+            from: [
+                "crashDiagnostics": [
+                    ["callStackTree": node],
+                ],
+            ],
+            kind: .diagnostic,
+            windowStartMs: 10,
+            windowEndMs: 20,
+            context: ["lastSessionId": "session-deep"]
+        )
+
+        #expect(item.kind == .diagnostic)
+        #expect(item.summary["crashDiagnosticCount"] == "1")
+        #expect(item.summary["lastSessionId"] == "session-deep")
+        #expect(!(item.raw["payload"] ?? "").isEmpty)
+        #expect(item.raw["oppiDiagnosticContext"]?.contains("session-deep") == true)
+    }
+
+    @Test func summaryDoesNotReencodeNestedObjects() {
+        let item = MetricKitPayloadItemBuilder.makeItem(
+            from: [
+                "cpuMetrics": [
+                    "cumulativeCPUTime": "6879 sec",
+                    "extra": "value",
+                ],
+            ],
+            kind: .metric,
+            windowStartMs: 0,
+            windowEndMs: 0
+        )
+
+        #expect(item.summary["cpuMetrics"] == "object(2 keys)")
     }
 }
 
