@@ -769,9 +769,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     }
 
     private func setupDoubleTap() {
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        scrollView.addGestureRecognizer(doubleTap)
+        DoubleTapZoom.install(on: scrollView, target: self, action: #selector(handleDoubleTap(_:)))
     }
 
     private func loadPreview() {
@@ -785,18 +783,23 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     }
 
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        if scrollView.zoomScale > 1.0 {
-            scrollView.setZoomScale(1.0, animated: true)
-        } else {
-            let point = gesture.location(in: containerView)
-            let size = CGSize(
-                width: scrollView.bounds.width / 2.5,
-                height: scrollView.bounds.height / 2.5
-            )
-            let origin = CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2)
-            scrollView.zoom(to: CGRect(origin: origin, size: size), animated: true)
-        }
+        toggleZoom(at: gesture.location(in: containerView))
     }
+
+    private func toggleZoom(at pointInPreview: CGPoint, animated: Bool? = nil) {
+        DoubleTapZoom.toggle(
+            in: scrollView,
+            tapInContent: pointInPreview,
+            fitScale: scrollView.minimumZoomScale,
+            animated: animated
+        )
+    }
+
+#if DEBUG
+    func debugToggleZoomForTesting(at pointInPreview: CGPoint) {
+        toggleZoom(at: pointInPreview, animated: false)
+    }
+#endif
 }
 
 extension FullScreenImageDataPreviewViewController {

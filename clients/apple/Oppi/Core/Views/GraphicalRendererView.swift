@@ -39,13 +39,14 @@ final class GraphicalRendererUIView: UIView {
 
 // MARK: - Zoomable Scroll Container
 
-/// UIScrollView wrapper that adds pinch-to-zoom and panning to a
-/// `GraphicalRendererUIView`. Used for diagrams and LaTeX math.
+/// UIScrollView wrapper that adds pinch-to-zoom, panning, and Photos-style
+/// double-tap zoom to a `GraphicalRendererUIView`. Used for diagrams and LaTeX math.
 final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     private let scrollView = UIScrollView()
     private let contentView = GraphicalRendererUIView()
     private var contentWidthConstraint: NSLayoutConstraint?
     private var contentHeightConstraint: NSLayoutConstraint?
+    private var hasUserAdjustedZoom = false
 
     init(size: CGSize, draw: @escaping (CGContext, CGPoint) -> Void) {
         super.init(frame: .zero)
@@ -67,6 +68,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         scrollView.backgroundColor = .clear
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
+        DoubleTapZoom.install(on: scrollView, target: self, action: #selector(handleDoubleTap(_:)))
 
         contentView.configure(size: size, draw: draw)
         contentView.translatesAutoresizingMaskIntoConstraints = false
@@ -101,38 +103,105 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         contentView.configure(size: size, draw: draw)
         let newWidth = max(size.width, 1)
         let newHeight = max(size.height, 1)
+        let sizeChanged = abs((contentWidthConstraint?.constant ?? 0) - newWidth) > 0.5
+            || abs((contentHeightConstraint?.constant ?? 0) - newHeight) > 0.5
         contentWidthConstraint?.constant = newWidth
         contentHeightConstraint?.constant = newHeight
+        if sizeChanged {
+            hasUserAdjustedZoom = false
+        }
         setNeedsLayout()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        fitContentIfNeeded()
-        centerContentHorizontally()
+        applyFitScaleIfNeeded()
+        centerContent()
     }
 
-    /// Scale down to fit width if content is wider than the view, otherwise show at 1x.
-    private func fitContentIfNeeded() {
-        guard let widthC = contentWidthConstraint,
-              bounds.width > 0, widthC.constant > 0 else { return }
-        let fitScale = min(1.0, bounds.width / widthC.constant)
-        if abs(scrollView.zoomScale - fitScale) > 0.01 {
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        toggleZoom(at: gesture.location(in: contentView))
+    }
+
+    private func toggleZoom(at pointInContent: CGPoint, animated: Bool? = nil) {
+        let fitScale = currentFitScale()
+        let zoomingIn = !DoubleTapZoom.isZoomedIn(scale: scrollView.zoomScale, fitScale: fitScale)
+        if zoomingIn {
+            hasUserAdjustedZoom = true
+        }
+        DoubleTapZoom.toggle(
+            in: scrollView,
+            tapInContent: pointInContent,
+            fitScale: fitScale,
+            animated: animated
+        )
+        if !zoomingIn {
+            hasUserAdjustedZoom = false
+        }
+    }
+
+    /// Fit to width on first layout and after rotation, but keep a user zoom.
+    private func applyFitScaleIfNeeded() {
+        let fitScale = currentFitScale()
+        guard fitScale > 0 else { return }
+        scrollView.minimumZoomScale = fitScale
+        if hasUserAdjustedZoom {
+            if scrollView.zoomScale < fitScale {
+                scrollView.zoomScale = fitScale
+            }
+            return
+        }
+        if abs(scrollView.zoomScale - fitScale) > DoubleTapZoom.scaleSlop {
             scrollView.zoomScale = fitScale
         }
     }
 
+    private func currentFitScale() -> CGFloat {
+        DoubleTapZoom.fitScale(
+            boundsWidth: bounds.width,
+            contentWidth: contentWidthConstraint?.constant ?? 0
+        )
+    }
+
+    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        hasUserAdjustedZoom = true
+    }
+
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        hasUserAdjustedZoom = DoubleTapZoom.isZoomedIn(scale: scale, fitScale: currentFitScale())
+    }
+
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
-        centerContentHorizontally()
+        centerContent()
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
         contentView
     }
 
-    /// Adjust left inset so the content is horizontally centered when narrower than the viewport.
-    private func centerContentHorizontally() {
+    /// Center content on either axis when it is smaller than the viewport.
+    private func centerContent() {
         let offsetX = max((scrollView.bounds.width - scrollView.contentSize.width) / 2, 0)
-        scrollView.contentInset = UIEdgeInsets(top: scrollView.contentInset.top, left: offsetX, bottom: scrollView.contentInset.bottom, right: 0)
+        let offsetY = max((scrollView.bounds.height - scrollView.contentSize.height) / 2, 0)
+        scrollView.contentInset = UIEdgeInsets(top: offsetY, left: offsetX, bottom: offsetY, right: offsetX)
     }
+
+#if DEBUG
+    var debugZoomScaleForTesting: CGFloat { scrollView.zoomScale }
+    var debugFitScaleForTesting: CGFloat { currentFitScale() }
+    var debugDoubleTapRecognizerCountForTesting: Int {
+        (scrollView.gestureRecognizers ?? []).compactMap { $0 as? UITapGestureRecognizer }
+            .filter { $0.numberOfTapsRequired == 2 }
+            .count
+    }
+    var debugSingleTapRecognizerCountForTesting: Int {
+        (scrollView.gestureRecognizers ?? []).compactMap { $0 as? UITapGestureRecognizer }
+            .filter { $0.numberOfTapsRequired == 1 }
+            .count
+    }
+
+    func debugToggleZoomForTesting(at pointInContent: CGPoint) {
+        toggleZoom(at: pointInContent, animated: false)
+    }
+#endif
 }

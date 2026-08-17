@@ -113,9 +113,7 @@ final class FullScreenImageViewController: UIViewController {
     }
 
     private func setupDoubleTap() {
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        scrollView.addGestureRecognizer(doubleTap)
+        DoubleTapZoom.install(on: scrollView, target: self, action: #selector(handleDoubleTap(_:)))
     }
 
     private func setupBottomToolbar() {
@@ -182,17 +180,16 @@ final class FullScreenImageViewController: UIViewController {
     // MARK: - Actions
 
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        if scrollView.zoomScale > 1.0 {
-            scrollView.setZoomScale(1.0, animated: true)
-        } else {
-            let point = gesture.location(in: imageView)
-            let size = CGSize(
-                width: scrollView.bounds.width / 2.5,
-                height: scrollView.bounds.height / 2.5
-            )
-            let origin = CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2)
-            scrollView.zoom(to: CGRect(origin: origin, size: size), animated: true)
-        }
+        toggleZoom(at: gesture.location(in: imageView))
+    }
+
+    private func toggleZoom(at pointInImage: CGPoint, animated: Bool? = nil) {
+        DoubleTapZoom.toggle(
+            in: scrollView,
+            tapInContent: pointInImage,
+            fitScale: scrollView.minimumZoomScale,
+            animated: animated
+        )
     }
 
     @objc private func dismissTapped() {
@@ -255,6 +252,14 @@ extension FullScreenImageViewController: UIScrollViewDelegate {
         imageView
     }
 }
+
+#if DEBUG
+extension FullScreenImageViewController {
+    func debugToggleZoomForTesting(at pointInImage: CGPoint) {
+        toggleZoom(at: pointInImage, animated: false)
+    }
+}
+#endif
 
 // MARK: - Presentation Helper
 
