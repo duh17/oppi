@@ -589,7 +589,7 @@ final class WebSocketClient {
             return
         }
         guard let authSession else {
-            openSocket(url: url, token: credentials.token, continuation: continuation)
+            openSocket(url: url, token: credentials.effectiveAccessToken, continuation: continuation)
             return
         }
         let connectionAtOpen = connectionID
@@ -597,7 +597,34 @@ final class WebSocketClient {
             guard let self,
                   self.connectionID == connectionAtOpen,
                   self.status != .disconnected else { return }
-            let token = (try? await authSession.currentAccessToken()) ?? self.credentials.effectiveAccessToken
+            let token: String
+            do {
+                let cached = await authSession.accessToken
+                if cached.isEmpty, !self.credentials.effectiveAccessToken.isEmpty {
+                    token = self.credentials.effectiveAccessToken
+                } else {
+                    token = ServerAuthorization.resolvedToken(
+                        try await authSession.currentAccessToken(),
+                        fallback: self.credentials.effectiveAccessToken
+                    )
+                }
+            } catch {
+                // HTTP callers fail closed. Focused streams still open from the
+                // leftover/static snapshot so the first command is not lost.
+                let fallback = self.credentials.effectiveAccessToken
+                guard !fallback.isEmpty else {
+                    logger.error(
+                        "Device-key token resolution failed with no leftover snapshot: \(error.localizedDescription, privacy: .public)"
+                    )
+                    guard self.connectionID == connectionAtOpen else { return }
+                    self.disconnect()
+                    return
+                }
+                logger.error(
+                    "Device-key token resolution failed; opening leftover snapshot: \(error.localizedDescription, privacy: .public)"
+                )
+                token = fallback
+            }
             guard self.connectionID == connectionAtOpen, self.status != .disconnected else { return }
             self.openSocket(url: url, token: token, continuation: continuation)
         }

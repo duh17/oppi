@@ -125,6 +125,57 @@ struct PairedServerTests {
         #expect(server.sortOrder == 5)
     }
 
+    @Test func leftoverDtUpdateKeepsReplacementAccessToken() {
+        let leftover = ServerCredentials(
+            host: "pairing.example.test",
+            port: 7749,
+            token: "dt_leftover",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:fp1"
+        )
+        var server = PairedServer(from: leftover)!
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        server.updateCredentials(from: leftover.withDeviceCredential(replacement))
+        server.updateCredentials(from: leftover)
+
+        #expect(server.deviceCredential?.accessToken == "at_replacement")
+        #expect(server.token.isEmpty)
+        #expect(server.credentials.effectiveAccessToken == "at_replacement")
+    }
+
+    @Test func userInitiatedPairReplacesStoredAccessToken() {
+        let leftover = ServerCredentials(
+            host: "pairing.example.test",
+            port: 7749,
+            token: "dt_leftover",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:fp1"
+        )
+        var server = PairedServer(from: leftover)!
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        server.updateCredentials(from: leftover.withDeviceCredential(replacement))
+        server.updateCredentials(
+            from: leftover.withAuthToken("dt_fresh_pair"),
+            replacingStoredDeviceCredential: true
+        )
+
+        #expect(server.deviceCredential == nil)
+        #expect(server.token == "dt_fresh_pair")
+        #expect(server.credentials.effectiveAccessToken == "dt_fresh_pair")
+    }
+
     @Test("Codable round-trip")
     func codableRoundTrip() throws {
         let creds = ServerCredentials(

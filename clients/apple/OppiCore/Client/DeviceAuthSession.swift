@@ -100,9 +100,17 @@ public actor DeviceAuthSession {
         self.onRefresh = onRefresh
     }
 
-    /// Return a usable access token, refreshing single-flight when near expiry.
+    /// Prefer a freshly resolved device-key token. An empty resolution must not
+    /// wipe a still-valid leftover or static bearer.
+    public static func resolvedToken(_ resolved: String?, fallback: String) -> String {
+        if let resolved, !resolved.isEmpty { return resolved }
+        return fallback
+    }
+
+    /// Return a usable access token, refreshing single-flight when near expiry
+    /// or when the cached token is empty.
     public func currentAccessToken() async throws -> String {
-        if clock().addingTimeInterval(skew) < expiresAt {
+        if !accessToken.isEmpty, clock().addingTimeInterval(skew) < expiresAt {
             return accessToken
         }
         return try await refreshAccessToken()

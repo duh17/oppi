@@ -30,26 +30,44 @@ enum KeychainService {
     /// merges the incoming `deviceCredential` against the latest stored record
     /// (freshest per-transport token wins), so a stale full-record writer in
     /// another process cannot roll back a token it never observed.
-    static func saveServer(_ server: PairedServer) throws {
+    static func saveServer(
+        _ server: PairedServer,
+        replacingStoredDeviceCredential: Bool = false
+    ) throws {
         let container = try CrossProcessFileLock.appGroupContainer(
             identifier: SharedConstants.appGroupIdentifier
         )
         try CrossProcessFileLock.withLock(serverId: server.id, container: container) {
-            try saveServerLocked(server)
+            try saveServerLocked(
+                server,
+                replacingStoredDeviceCredential: replacingStoredDeviceCredential
+            )
         }
     }
 
-    private static func saveServerLocked(_ server: PairedServer) throws {
+    private static func saveServerLocked(
+        _ server: PairedServer,
+        replacingStoredDeviceCredential: Bool = false
+    ) throws {
         var toWrite = server
         let account = serverAccount(for: server.id)
         if let latest = loadServerFromGroup(account: account, accessGroup: accessGroup),
            let stored = latest.deviceCredential {
             if let incoming = toWrite.deviceCredential {
-                toWrite.deviceCredential = incoming.freshestMerge(with: stored)
-            } else if toWrite.token.isEmpty {
-                // Stale pre-migration in-memory record: adopt the credential a
-                // concurrent process already migrated in.
+                let merged = incoming.freshestMerge(with: stored)
+                toWrite.deviceCredential = merged
+                if !merged.accessToken.isEmpty {
+                    toWrite.token = ""
+                }
+            } else if replacingStoredDeviceCredential {
+                // User-initiated pair: persist the incoming token and drop the
+                // stored at_ so a fresh dt_ is not pinned to a dead credential.
+                toWrite.deviceCredential = nil
+            } else {
+                // A leftover dt_ writer must not wipe a replacement already
+                // persisted by migrate. Keep the stored at_ and clear dt_.
                 toWrite.deviceCredential = stored
+                toWrite.token = ""
             }
         }
 

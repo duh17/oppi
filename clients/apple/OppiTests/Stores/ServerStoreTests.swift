@@ -114,6 +114,72 @@ struct ServerStoreTests {
         #expect(store.server(forHost: "mini.ts.net", port: 7749) == nil)
     }
 
+    @Test func leftoverDtPersistAfterMigrateKeepsInMemoryReplacement() throws {
+        let store = makeCleanStore()
+        defer { cleanupKeychain(store) }
+
+        let leftoverCreds = ServerCredentials(
+            host: "pairing.example.test",
+            port: 7749,
+            token: "dt_leftover",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:store-leftover-dt"
+        )
+        let leftover = try #require(PairedServer(from: leftoverCreds))
+        try store.persistServer(leftover)
+
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        try store.persistServer(try #require(PairedServer(from: leftoverCreds.withDeviceCredential(replacement))))
+
+        // A stale leftover writer must not restore revoked dt_ in memory.
+        try store.persistServer(leftover)
+
+        let current = try #require(store.server(for: leftover.id))
+        #expect(current.deviceCredential?.accessToken == "at_replacement")
+        #expect(current.token.isEmpty)
+        #expect(current.credentials.effectiveAccessToken == "at_replacement")
+    }
+
+    @Test func userInitiatedRepairAdoptsFreshDeviceToken() throws {
+        let store = makeCleanStore()
+        defer { cleanupKeychain(store) }
+
+        let leftoverCreds = ServerCredentials(
+            host: "pairing.example.test",
+            port: 7749,
+            token: "dt_leftover",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:store-repair-dt"
+        )
+        let leftover = try #require(PairedServer(from: leftoverCreds))
+        try store.persistServer(leftover)
+
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        try store.persistServer(try #require(PairedServer(from: leftoverCreds.withDeviceCredential(replacement))))
+
+        store.addOrUpdate(
+            try #require(PairedServer(from: leftoverCreds.withAuthToken("dt_fresh_pair"))),
+            replacingStoredDeviceCredential: true
+        )
+
+        let current = try #require(store.server(for: leftover.id))
+        #expect(current.deviceCredential == nil)
+        #expect(current.token == "dt_fresh_pair")
+        #expect(current.credentials.effectiveAccessToken == "dt_fresh_pair")
+    }
+
     // MARK: - Helpers
 
     private func makeCleanStore() -> ServerStore {

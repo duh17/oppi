@@ -121,7 +121,7 @@ enum LANEndpointSelection {
     ) async -> Bool {
         let client = APIClient(environment: OppiClientEnvironment(
             baseURL: selection.baseURL,
-            bearerToken: credentials.token,
+            bearerToken: credentials.effectiveAccessToken,
             pinnedCertificateFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName
         ))

@@ -306,6 +306,108 @@ struct ShareQuickSessionSenderTests {
         }
         #expect(persisted.count() == 1)
     }
+
+    @Test func emptyDeviceTokenKeepsLeftoverStaticShareBearer() async throws {
+        let credential = DeviceCredential(
+            deviceId: "dev-share",
+            accessToken: "",
+            expiresAt: Int64(Date().timeIntervalSince1970 * 1000) + 3_600_000,
+            refreshChallenge: nil
+        )
+        let server = try #require(ShareQuickSessionServer(
+            id: "server-1",
+            name: "Mac",
+            baseURL: URL(string: "https://mac.example:7749"),
+            token: "dt_leftover",
+            deviceCredential: credential,
+            tlsCertFingerprint: nil,
+            sortOrder: 0
+        ))
+        let transport = ShareSenderStubTransport(responses: [
+            .json(200, #"{"workspaces":[{"id":"ws-1","name":"Oppi"}]}"#),
+        ])
+        let sender = ShareQuickSessionSender(
+            transport: transport,
+            deviceKeyProvider: { InMemoryP256DeviceKey() }
+        )
+
+        let workspaces = try await sender.fetchWorkspaces(server: server)
+
+        #expect(workspaces.map(\.id) == ["ws-1"])
+        let request = try #require(await transport.requests.first)
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer dt_leftover")
+    }
+
+    @Test func refreshRejectionDoesNotFallBackToLeftoverStaticShareBearer() async throws {
+        let credential = DeviceCredential(
+            deviceId: "dev-share",
+            accessToken: "at_expired",
+            expiresAt: Int64(Date().timeIntervalSince1970 * 1000) - 10_000,
+            refreshChallenge: nil
+        )
+        let server = try #require(ShareQuickSessionServer(
+            id: "server-1",
+            name: "Mac",
+            baseURL: URL(string: "https://mac.example:7749"),
+            token: "dt_leftover",
+            deviceCredential: credential,
+            tlsCertFingerprint: nil,
+            sortOrder: 0
+        ))
+        let transport = ShareSenderStubTransport(responses: [
+            .json(200, #"{"nonce":"nonce-1","audience":"oppi:refresh:v1","expiresAt":4102444800000}"#),
+            .json(401, #"{"error":"revoked"}"#),
+            .json(200, #"{"workspaces":[{"id":"ws-1","name":"Oppi"}]}"#),
+        ])
+        let sender = ShareQuickSessionSender(
+            transport: transport,
+            deviceKeyProvider: { InMemoryP256DeviceKey() }
+        )
+
+        do {
+            _ = try await sender.fetchWorkspaces(server: server)
+            Issue.record("expected refresh rejection to fail closed")
+        } catch let error as DeviceAuthError {
+            #expect(error == .refreshRejected(code: "revoked"))
+        }
+
+        let requests = await transport.requests
+        #expect(requests.map { $0.url?.path } == ["/auth/challenge", "/auth/refresh"])
+        #expect(requests.contains { $0.url?.path == "/workspaces" } == false)
+    }
+
+    @Test func challengeUnavailableFallsBackToLeftoverStaticShareBearer() async throws {
+        let credential = DeviceCredential(
+            deviceId: "dev-share",
+            accessToken: "at_expired",
+            expiresAt: Int64(Date().timeIntervalSince1970 * 1000) - 10_000,
+            refreshChallenge: nil
+        )
+        let server = try #require(ShareQuickSessionServer(
+            id: "server-1",
+            name: "Mac",
+            baseURL: URL(string: "https://mac.example:7749"),
+            token: "dt_leftover",
+            deviceCredential: credential,
+            tlsCertFingerprint: nil,
+            sortOrder: 0
+        ))
+        let transport = ShareSenderStubTransport(responses: [
+            .json(404, #"{"error":"not_found"}"#),
+            .json(200, #"{"workspaces":[{"id":"ws-1","name":"Oppi"}]}"#),
+        ])
+        let sender = ShareQuickSessionSender(
+            transport: transport,
+            deviceKeyProvider: { InMemoryP256DeviceKey() }
+        )
+
+        let workspaces = try await sender.fetchWorkspaces(server: server)
+
+        #expect(workspaces.map(\.id) == ["ws-1"])
+        let requests = await transport.requests
+        #expect(requests.map { $0.url?.path } == ["/auth/challenge", "/workspaces"])
+        #expect(requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer dt_leftover")
+    }
 }
 
 private actor ShareSenderStubTransport: ShareQuickSessionHTTPTransport {

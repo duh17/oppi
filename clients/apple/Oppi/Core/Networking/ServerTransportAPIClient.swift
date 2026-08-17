@@ -6,6 +6,10 @@ enum ServerAuthorization {
     static func apply(token: String, to request: inout URLRequest) {
         request.setValue(headerValue(token: token), forHTTPHeaderField: "Authorization")
     }
+
+    static func resolvedToken(_ resolved: String?, fallback: String) -> String {
+        DeviceAuthSession.resolvedToken(resolved, fallback: fallback)
+    }
 }
 
 /// Builds the HTTPS client used by short-lived app intents and extensions.
@@ -60,7 +64,7 @@ enum ServerTransportAPIClient {
     private static func makeHTTPClient(for server: PairedServer, selection: EndpointSelection) throws -> APIClient {
         let client = APIClient(environment: OppiClientEnvironment(
             baseURL: selection.baseURL,
-            bearerToken: server.token,
+            bearerToken: server.credentials.effectiveAccessToken,
             pinnedCertificateFingerprint: server.tlsCertFingerprint,
             tlsServerName: selection.tlsServerName
         ))

@@ -150,27 +150,11 @@ final class AppEventStreamClient {
                 return
             }
             self.continuation = continuation
-            if let currentTokenProvider = self.currentTokenProvider {
-                Task { [weak self] in
-                    do {
-                        let current = try await currentTokenProvider()
-                        guard let self,
-                              self.connectionID == thisConnection,
-                              self.status != .disconnected,
-                              !current.isEmpty else {
-                            self?.disconnect()
-                            return
-                        }
-                        self.token = current
-                        self.open(continuation: continuation)
-                    } catch {
-                        self?.logStreamError("Initial device token resolution failed", error: error)
-                        self?.disconnect()
-                    }
-                }
-            } else {
-                self.open(continuation: continuation)
-            }
+            self.startConnection(
+                thisConnection: thisConnection,
+                continuation: continuation,
+                currentTokenProvider: self.currentTokenProvider
+            )
 
             continuation.onTermination = { [weak self] _ in
                 Task { @MainActor in
@@ -178,6 +162,62 @@ final class AppEventStreamClient {
                     guard self.connectionID == thisConnection else { return }
                     self.disconnect()
                 }
+            }
+        }
+    }
+
+    private func startConnection(
+        thisConnection: UInt64,
+        continuation: AsyncStream<AppEventMessage>.Continuation,
+        currentTokenProvider: (@Sendable () async throws -> String)?
+    ) {
+        if !token.isEmpty {
+            open(continuation: continuation)
+        }
+        guard let currentTokenProvider else {
+            if token.isEmpty { disconnect() }
+            return
+        }
+        Task { [weak self] in
+            await self?.applyResolvedToken(
+                thisConnection: thisConnection,
+                continuation: continuation,
+                currentTokenProvider: currentTokenProvider
+            )
+        }
+    }
+
+    private func applyResolvedToken(
+        thisConnection: UInt64,
+        continuation: AsyncStream<AppEventMessage>.Continuation,
+        currentTokenProvider: @Sendable () async throws -> String
+    ) async {
+        do {
+            let current = try await currentTokenProvider()
+            guard connectionID == thisConnection, status != .disconnected else { return }
+            let resolved = ServerAuthorization.resolvedToken(current, fallback: token)
+            if resolved.isEmpty {
+                disconnect()
+                return
+            }
+            if webSocket == nil {
+                token = resolved
+                open(continuation: continuation)
+                return
+            }
+            guard resolved != token else { return }
+            token = resolved
+            if status == .connecting {
+                webSocket?.cancel(.goingAway, nil)
+                open(continuation: continuation)
+            }
+        } catch {
+            logStreamError("Initial device token resolution failed", error: error)
+            guard connectionID == thisConnection else { return }
+            // Keep a leftover/static snapshot open so mixed-update streams are
+            // not torn down while the device-key session cannot produce a replacement.
+            if token.isEmpty {
+                disconnect()
             }
         }
     }

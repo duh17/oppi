@@ -78,6 +78,28 @@ struct DeviceAuthSessionTests {
         #expect(await transport.refreshCalls.isEmpty)
     }
 
+    @Test func emptyAccessTokenRefreshesInsteadOfReturningEmpty() async throws {
+        let key = InMemoryP256DeviceKey()
+        let transport = FakeDeviceAuthTransport(
+            challenges: [DeviceAuthChallenge(nonce: "n1", audience: "oppi:refresh:v1", expiresAt: 2_000_000)],
+            refreshResult: DeviceAuthRefreshResult(accessToken: "at_refreshed", expiresAt: 2_000_000, refreshChallenge: nil)
+        )
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let session = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: key,
+            accessToken: "",
+            expiresAt: now.addingTimeInterval(600),
+            transport: transport,
+            clock: { now }
+        )
+
+        let token = try await session.currentAccessToken()
+        #expect(token == "at_refreshed")
+        #expect(await transport.challengeCount == 1)
+        #expect(await transport.refreshCalls.count == 1)
+    }
+
     @Test func singleFlightRefreshCoalescesConcurrentCallers() async throws {
         let key = InMemoryP256DeviceKey()
         let transport = FakeDeviceAuthTransport(

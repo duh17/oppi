@@ -343,9 +343,25 @@ actor ShareQuickSessionSender {
         forceRefresh: Bool = false
     ) async throws -> String {
         guard let session = try deviceSession(for: server) else { return server.token }
-        return forceRefresh
-            ? try await session.refreshAccessToken()
-            : try await session.currentAccessToken()
+        if forceRefresh {
+            return try await session.refreshAccessToken()
+        }
+        let cached = await session.accessToken
+        if cached.isEmpty, !server.token.isEmpty {
+            return server.token
+        }
+        do {
+            return DeviceAuthSession.resolvedToken(
+                try await session.currentAccessToken(),
+                fallback: server.token
+            )
+        } catch {
+            if case DeviceAuthError.refreshRejected = error {
+                throw error
+            }
+            if !server.token.isEmpty { return server.token }
+            throw error
+        }
     }
 
     func fetchWorkspaces(server: ShareQuickSessionServer) async throws -> [ShareQuickSessionWorkspace] {

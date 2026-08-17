@@ -298,6 +298,7 @@ struct AppEventStreamClientTests {
         let refreshCounter = RefreshCounter()
         let client = try makeClient(
             factory: factory,
+            token: "",
             reconnectDelay: { _ in 0 },
             currentTokenProvider: {
                 currentCounter.increment()
@@ -330,6 +331,48 @@ struct AppEventStreamClientTests {
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
         #expect(currentCounter.current() == 1)
         #expect(refreshCounter.current() == 1)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func emptyCurrentTokenKeepsLeftoverAndStillOpens() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let client = try makeClient(
+            factory: factory,
+            currentTokenProvider: { "" }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 1 || client.status == .disconnected
+        })
+        #expect(factory.sockets.count == 1)
+        #expect(client.status != .disconnected)
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func refreshRejectionKeepsLeftoverAppEventSnapshot() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let client = try makeClient(
+            factory: factory,
+            currentTokenProvider: {
+                throw DeviceAuthError.refreshRejected(code: "revoked")
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 1 || client.status == .disconnected
+        })
+        #expect(factory.sockets.count == 1)
+        #expect(client.status != .disconnected)
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
 
         client.disconnect()
         await consumer.value
@@ -411,6 +454,7 @@ struct AppEventStreamClientTests {
 
     private func makeClient(
         factory: ScriptedAppEventSocketFactory,
+        token: String = "test-token",
         pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = { _ in 60 },
@@ -421,7 +465,7 @@ struct AppEventStreamClientTests {
         let url = try #require(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         return AppEventStreamClient(
             url: url,
-            token: "test-token",
+            token: token,
             currentTokenProvider: currentTokenProvider,
             refreshTokenProvider: refreshTokenProvider,
             pingInterval: pingInterval,

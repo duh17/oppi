@@ -124,6 +124,76 @@ struct KeychainServiceTests {
         #expect(matches.count == 1)
     }
 
+    @Test func leftoverDtPersistAfterMigrateKeepsReplacementAccessToken() throws {
+        let fp = UUID().uuidString
+        let id = "sha256:\(fp)"
+        defer { cleanupAll(serverId: id) }
+
+        let leftoverCreds = ServerCredentials(
+            host: "pairing.example.test",
+            port: 7749,
+            token: "dt_leftover",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: id
+        )
+        let leftover = try #require(PairedServer(from: leftoverCreds))
+        try KeychainService.saveServer(leftover)
+
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        let migratedCreds = leftoverCreds.withDeviceCredential(replacement)
+        let migrated = try #require(PairedServer(from: migratedCreds))
+        try KeychainService.saveServer(migrated)
+
+        // A stale leftover writer must not restore revoked dt_ or drop at_.
+        try KeychainService.saveServer(leftover)
+
+        let reloaded = try #require(KeychainService.loadServer(id: id))
+        #expect(reloaded.deviceCredential?.accessToken == "at_replacement")
+        #expect(reloaded.token.isEmpty)
+        #expect(reloaded.credentials.effectiveAccessToken == "at_replacement")
+    }
+
+    @Test func userInitiatedPairSaveReplacesStoredAccessToken() throws {
+        let fp = UUID().uuidString
+        let id = "sha256:\(fp)"
+        defer { cleanupAll(serverId: id) }
+
+        let leftoverCreds = ServerCredentials(
+            host: "pairing.example.test",
+            port: 7749,
+            token: "dt_leftover",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: id
+        )
+        let leftover = try #require(PairedServer(from: leftoverCreds))
+        try KeychainService.saveServer(leftover)
+
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        try KeychainService.saveServer(
+            try #require(PairedServer(from: leftoverCreds.withDeviceCredential(replacement)))
+        )
+
+        let freshPair = try #require(PairedServer(from: leftoverCreds.withAuthToken("dt_fresh_pair")))
+        try KeychainService.saveServer(freshPair, replacingStoredDeviceCredential: true)
+
+        let reloaded = try #require(KeychainService.loadServer(id: id))
+        #expect(reloaded.deviceCredential == nil)
+        #expect(reloaded.token == "dt_fresh_pair")
+        #expect(reloaded.credentials.effectiveAccessToken == "dt_fresh_pair")
+    }
+
     @Test func deleteRemovesServer() throws {
         let fp = UUID().uuidString
         guard let server = makeServer(fingerprint: fp) else {

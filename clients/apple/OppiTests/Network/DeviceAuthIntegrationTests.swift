@@ -4,6 +4,74 @@ import Testing
 
 // MARK: - Fakes
 
+@MainActor
+private final class SequenceMigrationClient: DeviceAuthMigrationTransport {
+    enum Result {
+        case success(DeviceCredential)
+        case failure(Error)
+    }
+
+    var calls = 0
+    private var results: [Result]
+
+    init(results: [Result]) {
+        self.results = results
+    }
+
+    func migrateDevice(
+        deviceName: String?,
+        devicePublicKey: DevicePublicKey
+    ) async throws -> PairDeviceResponse {
+        calls += 1
+        let result = results.isEmpty ? .failure(URLError(.timedOut)) : results.removeFirst()
+        switch result {
+        case .success(let credential):
+            return PairDeviceResponse(
+                deviceId: credential.deviceId,
+                accessToken: credential.accessToken,
+                expiresAt: credential.expiresAt,
+                refreshChallenge: credential.refreshChallenge
+            )
+        case .failure(let error):
+            throw error
+        }
+    }
+}
+
+@MainActor
+private final class CountingMigrationClient: DeviceAuthMigrationTransport {
+    var calls = 0
+    let credential: DeviceCredential?
+    let error: DeviceAuthError?
+    let pairResponse: PairDeviceResponse?
+
+    init(
+        credential: DeviceCredential? = nil,
+        error: DeviceAuthError? = nil,
+        pairResponse: PairDeviceResponse? = nil
+    ) {
+        self.credential = credential
+        self.error = error
+        self.pairResponse = pairResponse
+    }
+
+    func migrateDevice(
+        deviceName: String?,
+        devicePublicKey: DevicePublicKey
+    ) async throws -> PairDeviceResponse {
+        calls += 1
+        if let error { throw error }
+        if let pairResponse { return pairResponse }
+        let credential = try #require(credential)
+        return PairDeviceResponse(
+            deviceId: credential.deviceId,
+            accessToken: credential.accessToken,
+            expiresAt: credential.expiresAt,
+            refreshChallenge: credential.refreshChallenge
+        )
+    }
+}
+
 private struct StubMigrationClient: DeviceAuthMigrationTransport {
     let credential: DeviceCredential?
     let error: DeviceAuthError?
@@ -192,6 +260,202 @@ struct DeviceAuthMigrationServiceTests {
         #expect(result.token == "dt_legacy")
         #expect(result.deviceCredential == nil)
     }
+
+    @Test func persistFailureIsNotNegativelyCached() async throws {
+        let credential = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_1",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        var persistAttempts = 0
+        let client = CountingMigrationClient(credential: credential)
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in client },
+            persist: { _ in
+                persistAttempts += 1
+                if persistAttempts == 1 {
+                    throw KeychainCredentialMergeError.writeFailed(errSecIO)
+                }
+            }
+        )
+        let leftover = try legacyServer()
+
+        let first = await service.migrateIfNeeded(leftover)
+        let second = await service.migrateIfNeeded(leftover)
+
+        #expect(first.token == "dt_legacy")
+        #expect(first.deviceCredential == nil)
+        #expect(second.deviceCredential?.accessToken == "at_1")
+        #expect(second.token == "")
+        #expect(client.calls == 2)
+        #expect(persistAttempts == 2)
+    }
+
+    @Test func deviceKeyLoadFailureIsNotNegativelyCached() async throws {
+        let credential = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_1",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        var keyAttempts = 0
+        let client = CountingMigrationClient(credential: credential)
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: {
+                keyAttempts += 1
+                if keyAttempts == 1 {
+                    throw DeviceAuthError.challengeUnavailable
+                }
+                return InMemoryP256DeviceKey()
+            },
+            clientFactory: { _ in client },
+            persist: { _ in }
+        )
+        let leftover = try legacyServer()
+
+        let first = await service.migrateIfNeeded(leftover)
+        let second = await service.migrateIfNeeded(leftover)
+
+        #expect(first.token == "dt_legacy")
+        #expect(first.deviceCredential == nil)
+        #expect(second.deviceCredential?.accessToken == "at_1")
+        #expect(second.token == "")
+        #expect(keyAttempts == 2)
+        #expect(client.calls == 1)
+    }
+
+    @Test func failedMigrateIsNotRetriedForTheSameLeftoverToken() async throws {
+        let client = CountingMigrationClient(error: .refreshRejected(code: "revoked"))
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in client },
+            persist: { _ in }
+        )
+        let leftover = try legacyServer()
+
+        let first = await service.migrateIfNeeded(leftover)
+        let second = await service.migrateIfNeeded(leftover)
+
+        #expect(first.token == "dt_legacy")
+        #expect(second.token == "dt_legacy")
+        #expect(client.calls == 1)
+    }
+
+    @Test func transientMigrateFailureIsNotNegativelyCached() async throws {
+        let credential = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_1",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        let client = SequenceMigrationClient(results: [
+            .failure(URLError(.timedOut)),
+            .success(credential),
+        ])
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in client },
+            persist: { _ in }
+        )
+        let leftover = try legacyServer()
+
+        let first = await service.migrateIfNeeded(leftover)
+        let second = await service.migrateIfNeeded(leftover)
+
+        #expect(first.token == "dt_legacy")
+        #expect(first.deviceCredential == nil)
+        #expect(second.deviceCredential?.accessToken == "at_1")
+        #expect(second.token == "")
+        #expect(client.calls == 2)
+    }
+
+    @Test func rateLimitedMigrateFailureIsNotNegativelyCached() async throws {
+        let credential = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_1",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        let client = SequenceMigrationClient(results: [
+            .failure(APIError.server(status: 429, message: "Too Many Requests")),
+            .success(credential),
+        ])
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in client },
+            persist: { _ in }
+        )
+        let leftover = try legacyServer()
+
+        let first = await service.migrateIfNeeded(leftover)
+        let second = await service.migrateIfNeeded(leftover)
+
+        #expect(first.token == "dt_legacy")
+        #expect(first.deviceCredential == nil)
+        #expect(second.deviceCredential?.accessToken == "at_1")
+        #expect(second.token == "")
+        #expect(client.calls == 2)
+    }
+
+    @Test func forcedMigrateRetriesAfterCachedFailure() async throws {
+        let client = CountingMigrationClient(error: .refreshRejected(code: "revoked"))
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in client },
+            persist: { _ in }
+        )
+        let leftover = try legacyServer()
+
+        _ = await service.migrateIfNeeded(leftover)
+        _ = await service.migrateIfNeeded(leftover, force: true)
+
+        #expect(client.calls == 2)
+    }
+
+    @Test func differentLeftoverTokenDoesNotHitNegativeCache() async throws {
+        let client = CountingMigrationClient(error: .refreshRejected(code: "revoked"))
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in client },
+            persist: { _ in }
+        )
+        let leftover = try legacyServer()
+        var repaired = leftover
+        repaired.token = "dt_fresh_pair"
+
+        _ = await service.migrateIfNeeded(leftover)
+        _ = await service.migrateIfNeeded(repaired)
+
+        #expect(client.calls == 2)
+    }
+
+    @Test func persistOnlyWhenReplacementAccessTokenExists() async throws {
+        var persisted: [PairedServer] = []
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in
+                StubMigrationClient(
+                    credential: nil,
+                    error: nil,
+                    pairResponse: PairDeviceResponse(
+                        deviceId: "dev_incomplete",
+                        accessToken: "",
+                        expiresAt: 0,
+                        deviceToken: "dt_should_not_replace"
+                    )
+                )
+            },
+            persist: { persisted.append($0) }
+        )
+
+        let result = await service.migrateIfNeeded(try legacyServer())
+
+        #expect(result.token == "dt_legacy")
+        #expect(result.deviceCredential == nil)
+        #expect(persisted.isEmpty)
+    }
 }
 
 // MARK: - APIClient 401 refresh
@@ -275,6 +539,176 @@ struct DeviceAuthAPIClientTests {
 
         #expect(requestCount == 1)
         #expect(await transport.refreshCallCount() == 1)
+    }
+
+    @Test func refreshRejectionDoesNotFallBackToLeftoverStaticToken() async throws {
+        let client = makeClient(token: "dt_leftover")
+        defer { MockURLProtocol.handler = nil }
+        let transport = RecordingDeviceAuthTransport(
+            nextToken: "at_fresh",
+            refreshError: .refreshRejected(code: "revoked")
+        )
+        let session = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: InMemoryP256DeviceKey(),
+            accessToken: "at_expired",
+            expiresAt: Date().addingTimeInterval(-1),
+            transport: transport
+        )
+        client.attachAuthSession(session)
+
+        var requestCount = 0
+        MockURLProtocol.handler = { _ in
+            requestCount += 1
+            return (
+                Data(#"{"error":"Unauthorized"}"#.utf8),
+                HTTPURLResponse(
+                    url: URL(string: "http://localhost:7749/me")!,
+                    statusCode: 401,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+            )
+        }
+
+        do {
+            _ = try await client.me()
+            Issue.record("expected refresh rejection to fail closed")
+        } catch let error as DeviceAuthError {
+            #expect(error == .refreshRejected(code: "revoked"))
+        }
+
+        #expect(requestCount == 0)
+        #expect(await transport.refreshCallCount() == 1)
+    }
+
+    @Test func challengeUnavailableFallsBackToLeftoverStaticToken() async throws {
+        let client = makeClient(token: "dt_leftover")
+        defer { MockURLProtocol.handler = nil }
+        let transport = RecordingDeviceAuthTransport(
+            nextToken: "at_fresh",
+            refreshError: .challengeUnavailable
+        )
+        let session = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: InMemoryP256DeviceKey(),
+            accessToken: "at_expired",
+            expiresAt: Date().addingTimeInterval(-1),
+            transport: transport
+        )
+        client.attachAuthSession(session)
+
+        var seenTokens: [String] = []
+        MockURLProtocol.handler = { request in
+            seenTokens.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            return (
+                Data(#"{"user":"u1","name":"Test"}"#.utf8),
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+
+        let user = try await client.me()
+
+        #expect(user.user == "u1")
+        #expect(seenTokens == ["Bearer dt_leftover"])
+        #expect(await transport.refreshCallCount() == 1)
+    }
+
+    @Test func emptyCurrentAccessTokenKeepsLeftoverStaticToken() async throws {
+        let client = makeClient(token: "dt_leftover")
+        defer { MockURLProtocol.handler = nil }
+        let session = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: InMemoryP256DeviceKey(),
+            accessToken: "",
+            expiresAt: Date().addingTimeInterval(600),
+            transport: RecordingDeviceAuthTransport(
+                nextToken: "at_should_not_replace",
+                refreshError: .challengeUnavailable
+            )
+        )
+        client.attachAuthSession(session)
+
+        var seenTokens: [String] = []
+        MockURLProtocol.handler = { request in
+            seenTokens.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            return (
+                Data(#"{"user":"u1","name":"Test"}"#.utf8),
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+
+        let user = try await client.me()
+
+        #expect(user.user == "u1")
+        #expect(seenTokens == ["Bearer dt_leftover"])
+    }
+
+    @Test func postMigrateHTTPUsesReplacementAccessTokenNotEmptyStatic() async throws {
+        let client = makeClient(token: "")
+        defer { MockURLProtocol.handler = nil }
+        let session = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: InMemoryP256DeviceKey(),
+            accessToken: "at_replacement",
+            expiresAt: Date().addingTimeInterval(600),
+            transport: RecordingDeviceAuthTransport(nextToken: "at_fresh")
+        )
+        client.attachAuthSession(session)
+
+        var seenTokens: [String] = []
+        MockURLProtocol.handler = { request in
+            seenTokens.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            return (
+                Data(#"{"user":"u1","name":"Test"}"#.utf8),
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+
+        let user = try await client.me()
+
+        #expect(user.user == "u1")
+        #expect(seenTokens == ["Bearer at_replacement"])
+    }
+
+    @Test func postMigrateServerInfoAndStatsUseReplacementAccessToken() async throws {
+        let client = makeClient(token: "")
+        defer { MockURLProtocol.handler = nil }
+        let session = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: InMemoryP256DeviceKey(),
+            accessToken: "at_replacement",
+            expiresAt: Date().addingTimeInterval(600),
+            transport: RecordingDeviceAuthTransport(nextToken: "at_fresh")
+        )
+        client.attachAuthSession(session)
+
+        var seen: [(path: String, auth: String)] = []
+        MockURLProtocol.handler = { request in
+            seen.append((
+                path: request.url?.path ?? "",
+                auth: request.value(forHTTPHeaderField: "Authorization") ?? ""
+            ))
+            let path = request.url?.path ?? ""
+            if path == "/server/info" {
+                return (
+                    Data(#"{"name":"Test","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"22","piVersion":"1","configVersion":1,"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}"#.utf8),
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                )
+            }
+            return (
+                Data(#"{"memory":{"heapUsed":1,"heapTotal":2,"rss":3,"external":0},"activeSessions":[],"daily":[],"modelBreakdown":[],"workspaceBreakdown":[],"totals":{"sessions":0,"cost":0,"tokens":0}}"#.utf8),
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+
+        let info = try await client.serverInfo()
+        let stats = try await client.fetchStats(range: 7)
+
+        #expect(info.name == "Test")
+        #expect(stats.totals.sessions == 0)
+        #expect(seen.map(\.path) == ["/server/info", "/server/stats"])
+        #expect(seen.allSatisfy { $0.auth == "Bearer at_replacement" })
     }
 }
 
@@ -425,5 +859,7 @@ struct DeviceCredentialCodableTests {
 
         #expect(decoded.deviceCredential?.deviceId == "dev_1")
         #expect(decoded.deviceCredential?.accessToken == "at_1")
+        #expect(decoded.token.isEmpty)
+        #expect(decoded.credentials.effectiveAccessToken == "at_1")
     }
 }

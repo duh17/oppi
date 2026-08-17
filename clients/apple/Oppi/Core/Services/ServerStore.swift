@@ -21,9 +21,15 @@ final class ServerStore {
     /// (re-pair). Non-throwing UI convenience: a Keychain write failure is
     /// logged. Use `persistServer(_:)` when the caller must fail safely on a
     /// persistence failure (device-key migration).
-    func addOrUpdate(_ server: PairedServer) {
+    func addOrUpdate(
+        _ server: PairedServer,
+        replacingStoredDeviceCredential: Bool = false
+    ) {
         do {
-            try persistServer(server)
+            try persistServer(
+                server,
+                replacingStoredDeviceCredential: replacingStoredDeviceCredential
+            )
         } catch {
             logger.error("Failed to save server \(server.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
@@ -34,11 +40,17 @@ final class ServerStore {
     /// The record is written through BEFORE the in-memory list is mutated, so a
     /// caller that catches the error observes the previous durable state (no
     /// half-applied in-memory credential).
-    func persistServer(_ server: PairedServer) throws {
+    func persistServer(
+        _ server: PairedServer,
+        replacingStoredDeviceCredential: Bool = false
+    ) throws {
         let toSave: PairedServer
         if let idx = servers.firstIndex(where: { $0.id == server.id }) {
             var existing = servers[idx]
-            existing.updateCredentials(from: server.credentials)
+            existing.updateCredentials(
+                from: server.credentials,
+                replacingStoredDeviceCredential: replacingStoredDeviceCredential
+            )
             toSave = existing
         } else {
             var newServer = server
@@ -46,12 +58,17 @@ final class ServerStore {
             toSave = newServer
         }
 
-        try save(toSave)
+        try save(toSave, replacingStoredDeviceCredential: replacingStoredDeviceCredential)
+        // Keychain may keep a replacement at_ when the incoming writer still
+        // carries leftover dt_. Adopt that merged record so live memory cannot
+        // restore a revoked token after migrate. A user-initiated pair skips
+        // that merge so a fresh dt_ is not pinned to a stored at_.
+        let persisted = KeychainService.loadServer(id: toSave.id) ?? toSave
 
-        if let idx = servers.firstIndex(where: { $0.id == toSave.id }) {
-            servers[idx] = toSave
+        if let idx = servers.firstIndex(where: { $0.id == persisted.id }) {
+            servers[idx] = persisted
         } else {
-            servers.append(toSave)
+            servers.append(persisted)
         }
         saveIndex()
     }
@@ -129,8 +146,14 @@ final class ServerStore {
         servers.sort { $0.sortOrder < $1.sortOrder }
     }
 
-    private func save(_ server: PairedServer) throws {
-        try KeychainService.saveServer(server)
+    private func save(
+        _ server: PairedServer,
+        replacingStoredDeviceCredential: Bool = false
+    ) throws {
+        try KeychainService.saveServer(
+            server,
+            replacingStoredDeviceCredential: replacingStoredDeviceCredential
+        )
     }
 
     /// Persist the ordered list of server IDs to both shared and standard UserDefaults.

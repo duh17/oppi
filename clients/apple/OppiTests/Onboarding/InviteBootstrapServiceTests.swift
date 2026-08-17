@@ -61,6 +61,7 @@ struct InviteBootstrapServiceTests {
         #expect(factoryTokens == ["", "dt_old_server"])
         #expect(result.effectiveCredentials.token == "dt_old_server")
         #expect(result.effectiveCredentials.deviceCredential == nil)
+        #expect(result.effectiveCredentials.pairingToken == nil)
     }
 
     @Test func cancelledTrustDoesNotProbeOrExchangePairingToken() async throws {

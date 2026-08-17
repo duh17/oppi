@@ -752,7 +752,7 @@ final class ServerConnection {
     ) -> OppiClientEnvironment {
         OppiClientEnvironment(
             baseURL: selection.baseURL,
-            bearerToken: credentials.token,
+            bearerToken: credentials.effectiveAccessToken,
             pinnedCertificateFingerprint: tlsCertFingerprint ?? credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
             processOwnership: .clientOnly

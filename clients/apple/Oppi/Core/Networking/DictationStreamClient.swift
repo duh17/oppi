@@ -110,31 +110,61 @@ final class DictationStreamClient: DictationTransport {
         return AsyncStream { [weak self] continuation in
             guard let self else { return }
             self.continuation = continuation
-            if let currentTokenProvider = self.currentTokenProvider {
-                Task { [weak self] in
-                    do {
-                        let current = try await currentTokenProvider()
-                        guard let self,
-                              self.status != .disconnected,
-                              self.continuation != nil,
-                              !current.isEmpty else {
-                            self?.disconnect()
-                            return
-                        }
-                        self.token = current
-                        self.openSocket()
-                    } catch {
-                        dictationStreamLogger.error("Initial device token resolution failed: \(String(describing: error), privacy: .public)")
-                        self?.disconnect()
-                    }
-                }
-            } else {
-                self.openSocket()
-            }
+            self.startConnection(currentTokenProvider: self.currentTokenProvider)
             continuation.onTermination = { [weak self] _ in
                 Task { @MainActor in
                     self?.disconnect()
                 }
+            }
+        }
+    }
+
+    private func startConnection(
+        currentTokenProvider: (@Sendable () async throws -> String)?
+    ) {
+        // A leftover dt_ or just-migrated at_ snapshot is already on `token`.
+        // Open with that immediately so dictation_start is not lost while the
+        // session is still resolving. Wait only when there is no snapshot.
+        if !token.isEmpty {
+            openSocket()
+        }
+        guard let currentTokenProvider else {
+            if token.isEmpty { disconnect() }
+            return
+        }
+        Task { [weak self] in
+            await self?.applyResolvedToken(currentTokenProvider)
+        }
+    }
+
+    private func applyResolvedToken(
+        _ currentTokenProvider: @Sendable () async throws -> String
+    ) async {
+        do {
+            let current = try await currentTokenProvider()
+            guard status != .disconnected, continuation != nil else { return }
+            let resolved = ServerAuthorization.resolvedToken(current, fallback: token)
+            if resolved.isEmpty {
+                disconnect()
+                return
+            }
+            if task == nil {
+                token = resolved
+                openSocket()
+                return
+            }
+            guard resolved != token else { return }
+            token = resolved
+            if status == .connecting {
+                task?.cancel(.goingAway, nil)
+                openSocket()
+            }
+        } catch {
+            dictationStreamLogger.error("Initial device token resolution failed: \(String(describing: error), privacy: .public)")
+            // Keep a leftover/static snapshot open so dictation_start is not
+            // lost while the device-key session cannot produce a replacement.
+            if token.isEmpty {
+                disconnect()
             }
         }
     }
@@ -247,7 +277,9 @@ final class DictationStreamClient: DictationTransport {
         }
         // Terminal: this socket's loop owns the disconnect. On the success path
         // above we `return` before reaching here, leaving the replacement socket
-        // and its continuation intact.
+        // and its continuation intact. A superseded loop must not tear down the
+        // socket that replaced it.
+        guard self.task?.identity == task.identity else { return }
         status = .disconnected
         continuation?.finish()
     }

@@ -121,6 +121,259 @@ struct ConnectionCoordinatorTests {
         #expect(connection.transportPath == .paired)
     }
 
+    @Test func existingLiveConnectionStillRunsLeftoverDeviceMigrate() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let server = try leftoverDtServer()
+        store.addOrUpdate(server)
+
+        let client = CountingCoordinatorMigrationClient(error: .refreshRejected(code: "revoked"))
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in client },
+            persist: { _ in }
+        )
+        coordinator._migrateDeviceIfNeededForTesting = { incoming, force in
+            await service.migrateIfNeeded(incoming, force: force)
+        }
+
+        let first = await coordinator.ensureConnectionReady(for: server)
+        #expect(first.apiClient != nil)
+        #expect(client.calls == 1)
+
+        let second = await coordinator.ensureConnectionReady(for: server)
+        #expect(second === first)
+        #expect(client.calls == 1)
+    }
+
+    @Test func migrateReplacementRebindsExistingLiveConnection() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let leftover = try leftoverDtServer()
+        store.addOrUpdate(leftover)
+
+        let replacementGate = CoordinatorReplacementGate()
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        coordinator._migrateDeviceIfNeededForTesting = { incoming, _ in
+            guard replacementGate.shouldReplace else { return incoming }
+            var migrated = incoming
+            migrated.deviceCredential = replacement
+            migrated.token = ""
+            return migrated
+        }
+
+        let first = await coordinator.ensureConnectionReady(for: leftover)
+        #expect(first.credentials?.token == "dt_legacy")
+        #expect(first.credentials?.deviceCredential == nil)
+
+        replacementGate.shouldReplace = true
+
+        let rebound = await coordinator.ensureConnectionReady(for: leftover)
+        #expect(rebound === first)
+        #expect(rebound.credentials?.token.isEmpty == true)
+        #expect(rebound.credentials?.deviceCredential?.accessToken == "at_replacement")
+        #expect(rebound.credentials?.effectiveAccessToken == "at_replacement")
+    }
+
+    @Test func inFlightPreparationStillMigratesLeftoverAfterReplacement() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let leftover = try leftoverDtServer()
+        store.addOrUpdate(leftover)
+
+        let migrateGate = CoordinatorPreparationGate()
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        var migrateCalls = 0
+        coordinator._migrateDeviceIfNeededForTesting = { incoming, _ in
+            migrateCalls += 1
+            if migrateCalls == 1 {
+                await migrateGate.suspendPreparation()
+                return incoming
+            }
+            var migrated = incoming
+            migrated.deviceCredential = replacement
+            migrated.token = ""
+            return migrated
+        }
+
+        let firstTask = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: leftover)
+        }
+        await migrateGate.waitUntilStarted()
+
+        let secondTask = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: leftover)
+        }
+        await migrateGate.release()
+
+        let first = await firstTask.value
+        let second = await secondTask.value
+
+        #expect(migrateCalls >= 2)
+        #expect(second.credentials?.deviceCredential?.accessToken == "at_replacement")
+        #expect(second.credentials?.effectiveAccessToken == "at_replacement")
+        #expect(first.credentials?.effectiveAccessToken == "at_replacement" || first.credentials?.token == "dt_legacy")
+    }
+
+    @Test func leftoverMigrateFailureDoesNotRecurseForever() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let leftover = try leftoverDtServer()
+        store.addOrUpdate(leftover)
+
+        let migrateGate = CoordinatorPreparationGate()
+        var migrateCalls = 0
+        coordinator._migrateDeviceIfNeededForTesting = { incoming, _ in
+            migrateCalls += 1
+            if migrateCalls == 1 {
+                await migrateGate.suspendPreparation()
+            }
+            return incoming
+        }
+
+        let firstTask = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: leftover)
+        }
+        await migrateGate.waitUntilStarted()
+        let secondTask = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: leftover)
+        }
+        await migrateGate.release()
+
+        let first = await firstTask.value
+        let second = await secondTask.value
+
+        #expect(migrateCalls == 2)
+        #expect(first.credentials?.token == "dt_legacy")
+        #expect(second.credentials?.token == "dt_legacy")
+        #expect(second.apiClient != nil)
+    }
+
+    @Test func leftoverMigrateFailureDoesNotPostAgainForInFlightWaiter() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let leftover = try leftoverDtServer()
+        store.addOrUpdate(leftover)
+
+        let migrateGate = CoordinatorPreparationGate()
+        let client = CountingCoordinatorMigrationClient(error: .refreshRejected(code: "revoked"))
+        let service = DeviceAuthMigrationService(
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            clientFactory: { _ in client },
+            persist: { _ in }
+        )
+        coordinator._migrateDeviceIfNeededForTesting = { incoming, force in
+            if client.calls == 0 {
+                await migrateGate.suspendPreparation()
+            }
+            return await service.migrateIfNeeded(incoming, force: force)
+        }
+
+        let firstTask = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: leftover)
+        }
+        await migrateGate.waitUntilStarted()
+        let secondTask = Task { @MainActor in
+            await coordinator.ensureConnectionReady(for: leftover)
+        }
+        await migrateGate.release()
+
+        let first = await firstTask.value
+        let second = await secondTask.value
+
+        #expect(client.calls == 1)
+        #expect(first.credentials?.token == "dt_legacy")
+        #expect(second.credentials?.token == "dt_legacy")
+        #expect(second.apiClient != nil)
+    }
+
+    @Test func addServerReadyReplacesStoredAccessTokenOnUserInitiatedPair() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let leftover = try leftoverDtServer()
+        store.addOrUpdate(leftover)
+
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        var migrated = leftover
+        migrated.deviceCredential = replacement
+        migrated.token = ""
+        try store.persistServer(migrated)
+
+        let freshPair = try #require(PairedServer(from: leftover.credentials.withAuthToken("dt_fresh_pair")))
+        let added = await coordinator.addServerReady(freshPair, switchTo: false)
+
+        #expect(added)
+        let current = try #require(store.server(for: leftover.id))
+        #expect(current.deviceCredential == nil)
+        #expect(current.token == "dt_fresh_pair")
+        #expect(current.credentials.effectiveAccessToken == "dt_fresh_pair")
+    }
+
+    @Test func addServerReadyKeepsReplacementWhenLeftoverWriterHasNoToken() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let leftover = try leftoverDtServer()
+        store.addOrUpdate(leftover)
+
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        var migrated = leftover
+        migrated.deviceCredential = replacement
+        migrated.token = ""
+        try store.persistServer(migrated)
+
+        var emptyWriter = leftover
+        emptyWriter.token = ""
+        emptyWriter.deviceCredential = nil
+        let added = await coordinator.addServerReady(emptyWriter, switchTo: false)
+
+        #expect(added)
+        let current = try #require(store.server(for: leftover.id))
+        #expect(current.deviceCredential?.accessToken == "at_replacement")
+        #expect(current.token.isEmpty)
+    }
+
+    @Test func addServerReadyFailedRepairRestoresPriorAccessToken() async throws {
+        let (coordinator, store) = makeCoordinator()
+        coordinator._serverInfoBootstrapForTesting = { _, _ in
+            throw APIError.server(status: 401, message: "Unauthorized")
+        }
+        let leftover = try leftoverDtServer()
+        store.addOrUpdate(leftover)
+
+        let replacement = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_replacement",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        var migrated = leftover
+        migrated.deviceCredential = replacement
+        migrated.token = ""
+        try store.persistServer(migrated)
+
+        let freshPair = try #require(PairedServer(from: leftover.credentials.withAuthToken("dt_fresh_pair")))
+        let added = await coordinator.addServerReady(freshPair, switchTo: false)
+
+        #expect(!added)
+        let current = try #require(store.server(for: leftover.id))
+        #expect(current.deviceCredential?.accessToken == "at_replacement")
+        #expect(current.token.isEmpty)
+        #expect(current.credentials.effectiveAccessToken == "at_replacement")
+    }
+
     @Test func coordinatorRejectsPlaintextEndpointInHTTPSOnlyMode() async throws {
         let (coordinator, _) = makeCoordinator()
         var server = makeServer(
@@ -819,6 +1072,18 @@ struct ConnectionCoordinatorTests {
         )
     }
 
+    private func leftoverDtServer() throws -> PairedServer {
+        let credentials = ServerCredentials(
+            host: "pairing.example.test",
+            port: 7749,
+            token: "dt_legacy",
+            name: "Legacy",
+            scheme: .https,
+            serverFingerprint: "sha256:leftover-dt"
+        )
+        return try #require(PairedServer(from: credentials))
+    }
+
     private func makeServer(
         id: String,
         name: String,
@@ -843,6 +1108,29 @@ struct ConnectionCoordinatorTests {
         return server
     }
 
+}
+
+@MainActor
+private final class CoordinatorReplacementGate {
+    var shouldReplace = false
+}
+
+@MainActor
+private final class CountingCoordinatorMigrationClient: DeviceAuthMigrationTransport {
+    var calls = 0
+    let error: DeviceAuthError
+
+    init(error: DeviceAuthError) {
+        self.error = error
+    }
+
+    func migrateDevice(
+        deviceName: String?,
+        devicePublicKey: DevicePublicKey
+    ) async throws -> PairDeviceResponse {
+        calls += 1
+        throw error
+    }
 }
 
 private final class CoordinatorRequestLog: @unchecked Sendable {

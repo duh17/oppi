@@ -2120,20 +2120,38 @@ actor APIClient: ClientLogUploading {
     // MARK: - Authorization
 
     /// Resolve the bearer token, refreshing a device-key access token when it is
-    /// near expiry. Falls back to the static token for legacy/static credentials.
+    /// near expiry. Falls back to the leftover/static token when the session has
+    /// not produced a usable replacement. Refresh rejection (revoked/unknown
+    /// device) fails closed instead of sending a possibly-expired snapshot.
     private func authorizedToken(forceRefresh: Bool = false) async throws -> String {
         guard let authSession = authSessionBox.get() else { return token }
         if forceRefresh {
             return try await authSession.refreshAccessToken()
         }
-        return try await authSession.currentAccessToken()
+        let cached = await authSession.accessToken
+        if cached.isEmpty, !token.isEmpty {
+            return token
+        }
+        do {
+            return ServerAuthorization.resolvedToken(
+                try await authSession.currentAccessToken(),
+                fallback: token
+            )
+        } catch {
+            if case DeviceAuthError.refreshRejected = error {
+                throw error
+            }
+            if !token.isEmpty { return token }
+            throw error
+        }
     }
 
     /// A per-request bearer resolver for AVFoundation media loading. It refreshes
     /// (single-flight) when the access token is near expiry instead of returning a
-    /// 10-minute snapshot, so long playback outlives the token. Fails closed when
-    /// no non-empty bearer can be resolved (revoked/unknown device or an
-    /// unavailable device key) instead of issuing an unauthenticated request.
+    /// 10-minute snapshot, so long playback outlives the token. Refresh rejection
+    /// (revoked/unknown device) fails closed. An unavailable device key falls back
+    /// to a leftover/static token when one exists, then fails closed if that
+    /// leftover is also empty instead of issuing an unauthenticated request.
     private func mediaAuthorizationProvider() -> @Sendable () async throws -> String {
         let staticToken = token
         return { [weak self] in
