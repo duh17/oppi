@@ -1,5 +1,42 @@
 import SwiftUI
 
+/// Builds the same full-screen file viewer used by session-touched file preview.
+enum SessionFileFullScreenContentBuilder {
+    static func content(
+        text: String,
+        filePath: String,
+        workspaceID: String?,
+        serverBaseURL: URL?,
+        workspaceHostMount: String?,
+        fetchSessionFileData: ((String) async throws -> Data)?,
+        sessionID: String
+    ) -> FullScreenCodeContent {
+        let displayPath = MarkdownWikiLinkRewriter.resolvedHostPath(filePath) != nil
+            ? filePath
+            : (filePath.workspaceRelativePath(hostMount: workspaceHostMount) ?? filePath)
+
+        guard let workspaceID,
+              let serverBaseURL,
+              let fetchSessionFileData else {
+            return .fromText(text, filePath: filePath)
+        }
+
+        return .fromText(
+            text,
+            filePath: displayPath,
+            workspaceContext: .init(
+                workspaceID: workspaceID,
+                serverBaseURL: serverBaseURL,
+                fetchWorkspaceFile: { _, path in
+                    try await fetchSessionFileData(path)
+                },
+                sessionID: sessionID,
+                fetchSessionFile: nil
+            )
+        )
+    }
+}
+
 /// Displays content of a file reported by the session.
 ///
 /// Loads workspace files and reported external paths via the session raw API, then renders using

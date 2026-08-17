@@ -1662,20 +1662,6 @@ actor APIClient: ClientLogUploading {
         return data
     }
 
-    /// Fetch a workspace file or an external path reported by the session.
-    ///
-    /// Returns the raw file content as a string. Used when the user taps a file path
-    /// in a tool call row to view the current file on disk.
-    // periphery:ignore - used by APIClientTests + RemoteFileView (transitively unused)
-    func getSessionFile(workspaceId: String, sessionId: String, path: String) async throws -> String {
-        let data = try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))
-        // File content is returned as raw bytes — decode as UTF-8 text
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw APIError.server(status: 422, message: "File is not text (binary content)")
-        }
-        return text
-    }
-
     /// Fetch raw data for a workspace file or an external path reported by the session.
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
         return try await get(url: makeSessionRawURL(workspaceId: workspaceId, sessionId: sessionId, path: path))

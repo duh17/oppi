@@ -1242,33 +1242,6 @@ struct APIClientTests {
         #expect(content == "ok")
     }
 
-    @Test func getSessionFileUsesWorkspaceRelativeSessionRawRoute() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        MockURLProtocol.handler = { request in
-            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
-
-            #expect(
-                components?.percentEncodedPath ==
-                    "/workspaces/w1/sessions/s1/raw/Sources%2Fmain.swift"
-            )
-            #expect(components?.percentEncodedQuery == nil)
-
-            let body = "print(\"hello\")".data(using: .utf8)!
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: ["Content-Type": "text/plain"]
-            )!
-            return (body, response)
-        }
-
-        let content = try await client.getSessionFile(workspaceId: "w1", sessionId: "s1", path: "Sources/main.swift")
-        #expect(content == "print(\"hello\")")
-    }
-
     @Test func sessionRawFileSendsAbsoluteReportedPath() async throws {
         let client = makeClient()
         defer { cleanup() }
