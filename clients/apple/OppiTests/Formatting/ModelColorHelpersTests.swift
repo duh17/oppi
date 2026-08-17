@@ -64,6 +64,38 @@ struct ModelColorHelpersTests {
         #expect(providerDisplayLabel("qwen-token-plan-cn") == "Qwen Token Plan CN")
     }
 
+    @Test func providerLogoAssetNamesIncludeCursorAndOpenCode() {
+        #expect(providerLogoAssetName("cursor") == "provider-cursor")
+        #expect(ProviderIcon.logoAssetName(for: "cursor") == "provider-cursor")
+        #expect(providerDisplayLabel("cursor") == "Cursor")
+
+        #expect(providerLogoAssetName("opencode") == "provider-opencode")
+        #expect(providerLogoAssetName("opencode-go") == "provider-opencode")
+        #expect(ProviderIcon.logoAssetName(for: "opencode-go") == "provider-opencode")
+        #expect(providerDisplayLabel("opencode") == "OpenCode")
+        #expect(providerDisplayLabel("opencode-go") == "OpenCode Go")
+    }
+
+    /// Template rendering keeps only alpha, so an asset that converted to an
+    /// opaque rectangle would show as a filled block instead of a mark.
+    @Test(arguments: ["provider-cursor", "provider-opencode"])
+    func newProviderTemplateAssetsCarryTransparency(assetName: String) throws {
+        let image = try #require(UIImage(named: assetName))
+        let raster = try #require(rasterize(image))
+
+        #expect(raster.opaqueFraction > 0.1)
+        #expect(raster.opaqueFraction < 0.9)
+    }
+
+    /// OpenCode's mark is a frame; the vendor file fills that opening with an
+    /// opaque backdrop that has to be dropped during asset generation.
+    @Test func openCodeTemplateAssetKeepsFrameOpening() throws {
+        let image = try #require(UIImage(named: "provider-opencode"))
+        let raster = try #require(rasterize(image))
+
+        #expect(raster.alpha(normalizedX: 0.5, normalizedY: 0.5) == 0)
+    }
+
     @Test func qwenTemplateAssetPreservesNegativeSpace() throws {
         let image = try #require(UIImage(named: "provider-qwen"))
         let raster = try #require(rasterize(image))
@@ -94,6 +126,16 @@ struct ModelColorHelpersTests {
             let x = min(width - 1, max(0, Int(CGFloat(width) * normalizedX)))
             let y = min(height - 1, max(0, Int(CGFloat(height) * normalizedY)))
             return pixels[((y * width) + x) * 4 + 3]
+        }
+
+        var opaqueFraction: Double {
+            let total = width * height
+            guard total > 0 else { return 0 }
+            var opaque = 0
+            for index in stride(from: 3, to: pixels.count, by: 4) where pixels[index] > 127 {
+                opaque += 1
+            }
+            return Double(opaque) / Double(total)
         }
     }
 

@@ -35,6 +35,19 @@ struct ProviderColorTests {
         #expect(ProviderIcon.logoAssetName(for: "ds4") == "provider-ds4")
     }
 
+    @Test func resolvesCursorProviderDisplayMetadata() {
+        expectColor("cursor/composer-2.5", equals: palette.fg)
+        #expect(ProviderIcon.displayName(for: "cursor") == "Cursor")
+        #expect(ProviderIcon.logoAssetName(for: "cursor") == "provider-cursor")
+    }
+
+    @Test func resolvesOpenCodeProviderDisplayMetadata() {
+        expectColor("opencode/kimi-k3", equals: palette.cyan)
+        expectColor("opencode-go/glm-5.3", equals: palette.cyan)
+        #expect(ProviderIcon.displayName(for: "opencode-go") == "OpenCode Go")
+        #expect(ProviderIcon.logoAssetName(for: "opencode-go") == "provider-opencode")
+    }
+
     @Test func fallsBackToPurpleForMissingMalformedOrUnknownModel() {
         expectColor(nil, equals: palette.purple)
         expectColor("", equals: palette.purple)

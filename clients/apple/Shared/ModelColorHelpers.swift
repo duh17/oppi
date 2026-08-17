@@ -1023,6 +1023,7 @@ private let providerAliases: [String: String] = [
 private let providersWithLogoAsset: Set<String> = [
     "anthropic",
     "cerebras",
+    "cursor",
     "deepseek",
     "ds4",
     "fireworks",
@@ -1033,6 +1034,7 @@ private let providersWithLogoAsset: Set<String> = [
     "mistral",
     "omlx",
     "openai",
+    "opencode",
     "openrouter",
     "qwen",
     "vercel-ai-gateway",
@@ -1045,6 +1047,7 @@ private let knownProviderDisplayNames: [String: String] = [
     "anthropic": "Anthropic",
     "azure-openai-responses": "Azure OpenAI",
     "cerebras": "Cerebras",
+    "cursor": "Cursor",
     "deepseek": "DeepSeek",
     "ds4": "DS4 Dwarf Star",
     "github-copilot": "GitHub Copilot",

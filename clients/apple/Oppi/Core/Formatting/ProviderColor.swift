@@ -33,6 +33,9 @@ enum ProviderColor {
             return palette.red
         case "qwen":
             return palette.purple
+        case "cursor":
+            // Cursor's mark is monochrome, and purple is already Qwen's.
+            return palette.fg
         default:
             return palette.purple
         }
