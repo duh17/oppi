@@ -267,22 +267,6 @@ final class SessionStore {
         lastSyncFailed = true
     }
 
-    // periphery:ignore - store freshness API surface; not yet consumed by UI
-    func freshnessState(now: Date = Date(), staleAfter: TimeInterval = 300) -> FreshnessState {
-        FreshnessState.derive(
-            lastSuccessfulSyncAt: lastSuccessfulSyncAt,
-            isSyncing: isSyncing,
-            lastSyncFailed: lastSyncFailed,
-            staleAfter: staleAfter,
-            now: now
-        )
-    }
-
-    // periphery:ignore - store freshness API surface; not yet consumed by UI
-    func freshnessLabel(now: Date = Date()) -> String {
-        FreshnessState.updatedLabel(lastSuccessfulSyncAt: lastSuccessfulSyncAt, now: now)
-    }
-
     // ── Mutations (operate on active server partition) ──
 
     /// Insert or update a session from server data.

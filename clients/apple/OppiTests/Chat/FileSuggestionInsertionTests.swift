@@ -105,62 +105,6 @@ struct FileSuggestionInsertionTests {
         #expect(s.id == "foo/bar.swift")
     }
 
-    // MARK: - FileSuggestionResult decoding
-
-    @Test func resultDecodesSuccessPayload() {
-        let data: JSONValue = .object([
-            "items": .array([
-                .object(["path": .string("src/main.ts"), "isDirectory": .bool(false)]),
-                .object(["path": .string("src/"), "isDirectory": .bool(true)]),
-            ]),
-            "truncated": .bool(true),
-        ])
-
-        let result = FileSuggestionResult.from(data)
-        #expect(result != nil)
-        #expect(result?.items.count == 2)
-        #expect(result?.items[0].path == "src/main.ts")
-        #expect(result?.items[0].isDirectory == false)
-        #expect(result?.items[1].path == "src/")
-        #expect(result?.items[1].isDirectory == true)
-        #expect(result?.truncated == true)
-    }
-
-    @Test func resultDecodesEmptyItems() {
-        let data: JSONValue = .object(["items": .array([]), "truncated": .bool(false)])
-        let result = FileSuggestionResult.from(data)
-        #expect(result?.items.isEmpty == true)
-        #expect(result?.truncated == false)
-    }
-
-    @Test func resultSkipsMalformedItems() {
-        let data: JSONValue = .object([
-            "items": .array([
-                .object(["path": .string("ok.swift"), "isDirectory": .bool(false)]),
-                .string("bad-entry"),
-                .object(["path": .string("missing-isDirectory-key")]),
-            ]),
-            "truncated": .bool(false),
-        ])
-
-        let result = FileSuggestionResult.from(data)
-        #expect(result?.items.count == 1)
-        #expect(result?.items[0].path == "ok.swift")
-    }
-
-    @Test func resultNilForNonObjectData() {
-        #expect(FileSuggestionResult.from(nil) == nil)
-        #expect(FileSuggestionResult.from(.string("oops")) == nil)
-        #expect(FileSuggestionResult.from(.bool(true)) == nil)
-    }
-
-    @Test func resultDefaultsTruncatedToFalse() {
-        // No "truncated" key — defaults to false.
-        let data: JSONValue = .object(["items": .array([])])
-        let result = FileSuggestionResult.from(data)
-        #expect(result?.truncated == false)
-    }
-
     // MARK: - ServerConnection state management
 
     @Test func clearFileSuggestionsEmptiesItems() {

@@ -21,30 +21,6 @@ extension VoiceInputManager {
         return .modernSpeech
     }
 
-    // periphery:ignore - API surface for voice availability checks
-    /// Whether either on-device engine supports a locale equivalent to `locale`.
-    static func isAvailable(for locale: Locale = .current) async -> Bool {
-        if await AppleOnDeviceVoiceProvider.isAvailable(for: .modernSpeech, locale: locale) {
-            return true
-        }
-        return await AppleOnDeviceVoiceProvider.isAvailable(for: .classicDictation, locale: locale)
-    }
-
-    // periphery:ignore - API surface for voice model availability checks
-    /// Whether the model selected by capability-aware on-device routing is installed.
-    static func isModelInstalled(for locale: Locale) async -> Bool {
-        if await AppleOnDeviceVoiceProvider.isAvailable(for: .modernSpeech, locale: locale) {
-            return await AppleOnDeviceVoiceProvider.isModelInstalled(
-                for: .modernSpeech,
-                locale: locale
-            )
-        }
-        return await AppleOnDeviceVoiceProvider.isModelInstalled(
-            for: .classicDictation,
-            locale: locale
-        )
-    }
-
     /// Compact language label for display in the mic button.
     /// CJK languages get their native script character, others get 2-letter code.
     static func languageLabel(for locale: Locale) -> String {

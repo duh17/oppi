@@ -1,4 +1,4 @@
-import SwiftUI
+import CoreGraphics
 
 enum FileContentPresentation {
     /// Compact card-style rendering used inside timeline/list rows.
@@ -16,22 +16,5 @@ enum FileContentPresentation {
 
     var allowsExpansionAffordance: Bool {
         usesInlineChrome
-    }
-}
-
-enum ExpandableInlineTextSelectionPolicy {
-    static func allowsInlineSelection(hasFullScreenAffordance: Bool) -> Bool {
-        !hasFullScreenAffordance
-    }
-}
-
-extension View {
-    @ViewBuilder
-    func applyInlineTextSelectionPolicy(_ enabled: Bool) -> some View {
-        if enabled {
-            textSelection(.enabled)
-        } else {
-            textSelection(.disabled)
-        }
     }
 }

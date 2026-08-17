@@ -136,35 +136,3 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         scrollView.contentInset = UIEdgeInsets(top: scrollView.contentInset.top, left: offsetX, bottom: scrollView.contentInset.bottom, right: 0)
     }
 }
-
-// MARK: - SwiftUI Wrappers
-
-/// SwiftUI wrapper for the basic (non-zoomable) graphical view.
-struct GraphicalRendererSwiftUIView: UIViewRepresentable {
-    let size: CGSize
-    let drawBlock: (CGContext, CGPoint) -> Void
-
-    func makeUIView(context: Context) -> GraphicalRendererUIView {
-        let view = GraphicalRendererUIView()
-        view.configure(size: size, draw: drawBlock)
-        return view
-    }
-
-    func updateUIView(_ view: GraphicalRendererUIView, context: Context) {
-        view.configure(size: size, draw: drawBlock)
-    }
-}
-
-/// SwiftUI wrapper for zoomable graphical rendering (diagrams, math).
-struct ZoomableGraphicalSwiftUIView: UIViewRepresentable {
-    let size: CGSize
-    let drawBlock: (CGContext, CGPoint) -> Void
-
-    func makeUIView(context: Context) -> ZoomableGraphicalView {
-        ZoomableGraphicalView(size: size, draw: drawBlock)
-    }
-
-    func updateUIView(_ view: ZoomableGraphicalView, context: Context) {
-        view.update(size: size, draw: drawBlock)
-    }
-}

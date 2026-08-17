@@ -9,17 +9,7 @@ import SwiftUI
 /// in place and expanded content grows downward. The scroll offset correction
 /// is instant; the in-cell content reveal provides the subtle visual polish.
 enum ToolRowExpansionAnimation {
-    // periphery:ignore - reserved for future animated scroll correction
-    static let expandDuration: TimeInterval = 0.15
-    // periphery:ignore - reserved for future animated scroll correction
-    static let collapseDuration: TimeInterval = 0.10
-
     // In-cell reveal for command/output panels (no slide translation).
     static let contentRevealDuration: TimeInterval = 0.05
     static let contentRevealDelay: TimeInterval = 0.0
-
-    // periphery:ignore - SwiftUI animation values, not yet wired to expandable rows
-    static let swiftUIExpand: Animation = .easeInOut(duration: expandDuration)
-    // periphery:ignore - SwiftUI animation values, not yet wired to expandable rows
-    static let swiftUICollapse: Animation = .linear(duration: collapseDuration)
 }

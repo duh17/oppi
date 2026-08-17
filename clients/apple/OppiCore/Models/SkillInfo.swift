@@ -31,8 +31,4 @@ struct SkillInfo: Codable, Identifiable, Sendable, Equatable {
     }
 
     var id: String { name }
-
-    // periphery:ignore - API surface for future skill editing UI
-    /// Whether this skill can be edited from the iOS app.
-    var isEditable: Bool { !builtIn }
 }

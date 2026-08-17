@@ -511,17 +511,6 @@ final class ChatActionHandler {
         }
     }
 
-    // periphery:ignore - future UI wiring point for thinking level cycling
-    func cycleThinking(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
-        Task {
-            do {
-                try await connection.cycleThinkingLevel()
-            } catch {
-                reducer.process(.error(sessionId: sessionId, message: "Failed to cycle thinking: \(error.localizedDescription)"))
-            }
-        }
-    }
-
     func compact(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
         Task { @MainActor in
             // Show immediate "Compacting context..." indicator before the server responds.
@@ -551,18 +540,6 @@ final class ChatActionHandler {
                 connection.extensionToast = "Reloaded tools, extensions, skills, and prompts."
             } catch {
                 reducer.process(.error(sessionId: sessionId, message: "Reload failed: \(error.localizedDescription)"))
-            }
-        }
-    }
-
-    // periphery:ignore - future UI wiring point for new session creation
-    func newSession(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
-        Task { @MainActor in
-            do {
-                try await connection.newSession()
-                try? await connection.requestState()
-            } catch {
-                reducer.process(.error(sessionId: sessionId, message: "New session failed: \(error.localizedDescription)"))
             }
         }
     }

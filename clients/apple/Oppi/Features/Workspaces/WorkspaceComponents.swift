@@ -1,20 +1,6 @@
 import SwiftUI
 import UIKit
 
-typealias WorkspaceIconOption = IconSymbolOption
-
-enum WorkspaceIconCatalog {
-    static let options = IconSymbolCatalog.options
-
-    static func filtered(by query: String) -> [WorkspaceIconOption] {
-        IconSymbolCatalog.availableOptions(matching: query)
-    }
-
-    static func label(for symbolName: String) -> String? {
-        IconSymbolCatalog.label(for: symbolName)
-    }
-}
-
 // MARK: - WorkspaceIcon
 
 struct WorkspaceIcon: View {
@@ -355,62 +341,5 @@ struct WorkspaceServerStatusPresentation: Equatable, Sendable {
             label: health.freshnessLabel,
             isUnreachable: false
         )
-    }
-}
-
-// MARK: - RuntimeStatusBadge
-
-// periphery:ignore - future navigation bar badge; not yet integrated into ChatView
-/// Environment icon whose tint reflects session + sync state.
-struct RuntimeStatusBadge: View {
-    enum SyncState {
-        case live
-        case syncing
-        case offline
-        case stale
-
-        var accessibilityText: String {
-            switch self {
-            case .live: return "Live"
-            case .syncing: return "Syncing"
-            case .offline: return "Offline"
-            case .stale: return "Stale"
-            }
-        }
-    }
-
-    let statusColor: Color
-    var syncState: SyncState = .live
-    var icon: ServerBadgeIcon = .defaultValue
-
-    private var badgeTint: Color {
-        switch syncState {
-        case .live: return statusColor
-        case .syncing: return .themeBlue
-        case .offline: return .themeRed
-        case .stale: return .themeOrange
-        }
-    }
-
-    var body: some View {
-        RuntimeBadge(compact: true, icon: icon, tint: badgeTint)
-            .frame(width: 24, height: 24)
-            .accessibilityLabel("\(syncState.accessibilityText) session status")
-    }
-}
-
-// periphery:ignore - extension on RuntimeStatusBadge.SyncState; suppressed with parent type
-extension RuntimeStatusBadge.SyncState {
-    init(_ freshness: FreshnessState) {
-        switch freshness {
-        case .live:
-            self = .live
-        case .syncing:
-            self = .syncing
-        case .offline:
-            self = .offline
-        case .stale:
-            self = .stale
-        }
     }
 }

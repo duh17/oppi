@@ -217,21 +217,21 @@ struct WorkspacePiResourceScopePolicyTests {
 @Suite("Workspace icon picker catalog")
 struct WorkspaceIconPickerCatalogTests {
     @Test func emptySearchReturnsEveryCuratedSymbol() {
-        #expect(WorkspaceIconCatalog.filtered(by: "").count == WorkspaceIconCatalog.options.count)
+        #expect(IconSymbolCatalog.availableOptions(matching: "").count == IconSymbolCatalog.options.count)
     }
 
     @Test func searchMatchesLabelsAndSymbolNamesCaseInsensitively() {
-        #expect(WorkspaceIconCatalog.filtered(by: "CODE").contains { $0.symbolName == "chevron.left.forwardslash.chevron.right" })
-        #expect(WorkspaceIconCatalog.filtered(by: "branch").contains { $0.symbolName == "arrow.triangle.branch" })
+        #expect(IconSymbolCatalog.availableOptions(matching: "CODE").contains { $0.symbolName == "chevron.left.forwardslash.chevron.right" })
+        #expect(IconSymbolCatalog.availableOptions(matching: "branch").contains { $0.symbolName == "arrow.triangle.branch" })
     }
 
     @Test func unmatchedSearchReturnsNoSymbols() {
-        #expect(WorkspaceIconCatalog.filtered(by: "definitely-not-an-icon").isEmpty)
+        #expect(IconSymbolCatalog.availableOptions(matching: "definitely-not-an-icon").isEmpty)
     }
 
     @Test func curatedSymbolsResolveToHumanFacingLabels() {
-        #expect(WorkspaceIconCatalog.label(for: "chevron.left.forwardslash.chevron.right") == "Code")
-        #expect(WorkspaceIconCatalog.label(for: "🧠") == nil)
+        #expect(IconSymbolCatalog.label(for: "chevron.left.forwardslash.chevron.right") == "Code")
+        #expect(IconSymbolCatalog.label(for: "🧠") == nil)
     }
 }
 

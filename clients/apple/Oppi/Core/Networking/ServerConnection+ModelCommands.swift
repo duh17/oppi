@@ -63,11 +63,6 @@ extension ServerConnection {
         }
     }
 
-    // periphery:ignore - API surface for model cycling
-    func cycleModel() async throws {
-        try await send(.cycleModel())
-    }
-
     // ── Thinking ──
 
     func setThinkingLevel(_ level: ThinkingLevel) async throws {

@@ -26,37 +26,3 @@ struct FileSuggestion: Sendable, Equatable, Identifiable {
         return String(path.dropLast())
     }
 }
-
-// periphery:ignore
-struct FileSuggestionResult: Sendable, Equatable {
-    let items: [FileSuggestion]
-    let truncated: Bool
-
-    // periphery:ignore
-    static func from(_ data: JSONValue?) -> Self? {
-        guard case .object(let object) = data else {
-            return nil
-        }
-
-        let truncated = object["truncated"]?.boolValue ?? false
-
-        guard case .array(let rawItems) = object["items"] else {
-            return Self(items: [], truncated: truncated)
-        }
-
-        let items = rawItems.compactMap(FileSuggestion.from)
-        return Self(items: items, truncated: truncated)
-    }
-}
-
-private extension FileSuggestion {
-    static func from(_ value: JSONValue) -> Self? {
-        guard case .object(let object) = value,
-              case .string(let path) = object["path"],
-              case .bool(let isDirectory) = object["isDirectory"] else {
-            return nil
-        }
-
-        return Self(path: path, isDirectory: isDirectory)
-    }
-}

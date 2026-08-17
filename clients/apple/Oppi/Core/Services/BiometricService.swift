@@ -38,14 +38,6 @@ final class BiometricService {
 
     // MARK: - Capability Check
 
-    // periphery:ignore - API surface for biometric lock feature
-    /// Whether the device supports any form of biometric auth.
-    var isBiometricAvailable: Bool {
-        let context = LAContext()
-        var error: NSError?
-        return context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)
-    }
-
     /// Human-readable name for the biometric type (Face ID, Touch ID, Optic ID).
     /// Cached at init — Secure Enclave query runs once, not per-access.
     var biometricName: String { cachedBiometricName }

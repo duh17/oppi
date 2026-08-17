@@ -505,33 +505,3 @@ enum InviteBootstrapService {
         fingerprint.count > 24 ? String(fingerprint.prefix(24)) + "…" : fingerprint
     }
 }
-
-/// A pairing invite has no device token yet, so this deliberately sends no
-/// Authorization header. It is a bounded read-only route probe, never a retry
-/// of the one-time `POST /pair` mutation.
-private enum InvitePairingHTTPSProbe {
-    static func probe(
-        selection: EndpointSelection,
-        credentials: ServerCredentials
-    ) async throws {
-        let url = selection.baseURL.appendingPathComponent("health")
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 3
-
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 3
-        configuration.timeoutIntervalForResource = 3
-        configuration.waitsForConnectivity = false
-        let delegate = PinnedServerTrustDelegate(
-            pinnedLeafFingerprint: credentials.normalizedTLSCertFingerprint,
-            expectedServerName: selection.tlsServerName
-        )
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
-        let (_, response) = try await session.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw APIError.invalidResponse
-        }
-    }
-}

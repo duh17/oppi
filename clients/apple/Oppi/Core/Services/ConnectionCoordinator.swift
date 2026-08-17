@@ -573,11 +573,6 @@ final class ConnectionCoordinator {
         lanDiscovery.start()
     }
 
-    // periphery:ignore - intentional API surface; companion to startLANDiscovery()
-    func stopLANDiscovery() {
-        lanDiscovery.stop()
-    }
-
     private func applyLANDiscovery(_ endpoints: [LANDiscoveredEndpoint]) {
         for server in serverStore.servers {
             let endpoint = bestLANEndpoint(forServerId: server.id, candidates: endpoints)

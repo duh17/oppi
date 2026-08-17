@@ -120,11 +120,4 @@ final class PushRegistration {
             }
         }
     }
-
-    // periphery:ignore - API surface for push token re-registration after reconnect
-    /// Re-send the cached device token (e.g., after reconnect).
-    func resendTokenIfNeeded() async {
-        guard let token = deviceToken else { return }
-        await sendTokenToServer(token, tokenType: "apns")
-    }
 }
