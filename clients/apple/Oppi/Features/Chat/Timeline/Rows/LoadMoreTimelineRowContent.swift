@@ -16,6 +16,12 @@ struct LoadMoreTimelineRowConfiguration: UIContentConfiguration {
 }
 
 final class LoadMoreTimelineRowContentView: UIView, UIContentView {
+    /// The row self-sizes to its label, so the button can only be as tall as
+    /// the row itself — a hit area grown past the cell bounds is discarded by
+    /// the cell's own `point(inside:)`. Grow the row instead so the reveal
+    /// action gets the minimum comfortable touch target.
+    private static let minimumTapTargetHeight: CGFloat = 44
+
     private let button = UIButton(type: .system)
     private var currentConfiguration: LoadMoreTimelineRowConfiguration
 
@@ -55,6 +61,7 @@ final class LoadMoreTimelineRowContentView: UIView, UIContentView {
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumTapTargetHeight),
         ])
     }
 

@@ -506,6 +506,37 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func loadMoreRowSelfSizesToAComfortableTapTarget() throws {
+        let windowed = makeWindowedTimelineHarness(sessionId: "session-load-more-tap-target")
+        windowed.applyItems(
+            [.systemEvent(id: "system-1", message: "Context compacted")],
+            hiddenCount: 9,
+            renderWindowStep: 60,
+            isBusy: false
+        )
+
+        let cell = try configuredTimelineCell(in: windowed.collectionView, item: 0)
+        let row = try #require(timelineFirstView(ofType: LoadMoreTimelineRowContentView.self, in: cell.contentView))
+        let button = try #require(timelineFirstView(ofType: UIButton.self, in: row))
+
+        #expect(
+            cell.bounds.height >= 44,
+            "load-more row self-sized to \(cell.bounds.height)pt, below the 44pt minimum touch target"
+        )
+
+        // A real finger lands anywhere in the row, not just on the glyphs.
+        for relativeY in [0.15, 0.5, 0.85] {
+            let pointInCell = CGPoint(x: cell.bounds.midX, y: cell.bounds.height * relativeY)
+            let pointInCollectionView = windowed.collectionView.convert(pointInCell, from: cell)
+            let hit = windowed.collectionView.hitTest(pointInCollectionView, with: nil)
+            #expect(
+                hit === button || hit?.isDescendant(of: button) == true,
+                "tap at \(relativeY) of the row height hit \(String(describing: hit)) instead of the button"
+            )
+        }
+    }
+
+    @MainActor
     @Test func loadMoreRowSelectionIsNotASecondActionOwner() throws {
         var callbackCount = 0
         let harness = makeTimelineHarness(sessionId: "session-load-more-selection")
