@@ -2,7 +2,7 @@
 
 _Last updated: 2026-08-17_
 
-Oppi is a native Apple client for a Pi server that you run and pair yourself. There is no hosted Oppi account service. Contact support by email, or use GitHub Issues for public bug reports and feature requests.
+Oppi is a native Apple client for an Oppi server that you run and pair yourself. There is no hosted Oppi account service. Contact support by email, or use GitHub Issues for public bug reports and feature requests.
 
 ## Contact route
 

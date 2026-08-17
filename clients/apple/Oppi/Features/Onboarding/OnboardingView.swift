@@ -46,6 +46,15 @@ struct OnboardingView: View {
                     .font(.body)
                     .foregroundStyle(.themeComment)
                     .multilineTextAlignment(.center)
+
+                if mode == .initial {
+                    Text("Oppi pairs with an Oppi server you run yourself on a Mac or Linux machine. Install the server, then pair this phone.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 4)
+                        .accessibilityIdentifier("onboarding.prerequisite")
+                }
             }
 
             Spacer()
@@ -107,6 +116,17 @@ struct OnboardingView: View {
                     }
                 }
             }
+
+            Link(destination: AppSupportLinks.setupURL) {
+                Text("How to set up the server")
+            }
+            .environment(\.openURL, OpenURLAction { _ in
+                AppSupportLinks.open(AppSupportLinks.setupURL)
+                return .handled
+            })
+            .font(.footnote)
+            .accessibilityIdentifier("onboarding.setupHelp")
+            .accessibilityHint("Opens the public server setup and pairing guide")
 
             if mode == .initial, connection.credentials != nil {
                 Button("Back to current server") {

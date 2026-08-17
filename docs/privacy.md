@@ -2,7 +2,7 @@
 
 _Last updated: 2026-08-17_
 
-This policy describes the current Oppi Apple client and the Oppi server that you run yourself. Oppi is a native client for a paired, self-hosted Pi coding-agent server. Oppi does not provide a hosted Oppi account service, a central session store, or an Oppi-operated external analytics service. Pi may collect its own install or update telemetry outside this policy; see Pi's documentation for that behavior.
+This policy describes the current Oppi Apple client and the Oppi server that you run yourself. Oppi is a native client for a paired, self-hosted Oppi server. That server runs Pi through its SDK; Pi does not ship a server mode. Oppi does not provide a hosted Oppi account service, a central session store, or an Oppi-operated external analytics service. Pi may collect its own install or update telemetry outside this policy; see Pi's documentation for that behavior.
 
 You choose the server, workspace, model providers, speech-to-text service, and text-to-speech service. Those choices determine where your content goes and how long it remains there. Check the Pi version and configuration used by your server.
 
