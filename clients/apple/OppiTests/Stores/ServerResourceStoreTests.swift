@@ -1045,6 +1045,67 @@ struct ServerResourceStoreTests {
         #expect(relaunched.extensions(forServer: "server-a").first(where: \.isBuiltInOppi)?.state == .on)
     }
 
+    @Test func serverNormalizedOppiResponseSettlesWithoutRewritingTheSameSnapshot() async {
+        // A server that does not advertise the mobile output guide answers with
+        // a nil guide, so its response can never equal the requested snapshot.
+        let normalized = OppiExtensionConfiguration(
+            enabled: true,
+            approvalPolicy: .confirmDestructiveOnly,
+            revision: 2
+        )
+        let store = configuredOppiStore()
+        var writes = 0
+
+        await store.setOppiEnabled(
+            true,
+            serverId: "server-a",
+            request: { _, _, _, _ in
+                writes += 1
+                guard writes == 1 else {
+                    throw APIError.server(status: 500, message: "Rewrote an unchanged intent")
+                }
+                return normalized
+            },
+            fetchAuthoritative: { normalized }
+        )
+
+        #expect(writes == 1)
+        #expect(store.oppiConfiguration(forServer: "server-a") == normalized)
+        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
+        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
+        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a") == nil)
+        #expect(store.extensions(forServer: "server-a").first(where: \.isBuiltInOppi)?.state == .on)
+    }
+
+    @Test func oppiValueTheServerRefusesSettlesOnItsAnswerAndReportsTheOverride() async {
+        let refused = OppiExtensionConfiguration(
+            enabled: false,
+            approvalPolicy: .confirmDestructiveOnly,
+            mobileOutputGuideEnabled: false,
+            revision: 2
+        )
+        let store = configuredOppiStore()
+        var writes = 0
+
+        await store.setOppiMobileOutputGuide(
+            true,
+            serverId: "server-a",
+            request: { _, _, _, _ in
+                writes += 1
+                guard writes == 1 else {
+                    throw APIError.server(status: 500, message: "Rewrote an unchanged intent")
+                }
+                return refused
+            },
+            fetchAuthoritative: { refused }
+        )
+
+        #expect(writes == 1)
+        #expect(store.oppiConfiguration(forServer: "server-a") == refused)
+        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
+        #expect(store.mutationError(for: .oppiMobileOutputGuide, serverId: "server-a") != nil)
+    }
+
     @Test func failedOppiWriteRollsBackToLastAuthoritativeConfiguration() async {
         let store = configuredOppiStore()
 

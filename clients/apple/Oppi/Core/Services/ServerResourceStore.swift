@@ -884,13 +884,25 @@ final class ServerResourceStore {
                     partition.pendingMutations.remove(.oppiMobileOutputGuide)
                     partition.errors.removeValue(forKey: .oppiMobileOutputGuide)
                 }
-                if let desired = partition.desiredOppiConfiguration,
-                   Self.sameOppiValues(desired, response) {
+                // Only a setting changed while this write was in flight earns
+                // another round trip. A server that answers an unchanged intent
+                // with different values has normalized them, so rewriting the
+                // same snapshot could never converge.
+                if let currentDesired = partition.desiredOppiConfiguration,
+                   !Self.sameOppiValues(currentDesired, response),
+                   !Self.sameOppiValues(currentDesired, desired) {
+                    shouldContinue = true
+                } else {
+                    let oppiKeys: Set<ServerResourceMutationKey> = [
+                        .oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide,
+                    ]
                     partition.desiredOppiConfiguration = response
+                    for key in partition.pendingMutations.intersection(oppiKeys) {
+                        partition.errors[key] = "The server saved a different value for this setting."
+                    }
+                    partition.pendingMutations.subtract(oppiKeys)
                     partition.oppiWriteRequest = nil
                     partition.oppiFetchAuthoritative = nil
-                } else {
-                    shouldContinue = true
                 }
                 Self.applyOppiState(to: &partition)
             }
