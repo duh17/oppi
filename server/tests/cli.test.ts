@@ -20,11 +20,20 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { OPPI_CALLER_SESSION_ID_ENV } from "../src/session-caller-identity.js";
 import { Storage } from "../src/storage.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 
 const CLI = process.env.OPPI_TEST_CLI ?? resolve(__dirname, "../dist/src/cli.js");
 let dataDir: string;
+
+function cliProcessEnv(env?: Record<string, string>): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = { ...process.env, OPPI_DATA_DIR: dataDir, ...env };
+  if (env?.[OPPI_CALLER_SESSION_ID_ENV] === undefined) {
+    delete next[OPPI_CALLER_SESSION_ID_ENV];
+  }
+  return next;
+}
 
 let hasOpenSSL = true;
 try {
@@ -46,7 +55,7 @@ function run(
   try {
     const stdout = execFileSync("node", [CLI, ...args], {
       encoding: "utf-8",
-      env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
+      env: cliProcessEnv(env),
       timeout: timeoutMs,
     });
     return { stdout, stderr: "", exitCode: 0 };
@@ -68,7 +77,7 @@ function runBin(
   try {
     const stdout = execFileSync(CLI, args, {
       encoding: "utf-8",
-      env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
+      env: cliProcessEnv(env),
       timeout: timeoutMs,
     });
     return { stdout, exitCode: 0 };
@@ -139,7 +148,7 @@ async function runAsync(
       [CLI, ...args],
       {
         encoding: "utf-8",
-        env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
+        env: cliProcessEnv(env),
         timeout: timeoutMs,
         ...(cwd ? { cwd } : {}),
       },
@@ -160,7 +169,7 @@ async function runUntilOutput(
 ): Promise<string> {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn("node", [CLI, ...args], {
-      env: { ...process.env, OPPI_DATA_DIR: dataDir, ...env },
+      env: cliProcessEnv(env),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -314,6 +323,13 @@ describe("oppi help", () => {
     expect(text).toContain("Usage: oppi session create");
     expect(text).toContain("--workspace <workspace>");
     expect(text).toContain("--prompt <text>");
+    expect(text).toContain("--tools");
+    expect(text).toContain("--exclude-tools");
+    expect(text).toContain("--no-tools");
+    expect(text).toContain("--no-builtin-tools");
+    expect(text).toContain(":thinking");
+    expect(text).toContain("11111111-1111-4111-8111-111111111111");
+    expect(text).not.toContain("sess_123");
     expect(text).toContain("--allow-nested-delegation");
     expect(text).toContain("grant then propagates down the subtree");
     expect(text).toContain("--idempotency-key <key>");
@@ -630,6 +646,12 @@ describe("oppi help", () => {
           "--definition <file>",
           "--definition-json <json-object>",
           "--name <name>",
+          "--model",
+          "--thinking",
+          "--tools",
+          "--exclude-tools",
+          "--no-tools",
+          "--no-builtin-tools",
           "Allowed AgentDefinition keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints",
           "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images",
           "unavailable names are dropped with a session warning, not a launch failure",
@@ -641,6 +663,12 @@ describe("oppi help", () => {
           "Usage: oppi agent update <agent>",
           "--definition <file>",
           "--definition-json <json-object>",
+          "--model",
+          "--thinking",
+          "--tools",
+          "--exclude-tools",
+          "--no-tools",
+          "--no-builtin-tools",
           "Update is a PATCH: omitted fields keep their stored values",
           "JSON null clears a field or nested key",
           "Run 'oppi agent get <agent>' first, then patch only the changed fields",

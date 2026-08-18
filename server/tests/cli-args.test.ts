@@ -36,4 +36,53 @@ describe("parseCliArgs", () => {
 
     expect(isHelpFlag(parsed.flags)).toBe(true);
   });
+
+  it("maps the explicit Pi short-flag table and leaves other tokens positional", () => {
+    expect(
+      parseCliArgs([
+        "session",
+        "create",
+        "-n",
+        "Review",
+        "-t",
+        "read, grep",
+        "-xt",
+        "bash",
+        "-nt",
+        "--workspace",
+        "ws-1",
+      ]),
+    ).toEqual({
+      command: "session",
+      flags: {
+        name: "Review",
+        tools: "read, grep",
+        "exclude-tools": "bash",
+        "no-tools": "true",
+        workspace: "ws-1",
+      },
+      positional: ["create"],
+    });
+  });
+
+  it("does not consume the next argv after boolean shorts", () => {
+    expect(parseCliArgs(["agent", "create", "-nbt", "Reviewer", "-nt"])).toEqual({
+      command: "agent",
+      flags: {
+        "no-builtin-tools": "true",
+        "no-tools": "true",
+      },
+      positional: ["create", "Reviewer"],
+    });
+  });
+
+  it("rejects unknown short flags instead of treating them as positionals", () => {
+    expect(() => parseCliArgs(["session", "create", "-z", "oops"])).toThrow("Unknown flag: -z");
+  });
+
+  it("rejects a short flag that collides with its long form", () => {
+    expect(() => parseCliArgs(["session", "create", "-n", "A", "--name", "B"])).toThrow(
+      "Duplicate flag: --name",
+    );
+  });
 });

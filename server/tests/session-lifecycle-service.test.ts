@@ -280,6 +280,30 @@ describe("SessionLifecycleService", () => {
       expect(result.session.launch?.modelPolicy).toBeUndefined();
     });
 
+    it("applies inline sessionDefaults tool policy from workspace session create", async () => {
+      const createdSession = makeSession({ id: "created-1" });
+      const { service, saveSession } = makeService({
+        forkSession: createdSession,
+      });
+
+      await service.createWorkspaceSession({
+        workspace: makeWorkspace(),
+        tools: ["read", "grep"],
+        excludeTools: ["bash"],
+        noTools: "builtin",
+      });
+
+      expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+        launch: {
+          tools: {
+            allowed: ["read", "grep"],
+            excluded: ["bash"],
+            noTools: "builtin",
+          },
+        },
+      });
+    });
+
     it("persists caller lineage for managed CLI child sessions", async () => {
       const parent = makeSession({ id: "parent-1" });
       const createdSession = makeSession({ id: "created-1" });

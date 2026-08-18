@@ -217,6 +217,148 @@ describe("session command dispatch and output boundaries", () => {
     });
   });
 
+  it("posts workspace tool policy from Pi create flags", async () => {
+    request
+      .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
+      .mockResolvedValueOnce({ session: { id: "child-1", workspaceId: "ws-1" } });
+
+    await withCallerSessionEnv(undefined, async () => {
+      await captureCliOutput(() =>
+        cmdSession(storage, "create", [], {
+          workspace: "ws-1",
+          prompt: "Inspect the repo",
+          tools: "read, grep",
+          "exclude-tools": "bash",
+          "no-builtin-tools": "true",
+          json: "true",
+        }),
+      );
+    });
+
+    expect(request).toHaveBeenNthCalledWith(2, storage, "/workspaces/ws-1/sessions", {
+      method: "POST",
+      body: {
+        prompt: "Inspect the repo",
+        tools: ["read", "grep"],
+        excludeTools: ["bash"],
+        noTools: "builtin",
+      },
+    });
+  });
+
+  it("posts saved-Agent overrides for tools and thinking", async () => {
+    request
+      .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
+      .mockResolvedValueOnce({ session: { id: "child-1", workspaceId: "ws-1" } });
+
+    await withCallerSessionEnv(undefined, async () => {
+      await captureCliOutput(() =>
+        cmdSession(storage, "create", [], {
+          agent: "reviewer",
+          workspace: "ws-1",
+          prompt: "Review this",
+          tools: "read",
+          thinking: "high",
+          json: "true",
+        }),
+      );
+    });
+
+    expect(request).toHaveBeenNthCalledWith(2, storage, "/agents/reviewer/sessions", {
+      method: "POST",
+      body: {
+        prompt: { text: "Review this" },
+        target: { workspaceId: "ws-1" },
+        overrides: {
+          tools: ["read"],
+          thinkingLevel: "high",
+        },
+      },
+    });
+  });
+
+  it("applies --model :thinking and lets --thinking win", async () => {
+    request
+      .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
+      .mockResolvedValueOnce({
+        models: [
+          {
+            id: "openai/gpt-5.3-codex",
+            name: "GPT-5.3 Codex",
+            provider: "openai",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ session: { id: "suffix-1", workspaceId: "ws-1" } })
+      .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
+      .mockResolvedValueOnce({
+        models: [
+          {
+            id: "openai/gpt-5.3-codex",
+            name: "GPT-5.3 Codex",
+            provider: "openai",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ session: { id: "override-1", workspaceId: "ws-1" } });
+
+    await withCallerSessionEnv(undefined, async () => {
+      await captureCliOutput(() =>
+        cmdSession(storage, "create", [], {
+          workspace: "ws-1",
+          prompt: "suffix only",
+          model: "gpt-5.3-codex:high",
+          json: "true",
+        }),
+      );
+      await captureCliOutput(() =>
+        cmdSession(storage, "create", [], {
+          workspace: "ws-1",
+          prompt: "explicit thinking wins",
+          model: "gpt-5.3-codex:high",
+          thinking: "low",
+          json: "true",
+        }),
+      );
+    });
+
+    expect(request).toHaveBeenNthCalledWith(3, storage, "/workspaces/ws-1/sessions", {
+      method: "POST",
+      body: {
+        prompt: "suffix only",
+        model: "openai/gpt-5.3-codex",
+        thinking: "high",
+      },
+    });
+    expect(request).toHaveBeenNthCalledWith(6, storage, "/workspaces/ws-1/sessions", {
+      method: "POST",
+      body: {
+        prompt: "explicit thinking wins",
+        model: "openai/gpt-5.3-codex",
+        thinking: "low",
+      },
+    });
+  });
+
+  it("rejects combining --no-tools with --no-builtin-tools", async () => {
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSession(storage, "create", [], {
+        workspace: "ws-1",
+        prompt: "nope",
+        "no-tools": "true",
+        "no-builtin-tools": "true",
+        json: "true",
+      }),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: false,
+      error: { message: "--no-tools and --no-builtin-tools cannot be used together" },
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("uses the human output callback for an empty list", async () => {
     request.mockResolvedValue({ sessions: [] });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});

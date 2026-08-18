@@ -579,6 +579,49 @@ describe("CLI app-state API boundary", () => {
     );
   });
 
+  it("posts Pi tool-policy flags on workspace session create", async () => {
+    await withOrchApi(
+      (res, ctx) => {
+        if (ctx.path === "/workspaces/ws-1") {
+          sendJson(res, { workspace: { id: "ws-1", name: "Oppi" } });
+          return;
+        }
+        if (ctx.path === "/workspaces/ws-1/sessions") {
+          sendJson(res, { session: { id: "created-tools", workspaceId: "ws-1" } });
+          return;
+        }
+        sendJson(res, { error: "unexpected route" }, 404);
+      },
+      async ({ dataDir, requests }) => {
+        const { code } = await runCliResult(
+          [
+            "session",
+            "create",
+            "--workspace",
+            "ws-1",
+            "--prompt",
+            "review",
+            "--tools",
+            "read,grep",
+            "--exclude-tools",
+            "bash",
+            "--no-builtin-tools",
+            "--json",
+          ],
+          dataDir,
+        );
+        expect(code).toBe(0);
+        expect(
+          requests.find((request) => request.path === "/workspaces/ws-1/sessions")?.body,
+        ).toMatchObject({
+          tools: ["read", "grep"],
+          excludeTools: ["bash"],
+          noTools: "builtin",
+        });
+      },
+    );
+  });
+
   it("reads sent text from stdin when --text is @-", async () => {
     await withOrchApi(
       (res) => sendJson(res, { messages: [] }),

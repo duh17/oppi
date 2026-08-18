@@ -705,7 +705,9 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi wait session sess_123 --status stopped --json" }],
+    examples: [
+      { command: "oppi wait session 11111111-1111-4111-8111-111111111111 --status stopped --json" },
+    ],
   },
   {
     path: ["wait", "session"],
@@ -727,7 +729,12 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi wait session sess_123 --status stopped --timeout 10m --json" }],
+    examples: [
+      {
+        command:
+          "oppi wait session 11111111-1111-4111-8111-111111111111 --status stopped --timeout 10m --json",
+      },
+    ],
   },
   {
     path: ["schedule"],
@@ -987,9 +994,12 @@ const HELP_TOPICS: HelpTopic[] = [
       "Inspect history progressively: 'inspect <id> --view summary' for counts, '--view outline' to choose turns, then '--view messages' or '--view tools'.",
     ],
     examples: [
-      { command: "oppi session watch sess_123 --until idle" },
-      { command: 'oppi session send sess_123 --text "focus on the failing test"' },
-      { command: "oppi session inspect sess_123 --view outline" },
+      { command: "oppi session watch 11111111-1111-4111-8111-111111111111 --until idle" },
+      {
+        command:
+          'oppi session send 11111111-1111-4111-8111-111111111111 --text "focus on the failing test"',
+      },
+      { command: "oppi session inspect 11111111-1111-4111-8111-111111111111 --view outline" },
     ],
   },
   {
@@ -1022,7 +1032,7 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi session get <id> [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
-    examples: [{ command: "oppi session get sess_123 --json" }],
+    examples: [{ command: "oppi session get 11111111-1111-4111-8111-111111111111 --json" }],
   },
   {
     path: ["session", "send"],
@@ -1046,8 +1056,14 @@ const HELP_TOPICS: HelpTopic[] = [
       "Use --follow-up for work that should begin only after the agent finishes its current work.",
     ],
     examples: [
-      { command: 'oppi session send sess_123 --text "Focus on the failing test"' },
-      { command: 'oppi session send sess_123 --text "Afterward, summarize the fix" --follow-up' },
+      {
+        command:
+          'oppi session send 11111111-1111-4111-8111-111111111111 --text "Focus on the failing test"',
+      },
+      {
+        command:
+          'oppi session send 11111111-1111-4111-8111-111111111111 --text "Afterward, summarize the fix" --follow-up',
+      },
     ],
   },
   {
@@ -1058,7 +1074,7 @@ const HELP_TOPICS: HelpTopic[] = [
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: ["Aborts the in-flight turn only; use 'session stop' to end the session."],
-    examples: [{ command: "oppi session abort sess_123" }],
+    examples: [{ command: "oppi session abort 11111111-1111-4111-8111-111111111111" }],
   },
   {
     path: ["session", "watch"],
@@ -1091,7 +1107,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "With --all, idle/attention must hold for every session at resolution; exits nonzero on timeout.",
     ],
     examples: [
-      { command: "oppi session watch sess_123 --until idle" },
+      { command: "oppi session watch 11111111-1111-4111-8111-111111111111 --until idle" },
       { command: "oppi session watch sess_1 sess_2 --until attention --json" },
     ],
   },
@@ -1120,7 +1136,9 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: ["Use watch for multiple sessions or live state transitions."],
-    examples: [{ command: "oppi session wait sess_123 --for idle --json" }],
+    examples: [
+      { command: "oppi session wait 11111111-1111-4111-8111-111111111111 --for idle --json" },
+    ],
   },
   {
     path: ["session", "read"],
@@ -1132,7 +1150,9 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--tail", value: "<count>", summary: "return only the last trace entries" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi session read sess_123 --tail 50 --json" }],
+    examples: [
+      { command: "oppi session read 11111111-1111-4111-8111-111111111111 --tail 50 --json" },
+    ],
   },
   {
     path: ["session", "events"],
@@ -1144,7 +1164,9 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--since", value: "<cursor>", summary: "event sequence cursor" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi session events sess_123 --since 42 --json" }],
+    examples: [
+      { command: "oppi session events 11111111-1111-4111-8111-111111111111 --since 42 --json" },
+    ],
   },
   {
     path: ["session", "trace"],
@@ -1156,7 +1178,12 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--include", value: "<parts>", summary: "trace parts such as summary,tools" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi session trace sess_123 --include summary,tools --json" }],
+    examples: [
+      {
+        command:
+          "oppi session trace 11111111-1111-4111-8111-111111111111 --include summary,tools --json",
+      },
+    ],
   },
   {
     path: ["session", "stop"],
@@ -1165,7 +1192,7 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi session stop <id> [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
-    examples: [{ command: "oppi session stop sess_123 --json" }],
+    examples: [{ command: "oppi session stop 11111111-1111-4111-8111-111111111111 --json" }],
   },
   {
     path: ["session", "search"],
@@ -1228,10 +1255,17 @@ const HELP_TOPICS: HelpTopic[] = [
       "Use summary for counts, response for the latest assistant response, or messages/tools for selected turns.",
     ],
     examples: [
-      { command: "oppi session inspect sess_123 --view summary --json" },
-      { command: "oppi session inspect sess_123 --view outline --json" },
-      { command: "oppi session inspect sess_123 --view response" },
-      { command: "oppi session inspect sess_123 --turns 3-7 --view messages --json" },
+      {
+        command: "oppi session inspect 11111111-1111-4111-8111-111111111111 --view summary --json",
+      },
+      {
+        command: "oppi session inspect 11111111-1111-4111-8111-111111111111 --view outline --json",
+      },
+      { command: "oppi session inspect 11111111-1111-4111-8111-111111111111 --view response" },
+      {
+        command:
+          "oppi session inspect 11111111-1111-4111-8111-111111111111 --turns 3-7 --view messages --json",
+      },
     ],
   },
   {
@@ -1241,7 +1275,7 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi session resume <id> [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
-    examples: [{ command: "oppi session resume sess_123 --json" }],
+    examples: [{ command: "oppi session resume 11111111-1111-4111-8111-111111111111 --json" }],
   },
   {
     path: ["session", "fork"],
@@ -1259,7 +1293,9 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--name", value: "<text>", summary: "forked session name" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi session fork sess_123 --entry turn-42 --json" }],
+    examples: [
+      { command: "oppi session fork 11111111-1111-4111-8111-111111111111 --entry turn-42 --json" },
+    ],
   },
   {
     path: ["session", "delete"],
@@ -1268,7 +1304,7 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi session delete <id> [--json]",
     arguments: [{ name: "<id>", summary: "session id" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
-    examples: [{ command: "oppi session delete sess_123 --json" }],
+    examples: [{ command: "oppi session delete 11111111-1111-4111-8111-111111111111 --json" }],
   },
   {
     path: ["session", "tool-output"],
@@ -1280,7 +1316,9 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "<tool-call-id>", summary: "tool call id" },
     ],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
-    examples: [{ command: "oppi session tool-output sess_123 call_123 --json" }],
+    examples: [
+      { command: "oppi session tool-output 11111111-1111-4111-8111-111111111111 call_123 --json" },
+    ],
   },
   {
     path: ["session", "trace-page"],
@@ -1295,7 +1333,12 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--preview-bytes", value: "<count>", summary: "tool-output preview byte budget" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi session trace-page sess_123 --target-events 80 --json" }],
+    examples: [
+      {
+        command:
+          "oppi session trace-page 11111111-1111-4111-8111-111111111111 --target-events 80 --json",
+      },
+    ],
   },
   {
     path: ["session", "trace-outline"],
@@ -1310,8 +1353,10 @@ const HELP_TOPICS: HelpTopic[] = [
       "Pass an entry id to 'trace-page --around-entry' for bounded surrounding detail.",
     ],
     examples: [
-      { command: "oppi session inspect sess_123 --view outline --json" },
-      { command: "oppi session trace-outline sess_123 --json" },
+      {
+        command: "oppi session inspect 11111111-1111-4111-8111-111111111111 --view outline --json",
+      },
+      { command: "oppi session trace-outline 11111111-1111-4111-8111-111111111111 --json" },
     ],
   },
   {
@@ -1365,10 +1410,10 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Create saved Agent",
     summary: "Create a saved Agent from --name and an optional file or inline JSON definition.",
     usage:
-      "oppi agent create [--name <name>] [--definition <file> | --definition-json <json-object>] [--json]",
+      "oppi agent create [--name <name>] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--json]",
     flags: [
       {
-        name: "--name",
+        name: "--name, -n",
         value: "<name>",
         summary: "Agent display name; overrides definition.name",
       },
@@ -1378,10 +1423,39 @@ const HELP_TOPICS: HelpTopic[] = [
         value: "<json-object>",
         summary: "inline JSON AgentDefinition fields; maximum 65536 bytes",
       },
+      {
+        name: "--model",
+        value: "<model[:thinking]>",
+        summary: "writes sessionDefaults.model; optional :thinking suffix",
+      },
+      {
+        name: "--thinking",
+        value: "<level>",
+        summary: `writes sessionDefaults.thinkingLevel: ${THINKING_LEVELS.join(", ")}; wins over --model :thinking`,
+      },
+      {
+        name: "--tools, -t",
+        value: "<csv>",
+        summary: "writes sessionDefaults.tools; overlays definition JSON",
+      },
+      {
+        name: "--exclude-tools, -xt",
+        value: "<csv>",
+        summary: "writes sessionDefaults.excludeTools; overlays definition JSON",
+      },
+      {
+        name: "--no-tools, -nt",
+        summary: "writes sessionDefaults.noTools=all",
+      },
+      {
+        name: "--no-builtin-tools, -nbt",
+        summary: "writes sessionDefaults.noTools=builtin",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
       "Choose at most one of --definition or --definition-json; --name or definition.name is required.",
+      "--model, --thinking, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write sessionDefaults and overlay the same keys from --definition / --definition-json. --thinking wins over a --model :thinking suffix.",
       "Allowed AgentDefinition keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints.",
       "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
       "resources.extensionIds / resources.skillPaths are exact selections; omit them to inherit Pi discovery.",
@@ -1400,7 +1474,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Update saved Agent",
     summary: "Patch a saved Agent from a JSON definition file or inline JSON object.",
     usage:
-      "oppi agent update <agent> (--definition <file> | --definition-json <json-object>) [--expected-version <version>] [--json]",
+      "oppi agent update <agent> [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--expected-version <version>] [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
       {
@@ -1414,6 +1488,34 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "inline JSON AgentDefinition fields to patch; maximum 65536 bytes",
       },
       {
+        name: "--model",
+        value: "<model[:thinking]>",
+        summary: "overlays sessionDefaults.model; optional :thinking suffix",
+      },
+      {
+        name: "--thinking",
+        value: "<level>",
+        summary: `overlays sessionDefaults.thinkingLevel: ${THINKING_LEVELS.join(", ")}; wins over --model :thinking`,
+      },
+      {
+        name: "--tools, -t",
+        value: "<csv>",
+        summary: "overlays sessionDefaults.tools",
+      },
+      {
+        name: "--exclude-tools, -xt",
+        value: "<csv>",
+        summary: "overlays sessionDefaults.excludeTools",
+      },
+      {
+        name: "--no-tools, -nt",
+        summary: "overlays sessionDefaults.noTools=all",
+      },
+      {
+        name: "--no-builtin-tools, -nbt",
+        summary: "overlays sessionDefaults.noTools=builtin",
+      },
+      {
         name: "--expected-version",
         value: "<version>",
         summary: "reject with conflict unless the Agent still has this version",
@@ -1421,10 +1523,11 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
-      "Choose exactly one of --definition or --definition-json.",
+      "Choose at most one of --definition or --definition-json; first-class sessionDefaults flags can patch without JSON.",
       "Update is a PATCH: omitted fields keep their stored values; nested resources, sessionDefaults, and launchConstraints merge key by key; JSON null clears a field or nested key.",
       "Run 'oppi agent get <agent>' first, then patch only the changed fields; --expected-version with the reviewed version returns a conflict instead of overwriting newer changes.",
       "sessionDefaults.tools is an allowlist of real tool names; a stale name is dropped from launched sessions with a warning, so patch it to the current tool names instead of leaving leftovers.",
+      "--model, --thinking, --tools, --exclude-tools, --no-tools, and --no-builtin-tools overlay the same sessionDefaults keys from --definition / --definition-json. --thinking wins over a --model :thinking suffix.",
       "Omit --expected-version for a compatible unconditional PATCH.",
     ],
     examples: [
@@ -1464,16 +1567,35 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "first prompt sent to the session",
         required: true,
       },
-      { name: "--name", value: "<text>", summary: "session name" },
+      { name: "--name, -n", value: "<text>", summary: "session name" },
       {
         name: "--model",
-        value: "<model>",
-        summary: "model override; fuzzy-matched against enabled Pi models",
+        value: "<model[:thinking]>",
+        summary:
+          "model override; fuzzy-matched against enabled Pi models; optional :thinking suffix",
       },
       {
         name: "--thinking",
         value: "<level>",
-        summary: `thinking level override: ${THINKING_LEVELS.join(", ")}`,
+        summary: `thinking level override: ${THINKING_LEVELS.join(", ")}; wins over --model :thinking`,
+      },
+      {
+        name: "--tools, -t",
+        value: "<csv>",
+        summary: "comma-separated tool allowlist for sessionDefaults.tools",
+      },
+      {
+        name: "--exclude-tools, -xt",
+        value: "<csv>",
+        summary: "comma-separated tool denylist for sessionDefaults.excludeTools",
+      },
+      {
+        name: "--no-tools, -nt",
+        summary: "disable all tools (sessionDefaults.noTools=all)",
+      },
+      {
+        name: "--no-builtin-tools, -nbt",
+        summary: "disable built-in tools (sessionDefaults.noTools=builtin)",
       },
       { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
       {
@@ -1500,6 +1622,8 @@ const HELP_TOPICS: HelpTopic[] = [
       "With --idempotency-key, retrying the same create request reuses the existing launch instead of creating a duplicate session.",
       "If another launcher still owns the active lease for that key, the server can report launch_in_progress; retry with the same key.",
       "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",
+      "--model also accepts an optional :thinking suffix such as sonnet:high. --thinking wins if both are present.",
+      "Session targeting uses the exact full Pi UUID, for example 11111111-1111-4111-8111-111111111111.",
     ],
     examples: [
       {

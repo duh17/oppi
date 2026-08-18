@@ -6,6 +6,12 @@ import type { LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import { readDefinitionInput } from "../definition-input.js";
 import {
+  applySessionDefaultFlags,
+  hasSessionDefaultFlags,
+  resolveNoToolsFlag,
+} from "../launch-flags.js";
+import { resolveModelFlagForCli } from "../model-resolution.js";
+import {
   codeValue,
   printDetails,
   printList,
@@ -78,7 +84,12 @@ export async function cmdAgent(
     }
 
     if (mode === "create") {
-      const definition = readDefinitionInput(flags);
+      resolveNoToolsFlag(flags);
+      const definition = applySessionDefaultFlags(
+        readDefinitionInput(flags),
+        flags,
+        await resolveModelFlagForCli(storage, flags.model),
+      );
       if (flags.name) definition.name = flags.name;
       if (!definition.name) throw new Error("--name or definition.name is required");
       const result = await call<Record<string, unknown>>("/agents", {
@@ -101,8 +112,19 @@ export async function cmdAgent(
     if (mode === "update") {
       const reference = positional[0]?.trim();
       if (!reference) throw new Error("agent id or name is required");
+      resolveNoToolsFlag(flags);
       const expectedVersion = parseExpectedAgentVersionFlag(flags);
-      const definition = readDefinitionInput(flags, { required: true, update: true });
+      const definition = applySessionDefaultFlags(
+        readDefinitionInput(flags, {
+          required: !hasSessionDefaultFlags(flags),
+          update: true,
+        }),
+        flags,
+        await resolveModelFlagForCli(storage, flags.model),
+      );
+      if (Object.keys(definition).length === 0) {
+        throw new Error("definition update must not be empty");
+      }
       const query =
         expectedVersion === undefined
           ? ""

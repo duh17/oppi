@@ -62,7 +62,8 @@ async function newSessionAction(
     workspaceId,
     prompt,
     ...(agentId ? { agentId } : {}),
-    ...(resolvedModel ? { model: resolvedModel } : {}),
+    ...(resolvedModel ? { model: resolvedModel.canonicalId } : {}),
+    ...(resolvedModel?.thinkingLevel ? { thinkingLevel: resolvedModel.thinkingLevel } : {}),
     ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
     ...(flags.name ? { name: flags.name } : {}),
   };
@@ -204,14 +205,18 @@ export async function cmdSchedule(
       if (flags.model !== undefined && flags["clear-model"] === "true") {
         throw new Error("--model and --clear-model cannot be combined");
       }
+      const resolvedModel =
+        flags["clear-model"] === "true"
+          ? undefined
+          : await resolveModelFlagForCli(storage, flags.model);
       const definition = hasDefinition
         ? readDefinitionInput(flags, { required: true, update: true })
         : {
             action: {
-              model:
-                flags["clear-model"] === "true"
-                  ? null
-                  : await resolveModelFlagForCli(storage, flags.model),
+              model: flags["clear-model"] === "true" ? null : resolvedModel?.canonicalId,
+              ...(resolvedModel?.thinkingLevel
+                ? { thinkingLevel: resolvedModel.thinkingLevel }
+                : {}),
             },
           };
       const result = await call<Record<string, unknown>>(`/schedules/${encodeURIComponent(id)}`, {

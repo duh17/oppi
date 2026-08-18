@@ -8,7 +8,13 @@ import {
   resolveModelRequest,
   type ModelResolutionInfo,
 } from "../model-resolution.js";
+import type { ThinkingLevel } from "../thinking-levels.js";
 import { localApiRequest, type LocalApiConnection } from "./local-api-client.js";
+
+export type ResolvedCliModelFlag = {
+  canonicalId: string;
+  thinkingLevel?: ThinkingLevel;
+};
 
 export class CliModelResolutionError extends Error {
   readonly availableModels: string[];
@@ -33,7 +39,7 @@ function isModelInfo(value: unknown): value is ModelResolutionInfo {
 export async function resolveModelFlagForCli(
   storage: LocalApiConnection,
   requestedModel: string | undefined,
-): Promise<string | undefined> {
+): Promise<ResolvedCliModelFlag | undefined> {
   const trimmed = requestedModel?.trim();
   if (!trimmed) return undefined;
 
@@ -48,7 +54,10 @@ export async function resolveModelFlagForCli(
     );
   }
 
-  return resolution.candidate.canonicalId;
+  return {
+    canonicalId: resolution.candidate.canonicalId,
+    ...(resolution.thinkingLevel ? { thinkingLevel: resolution.thinkingLevel } : {}),
+  };
 }
 
 export function modelResolutionErrorEnvelope(error: CliModelResolutionError): {

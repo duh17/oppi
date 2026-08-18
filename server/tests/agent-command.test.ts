@@ -166,6 +166,98 @@ describe("agent command", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it("stores sessionDefaults from first-class create flags and overlays definition JSON", async () => {
+    request
+      .mockResolvedValueOnce({
+        models: [{ id: "openai/gpt-5.3-codex", name: "GPT-5.3 Codex", provider: "openai" }],
+      })
+      .mockResolvedValueOnce({ agent: { id: "agent-1", name: "Reviewer" } } as never);
+
+    await captureCliOutput(() =>
+      cmdAgent(storage, "create", [], {
+        json: "true",
+        name: "Reviewer",
+        model: "gpt-5.3-codex",
+        thinking: "high",
+        tools: "read",
+        "exclude-tools": "bash",
+        "no-builtin-tools": "true",
+        "definition-json": JSON.stringify({
+          description: "From JSON",
+          sessionDefaults: { model: "json-model", tools: ["write"], thinkingLevel: "low" },
+        }),
+      }),
+    );
+
+    expect(request).toHaveBeenNthCalledWith(2, storage, "/agents", {
+      method: "POST",
+      body: {
+        name: "Reviewer",
+        description: "From JSON",
+        sessionDefaults: {
+          model: "openai/gpt-5.3-codex",
+          thinkingLevel: "high",
+          tools: ["read"],
+          excludeTools: ["bash"],
+          noTools: "builtin",
+        },
+      },
+    });
+  });
+
+  it("overlays the same sessionDefaults flags on Agent update PATCH", async () => {
+    request
+      .mockResolvedValueOnce({
+        models: [{ id: "openai/gpt-5.3-codex", name: "GPT-5.3 Codex", provider: "openai" }],
+      })
+      .mockResolvedValueOnce({ agent: { id: "agent-1", name: "Reviewer", version: 5 } } as never);
+
+    await captureCliOutput(() =>
+      cmdAgent(storage, "update", ["Reviewer"], {
+        json: "true",
+        model: "gpt-5.3-codex:high",
+        thinking: "low",
+        tools: "read",
+        "exclude-tools": "bash",
+        "no-tools": "true",
+        "definition-json": JSON.stringify({
+          sessionDefaults: { model: "json-model", tools: ["write"], noTools: "builtin" },
+        }),
+      }),
+    );
+
+    expect(request).toHaveBeenNthCalledWith(2, storage, "/agents/Reviewer", {
+      method: "PATCH",
+      body: {
+        sessionDefaults: {
+          model: "openai/gpt-5.3-codex",
+          thinkingLevel: "low",
+          tools: ["read"],
+          excludeTools: ["bash"],
+          noTools: "all",
+        },
+      },
+    });
+  });
+
+  it("rejects combining --no-tools with --no-builtin-tools on Agent commands", async () => {
+    const captured = await captureCliOutput(() =>
+      cmdAgent(storage, "create", [], {
+        json: "true",
+        name: "Reviewer",
+        "no-tools": "true",
+        "no-builtin-tools": "true",
+      }),
+    );
+
+    expect(captured.exitCode).toBe(1);
+    expect(JSON.parse(captured.stdout)).toMatchObject({
+      ok: false,
+      error: { message: "--no-tools and --no-builtin-tools cannot be used together" },
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("pins Agent update expected-version help", () => {
     const topic = resolveHelpTopic(["agent", "update"]);
     expect(topic).toBeDefined();

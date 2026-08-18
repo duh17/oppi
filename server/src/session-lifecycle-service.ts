@@ -153,6 +153,9 @@ export class SessionLifecycleService {
     model?: string;
     prompt?: string;
     thinking?: string;
+    tools?: string[];
+    excludeTools?: string[];
+    noTools?: "all" | "builtin";
     ephemeral?: boolean;
     worktreeId?: string;
     attachments?: ChatAttachmentRef[];
@@ -166,6 +169,9 @@ export class SessionLifecycleService {
       sessionDefaults: {
         model: params.model,
         thinkingLevel: params.thinking as ThinkingLevel | undefined,
+        ...(params.tools ? { tools: params.tools } : {}),
+        ...(params.excludeTools ? { excludeTools: params.excludeTools } : {}),
+        ...(params.noTools ? { noTools: params.noTools } : {}),
       },
     };
     const launchService = new AgentLaunchService({
@@ -889,10 +895,7 @@ export class SessionLifecycleService {
     );
   }
 
-  private findImportedSession(identity: {
-    path: string;
-    sessionId?: string;
-  }): Session | undefined {
+  private findImportedSession(identity: { path: string; sessionId?: string }): Session | undefined {
     return this.deps.storage
       .listSessions()
       .find((session) => this.sessionMatchesImportedIdentity(session, identity));

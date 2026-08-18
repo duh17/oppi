@@ -4,6 +4,21 @@ export type ParsedCliArgs = {
   positional: string[];
 };
 
+type ShortFlagSpec = {
+  name: string;
+  boolean?: boolean;
+};
+
+// Explicit Pi-compatible shorts only. Unknown shorts must error, not become positionals.
+const SHORT_FLAGS: Record<string, ShortFlagSpec> = {
+  h: { name: "help", boolean: true },
+  n: { name: "name" },
+  t: { name: "tools" },
+  xt: { name: "exclude-tools" },
+  nt: { name: "no-tools", boolean: true },
+  nbt: { name: "no-builtin-tools", boolean: true },
+};
+
 export function parseCliArgs(args: string[]): ParsedCliArgs {
   const command = args[0] || "help";
   const flags: Record<string, string> = {};
@@ -26,6 +41,18 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
       const value =
         next && next !== "--" && !next.startsWith("--") ? (args[++i] ?? "true") : "true";
       flags[key] = value;
+    } else if (parseFlags && arg.startsWith("-") && arg !== "-") {
+      const spec = SHORT_FLAGS[arg.slice(1)];
+      if (!spec) throw new Error(`Unknown flag: ${arg}`);
+      if (Object.hasOwn(flags, spec.name)) throw new Error(`Duplicate flag: --${spec.name}`);
+      if (spec.boolean) {
+        flags[spec.name] = "true";
+      } else {
+        const next = args[i + 1];
+        const value =
+          next && next !== "--" && !next.startsWith("--") ? (args[++i] ?? "true") : "true";
+        flags[spec.name] = value;
+      }
     } else {
       positional.push(arg);
     }

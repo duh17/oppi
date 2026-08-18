@@ -836,6 +836,25 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(firstSavedSession.thinkingLevel).toBe("high");
   });
 
+  it("applies tools, excludeTools, and noTools to the inline launch policy", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, {
+      prompt: "hello",
+      tools: ["read", "grep"],
+      excludeTools: ["bash"],
+      noTools: "builtin",
+    });
+
+    expect(mock.errors).toEqual([]);
+    const firstSavedSession = mock.storage.saveSession.mock.calls[0]![0] as Session;
+    expect(firstSavedSession.launch?.tools).toEqual({
+      allowed: ["read", "grep"],
+      excluded: ["bash"],
+      noTools: "builtin",
+    });
+  });
+
   it("persists thinking level on the session object after prompted creation", async () => {
     const mock = createMockContext();
 

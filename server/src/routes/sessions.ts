@@ -19,6 +19,38 @@ const CONTROL_SESSION_INTENTS = new Set(["create", "revise"] as const);
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
+function parseWorkspaceSessionToolPolicy(body: {
+  tools?: unknown;
+  excludeTools?: unknown;
+  noTools?: unknown;
+}): {
+  tools?: string[];
+  excludeTools?: string[];
+  noTools?: "all" | "builtin";
+  error?: string;
+} {
+  const tools = parseOptionalStringArray(body.tools, "tools");
+  if (typeof tools === "string") return { error: tools };
+  const excludeTools = parseOptionalStringArray(body.excludeTools, "excludeTools");
+  if (typeof excludeTools === "string") return { error: excludeTools };
+  if (body.noTools !== undefined && body.noTools !== "all" && body.noTools !== "builtin") {
+    return { error: "noTools must be all or builtin" };
+  }
+  return {
+    ...(tools ? { tools } : {}),
+    ...(excludeTools ? { excludeTools } : {}),
+    ...(body.noTools === "all" || body.noTools === "builtin" ? { noTools: body.noTools } : {}),
+  };
+}
+
+function parseOptionalStringArray(value: unknown, field: string): string[] | string | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    return `${field} must be an array of strings`;
+  }
+  return value;
+}
+
 function invalidDelegationFields(
   parentSessionId: unknown,
   allowNestedDelegation: unknown,
@@ -131,6 +163,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       piSessionFile?: string;
       prompt?: string;
       thinking?: string;
+      tools?: unknown;
+      excludeTools?: unknown;
+      noTools?: unknown;
       ephemeral?: boolean;
       worktreeId?: string;
       attachments?: ChatAttachmentRef[];
@@ -159,6 +194,11 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
     if (body.thinking !== undefined && !isThinkingLevel(body.thinking)) {
       helpers.error(res, 400, "Invalid thinking level");
+      return;
+    }
+    const toolPolicy = parseWorkspaceSessionToolPolicy(body);
+    if (toolPolicy.error) {
+      helpers.error(res, 400, toolPolicy.error);
       return;
     }
     const requestedModel = body.model;
@@ -206,6 +246,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         model: requestedModel,
         prompt: body.prompt,
         thinking: body.thinking,
+        tools: toolPolicy.tools,
+        excludeTools: toolPolicy.excludeTools,
+        noTools: toolPolicy.noTools,
         ephemeral: body.ephemeral,
         worktreeId: worktreeSelection.worktreeId,
         attachments: body.attachments,

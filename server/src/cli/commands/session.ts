@@ -19,6 +19,7 @@ import {
   writeJsonEnvelope,
 } from "../output.js";
 import { inferWorkspaceIdFromCwdForCli, resolveWorkspaceIdForCli } from "../resources.js";
+import { resolveThinkingFromFlags, resolveToolPolicyFromFlags } from "../launch-flags.js";
 import { resolveModelFlagForCli } from "../model-resolution.js";
 import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
 import {
@@ -458,9 +459,11 @@ async function createSession(
     }
     return;
   }
+  const toolPolicy = resolveToolPolicyFromFlags(flags);
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef);
   const prompt = attributeManagedSessionMessage(promptText, parentSessionId);
   const resolvedModel = await resolveModelFlagForCli(storage, flags.model);
+  const thinking = resolveThinkingFromFlags(flags, resolvedModel?.thinkingLevel);
   const savedAgent = savedAgentReference(flags.agent);
   const allowNestedDelegation = flags["allow-nested-delegation"] === "true";
   const result = savedAgent
@@ -476,11 +479,12 @@ async function createSession(
               ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
             },
             ...(flags.name ? { sessionName: flags.name } : {}),
-            ...(resolvedModel || flags.thinking
+            ...(resolvedModel || thinking || hasToolPolicy(toolPolicy)
               ? {
                   overrides: {
-                    ...(resolvedModel ? { model: resolvedModel } : {}),
-                    ...(flags.thinking ? { thinkingLevel: flags.thinking } : {}),
+                    ...(resolvedModel ? { model: resolvedModel.canonicalId } : {}),
+                    ...(thinking ? { thinkingLevel: thinking } : {}),
+                    ...toolPolicy,
                   },
                 }
               : {}),
@@ -498,8 +502,9 @@ async function createSession(
           body: {
             prompt: prompt,
             ...(flags.name ? { name: flags.name } : {}),
-            ...(resolvedModel ? { model: resolvedModel } : {}),
-            ...(flags.thinking ? { thinking: flags.thinking } : {}),
+            ...(resolvedModel ? { model: resolvedModel.canonicalId } : {}),
+            ...(thinking ? { thinking } : {}),
+            ...toolPolicy,
             ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
             ...(parentSessionId ? { parentSessionId } : {}),
             ...(allowNestedDelegation ? { allowNestedDelegation: true } : {}),
@@ -525,12 +530,16 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   create: [
     "agent",
     "allow-nested-delegation",
+    "exclude-tools",
     "idempotency-key",
     "json",
     "model",
     "name",
+    "no-builtin-tools",
+    "no-tools",
     "prompt",
     "thinking",
+    "tools",
     "workspace",
     "worktree",
   ],
@@ -675,4 +684,14 @@ function savedAgentReference(agent: string | undefined): string | undefined {
   if (!normalized || normalized === "default" || normalized === "workspace_default")
     return undefined;
   return normalized;
+}
+
+function hasToolPolicy(policy: {
+  tools?: string[];
+  excludeTools?: string[];
+  noTools?: "all" | "builtin";
+}): boolean {
+  return (
+    policy.tools !== undefined || policy.excludeTools !== undefined || policy.noTools !== undefined
+  );
 }
