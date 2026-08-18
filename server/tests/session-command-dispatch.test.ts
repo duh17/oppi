@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cmdSession } from "../src/cli/commands/session.js";
 import { localApiRequest, type LocalApiConnection } from "../src/cli/local-api-client.js";
 import { captureCliOutput } from "../src/cli/output.js";
+import { OPPI_CALLER_SESSION_ID_ENV } from "../src/session-caller-identity.js";
 
 vi.mock("../src/cli/local-api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/cli/local-api-client.js")>();
@@ -120,6 +121,102 @@ describe("session command dispatch and output boundaries", () => {
     },
   );
 
+  it("attributes create prompts with the caller session id", async () => {
+    request
+      .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
+      .mockResolvedValueOnce({ session: { id: "child-1", workspaceId: "ws-1" } });
+
+    await captureCliOutput(() =>
+      cmdSession(
+        storage,
+        "create",
+        [],
+        {
+          workspace: "ws-1",
+          prompt: "This is a message: Own the remaining review findings.",
+          json: "true",
+        },
+        process.cwd(),
+        { callerSessionId: "parent-1" },
+      ),
+    );
+
+    expect(request).toHaveBeenNthCalledWith(2, storage, "/workspaces/ws-1/sessions", {
+      method: "POST",
+      body: {
+        prompt: "This is a message from session parent-1: Own the remaining review findings.",
+        parentSessionId: "parent-1",
+      },
+    });
+  });
+
+  it("leaves unaffiliated create prompts unchanged", async () => {
+    request
+      .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
+      .mockResolvedValueOnce({ session: { id: "child-1", workspaceId: "ws-1" } });
+
+    await withCallerSessionEnv(undefined, async () => {
+      await captureCliOutput(() =>
+        cmdSession(storage, "create", [], {
+          workspace: "ws-1",
+          prompt: "Inspect the failing CLI test",
+          json: "true",
+        }),
+      );
+    });
+
+    expect(request).toHaveBeenNthCalledWith(2, storage, "/workspaces/ws-1/sessions", {
+      method: "POST",
+      body: { prompt: "Inspect the failing CLI test" },
+    });
+  });
+
+  it("attributes send text with the caller session id", async () => {
+    request.mockResolvedValue({ messages: [] });
+
+    await captureCliOutput(() =>
+      cmdSession(
+        storage,
+        "send",
+        ["child-1"],
+        { text: "This is a message: Focus on the failing test", json: "true" },
+        process.cwd(),
+        { callerSessionId: "parent-1" },
+      ),
+    );
+
+    expect(request).toHaveBeenCalledWith(storage, "/sessions/child-1/command", {
+      method: "POST",
+      body: {
+        type: "prompt",
+        message: "This is a message from session parent-1: Focus on the failing test",
+        streamingBehavior: "steer",
+      },
+    });
+  });
+
+  it("leaves unaffiliated send text unchanged", async () => {
+    request.mockResolvedValue({ messages: [] });
+
+    await withCallerSessionEnv(undefined, async () => {
+      await captureCliOutput(() =>
+        cmdSession(storage, "send", ["child-1"], {
+          text: "Focus on the failing test",
+          json: "true",
+        }),
+      );
+    });
+
+    expect(request).toHaveBeenCalledWith(storage, "/sessions/child-1/command", {
+      method: "POST",
+      body: {
+        type: "prompt",
+        message: "Focus on the failing test",
+        streamingBehavior: "steer",
+      },
+    });
+  });
+
   it("uses the human output callback for an empty list", async () => {
     request.mockResolvedValue({ sessions: [] });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -131,3 +228,24 @@ describe("session command dispatch and output boundaries", () => {
     log.mockRestore();
   });
 });
+
+async function withCallerSessionEnv(
+  callerSessionId: string | undefined,
+  run: () => Promise<void>,
+): Promise<void> {
+  const previous = process.env[OPPI_CALLER_SESSION_ID_ENV];
+  if (callerSessionId === undefined) {
+    delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+  } else {
+    process.env[OPPI_CALLER_SESSION_ID_ENV] = callerSessionId;
+  }
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[OPPI_CALLER_SESSION_ID_ENV];
+    } else {
+      process.env[OPPI_CALLER_SESSION_ID_ENV] = previous;
+    }
+  }
+}

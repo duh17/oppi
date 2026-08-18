@@ -1041,6 +1041,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Pass @- to --text to read the message from stdin.",
+      "When a managed session is the caller, send prefixes the text with `This is a message from session <caller-id>:` so the target can inspect that source session. Do not type the prefix yourself.",
       "Without a delivery flag, send prompts an idle session and steers a busy session after its current tool calls, before the next model turn.",
       "Use --follow-up for work that should begin only after the agent finishes its current work.",
     ],
@@ -1493,6 +1494,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Pass @- to --prompt to read the first prompt from stdin.",
+      "When a managed session is the caller, create prefixes the prompt with `This is a message from session <caller-id>:` so the child can inspect that source session. Do not type the prefix yourself.",
       "JSON output is compact and returns the launch id as data.session_id.",
       "Managed sessions can create only direct children by default. A root may pass --allow-nested-delegation to authorize a child to spawn its own children; the grant then propagates down the subtree, so explicitly requested grandchild sessions work without re-authorizing at every level.",
       "With --idempotency-key, retrying the same create request reuses the existing launch instead of creating a duplicate session.",

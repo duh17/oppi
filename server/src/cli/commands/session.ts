@@ -39,6 +39,7 @@ import {
   printTraceOutline,
   type SessionTraceEvent,
 } from "./session-inspect.js";
+import { attributeManagedSessionMessage } from "../managed-session-message.js";
 import {
   assertNoCommandError,
   printSessionNotice,
@@ -130,7 +131,10 @@ export async function cmdSession(
 
     if (mode === "send") {
       const id = requirePositional(positional, "session id is required");
-      const text = resolvePromptInput(flags.text, "--text");
+      const text = attributeManagedSessionMessage(
+        resolvePromptInput(flags.text, "--text"),
+        callerSessionId,
+      );
       const commandType = resolveSendStreamingKind(flags) ?? "prompt";
       const result = await sendSessionInput(id, commandType, text, call);
       assertNoCommandError(result, commandType === "prompt");
@@ -455,6 +459,7 @@ async function createSession(
     return;
   }
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef);
+  const prompt = attributeManagedSessionMessage(promptText, parentSessionId);
   const resolvedModel = await resolveModelFlagForCli(storage, flags.model);
   const savedAgent = savedAgentReference(flags.agent);
   const allowNestedDelegation = flags["allow-nested-delegation"] === "true";
@@ -465,7 +470,7 @@ async function createSession(
         {
           method: "POST",
           body: {
-            prompt: { text: promptText },
+            prompt: { text: prompt },
             target: {
               workspaceId,
               ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
@@ -491,7 +496,7 @@ async function createSession(
         {
           method: "POST",
           body: {
-            prompt: promptText,
+            prompt: prompt,
             ...(flags.name ? { name: flags.name } : {}),
             ...(resolvedModel ? { model: resolvedModel } : {}),
             ...(flags.thinking ? { thinking: flags.thinking } : {}),

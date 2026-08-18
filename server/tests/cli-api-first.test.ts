@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { OPPI_CALLER_SESSION_ID_ENV } from "../src/session-caller-identity.js";
 import { openDatabase } from "../src/sqlite-compat.js";
 import { ConfigStore } from "../src/storage/config-store.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
@@ -35,12 +36,20 @@ function sessionStateDbFiles(dataDir: string): string[] {
   return readdirSync(dataDir).filter((name) => name.startsWith("session-state.db"));
 }
 
+function cliProcessEnv(dataDir: string, env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = { ...process.env, OPPI_DATA_DIR: dataDir, ...env };
+  if (env?.[OPPI_CALLER_SESSION_ID_ENV] === undefined) {
+    delete next[OPPI_CALLER_SESSION_ID_ENV];
+  }
+  return next;
+}
+
 async function runCli(args: string[], dataDir: string): Promise<string> {
   return await new Promise((resolveRun, rejectRun) => {
     execFile(
       "node",
       [CLI, ...args],
-      { encoding: "utf-8", env: { ...process.env, OPPI_DATA_DIR: dataDir } },
+      { encoding: "utf-8", env: cliProcessEnv(dataDir) },
       (error, stdout, stderr) => {
         if (error) {
           rejectRun(new Error(stderr || stdout || error.message));
@@ -129,7 +138,7 @@ function runCliResult(
     const child = execFile(
       "node",
       [CLI, ...args],
-      { encoding: "utf-8", env: { ...process.env, OPPI_DATA_DIR: cliDataDir, ...env } },
+      { encoding: "utf-8", env: cliProcessEnv(cliDataDir, env) },
       (error, stdout) => {
         const code =
           error && typeof (error as { code?: unknown }).code === "number"
@@ -560,7 +569,9 @@ describe("CLI app-state API boundary", () => {
         expect(
           requests.find((request) => request.path === "/agents/reviewer/sessions")?.body,
         ).toMatchObject({
-          prompt: { text: "saved-Agent prompt from stdin\n" },
+          prompt: {
+            text: "This is a message from session parent-2: saved-Agent prompt from stdin\n",
+          },
           parentSessionId: "parent-2",
           allowNestedDelegation: true,
         });

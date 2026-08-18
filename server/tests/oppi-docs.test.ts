@@ -192,6 +192,9 @@ describe("Oppi documentation prompt hint", () => {
         "prompts an idle session and steers a busy session",
       );
       expect(OPPI_CLI_SYSTEM_PROMPT_HINT).toContain("--follow-up");
+      expect(OPPI_CLI_SYSTEM_PROMPT_HINT).toContain(
+        "This is a message from session <caller-id>:",
+      );
       expect(OPPI_CLI_SYSTEM_PROMPT_HINT).not.toContain("alias");
     } finally {
       await backend.dispose();
