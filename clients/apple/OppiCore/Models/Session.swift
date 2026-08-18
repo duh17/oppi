@@ -177,7 +177,6 @@ struct Session: Identifiable, Sendable, Equatable {
     // Runtime ownership
     var runtime: SessionRuntimeKind? = nil
     var mirror: PiTuiMirrorSessionMetadata? = nil
-    var piSessionId: String? = nil
     var control: ControlSessionMetadata? = nil
     var launch: SessionLaunchMetadata? = nil
 
@@ -273,7 +272,6 @@ struct SessionSummary: Sendable, Equatable {
     var thinkingLevel: String?
     var runtime: SessionRuntimeKind? = nil
     var mirror: PiTuiMirrorSessionMetadata? = nil
-    var piSessionId: String? = nil
     var control: ControlSessionMetadata? = nil
     var agentId: String? = nil
     var agentIcon: IconChoice? = nil
@@ -311,7 +309,6 @@ struct SessionSummary: Sendable, Equatable {
             thinkingLevel: thinkingLevel,
             runtime: runtime,
             mirror: mirror,
-            piSessionId: piSessionId,
             control: control,
             launch: agentId.map { SessionLaunchMetadata(agentId: $0, agentIcon: agentIcon) },
             ephemeral: ephemeral
@@ -343,7 +340,6 @@ extension SessionSummary {
         self.thinkingLevel = session.thinkingLevel
         self.runtime = session.runtime
         self.mirror = session.mirror
-        self.piSessionId = session.piSessionId
         self.control = session.control
         self.agentId = session.launch?.agentId
         self.agentIcon = session.launch?.agentIcon
@@ -358,7 +354,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
-    case thinkingLevel, runtime, mirror, piSessionId, control, launch, agentId, agentIcon, ephemeral
+    case thinkingLevel, runtime, mirror, control, launch, agentId, agentIcon, ephemeral
     case pendingAskCount
 }
 
@@ -385,7 +381,6 @@ private struct DecodedSessionWireFields {
     let thinkingLevel: String?
     let runtime: SessionRuntimeKind?
     let mirror: PiTuiMirrorSessionMetadata?
-    let piSessionId: String?
     let control: ControlSessionMetadata?
     let launch: SessionLaunchMetadata?
     let agentId: String?
@@ -415,7 +410,6 @@ private struct DecodedSessionWireFields {
         thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
         runtime = try container.decodeIfPresent(SessionRuntimeKind.self, forKey: .runtime)
         mirror = try container.decodeIfPresent(PiTuiMirrorSessionMetadata.self, forKey: .mirror)
-        piSessionId = try container.decodeIfPresent(String.self, forKey: .piSessionId)
         control = try container.decodeIfPresent(ControlSessionMetadata.self, forKey: .control)
         launch = try container.decodeIfPresent(SessionLaunchMetadata.self, forKey: .launch)
         agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
@@ -452,7 +446,6 @@ private extension DecodedSessionWireFields {
             thinkingLevel: thinkingLevel,
             runtime: runtime,
             mirror: mirror,
-            piSessionId: piSessionId,
             control: control,
             launch: presentationLaunch,
             ephemeral: ephemeral
@@ -518,7 +511,6 @@ extension Session: Codable {
         try c.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
         try c.encodeIfPresent(runtime, forKey: .runtime)
         try c.encodeIfPresent(mirror, forKey: .mirror)
-        try c.encodeIfPresent(piSessionId, forKey: .piSessionId)
         try c.encodeIfPresent(control, forKey: .control)
         try c.encodeIfPresent(launch, forKey: .launch)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)

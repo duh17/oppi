@@ -572,12 +572,6 @@ function syncSessionIdentityFromManager(session: Session, manager: PiSessionMana
     session.piSessionFiles = [...knownFiles];
   }
 
-  const piSessionId = manager.getSessionId();
-  // Temporary dual-ID field. Session.id is the canonical identity and is never
-  // replaced here; keep piSessionId only while it reports the same UUID.
-  if (piSessionId) {
-    session.piSessionId = piSessionId;
-  }
 }
 
 /** Product fork: mint Session.id first, then create a distinct Pi JSONL with that id. */

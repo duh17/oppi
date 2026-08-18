@@ -197,7 +197,6 @@ export interface Session {
   // session so deleted sessions are not rediscovered as importable local sessions.
   piSessionFile?: string; // latest absolute JSONL path reported by pi get_state
   piSessionFiles?: string[]; // all observed session JSONL paths for this session
-  piSessionId?: string; // pi internal session UUID reported by get_state
 
   // Agent launch metadata. Session rows own launch idempotency; there is no
   // separate launch record table.
@@ -240,8 +239,6 @@ export interface SessionSummary {
   thinkingLevel?: string;
   runtime?: SessionRuntimeKind;
   mirror?: PiTuiMirrorSessionMetadata;
-  /** Pi internal session UUID for generic session identity matching. */
-  piSessionId?: string;
   /** Saved-Agent identity projected for presentation and generic fallback semantics. */
   agentId?: string;
   /** Immutable launch-time icon snapshot; malformed values remain decode-safe. */

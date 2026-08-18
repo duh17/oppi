@@ -75,13 +75,14 @@ describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
     expect(session.piSessionFiles).toContain("/tmp/b.jsonl");
   });
 
-  it("applies sessionId", () => {
-    const session = makeSession();
+  it("does not write a second public identity from Pi sessionId", () => {
+    const session = makeSession({ id: "s1" });
 
     const changed = applySnapshot(session, { sessionId: "uuid-123" });
 
-    expect(changed).toBe(true);
-    expect(session.piSessionId).toBe("uuid-123");
+    expect(changed).toBe(false);
+    expect(session.id).toBe("s1");
+    expect(session).not.toHaveProperty("piSessionId");
   });
 
   it("applies model with provider prefix", () => {
@@ -194,7 +195,6 @@ describe("SessionStateCoordinator.applyPiStateSnapshot", () => {
     const session = makeSession({
       piSessionFile: "/tmp/same.jsonl",
       piSessionFiles: ["/tmp/same.jsonl"],
-      piSessionId: "uuid-1",
     });
 
     const changed = applySnapshot(session, {

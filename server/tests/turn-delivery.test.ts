@@ -445,7 +445,7 @@ describe("turn delivery idempotency", () => {
 
     await manager.forwardClientCommand("s1", { type: "fork", entryId: "msg-123" }, "req-fork-1");
 
-    expect(session.piSessionId).toBeUndefined();
+    expect(session).not.toHaveProperty("piSessionId");
     const rpcResult = asRpcResults(events).find((event) => event.command === "fork");
     expect(rpcResult?.success).toBe(false);
     expect(rpcResult?.error).toMatch(/not allowed|Oppi lifecycle|distinct canonical/i);

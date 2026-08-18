@@ -93,13 +93,12 @@ describe("buildSessionSummary", () => {
     expect(summary.changeStats?.changedFilesOverflow).toBe(3);
   });
 
-  it("excludes trace and internal change tracking fields while exposing generic Pi identity", () => {
+  it("excludes trace paths and any second public session identity", () => {
     const summary = buildSessionSummary(
       makeSession({
         warnings: ["local warning"],
         piSessionFile: "/Users/test/.pi/agent/sessions/s1.jsonl",
         piSessionFiles: ["/Users/test/.pi/agent/sessions/s1.jsonl"],
-        piSessionId: "pi-internal-session-id",
         changeStats: {
           mutatingToolCalls: 2,
           filesChanged: 1,
@@ -116,7 +115,7 @@ describe("buildSessionSummary", () => {
     expect(summary).not.toHaveProperty("warnings");
     expect(summary).not.toHaveProperty("piSessionFile");
     expect(summary).not.toHaveProperty("piSessionFiles");
-    expect(summary.piSessionId).toBe("pi-internal-session-id");
+    expect(summary).not.toHaveProperty("piSessionId");
     expect(summary.changeStats).toEqual({
       mutatingToolCalls: 2,
       filesChanged: 1,

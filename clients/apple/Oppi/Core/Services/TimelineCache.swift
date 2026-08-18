@@ -41,7 +41,7 @@ actor TimelineCache {
         let generation: Int
     }
 
-    private static let currentSchemaGeneration = 2
+    private static let currentSchemaGeneration = 3
     private static let schemaMarkerFilename = "timeline-cache-schema.json"
 
     static let shared = TimelineCache()

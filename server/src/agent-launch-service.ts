@@ -293,7 +293,6 @@ export class AgentLaunchService {
           runtime: "oppi",
         }
       : this.deps.storage.createSession(sessionName, modelSelection.model);
-    session.piSessionId = session.id;
 
     session.workspaceId = request.target.workspace.id;
     session.workspaceName = request.target.workspace.name;

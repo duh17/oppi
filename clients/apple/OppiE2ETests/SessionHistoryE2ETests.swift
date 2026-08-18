@@ -75,9 +75,9 @@ final class SessionHistoryE2ETests: E2ETestCase {
         XCTAssertTrue(waitForImportedChatSurface(timeout: 20), "Imported local session chat did not open")
         XCTAssertTrue(waitForTimelineTextContaining(localImportFirstMessage, timeout: 20), "Imported local trace message did not render")
 
-        let imported = try waitForImportedSession(piSessionId: fixture.piSessionId, timeout: 10)
+        let imported = try waitForImportedSession(id: fixture.piSessionId, timeout: 10)
         XCTAssertEqual(imported["workspaceId"] as? String, workspaceId)
-        XCTAssertEqual(imported["piSessionId"] as? String, fixture.piSessionId)
+        XCTAssertEqual(imported["id"] as? String, fixture.piSessionId)
     }
 
     @MainActor
@@ -146,19 +146,19 @@ final class SessionHistoryE2ETests: E2ETestCase {
     }
 
     private func waitForImportedSession(
-        piSessionId: String,
+        id: String,
         timeout: TimeInterval
     ) throws -> [String: Any] {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             let response = try e2eLabAPIJSON(method: "GET", path: "/sessions?workspaceId=\(e2eWorkspaceId())&status=stopped")
             let sessions = response["sessions"] as? [[String: Any]] ?? []
-            if let session = sessions.first(where: { $0["piSessionId"] as? String == piSessionId }) {
+            if let session = sessions.first(where: { $0["id"] as? String == id }) {
                 return session
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        XCTFail("Imported session with piSessionId \(piSessionId) did not appear")
+        XCTFail("Imported session with id \(id) did not appear")
         return [:]
     }
 

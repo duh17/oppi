@@ -106,7 +106,7 @@ describe("SearchIndex indexes transcript content only", () => {
     });
     cleanupPaths.add(summaryPath);
 
-    const session = makeSession({ id: "sess-summary", piSessionId, piSessionFile: jsonlPath });
+    const session = makeSession({ id: "sess-summary", piSessionFile: jsonlPath });
     const sessions = new Map([[session.id, session]]);
     const index = new SearchIndex(dataDir, (id) => sessions.get(id));
     cleanupPaths.add(join(dataDir, "session-search.db"));
@@ -145,7 +145,7 @@ describe("SearchIndex indexes transcript content only", () => {
     });
     cleanupPaths.add(summaryPath);
 
-    const session = makeSession({ id: "sess-reindex", piSessionId, piSessionFile: jsonlPath });
+    const session = makeSession({ id: "sess-reindex", piSessionFile: jsonlPath });
     const sessions = new Map([[session.id, session]]);
     const index = new SearchIndex(dataDir, (id) => sessions.get(id));
     cleanupPaths.add(join(dataDir, "session-search.db"));

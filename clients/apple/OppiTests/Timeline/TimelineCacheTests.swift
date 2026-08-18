@@ -30,6 +30,24 @@ struct TimelineCacheTests {
         #expect(fileManager.fileExists(atPath: schemaMarkerURL(root).path))
     }
 
+    @Test func olderSchemaGenerationDropsSessionKeyedCache() async throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
+        let root = base.appending(path: "root")
+        let traces = root.appending(path: "traces", directoryHint: .isDirectory)
+        let staleTrace = traces.appending(path: "old-short-id.json")
+
+        defer { try? fileManager.removeItem(at: base) }
+
+        try fileManager.createDirectory(at: traces, withIntermediateDirectories: true)
+        try Data("old-cache".utf8).write(to: staleTrace, options: .atomic)
+        try JSONEncoder().encode(["generation": 2]).write(to: schemaMarkerURL(root), options: .atomic)
+
+        _ = TimelineCache(rootURL: root)
+
+        #expect(!fileManager.fileExists(atPath: staleTrace.path))
+    }
+
     @Test func matchingSchemaPreservesCacheAcrossRelaunch() async throws {
         let fileManager = FileManager.default
         let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")

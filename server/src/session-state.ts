@@ -55,7 +55,7 @@ export class SessionStateCoordinator {
       }
       return {
         sessionFile: active.session.piSessionFile,
-        sessionId: active.session.piSessionId,
+        sessionId: active.session.id,
         leafId: active.sdkBackend.session.sessionManager.getLeafId(),
       };
     } catch {
@@ -92,13 +92,6 @@ export class SessionStateCoordinator {
       }
       if ((session.piSessionFiles?.length ?? 0) > 0) {
         session.piSessionFiles = undefined;
-        changed = true;
-      }
-    }
-
-    if (typeof state.sessionId === "string" && state.sessionId.length > 0) {
-      if (session.piSessionId !== state.sessionId) {
-        session.piSessionId = state.sessionId;
         changed = true;
       }
     }

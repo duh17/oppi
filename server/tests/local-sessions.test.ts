@@ -14,6 +14,7 @@ import {
 import { join, resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
+  collectKnownLocalSessionIdentities,
   discoverLocalSessions,
   invalidateLocalSessionsCache,
   validateLocalSessionPath,
@@ -315,6 +316,20 @@ describe("discoverLocalSessions", () => {
     const found = sessions.find((s) => s.piSessionId === "uuid-2");
 
     expect(found).toBeUndefined();
+  });
+
+  it("collects imported Session.id as the catalog Pi identity", () => {
+    const known = collectKnownLocalSessionIdentities([
+      {
+        id: "uuid-imported",
+        piSessionFile: "/tmp/imported.jsonl",
+        piSessionFiles: ["/tmp/older.jsonl"],
+      },
+    ]);
+
+    expect(known.piSessionIds.has("uuid-imported")).toBe(true);
+    expect(known.files.has("/tmp/imported.jsonl")).toBe(true);
+    expect(known.files.has("/tmp/older.jsonl")).toBe(true);
   });
 
   it("filters out known session identities by piSessionId", async () => {

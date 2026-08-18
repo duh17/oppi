@@ -829,7 +829,7 @@ describe("workspaces module", () => {
 
       const ctx = {
         storage: {
-          listSessions: vi.fn(() => [{ id: "managed-1", piSessionId: "route-known" }]),
+          listSessions: vi.fn(() => [{ id: "route-known" }]),
           getDataDir: vi.fn(() => dataDir),
         },
       } as unknown as RouteContext;

@@ -261,14 +261,14 @@ function canonicalLocalSessionFilePath(path: string): string {
 }
 
 export function collectKnownLocalSessionIdentities(
-  sessions: Iterable<Pick<Session, "piSessionFile" | "piSessionFiles" | "piSessionId">>,
+  sessions: Iterable<Pick<Session, "id" | "piSessionFile" | "piSessionFiles">>,
 ): KnownLocalSessionIdentities {
   const files = new Set<string>();
   const piSessionIds = new Set<string>();
 
   for (const session of sessions) {
-    if (session.piSessionId) {
-      piSessionIds.add(session.piSessionId);
+    if (session.id) {
+      piSessionIds.add(session.id);
     }
     if (session.piSessionFile) {
       files.add(canonicalLocalSessionFilePath(session.piSessionFile));

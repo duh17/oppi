@@ -83,7 +83,7 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     const snapshot = this.piTui.getActiveSession(sessionId) ?? session;
     return {
       sessionFile: snapshot.piSessionFile,
-      sessionId: snapshot.piSessionId,
+      sessionId: snapshot.id,
     };
   }
 

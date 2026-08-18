@@ -765,7 +765,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (!session || !this.isMirrorSession(session)) return null;
     return {
       sessionFile: session.piSessionFile,
-      sessionId: session.piSessionId,
+      sessionId: session.id,
       ...(active?.leafId ? { leafId: active.leafId } : {}),
     };
   }
@@ -1676,7 +1676,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const piSessionFile = canonicalSessionFilePath(state.sessionFile);
     const piSessionId = state.piSessionId?.trim();
     const existing = this.storage.listSessions().find((session) => {
-      if (piSessionId && (session.id === piSessionId || session.piSessionId === piSessionId)) {
+      if (piSessionId && session.id === piSessionId) {
         return true;
       }
       if (!piSessionFile) return false;
@@ -1779,7 +1779,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     else if (meaningfulSessionName(session.name, session.id) === undefined) delete session.name;
     if (model) session.model = model;
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
-    if (piSessionId) session.piSessionId = piSessionId;
     syncSessionWorktreeFromCwd(session, workspace, state.cwd, this.storage.getDataDir());
     mergePiSessionFile(session, piSessionFile);
     if (!session.firstMessage) {
@@ -1899,7 +1898,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       };
     }
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
-    if (state.piSessionId?.trim()) session.piSessionId = state.piSessionId.trim();
     mergePiSessionFile(session, state.sessionFile);
     if (!session.firstMessage) {
       session.firstMessage = firstUserMessageFromSessionFile(

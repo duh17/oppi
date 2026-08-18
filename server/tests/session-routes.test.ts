@@ -786,7 +786,6 @@ describe("sessions module", () => {
         cost: 0,
         piSessionFile: tracePath,
         piSessionFiles: [tracePath],
-        piSessionId: "pi-1",
       };
       const ctx = {
         storage: {

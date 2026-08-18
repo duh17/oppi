@@ -263,7 +263,6 @@ describe("AgentLaunchService", () => {
       const started = listSessions().find((session) => session.id === sessionId);
       if (!started) throw new Error("started session missing");
       const runtimeSession = structuredClone(started);
-      runtimeSession.piSessionId = "pi-runtime-session";
       runtimeSession.piSessionFile = "/tmp/pi-runtime-session.jsonl";
       runtimeSession.piSessionFiles = [runtimeSession.piSessionFile];
       listSessions()[0] = runtimeSession;
@@ -288,7 +287,6 @@ describe("AgentLaunchService", () => {
     expect(result.discarded).toBeUndefined();
     expect(deleteSession).not.toHaveBeenCalled();
     expect(result.session).toMatchObject({
-      piSessionId: "pi-runtime-session",
       piSessionFile: "/tmp/pi-runtime-session.jsonl",
       piSessionFiles: ["/tmp/pi-runtime-session.jsonl"],
     });

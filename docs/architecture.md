@@ -98,7 +98,7 @@ graph TD
   Store --> Client
 ```
 
-The adapters differ where ownership semantics differ: start, stop, abort, remote commands, queue control, and extension UI response delivery. Shared projection code owns Pi event translation, session mutation, media materialization, title and first-message policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `piSessionId` and canonical `piSessionFile`, so one terminal session appears as one Oppi row.
+The adapters differ where ownership semantics differ: start, stop, abort, remote commands, queue control, and extension UI response delivery. Shared projection code owns Pi event translation, session mutation, media materialization, title and first-message policy, summaries, and the SQLite read model. Live mirror and local JSONL import coalesce by `Session.id` (the Pi session UUID after import) and canonical `piSessionFile`, so one terminal session appears as one Oppi row.
 
 Persisted runtime ownership uses `Session.runtime == "oppi"` for server-owned SDK sessions and `Session.runtime == "pi-tui"` for terminal-owned mirror sessions. `SessionRuntimes` dispatches command, catch-up, pending UI, and snapshot calls by that field.
 

@@ -59,7 +59,6 @@ interface SessionProjectionRow {
   mirror_json: string | null;
   pi_session_file: string | null;
   pi_session_files_json: string | null;
-  pi_session_id: string | null;
   ephemeral: number;
   launch_idempotency_key: string | null;
   launch_source: string | null;
@@ -117,7 +116,6 @@ const SESSION_PROJECTION_COLUMNS = `
   mirror_json,
   pi_session_file,
   pi_session_files_json,
-  pi_session_id,
   ephemeral,
   launch_idempotency_key,
   launch_source,
@@ -155,7 +153,6 @@ const SESSION_COLUMN_DEFINITIONS = [
   ["mirror_json", "TEXT"],
   ["pi_session_file", "TEXT"],
   ["pi_session_files_json", "TEXT"],
-  ["pi_session_id", "TEXT"],
   ["ephemeral", "INTEGER NOT NULL DEFAULT 0"],
   ["agent_id", "TEXT"],
   ["agent_version", "INTEGER"],
@@ -221,8 +218,6 @@ export class SessionSqliteStore {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
       runtime: "oppi",
-      // Temporary dual-ID field: keep it only while it equals Session.id.
-      piSessionId: id,
     };
 
     this.saveSession(session);
@@ -267,7 +262,6 @@ export class SessionSqliteStore {
       normalized.mirror ? JSON.stringify(normalized.mirror) : null,
       normalized.piSessionFile ?? null,
       normalized.piSessionFiles ? JSON.stringify(normalized.piSessionFiles) : null,
-      normalized.piSessionId ?? null,
       normalized.ephemeral ? 1 : 0,
       normalized.launch?.agentId ?? null,
       normalized.launch?.agentVersion ?? null,
@@ -528,7 +522,6 @@ export class SessionSqliteStore {
         mirror_json TEXT,
         pi_session_file TEXT,
         pi_session_files_json TEXT,
-        pi_session_id TEXT,
         ephemeral INTEGER NOT NULL DEFAULT 0,
         agent_id TEXT,
         agent_version INTEGER,
@@ -685,7 +678,6 @@ export class SessionSqliteStore {
         mirror_json,
         pi_session_file,
         pi_session_files_json,
-        pi_session_id,
         ephemeral,
         agent_id,
         agent_version,
@@ -703,7 +695,7 @@ export class SessionSqliteStore {
         session_json,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         workspace_name = excluded.workspace_name,
@@ -732,7 +724,6 @@ export class SessionSqliteStore {
         mirror_json = excluded.mirror_json,
         pi_session_file = excluded.pi_session_file,
         pi_session_files_json = excluded.pi_session_files_json,
-        pi_session_id = excluded.pi_session_id,
         ephemeral = excluded.ephemeral,
         agent_id = excluded.agent_id,
         agent_version = excluded.agent_version,
@@ -996,7 +987,6 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
   const mirror = parseJsonValue<Session["mirror"]>(row.mirror_json, row.id, "mirror");
   if (mirror) session.mirror = mirror;
   if (row.pi_session_file !== null) session.piSessionFile = row.pi_session_file;
-  if (row.pi_session_id !== null) session.piSessionId = row.pi_session_id;
   if (row.ephemeral !== 0) session.ephemeral = true;
 
   const launch = parseJsonValue<Session["launch"]>(row.launch_metadata_json, row.id, "launch");
@@ -1151,9 +1141,6 @@ function normalizeDeclaredSession(session: Session): Session {
   }
   if (session.piSessionFiles && session.piSessionFiles.length > 0) {
     normalized.piSessionFiles = [...session.piSessionFiles];
-  }
-  if (session.piSessionId !== undefined && session.piSessionId !== null) {
-    normalized.piSessionId = session.piSessionId;
   }
   if (session.launch !== undefined && session.launch !== null) {
     normalized.launch = normalizeStoredLaunchIcon(session.launch) as unknown as Session["launch"];

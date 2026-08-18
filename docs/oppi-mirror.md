@@ -207,4 +207,4 @@ OPPI_MIRROR_AUTO_START=false pi
 
 ### The session appears twice
 
-The mirror session and local JSONL import must share the same `piSessionId` and canonical session file. If duplicates appear, check the server’s mirror identity coalescing and local-session import behavior.
+The mirror session and local JSONL import must share the same `Session.id` (the Pi session UUID) and canonical session file. If duplicates appear, check the server’s mirror identity coalescing and local-session import behavior.

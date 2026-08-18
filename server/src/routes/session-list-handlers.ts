@@ -235,7 +235,6 @@ export function createSessionListRouteHandlers(
     const recentDaysParam = Number.parseInt(url.searchParams.get("recentDays") ?? "", 10);
     const recentDays =
       Number.isFinite(recentDaysParam) && recentDaysParam > 0 ? recentDaysParam : 0;
-    const piSessionIdFilter = url.searchParams.get("piSessionId")?.trim();
     const serverNow = Date.now();
 
     helpers.compressedJson(
@@ -243,7 +242,6 @@ export function createSessionListRouteHandlers(
       res,
       listService.listRecentWorkspaceSessionSummaries({
         recentDays,
-        ...(piSessionIdFilter ? { piSessionId: piSessionIdFilter } : {}),
         nowMs: serverNow,
       }),
     );

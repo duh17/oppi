@@ -67,7 +67,7 @@ struct SessionIdentityTests {
         #expect(AgentIconContent.resolve(malformed.agentIcon) == .fallback)
     }
 
-    @Test func decodesPiSessionIdOnSessionAndSummary() throws {
+    @Test func leftoverPiSessionIdIsNotAPublicSessionIdentity() throws {
         let json = Data("""
         {
           "id": "session-1",
@@ -84,9 +84,11 @@ struct SessionIdentityTests {
 
         let session = try JSONDecoder().decode(Session.self, from: json)
         let summary = try JSONDecoder().decode(SessionSummary.self, from: json)
+        let encodedSession = try JSONSerialization.jsonObject(with: JSONEncoder().encode(session)) as? [String: Any]
 
-        #expect(session.piSessionId == "pi-session-uuid")
-        #expect(summary.piSessionId == "pi-session-uuid")
-        #expect(summary.session.piSessionId == "pi-session-uuid")
+        #expect(session.id == "session-1")
+        #expect(summary.id == "session-1")
+        #expect(summary.session.id == "session-1")
+        #expect(encodedSession?["piSessionId"] == nil)
     }
 }

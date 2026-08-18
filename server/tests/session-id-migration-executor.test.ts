@@ -420,11 +420,11 @@ describe("session ID migration executor", () => {
         }>;
         expect(rows.map((row) => row.id).sort()).toEqual([PI_A, PI_C]);
         const child = rows.find((row) => row.id === PI_A);
-        expect(child?.pi_session_id).toBe(PI_A);
+        expect(child?.pi_session_id).toBeNull();
         expect(child?.parent_session_id).toBe("removed-parent");
         const session = JSON.parse(child?.session_json ?? "{}") as Record<string, unknown>;
         expect(session.id).toBe(PI_A);
-        expect(session.piSessionId).toBe(PI_A);
+        expect(session).not.toHaveProperty("piSessionId");
         expect(session.piSessionFile).toBe(current);
         expect((session.launch as { parentSessionId?: string }).parentSessionId).toBe(PI_C);
         expect(JSON.parse(child?.launch_metadata_json ?? "{}")).toMatchObject({

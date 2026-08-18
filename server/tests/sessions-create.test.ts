@@ -211,7 +211,7 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
       if (session?.runtime === "pi-tui") {
         return {
           sessionFile: session.piSessionFile,
-          sessionId: session.piSessionId,
+          sessionId: session.id,
         };
       }
       return sessions.refreshSessionState(sessionId);
@@ -966,7 +966,6 @@ describe("POST /workspaces/:id/sessions", () => {
     const existing = makeSession({
       id: "existing-session",
       workspaceId: "old-workspace",
-      piSessionId: "pi-coalesce-1",
       piSessionFile: jsonl,
       piSessionFiles: [jsonl],
     });
@@ -1008,7 +1007,7 @@ describe("POST /workspaces/:id/sessions", () => {
     }
   });
 
-  it("persists piSessionId when importing a local JSONL for the first time", async () => {
+  it("uses the JSONL header id as Session.id and does not persist a second identity", async () => {
     const root = getPiSessionsRoot();
     const dir = mkdtempSync(join(root, "oppi-import-new-"));
     const jsonl = join(dir, "session.jsonl");
@@ -1026,7 +1025,7 @@ describe("POST /workspaces/:id/sessions", () => {
       expect(mock.responses[0]!.status).toBe(201);
       const saved = mock.storage.saveSession.mock.calls[0]![0] as Session;
       expect(saved.id).toBe("pi-new-1");
-      expect(saved.piSessionId).toBe("pi-new-1");
+      expect(saved).not.toHaveProperty("piSessionId");
       expect(saved.piSessionFile).toBe(jsonl);
       expect(saved.runtime).toBe("pi-tui");
       expect(saved.status).toBe("stopped");

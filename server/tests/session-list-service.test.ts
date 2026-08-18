@@ -174,6 +174,7 @@ describe("SessionListService", () => {
       });
       expect(result.sessions[1]).toMatchObject({ id: "stored-ready", pendingAskCount: 0 });
       expect(result.sessions[1]).not.toHaveProperty("piSessionFile");
+      expect(result.sessions[1]).not.toHaveProperty("piSessionId");
       expect(result.sessions[1]).not.toHaveProperty("warnings");
     });
   });

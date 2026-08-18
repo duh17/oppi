@@ -54,8 +54,7 @@
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
-        ],
-        "piSessionId": "uuid-abc-123"
+        ]
       },
       "currentSeq": 42
     },
@@ -113,8 +112,7 @@
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
-        ],
-        "piSessionId": "uuid-abc-123"
+        ]
       }
     },
     "session_summary": {
@@ -206,7 +204,6 @@
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
         ],
-        "piSessionId": "uuid-abc-123",
         "control": {
           "domain": "skills",
           "intent": "revise",
@@ -308,8 +305,7 @@
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
-        ],
-        "piSessionId": "uuid-abc-123"
+        ]
       }
     },
     "state_icon_emoji": {
@@ -361,8 +357,7 @@
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
-        ],
-        "piSessionId": "uuid-abc-123"
+        ]
       }
     },
     "state_icon_genmoji": {
@@ -415,8 +410,7 @@
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
-        ],
-        "piSessionId": "uuid-abc-123"
+        ]
       }
     },
     "state_icon_malformed": {
@@ -468,8 +462,7 @@
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
-        ],
-        "piSessionId": "uuid-abc-123"
+        ]
       }
     },
     "state_icon_future": {
@@ -521,8 +514,7 @@
         "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
         "piSessionFiles": [
           "/tmp/pi-sessions/abc123.jsonl"
-        ],
-        "piSessionId": "uuid-abc-123"
+        ]
       }
     },
     "session_ended": {

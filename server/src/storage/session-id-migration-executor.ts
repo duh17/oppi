@@ -799,7 +799,7 @@ function rewriteSessionState(
             `refuses to keep non-UUID identity as Session.id: ${session.piSessionId}`,
           );
         }
-        if (!session.piSessionId && normalizeUuid(target)) session.piSessionId = target;
+        delete session.piSessionId;
         rewriteLaunchParent(
           session,
           rewriteLocations.has(
@@ -810,8 +810,8 @@ function rewriteSessionState(
         next.session_json = JSON.stringify(session);
         copyProjectedFields(next, session, columns);
       }
-      if (columns.has("pi_session_id") && normalizeUuid(target)) {
-        next.pi_session_id = target;
+      if (columns.has("pi_session_id")) {
+        next.pi_session_id = null;
       }
       if (
         columns.has("parent_session_id") &&

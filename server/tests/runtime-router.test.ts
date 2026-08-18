@@ -87,7 +87,7 @@ function makeRouter(
     getEventRing: vi.fn(() => ({ length: 2, capacity: 500 })),
     getSessionTraceState: vi.fn(() => ({
       sessionFile: session.piSessionFile,
-      sessionId: session.piSessionId,
+      sessionId: session.id,
       ...(options.mirrorLeafId ? { leafId: options.mirrorLeafId } : {}),
     })),
     isSessionConnected: vi.fn(() => mirrorConnected),
@@ -225,7 +225,6 @@ describe("SessionRuntimes", () => {
     const session = makeSession({
       runtime: "pi-tui",
       piSessionFile: "/tmp/mirror.jsonl",
-      piSessionId: "pi-mirror-1",
     });
     const { router, managed, mirror } = makeRouter(session, { mirrorLeafId: "leaf-1" });
 
@@ -234,7 +233,7 @@ describe("SessionRuntimes", () => {
     expect(router.getToolFullOutputPath("sess-1", "tool-1")).toBe("/tmp/mirror-full-output.txt");
     await expect(router.refreshSessionState("sess-1")).resolves.toEqual({
       sessionFile: "/tmp/mirror.jsonl",
-      sessionId: "pi-mirror-1",
+      sessionId: "sess-1",
       leafId: "leaf-1",
     });
     expect(managed.refreshSessionState).not.toHaveBeenCalled();

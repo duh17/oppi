@@ -115,7 +115,6 @@ export class SessionListService {
 
   listRecentWorkspaceSessionSummaries(params: {
     recentDays: number;
-    piSessionId?: string;
     nowMs?: number;
   }): RecentWorkspaceSessionSummariesResult {
     const serverNow = params.nowMs ?? Date.now();
@@ -142,7 +141,7 @@ export class SessionListService {
       );
     const projectedSessions = [...workspaceSessions, ...controlSessions];
 
-    let sessions = this.buildManagedSessionListRows(
+    const sessions = this.buildManagedSessionListRows(
       mergeActiveSessionsAcrossWorkspaces(
         this.deps.sessionRuntimes,
         projectedSessions,
@@ -150,10 +149,6 @@ export class SessionListService {
       ),
       collectPendingAttentionCounts(this.deps.sessionRuntimes),
     );
-
-    if (params.piSessionId) {
-      sessions = sessions.filter((session) => session.piSessionId === params.piSessionId);
-    }
 
     return { sessions };
   }

@@ -52,7 +52,6 @@ const TEST_SESSION: Session = {
   launch: TEST_SESSION_LAUNCH,
   piSessionFile: "/tmp/pi-sessions/abc123.jsonl",
   piSessionFiles: ["/tmp/pi-sessions/abc123.jsonl"],
-  piSessionId: "uuid-abc-123",
 };
 
 const TEST_SESSION_SUMMARY: SessionSummary = {

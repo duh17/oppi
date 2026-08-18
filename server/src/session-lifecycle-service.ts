@@ -244,7 +244,6 @@ export class SessionLifecycleService {
           runtime: "oppi",
         }
       : this.deps.storage.createSession(sessionName, requestedModel);
-    session.piSessionId = session.id;
     session.workspaceId = undefined;
     session.workspaceName = undefined;
     session.worktreeId = undefined;
@@ -530,9 +529,9 @@ export class SessionLifecycleService {
 
     // Extract name and first message from the local session JSONL.
     const localMeta = await this.readLocalSessionMeta(validation.path);
-    const existingSession = this.findSessionByPiIdentity({
+    const existingSession = this.findImportedSession({
       path: validation.path,
-      piSessionId: localHeader.piSessionId,
+      sessionId: localHeader.sessionId,
     });
     if (existingSession) {
       existingSession.workspaceId = params.workspace.id;
@@ -544,7 +543,6 @@ export class SessionLifecycleService {
       existingSession.piSessionFiles = Array.from(
         new Set([...(existingSession.piSessionFiles ?? []), validation.path]),
       );
-      if (localHeader.piSessionId) existingSession.piSessionId = localHeader.piSessionId;
       if (!existingSession.firstMessage && localMeta?.firstMessage) {
         existingSession.firstMessage = localMeta.firstMessage.slice(0, 200);
       }
@@ -571,11 +569,11 @@ export class SessionLifecycleService {
       // from the imported JSONL/session state.
       includeWorkspaceDefault: false,
     });
-    if (!localHeader.piSessionId) {
+    if (!localHeader.sessionId) {
       throw new SessionLifecycleError("Cannot read session identity from file", 400);
     }
     const session = this.deps.storage.createSession(sessionName, modelSelection.model, {
-      id: localHeader.piSessionId,
+      id: localHeader.sessionId,
     });
 
     session.workspaceId = params.workspace.id;
@@ -588,7 +586,6 @@ export class SessionLifecycleService {
     }
     session.piSessionFile = validation.path;
     session.piSessionFiles = [validation.path];
-    if (localHeader.piSessionId) session.piSessionId = localHeader.piSessionId;
     session.runtime = "pi-tui";
     session.status = "stopped";
     session.mirror = { status: "disconnected" };
@@ -657,7 +654,6 @@ export class SessionLifecycleService {
     if (latestSource.worktreeId) {
       forkSession.worktreeId = latestSource.worktreeId;
     }
-    forkSession.piSessionId = forkSession.id;
 
     if (latestSource.thinkingLevel) forkSession.thinkingLevel = latestSource.thinkingLevel;
     if (latestSource.contextWindow) forkSession.contextWindow = latestSource.contextWindow;
@@ -875,14 +871,11 @@ export class SessionLifecycleService {
     }
   }
 
-  private sessionMatchesPiIdentity(
+  private sessionMatchesImportedIdentity(
     session: Session,
-    identity: { path: string; piSessionId?: string },
+    identity: { path: string; sessionId?: string },
   ): boolean {
-    if (
-      identity.piSessionId &&
-      (session.id === identity.piSessionId || session.piSessionId === identity.piSessionId)
-    ) {
+    if (identity.sessionId && session.id === identity.sessionId) {
       return true;
     }
     if (
@@ -896,19 +889,19 @@ export class SessionLifecycleService {
     );
   }
 
-  private findSessionByPiIdentity(identity: {
+  private findImportedSession(identity: {
     path: string;
-    piSessionId?: string;
+    sessionId?: string;
   }): Session | undefined {
     return this.deps.storage
       .listSessions()
-      .find((session) => this.sessionMatchesPiIdentity(session, identity));
+      .find((session) => this.sessionMatchesImportedIdentity(session, identity));
   }
 
   /** Read identity fields from a pi session JSONL header (first line). */
   private async readLocalSessionHeader(
     filePath: string,
-  ): Promise<{ cwd: string; piSessionId?: string } | null> {
+  ): Promise<{ cwd: string; sessionId?: string } | null> {
     try {
       const content = await readFile(filePath, "utf8");
       const firstLine = content.split("\n")[0];
@@ -918,7 +911,7 @@ export class SessionLifecycleService {
       if (!cwd) return null;
       return {
         cwd,
-        ...(typeof header.id === "string" ? { piSessionId: header.id } : {}),
+        ...(typeof header.id === "string" ? { sessionId: header.id } : {}),
       };
     } catch {
       return null;

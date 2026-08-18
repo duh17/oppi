@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { openDatabase } from "../src/sqlite-compat.js";
+
 import * as PiSdk from "@earendil-works/pi-coding-agent";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -89,8 +91,24 @@ describe("Pi-native session identity cutover", () => {
 
       expect(session.id).toMatch(UUID_RE);
       expect(session.id).not.toHaveLength(8);
-      expect(session.piSessionId).toBe(session.id);
+      expect(session).not.toHaveProperty("piSessionId");
       expect(store.getSession(session.id)?.id).toBe(session.id);
+      expect(store.getSession(session.id)).not.toHaveProperty("piSessionId");
+      store.close();
+
+      const db = openDatabase(join(dir, "session-state.db"));
+      try {
+        const columns = (
+          db.prepare("PRAGMA table_info(session_state_sessions)").all() as Array<{ name: string }>
+        ).map((row) => row.name);
+        expect(columns).not.toContain("pi_session_id");
+        const row = db
+          .prepare("SELECT session_json FROM session_state_sessions WHERE id = ?")
+          .get(session.id) as { session_json: string };
+        expect(JSON.parse(row.session_json)).not.toHaveProperty("piSessionId");
+      } finally {
+        db.close();
+      }
     });
 
     it("passes the persisted Session.id into SessionManager.create", () => {
@@ -210,7 +228,7 @@ describe("Pi-native session identity cutover", () => {
 
         expect(result.created).toBe(true);
         expect(result.session.id).toBe(headerId);
-        expect(result.session.piSessionId).toBe(headerId);
+        expect(result.session).not.toHaveProperty("piSessionId");
         expect(result.session.piSessionFile).toBe(jsonlPath);
         expect(createSession).toHaveBeenCalledWith(undefined, undefined, { id: headerId });
       } finally {
@@ -265,7 +283,7 @@ describe("Pi-native session identity cutover", () => {
       const created = [...sessions.values()][0];
       expect(ack?.sessionId).toBe("019e1ccc-2222-7222-8222-222222222222");
       expect(created?.id).toBe("019e1ccc-2222-7222-8222-222222222222");
-      expect(created?.piSessionId).toBe("019e1ccc-2222-7222-8222-222222222222");
+      expect(created).not.toHaveProperty("piSessionId");
       expect(created?.piSessionFile).toBe("/tmp/mirror-host/session.jsonl");
       expect(mintedFallback).toBe(0);
     });
