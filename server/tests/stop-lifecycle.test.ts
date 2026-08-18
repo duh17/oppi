@@ -1204,99 +1204,27 @@ describe("stop lifecycle", () => {
     }
   });
 
-  it.each(["newSession", "fork"] as const)(
-    "bounds stop queued behind %s teardown stuck in session_shutdown",
-    async (method) => {
-      vi.useFakeTimers();
-      try {
-        const { manager, active, events, saveSession } = makeManagerHarness("ready");
-        const {
-          backend,
-          finishShutdown,
-          oldSessionDispose,
-          replacementSessionDispose,
-          replacementSettled,
-        } = makeNeverResolvingReplacementBackend(method);
-        active.sdkBackend = backend;
-        const runtimeManager = (
-          manager as unknown as {
-            stopFlowCoordinator: { deps: { runtimeManager: WorkspaceRuntime } };
-          }
-        ).stopFlowCoordinator.deps.runtimeManager;
-        const command =
-          method === "newSession"
-            ? { type: "new_session" }
-            : { type: "fork", entryId: "entry-1" };
-        const replacement = manager.forwardClientCommand("s1", command, `request-${method}`);
-        await flushMicrotasks(10);
-        expect(backend.isRuntimeLifecycleTransactionExclusive).toBe(true);
+  it.each(["new_session", "fork"] as const)(
+    "rejects in-wrapper %s without starting replacement teardown",
+    async (type) => {
+      const { manager, active, events } = makeManagerHarness("ready");
+      const { backend } = makeNeverResolvingReplacementBackend(
+        type === "new_session" ? "newSession" : "fork",
+      );
+      active.sdkBackend = backend;
 
-        let stopSettled = false;
-        const stop = manager.stopSession("s1").then(() => {
-          stopSettled = true;
-        });
-        await flushMicrotasks(10);
+      await manager.forwardClientCommand(
+        "s1",
+        type === "new_session" ? { type: "new_session" } : { type: "fork", entryId: "entry-1" },
+        `request-${type}`,
+      );
 
-        let runtimeLockReleased = false;
-        const runtimeProbe = backend
-          .withRuntimeLifecycleTransaction("probe", async () => undefined)
-          .then(
-            () => {
-              throw new Error("Disposed backend unexpectedly admitted runtime work");
-            },
-            () => {
-              runtimeLockReleased = true;
-            },
-          );
-        let sessionLockReleased = false;
-        const sessionProbe = runtimeManager.withSessionLock("s1", async () => {
-          sessionLockReleased = true;
-        });
-        let workspaceLockReleased = false;
-        const workspaceProbe = runtimeManager.withWorkspaceLock("w1", async () => {
-          workspaceLockReleased = true;
-        });
-
-        await vi.advanceTimersByTimeAsync(6_000);
-        await flushMicrotasks(20);
-
-        const bounded = {
-          stopSettled,
-          active: manager.isActive("s1"),
-          terminalOutcomes: events.filter(
-            (event) => event.type === "stop_confirmed" || event.type === "stop_failed",
-          ).length,
-          oldSessionDisposals: oldSessionDispose.mock.calls.length,
-          runtimeLockReleased,
-          sessionLockReleased,
-          workspaceLockReleased,
-        };
-        const persistedAtBound = saveSession.mock.calls.length;
-        const eventsAtBound = events.length;
-
-        // Release the synthetic Pi hook so the pre-fix red run exits cleanly.
-        finishShutdown();
-        await replacementSettled;
-        await Promise.all([replacement, stop, runtimeProbe, sessionProbe, workspaceProbe]);
-        await flushMicrotasks(10);
-
-        expect(bounded).toEqual({
-          stopSettled: true,
-          active: false,
-          terminalOutcomes: 1,
-          oldSessionDisposals: 1,
-          runtimeLockReleased: true,
-          sessionLockReleased: true,
-          workspaceLockReleased: true,
-        });
-        expect(replacementSessionDispose).toHaveBeenCalledOnce();
-        expect(saveSession).toHaveBeenCalledTimes(persistedAtBound);
-        expect(events).toHaveLength(eventsAtBound);
-        expect(events.filter((event) => event.type === "command_result")).toHaveLength(0);
-      } finally {
-        vi.clearAllTimers();
-        vi.useRealTimers();
-      }
+      expect(backend.isRuntimeLifecycleTransactionExclusive).toBe(false);
+      const result = events.find((event) => event.type === "command_result");
+      expect(result).toMatchObject({ success: false, command: type });
+      expect(
+        (result as Extract<ServerMessage, { type: "command_result" }>).error,
+      ).toMatch(/Oppi lifecycle|not allowed|distinct canonical/i);
     },
   );
 

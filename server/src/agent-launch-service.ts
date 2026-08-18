@@ -2,7 +2,7 @@ import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { existsSync, statSync } from "node:fs";
 
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
-import { generateId } from "./id.js";
+import { mintSessionId } from "./id.js";
 import { AgentConfigurationError, type AgentConfigurationFailure } from "./agent-launch-errors.js";
 import {
   isRequiredModelUnavailableError,
@@ -281,7 +281,7 @@ export class AgentLaunchService {
     const agentIcon = request.agentId ? request.agent.icon : undefined;
     const session: Session = idempotencyKey
       ? {
-          id: generateId(8),
+          id: mintSessionId(),
           name: sessionName,
           status: "ready",
           createdAt: now,
@@ -293,6 +293,7 @@ export class AgentLaunchService {
           runtime: "oppi",
         }
       : this.deps.storage.createSession(sessionName, modelSelection.model);
+    session.piSessionId = session.id;
 
     session.workspaceId = request.target.workspace.id;
     session.workspaceName = request.target.workspace.name;

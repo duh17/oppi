@@ -14,7 +14,7 @@ import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
 import { DEFAULT_AGENT_ID, DEFAULT_AGENT_TOOL_NAMES } from "./default-agent.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { isPathWithinRoot } from "./git-utils.js";
-import { generateId } from "./id.js";
+import { mintSessionId } from "./id.js";
 import {
   canResumeStoppedMirrorAsOppi,
   promoteStoppedMirrorToOppi,
@@ -30,7 +30,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { isRequiredModelUnavailableError } from "./model-resolution.js";
 import { createLogger } from "./logger.js";
 import type { SessionRuntimes } from "./runtime-router.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { forkPiSessionFrom, resolveSdkSessionCwd } from "./sdk-backend.js";
 import { deleteSessionAttachments } from "./session-attachments.js";
 import {
   DEFAULT_SESSION_JSONL_META_READ_BYTES,
@@ -232,7 +232,7 @@ export class SessionLifecycleService {
     const sessionName = params.name?.trim() || "Oppi Control";
     const session: Session = idempotencyKey
       ? {
-          id: generateId(8),
+          id: mintSessionId(),
           name: sessionName,
           status: "ready",
           createdAt: now,
@@ -244,6 +244,7 @@ export class SessionLifecycleService {
           runtime: "oppi",
         }
       : this.deps.storage.createSession(sessionName, requestedModel);
+    session.piSessionId = session.id;
     session.workspaceId = undefined;
     session.workspaceName = undefined;
     session.worktreeId = undefined;
@@ -570,7 +571,12 @@ export class SessionLifecycleService {
       // from the imported JSONL/session state.
       includeWorkspaceDefault: false,
     });
-    const session = this.deps.storage.createSession(sessionName, modelSelection.model);
+    if (!localHeader.piSessionId) {
+      throw new SessionLifecycleError("Cannot read session identity from file", 400);
+    }
+    const session = this.deps.storage.createSession(sessionName, modelSelection.model, {
+      id: localHeader.piSessionId,
+    });
 
     session.workspaceId = params.workspace.id;
     session.workspaceName = params.workspace.name;
@@ -651,21 +657,35 @@ export class SessionLifecycleService {
     if (latestSource.worktreeId) {
       forkSession.worktreeId = latestSource.worktreeId;
     }
-    forkSession.piSessionFile = sourceSessionFile;
-    forkSession.piSessionFiles = Array.from(
-      new Set([...(latestSource.piSessionFiles || []), sourceSessionFile]),
-    );
+    forkSession.piSessionId = forkSession.id;
 
     if (latestSource.thinkingLevel) forkSession.thinkingLevel = latestSource.thinkingLevel;
     if (latestSource.contextWindow) forkSession.contextWindow = latestSource.contextWindow;
+
+    const forkCwd = resolveSdkSessionCwd(params.workspace, forkSession, {
+      dataDir: this.deps.storage.getDataDir(),
+    });
+    let forkedFile: string;
+    try {
+      const forked = forkPiSessionFrom(sourceSessionFile, forkCwd, forkSession.id);
+      if (!forked.sessionFile) {
+        throw new SessionLifecycleError("Failed to create forked session file", 500);
+      }
+      forkedFile = forked.sessionFile;
+    } catch (error: unknown) {
+      this.deps.storage.deleteSession(forkSession.id);
+      throw error;
+    }
+    forkSession.piSessionFile = forkedFile;
+    forkSession.piSessionFiles = [forkedFile];
 
     this.deps.storage.saveSession(forkSession);
 
     try {
       await this.deps.sessions.startSession(forkSession.id, params.workspace);
       await this.deps.sessions.runCommand(forkSession.id, {
-        type: "fork",
-        entryId: params.entryId,
+        type: "navigate_tree",
+        targetId: params.entryId,
       });
       await this.deps.sessionRuntimes.refreshSessionState(forkSession.id);
     } catch (error: unknown) {
@@ -859,7 +879,10 @@ export class SessionLifecycleService {
     session: Session,
     identity: { path: string; piSessionId?: string },
   ): boolean {
-    if (identity.piSessionId && session.piSessionId === identity.piSessionId) {
+    if (
+      identity.piSessionId &&
+      (session.id === identity.piSessionId || session.piSessionId === identity.piSessionId)
+    ) {
       return true;
     }
     if (

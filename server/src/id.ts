@@ -2,7 +2,7 @@
  * Generate a URL-safe random ID. Replaces nanoid — zero deps.
  * Uses crypto.randomBytes with base64url encoding (A-Za-z0-9_-).
  */
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 export function generateId(size: number): string {
   // base64url produces ceil(n * 4/3) chars from n bytes.
@@ -10,4 +10,9 @@ export function generateId(size: number): string {
   return randomBytes(Math.ceil(size * 0.75))
     .toString("base64url")
     .slice(0, size);
+}
+
+/** Mint the canonical Oppi/Pi session identity before the first persist. */
+export function mintSessionId(): string {
+  return randomUUID();
 }

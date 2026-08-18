@@ -382,8 +382,8 @@ export class Storage {
 
   // ─── Sessions ───
 
-  createSession(name?: string, model?: string): Session {
-    return this.sessionStore.createSession(name, model);
+  createSession(name?: string, model?: string, options?: { id?: string }): Session {
+    return this.sessionStore.createSession(name, model, options);
   }
 
   saveSession(session: Session): void {

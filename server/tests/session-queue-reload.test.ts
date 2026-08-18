@@ -1053,40 +1053,22 @@ describe("SdkBackend lifecycle replacement transactions", () => {
   });
 
   it.each(["newSession", "fork"] as const)(
-    "serializes %s behind reload",
+    "rejects in-wrapper %s instead of replacing the live runtime",
     async (method) => {
-      const reloadGate = deferred<void>();
       const runtimeCall = vi.fn(async () => ({ cancelled: true }));
-      const piSession = {
-        isStreaming: false,
-        isCompacting: false,
-        reload: vi.fn(() => reloadGate.promise),
-        extensionRunner: { getAllRegisteredTools: () => [] },
-      };
-      const runtime = {
-        session: piSession,
-        newSession: runtimeCall,
-        fork: runtimeCall,
-        dispose: vi.fn(async () => undefined),
-      };
       const backend = Object.create(SdkBackend.prototype) as SdkBackend;
       Object.assign(backend as unknown as Record<string, unknown>, {
         disposed: false,
-        runtime,
+        runtime: {
+          newSession: runtimeCall,
+          fork: runtimeCall,
+        },
       });
 
-      const reload = backend.reloadResources();
-      await flushMicrotasks();
-      expect(piSession.reload).toHaveBeenCalledOnce();
-
-      const replacement = method === "newSession" ? backend.newSession() : backend.fork("entry-1");
-      await flushMicrotasks();
+      await expect(
+        method === "newSession" ? backend.newSession() : backend.fork("entry-1"),
+      ).rejects.toThrow(/Oppi lifecycle|not allowed|distinct canonical/i);
       expect(runtimeCall).not.toHaveBeenCalled();
-
-      reloadGate.resolve();
-      await reload;
-      await replacement;
-      expect(runtimeCall).toHaveBeenCalledOnce();
     },
   );
 

@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { generateId } from "../id.js";
+import { mintSessionId } from "../id.js";
 import { ICON_ASSET_ID_PATTERN, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
@@ -207,10 +207,11 @@ export class SessionSqliteStore {
     this.db.close();
   }
 
-  createSession(name?: string, model?: string): Session {
+  createSession(name?: string, model?: string, options?: { id?: string }): Session {
     const now = Date.now();
+    const id = options?.id ?? mintSessionId();
     const session: Session = {
-      id: generateId(8),
+      id,
       name,
       status: "ready",
       createdAt: now,
@@ -220,6 +221,8 @@ export class SessionSqliteStore {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
       runtime: "oppi",
+      // Temporary dual-ID field: keep it only while it equals Session.id.
+      piSessionId: id,
     };
 
     this.saveSession(session);

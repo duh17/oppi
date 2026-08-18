@@ -468,7 +468,7 @@ export const QUEUE_RECONCILIATION_REQUIRED_ERROR =
 
 export const SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS = 5_000;
 
-type SdkRuntimeLifecycleOperation = "reload" | "new_session" | "fork" | "stop";
+type SdkRuntimeLifecycleOperation = "reload" | "stop";
 
 type SdkBackendForcedDisposeResult = {
   disposal: "forced";
@@ -573,9 +573,30 @@ function syncSessionIdentityFromManager(session: Session, manager: PiSessionMana
   }
 
   const piSessionId = manager.getSessionId();
+  // Temporary dual-ID field. Session.id is the canonical identity and is never
+  // replaced here; keep piSessionId only while it reports the same UUID.
   if (piSessionId) {
     session.piSessionId = piSessionId;
   }
+}
+
+/** Product fork: mint Session.id first, then create a distinct Pi JSONL with that id. */
+export function forkPiSessionFrom(
+  sourcePath: string,
+  targetCwd: string,
+  id: string,
+): { sessionFile?: string; sessionId: string } {
+  const manager = PiSessionManager.forkFrom(sourcePath, targetCwd, undefined, { id });
+  const sessionId = manager.getSessionId();
+  if (sessionId !== id) {
+    throw new Error(
+      `Forked Pi session id ${sessionId} does not match minted Session.id ${id}`,
+    );
+  }
+  return {
+    sessionFile: manager.getSessionFile(),
+    sessionId,
+  };
 }
 
 /**
@@ -672,13 +693,13 @@ export class SdkBackend {
   ): PiSessionManager {
     const piSessionFile = session.piSessionFile;
     if (session.ephemeral) {
-      return PiSessionManager.inMemory(cwd);
+      return PiSessionManager.inMemory(cwd, { id: session.id });
     }
     if (piSessionFile) {
       return PiSessionManager.open(piSessionFile, undefined, cwdExistsOverride);
     }
 
-    const manager = PiSessionManager.create(cwd);
+    const manager = PiSessionManager.create(cwd, undefined, { id: session.id });
     const sessionFile = manager.getSessionFile();
     if (cwdExistsOverride === cwd || !sessionFile) {
       return manager;
@@ -1361,11 +1382,6 @@ export class SdkBackend {
     return context;
   }
 
-  private async refreshRuntimeSessionBindings(): Promise<void> {
-    this.subscribeToCurrentSession();
-    await this.bindCurrentSessionExtensions();
-  }
-
   private static applyDefaultQueueModes(session: AgentSession): void {
     // AgentSession's public queue setters persist to Pi user settings. Oppi
     // wants these delivery defaults session-locally without rewriting
@@ -1434,41 +1450,14 @@ export class SdkBackend {
   }
 
   async newSession(): Promise<{ cancelled: boolean }> {
-    return this.withExclusiveRuntimeOperation(
-      "new_session",
-      async () => {
-        if (this.disposed) return { cancelled: true };
-        this.assertRuntimeIdle("new_session");
-        const parentSession = this.piSession.sessionFile;
-        const result = await this.runtime.newSession({ parentSession });
-        this.assertReplacementContinuationActive("new_session");
-        if (!result.cancelled) {
-          this.restoreSessionManagerDisplayCwd();
-          await this.refreshRuntimeSessionBindings();
-          this.assertReplacementContinuationActive("new_session");
-        }
-        return result;
-      },
-      { allowDisposed: true },
+    throw new Error(
+      "new_session is not allowed inside an Oppi-focused session; create a distinct canonical session through Oppi lifecycle routes",
     );
   }
 
-  async fork(entryId: string): Promise<{ cancelled: boolean; selectedText?: string }> {
-    return this.withExclusiveRuntimeOperation(
-      "fork",
-      async () => {
-        if (this.disposed) return { cancelled: true };
-        this.assertRuntimeIdle("fork");
-        const result = await this.runtime.fork(entryId);
-        this.assertReplacementContinuationActive("fork");
-        if (!result.cancelled) {
-          this.restoreSessionManagerDisplayCwd();
-          await this.refreshRuntimeSessionBindings();
-          this.assertReplacementContinuationActive("fork");
-        }
-        return result;
-      },
-      { allowDisposed: true },
+  async fork(_entryId: string): Promise<{ cancelled: boolean; selectedText?: string }> {
+    throw new Error(
+      "fork is not allowed inside an Oppi-focused session; create a distinct canonical session through Oppi lifecycle routes",
     );
   }
 
@@ -1976,12 +1965,6 @@ export class SdkBackend {
     this.forcedDisposalResult ??= result;
     this.shutdownCleanupPromise ??= Promise.resolve(result);
     return result;
-  }
-
-  private assertReplacementContinuationActive(operation: SdkRuntimeLifecycleOperation): void {
-    if (!this.disposed) return;
-    this.disposeLateLifecycleContinuation(operation, this.piSession);
-    throw new Error("Session backend is disposed");
   }
 
   private disposeLateLifecycleContinuation(

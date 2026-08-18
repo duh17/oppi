@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import type { IncomingMessage, ServerResponse } from "node:http";
+
+vi.mock("../src/sdk-backend.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/sdk-backend.js")>();
+  return {
+    ...actual,
+    forkPiSessionFrom: vi.fn((_sourcePath: string, _cwd: string, id: string) => ({
+      sessionFile: `/tmp/forked-${id}.jsonl`,
+      sessionId: id,
+    })),
+  };
+});
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,12 +120,13 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
         updatedAt: 1,
       }),
     }),
-    createSession: vi.fn().mockImplementation((name?: string, model?: string) =>
-      makeSession({
-        id: `sess-${Date.now()}`,
-        name: name ?? undefined,
-        model: model ?? "test-model",
-      }),
+    createSession: vi.fn().mockImplementation(
+      (name?: string, model?: string, options?: { id?: string }) =>
+        makeSession({
+          id: options?.id ?? `sess-${Date.now()}`,
+          name: name ?? undefined,
+          model: model ?? "test-model",
+        }),
     ),
     saveSession: vi.fn(),
     getSession: vi.fn(),
@@ -1013,6 +1025,7 @@ describe("POST /workspaces/:id/sessions", () => {
       expect(mock.responses).toHaveLength(1);
       expect(mock.responses[0]!.status).toBe(201);
       const saved = mock.storage.saveSession.mock.calls[0]![0] as Session;
+      expect(saved.id).toBe("pi-new-1");
       expect(saved.piSessionId).toBe("pi-new-1");
       expect(saved.piSessionFile).toBe(jsonl);
       expect(saved.runtime).toBe("pi-tui");
@@ -1067,14 +1080,14 @@ describe("POST /workspaces/:id/sessions/:sessionId/fork", () => {
     await dispatchFork(mock, { entryId: "entry-user-1" });
 
     expect(mock.sessions.runCommand).toHaveBeenCalledWith("fork-1", {
-      type: "fork",
-      entryId: "entry-user-1",
+      type: "navigate_tree",
+      targetId: "entry-user-1",
     });
 
     const savedFork = mock.storage.saveSession.mock.calls[0]![0] as Session;
     expect(savedFork.workspaceId).toBe("ws-1");
-    expect(savedFork.piSessionFile).toBe("/tmp/source.jsonl");
-    expect(savedFork.piSessionFiles).toEqual(["/tmp/older.jsonl", "/tmp/source.jsonl"]);
+    expect(savedFork.piSessionFile).toBe("/tmp/forked-fork-1.jsonl");
+    expect(savedFork.piSessionFiles).toEqual(["/tmp/forked-fork-1.jsonl"]);
     expect(savedFork.thinkingLevel).toBe("medium");
     expect(savedFork.contextWindow).toBe(200_000);
 

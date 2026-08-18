@@ -447,14 +447,6 @@ describe("SdkBackend sandbox", () => {
         .extensions.find((extension) => extension.path === "<inline:oppi>");
       expect(sandboxInlineOppi).toBeUndefined();
       expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
-
-      await backend.newSession();
-
-      expect(runtime.services.cwd).toBe("/workspace/sandbox-secrets-test");
-      expect(runtime.session.sessionManager.getCwd()).toBe("/workspace/sandbox-secrets-test");
-      expect(runtime.session.sessionManager.getHeader()?.cwd).toBe(
-        "/workspace/sandbox-secrets-test",
-      );
     } finally {
       if (backend) await backend.dispose();
       sdkBackendType._gondolinManager = previousManager;
@@ -1900,7 +1892,7 @@ describe("SdkBackend.createPiSessionManager", () => {
       ).createPiSessionManager(session, cwd);
 
       expect(manager).toBe(inMemoryManager);
-      expect(inMemorySpy).toHaveBeenCalledWith(cwd);
+      expect(inMemorySpy).toHaveBeenCalledWith(cwd, { id: session.id });
       expect(createSpy).not.toHaveBeenCalled();
       expect(openSpy).not.toHaveBeenCalled();
     } finally {

@@ -440,59 +440,15 @@ describe("turn delivery idempotency", () => {
     expect(treeResult?.error).toContain("navigate_tree requires an idle session");
   });
 
-  it("refreshes and persists pi state after fork rpc succeeds", async () => {
+  it("rejects in-wrapper fork instead of replacing focused-session identity", async () => {
     const { manager, events, session } = makeManagerHarness("ready");
-
-    const saveSession = vi.spyOn(
-      manager as unknown as { persistSessionNow: (key: string, session: Session) => void },
-      "persistSessionNow",
-    );
-
-    const sendCommandAsync = vi.fn(async (_key: string, command: Record<string, unknown>) => {
-      if (command.type === "fork") {
-        return { text: "forked", cancelled: false };
-      }
-
-      if (command.type === "get_state") {
-        return {
-          sessionFile: "/tmp/child.jsonl",
-          sessionId: "pi-child-uuid",
-        };
-      }
-
-      throw new Error(`unexpected command: ${String(command.type)}`);
-    });
-
-    (manager as unknown as { sendCommandAsync: typeof sendCommandAsync }).sendCommandAsync =
-      sendCommandAsync;
 
     await manager.forwardClientCommand("s1", { type: "fork", entryId: "msg-123" }, "req-fork-1");
 
-    expect(sendCommandAsync).toHaveBeenNthCalledWith(
-      1,
-      "s1",
-      expect.objectContaining({ type: "fork", entryId: "msg-123" }),
-    );
-
-    expect(sendCommandAsync).toHaveBeenNthCalledWith(
-      2,
-      "s1",
-      expect.objectContaining({ type: "get_state" }),
-    );
-
-    expect(session.piSessionFile).toBe("/tmp/child.jsonl");
-    expect(session.piSessionId).toBe("pi-child-uuid");
-    expect(session.piSessionFiles).toEqual(["/tmp/child.jsonl"]);
-
-    expect(saveSession).toHaveBeenCalled();
-
+    expect(session.piSessionId).toBeUndefined();
     const rpcResult = asRpcResults(events).find((event) => event.command === "fork");
-    expect(rpcResult?.success).toBe(true);
-    expect(rpcResult?.requestId).toBe("req-fork-1");
-
-    const stateEvent = asStateEvents(events).at(-1);
-    expect(stateEvent?.session.piSessionFile).toBe("/tmp/child.jsonl");
-    expect(stateEvent?.session.piSessionId).toBe("pi-child-uuid");
+    expect(rpcResult?.success).toBe(false);
+    expect(rpcResult?.error).toMatch(/not allowed|Oppi lifecycle|distinct canonical/i);
   });
 
   it("mirrors thinking level after set_thinking_level without Oppi-owned per-model persistence", async () => {

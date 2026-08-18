@@ -1676,7 +1676,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const piSessionFile = canonicalSessionFilePath(state.sessionFile);
     const piSessionId = state.piSessionId?.trim();
     const existing = this.storage.listSessions().find((session) => {
-      if (piSessionId && session.piSessionId === piSessionId) return true;
+      if (piSessionId && (session.id === piSessionId || session.piSessionId === piSessionId)) {
+        return true;
+      }
       if (!piSessionFile) return false;
       if (canonicalSessionFilePath(session.piSessionFile) === piSessionFile) return true;
       return (session.piSessionFiles ?? []).some(
@@ -1765,7 +1767,9 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   ): Session {
     const model = normalizeModelId(state.model);
     const sessionName = meaningfulSessionName(state.sessionName);
-    const session = existing ?? this.storage.createSession(sessionName, model);
+    const session =
+      existing ??
+      this.storage.createSession(sessionName, model, piSessionId ? { id: piSessionId } : undefined);
     session.workspaceId = workspace.id;
     session.workspaceName = workspace.name;
     session.runtime = "pi-tui";

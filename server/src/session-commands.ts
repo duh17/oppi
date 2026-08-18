@@ -300,6 +300,18 @@ interface QueuedCompactCommand {
 }
 
 const IDLE_ONLY_COMMANDS = new Set(["compact", "navigate_tree", "reload"]);
+const IDENTITY_REPLACEMENT_COMMANDS = new Set([
+  "new_session",
+  "switch_session",
+  "fork",
+  "clone",
+]);
+
+function identityReplacementError(commandType: string): Error {
+  return new Error(
+    `${commandType} is not allowed inside an Oppi-focused session; create a distinct canonical session through Oppi lifecycle routes`,
+  );
+}
 
 function assertIdleForCommand(active: CommandSessionState, commandType: string): void {
   if (!IDLE_ONLY_COMMANDS.has(commandType)) {
@@ -323,6 +335,10 @@ export class SessionCommandCoordinator {
     this.runtimeCommandCoordinator = new RuntimeCommandCoordinator({
       runtimeName: "oppi runtime",
       isCommandSupported: (commandType) => this.isAllowedCommand(commandType),
+      unsupportedReason: (commandType) =>
+        IDENTITY_REPLACEMENT_COMMANDS.has(commandType)
+          ? identityReplacementError(commandType).message
+          : undefined,
       normalizeError: normalizeCommandError,
       broadcast: (key, message) => this.deps.broadcast(key, message),
       onCommandSuccess: (key, context) => this.handleForwardedCommandSuccess(key, context),
@@ -376,14 +392,6 @@ export class SessionCommandCoordinator {
     ["reload", (backend) => backend.reloadResources()],
 
     [
-      "new_session",
-      async (backend) => {
-        await backend.newSession();
-        return { success: true };
-      },
-    ],
-
-    [
       "set_session_name",
       (backend, cmd) => {
         const name = readRequiredString(cmd.name, "name");
@@ -392,7 +400,6 @@ export class SessionCommandCoordinator {
       },
     ],
 
-    ["fork", (backend, cmd) => backend.fork(readRequiredString(cmd.entryId, "entryId"))],
   ]);
 
   private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([
@@ -484,6 +491,7 @@ export class SessionCommandCoordinator {
   ]);
 
   isAllowedCommand(commandType: string): boolean {
+    if (IDENTITY_REPLACEMENT_COMMANDS.has(commandType)) return false;
     return SessionCommandCoordinator.ALLOWED_COMMANDS.has(commandType);
   }
 
@@ -505,6 +513,9 @@ export class SessionCommandCoordinator {
     }
 
     const type = command.type as string;
+    if (IDENTITY_REPLACEMENT_COMMANDS.has(type)) {
+      throw identityReplacementError(type);
+    }
     assertIdleForCommand(active, type);
     return this.executeCommand(active, type, command);
   }
@@ -587,6 +598,9 @@ export class SessionCommandCoordinator {
     type: string,
     command: Record<string, unknown>,
   ): Promise<unknown> {
+    if (IDENTITY_REPLACEMENT_COMMANDS.has(type)) {
+      throw identityReplacementError(type);
+    }
     if (type === "reload") {
       return active.sdkBackend.reloadResources(this.deps.reloadRuntimeConfig);
     }
@@ -624,6 +638,17 @@ export class SessionCommandCoordinator {
     }
 
     const commandType = message.type;
+    if (IDENTITY_REPLACEMENT_COMMANDS.has(commandType)) {
+      this.deps.broadcast(
+        key,
+        runtimeCommandFailure(
+          commandType,
+          requestId,
+          identityReplacementError(commandType).message,
+        ),
+      );
+      return;
+    }
     if (this.shouldQueueCompact(active, commandType)) {
       this.enqueueCompact(key, message, requestId);
       return;
@@ -667,7 +692,7 @@ export class SessionCommandCoordinator {
 
     // Session-branching commands mutate pi session identity/file in-place.
     // Refresh state immediately so reconnect/resume uses the new branch.
-    if (cmdType === "fork" || cmdType === "new_session" || cmdType === "navigate_tree") {
+    if (cmdType === "navigate_tree") {
       try {
         const refreshed = await executeCommand({ type: "get_state" });
         const snapshot = parsePiStateSnapshot(refreshed);

@@ -4,6 +4,18 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("../src/sdk-backend.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/sdk-backend.js")>();
+  return {
+    ...actual,
+    forkPiSessionFrom: vi.fn((sourcePath: string, _cwd: string, id: string) => ({
+      sessionFile: `/tmp/forked-${id}.jsonl`,
+      sessionId: id,
+      sourcePath,
+    })),
+  };
+});
+
 import { requiredModelLaunchFailureMessage } from "../src/agent-launch-service.js";
 import { RuntimeDisconnectedError } from "../src/agent-runtime-transport.js";
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
@@ -83,8 +95,9 @@ function makeService(
   getPersistedSession: (sessionId: string) => Session | undefined;
 } {
   const createSession = vi.fn(
-    (name?: string, model?: string) =>
-      options.forkSession ?? makeSession({ id: "fork-1", name, model }),
+    (name?: string, model?: string, createOptions?: { id?: string }) =>
+      options.forkSession ??
+      makeSession({ id: createOptions?.id ?? "fork-1", name, model }),
   );
   const deleteSession = vi.fn(() => true);
   const deleteSearchIndexSession = vi.fn();
@@ -1159,7 +1172,7 @@ describe("SessionLifecycleService", () => {
           "",
         ].join("\n"),
       );
-      const importedSession = makeSession({ id: "imported-1" });
+      const importedSession = makeSession({ id: "pi-session-1" });
       const { service, createSession, saveSession } = makeService({
         forkSession: importedSession,
       });
@@ -1171,10 +1184,12 @@ describe("SessionLifecycleService", () => {
           model: "openai-codex/gpt-5.6-sol",
         });
 
-        expect(createSession).toHaveBeenCalledWith("Imported Name", "openai-codex/gpt-5.6-sol");
+        expect(createSession).toHaveBeenCalledWith("Imported Name", "openai-codex/gpt-5.6-sol", {
+          id: "pi-session-1",
+        });
         expect(saveSession).toHaveBeenCalledWith(
           expect.objectContaining({
-            id: "imported-1",
+            id: "pi-session-1",
             workspaceId: "ws-1",
             workspaceName: "Project",
             firstMessage: "Hello import",
@@ -1195,7 +1210,7 @@ describe("SessionLifecycleService", () => {
           }),
         );
         expect(result.created).toBe(true);
-        expect(result.session).toMatchObject({ id: "imported-1", contextWindow: 200_000 });
+        expect(result.session).toMatchObject({ id: "pi-session-1", contextWindow: 200_000 });
       } finally {
         rmSync(piSessionDir, { recursive: true, force: true });
         rmSync(workspaceDir, { recursive: true, force: true });
@@ -1273,14 +1288,18 @@ describe("SessionLifecycleService", () => {
           id: "fork-1",
           workspaceId: "ws-1",
           workspaceName: "Project",
-          piSessionFile: "/tmp/current.jsonl",
-          piSessionFiles: ["/tmp/older.jsonl", "/tmp/current.jsonl"],
+          piSessionFile: "/tmp/forked-fork-1.jsonl",
+          piSessionFiles: ["/tmp/forked-fork-1.jsonl"],
+          piSessionId: "fork-1",
           thinkingLevel: "high",
           contextWindow: 200_000,
         }),
       );
       expect(startSession).toHaveBeenCalledWith("fork-1", expect.objectContaining({ id: "ws-1" }));
-      expect(runCommand).toHaveBeenCalledWith("fork-1", { type: "fork", entryId: "entry-user-1" });
+      expect(runCommand).toHaveBeenCalledWith("fork-1", {
+        type: "navigate_tree",
+        targetId: "entry-user-1",
+      });
       expect(refreshSessionState).toHaveBeenCalledWith("fork-1");
       expect(result.session).toMatchObject({ id: "fork-1", contextWindow: 200_000 });
     });
@@ -1317,10 +1336,10 @@ describe("SessionLifecycleService", () => {
       expect(createSession).not.toHaveBeenCalled();
     });
 
-    it("cleans up the created fork if the Pi fork command fails", async () => {
+    it("cleans up the created fork if the Pi navigate_tree command fails", async () => {
       const sourceSession = makeSession({ id: "source-1", piSessionFile: "/tmp/current.jsonl" });
       const { service, deleteSession, stopSession } = makeService({
-        runCommandError: new Error("fork command failed"),
+        runCommandError: new Error("navigate_tree command failed"),
       });
 
       await expect(
@@ -1329,7 +1348,7 @@ describe("SessionLifecycleService", () => {
           sourceSession,
           entryId: "entry-user-1",
         }),
-      ).rejects.toThrow("fork command failed");
+      ).rejects.toThrow("navigate_tree command failed");
 
       expect(stopSession).toHaveBeenCalledWith("fork-1");
       expect(deleteSession).toHaveBeenCalledWith("fork-1");
