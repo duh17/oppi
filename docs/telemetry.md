@@ -44,6 +44,7 @@ For local Grafana:
 ```bash
 npm run telemetry:grafana:up
 # Open http://localhost:13001, default login admin/admin
+# Dashboards: Release Preflight, Server Health, Model Routing
 ```
 
 ## Privacy model
@@ -252,7 +253,7 @@ Use Pi session files for forensic replay. Use Oppi metrics to answer whether the
 
 ## Local dashboards and importer
 
-The optional Grafana stack imports JSONL files into SQLite and serves prebuilt dashboards.
+The optional Grafana stack imports JSONL files into SQLite and serves prebuilt dashboards: Release Preflight, Server Health, and Model Routing.
 
 ```bash
 cd server

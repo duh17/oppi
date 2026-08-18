@@ -1,0 +1,702 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Compare and focus observed provider/model routes. Operational success is not accepted-task correctness. Use the Provider and Model dropdowns to isolate a set.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "code": { "language": "markdown", "showLineNumbers": false, "showMiniMap": false },
+        "content": "Use **Provider** and **Model** at the top to compare a set or focus one route. Missing `provider`+`model` tags are **untagged**.\n\nBars and tables are mechanical: TTFT, cost, turn/tool errors, USD per 1k output tokens. `status=ok` is not accepted-task correctness. Do not read these as TPS or quality. Pair with `npm run telemetry:review -- --models` for p50/p95.",
+        "mode": "markdown"
+      },
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "COUNT(server.turn_duration_ms) for the selected routes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 3 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_duration_ms'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Selected turns",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Selected-window samples in the model-routing metric set that lack provider or model.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 3 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_tool_calls','server.turn_input_tokens','server.turn_output_tokens','server.turn_cost','server.tool_duration_ms','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND (\n    NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL\n    OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL\n  )",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Untagged samples",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "SUM(server.turn_cost) / 1e6 for the selected routes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 3 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT ROUND(COALESCE(SUM(value), 0) / 1000000.0, 2) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Observed cost",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "SUM(server.turn_error) / COUNT(server.turn_duration_ms) for the selected routes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 15 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 3 },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT ROUND(\n  100.0 * COALESCE(SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END), 0)\n  / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n  1\n) AS value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_error', 'server.turn_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Turn error %",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "SUM(server.tool_result where status=error) / SUM(server.tool_result) for the selected routes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 3 },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT ROUND(\n  100.0 * COALESCE(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END), 0)\n  / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n  1\n) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.tool_result'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Tool error %",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Observed SUM(server.turn_cost) by selected route. Click a bar legend or use Model to focus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 85, "lineWidth": 1 },
+          "decimals": 2,
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "id": 13,
+      "options": {
+        "legend": { "displayMode": "hidden" },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "tooltip": { "mode": "single" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(SUM(value) / 1000000.0, 2) AS cost_usd\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nORDER BY cost_usd DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Cost by model",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Average server.turn_ttft_ms by selected route. First token may be thinking, not visible text.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 85, "lineWidth": 1 },
+          "decimals": 0,
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "id": 14,
+      "options": {
+        "legend": { "displayMode": "hidden" },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "tooltip": { "mode": "single" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(AVG(value), 0) AS ttft_avg_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_ttft_ms'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nORDER BY ttft_avg_ms DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "TTFT by model",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Mechanical turn error rate by selected route. Not accepted-task correctness.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 85, "lineWidth": 1 },
+          "decimals": 1,
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 15 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "id": 15,
+      "options": {
+        "legend": { "displayMode": "hidden" },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "tooltip": { "mode": "single" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_error', 'server.turn_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nHAVING SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) > 0\nORDER BY turn_err_pct DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Turn errors by model",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "SUM(turn_cost) / SUM(turn_output_tokens) as USD per 1k output tokens. Efficiency, not quality. Both series are sum-aggregated.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 85, "lineWidth": 1 },
+          "decimals": 4,
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "id": 16,
+      "options": {
+        "legend": { "displayMode": "hidden" },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "tooltip": { "mode": "single" },
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(\n    SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END)\n    / MAX(1.0, SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) * 1000.0),\n    4\n  ) AS usd_per_1k_out\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_cost', 'server.turn_output_tokens')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nHAVING SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) > 0\nORDER BY usd_per_1k_out DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "$ / 1k output by model",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Observed cost over time for the selected routes. One series per route.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "min": 0,
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+      "id": 11,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  SUM(value) / 1000000.0 AS cost_usd\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1, 2\nORDER BY 1",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Cost over time by model",
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": { "fields": ["route"] }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Mechanical turn errors over time for the selected routes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "lineWidth": 1,
+            "pointSize": 3,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "mode": "normal" }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "id": 12,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  SUM(value) AS turn_errors\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_error'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1, 2\nORDER BY 1",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Turn errors over time by model",
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": { "fields": ["route"] }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Provider rollup of the selected routes.",
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "cost_usd" },
+            "properties": [
+              { "id": "unit", "value": "currencyUSD" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "turn_err_pct" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "orange", "value": 5 },
+                    { "color": "red", "value": 15 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "tool_err_pct" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "orange", "value": 5 },
+                    { "color": "red", "value": 10 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "id": 7,
+      "options": { "cellHeight": "sm", "showHeader": true },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') AS provider,\n  CAST(SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) AS INTEGER) AS turns,\n  ROUND(SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0, 2) AS cost_usd,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_ttft_ms' THEN value END), 0) AS ttft_avg_ms,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS tool_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_cost','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nORDER BY CASE WHEN provider = 'untagged' THEN 1 ELSE 0 END, cost_usd DESC, turns DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "By provider",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Mechanical tool failures across the selected routes.",
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "err_pct" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "orange", "value": 5 },
+                    { "color": "red", "value": 10 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "id": 8,
+      "options": { "cellHeight": "sm", "showHeader": true },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.tool')), ''), 'unknown') AS tool,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END) AS INTEGER) AS calls,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END) AS INTEGER) AS errors,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS err_pct,\n  ROUND(AVG(CASE WHEN metric = 'server.tool_duration_ms' THEN value END), 0) AS duration_avg_ms\nFROM server_ops_metric_samples\nWHERE metric IN ('server.tool_result', 'server.tool_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nHAVING calls > 0\nORDER BY errors DESC, calls DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Tool errors",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Exact provider/model comparison for the selected set. Averages only; p50/p95 stay in telemetry:review --models.",
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "cost_usd" },
+            "properties": [
+              { "id": "unit", "value": "currencyUSD" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "usd_per_turn" },
+            "properties": [
+              { "id": "unit", "value": "currencyUSD" },
+              { "id": "decimals", "value": 4 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "usd_per_1k_out" },
+            "properties": [
+              { "id": "unit", "value": "currencyUSD" },
+              { "id": "decimals", "value": 4 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "turn_err_pct" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "orange", "value": 5 },
+                    { "color": "red", "value": 15 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "tool_err_pct" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "orange", "value": 5 },
+                    { "color": "red", "value": 10 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 39 },
+      "id": 9,
+      "options": { "cellHeight": "sm", "showHeader": true },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  CAST(SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) AS INTEGER) AS turns,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_ttft_ms' THEN value END), 0) AS ttft_avg_ms,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_duration_ms' THEN value END) / 1000.0, 1) AS turn_avg_s,\n  CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_tool_calls' THEN value ELSE 0 END), 0) AS INTEGER) AS tool_starts,\n  ROUND(\n    CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_tool_calls' THEN value ELSE 0 END), 0) AS REAL)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    2\n  ) AS tools_per_turn,\n  ROUND(SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0, 2) AS cost_usd,\n  ROUND(\n    (SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    4\n  ) AS usd_per_turn,\n  ROUND(\n    SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END)\n    / MAX(1.0, SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) * 1000.0),\n    4\n  ) AS usd_per_1k_out,\n  CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END), 0) AS INTEGER) AS output_tokens,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS tool_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_tool_calls','server.turn_output_tokens','server.turn_cost','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nHAVING turns > 0 OR tool_starts > 0 OR cost_usd > 0\nORDER BY CASE WHEN route = 'untagged' THEN 1 ELSE 0 END, cost_usd DESC, turns DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "By provider / model",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+      "description": "Per-route tool mix for the selected set. ask dwell is user wait, not provider latency.",
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "err_pct" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "orange", "value": 5 },
+                    { "color": "red", "value": 10 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 49 },
+      "id": 10,
+      "options": { "cellHeight": "sm", "showHeader": true },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.tool')), ''), 'unknown') AS tool,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END) AS INTEGER) AS calls,\n  ROUND(AVG(CASE WHEN metric = 'server.tool_duration_ms' THEN value END), 0) AS duration_avg_ms,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END) AS INTEGER) AS errors,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.tool_result', 'server.tool_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1, 2\nHAVING calls > 0\nORDER BY CASE WHEN route = 'untagged' THEN 1 ELSE 0 END, calls DESC, tool",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "By provider / model + tool",
+      "type": "table"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["oppi", "models", "providers"],
+  "templating": {
+    "list": [
+      {
+        "allValue": null,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+        "definition": "SELECT DISTINCT COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') AS __text FROM server_ops_metric_samples WHERE metric IN ('server.turn_duration_ms', 'server.turn_cost', 'server.tool_result') AND ts_ms BETWEEN $__from AND $__to ORDER BY 1",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Provider",
+        "multi": true,
+        "name": "provider",
+        "options": [],
+        "query": "SELECT DISTINCT COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') AS __text FROM server_ops_metric_samples WHERE metric IN ('server.turn_duration_ms', 'server.turn_cost', 'server.tool_result') AND ts_ms BETWEEN $__from AND $__to ORDER BY 1",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": null,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
+        "definition": "SELECT DISTINCT CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS __text FROM server_ops_metric_samples WHERE metric IN ('server.turn_duration_ms', 'server.turn_cost', 'server.tool_result') AND ts_ms BETWEEN $__from AND $__to AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring}) ORDER BY 1",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Model",
+        "multi": true,
+        "name": "route",
+        "options": [],
+        "query": "SELECT DISTINCT CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS __text FROM server_ops_metric_samples WHERE metric IN ('server.turn_duration_ms', 'server.turn_cost', 'server.tool_result') AND ts_ms BETWEEN $__from AND $__to AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring}) ORDER BY 1",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m"],
+    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "14d", "30d"]
+  },
+  "timezone": "browser",
+  "title": "Oppi Model Routing",
+  "uid": "oppi-model-routing",
+  "version": 2,
+  "weekStart": ""
+}

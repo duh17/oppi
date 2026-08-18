@@ -315,7 +315,7 @@ Open:
 The stack provisions this datasource and these dashboards automatically:
 
 - datasource: `Oppi Telemetry SQLite`
-- dashboards: `Oppi Release Preflight` and `Oppi Server Health` (folder: `Oppi`)
+- dashboards: `Oppi Release Preflight`, `Oppi Server Health`, and `Oppi Model Routing` (folder: `Oppi`)
 
 ### 2) Stop telemetry stack
 
