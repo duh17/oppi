@@ -62,6 +62,12 @@ final class DictationStreamClient: DictationTransport {
     private var task: DictationWebSocketTransport?
     private var receiveTask: Task<Void, Never>?
     private var continuation: AsyncStream<ServerMessage>.Continuation?
+    /// Queued until the current socket is writable, then replayed after a 401
+    /// refresh or leftover-token rotate so start lands on the surviving socket.
+    private var pendingDictationStart = false
+    /// True only while a 401 refresh or leftover-token rotate is replacing the
+    /// current socket. sendDictation may requeue dictation_start in that window.
+    private var isRecoveringFromAuthFailure = false
     /// True after a forced refresh has been consumed on the current socket. A
     /// second 401 on a socket that was already refreshed once is terminal, so a
     /// server that keeps rejecting freshly-issued tokens cannot loop forever.
@@ -105,6 +111,7 @@ final class DictationStreamClient: DictationTransport {
     func connect() -> AsyncStream<ServerMessage> {
         disconnect()
         status = .connecting
+        isRecoveringFromAuthFailure = false
         didForceRefreshForConnection = false
 
         return AsyncStream { [weak self] continuation in
@@ -122,14 +129,16 @@ final class DictationStreamClient: DictationTransport {
     private func startConnection(
         currentTokenProvider: (@Sendable () async throws -> String)?
     ) {
-        // A leftover dt_ or just-migrated at_ snapshot is already on `token`.
-        // Open with that immediately so dictation_start is not lost while the
-        // session is still resolving. Wait only when there is no snapshot.
-        if !token.isEmpty {
-            openSocket()
-        }
+        // A live device session can have a fresher token than the leftover
+        // ServerConnection.credentials snapshot. Resolve that first so the
+        // initial /dictation/stream socket is not opened with a stale bearer.
+        // Leftover-open only when that resolve fails or returns empty.
         guard let currentTokenProvider else {
-            if token.isEmpty { disconnect() }
+            if token.isEmpty {
+                disconnect()
+            } else {
+                openSocket()
+            }
             return
         }
         Task { [weak self] in
@@ -151,6 +160,7 @@ final class DictationStreamClient: DictationTransport {
             if task == nil {
                 token = resolved
                 openSocket()
+                await replayPendingDictationStart()
                 return
             }
             guard resolved != token else { return }
@@ -159,17 +169,22 @@ final class DictationStreamClient: DictationTransport {
             // and may already be evicted server-side (unknown_token); do not regress
             // self.token or cancel/reopen the socket the 401 handler owns.
             guard !didForceRefreshForConnection else { return }
+            isRecoveringFromAuthFailure = true
             token = resolved
-            if status == .connecting {
-                task?.cancel(.goingAway, nil)
-                openSocket()
-            }
+            task?.cancel(.goingAway, nil)
+            openSocket()
+            await replayPendingDictationStart()
+            isRecoveringFromAuthFailure = false
         } catch {
             dictationStreamLogger.error("Initial device token resolution failed: \(String(describing: error), privacy: .public)")
-            // Keep a leftover/static snapshot open so dictation_start is not
-            // lost while the device-key session cannot produce a replacement.
+            // Re-check after the await. A disconnect during currentAccessToken()
+            // must not leftover-open an unowned socket.
+            guard status != .disconnected, continuation != nil else { return }
             if token.isEmpty {
                 disconnect()
+            } else if task == nil {
+                openSocket()
+                await replayPendingDictationStart()
             }
         }
     }
@@ -190,13 +205,51 @@ final class DictationStreamClient: DictationTransport {
     }
 
     func sendDictation(_ message: ClientMessage) async throws {
-        guard let task else { throw WebSocketError.notConnected }
+        if case .dictationStart = message {
+            pendingDictationStart = true
+        }
+        guard let task else {
+            // Queue dictation_start until the first writable socket exists.
+            if case .dictationStart = message, status != .disconnected, continuation != nil {
+                return
+            }
+            throw WebSocketError.notConnected
+        }
+        do {
+            try await sendEncoded(message, on: task)
+        } catch {
+            // Only a 401 refresh or leftover rotate may requeue start. A 403/500/
+            // TLS/network handshake failure must fail enable immediately.
+            if case .dictationStart = message,
+               isRecoveringFromAuthFailure,
+               status != .disconnected,
+               continuation != nil {
+                return
+            }
+            throw error
+        }
+    }
+
+    private func sendEncoded(_ message: ClientMessage, on task: DictationWebSocketTransport) async throws {
         let data = try JSONEncoder().encode(message)
         guard let text = String(data: data, encoding: .utf8) else {
             throw WebSocketError.encodingFailed
         }
         try await task.send(.string(text))
         if status == .connecting { status = .connected }
+    }
+
+    private func replayPendingDictationStart() async {
+        guard pendingDictationStart, let task, status != .disconnected, continuation != nil else {
+            return
+        }
+        do {
+            try await sendEncoded(.dictationStart, on: task)
+        } catch {
+            dictationStreamLogger.error(
+                "Failed to send queued dictation_start: \(String(describing: error), privacy: .public)"
+            )
+        }
     }
 
     func sendDictationAudio(_ data: Data) async throws {
@@ -214,6 +267,8 @@ final class DictationStreamClient: DictationTransport {
         receiveTask = nil
         task?.cancel(.normalClosure, nil)
         task = nil
+        pendingDictationStart = false
+        isRecoveringFromAuthFailure = false
         continuation?.finish()
         continuation = nil
         status = .disconnected
@@ -253,6 +308,7 @@ final class DictationStreamClient: DictationTransport {
                         dictationStreamLogger.error("Repeated 401 after forced refresh — disconnecting")
                         break
                     }
+                    isRecoveringFromAuthFailure = true
                     do {
                         let refreshed = try await refreshTokenProvider()
                         if !refreshed.isEmpty {
@@ -264,17 +320,21 @@ final class DictationStreamClient: DictationTransport {
                                   self.task?.identity == task.identity,
                                   continuation != nil,
                                   status != .disconnected else {
+                                isRecoveringFromAuthFailure = false
                                 dictationStreamLogger.info("Dictation disconnected during 401 refresh — not reopening")
                                 return
                             }
                             token = refreshed
                             didForceRefreshForConnection = true
-                            await MainActor.run { [weak self] in self?.openSocket() }
+                            openSocket()
+                            await replayPendingDictationStart()
+                            isRecoveringFromAuthFailure = false
                             return
                         }
                     } catch {
                         dictationStreamLogger.error("Device-key refresh failed on 401: \(String(describing: error), privacy: .public)")
                     }
+                    isRecoveringFromAuthFailure = false
                 }
                 dictationStreamLogger.warning("Dictation stream receive ended: \(String(describing: error), privacy: .public)")
                 break

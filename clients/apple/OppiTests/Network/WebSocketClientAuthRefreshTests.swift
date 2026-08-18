@@ -289,30 +289,84 @@ struct WebSocketClientAuthRefreshTests {
 
 @MainActor
 private final class ScriptedDictationSocket {
-    private var pending: CheckedContinuation<URLSessionWebSocketTask.Message, Error>?
+    typealias Message = URLSessionWebSocketTask.Message
+
+    private var pending: CheckedContinuation<Message, Error>?
+    private var queuedResults: [Result<Message, Error>] = []
     private var response: URLResponse?
+    private var sendFailure: Error?
+    private(set) var closeCode: URLSessionWebSocketTask.CloseCode?
+    private(set) var sentTexts: [String] = []
+
+    var sentDictationStartCount: Int {
+        sentTexts.filter { $0.contains("\"type\":\"dictation_start\"") }.count
+    }
 
     lazy var transport = DictationWebSocketTransport(
         identity: self,
         resume: {},
         receive: { [weak self] in
             guard let self else { throw CancellationError() }
-            return try await withCheckedThrowingContinuation { self.pending = $0 }
+            return try await self.receive()
         },
-        send: { _ in },
-        cancel: { [weak self] _, _ in self?.pending?.resume(throwing: CancellationError()) },
+        send: { [weak self] message in
+            guard let self else { throw CancellationError() }
+            try await self.recordSend(message)
+        },
+        cancel: { [weak self] code, _ in self?.cancel(code) },
         response: { [weak self] in self?.response }
     )
 
     func fail401() {
+        sendFailure = URLError(.userAuthenticationRequired)
         response = HTTPURLResponse(
             url: URL(string: "wss://server.example.test/dictation/stream")!,
             statusCode: 401,
             httpVersion: nil,
             headerFields: nil
         )
-        pending?.resume(throwing: URLError(.userAuthenticationRequired))
-        pending = nil
+        resolve(.failure(URLError(.userAuthenticationRequired)))
+    }
+
+    func failSend(_ error: Error) {
+        sendFailure = error
+    }
+
+    private func receive() async throws -> Message {
+        if !queuedResults.isEmpty {
+            return try queuedResults.removeFirst().get()
+        }
+        return try await withCheckedThrowingContinuation { pending = $0 }
+    }
+
+    private func cancel(_ code: URLSessionWebSocketTask.CloseCode) {
+        closeCode = code
+        resolve(.failure(CancellationError()))
+    }
+
+    private func resolve(_ result: Result<Message, Error>) {
+        if let pending {
+            self.pending = nil
+            pending.resume(with: result)
+        } else {
+            queuedResults.append(result)
+        }
+    }
+
+    private func recordSend(_ message: URLSessionWebSocketTask.Message) throws {
+        if let sendFailure {
+            throw sendFailure
+        }
+        switch message {
+        case .string(let text):
+            sentTexts.append(text)
+        case .data(let data):
+            if let text = String(data: data, encoding: .utf8) {
+                sentTexts.append(text)
+            }
+        @unknown default:
+            break
+        }
     }
 }
 
@@ -562,11 +616,13 @@ struct DictationDeviceAuthTests {
         let consumer = Task { @MainActor in for await _ in stream {} }
 
         // After dt_ -> at_ migrate the constructor already holds the replacement
-        // snapshot. Dictation must open immediately with that at_ so the first
-        // dictation_start is not lost while currentAccessToken() is still in flight.
+        // snapshot. dictation_start is queued until currentAccessToken() resolves
+        // so the first writable socket still receives start.
         try await client.sendDictation(.dictationStart)
 
-        #expect(factory.sockets.count == 1)
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1 && factory.sockets.first?.sentDictationStartCount == 1
+        })
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_replacement")
         #expect(client.status == .connected)
 
@@ -599,11 +655,14 @@ struct DictationDeviceAuthTests {
         let stream = client.connect()
         let consumer = Task { @MainActor in for await _ in stream {} }
 
+        // Resolve-first: first socket waits for currentAccessToken. After 401
+        // refresh, stay on the recovered token; do not open a third socket.
+        await gate.waitUntilEntered()
+        await gate.release()
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
             factory.sockets.count == 1
         })
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_stale")
-        await gate.waitUntilEntered()
 
         let first = try #require(factory.sockets.first)
         first.fail401()
@@ -612,20 +671,183 @@ struct DictationDeviceAuthTests {
         })
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
         #expect(refreshCalls.get() == 1)
-
-        await gate.release()
-        // Without the guard, applyResolvedToken regresses to at_stale and opens
-        // SOCKET C. Wait for that symptom, then assert the contract.
-        _ = await waitForMainActorCondition(timeout: .seconds(1)) {
-            factory.sockets.count == 3
-        }
-
         #expect(factory.sockets.count == 2)
-        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
-        #expect(refreshCalls.get() == 1)
         #expect(client.status != .disconnected)
 
         client.disconnect()
+        await consumer.value
+    }
+
+    @Test func leftoverSnapshotRotateReplaysDictationStartOnSurvivingSocket() async throws {
+        let factory = ScriptedDictationFactory()
+        let gate = LateTokenGate()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_leftover",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in
+                await gate.wait()
+                return "at_current"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        // given start is sent while leftover != currentAccessToken is still resolving
+        await gate.waitUntilEntered()
+        try await client.sendDictation(.dictationStart)
+
+        // when the live device token is used for the first socket (no leftover-open)
+        await gate.release()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+                && factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_current"
+                && factory.sockets.last?.sentDictationStartCount == 1
+        })
+
+        let surviving = try #require(factory.sockets.last)
+        #expect(factory.sockets.count == 1, "Leftover snapshot must not open a first socket")
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_current")
+        #expect(
+            surviving.sentDictationStartCount == 1,
+            "The current-token socket must receive dictation_start"
+        )
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func leftoverSnapshot401RefreshReplaysDictationStartOnRecoveredSocket() async throws {
+        let factory = ScriptedDictationFactory()
+        let refreshCalls = LockedCallCount()
+        let refreshGate = LateTokenGate()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_expired",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in "at_expired" },
+            refreshTokenProvider: { @Sendable in
+                refreshCalls.increment()
+                await refreshGate.wait()
+                return "at_refreshed"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_expired")
+
+        // when the leftover handshake 401s, send start during refresh (no writable socket yet)
+        let first = try #require(factory.sockets.first)
+        first.fail401()
+        await refreshGate.waitUntilEntered()
+        #expect(refreshCalls.get() == 1)
+        #expect(factory.sockets.count == 1)
+
+        var sendError: Error?
+        do {
+            try await client.sendDictation(.dictationStart)
+        } catch {
+            sendError = error
+        }
+
+        await refreshGate.release()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+
+        let recovered = try #require(factory.sockets.last)
+        #expect(sendError == nil, "First handshake 401 must not fail enable after the client recovered")
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
+        #expect(
+            recovered.sentDictationStartCount == 1,
+            "Recovered socket must receive dictation_start after leftover 401 refresh"
+        )
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func nonAuthHandshakeSendFailureFailsDictationStartImmediately() async throws {
+        let factory = ScriptedDictationFactory()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "dt_leftover",
+            tlsCertFingerprint: nil,
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(factory.sockets.count == 1)
+        let socket = try #require(factory.sockets.first)
+        socket.failSend(URLError(.secureConnectionFailed))
+
+        var sendError: Error?
+        do {
+            try await client.sendDictation(.dictationStart)
+        } catch {
+            sendError = error
+        }
+
+        #expect(sendError != nil, "TLS/network handshake send failure must fail enable immediately")
+        #expect(socket.sentDictationStartCount == 0)
+        #expect(factory.sockets.count == 1)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func failedCurrentTokenResolveDoesNotOpenAfterDisconnect() async throws {
+        let factory = ScriptedDictationFactory()
+        let gate = LateTokenGate()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "dt_leftover",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in
+                await gate.wait()
+                throw DeviceAuthError.challengeUnavailable
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        await gate.waitUntilEntered()
+        #expect(factory.sockets.count == 0)
+        client.disconnect()
+        await gate.release()
+
+        _ = await waitForMainActorCondition(timeout: .seconds(1)) {
+            factory.sockets.count == 1
+        }
+        #expect(factory.sockets.count == 0, "Disconnect during a failed currentAccessToken() must not leftover-open")
+        #expect(client.status == .disconnected)
+
         await consumer.value
     }
 }
