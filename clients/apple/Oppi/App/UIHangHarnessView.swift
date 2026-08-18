@@ -410,6 +410,18 @@ struct UIHangHarnessView: View {
                     timestamp: visualTS.addingTimeInterval(0.1)
                 ))
 
+                items.append(.assistantMessage(
+                    id: "\(sessionPrefix)-visual-assistant-table",
+                    text: """
+                    | Time | Evidence |
+                    | --- | --- |
+                    | 01:46:42 | JSONL start, cwd ~/.config/dotfiles, host session (not Gondolin) |
+                    | 01:48:21 | auth.refresh_succeeded |
+                    | 01:49:48 | iOS background again; last WS activity 01a0140d; keepalive timeout (27s) |
+                    """,
+                    timestamp: visualTS.addingTimeInterval(0.15)
+                ))
+
                 items.append(.thinking(
                     id: "\(sessionPrefix)-visual-thinking",
                     preview: "Deliberating about renderer parity and fallback policy…",
@@ -1418,7 +1430,7 @@ struct UIHangHarnessView: View {
     }
 
     private func focusVisualAssistantMarkdown() {
-        let itemID = "\(selectedSession.rawValue)-visual-assistant-markdown"
+        let itemID = "\(selectedSession.rawValue)-visual-assistant-table"
         guard currentItems.contains(where: { $0.id == itemID }) else { return }
         renderWindow = currentItems.count
         heartbeat &+= 1

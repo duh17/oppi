@@ -276,10 +276,13 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             "Chat bubble should show 01:46:42 on one line"
         )
 
-        // Focus pins the heading to the top; the last wrapped row sits behind
-        // the composer. Nudge up so the complete table is in the screenshot.
-        timeline.swipeUp(velocity: .slow)
-        Thread.sleep(forTimeInterval: 0.4)
+        let lastRow = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "keepalive", "keepalive")
+        ).firstMatch
+        XCTAssertTrue(
+            lastRow.waitForExistence(timeout: 4),
+            "Chat bubble must expose the complete last Evidence cell, including keepalive"
+        )
 
         saveTableScreenshot(name: "readable-table-time-evidence-chat-bubble")
     }
