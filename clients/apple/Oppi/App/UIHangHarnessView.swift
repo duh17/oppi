@@ -393,11 +393,11 @@ struct UIHangHarnessView: View {
                     - bullet one
                     - bullet two with enough text to wrap under the avatar column on phone widths
 
-                    | Feature | Detail |
+                    | Time | Evidence |
                     | --- | --- |
-                    | Hang layout | Avatar stays put; prose/tables use width under it |
-                    | Two-column fit | Wrap cell text instead of sideways scroll when possible |
-                    | Wide tables | Keep horizontal scroll once columns get too many |
+                    | 01:46:42 | JSONL start, cwd ~/.config/dotfiles, host session (not Gondolin) |
+                    | 01:48:21 | auth.refresh_succeeded |
+                    | 01:49:48 | iOS background again; last WS activity 01a0140d; keepalive timeout (27s) |
 
                     | Col A | Col B | Col C | Col D | Col E |
                     | --- | --- | --- | --- | --- |
@@ -946,6 +946,14 @@ struct UIHangHarnessView: View {
                     .accessibilityIdentifier("harness.assistantOverlap.advance")
                 }
 
+                if UIHangHarnessConfig.includeVisualFixtures {
+                    Button("Table") {
+                        focusVisualAssistantMarkdown()
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("harness.visual.table.focus")
+                }
+
                 Button("Visual Image") {
                     scrollToVisualUserImage(animated: false)
                 }
@@ -1259,6 +1267,21 @@ struct UIHangHarnessView: View {
 
     private func visualReadMarkdownContent(for session: HarnessSession) -> String {
         var sections: [String] = [
+            "# Session 01a0140d — network diagnosis",
+            "Local times are PDT (UTC−7).",
+            "## What 01a0140d itself did",
+            """
+            | Time | Evidence |
+            | --- | --- |
+            | 01:46:42 | JSONL start, cwd ~/.config/dotfiles, host session (not Gondolin) |
+            | 01:48:21 | auth.refresh_succeeded |
+            | 01:48:31 | iOS scene → inactive/background |
+            | 01:49:48 | iOS background again; last WS activity 01a0140d; keepalive timeout (27s) |
+            | 01:51:04 | user: “install the dev build… connect” |
+            | 01:51:14 | agent_end / agent_settled mid install |
+            | 01:51:21 | mirror_stopped |
+            """,
+            "This heading after the table must stay fully below the last row.",
             "# Read Harness Markdown — \(session.title)",
             "This fixture mirrors long markdown loaded via the read tool on a .md path.",
         ]
@@ -1392,6 +1415,14 @@ struct UIHangHarnessView: View {
         let itemID = visualUserImageItemID(for: selectedSession)
         guard currentItems.contains(where: { $0.id == itemID }) else { return }
         issueScrollCommand(id: itemID, anchor: .top, animated: animated)
+    }
+
+    private func focusVisualAssistantMarkdown() {
+        let itemID = "\(selectedSession.rawValue)-visual-assistant-markdown"
+        guard currentItems.contains(where: { $0.id == itemID }) else { return }
+        renderWindow = currentItems.count
+        heartbeat &+= 1
+        issueScrollCommand(id: itemID, anchor: .top, animated: false)
     }
 
     private func focusAssistantOverlapFixture() {

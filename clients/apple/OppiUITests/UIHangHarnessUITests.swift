@@ -254,6 +254,80 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         add(attachment)
     }
 
+    func testReadableMarkdownTableChatBubbleScreenshot() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 1, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 1)
+
+        let focus = app.descendants(matching: .any)["harness.visual.table.focus"]
+        XCTAssertTrue(focus.waitForExistence(timeout: 4))
+        focus.tap()
+        Thread.sleep(forTimeInterval: 0.6)
+
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+
+        let timeMatch = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "01:46:42", "01:46:42")
+        ).firstMatch
+        XCTAssertTrue(
+            timeMatch.waitForExistence(timeout: 6),
+            "Chat bubble should show 01:46:42 on one line"
+        )
+
+        // Focus pins the heading to the top; the last wrapped row sits behind
+        // the composer. Nudge up so the complete table is in the screenshot.
+        timeline.swipeUp(velocity: .slow)
+        Thread.sleep(forTimeInterval: 0.4)
+
+        saveTableScreenshot(name: "readable-table-time-evidence-chat-bubble")
+    }
+
+    func testReadableMarkdownTableExpandedReadScreenshot() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 1, timeout: 6)
+        XCTAssertGreaterThanOrEqual(visualTools, 1)
+
+        let focusButton = app.descendants(matching: .any)["harness.readMarkdown.focus"]
+        XCTAssertTrue(focusButton.waitForExistence(timeout: 4))
+        focusButton.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.readMarkdownExpanded", equals: 1, timeout: 4), 1)
+        Thread.sleep(forTimeInterval: 0.4)
+
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).doubleTap()
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let timeCell = app.staticTexts["01:46:42"].firstMatch
+        let heading = app.staticTexts["What 01a0140d itself did"].firstMatch
+        XCTAssertTrue(
+            timeCell.waitForExistence(timeout: 6) || heading.waitForExistence(timeout: 2),
+            "Expanded Read should show the Time/Evidence table without wrapping 01:46:42"
+        )
+        XCTAssertFalse(
+            app.staticTexts["01:46:4"].exists && !timeCell.exists,
+            "Time cell must not wrap mid-timestamp"
+        )
+
+        saveTableScreenshot(name: "readable-table-time-evidence-expanded-read")
+    }
+
+    private func saveTableScreenshot(name: String) {
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        let directory = URL(fileURLWithPath: "/tmp/oppi-screenshots", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let outputURL = directory.appendingPathComponent("\(name).png")
+        try? screenshot.pngRepresentation.write(to: outputURL, options: .atomic)
+    }
+
     func testVisualToolsetTapThroughRendersWithoutStalls() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
 

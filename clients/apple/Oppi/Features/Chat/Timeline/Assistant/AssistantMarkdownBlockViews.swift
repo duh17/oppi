@@ -442,7 +442,7 @@ final class NativeTableBlockView: UIView {
 
     private let scrollView: HorizontalPanPassthroughScrollView = {
         let sv = HorizontalPanPassthroughScrollView()
-        sv.showsHorizontalScrollIndicator = false
+        sv.showsHorizontalScrollIndicator = true
         sv.alwaysBounceVertical = false
         sv.bounces = false
         sv.isDirectionalLockEnabled = true
@@ -463,7 +463,8 @@ final class NativeTableBlockView: UIView {
         return tv
     }()
 
-    /// Multi-line grid used when wrapping cells to fit the bubble width.
+    /// Multi-line grid used when any column clamps to `maxReadable`.
+    /// Lives inside `scrollView` so a wide grid can pan horizontally.
     private let wrapStack: UIStackView = {
         let stack = UIStackView()
         stack.axis = .vertical
@@ -483,9 +484,11 @@ final class NativeTableBlockView: UIView {
     /// whichever is smaller.
     private var cardWidthConstraint: NSLayoutConstraint?
 
-    /// Only the active mode's bottom constraint should drive card height.
-    private var scrollBottomConstraint: NSLayoutConstraint?
-    private var wrapBottomConstraint: NSLayoutConstraint?
+    /// Explicit grid width (sum of clamped columns + gaps). This is the
+    /// scroller content width; rows are not pinned to the card trailing edge.
+    private var wrapStackWidthConstraint: NSLayoutConstraint?
+    private var tableLabelContentConstraints: [NSLayoutConstraint] = []
+    private var wrapStackContentConstraints: [NSLayoutConstraint] = []
 
     /// Stored for long-press copy — rebuilt as markdown table text.
     private var currentHeaders: [[MarkdownInline]] = []
@@ -494,13 +497,9 @@ final class NativeTableBlockView: UIView {
     /// Whether any cell contains a link (enables text view selectability for taps).
     private var hasLinks = false
     private var isWrapMode = false
-    private var lastLayoutWidth: CGFloat = 0
-    private var naturalSingleLineWidth: CGFloat = 0
-    private var naturalColumnWidths: [CGFloat] = []
     /// Identity of the last rendered table content/mode so streaming ticks can
     /// skip full wrap-grid reconstruction when nothing meaningful changed.
     private var renderedContentSignature: String = ""
-    private var renderedWrapColumnWidths: [CGFloat] = []
     private var lastContentIdentity: String = ""
 
     private lazy var longPressCopyGesture: UILongPressGestureRecognizer = {
@@ -520,8 +519,8 @@ final class NativeTableBlockView: UIView {
 
         addSubview(cardView)
         cardView.addSubview(scrollView)
-        cardView.addSubview(wrapStack)
         scrollView.addSubview(tableLabel)
+        scrollView.addSubview(wrapStack)
 
         tableLabel.delegate = self
         cardView.addGestureRecognizer(longPressCopyGesture)
@@ -532,11 +531,41 @@ final class NativeTableBlockView: UIView {
         let cardWidth = cardView.widthAnchor.constraint(equalTo: widthAnchor)
         cardWidthConstraint = cardWidth
 
-        let scrollBottom = scrollView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor)
-        scrollBottomConstraint = scrollBottom
-        let wrapBottom = wrapStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -6)
-        wrapBottomConstraint = wrapBottom
-        wrapBottom.isActive = false
+        let wrapWidth = wrapStack.widthAnchor.constraint(equalToConstant: 0)
+        wrapStackWidthConstraint = wrapWidth
+
+        tableLabelContentConstraints = [
+            tableLabel.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            tableLabel.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            tableLabel.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            tableLabel.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            tableLabel.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+            labelWidthConstraint,
+        ]
+
+        wrapStackContentConstraints = [
+            wrapStack.topAnchor.constraint(
+                equalTo: scrollView.contentLayoutGuide.topAnchor,
+                constant: 6
+            ),
+            wrapStack.leadingAnchor.constraint(
+                equalTo: scrollView.contentLayoutGuide.leadingAnchor,
+                constant: MarkdownTableColumnLayout.horizontalContentInset
+            ),
+            wrapStack.trailingAnchor.constraint(
+                equalTo: scrollView.contentLayoutGuide.trailingAnchor,
+                constant: -MarkdownTableColumnLayout.horizontalContentInset
+            ),
+            wrapStack.bottomAnchor.constraint(
+                equalTo: scrollView.contentLayoutGuide.bottomAnchor,
+                constant: -6
+            ),
+            wrapStack.heightAnchor.constraint(
+                equalTo: scrollView.frameLayoutGuide.heightAnchor,
+                constant: -12
+            ),
+            wrapWidth,
+        ]
 
         NSLayoutConstraint.activate([
             cardView.topAnchor.constraint(equalTo: topAnchor),
@@ -547,50 +576,65 @@ final class NativeTableBlockView: UIView {
             scrollView.topAnchor.constraint(equalTo: cardView.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
-            scrollBottom,
-
-            wrapStack.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 6),
-            wrapStack.leadingAnchor.constraint(
-                equalTo: cardView.leadingAnchor,
-                constant: MarkdownTableColumnLayout.horizontalContentInset
-            ),
-            wrapStack.trailingAnchor.constraint(
-                equalTo: cardView.trailingAnchor,
-                constant: -MarkdownTableColumnLayout.horizontalContentInset
-            ),
-
-            tableLabel.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            tableLabel.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            tableLabel.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            tableLabel.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            tableLabel.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
-            labelWidthConstraint,
+            scrollView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
         ])
+        NSLayoutConstraint.activate(tableLabelContentConstraints)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        scrollView.flashScrollIndicators()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let width = bounds.width
-        if width > 0, abs(width - lastLayoutWidth) > 0.5 {
-            lastLayoutWidth = width
-            relayoutForAvailableWidth(width, force: false)
-        }
         updateCardWidth()
     }
 
-    /// Update card width to min(contentWidth, boundsWidth) in clip mode.
-    /// Wrap mode always fills the available width.
+    /// UIScrollView has no useful intrinsic height. Measure the active table
+    /// body so chat self-sizing cannot clip the last wrapped row.
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: measuredTableHeight())
+    }
+
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        let width = targetSize.width.isFinite && targetSize.width > 0
+            ? targetSize.width
+            : max(1, bounds.width)
+        return CGSize(width: width, height: measuredTableHeight())
+    }
+
+    private func measuredTableHeight() -> CGFloat {
+        if isWrapMode {
+            let columnWidth = max(1, wrapStackWidthConstraint?.constant ?? 0)
+            let stackSize = wrapStack.systemLayoutSizeFitting(
+                CGSize(width: columnWidth, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            )
+            return max(1, ceil(stackSize.height + 12))
+        }
+
+        let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        if let text = tableLabel.attributedText, text.length > 0 {
+            let bounds = text.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
+            return max(1, ceil(bounds.height + tableLabel.textContainerInset.top + tableLabel.textContainerInset.bottom))
+        }
+        return max(1, tableLabel.intrinsicContentSize.height)
+    }
+
+    /// Card width is min(contentWidth, bounds.width) in both clip and grid mode.
     private func updateCardWidth() {
         guard let constraint = cardWidthConstraint else { return }
         let parentWidth = bounds.width
+        let contentWidth = currentContentWidth()
 
-        if isWrapMode {
-            setCardWidthRelativeToParent(constraint)
-            return
-        }
-
-        let contentWidth = tableLabelWidthConstraint?.constant ?? 0
-        if contentWidth > 0, contentWidth < parentWidth {
+        if contentWidth > 0, parentWidth > 0, contentWidth < parentWidth {
             if constraint.firstAnchor === cardView.widthAnchor,
                constraint.secondAnchor === widthAnchor {
                 constraint.isActive = false
@@ -603,6 +647,14 @@ final class NativeTableBlockView: UIView {
         } else {
             setCardWidthRelativeToParent(constraint)
         }
+    }
+
+    private func currentContentWidth() -> CGFloat {
+        if isWrapMode {
+            let columns = wrapStackWidthConstraint?.constant ?? 0
+            return columns + MarkdownTableColumnLayout.horizontalContentInset * 2
+        }
+        return tableLabelWidthConstraint?.constant ?? 0
     }
 
     private func setCardWidthRelativeToParent(_ constraint: NSLayoutConstraint) {
@@ -649,58 +701,30 @@ final class NativeTableBlockView: UIView {
         cardView.layer.borderColor = UIColor(palette.mdCodeBlockBorder).withAlphaComponent(0.5).cgColor
 
         let metrics = Self.measureNaturalColumns(headers: headers, rows: rows)
-        naturalColumnWidths = metrics.columnWidths
-        naturalSingleLineWidth = metrics.totalWidth
 
         // Only snap horizontal offset when the table body actually changed.
         if contentChanged {
             scrollView.contentOffset = .zero
         }
 
-        let width = bounds.width > 0 ? bounds.width : lastLayoutWidth
-        if width > 0 {
-            lastLayoutWidth = width
-            relayoutForAvailableWidth(width, force: contentChanged)
-        } else {
-            // No width yet — render single-line and revisit in layoutSubviews.
-            renderClipMode(palette: palette, force: contentChanged)
-        }
-
-        setNeedsLayout()
-        layoutIfNeeded()
-    }
-
-    private func relayoutForAvailableWidth(_ availableWidth: CGFloat, force: Bool = false) {
-        guard let palette = currentPalette else { return }
-        let columnCount = max(currentHeaders.count, currentRows.first?.count ?? 0)
-        // Compare full single-line width (text + separators/padding) against the
-        // available card width so borderline 2–3 column tables wrap instead of
-        // still requiring a sideways scroll for chrome alone.
-        let shouldWrap = MarkdownTableColumnLayout.shouldWrap(
-            columnCount: columnCount,
-            naturalContentWidth: naturalSingleLineWidth,
-            availableWidth: availableWidth
-        )
-
+        // Mode is content-only and chosen once per apply. Layout width never
+        // rebuilds the table or flips clip vs grid.
         let previousMode = isWrapMode
-        if shouldWrap {
-            let budget = MarkdownTableColumnLayout.contentBudget(
-                forAvailableWidth: availableWidth,
-                columnCount: columnCount
+        if MarkdownTableColumnLayout.needsGridMode(naturalWidths: metrics.columnWidths) {
+            let widths = MarkdownTableColumnLayout.clampedColumnWidths(
+                naturalWidths: metrics.columnWidths
             )
-            let widths = MarkdownTableColumnLayout.allocateColumnWidths(
-                naturalWidths: naturalColumnWidths,
-                availableContentWidth: budget
-            )
-            renderWrapMode(columnWidths: widths, palette: palette, force: force)
+            renderWrapMode(columnWidths: widths, palette: palette, force: contentChanged)
         } else {
-            renderClipMode(palette: palette, force: force)
+            renderClipMode(palette: palette, force: contentChanged)
         }
 
         if previousMode != isWrapMode {
             notifyHeightMayHaveChanged()
         }
         updateCardWidth()
+        setNeedsLayout()
+        layoutIfNeeded()
     }
 
     private func notifyHeightMayHaveChanged() {
@@ -717,14 +741,12 @@ final class NativeTableBlockView: UIView {
         }
 
         isWrapMode = false
-        scrollView.isHidden = false
         tableLabel.isHidden = false
         wrapStack.isHidden = true
-        wrapBottomConstraint?.isActive = false
-        scrollBottomConstraint?.isActive = true
+        NSLayoutConstraint.deactivate(wrapStackContentConstraints)
+        NSLayoutConstraint.activate(tableLabelContentConstraints)
         if modeChanged {
             clearWrapStack()
-            renderedWrapColumnWidths = []
         }
 
         if hasLinks || (reviewCommentSelectionRouter != nil && reviewCommentSourceContext != nil) {
@@ -755,18 +777,18 @@ final class NativeTableBlockView: UIView {
 
     private func renderWrapMode(columnWidths: [CGFloat], palette: ThemePalette, force: Bool) {
         let signature = "wrap|" + lastContentIdentity
-        let widthsUnchanged = renderedWrapColumnWidths == columnWidths
         let modeChanged = !isWrapMode
-        if !force, !modeChanged, widthsUnchanged, renderedContentSignature == signature {
+        if !force, !modeChanged, renderedContentSignature == signature {
             return
         }
 
         isWrapMode = true
-        scrollView.isHidden = true
         tableLabel.isHidden = true
         wrapStack.isHidden = false
-        scrollBottomConstraint?.isActive = false
-        wrapBottomConstraint?.isActive = true
+        NSLayoutConstraint.deactivate(tableLabelContentConstraints)
+        let spacing = MarkdownTableColumnLayout.columnSpacing * CGFloat(max(0, columnWidths.count - 1))
+        wrapStackWidthConstraint?.constant = columnWidths.reduce(0, +) + spacing
+        NSLayoutConstraint.activate(wrapStackContentConstraints)
         tableLabel.attributedText = nil
         tableLabelWidthConstraint?.constant = 0
         clearWrapStack()
@@ -783,7 +805,6 @@ final class NativeTableBlockView: UIView {
             zebra: false
         )
         wrapStack.addArrangedSubview(headerRow)
-        var wrapRows = [headerRow]
 
         let separator = UIView()
         separator.translatesAutoresizingMaskIntoConstraints = false
@@ -802,12 +823,9 @@ final class NativeTableBlockView: UIView {
                 zebra: rowIndex % 2 == 1
             )
             wrapStack.addArrangedSubview(body)
-            wrapRows.append(body)
         }
-        pinWrapCellHeights(in: wrapRows)
 
         renderedContentSignature = signature
-        renderedWrapColumnWidths = columnWidths
         notifyHeightMayHaveChanged()
     }
 
@@ -838,7 +856,7 @@ final class NativeTableBlockView: UIView {
     ) -> UIView {
         let row = UIStackView()
         row.axis = .horizontal
-        row.alignment = .top
+        row.alignment = .fill
         row.distribution = .fill
         row.spacing = MarkdownTableColumnLayout.columnSpacing
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -852,7 +870,7 @@ final class NativeTableBlockView: UIView {
         }
 
         for (index, cell) in cells.enumerated() {
-            let width = index < columnWidths.count ? columnWidths[index] : MarkdownTableColumnLayout.minimumWrappedColumnWidth
+            let width = index < columnWidths.count ? columnWidths[index] : 1
             let cellView = makeWrapCell(
                 inlines: cell,
                 width: width,
@@ -879,10 +897,10 @@ final class NativeTableBlockView: UIView {
         textView.backgroundColor = .clear
         textView.textContainerInset = UIEdgeInsets(top: 5, left: 0, bottom: 5, right: 0)
         textView.textContainer.lineFragmentPadding = 0
-        textView.textContainer.widthTracksTextView = true
+        textView.textContainer.widthTracksTextView = false
         textView.translatesAutoresizingMaskIntoConstraints = false
-        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        textView.setContentHuggingPriority(.required, for: .horizontal)
         textView.delegate = self
         textView.linkTextAttributes = [
             .foregroundColor: UIColor(palette.blue),
@@ -914,26 +932,14 @@ final class NativeTableBlockView: UIView {
         textView.attributedText = result
 
         let resolvedWidth = max(1, width)
+        // Required width + non-scrolling UITextView yields a live intrinsic height.
+        // Pin the text container width now so self-sizing works before first layout.
+        textView.textContainer.size = CGSize(
+            width: resolvedWidth,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         textView.widthAnchor.constraint(equalToConstant: resolvedWidth).isActive = true
         return textView
-    }
-
-    /// Width is resolved only after cells enter the attached wrap stack. Layout
-    /// the complete grid once, then pin each TextKit view to its width-aware height.
-    private func pinWrapCellHeights(in rows: [UIView]) {
-        wrapStack.layoutIfNeeded()
-
-        for row in rows {
-            guard let stack = row as? UIStackView else { continue }
-            for cell in stack.arrangedSubviews {
-                guard let textView = cell as? UITextView else { continue }
-                let width = max(1, textView.bounds.width)
-                let fittingHeight = textView.sizeThatFits(
-                    CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-                ).height
-                textView.heightAnchor.constraint(equalToConstant: max(1, ceil(fittingHeight))).isActive = true
-            }
-        }
     }
 
     private func applySelectionStateToWrapCells(selectionEnabled: Bool) {
@@ -1011,7 +1017,7 @@ final class NativeTableBlockView: UIView {
         return headerKey + "#" + rowKey
     }
 
-    /// Natural single-line column metrics used to decide wrap-vs-scroll.
+    /// Natural single-line column metrics used to choose clip vs grid.
     static func measureNaturalColumns(
         headers: [[MarkdownInline]],
         rows: [[[MarkdownInline]]]
