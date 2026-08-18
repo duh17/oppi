@@ -19,7 +19,7 @@ The server owns:
 - terminal Pi TUI mirror registration and command proxying,
 - session event projection into durable sequence numbers, summaries, media, search, and SQLite read models,
 - extension UI relay and attention state,
-- telemetry, push, Live Activity updates, runtime version status, and diagnostics.
+- telemetry, push, Live Activity updates, package version via getPackageInfo(), and diagnostics.
 
 The server does not render the chat timeline. It sends protocol messages and HTTP snapshots for the Apple client to render.
 
@@ -111,22 +111,22 @@ graph TD
 
 ## Main server blocks
 
-| Block                                              | Owns                                                                                                                 | Does not own                               |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `server.ts`                                        | startup, dependency wiring, HTTPS, WebSocket, auth shell, and service lifecycle                                      | session semantics                          |
-| `routes/*`                                         | HTTP parsing, auth-checked route boundaries, response shapes, app-event emission                                     | lifecycle, list, trace, or runtime policy  |
-| `session-lifecycle-service.ts`                     | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
-| `session-list-service.ts`                          | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
-| `session-trace-service.ts`                         | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
-| `session-title-generator.ts` + `token-usage.ts`    | Provider-owned Pi model requests and static built-in pricing lookup                                                  | session lifecycle or route behavior        |
-| `agent-launch-service.ts`                          | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
-| `agent-schedules.ts` + `agent-schedule-runner.ts`  | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history                     | Apple UI routing                           |
-| `app-event-stream.ts`                              | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
-| `stream.ts` + `ws-message-handler.ts`              | focused session and audio WebSocket framing, fan-out, client-message routing                                         | workspace list data flow                   |
-| `runtime-router.ts`                                | runtime ownership dispatch through `SessionRuntimes`                                                                 | shared Pi event projection semantics       |
-| `sessions.ts` + `session-*`                        | managed session lifecycle, queue, stop, event translation, SDK calls                                                 | HTTP response shaping                      |
-| `pi-tui-mirror-runtime.ts`                         | terminal mirror bridge registration, takeover, queue, and command proxying                                           | Apple focused-session transport            |
-| `session-sqlite-store.ts` + `local-sessions.ts`    | persisted read models and local JSONL catalog                                                                        | runtime command delivery                   |
+| Block                                             | Owns                                                                                                                 | Does not own                               |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `server.ts`                                       | startup, dependency wiring, HTTPS, WebSocket, auth shell, and service lifecycle                                      | session semantics                          |
+| `routes/*`                                        | HTTP parsing, auth-checked route boundaries, response shapes, app-event emission                                     | lifecycle, list, trace, or runtime policy  |
+| `session-lifecycle-service.ts`                    | create/import, resume/open, stop, fork, delete, and mirror promotion policy                                          | HTTP response mapping                      |
+| `session-list-service.ts`                         | recent/workspace/archive session row shaping, active runtime overlays, local-session catalog joins                   | route query parsing                        |
+| `session-trace-service.ts`                        | trace source precedence, tool output lookup, overall diffs, changed-file summaries, and raw changed-file read policy | streaming bytes to HTTP responses          |
+| `session-title-generator.ts` + `token-usage.ts`   | Provider-owned Pi model requests and static built-in pricing lookup                                                  | session lifecycle or route behavior        |
+| `agent-launch-service.ts`                         | idempotent saved-Agent and schedule launches into managed sessions                                                   | HTTP response mapping                      |
+| `agent-schedules.ts` + `agent-schedule-runner.ts` | durable schedule definitions, due-run materialization, lease claiming, dispatch, and run history                     | Apple UI routing                           |
+| `app-event-stream.ts`                             | global app-event WebSocket, app-event allowlist, row and extension UI mapping, workspace invalidation mapping        | focused timeline replay or command routing |
+| `stream.ts` + `ws-message-handler.ts`             | focused session and audio WebSocket framing, fan-out, client-message routing                                         | workspace list data flow                   |
+| `runtime-router.ts`                               | runtime ownership dispatch through `SessionRuntimes`                                                                 | shared Pi event projection semantics       |
+| `sessions.ts` + `session-*`                       | managed session lifecycle, queue, stop, event translation, SDK calls                                                 | HTTP response shaping                      |
+| `pi-tui-mirror-runtime.ts`                        | terminal mirror bridge registration, takeover, queue, and command proxying                                           | Apple focused-session transport            |
+| `session-sqlite-store.ts` + `local-sessions.ts`   | persisted read models and local JSONL catalog                                                                        | runtime command delivery                   |
 
 ## HTTP and WebSocket boundaries
 
@@ -157,7 +157,7 @@ WebSocket upgrade paths are explicit:
 | Path                                                  | Owner                   | Purpose                                                  |
 | ----------------------------------------------------- | ----------------------- | -------------------------------------------------------- |
 | `/workspaces/:workspaceId/sessions/:sessionId/stream` | `BoundSessionStreamMux` | workspace-focused timeline, commands, queue sync, state  |
-| `/control-sessions/:sessionId/stream`                  | `BoundSessionStreamMux` | control-focused timeline through the same runtime path   |
+| `/control-sessions/:sessionId/stream`                 | `BoundSessionStreamMux` | control-focused timeline through the same runtime path   |
 | `/app/events/stream`                                  | `AppEventStreamMux`     | app-wide session row and extension UI attention events   |
 | `/dictation/stream`                                   | `DictationStreamMux`    | dictation control and binary audio                       |
 | `/mirror/v1/bridge` (owner Unix socket only)          | `PiTuiMirrorRuntime`    | terminal Pi TUI mirror registration and command proxying |
@@ -308,8 +308,8 @@ Keep these high-churn modules small and explicit:
 | Terminal mirror runtime                     | `server/src/runtime-router.ts`, `server/src/pi-tui-mirror-runtime.ts`, `server/src/pi-tui-mirror-contract.ts`, `pi-extensions/oppi-mirror/extensions/oppi-mirror.ts`                   |
 | Extension UI relay                          | `server/src/sdk-ui-bridge.ts`, `server/src/extension-ui-contract.ts`, `server/src/extension-ui-state.ts`, `server/src/session-agent-events.ts`                                         |
 | Workspace files and media                   | `server/src/routes/workspace-files.ts`, `server/src/file-serving-policy.ts`, `server/src/routes/uploads.ts`, `server/src/session-attachments.ts`, `server/src/http-range.ts`           |
-| Host file raw                               | `server/src/routes/host-files.ts`, `server/src/host-file-path.ts`, `server/src/file-serving-policy.ts`, `server/src/http-range.ts`                                                      |
+| Host file raw                               | `server/src/routes/host-files.ts`, `server/src/host-file-path.ts`, `server/src/file-serving-policy.ts`, `server/src/http-range.ts`                                                     |
 | Protocol contract                           | `server/src/types/protocol.ts`, `server/src/types.ts`, `protocol/*.json`                                                                                                               |
 | Pi model/auth and pricing                   | `server/src/session-title-generator.ts`, `server/src/token-usage.ts`, `server/src/model-catalog.ts`                                                                                    |
-| Provider usage quotas                       | `server/src/provider-quota/` (`adapters/registry.ts` to add a provider; shared DTO + Apple compact/detail presentation)                                                               |
+| Provider usage quotas                       | `server/src/provider-quota/` (`adapters/registry.ts` to add a provider; shared DTO + Apple compact/detail presentation)                                                                |
 | Pi event projection                         | `server/src/session-events.ts`, `server/src/session-agent-events.ts`, `server/src/session-protocol.ts`, `server/src/session-agent-event-media.ts`                                      |

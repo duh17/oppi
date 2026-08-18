@@ -1,10 +1,21 @@
 import { dirname, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export interface PackageInfo {
   name: string;
   version: string;
+}
+
+/** Retired Mac/server updater cache. Live version is getPackageInfo(). */
+export const RETIRED_RUNTIME_STATUS_FILENAME = "runtime-status.json";
+
+export function removeRetiredRuntimeStatusFile(dataDir: string): boolean {
+  const statusPath = join(dataDir, RETIRED_RUNTIME_STATUS_FILENAME);
+  if (!existsSync(statusPath)) return false;
+  if (!statSync(statusPath).isFile()) return false;
+  unlinkSync(statusPath);
+  return true;
 }
 
 let cachedPackageInfo: PackageInfo | undefined;

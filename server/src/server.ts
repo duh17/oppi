@@ -82,7 +82,11 @@ import {
   type LocalApiSocketBinding,
 } from "./local-api-socket.js";
 import { isLocalRequest, isSecureNetworkRequest, markLocalRequest } from "./request-trust.js";
-import { getPackageInfo } from "./version.js";
+import {
+  getPackageInfo,
+  removeRetiredRuntimeStatusFile,
+  RETIRED_RUNTIME_STATUS_FILENAME,
+} from "./version.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
@@ -760,6 +764,14 @@ export class Server {
     // Mark zombie sessions (non-terminal status on disk but not in memory) as stopped.
     // These are sessions that crashed mid-startup or were orphaned by a server restart.
     this.healOrphanedSessions();
+
+    // The old npm/Pi self-updater left this cache behind after Sparkle took over.
+    // Delete it so a stale version cannot be mistaken for live status.
+    if (removeRetiredRuntimeStatusFile(this.storage.getDataDir())) {
+      log.info("startup.removed_retired_runtime_status", {
+        file: RETIRED_RUNTIME_STATUS_FILENAME,
+      });
+    }
 
     const finishStartup = async (): Promise<void> => {
       if (this.httpServer?.listening) {
