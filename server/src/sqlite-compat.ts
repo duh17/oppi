@@ -38,18 +38,34 @@ export function openDatabase(path: string): SqliteDatabase {
   return openNodeSqliteDatabase(path);
 }
 
+/**
+ * Open an existing SQLite database without write capability. Callers that
+ * inspect copied data must use this rather than the normal writable opener.
+ */
+export function openReadOnlyDatabase(path: string): SqliteDatabase {
+  if (isBun) {
+    return openBunDatabase(path, { readonly: true });
+  }
+  return openNodeSqliteDatabase(path, { readOnly: true });
+}
+
 // ---------------------------------------------------------------------------
 // Bun runtime
 // ---------------------------------------------------------------------------
 
-function openBunDatabase(path: string): SqliteDatabase {
+function openBunDatabase(path: string, options?: { readonly?: boolean }): SqliteDatabase {
   // bun:sqlite is a Bun built-in — always available under Bun.
   // Use cjsRequire because this file is ESM and dynamic import() is async.
   const { Database } = cjsRequire("bun:sqlite") as {
-    Database: new (path: string) => BunSqliteDb;
+    Database: new (path: string, options?: { readonly?: boolean }) => BunSqliteDb;
   };
-  const db = new Database(path);
-  configureDatabase(db);
+  const db = options ? new Database(path, options) : new Database(path);
+  try {
+    configureDatabase(db, options?.readonly === true);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 
   return {
     exec: (sql: string) => db.exec(sql),
@@ -82,12 +98,17 @@ interface BunSqliteDb {
 // Node.js 22+ runtime (built-in node:sqlite)
 // ---------------------------------------------------------------------------
 
-function openNodeSqliteDatabase(path: string): SqliteDatabase {
+function openNodeSqliteDatabase(path: string, options?: { readOnly?: boolean }): SqliteDatabase {
   const { DatabaseSync } = cjsRequire("node:sqlite") as {
-    DatabaseSync: new (path: string) => NodeSqliteDb;
+    DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => NodeSqliteDb;
   };
-  const db = new DatabaseSync(path);
-  configureDatabase(db);
+  const db = options ? new DatabaseSync(path, options) : new DatabaseSync(path);
+  try {
+    configureDatabase(db, options?.readOnly === true);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 
   return {
     exec: (sql: string) => db.exec(sql),
@@ -117,6 +138,10 @@ interface NodeSqliteDb {
   close(): void;
 }
 
-function configureDatabase(db: Pick<SqliteDatabase, "exec">): void {
+function configureDatabase(db: Pick<SqliteDatabase, "exec">, readOnly = false): void {
   db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  if (readOnly) {
+    // Defense in depth for drivers whose open flags are platform-specific.
+    db.exec("PRAGMA query_only = ON");
+  }
 }
