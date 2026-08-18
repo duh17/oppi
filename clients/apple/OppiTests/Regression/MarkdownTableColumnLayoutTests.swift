@@ -82,6 +82,10 @@ struct NativeTableWrapToFitTests {
         let horizontalScroll = timelineAllScrollViews(in: tableView).first { !($0 is UITextView) }
         #expect(horizontalScroll != nil, "Grid tables stay hosted in the horizontal scroller")
         #expect(horizontalScroll?.isHidden == false)
+        #expect(
+            (horizontalScroll?.contentSize.width ?? 0) > (horizontalScroll?.bounds.width ?? 0) + 1,
+            "Clamped grid wider than the bubble must enable horizontal scroll"
+        )
 
         let shortCells = visibleTableCells(in: tableView).filter { cell in
             let text = timelineRenderedText(of: cell)

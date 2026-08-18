@@ -419,9 +419,9 @@ extension NativeCodeBlockView: UITextViewDelegate {
 /// UIKit markdown table.
 ///
 /// Default path keeps monospaced single-line columns with horizontal scroll
-/// (pixel-aligned via tab stops). When a 2–3 column table is wider than the
-/// available bubble width, switches to a wrapped multi-line grid so typical
-/// two-column tables fit on one phone screen without sideways scrolling.
+/// (pixel-aligned via tab stops). Grid mode is used only when a column's
+/// natural width exceeds the readable clamp; short columns stay one line and
+/// the table may scroll sideways instead of squeezing to the viewport.
 final class NativeTableBlockView: UIView {
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
