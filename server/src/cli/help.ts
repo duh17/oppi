@@ -1582,20 +1582,20 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--tools, -t",
         value: "<csv>",
-        summary: "comma-separated tool allowlist for sessionDefaults.tools",
+        summary: "comma-separated tool allowlist",
       },
       {
         name: "--exclude-tools, -xt",
         value: "<csv>",
-        summary: "comma-separated tool denylist for sessionDefaults.excludeTools",
+        summary: "comma-separated tool denylist",
       },
       {
         name: "--no-tools, -nt",
-        summary: "disable all tools (sessionDefaults.noTools=all)",
+        summary: "disable all tools",
       },
       {
         name: "--no-builtin-tools, -nbt",
-        summary: "disable built-in tools (sessionDefaults.noTools=builtin)",
+        summary: "disable built-in tools",
       },
       { name: "--worktree", value: "<id>", summary: "workspace worktree id" },
       {
@@ -1623,6 +1623,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "If another launcher still owns the active lease for that key, the server can report launch_in_progress; retry with the same key.",
       "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",
       "--model also accepts an optional :thinking suffix such as sonnet:high. --thinking wins if both are present.",
+      "Without --agent, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write inline sessionDefaults. With --agent, the same flags go to saved-Agent overrides.",
       "Session targeting uses the exact full Pi UUID, for example 11111111-1111-4111-8111-111111111111.",
     ],
     examples: [

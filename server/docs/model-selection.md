@@ -23,7 +23,9 @@ One shared helper, `resolveInitialChatModel`, resolves the initial model for new
 
 Model IDs stored in Oppi workspace defaults should use canonical `provider/model-id` form, such as `ds4/deepseek-v4-flash`.
 
-Before submitting a request, the Oppi CLI resolves `--model` for `session create` and new-session `schedule create` through the server `/models` catalog. The catalog is filtered by Pi `enabledModels`, accepts fuzzy text such as `sonnet`, prefers subscription/OAuth-backed matches over API-key matches, and sends the canonical `provider/model-id` to the server. If no match exists, the CLI error lists the exact available model IDs so an agent can retry with a valid value.
+Before submitting a request, the Oppi CLI resolves `--model` for `session create` and new-session `schedule create` through the server `/models` catalog. The catalog is filtered by Pi `enabledModels`, accepts fuzzy text such as `sonnet`, prefers subscription/OAuth-backed matches over API-key matches, and sends the canonical `provider/model-id` to the server. `--model` can include an optional `:thinking` suffix such as `sonnet:high`. An explicit `--thinking` value wins over that suffix. If no match exists, the CLI error lists the exact available model IDs so an agent can retry with a valid value.
+
+`session create` and `agent create` / `update` also accept Pi tool-policy flags: `--tools` / `-t`, `--exclude-tools` / `-xt`, `--no-tools` / `-nt`, and `--no-builtin-tools` / `-nbt`. Without `--agent`, `session create` writes those values onto the workspace create body as inline `sessionDefaults`. With `--agent`, they go to saved-Agent `overrides`. On `agent create` / `update`, the same flags overlay `sessionDefaults` in `--definition` / `--definition-json`.
 
 ## Flow notes
 

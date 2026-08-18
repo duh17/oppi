@@ -895,7 +895,10 @@ export class SessionLifecycleService {
     );
   }
 
-  private findImportedSession(identity: { path: string; sessionId?: string }): Session | undefined {
+  private findImportedSession(identity: {
+    path: string;
+    sessionId?: string;
+  }): Session | undefined {
     return this.deps.storage
       .listSessions()
       .find((session) => this.sessionMatchesImportedIdentity(session, identity));
