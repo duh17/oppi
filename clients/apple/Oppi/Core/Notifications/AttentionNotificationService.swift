@@ -20,6 +20,12 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     /// Category ID for agent questions. Tapping opens the owning session.
     nonisolated static let askCategoryId = "ASK_REQUEST"
 
+    /// Remote session-ended alerts. Tapping opens the owning session.
+    nonisolated static let sessionDoneCategoryId = "SESSION_DONE"
+
+    /// Remote session-error alerts. Tapping opens the owning session.
+    nonisolated static let sessionErrorCategoryId = "SESSION_ERROR"
+
     /// Called when the user taps an ask notification body.
     /// Navigate to the session containing this ask request.
     var onNavigateToSession: ((String) -> Void)? {
@@ -58,13 +64,19 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
         didConfigureForLaunch = true
 
-        let askCategory = UNNotificationCategory(
-            identifier: Self.askCategoryId,
-            actions: [],
-            intentIdentifiers: []
-        )
+        let sessionCategories = [
+            Self.askCategoryId,
+            Self.sessionDoneCategoryId,
+            Self.sessionErrorCategoryId,
+        ].map { identifier in
+            UNNotificationCategory(
+                identifier: identifier,
+                actions: [],
+                intentIdentifiers: []
+            )
+        }
 
-        center.setNotificationCategories([askCategory])
+        center.setNotificationCategories(Set(sessionCategories))
     }
 
     // MARK: - Fire Notifications
@@ -122,6 +134,24 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             return true
         }
         return requestSessionId != activeSessionId
+    }
+
+    /// Session id carried by a local ask banner or a remote session-event push.
+    nonisolated static func navigationSessionId(
+        categoryIdentifier: String,
+        userInfo: [AnyHashable: Any]
+    ) -> String? {
+        switch categoryIdentifier {
+        case askCategoryId, sessionDoneCategoryId, sessionErrorCategoryId:
+            break
+        default:
+            return nil
+        }
+        guard let sessionId = userInfo["sessionId"] as? String else {
+            return nil
+        }
+        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Cancel ask notification when the ask is answered or superseded.
@@ -205,17 +235,13 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let content = response.notification.request.content
-        let userInfo = content.userInfo
-        let sessionId = userInfo["sessionId"] as? String ?? ""
-
-        if content.categoryIdentifier == Self.askCategoryId {
-            if !sessionId.isEmpty {
-                Task { @MainActor in
-                    handleAskNotificationTap(sessionId: sessionId)
-                }
+        if let sessionId = Self.navigationSessionId(
+            categoryIdentifier: content.categoryIdentifier,
+            userInfo: content.userInfo
+        ) {
+            Task { @MainActor in
+                handleAskNotificationTap(sessionId: sessionId)
             }
-            completionHandler()
-            return
         }
 
         completionHandler()

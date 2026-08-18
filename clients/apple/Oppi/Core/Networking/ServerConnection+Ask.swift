@@ -58,6 +58,71 @@ extension ServerConnection {
         }
     }
 
+    /// Apply an authoritative session-scoped `/dialogs` snapshot.
+    ///
+    /// A successful response replaces pending ask cards for this session only.
+    /// It does not schedule a new local notification: the caller just opened
+    /// this session, and a failure path must not have cleared in-memory asks.
+    func applySessionDialogsSnapshot(
+        sessionId: String,
+        workspaceId: String?,
+        dialogs: [ExtensionUIRequest.DialogSnapshot]
+    ) {
+        let requests = dialogs.map { snapshot in
+            ExtensionUIRequest.fromDialogSnapshot(
+                snapshot,
+                sessionId: sessionId,
+                workspaceId: workspaceId
+            )
+        }
+        let asks = requests.compactMap(\.askRequest)
+
+        askRequestStore.remove(for: sessionId)
+        for ask in asks {
+            _ = askRequestStore.set(ask, for: sessionId)
+        }
+
+        if ReleaseFeatures.localAttentionNotificationsEnabled {
+            AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+        }
+
+        if let workspaceId = attentionWorkspaceId(
+            explicitWorkspaceId: workspaceId ?? asks.first?.workspaceId,
+            sessionId: sessionId
+        ) {
+            syncWorkspaceSummary(workspaceId: workspaceId)
+        }
+    }
+
+    /// HTTP repair for pending ask cards after a notification or deep-link open.
+    ///
+    /// Network failures leave the in-memory ask queue untouched. An empty 200
+    /// clears only this session.
+    func hydrateSessionDialogs(sessionId: String) async {
+        let workspaceId = sessionReentryWorkspaceId(for: sessionId)
+        do {
+            let response: APIClient.SessionDialogsResponse
+            if let fetchHook = _getSessionDialogsForTesting {
+                response = try await fetchHook(sessionId)
+            } else if let apiClient {
+                response = try await apiClient.getSessionDialogs(sessionId: sessionId)
+            } else {
+                return
+            }
+            applySessionDialogsSnapshot(
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                dialogs: response.dialogs
+            )
+        } catch {
+            recordRefreshEvent(
+                "session_dialogs.hydrate_failed",
+                level: .warning,
+                metadata: Self.refreshErrorMetadata(error)
+            )
+        }
+    }
+
     func clearAskRequest(id requestId: String) {
         let removals = askRequestStore.remove(id: requestId)
         guard !removals.isEmpty else { return }

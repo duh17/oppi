@@ -1006,6 +1006,43 @@ final class ConnectionCoordinator {
         return nil
     }
 
+    /// Test seam: replace generic `GET /sessions/:id` during deep-link resolve.
+    var _getSessionRecordForTesting: ((_ serverId: String, _ sessionId: String) async throws -> Session)?
+
+    /// Resolve a deep-linked session from cache, then from hinted-server HTTP.
+    func findOrFetchSession(id: String) async -> SessionLookupResult? {
+        if let found = findSession(id: id) {
+            return found
+        }
+
+        let hintedServerIds = SessionDeepLinkSessionResolution.fetchServerIds(
+            activeServerId: activeServerId,
+            serverIdsWithPendingAsk: connections.compactMap { serverId, connection in
+                connection.askRequestStore.hasPending(for: id) ? serverId : nil
+            }
+        )
+
+        for serverId in hintedServerIds {
+            guard let connection = connections[serverId] else { continue }
+            do {
+                let session: Session
+                if let fetchHook = _getSessionRecordForTesting {
+                    session = try await fetchHook(serverId, id)
+                } else if let api = await apiClientReady(for: serverId) {
+                    session = try await api.getSessionRecord(sessionId: id)
+                } else {
+                    continue
+                }
+                connection.sessionStore.upsert(session)
+                return SessionLookupResult(serverId: serverId, connection: connection)
+            } catch {
+                continue
+            }
+        }
+
+        return nil
+    }
+
     /// Get the connection for a specific server.
     func connection(for serverId: String) -> ServerConnection? {
         connections[serverId]

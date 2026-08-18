@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Oppi
 
@@ -794,5 +795,230 @@ struct AskRequestTests {
         )
 
         #expect(conn.askRequestStore.pending(for: "s1")?.id == "select-2")
+    }
+
+    @Test func dialogSnapshotInjectsSessionAndWorkspaceIds() throws {
+        let json = """
+        {
+            "id": "ask-1",
+            "method": "ask",
+            "questions": [
+                {
+                    "id": "q",
+                    "question": "Which?",
+                    "options": [{"value": "a", "label": "A"}]
+                }
+            ],
+            "allowCustom": false,
+            "timeout": 1000
+        }
+        """
+        let snapshot = try JSONDecoder().decode(ExtensionUIRequest.DialogSnapshot.self, from: Data(json.utf8))
+        let request = ExtensionUIRequest.fromDialogSnapshot(
+            snapshot,
+            sessionId: "child-1",
+            workspaceId: "ws-1"
+        )
+        let ask = try #require(request.askRequest)
+
+        #expect(request.sessionId == "child-1")
+        #expect(request.workspaceId == "ws-1")
+        #expect(ask.sessionId == "child-1")
+        #expect(ask.workspaceId == "ws-1")
+        #expect(ask.questions.first?.question == "Which?")
+        #expect(ask.allowCustom == false)
+        #expect(ask.timeout == 1000)
+    }
+
+    @Test @MainActor func sessionDialogsSnapshotHydratesAskWithoutLiveStream() {
+        let conn = ServerConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1", status: .stopped))
+
+        conn.applySessionDialogsSnapshot(
+            sessionId: "s2",
+            workspaceId: "w1",
+            dialogs: [
+                ExtensionUIRequest.DialogSnapshot(
+                    id: "ask-hydrated",
+                    method: "ask",
+                    timeout: 5_000,
+                    questions: [
+                        AskQuestion(
+                            id: "q1",
+                            question: "What next?",
+                            options: [AskOption(value: "a", label: "A")],
+                            multiSelect: false
+                        ),
+                    ],
+                    allowCustom: true
+                ),
+            ]
+        )
+
+        #expect(conn.askRequestStore.pending(for: "s2")?.id == "ask-hydrated")
+        #expect(conn.askRequestStore.pending(for: "s2")?.questions.first?.question == "What next?")
+    }
+
+    @Test @MainActor func sessionDialogsSnapshotEmptyClearsOnlyThatSession() {
+        let conn = ServerConnection()
+        conn.askRequestStore.set(
+            AskRequest(
+                id: "keep",
+                sessionId: "s1",
+                questions: [AskQuestion(id: "q", question: "Keep?", options: [], multiSelect: false)],
+                allowCustom: true,
+                timeout: nil
+            ),
+            for: "s1"
+        )
+        conn.askRequestStore.set(
+            AskRequest(
+                id: "drop",
+                sessionId: "s2",
+                questions: [AskQuestion(id: "q", question: "Drop?", options: [], multiSelect: false)],
+                allowCustom: true,
+                timeout: nil
+            ),
+            for: "s2"
+        )
+
+        conn.applySessionDialogsSnapshot(sessionId: "s2", workspaceId: "w1", dialogs: [])
+
+        #expect(conn.askRequestStore.pending(for: "s1")?.id == "keep")
+        #expect(conn.askRequestStore.pending(for: "s2") == nil)
+    }
+
+    @Test @MainActor func sessionDialogsHydrateLoadsAskWhenStoreIsEmpty() async {
+        let conn = ServerConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1", status: .stopped))
+        conn._getSessionDialogsForTesting = { _ in
+            APIClient.SessionDialogsResponse(
+                dialogs: [
+                    ExtensionUIRequest.DialogSnapshot(
+                        id: "ask-rest",
+                        method: "ask",
+                        questions: [
+                            AskQuestion(
+                                id: "q1",
+                                question: "From REST?",
+                                options: [],
+                                multiSelect: false
+                            ),
+                        ],
+                        allowCustom: true
+                    ),
+                ],
+                serverNow: 1
+            )
+        }
+
+        await conn.hydrateSessionDialogs(sessionId: "s2")
+
+        #expect(conn.askRequestStore.pending(for: "s2")?.id == "ask-rest")
+        #expect(conn.askRequestStore.pending(for: "s2")?.questions.first?.question == "From REST?")
+    }
+
+    @Test @MainActor func sessionDialogsHydrateFailurePreservesInMemoryAsk() async {
+        let conn = ServerConnection()
+        conn.askRequestStore.set(
+            AskRequest(
+                id: "live-ask",
+                sessionId: "s2",
+                questions: [AskQuestion(id: "q", question: "Stay?", options: [], multiSelect: false)],
+                allowCustom: true,
+                timeout: nil
+            ),
+            for: "s2"
+        )
+        conn._getSessionDialogsForTesting = { _ in
+            throw APIError.server(status: 500, message: "dialogs unavailable")
+        }
+
+        await conn.hydrateSessionDialogs(sessionId: "s2")
+
+        #expect(conn.askRequestStore.pending(for: "s2")?.id == "live-ask")
+    }
+
+    @Test @MainActor func externalSessionOpenFocusesAndHydratesAskWithoutLiveStream() async {
+        let conn = ServerConnection()
+        conn.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1", status: .stopped))
+        var prepared: [String] = []
+        conn._onPrepareForSessionReentryForTesting = { prepared.append($0) }
+        conn._getSessionDialogsForTesting = { _ in
+            APIClient.SessionDialogsResponse(
+                dialogs: [
+                    ExtensionUIRequest.DialogSnapshot(
+                        id: "ask-open",
+                        method: "ask",
+                        questions: [
+                            AskQuestion(
+                                id: "q1",
+                                question: "Visible after tap?",
+                                options: [],
+                                multiSelect: false
+                            ),
+                        ],
+                        allowCustom: true
+                    ),
+                ],
+                serverNow: 1
+            )
+        }
+
+        await conn.prepareExternalSessionOpen(sessionId: "s2")
+
+        #expect(prepared == ["s2"])
+        #expect(conn.focusedSessionId == "s2")
+        #expect(conn.sessionStore.activeSessionId == "s2")
+        #expect(ChatView.resolvedComposerAskRequest(
+            conn.askRequestStore.pending(for: "s2"),
+            hasReviewComment: false
+        )?.id == "ask-open")
+    }
+
+    @Test @MainActor func externalSessionOpenRefreshesBusyJSONConnectsStreamAndShowsAsk() async {
+        let (conn, _) = makeTestConnection(sessionId: "parent")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.sessionStore.upsert(makeTestSession(id: "child", workspaceId: "w1", status: .stopped))
+        var streamConnects = 0
+        conn._connectStreamForTesting = {
+            streamConnects += 1
+            return AsyncStream { _ in }
+        }
+        conn._getSessionRecordForTesting = { id in
+            makeTestSession(id: id, workspaceId: "w1", name: "Child", status: .busy)
+        }
+        conn._getSessionDialogsForTesting = { _ in
+            APIClient.SessionDialogsResponse(
+                dialogs: [
+                    ExtensionUIRequest.DialogSnapshot(
+                        id: "ask-live",
+                        method: "ask",
+                        questions: [
+                            AskQuestion(
+                                id: "q1",
+                                question: "Answer me",
+                                options: [],
+                                multiSelect: false
+                            ),
+                        ],
+                        allowCustom: true
+                    ),
+                ],
+                serverNow: 1
+            )
+        }
+
+        await conn.prepareExternalSessionOpen(sessionId: "child")
+
+        #expect(conn.focusedSessionId == "child")
+        #expect(conn.sessionStore.session(id: "child")?.status == .busy)
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/child/stream")
+        #expect(streamConnects == 1)
+        #expect(ChatView.resolvedComposerAskRequest(
+            conn.askRequestStore.pending(for: "child"),
+            hasReviewComment: false
+        )?.id == "ask-live")
+        conn.disconnectStream()
     }
 }

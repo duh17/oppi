@@ -289,6 +289,12 @@ final class ServerConnection {
     /// Test seam: replace compact sidebar Git summary HTTP fetches.
     var _getWorkspaceGitSummaryForTesting: ((String) async throws -> WorkspaceGitSummary)?
 
+    /// Test seam: replace session dialog hydration HTTP fetches.
+    var _getSessionDialogsForTesting: ((String) async throws -> APIClient.SessionDialogsResponse)?
+
+    /// Test seam: replace generic `GET /sessions/:id` during external open.
+    var _getSessionRecordForTesting: ((String) async throws -> Session)?
+
 
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest? {
@@ -1910,6 +1916,53 @@ final class ServerConnection {
 
         prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: resolvedScope)
         connectStream()
+    }
+
+    /// Notification / deep-link open: focus first, then hydrate pending dialogs.
+    ///
+    /// If `/dialogs` is the first place we learn the workspace, re-enter so a
+    /// live session can bind its stream after the ask card is restored.
+    func prepareExternalSessionOpen(
+        sessionId: String,
+        workspaceIdHint: String? = nil
+    ) async {
+        sessionStore.activeSessionId = sessionId
+        await refreshSessionRecordIfPossible(sessionId: sessionId)
+        let initialWorkspaceId = sessionReentryWorkspaceId(
+            for: sessionId,
+            workspaceIdHint: workspaceIdHint
+        )
+        prepareForSessionReentry(sessionId, workspaceIdHint: initialWorkspaceId)
+        await hydrateSessionDialogs(sessionId: sessionId)
+        let resolvedWorkspaceId = sessionReentryWorkspaceId(
+            for: sessionId,
+            workspaceIdHint: initialWorkspaceId
+        )
+        if resolvedWorkspaceId != initialWorkspaceId {
+            prepareForSessionReentry(sessionId, workspaceIdHint: resolvedWorkspaceId)
+        }
+    }
+
+    /// Load current session JSON so tap does not trust a stale cached status.
+    /// Failure keeps the cached row; it must not block ask-card hydration.
+    func refreshSessionRecordIfPossible(sessionId: String) async {
+        do {
+            let session: Session
+            if let fetchHook = _getSessionRecordForTesting {
+                session = try await fetchHook(sessionId)
+            } else if let apiClient {
+                session = try await apiClient.getSessionRecord(sessionId: sessionId)
+            } else {
+                return
+            }
+            sessionStore.upsert(session)
+        } catch {
+            recordRefreshEvent(
+                "session_record.refresh_failed",
+                level: .warning,
+                metadata: Self.refreshErrorMetadata(error)
+            )
+        }
     }
 
     func disconnectSession(sessionId: String) {

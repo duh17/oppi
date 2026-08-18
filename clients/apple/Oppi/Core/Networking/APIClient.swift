@@ -483,6 +483,24 @@ actor APIClient: ClientLogUploading {
         return (response.session, response.trace)
     }
 
+    /// Generic session metadata without a workspace or control route scope.
+    func getSessionRecord(sessionId: String) async throws -> Session {
+        let data = try await get("/sessions/\(sessionId)")
+        struct Response: Decodable { let session: Session }
+        return try JSONDecoder().decode(Response.self, from: data).session
+    }
+
+    struct SessionDialogsResponse: Decodable, Sendable, Equatable {
+        let dialogs: [ExtensionUIRequest.DialogSnapshot]
+        let serverNow: Int64?
+    }
+
+    /// Pending user-reply dialogs for one session (`GET /sessions/:id/dialogs`).
+    func getSessionDialogs(sessionId: String) async throws -> SessionDialogsResponse {
+        let data = try await get("/sessions/\(sessionId)/dialogs")
+        return try JSONDecoder().decode(SessionDialogsResponse.self, from: data)
+    }
+
     /// Get a paged workspace session trace for timeline history.
     func getWorkspaceSessionTracePage(
         workspaceId: String,

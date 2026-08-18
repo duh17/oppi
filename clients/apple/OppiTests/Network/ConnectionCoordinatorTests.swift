@@ -597,6 +597,40 @@ struct ConnectionCoordinatorTests {
         #expect(result?.connection.sessionStore.session(id: "s-on-a")?.name == "On A")
     }
 
+    @Test func findOrFetchSessionUsesCachedRowWithoutHTTP() async {
+        let (coordinator, _) = makeCoordinator()
+        let serverA = makeServer(id: "sha256:fetch-a", name: "A")
+        coordinator.serverStore.addOrUpdate(serverA)
+        coordinator.switchToServer(serverA)
+        coordinator.activeConnection.sessionStore.upsert(makeTestSession(id: "cached", name: "Cached"))
+
+        var fetchedIds: [String] = []
+        coordinator._getSessionRecordForTesting = { _, sessionId in
+            fetchedIds.append(sessionId)
+            return makeTestSession(id: sessionId, name: "Fetched")
+        }
+
+        let result = await coordinator.findOrFetchSession(id: "cached")
+        #expect(result?.connection.sessionStore.session(id: "cached")?.name == "Cached")
+        #expect(fetchedIds.isEmpty)
+    }
+
+    @Test func findOrFetchSessionLoadsMissingRowFromHintedServer() async {
+        let (coordinator, _) = makeCoordinator()
+        let serverA = makeServer(id: "sha256:fetch-miss", name: "A")
+        coordinator.serverStore.addOrUpdate(serverA)
+        coordinator.switchToServer(serverA)
+
+        coordinator._getSessionRecordForTesting = { _, sessionId in
+            makeTestSession(id: sessionId, workspaceId: "w1", name: "Fetched", status: .busy)
+        }
+
+        let result = await coordinator.findOrFetchSession(id: "missing-child")
+        #expect(result?.serverId == "sha256:fetch-miss")
+        #expect(result?.connection.sessionStore.session(id: "missing-child")?.name == "Fetched")
+        #expect(result?.connection.sessionStore.session(id: "missing-child")?.status == .busy)
+    }
+
     // MARK: - Push Navigation
 
     @Test func pushNavigationSwitchesServerForCrossServerSession() {

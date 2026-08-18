@@ -170,6 +170,50 @@ enum SessionDeepLinkNavigationPolicy {
     }
 }
 
+enum SessionDeepLinkSessionResolution {
+    /// Servers to try for `GET /sessions/:id` when the row is not cached.
+    /// Active server first, then any server that already has this ask in memory.
+    /// Do not probe the rest of the pairing list on the tap path.
+    static func fetchServerIds(
+        activeServerId: String?,
+        serverIdsWithPendingAsk: [String]
+    ) -> [String] {
+        var ids: [String] = []
+        if let activeServerId, !activeServerId.isEmpty {
+            ids.append(activeServerId)
+        }
+        for serverId in serverIdsWithPendingAsk where !ids.contains(serverId) {
+            ids.append(serverId)
+        }
+        return ids
+    }
+}
+
+/// Production sequence after a session-targeted notification or `oppi://session` tap.
+@MainActor
+enum SessionNotificationOpen {
+    static func openResolved(
+        sessionId: String,
+        serverId: String,
+        connection: ServerConnection,
+        navigation: AppNavigation,
+        source: SessionNavigationSource
+    ) async {
+        await connection.prepareExternalSessionOpen(sessionId: sessionId)
+        let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
+        navigation.selectedTab = .workspaces
+        navigation.openSession(
+            WorkspaceSessionNavTarget(
+                serverId: serverId,
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                routeScope: connection.sessionStore.routeScope(for: sessionId)
+            ),
+            source: source
+        )
+    }
+}
+
 @MainActor
 enum AppStartupSequence {
     static func run(
@@ -1128,7 +1172,7 @@ struct OppiApp: App {
         source: SessionNavigationSource,
         parkingAllowed: Bool
     ) async {
-        let foundSession = coordinator.findSession(id: sessionId)
+        let foundSession = await coordinator.findOrFetchSession(id: sessionId)
         switch SessionDeepLinkNavigationPolicy.disposition(
             sessionIsAvailable: foundSession != nil,
             launchPhase: navigation.launchPhase,
@@ -1202,17 +1246,11 @@ struct OppiApp: App {
         source: SessionNavigationSource = .externalURL
     ) async {
         guard await coordinator.switchToServerReady(serverId) else { return }
-        let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
-        connection.sessionStore.activeSessionId = sessionId
-        connection.prepareForSessionReentry(sessionId, workspaceIdHint: workspaceId)
-        navigation.selectedTab = .workspaces
-        navigation.openSession(
-            WorkspaceSessionNavTarget(
-                serverId: serverId,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                routeScope: connection.sessionStore.routeScope(for: sessionId)
-            ),
+        await SessionNotificationOpen.openResolved(
+            sessionId: sessionId,
+            serverId: serverId,
+            connection: connection,
+            navigation: navigation,
             source: source
         )
     }

@@ -432,6 +432,41 @@ struct APIClientTests {
         #expect(summaries[1].pendingAskCount == 0)
     }
 
+    @Test func getSessionRecordUsesGenericSessionRoute() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/sessions/s1")
+            return self.mockResponse(json: """
+            {"session":{"id":"s1","workspaceId":"w1","status":"busy","createdAt":0,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0}}
+            """)
+        }
+
+        let session = try await client.getSessionRecord(sessionId: "s1")
+        #expect(session.id == "s1")
+        #expect(session.workspaceId == "w1")
+        #expect(session.status == .busy)
+    }
+
+    @Test func getSessionDialogsDecodesSnapshotsWithoutSessionId() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/sessions/s1/dialogs")
+            return self.mockResponse(json: """
+            {"dialogs":[{"id":"ask-1","method":"ask","questions":[{"id":"q","question":"Which?","options":[{"value":"a","label":"A"}]}],"allowCustom":false,"timeout":1000}],"serverNow":9}
+            """)
+        }
+
+        let response = try await client.getSessionDialogs(sessionId: "s1")
+        #expect(response.dialogs.count == 1)
+        #expect(response.dialogs.first?.id == "ask-1")
+        #expect(response.dialogs.first?.method == "ask")
+        #expect(response.serverNow == 9)
+    }
+
     @Test func listSessionsFromWorkspacesUsesAggregatedEndpoint() async throws {
         let client = makeClient()
         defer { cleanup() }

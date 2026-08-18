@@ -75,6 +75,7 @@ const sessionOperationIds = new Set<string>([
   "readSessionTrace",
   "getSessionTrace",
   "getGenericSessionEvents",
+  "getSessionDialogs",
   "getSessionAttachment",
   "headSessionAttachment",
   "sendSessionCommand",
@@ -786,7 +787,7 @@ const rawApiRouteSpecs = [
     method: "GET",
     path: "/sessions/{sessionId}/dialogs",
     operationId: "getSessionDialogs",
-    surface: "internal",
+    surface: "core",
     auth: "owner",
   },
   {

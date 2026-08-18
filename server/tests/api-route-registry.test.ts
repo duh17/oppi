@@ -87,6 +87,7 @@ const sessionOperationIds = [
   "readSessionTrace",
   "getSessionTrace",
   "getGenericSessionEvents",
+  "getSessionDialogs",
   "getSessionAttachment",
   "headSessionAttachment",
   "sendSessionCommand",
@@ -196,6 +197,9 @@ describe("api route registry", () => {
     expect(normalizeRegisteredPathPattern("/sessions/s1/trace")).toBe("/sessions/:sessionId/trace");
     expect(normalizeRegisteredPathPattern("/sessions/s1/events")).toBe(
       "/sessions/:sessionId/events",
+    );
+    expect(normalizeRegisteredPathPattern("/sessions/s1/dialogs")).toBe(
+      "/sessions/:sessionId/dialogs",
     );
     expect(normalizeRegisteredPathPattern("/sessions/s1/attachments/att-image")).toBe(
       "/sessions/:sessionId/attachments/:attachmentId",
