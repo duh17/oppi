@@ -2132,6 +2132,7 @@ final class ServerConnection {
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
             diagnosticRemoteIdentity: nil,
+            leftoverExpiresAtMs: credentials.deviceCredential?.expiresAt,
             currentTokenProvider: currentTokenProvider,
             refreshTokenProvider: refreshTokenProvider
         )

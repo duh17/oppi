@@ -266,6 +266,150 @@ struct WebSocketClientAuthRefreshTests {
         await consumer.value
     }
 
+    @Test func siblingSessionTokenReuseDoesNotSpendMintBudget() async throws {
+        let factory = ScriptedFocusedWebSocketFactory()
+        let transport = RecordingDeviceAuthTransport(nextToken: "at_minted")
+        let authSession = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: InMemoryP256DeviceKey(),
+            accessToken: "at_stale",
+            expiresAt: Date().addingTimeInterval(600),
+            transport: transport
+        )
+        let client = WebSocketClient(
+            credentials: makeTestCredentials(token: "at_stale"),
+            authSession: authSession,
+            webSocketFactory: { request in factory.makeTransport(for: request) }
+        )
+        client.setStreamURL(URL(string: "ws://127.0.0.1:7749/session/stream")!)
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await _ in stream {}
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        _ = try await authSession.refreshAccessToken()
+        #expect(await transport.refreshCallCount() == 1)
+
+        try #require(factory.sockets.first).fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+        #expect(await transport.refreshCallCount() == 1)
+
+        try #require(factory.sockets.last).fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 3
+        })
+        #expect(await transport.refreshCallCount() == 2)
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func unexpiredLeftoverCredentialStillOpensAfterRefreshRejection() async throws {
+        let factory = ScriptedFocusedWebSocketFactory()
+        let transport = RecordingDeviceAuthTransport(
+            nextToken: "at_fresh",
+            refreshError: .refreshRejected(code: "revoked")
+        )
+        let authSession = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: InMemoryP256DeviceKey(),
+            accessToken: "at_expired",
+            expiresAt: Date().addingTimeInterval(-1),
+            transport: transport
+        )
+        let futureMs = Int64((Date().timeIntervalSince1970 + 600) * 1000)
+        let client = WebSocketClient(
+            credentials: ServerCredentials(
+                host: "localhost",
+                port: 7749,
+                token: "at_leftover",
+                name: "Test",
+                deviceCredential: DeviceCredential(
+                    deviceId: "dev_1",
+                    accessToken: "at_leftover",
+                    expiresAt: futureMs,
+                    refreshChallenge: nil
+                )
+            ),
+            authSession: authSession,
+            webSocketFactory: { request in factory.makeTransport(for: request) }
+        )
+        client.setStreamURL(URL(string: "ws://127.0.0.1:7749/session/stream")!)
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await _ in stream {}
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_leftover")
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func expiredLeftoverDoesNotOpenAfterRefreshRejection() async throws {
+        let factory = ScriptedFocusedWebSocketFactory()
+        let transport = RecordingDeviceAuthTransport(
+            nextToken: "at_fresh",
+            refreshError: .refreshRejected(code: "revoked")
+        )
+        let authSession = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: InMemoryP256DeviceKey(),
+            accessToken: "at_expired",
+            expiresAt: Date().addingTimeInterval(-1),
+            transport: transport
+        )
+        let expiredMs = Int64((Date().timeIntervalSince1970 - 120) * 1000)
+        let client = WebSocketClient(
+            credentials: ServerCredentials(
+                host: "localhost",
+                port: 7749,
+                token: "at_expired_leftover",
+                name: "Test",
+                deviceCredential: DeviceCredential(
+                    deviceId: "dev_1",
+                    accessToken: "at_expired_leftover",
+                    expiresAt: expiredMs,
+                    refreshChallenge: nil
+                )
+            ),
+            authSession: authSession,
+            webSocketFactory: { request in factory.makeTransport(for: request) }
+        )
+        client.setStreamURL(URL(string: "ws://127.0.0.1:7749/session/stream")!)
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await _ in stream {}
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            client.status == .disconnected
+        })
+        #expect(await transport.refreshCallCount() == 1)
+        #expect(factory.sockets.isEmpty, "Known-expired leftover must not open a socket")
+
+        client.disconnect()
+        await consumer.value
+    }
+
     private func makeClient(
         factory: ScriptedFocusedWebSocketFactory,
         transport: any DeviceAuthTransport
@@ -467,7 +611,7 @@ struct DictationDeviceAuthTests {
             factory.sockets.count == 2
         })
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
-        #expect(currentCalls.get() == 1)
+        #expect(currentCalls.get() == 2)
         #expect(refreshCalls.get() == 1)
 
         client.disconnect()

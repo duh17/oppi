@@ -68,6 +68,7 @@ final class AppEventStreamClient {
 
     private let url: URL
     private var token: String
+    private let leftoverExpiresAtMs: Int64?
     private let currentTokenProvider: (@Sendable () async throws -> String)?
     /// Distinct forced refresh used only after a 401. Static-token streams leave
     /// both providers nil and treat 401 as terminal.
@@ -106,6 +107,7 @@ final class AppEventStreamClient {
         tlsCertFingerprint: String? = nil,
         tlsServerName: String? = nil,
         diagnosticRemoteIdentity: String? = nil,
+        leftoverExpiresAtMs: Int64? = nil,
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
         refreshTokenProvider: (@Sendable () async throws -> String)? = nil,
         pingInterval: Duration = WebSocketRecoveryPolicy.pingInterval,
@@ -116,6 +118,7 @@ final class AppEventStreamClient {
     ) {
         self.url = url
         self.token = token
+        self.leftoverExpiresAtMs = leftoverExpiresAtMs
         self.currentTokenProvider = currentTokenProvider
         self.refreshTokenProvider = refreshTokenProvider
         self.reconnectDelay = reconnectDelay
@@ -171,20 +174,24 @@ final class AppEventStreamClient {
         continuation: AsyncStream<AppEventMessage>.Continuation,
         currentTokenProvider: (@Sendable () async throws -> String)?
     ) {
-        if !token.isEmpty {
-            open(continuation: continuation)
-        }
-        guard let currentTokenProvider else {
-            if token.isEmpty { disconnect() }
+        // Resolve first when a device-key session exists. Opening with a leftover
+        // snapshot burns the connection's one 401 retry on a guaranteed miss after
+        // the 10-minute access TTL.
+        if let currentTokenProvider {
+            Task { [weak self] in
+                await self?.applyResolvedToken(
+                    thisConnection: thisConnection,
+                    continuation: continuation,
+                    currentTokenProvider: currentTokenProvider
+                )
+            }
             return
         }
-        Task { [weak self] in
-            await self?.applyResolvedToken(
-                thisConnection: thisConnection,
-                continuation: continuation,
-                currentTokenProvider: currentTokenProvider
-            )
+        if token.isEmpty {
+            disconnect()
+            return
         }
+        open(continuation: continuation)
     }
 
     private func applyResolvedToken(
@@ -214,10 +221,17 @@ final class AppEventStreamClient {
         } catch {
             logStreamError("Initial device token resolution failed", error: error)
             guard connectionID == thisConnection else { return }
-            // Keep a leftover/static snapshot open so mixed-update streams are
-            // not torn down while the device-key session cannot produce a replacement.
-            if token.isEmpty {
+            // Mixed-update: keep a leftover/static snapshot so a failed device-key
+            // session does not drop the stream. Do not open a known-empty leftover.
+            if !DeviceAuthSession.leftoverIsUsable(
+                token: token,
+                expiresAtMs: leftoverExpiresAtMs
+            ) {
                 disconnect()
+                return
+            }
+            if webSocket == nil {
+                open(continuation: continuation)
             }
         }
     }
@@ -515,6 +529,16 @@ final class AppEventStreamClient {
             return false
         }
         do {
+            if let currentTokenProvider {
+                let current = try await currentTokenProvider()
+                guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
+                if !current.isEmpty, current != token {
+                    // Sibling already minted. Reconnect without spending the one mint.
+                    token = current
+                    attemptReconnect(reason: "auth_current_token")
+                    return true
+                }
+            }
             let refreshed = try await refreshTokenProvider()
             guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
             guard !refreshed.isEmpty else {

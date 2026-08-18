@@ -107,6 +107,20 @@ public actor DeviceAuthSession {
         return fallback
     }
 
+    /// Leftover/static bearers without an expiry stay usable (mixed-update `dt_`).
+    /// A known-expired `at_` must not open a socket.
+    public static func leftoverIsUsable(
+        token: String,
+        expiresAtMs: Int64?,
+        now: Date = Date(),
+        skew: TimeInterval = 30
+    ) -> Bool {
+        guard !token.isEmpty else { return false }
+        guard let expiresAtMs else { return true }
+        let expiresAt = Date(timeIntervalSince1970: TimeInterval(expiresAtMs) / 1_000)
+        return now.addingTimeInterval(skew) < expiresAt
+    }
+
     /// Return a usable access token, refreshing single-flight when near expiry
     /// or when the cached token is empty.
     public func currentAccessToken() async throws -> String {
@@ -117,7 +131,17 @@ public actor DeviceAuthSession {
     }
 
     /// Refresh the access token, coalescing concurrent callers into one exchange.
-    public func refreshAccessToken() async throws -> String {
+    ///
+    /// Pass the bearer that just received 401 as `replacing`. If another caller
+    /// already minted a newer token, return that instead of issuing another nonce.
+    public func refreshAccessToken(replacing staleToken: String? = nil) async throws -> String {
+        if let staleToken,
+           !staleToken.isEmpty,
+           accessToken != staleToken,
+           !accessToken.isEmpty,
+           clock().addingTimeInterval(skew) < expiresAt {
+            return accessToken
+        }
         if let inFlightRefresh {
             // Re-entrancy guard: awaiting our own in-flight task would deadlock.
             if Self.isRefreshing {

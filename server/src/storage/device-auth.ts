@@ -16,7 +16,8 @@ export const ACCESS_TOKEN_TTL_MS = 10 * 60 * 1000;
 export const CHALLENGE_TTL_MS = 60 * 1000;
 export const CLOCK_SKEW_MS = 30 * 1000;
 export const MAX_OUTSTANDING_CHALLENGES = 10_000;
-export const MAX_ACTIVE_ACCESS_TOKENS_PER_DEVICE = 2;
+export const MAX_CHALLENGES_PER_DEVICE = 4;
+export const MAX_ACTIVE_ACCESS_TOKENS_PER_DEVICE = 8;
 export const MAX_REFRESHES_PER_MINUTE_PER_DEVICE = 12;
 
 type ChallengeNonceState = { deviceId: string; expiresAt: number; used: boolean };
@@ -25,7 +26,11 @@ type PairingTokenValidation = { ok: true } | { ok: false; status: 400 | 401; err
 
 export type AccessTokenValidation =
   | { ok: true; deviceId: string; scope: DeviceRecord["scope"] }
-  | { ok: false; code: "unknown_token" | "expired" | "revoked" };
+  | {
+      ok: false;
+      code: "unknown_token" | "expired" | "revoked" | "evicted";
+      deviceId?: string;
+    };
 
 export type RefreshResult =
   | { ok: true; accessToken: string; expiresAt: number }
@@ -122,6 +127,10 @@ export class DeviceAuthStore {
   private readonly refreshesByDevice = new Map<string, number[]>();
 
   constructor(private readonly configStore: ConfigStore) {}
+
+  private unexpiredAccessTokens(records: AccessTokenRecord[], now: number): AccessTokenRecord[] {
+    return records.filter((record) => now - CLOCK_SKEW_MS <= record.expiresAt);
+  }
 
   private boundedAccessTokens(records: AccessTokenRecord[], now: number): AccessTokenRecord[] {
     const byDevice = new Map<string, Array<{ record: AccessTokenRecord; index: number }>>();
@@ -233,7 +242,10 @@ export class DeviceAuthStore {
       pairingToken: undefined,
       pairingTokenExpiresAt: undefined,
       authDevices: [...(config.authDevices ?? []), device],
-      authAccessTokens: this.boundedAccessTokens([...(config.authAccessTokens ?? []), access], now),
+      authAccessTokens: this.unexpiredAccessTokens(
+        [...(config.authAccessTokens ?? []), access],
+        now,
+      ),
     });
     const refreshChallenge = this.issueChallenge(device.id);
     if (!refreshChallenge) throw new Error("failed to issue refresh challenge");
@@ -311,7 +323,7 @@ export class DeviceAuthStore {
     };
     this.configStore.updateConfig({
       authDevices: devices,
-      authAccessTokens: this.boundedAccessTokens(
+      authAccessTokens: this.unexpiredAccessTokens(
         [...(this.configStore.getConfig().authAccessTokens ?? []), access],
         now,
       ),
@@ -341,14 +353,20 @@ export class DeviceAuthStore {
     if (!device || device.revokedAt !== undefined || !device.publicKey) return null;
 
     const now = Date.now();
+    const liveForDevice: Array<{ nonce: string; expiresAt: number }> = [];
     for (const [nonce, state] of this.challenges) {
       if (state.used || now - CLOCK_SKEW_MS > state.expiresAt) {
         this.challenges.delete(nonce);
         continue;
       }
       if (state.deviceId === deviceId) {
-        return { nonce, audience: REFRESH_AUDIENCE, expiresAt: state.expiresAt };
+        liveForDevice.push({ nonce, expiresAt: state.expiresAt });
       }
+    }
+    liveForDevice.sort((left, right) => left.expiresAt - right.expiresAt);
+    while (liveForDevice.length >= MAX_CHALLENGES_PER_DEVICE) {
+      const oldest = liveForDevice.shift();
+      if (oldest) this.challenges.delete(oldest.nonce);
     }
 
     const nonce = DeviceAuthStore.generateNonce();
@@ -402,7 +420,10 @@ export class DeviceAuthStore {
       authDevices: (config.authDevices ?? []).map((item) =>
         item.id === device.id ? { ...item, lastUsedAt: now } : item,
       ),
-      authAccessTokens: this.boundedAccessTokens([...(config.authAccessTokens ?? []), access], now),
+      authAccessTokens: this.unexpiredAccessTokens(
+        [...(config.authAccessTokens ?? []), access],
+        now,
+      ),
     });
     this.refreshesByDevice.set(device.id, [...(this.refreshesByDevice.get(device.id) ?? []), now]);
     return { ok: true, accessToken, expiresAt: access.expiresAt };
@@ -412,19 +433,24 @@ export class DeviceAuthStore {
     const config = this.configStore.getConfig();
     const now = Date.now();
     const existing = config.authAccessTokens ?? [];
-    const bounded = this.boundedAccessTokens(existing, now);
-    if (bounded.length !== existing.length) {
-      this.configStore.updateConfig({ authAccessTokens: bounded });
+    const unexpired = this.unexpiredAccessTokens(existing, now);
+    if (unexpired.length !== existing.length) {
+      this.configStore.updateConfig({ authAccessTokens: unexpired });
     }
+    const bounded = this.boundedAccessTokens(unexpired, now);
     const candidateHash = tokenHash(candidate);
     const access = existing.find((item) => secureTokenEquals(item.tokenHash, candidateHash));
     if (!access) return { ok: false, code: "unknown_token" };
-    if (now - CLOCK_SKEW_MS > access.expiresAt) return { ok: false, code: "expired" };
+    if (now - CLOCK_SKEW_MS > access.expiresAt) {
+      return { ok: false, code: "expired", deviceId: access.deviceId };
+    }
     if (!bounded.some((item) => item.id === access.id)) {
-      return { ok: false, code: "unknown_token" };
+      return { ok: false, code: "evicted", deviceId: access.deviceId };
     }
     const device = (config.authDevices ?? []).find((item) => item.id === access.deviceId);
-    if (!device || device.revokedAt !== undefined) return { ok: false, code: "revoked" };
+    if (!device || device.revokedAt !== undefined) {
+      return { ok: false, code: "revoked", deviceId: access.deviceId };
+    }
     return { ok: true, deviceId: device.id, scope: device.scope };
   }
 

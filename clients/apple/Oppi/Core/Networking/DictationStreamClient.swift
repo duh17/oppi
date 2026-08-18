@@ -310,6 +310,24 @@ final class DictationStreamClient: DictationTransport {
                     }
                     isRecoveringFromAuthFailure = true
                     do {
+                        if let currentTokenProvider {
+                            let current = try await currentTokenProvider()
+                            if !current.isEmpty, current != token {
+                                guard !Task.isCancelled,
+                                      self.task?.identity == task.identity,
+                                      continuation != nil,
+                                      status != .disconnected else {
+                                    isRecoveringFromAuthFailure = false
+                                    dictationStreamLogger.info("Dictation disconnected during 401 refresh — not reopening")
+                                    return
+                                }
+                                token = current
+                                openSocket()
+                                await replayPendingDictationStart()
+                                isRecoveringFromAuthFailure = false
+                                return
+                            }
+                        }
                         let refreshed = try await refreshTokenProvider()
                         if !refreshed.isEmpty {
                             // Re-check socket identity, cancellation, continuation,

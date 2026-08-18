@@ -105,6 +105,9 @@ final class WebSocketClient {
     /// Device-key auth session. When set, the WebSocket bearer comes from this
     /// session and a 401 handshake refreshes single-flight before one reconnect.
     private var authSession: DeviceAuthSession?
+    /// Bearer last applied to the live socket. 401 recovery compares this to the
+    /// session's current token so a sibling refresh is reused instead of reminted.
+    private var appliedAccessToken: String = ""
     var configuredTLSServerName: String? { trustDelegate.expectedServerName }
     private var preferredEndpoint: EndpointSelection?
     private var streamURL: URL?
@@ -600,7 +603,11 @@ final class WebSocketClient {
             let token: String
             do {
                 let cached = await authSession.accessToken
-                if cached.isEmpty, !self.credentials.effectiveAccessToken.isEmpty {
+                if cached.isEmpty,
+                   DeviceAuthSession.leftoverIsUsable(
+                    token: self.credentials.effectiveAccessToken,
+                    expiresAtMs: self.credentials.deviceCredential?.expiresAt
+                   ) {
                     token = self.credentials.effectiveAccessToken
                 } else {
                     token = ServerAuthorization.resolvedToken(
@@ -609,10 +616,14 @@ final class WebSocketClient {
                     )
                 }
             } catch {
-                // HTTP callers fail closed. Focused streams still open from the
-                // leftover/static snapshot so the first command is not lost.
+                // HTTP callers fail closed. Focused streams may still open from a
+                // leftover/static snapshot that is not known-expired.
                 let fallback = self.credentials.effectiveAccessToken
-                guard !fallback.isEmpty else {
+                let leftoverUsable = DeviceAuthSession.leftoverIsUsable(
+                    token: fallback,
+                    expiresAtMs: self.credentials.deviceCredential?.expiresAt
+                )
+                guard leftoverUsable else {
                     logger.error(
                         "Device-key token resolution failed with no leftover snapshot: \(error.localizedDescription, privacy: .public)"
                     )
@@ -637,6 +648,7 @@ final class WebSocketClient {
     ) {
         var request = URLRequest(url: url)
         ServerAuthorization.apply(token: token, to: &request)
+        appliedAccessToken = token
         let ws = webSocketFactory(request)
         self.webSocket = ws
         ws.resume()
@@ -660,7 +672,16 @@ final class WebSocketClient {
             return false
         }
         do {
-            let refreshed = try await authSession.refreshAccessToken()
+            let current = try await authSession.currentAccessToken()
+            guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
+            if !current.isEmpty, current != appliedAccessToken {
+                // Sibling already minted. Reconnect without spending the one mint.
+                attemptReconnect()
+                return true
+            }
+            let refreshed = try await authSession.refreshAccessToken(
+                replacing: appliedAccessToken
+            )
             guard webSocket?.identity == ws.identity, status != .disconnected else { return true }
             guard !refreshed.isEmpty else {
                 wsLogError(

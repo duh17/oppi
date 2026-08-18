@@ -203,15 +203,17 @@ export function formatUnauthorizedAuthLog(opts: {
   path: string;
   method?: string;
   authorization: string | string[] | undefined;
+  reason?: string;
 }): string {
   const authPresent = hasAuthHeader(opts.authorization);
+  const reason = opts.reason ? ` reason=${opts.reason}` : "";
 
   if (opts.transport === "ws") {
-    return `${ts()} [auth] 401 WS upgrade ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
+    return `${ts()} [auth] 401 WS upgrade ${opts.path} — auth: ${authPresent ? "present" : "missing"}${reason}`;
   }
 
   const method = opts.method || "GET";
-  return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}`;
+  return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}${reason}`;
 }
 
 /**
@@ -1196,32 +1198,53 @@ export class Server {
 
   // ─── Auth ───
 
-  private authenticate(req: IncomingMessage): SocketPrincipal | null {
+  private authenticate(
+    req: IncomingMessage,
+  ): { ok: true; principal: SocketPrincipal } | { ok: false; reason: string; deviceId?: string } {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) return null;
+    if (!auth) return { ok: false, reason: "missing" };
+    if (!auth.startsWith("Bearer ")) return { ok: false, reason: "malformed" };
     const candidate = auth.slice(7);
+    if (!candidate) return { ok: false, reason: "malformed" };
     const owner = this.storage.getToken();
     if (owner && secureTokenEquals(owner, candidate)) {
-      return isLocalRequest(req) ? { kind: "owner" } : null;
+      return isLocalRequest(req)
+        ? { ok: true, principal: { kind: "owner" } }
+        : { ok: false, reason: "owner_on_network" };
     }
 
-    if (!isSecureNetworkRequest(req)) return null;
+    if (!isSecureNetworkRequest(req)) {
+      return { ok: false, reason: "insecure" };
+    }
 
     const access = this.storage.validateAccessToken(candidate);
     if (access.ok) {
       if (this.storage.commitLegacyRevocation(access.deviceId)) {
         this.closeLegacyTokenConnectionsForDevice(access.deviceId);
       }
-      return { kind: "device", deviceId: access.deviceId, tokenClass: "at_" };
+      return {
+        ok: true,
+        principal: { kind: "device", deviceId: access.deviceId, tokenClass: "at_" },
+      };
     }
-    if (this.storage.isMigrationFinalized()) return null;
-    for (const dt of this.storage.getAuthDeviceTokens()) {
-      if (secureTokenEquals(dt, candidate) && this.storage.hasAuthToken(dt)) {
-        const deviceId = this.storage.deviceIdForLegacyToken(dt);
-        return deviceId ? { kind: "device", deviceId, tokenClass: "dt_" } : null;
+    if (!this.storage.isMigrationFinalized()) {
+      for (const dt of this.storage.getAuthDeviceTokens()) {
+        if (secureTokenEquals(dt, candidate) && this.storage.hasAuthToken(dt)) {
+          const deviceId = this.storage.deviceIdForLegacyToken(dt);
+          if (deviceId) {
+            return {
+              ok: true,
+              principal: { kind: "device", deviceId, tokenClass: "dt_" },
+            };
+          }
+        }
       }
     }
-    return null;
+    return {
+      ok: false,
+      reason: access.code,
+      ...("deviceId" in access && access.deviceId ? { deviceId: access.deviceId } : {}),
+    };
   }
 
   // ─── HTTP Router ───
@@ -1287,13 +1310,15 @@ export class Server {
       return;
     }
 
-    const principal = this.authenticate(req);
-    if (!principal) {
+    const authResult = this.authenticate(req);
+    if (!authResult.ok) {
       log.warn("auth.unauthorized", {
         transport: "http",
         method,
         path,
         authPresent: hasAuthHeader(req.headers.authorization),
+        reason: authResult.reason,
+        ...(authResult.deviceId ? { device: authResult.deviceId } : {}),
       });
       this.error(res, 401, "Unauthorized");
       return;
@@ -1337,12 +1362,14 @@ export class Server {
 
     const url = new URL(req.url || "/", `${this.transportScheme}://${req.headers.host}`);
 
-    const principal = this.authenticate(req);
-    if (!principal) {
+    const authResult = this.authenticate(req);
+    if (!authResult.ok) {
       log.warn("auth.unauthorized", {
         transport: "ws",
         path: url.pathname,
         authPresent: hasAuthHeader(req.headers.authorization),
+        reason: authResult.reason,
+        ...(authResult.deviceId ? { device: authResult.deviceId } : {}),
       });
       writeUpgradeErrorResponse(socket, "HTTP/1.1 401 Unauthorized", {
         "WWW-Authenticate": 'Bearer realm="oppi"',
@@ -1351,6 +1378,7 @@ export class Server {
       });
       return;
     }
+    const principal = authResult.principal;
 
     const sessionStreamMatch = matchFocusedSessionStreamPath(url.pathname);
     const appEventStreamMatch = url.pathname === "/app/events/stream";

@@ -29,4 +29,17 @@ describe("auth log redaction", () => {
     expect(line).not.toContain("sk_live_super_secret_token");
     expect(line).not.toContain("tok=");
   });
+
+  it("includes a machine-readable 401 reason without leaking the bearer", () => {
+    const line = formatUnauthorizedAuthLog({
+      method: "GET",
+      path: "/sessions",
+      authorization: "Bearer at_live_super_secret_token",
+      reason: "evicted",
+    });
+
+    expect(line).toContain("reason=evicted");
+    expect(line).toContain("auth: present");
+    expect(line).not.toContain("at_live_super_secret_token");
+  });
 });

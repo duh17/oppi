@@ -11,6 +11,7 @@ import {
   ACCESS_TOKEN_TTL_MS,
   CLOCK_SKEW_MS,
   MAX_ACTIVE_ACCESS_TOKENS_PER_DEVICE,
+  MAX_CHALLENGES_PER_DEVICE,
   REFRESH_AUDIENCE,
 } from "../src/storage/device-auth.js";
 import type { DevicePublicKey } from "../src/types.js";
@@ -50,10 +51,10 @@ function signChallenge(key: DeviceKey, nonce: string): string {
 
 function enroll(key: DeviceKey = makeDeviceKey()) {
   const pairingToken = storage.issuePairingToken(60_000);
-  const result = storage.enrollViaPairing(
-    pairingToken,
-    { publicKey: key.publicKeyJwk, name: "iPhone" },
-  );
+  const result = storage.enrollViaPairing(pairingToken, {
+    publicKey: key.publicKeyJwk,
+    name: "iPhone",
+  });
   if (!result) throw new Error("enrollment failed");
   return result;
 }
@@ -75,15 +76,67 @@ describe("device-auth refresh", () => {
       issued.push(result.accessToken);
     }
 
-    const retained = storage.getConfig().authAccessTokens?.filter(
-      (token) => token.deviceId === enrolled.deviceId,
-    ) ?? [];
-    expect(retained).toHaveLength(MAX_ACTIVE_ACCESS_TOKENS_PER_DEVICE);
+    const retained =
+      storage
+        .getConfig()
+        .authAccessTokens?.filter((token) => token.deviceId === enrolled.deviceId) ?? [];
+    expect(retained.length).toBeGreaterThan(MAX_ACTIVE_ACCESS_TOKENS_PER_DEVICE);
     expect(storage.validateAccessToken(issued.at(-1) as string).ok).toBe(true);
-    expect(storage.validateAccessToken(issued[0])).toEqual({
+    expect(storage.validateAccessToken(issued[0])).toMatchObject({
       ok: false,
-      code: "unknown_token",
+      code: "evicted",
+      deviceId: enrolled.deviceId,
     });
+  });
+
+  it("mints a distinct nonce per challenge so concurrent refreshers do not share one", () => {
+    const key = makeDeviceKey();
+    const enrolled = enroll(key);
+    const first = storage.issueChallenge(enrolled.deviceId);
+    const second = storage.issueChallenge(enrolled.deviceId);
+    if (!first || !second) throw new Error("no challenge");
+    expect(first.nonce).not.toBe(second.nonce);
+
+    const firstRefresh = storage.refresh({
+      deviceId: enrolled.deviceId,
+      nonce: first.nonce,
+      signature: signChallenge(key, first.nonce),
+    });
+    const secondRefresh = storage.refresh({
+      deviceId: enrolled.deviceId,
+      nonce: second.nonce,
+      signature: signChallenge(key, second.nonce),
+    });
+    expect(firstRefresh.ok).toBe(true);
+    expect(secondRefresh.ok).toBe(true);
+  });
+
+  it("evicts the oldest unused challenge after the per-device cap", () => {
+    const key = makeDeviceKey();
+    const enrolled = enroll(key);
+    const issued = [];
+    for (let index = 0; index < MAX_CHALLENGES_PER_DEVICE + 1; index += 1) {
+      const challenge = storage.issueChallenge(enrolled.deviceId);
+      if (!challenge) throw new Error("no challenge");
+      issued.push(challenge);
+    }
+    const oldest = issued[0];
+    const newest = issued.at(-1);
+    if (!oldest || !newest) throw new Error("missing challenge");
+    expect(
+      storage.refresh({
+        deviceId: enrolled.deviceId,
+        nonce: oldest.nonce,
+        signature: signChallenge(key, oldest.nonce),
+      }),
+    ).toEqual({ ok: false, code: "unknown_nonce" });
+    expect(
+      storage.refresh({
+        deviceId: enrolled.deviceId,
+        nonce: newest.nonce,
+        signature: signChallenge(key, newest.nonce),
+      }).ok,
+    ).toBe(true);
   });
 
   it("rejects a replayed nonce", () => {
@@ -148,7 +201,6 @@ describe("device-auth refresh", () => {
     });
     expect(result).toEqual({ ok: false, code: "revoked" });
   });
-
 });
 
 describe("access-token validation", () => {
@@ -160,9 +212,10 @@ describe("access-token validation", () => {
       expect(storage.validateAccessToken(enrolled.accessToken).ok).toBe(true);
 
       vi.setSystemTime(new Date(Date.now() + ACCESS_TOKEN_TTL_MS + CLOCK_SKEW_MS + 1));
-      expect(storage.validateAccessToken(enrolled.accessToken)).toEqual({
+      expect(storage.validateAccessToken(enrolled.accessToken)).toMatchObject({
         ok: false,
         code: "expired",
+        deviceId: enrolled.deviceId,
       });
     } finally {
       vi.useRealTimers();
@@ -179,6 +232,29 @@ describe("access-token validation", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reports evicted for a still-unexpired token pushed out of the live window", () => {
+    const key = makeDeviceKey();
+    const enrolled = enroll(key);
+    const issued = [enrolled.accessToken];
+    for (let index = 0; index < MAX_ACTIVE_ACCESS_TOKENS_PER_DEVICE; index += 1) {
+      const challenge = storage.issueChallenge(enrolled.deviceId);
+      if (!challenge) throw new Error("no challenge");
+      const result = storage.refresh({
+        deviceId: enrolled.deviceId,
+        nonce: challenge.nonce,
+        signature: signChallenge(key, challenge.nonce),
+      });
+      if (!result.ok) throw new Error(`refresh failed: ${result.code}`);
+      issued.push(result.accessToken);
+    }
+    expect(storage.validateAccessToken(issued[0])).toMatchObject({
+      ok: false,
+      code: "evicted",
+      deviceId: enrolled.deviceId,
+    });
+    expect(storage.validateAccessToken(issued.at(-1) as string).ok).toBe(true);
   });
 
   it("rejects unknown tokens and owner sk_ tokens", () => {

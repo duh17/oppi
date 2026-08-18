@@ -332,7 +332,7 @@ actor APIClient: ClientLogUploading {
 
         var (data, response) = try await bootstrapData(for: request, deadline: bootstrapDeadline)
         if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
-            current = try await authorizedToken(forceRefresh: true)
+            current = try await authorizedToken(forceRefresh: true, replacing: current)
             var retry = try URLRequest(url: makeURL(path: "/server/info"))
             retry.httpMethod = "GET"
             ServerAuthorization.apply(token: current, to: &retry)
@@ -2053,10 +2053,13 @@ actor APIClient: ClientLogUploading {
     /// near expiry. Falls back to the leftover/static token when the session has
     /// not produced a usable replacement. Refresh rejection (revoked/unknown
     /// device) fails closed instead of sending a possibly-expired snapshot.
-    private func authorizedToken(forceRefresh: Bool = false) async throws -> String {
+    private func authorizedToken(
+        forceRefresh: Bool = false,
+        replacing staleToken: String? = nil
+    ) async throws -> String {
         guard let authSession = authSessionBox.get() else { return token }
         if forceRefresh {
-            return try await authSession.refreshAccessToken()
+            return try await authSession.refreshAccessToken(replacing: staleToken)
         }
         let cached = await authSession.accessToken
         if cached.isEmpty, !token.isEmpty {
@@ -2111,7 +2114,7 @@ actor APIClient: ClientLogUploading {
         ServerAuthorization.apply(token: current, to: &request)
         var (data, response) = try await performData(for: request)
         if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
-            current = try await authorizedToken(forceRefresh: true)
+            current = try await authorizedToken(forceRefresh: true, replacing: current)
             var retry = try buildingRequest()
             ServerAuthorization.apply(token: current, to: &retry)
             (data, response) = try await performData(for: retry)

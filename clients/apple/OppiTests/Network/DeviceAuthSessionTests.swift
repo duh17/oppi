@@ -219,4 +219,44 @@ struct DeviceAuthSessionTests {
         #expect(await transport.challengeCount == 1)
         #expect(await transport.refreshCalls.count == 1)
     }
+
+    @Test func leftoverIsUsableWithoutExpiryAndRejectsKnownExpired() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        #expect(DeviceAuthSession.leftoverIsUsable(token: "dt_leftover", expiresAtMs: nil, now: now))
+        #expect(!DeviceAuthSession.leftoverIsUsable(token: "", expiresAtMs: nil, now: now))
+        let expiredMs = Int64((now.timeIntervalSince1970 - 120) * 1000)
+        #expect(!DeviceAuthSession.leftoverIsUsable(
+            token: "at_expired",
+            expiresAtMs: expiredMs,
+            now: now
+        ))
+        let futureMs = Int64((now.timeIntervalSince1970 + 600) * 1000)
+        #expect(DeviceAuthSession.leftoverIsUsable(
+            token: "at_fresh",
+            expiresAtMs: futureMs,
+            now: now
+        ))
+    }
+
+    @Test func replacingStaleTokenReusesNewerEpochWithoutNetwork() async throws {
+        let key = InMemoryP256DeviceKey()
+        let transport = FakeDeviceAuthTransport(
+            challenges: [DeviceAuthChallenge(nonce: "n1", audience: "oppi:refresh:v1", expiresAt: 2_000_000)],
+            refreshResult: DeviceAuthRefreshResult(accessToken: "at_should_not_mint", expiresAt: 2_000_000, refreshChallenge: nil)
+        )
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let session = DeviceAuthSession(
+            deviceId: "dev_1",
+            key: key,
+            accessToken: "at_current",
+            expiresAt: now.addingTimeInterval(600),
+            transport: transport,
+            clock: { now }
+        )
+
+        let token = try await session.refreshAccessToken(replacing: "at_evicted")
+        #expect(token == "at_current")
+        #expect(await transport.challengeCount == 0)
+        #expect(await transport.refreshCalls.isEmpty)
+    }
 }

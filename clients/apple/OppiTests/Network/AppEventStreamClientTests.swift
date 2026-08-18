@@ -329,8 +329,86 @@ struct AppEventStreamClientTests {
             factory.sockets.count == 2
         })
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
-        #expect(currentCounter.current() == 1)
+        #expect(currentCounter.current() == 2)
         #expect(refreshCounter.current() == 1)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func siblingTokenReuseDoesNotSpendTheOneMintThen401StillRefreshes() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let currentCounter = RefreshCounter()
+        let refreshCounter = RefreshCounter()
+        let client = try makeClient(
+            factory: factory,
+            token: "",
+            reconnectDelay: { _ in 0 },
+            currentTokenProvider: {
+                let count = currentCounter.incrementAndGet()
+                if count == 1 { return "at_current" }
+                return "at_sibling"
+            },
+            refreshTokenProvider: {
+                refreshCounter.increment()
+                return "at_minted"
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 1
+        })
+        try #require(factory.sockets.first).fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 2
+        })
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_sibling")
+        #expect(refreshCounter.current() == 0)
+
+        try #require(factory.sockets.last).fail(
+            URLError(.userAuthenticationRequired),
+            responseStatusCode: 401,
+            closeCode: .policyViolation
+        )
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 3
+        })
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_minted")
+        #expect(refreshCounter.current() == 1)
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func leftoverSnapshotDoesNotHandshakeBeforeCurrentTokenResolves() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let gate = TokenGate()
+        let client = try makeClient(
+            factory: factory,
+            token: "at_stale",
+            currentTokenProvider: {
+                await gate.wait()
+                return "at_current"
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(factory.sockets.isEmpty, "Must not open leftover before currentAccessToken returns")
+
+        await gate.release()
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 1
+        })
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_current")
 
         client.disconnect()
         await consumer.value
@@ -351,6 +429,53 @@ struct AppEventStreamClientTests {
         #expect(factory.sockets.count == 1)
         #expect(client.status != .disconnected)
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func expiredLeftoverDoesNotOpenAfterResolutionFailure() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let expiredMs = Int64((Date().timeIntervalSince1970 - 120) * 1000)
+        let client = try makeClient(
+            factory: factory,
+            token: "at_expired_leftover",
+            leftoverExpiresAtMs: expiredMs,
+            currentTokenProvider: {
+                throw DeviceAuthError.refreshRejected(code: "revoked")
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            client.status == .disconnected
+        })
+        #expect(factory.sockets.isEmpty, "Known-expired leftover must not open a socket")
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func unexpiredLeftoverCredentialStillOpensAfterResolutionFailure() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let futureMs = Int64((Date().timeIntervalSince1970 + 600) * 1000)
+        let client = try makeClient(
+            factory: factory,
+            token: "at_leftover",
+            leftoverExpiresAtMs: futureMs,
+            currentTokenProvider: {
+                throw DeviceAuthError.refreshRejected(code: "revoked")
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 1
+        })
+        #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_leftover")
+        #expect(client.status != .disconnected)
 
         client.disconnect()
         await consumer.value
@@ -459,6 +584,7 @@ struct AppEventStreamClientTests {
         pingTimeout: Duration = WebSocketRecoveryPolicy.pingTimeout,
         reconnectDelay: @escaping @Sendable (Int) -> TimeInterval = { _ in 60 },
         onTransportHealthFailure: (@MainActor @Sendable (PersistentStreamHealthFailure) async -> Void)? = nil,
+        leftoverExpiresAtMs: Int64? = nil,
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
         refreshTokenProvider: (@Sendable () async throws -> String)? = nil
     ) throws -> AppEventStreamClient {
@@ -466,6 +592,7 @@ struct AppEventStreamClientTests {
         return AppEventStreamClient(
             url: url,
             token: token,
+            leftoverExpiresAtMs: leftoverExpiresAtMs,
             currentTokenProvider: currentTokenProvider,
             refreshTokenProvider: refreshTokenProvider,
             pingInterval: pingInterval,
@@ -1049,6 +1176,24 @@ private final class ReconciliationRequestCounter: @unchecked Sendable {
     }
 }
 
+private actor TokenGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+        if released { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 private final class RefreshCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
@@ -1057,6 +1202,13 @@ private final class RefreshCounter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         value += 1
+    }
+
+    func incrementAndGet() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+        return value
     }
 
     func current() -> Int {
