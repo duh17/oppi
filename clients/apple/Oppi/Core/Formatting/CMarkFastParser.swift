@@ -759,7 +759,10 @@ private struct CMarkParsedDocument {
 }
 
 /// Shared parser setup: register GFM extensions, create parser, attach extensions, feed source.
-private func cmarkParsedDocument(_ source: String) -> CMarkParsedDocument? {
+private func cmarkParsedDocument(
+    _ source: String,
+    rewriteHTMLTables: Bool
+) -> CMarkParsedDocument? {
     cmark_gfm_core_extensions_ensure_registered()
 
     let options = CMARK_OPT_DEFAULT | CMARK_OPT_SMART | CMARK_OPT_SOURCEPOS
@@ -776,9 +779,15 @@ private func cmarkParsedDocument(_ source: String) -> CMarkParsedDocument? {
         cmark_parser_attach_syntax_extension(parser, tasklistExt)
     }
 
+    // Near-miss tables become GFM first so later wiki-pipe protection and
+    // cmark-gfm see ordinary delimiter rows and cells.
+    let tableSource = MarkdownTableMarkupRewriter.rewrite(
+        source,
+        rewriteHTMLTables: rewriteHTMLTables
+    )
     // Inline math is opaque while CommonMark parses its TeX punctuation.
     // Wiki-link protection then applies its independent scoped tokens.
-    let mathInput = MarkdownMathDelimiterRewriter.parserInput(source)
+    let mathInput = MarkdownMathDelimiterRewriter.parserInput(tableSource)
     let parserInput = MarkdownWikiLinkRewriter.parserInput(mathInput.source)
     parserInput.source.withCString { ptr in
         cmark_parser_feed(parser, ptr, parserInput.source.utf8.count)
@@ -797,7 +806,7 @@ private func cmarkParsedDocument(_ source: String) -> CMarkParsedDocument? {
 }
 
 nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
-    guard let parsed = cmarkParsedDocument(source) else { return [] }
+    guard let parsed = cmarkParsedDocument(source, rewriteHTMLTables: true) else { return [] }
     defer { cmark_node_free(parsed.root) }
 
     var blocks: [MarkdownBlock] = []
@@ -812,7 +821,7 @@ nonisolated func parseCommonMarkFast(_ source: String) -> [MarkdownBlock] {
 }
 
 nonisolated func parseCommonMarkFastLocated(_ source: String) -> [LocatedMarkdownBlock] {
-    guard let parsed = cmarkParsedDocument(source) else { return [] }
+    guard let parsed = cmarkParsedDocument(source, rewriteHTMLTables: false) else { return [] }
     defer { cmark_node_free(parsed.root) }
 
     var blocks: [LocatedMarkdownBlock] = []
@@ -831,7 +840,7 @@ nonisolated func parseCommonMarkFastLocated(_ source: String) -> [LocatedMarkdow
 
 /// Fast parse with last block start line — used by the streaming incremental path.
 nonisolated func parseCommonMarkFastWithLastLine(_ source: String) -> (blocks: [MarkdownBlock], lastBlockStartLine: Int) {
-    guard let parsed = cmarkParsedDocument(source) else { return ([], 1) }
+    guard let parsed = cmarkParsedDocument(source, rewriteHTMLTables: false) else { return ([], 1) }
     defer { cmark_node_free(parsed.root) }
 
     var blocks: [MarkdownBlock] = []

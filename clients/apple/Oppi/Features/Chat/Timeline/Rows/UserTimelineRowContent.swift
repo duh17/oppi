@@ -76,7 +76,10 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     private let pathPillRow = UIStackView()
     private let textRow = UIStackView()
     private let iconLabel = UILabel()
+    private let bodyStack = UIStackView()
     private let messageTextView = VerticalPanPassthroughTextView()
+    private var extraMarkdownTextViews: [VerticalPanPassthroughTextView] = []
+    private var tableBlockViews: [NativeTableBlockView] = []
     private let imageStrip = UIScrollView()
     private let imageStack = UIStackView()
 
@@ -84,7 +87,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     private static let thumbnailCornerRadius: CGFloat = TimelineBubbleStyle.thumbnailCornerRadius
     private static let maxDisplayCharacters = 12_000
     private static let maxDisplayLines = 220
-    private static let truncatedDisplaySuffix = "\n… message truncated for display. Use Copy for full content."
+    private static let truncatedDisplaySuffix = "\n\n… message truncated for display. Use Copy for full content."
     private static let slowApplyThresholdMs = 120
 
     private var currentConfiguration: UserTimelineRowConfiguration
@@ -207,8 +210,14 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         messageTextView.adjustsFontForContentSizeCategory = true
         messageTextView.font = AppFont.messageBody
 
+        bodyStack.translatesAutoresizingMaskIntoConstraints = false
+        bodyStack.axis = .vertical
+        bodyStack.alignment = .fill
+        bodyStack.spacing = 8
+        bodyStack.addArrangedSubview(messageTextView)
+
         textRow.addArrangedSubview(iconLabel)
-        textRow.addArrangedSubview(messageTextView)
+        textRow.addArrangedSubview(bodyStack)
 
         bubbleStack.addArrangedSubview(attachmentBadgeRow)
         bubbleStack.addArrangedSubview(pathPillRow)
@@ -274,15 +283,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
         let parsed = UserMessageAttachmentPresentation.parse(rawText: configuration.text)
         let displayText = Self.displayText(for: parsed.visibleText)
-        if displayText.text.isEmpty {
-            messageTextView.attributedText = nil
-        } else {
-            messageTextView.attributedText = FlatSegment.renderMarkdownInline(
-                displayText.text,
-                defaultTextColor: UIColor(palette.userMessageText),
-                palette: palette
-            )
-        }
+        applyMarkdownBody(displayText.text, palette: palette)
         let inlineImagePathPills = parsed.pathPills.filter { pill in
             guard pill.supportsInlinePreview else { return false }
             // Uploaded image attachments can arrive in two forms for the same
@@ -304,7 +305,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
         updateAttachmentBadges(visibleBadges, palette: palette)
         updatePathPills(nonImagePathPills, palette: palette)
-        messageTextView.isHidden = displayText.text.isEmpty
         textRow.isHidden = displayText.text.isEmpty
         bubbleContainer.isHidden = displayText.text.isEmpty && configuration.images.isEmpty && visibleBadges.isEmpty && parsed.pathPills.isEmpty
         iconLabel.isHidden = displayText.text.isEmpty
@@ -397,10 +397,125 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         }
     }
 
+    private var markdownTextViews: [UITextView] {
+        [messageTextView] + extraMarkdownTextViews
+    }
+
+    private func applyMarkdownBody(_ text: String, palette: ThemePalette) {
+        guard !text.isEmpty else {
+            resetMarkdownBodyToSingleTextView()
+            messageTextView.attributedText = nil
+            messageTextView.isHidden = true
+            return
+        }
+
+        let pieces = FlatSegment.renderMarkdownPieces(
+            text,
+            defaultTextColor: UIColor(palette.userMessageText),
+            palette: palette
+        )
+        let hasTable = pieces.contains {
+            if case .table = $0 { return true }
+            return false
+        }
+        guard hasTable else {
+            resetMarkdownBodyToSingleTextView()
+            if case .attributed(let attributed) = pieces.first {
+                messageTextView.attributedText = attributed
+            } else {
+                messageTextView.attributedText = nil
+            }
+            messageTextView.isHidden = (messageTextView.attributedText?.length ?? 0) == 0
+            return
+        }
+
+        clearExtraMarkdownViews()
+        messageTextView.removeFromSuperview()
+        messageTextView.attributedText = nil
+        messageTextView.isHidden = true
+
+        var usedPrimaryTextView = false
+        for piece in pieces {
+            switch piece {
+            case .attributed(let attributed):
+                if !usedPrimaryTextView {
+                    messageTextView.attributedText = attributed
+                    messageTextView.isHidden = false
+                    bodyStack.addArrangedSubview(messageTextView)
+                    usedPrimaryTextView = true
+                } else {
+                    let extra = makeExtraMarkdownTextView()
+                    extra.attributedText = attributed
+                    extra.textColor = UIColor(palette.userMessageText)
+                    bodyStack.addArrangedSubview(extra)
+                    extraMarkdownTextViews.append(extra)
+                }
+
+            case .table(let headers, let rows):
+                let table = NativeTableBlockView()
+                table.apply(headers: headers, rows: rows, palette: palette)
+                bodyStack.addArrangedSubview(table)
+                tableBlockViews.append(table)
+            }
+        }
+    }
+
+    private func resetMarkdownBodyToSingleTextView() {
+        clearExtraMarkdownViews()
+        if messageTextView.superview !== bodyStack {
+            bodyStack.insertArrangedSubview(messageTextView, at: 0)
+        }
+    }
+
+    private func clearExtraMarkdownViews() {
+        for view in extraMarkdownTextViews {
+            bodyStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for view in tableBlockViews {
+            bodyStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        extraMarkdownTextViews.removeAll()
+        tableBlockViews.removeAll()
+    }
+
+    private func makeExtraMarkdownTextView() -> VerticalPanPassthroughTextView {
+        let textView = VerticalPanPassthroughTextView()
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.isEditable = false
+        textView.isScrollEnabled = false
+        textView.isSelectable = false
+        textView.delegate = self
+        textView.backgroundColor = .clear
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.adjustsFontForContentSizeCategory = true
+        textView.font = AppFont.messageBody
+        return textView
+    }
+
     private func updateReviewCommentSelectionPolicy() {
-        let selectionEnabled = isReviewCommentSelectionEnabled && !messageTextView.isHidden
-        messageTextView.isSelectable = selectionEnabled
-        interactionHandlers?.gesture.isEnabled = !selectionEnabled
+        let selectionEnabled = isReviewCommentSelectionEnabled
+        messageTextView.isSelectable = selectionEnabled && !messageTextView.isHidden
+        for textView in extraMarkdownTextViews {
+            textView.isSelectable = selectionEnabled && !textView.isHidden
+        }
+        let anySelectable = messageTextView.isSelectable
+            || extraMarkdownTextViews.contains(where: \.isSelectable)
+        interactionHandlers?.gesture.isEnabled = !anySelectable
+
+        let tableContext = currentConfiguration.interactionContext?.sourceContext(
+            surface: .userMessage,
+            timelineItemId: currentConfiguration.itemID
+        )
+        for table in tableBlockViews {
+            table.configureReviewCommentSelection(
+                router: currentConfiguration.interactionContext?.reviewCommentSelectionRouter,
+                sourceContext: tableContext
+            )
+        }
     }
 
     private func filteredAttachmentBadges(
@@ -751,9 +866,9 @@ extension UserTimelineRowContentView: UIContextMenuInteractionDelegate {
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
         // Don't show context menu when tapping inside the selectable text area.
-        if messageTextView.isSelectable {
-            let pointInMessageText = messageTextView.convert(location, from: self)
-            if messageTextView.bounds.contains(pointInMessageText) {
+        for textView in markdownTextViews where textView.isSelectable {
+            let pointInText = textView.convert(location, from: self)
+            if textView.bounds.contains(pointInText) {
                 return nil
             }
         }

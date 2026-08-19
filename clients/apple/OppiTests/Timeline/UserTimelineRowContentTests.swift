@@ -339,6 +339,95 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("user row renders GFM tables with NativeTableBlockView instead of ASCII pipes")
+    func userRowRendersGFMTablesWithNativeTableView() throws {
+        let markdown = """
+        Complexity is concentrated.
+
+        | Tree | Files | Lines |
+        |------|------:|------:|
+        | `server/src/**/*.ts` | 245 | 84,865 |
+        | `clients/apple/**/*.swift` (tests, E2E, perf, Mac included) | 1,002 | 353,511 |
+        """
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: markdown,
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 640)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let table = try #require(firstSubview(ofType: NativeTableBlockView.self, in: view))
+        #expect(table.accessibilityIdentifier == "markdown.table")
+        #expect(table.bounds.height > 1)
+
+        let textView = try #require(userMessageTextView(in: view))
+        let rendered = textView.text ?? ""
+        #expect(rendered.contains("Complexity is concentrated."))
+        #expect(!rendered.contains("Tree | Files | Lines"))
+        #expect(!rendered.contains("────"))
+    }
+
+    @MainActor
+    @Test("user row renders a simple HTML table as NativeTableBlockView")
+    func userRowRendersSimpleHTMLTable() throws {
+        let markdown = """
+        Summary
+
+        <table>
+        <tr><th>Path</th><th>Lines</th></tr>
+        <tr><td>a.ts</td><td>12</td></tr>
+        </table>
+        """
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: markdown,
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 400)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        #expect(firstSubview(ofType: NativeTableBlockView.self, in: view) != nil)
+        let textView = try #require(userMessageTextView(in: view))
+        #expect(!(textView.text ?? "").contains("<table>"))
+    }
+
+    @MainActor
+    @Test("user row renders a table-only prompt without ASCII fallback")
+    func userRowRendersTableOnlyPrompt() throws {
+        let markdown = """
+        | Path | Lines |
+        | --- | ---: |
+        | a.ts | 12 |
+        """
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: markdown,
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 320)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let table = try #require(firstSubview(ofType: NativeTableBlockView.self, in: view))
+        #expect(table.bounds.height > 1)
+        let textView = try #require(userMessageTextView(in: view))
+        #expect(textView.isHidden)
+        #expect(!(textView.text ?? "").contains("Path | Lines"))
+    }
+
+    @MainActor
     @Test("user row hides generic photo badge when inline uploaded image preview is available")
     func userRowHidesGenericPhotoBadgeWhenInlineUploadedImagePreviewIsAvailable() async throws {
         let pngData = try #require(makeTestImage().pngData())

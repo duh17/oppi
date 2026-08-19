@@ -508,6 +508,7 @@ final class NativeTableBlockView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        accessibilityIdentifier = "markdown.table"
         setupViews()
     }
 

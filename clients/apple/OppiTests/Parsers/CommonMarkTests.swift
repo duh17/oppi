@@ -1356,3 +1356,224 @@ struct PartialTableParsingTests {
         #expect(rows[1].map { plainText(from: $0) } == ["3", ""])
     }
 }
+
+// MARK: - Lenient table markup
+
+@Suite("Lenient table markup")
+struct LenientTableMarkupTests {
+    @Test func alignedGFMTableFromUserReportParses()
+    {
+        let md = """
+        | Tree | Files | Lines |
+        |------|------:|------:|
+        | `server/src/**/*.ts` | 245 | 84,865 |
+        | `clients/apple/**/*.swift` (tests, E2E, perf, Mac included) | 1,002 | 353,511 |
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .table(let headers, let rows) = blocks[0] else {
+            Issue.record("Expected GFM table, got \(String(describing: blocks.first))")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["Tree", "Files", "Lines"])
+        #expect(rows.count == 2)
+        #expect(rows[0].map { plainText(from: $0) } == ["server/src/**/*.ts", "245", "84,865"])
+        #expect(rows[1][1...].map { plainText(from: $0) } == ["1,002", "353,511"])
+    }
+
+    @Test func orgStylePlusDelimiterParsesAsTable() throws {
+        let md = """
+        | Name | Value |
+        |------+-------|
+        | foo  | bar   |
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+            Issue.record("Expected org-style delimiter to become a table")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["Name", "Value"])
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [["foo", "bar"]])
+    }
+
+    @Test func unicodeDashDelimiterParsesAsTable() throws {
+        let md = """
+        Tree | Files | Lines
+        —— | —— | ——
+        server | 245 | 84865
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+            Issue.record("Expected em-dash delimiter to become a table")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["Tree", "Files", "Lines"])
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [["server", "245", "84865"]])
+    }
+
+    @Test func boxDrawingDelimiterParsesAsTable() throws {
+        let md = """
+        | Path | Lines |
+        | ──── | ────: |
+        | a.ts | 12 |
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(_, let rows) = try #require(blocks.first) else {
+            Issue.record("Expected box-drawing delimiter to become a table")
+            return
+        }
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [["a.ts", "12"]])
+    }
+
+    @Test func simpleHTMLTableParsesAsTable() throws {
+        let md = """
+        <table>
+        <tr><th>Path</th><th>Lines</th></tr>
+        <tr><td><code>a.ts</code></td><td>12</td></tr>
+        </table>
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+            Issue.record("Expected simple HTML table, got \(String(describing: blocks.first))")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["Path", "Lines"])
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [["a.ts", "12"]])
+    }
+
+    @Test func htmlTableWithColspanStaysHTML()
+    {
+        let md = """
+        <table>
+        <tr><td colspan=\"2\">wide</td></tr>
+        </table>
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.contains { if case .htmlBlock = $0 { true } else { false } })
+        #expect(!blocks.contains { if case .table = $0 { true } else { false } })
+    }
+
+    @Test func fencedHTMLTableStaysCode()
+    {
+        let md = """
+        ```html
+        <table>
+        <tr><th>A</th></tr>
+        <tr><td>1</td></tr>
+        </table>
+        ```
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .codeBlock("html", let code) = blocks[0] else {
+            Issue.record("Expected fenced HTML to stay a code block")
+            return
+        }
+        #expect(code.contains("<table>"))
+    }
+
+    @Test func plusInTableCellIsNotADelimiter() throws {
+        let md = """
+        | Expr | Value |
+        | --- | --- |
+        | 1+2 | 3 |
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(_, let rows) = try #require(blocks.first) else {
+            Issue.record("Expected ordinary GFM table")
+            return
+        }
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [["1+2", "3"]])
+    }
+
+    @Test func emDashThematicBreakIsNotATable()
+    {
+        let blocks = parseCommonMark("———\n")
+        #expect(!blocks.contains { if case .table = $0 { true } else { false } })
+    }
+
+    @Test func htmlTableAfterParagraphWithoutBlankLineStillParses() throws {
+        let md = """
+        Summary
+        <table><tr><th>Path</th><th>Lines</th></tr><tr><td>a.ts</td><td>12</td></tr></table>
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.contains { if case .paragraph = $0 { true } else { false } })
+        guard let table = blocks.first(where: { if case .table = $0 { true } else { false } }),
+              case .table(let headers, let rows) = table else {
+            Issue.record("Expected a table after the paragraph, got \(blocks)")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["Path", "Lines"])
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [["a.ts", "12"]])
+    }
+
+    @Test func htmlTableWithTheadTbodyParses() throws {
+        let md = """
+        <table>
+        <thead><tr><th>A</th><th>B</th></tr></thead>
+        <tbody><tr><td>1</td><td>2</td></tr></tbody>
+        </table>
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(let headers, let rows) = try #require(blocks.first) else {
+            Issue.record("Expected thead/tbody HTML to become a table")
+            return
+        }
+        #expect(headers.map { plainText(from: $0) } == ["A", "B"])
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [["1", "2"]])
+    }
+
+    @Test func dashOnlyBodyRowAfterDelimiterIsNotRewritten() throws {
+        let md = """
+        | A | B |
+        | --- | --- |
+        | + | - |
+        | foo | bar |
+        """
+        let blocks = parseCommonMark(md)
+        guard case .table(_, let rows) = try #require(blocks.first) else {
+            Issue.record("Expected a table")
+            return
+        }
+        #expect(rows.map { $0.map { plainText(from: $0) } } == [["+", "-"], ["foo", "bar"]])
+    }
+
+    @Test func locatedHTMLTableDoesNotShiftFollowingHeadingLine() throws {
+        let md = """
+        <table>
+        <tr><th>A</th></tr>
+        <tr><td>1</td></tr>
+        </table>
+
+        ## After
+        """
+        let located = parseCommonMarkLocated(md)
+        guard let heading = located.first(where: {
+            if case .heading = $0.block { return true }
+            return false
+        }) else {
+            Issue.record("Expected a heading after the HTML table")
+            return
+        }
+        #expect(heading.lineRange?.lowerBound == 6)
+    }
+
+    @Test func fencedOrgDelimiterStaysCode() {
+        let md = """
+        ```
+        | Name | Value |
+        |------+-------|
+        | foo  | bar   |
+        ```
+        """
+        let blocks = parseCommonMark(md)
+        #expect(blocks.count == 1)
+        guard case .codeBlock(_, let code) = blocks[0] else {
+            Issue.record("Expected fenced org table to stay a code block")
+            return
+        }
+        #expect(code.contains("|------+-------|"))
+        #expect(!blocks.contains { if case .table = $0 { true } else { false } })
+    }
+}

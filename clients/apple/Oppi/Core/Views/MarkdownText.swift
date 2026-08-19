@@ -1531,74 +1531,127 @@ enum FlatSegment: Sendable {
 
     // MARK: - Inline Markdown Rendering
 
-    /// Render markdown source to a single `NSAttributedString` for simple
-    /// contexts where block-level subviews (code containers, tables) aren't
-    /// needed.
-    ///
-    /// Used for user message bubbles — renders all blocks inline with styled
-    /// attributed text. Code blocks become monospaced text, tables become
-    /// pipe-delimited rows, and text blocks get full inline formatting
-    /// (bold, italic, code, links, blockquotes, lists).
-    static func renderMarkdownInline(
+    enum MarkdownInlineRenderPiece {
+        case attributed(NSAttributedString)
+        case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
+    }
+
+    /// Split markdown into text runs and table blocks for hosts that can
+    /// mount `NativeTableBlockView` instead of flattening tables to ASCII.
+    static func renderMarkdownPieces(
         _ markdown: String,
         defaultTextColor: UIColor,
         palette: ThemePalette
-    ) -> NSAttributedString {
+    ) -> [MarkdownInlineRenderPiece] {
         let blocks = parseCommonMark(markdown)
         guard !blocks.isEmpty else {
-            return NSAttributedString(string: markdown, attributes: [
-                .font: AppFont.messageBody,
-                .foregroundColor: defaultTextColor,
-            ])
+            return [
+                .attributed(NSAttributedString(string: markdown, attributes: [
+                    .font: AppFont.messageBody,
+                    .foregroundColor: defaultTextColor,
+                ]))
+            ]
         }
 
-        let result = NSMutableAttributedString()
+        var pieces: [MarkdownInlineRenderPiece] = []
+        let pending = NSMutableAttributedString()
         let paragraphSep = NSAttributedString(string: "\n\n")
 
-        for (i, block) in blocks.enumerated() {
-            if i > 0 {
-                result.append(paragraphSep)
-            }
+        func flushPendingText() {
+            guard pending.length > 0 else { return }
+            pieces.append(.attributed(NSAttributedString(attributedString: pending)))
+            pending.setAttributedString(NSAttributedString())
+        }
 
+        func appendAttributed(_ text: NSAttributedString) {
+            guard text.length > 0 else { return }
+            if pending.length > 0 {
+                pending.append(paragraphSep)
+            }
+            pending.append(text)
+        }
+
+        for block in blocks {
             switch block {
+            case .table(let headers, let rows):
+                flushPendingText()
+                pieces.append(.table(headers: headers, rows: rows))
+
             case .codeBlock(_, let code):
                 let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
                 let codeFont = Self.monospacedFont(forTextStyle: .subheadline, baseSize: 12)
-                result.append(NSAttributedString(string: trimmed, attributes: [
+                appendAttributed(NSAttributedString(string: trimmed, attributes: [
                     .font: codeFont,
                     .foregroundColor: UIColor(palette.mdCode),
                     .backgroundColor: UIColor(palette.bgHighlight),
                 ]))
 
             case .thematicBreak:
-                result.append(NSAttributedString(string: "───", attributes: [
+                appendAttributed(NSAttributedString(string: "───", attributes: [
                     .foregroundColor: UIColor(palette.comment),
                     .font: AppFont.messageBody,
-                ]))
-
-            case .table(let headers, let rows):
-                let codeFont = Self.monospacedFont(forTextStyle: .subheadline, baseSize: 12)
-                var lines: [String] = []
-                let headerTexts = headers.map { plainText(from: $0) }
-                lines.append(headerTexts.joined(separator: " | "))
-                lines.append(headerTexts.map { String(repeating: "─", count: max($0.count, 3)) }.joined(separator: " | "))
-                for row in rows {
-                    lines.append(row.map { plainText(from: $0) }.joined(separator: " | "))
-                }
-                result.append(NSAttributedString(string: lines.joined(separator: "\n"), attributes: [
-                    .font: codeFont,
-                    .foregroundColor: defaultTextColor,
                 ]))
 
             default:
                 let attributed = attributedString(
                     for: block, palette: palette, defaultTextColor: defaultTextColor
                 )
-                result.append(NSAttributedString(attributed))
+                appendAttributed(NSAttributedString(attributed))
             }
         }
+        flushPendingText()
+        return pieces
+    }
 
+    /// Flatten markdown to one attributed string. Tables become ASCII pipes.
+    /// User bubbles with tables should use `renderMarkdownPieces` instead.
+    static func renderMarkdownInline(
+        _ markdown: String,
+        defaultTextColor: UIColor,
+        palette: ThemePalette
+    ) -> NSAttributedString {
+        let pieces = renderMarkdownPieces(
+            markdown,
+            defaultTextColor: defaultTextColor,
+            palette: palette
+        )
+        let result = NSMutableAttributedString()
+        let paragraphSep = NSAttributedString(string: "\n\n")
+        for (index, piece) in pieces.enumerated() {
+            if index > 0 {
+                result.append(paragraphSep)
+            }
+            switch piece {
+            case .attributed(let text):
+                result.append(text)
+            case .table(let headers, let rows):
+                result.append(asciiTableString(
+                    headers: headers,
+                    rows: rows,
+                    defaultTextColor: defaultTextColor
+                ))
+            }
+        }
         return result
+    }
+
+    private static func asciiTableString(
+        headers: [[MarkdownInline]],
+        rows: [[[MarkdownInline]]],
+        defaultTextColor: UIColor
+    ) -> NSAttributedString {
+        let codeFont = monospacedFont(forTextStyle: .subheadline, baseSize: 12)
+        var lines: [String] = []
+        let headerTexts = headers.map { plainText(from: $0) }
+        lines.append(headerTexts.joined(separator: " | "))
+        lines.append(headerTexts.map { String(repeating: "─", count: max($0.count, 3)) }.joined(separator: " | "))
+        for row in rows {
+            lines.append(row.map { plainText(from: $0) }.joined(separator: " | "))
+        }
+        return NSAttributedString(string: lines.joined(separator: "\n"), attributes: [
+            .font: codeFont,
+            .foregroundColor: defaultTextColor,
+        ])
     }
 
     // MARK: - Block → AttributedString

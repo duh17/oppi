@@ -460,6 +460,7 @@
 		5F75C41EAD4A592F6B88F4BB /* MermaidFlowchartRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05867D89410F8026ABA59F5 /* MermaidFlowchartRenderer.swift */; };
 		5F77981462070FB2F6603A61 /* PDFFileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08E223BD7326D70A4F87ABB8 /* PDFFileView.swift */; };
 		5F8EB709E604133F1A71A1A2 /* WorkspaceWorktree.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCA069FF2800CFB20DFDC09A /* WorkspaceWorktree.swift */; };
+		5F99A788DA0ADAAE72BDF798 /* MarkdownTableMarkupRewriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 377B94608C5AD5D71BDA5708 /* MarkdownTableMarkupRewriter.swift */; };
 		605CF1C783C02DA08BA0FE62 /* FeatureEducationTipPresentationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 052ED4EFFD20E33352F71034 /* FeatureEducationTipPresentationCoordinatorTests.swift */; };
 		60A51F0B03FABCD956DF6055 /* ServerInfoGitStatusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7302EC96FA719436130D3A75 /* ServerInfoGitStatusTests.swift */; };
 		60B0A14C3073680F96E8B61B /* MacAdminShellViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9930A4732BBD4A3D888CB29 /* MacAdminShellViews.swift */; };
@@ -1530,6 +1531,7 @@
 		36A3CDD9C63ABD1B3FC156EC /* AnchoredCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnchoredCollectionView.swift; sourceTree = "<group>"; };
 		3759285EA4A0192F99DD2BF1 /* AskOppiIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskOppiIntent.swift; sourceTree = "<group>"; };
 		376DA8883745F7A7707D5E33 /* WorkspaceReviewModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceReviewModelsTests.swift; sourceTree = "<group>"; };
+		377B94608C5AD5D71BDA5708 /* MarkdownTableMarkupRewriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTableMarkupRewriter.swift; sourceTree = "<group>"; };
 		3792E8E3EC34593F7D500E32 /* TeXMathParserConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXMathParserConformanceTests.swift; sourceTree = "<group>"; };
 		38079C013A567DD846E84749 /* ExtensionNativeMarkdownSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionNativeMarkdownSupport.swift; sourceTree = "<group>"; };
 		380CE5656A60F16AD7875C99 /* WordSpanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WordSpanTests.swift; sourceTree = "<group>"; };
@@ -2821,6 +2823,7 @@
 				00B3533483080107B480CD97 /* FullScreenCodeHighlighter.swift */,
 				A144C9943326D5DE892E25D1 /* MarkdownBlockSerializer.swift */,
 				FD0CFE7A40888C822D50442A /* MarkdownNode.swift */,
+				377B94608C5AD5D71BDA5708 /* MarkdownTableMarkupRewriter.swift */,
 				84ED2EDDBC0ADCF4031CEFB5 /* MarkdownWikiLink.swift */,
 				7B10929680CDA7CA8B3439CE /* OrgToMarkdownConverter.swift */,
 				8E9E3106B53C20450F229CB7 /* ProviderColor.swift */,
@@ -5734,6 +5737,7 @@
 				4C8D350088D2BE6279744FB0 /* MarkdownPrewarmer.swift in Sources */,
 				4594F3C9D799EEA9956C007A /* MarkdownStreamingPerf.swift in Sources */,
 				CEA7E742B4D0AEC520FF32D8 /* MarkdownTableColumnLayout.swift in Sources */,
+				5F99A788DA0ADAAE72BDF798 /* MarkdownTableMarkupRewriter.swift in Sources */,
 				790007ADEEDB2032747DFCE9 /* MarkdownText.swift in Sources */,
 				F5AAFB7CCFA6CD9F80FDD169 /* MarkdownWikiLink.swift in Sources */,
 				9E64D682A1FD5415B1F1E22D /* MathCoreGraphicsRenderer.swift in Sources */,
