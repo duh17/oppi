@@ -105,9 +105,10 @@ class E2ETestCase: XCTestCase {
 
         let application = XCUIApplication()
         application.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
-        // Pair through the invite. The harness `dt_` is only for lab API fixtures;
-        // injecting it into the app migrates the token, then later calls 401.
         application.launchEnvironment["PI_E2E_INVITE_URL"] = inviteURL
+        if let deviceToken = try? readDeviceToken() {
+            application.launchEnvironment["OPPI_E2E_DEVICE_TOKEN"] = deviceToken
+        }
         if !e2eLaunchesWorkspaceHomeOnly && !e2eLaunchesSessionsInboxOnly {
             application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
             if e2eAutoCreatesSessionOnLaunch {
@@ -278,6 +279,30 @@ class E2ETestCase: XCTestCase {
     private func workspaceListElement(in application: XCUIApplication) -> XCUIElement {
         let sidebarScroll = application.scrollViews["workspace.sidebar.scroll"]
         return sidebarScroll.exists ? sidebarScroll : application.collectionViews["workspace.list"]
+    }
+
+    private func readDeviceToken() throws -> String {
+        if let token = Self.e2eDeviceTokenCache, !token.isEmpty {
+            return token
+        }
+
+        for key in ["OPPI_E2E_DEVICE_TOKEN", "SIMCTL_CHILD_OPPI_E2E_DEVICE_TOKEN"] {
+            if let token = ProcessInfo.processInfo.environment[key]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !token.isEmpty {
+                Self.e2eDeviceTokenCache = token
+                return token
+            }
+        }
+
+        let path = "/tmp/oppi-e2e-device-token.txt"
+        guard FileManager.default.fileExists(atPath: path) else { return "" }
+        let token = try String(contentsOfFile: path, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            Self.e2eDeviceTokenCache = token
+        }
+        return token
     }
 
     /// Reads the invite URL provided by the E2E server harness.
