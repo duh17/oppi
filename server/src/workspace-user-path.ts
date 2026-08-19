@@ -46,9 +46,10 @@ export function resolveWorkspaceUserPath(params: ResolveWorkspaceUserPathParams)
 
   if (params.workspace.runtime === "sandbox") {
     const guestCwd = resolveSandboxGuestCwd(params.workspace);
-    if (requestedPath === guestCwd || requestedPath.startsWith(`${guestCwd}/`)) {
+    const guestPath = sandboxGuestPath(requestedPath, guestCwd);
+    if (guestPath) {
       try {
-        return containedUnderRoot(toHostPath(requestedPath, hostRoot, guestCwd), hostRoot);
+        return containedUnderRoot(toHostPath(guestPath, hostRoot, guestCwd), hostRoot);
       } catch {
         return null;
       }
@@ -60,6 +61,14 @@ export function resolveWorkspaceUserPath(params: ResolveWorkspaceUserPathParams)
   }
 
   return containedUnderRoot(resolve(hostRoot, requestedPath), hostRoot);
+}
+
+/** Restore a sandbox guest path after URL routing drops the leading slash. */
+function sandboxGuestPath(requestedPath: string, guestCwd: string): string | null {
+  const normalized = requestedPath.replaceAll("\\", "/");
+  const absolute = normalized.startsWith("/") ? normalized : `/${normalized}`;
+  if (absolute === guestCwd || absolute.startsWith(`${guestCwd}/`)) return absolute;
+  return null;
 }
 
 function containedUnderRoot(candidate: string, root: string): string | null {

@@ -105,6 +105,14 @@ describe("sandbox user browse of host-mount artifacts", () => {
       expect(resolveWorkspaceUserPath({ workspace, requestedPath: "reports/foo.png" })).toBe(
         resolve(hostFile),
       );
+      // Session-raw URL path segments drop the leading slash:
+      // /raw/%2Fworkspace/... → pathname capture "workspace/<slug>/...".
+      expect(
+        resolveWorkspaceUserPath({
+          workspace,
+          requestedPath: "workspace/deep-research/reports/foo.png",
+        }),
+      ).toBe(resolve(hostFile));
     });
 
     it("rejects /etc/passwd, tilde paths, host-home, and a different workspace slug", () => {
@@ -230,6 +238,24 @@ describe("sandbox user browse of host-mount artifacts", () => {
           workspace,
           session: makeSession(),
           path: guestFile,
+        }),
+      ).resolves.toMatchObject({
+        kind: "ok",
+        filePath: realpathSync(hostFile),
+        size: 9,
+      });
+    });
+
+    it("succeeds for a slash-stripped guest path from a session-raw URL", async () => {
+      const dataDir = tempDir("oppi-sandbox-raw-stripped-");
+      const { workspace, hostFile } = seedSandboxMount();
+      const service = makeTraceService(dataDir, workspace);
+
+      await expect(
+        service.getSessionRawFile({
+          workspace,
+          session: makeSession(),
+          path: "workspace/deep-research/reports/foo.png",
         }),
       ).resolves.toMatchObject({
         kind: "ok",
