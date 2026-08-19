@@ -1,28 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  parseWatchCondition,
-  runSessionWatch,
-  watchSessions,
-} from "../src/cli/commands/session-watch.js";
+import { parseWatchCondition, runSessionWatch } from "../src/cli/commands/session-watch.js";
 import { sleepWithSignal } from "../src/cli/commands/wait.js";
-import type { LocalApiRequestOptions } from "../src/cli/local-api-client.js";
-
-type ApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 
 function errorWithStatus(message: string, status: number): Error & { status: number } {
   return Object.assign(new Error(message), { status });
 }
 
-describe("session watch command contract", () => {
-  beforeEach(() => {
-    process.exitCode = undefined;
-  });
-
+describe("session wait poller contract", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    process.exitCode = undefined;
   });
 
   it.each([
@@ -333,67 +321,6 @@ describe("session watch command contract", () => {
 
     await expect(promise).rejects.toMatchObject({ name: "AbortError" });
     expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("writes one parseable JSON error and sets a nonzero exit code on disconnect", async () => {
-    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-
-    await watchSessions(["s"], { timeout: "1s" }, true, async () => {
-      throw errorWithStatus("connection lost", 503);
-    });
-
-    expect(process.exitCode).toBe(1);
-    expect(write).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(write.mock.calls[0]?.[0]))).toEqual({
-      event: "error",
-      message: "connection lost",
-      status: 503,
-    });
-  });
-
-  it("writes a timeout record and nonzero exit at the command boundary", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    const promise = watchSessions(
-      ["s"],
-      { interval: "10ms", timeout: "10ms", until: "idle" },
-      true,
-      async <T>(): Promise<T> => ({ session: { status: "busy" }, events: [] }) as T,
-    );
-
-    await vi.advanceTimersByTimeAsync(10);
-    await promise;
-
-    expect(process.exitCode).toBe(1);
-    expect(JSON.parse(String(write.mock.calls[0]?.[0]))).toEqual({
-      event: "timeout",
-      condition: "idle",
-      pending: ["s"],
-    });
-  });
-
-  it("emits human output without asserting incidental timestamps", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    await watchSessions(["s"], {}, false, async <T>(): Promise<T> => {
-      return { session: { status: "error", lastMessage: "failed\nnow" }, events: [] } as T;
-    });
-
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(String(log.mock.calls[0]?.[0])).toMatch(
-      /s status=error reason=idle tools=0 last='failed now'/,
-    );
-  });
-
-  it.each([
-    [[], {}, "at least one session id"],
-    [["s", "s"], {}, "session ids must be unique"],
-    [["s"], { until: "either" }, "--until must be idle"],
-  ] as const)("rejects conflicting watch inputs %#", async (ids, flags, message) => {
-    await expect(watchSessions([...ids], flags, true, async <T>() => ({}) as T)).rejects.toThrow(
-      message,
-    );
   });
 
   it("emits compact wait summaries on a timer, not a transition stream", async () => {

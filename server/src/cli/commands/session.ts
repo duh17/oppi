@@ -50,7 +50,6 @@ import {
 import {
   parseWatchCondition,
   runSessionWatch,
-  watchSessions,
   WAIT_DEFAULT_POLL,
   WAIT_DEFAULT_SUMMARY_EVERY,
   type WaitProgressSnapshot,
@@ -62,7 +61,7 @@ type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => vo
 export interface SessionCliCallerContext {
   /** Immutable for one in-process command; shell callers continue using the environment fallback. */
   callerSessionId?: string;
-  /** Cancels long-running in-process session commands such as wait/watch polling. */
+  /** Cancels long-running in-process session commands such as wait polling. */
   signal?: AbortSignal;
 }
 
@@ -162,11 +161,6 @@ export async function cmdSession(
       output({ session_id: id, command: "abort" }, () =>
         printSessionNotice(`aborted turn → ${id}`),
       );
-      return;
-    }
-
-    if (mode === "watch") {
-      await watchSessions(positional, flags, jsonOutput, call, callerContext.signal);
       return;
     }
 
@@ -479,7 +473,7 @@ export async function cmdSession(
     }
 
     throw new Error(
-      "Usage: oppi session list|get|create|send|abort|watch|wait|read|events|trace|search|inspect|stop|resume|fork|delete|tool-output|trace-page|trace-outline",
+      "Usage: oppi session list|get|create|send|abort|wait|read|events|trace|search|inspect|stop|resume|fork|delete|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
     if (callerContext.signal?.aborted) throw err;
@@ -595,7 +589,6 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   ],
   send: ["follow-up", "json", "steer", "text"],
   abort: ["json"],
-  watch: ["all", "interval", "json", "timeout", "until"],
   wait: ["all", "for", "interval", "json", "poll", "summary-every", "timeout"],
   read: ["json", "tail"],
   events: ["json", "since"],
@@ -649,7 +642,7 @@ function assertSessionFlags(mode: string, flags: Record<string, string>): void {
 }
 
 function sessionTargetsForMode(mode: string, positional: string[]): string[] {
-  if (mode === "watch" || mode === "wait") {
+  if (mode === "wait") {
     return positional.map((value) => value.trim()).filter(Boolean);
   }
   if (

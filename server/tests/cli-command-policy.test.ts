@@ -66,6 +66,7 @@ describe("CLI agent access policy", () => {
   });
 
   it.each([
+    ["session", "watch", "sess-1"],
     ["session", "changes", "sess-1"],
     ["session", "diff", "sess-1"],
     ["session", "dialogs", "sess-1"],
@@ -98,59 +99,6 @@ describe("CLI agent access policy", () => {
         invocation: { path: policy.path, access: policy.access },
       });
     }
-  });
-
-  it("maps one-session watch to bounded wait without exposing streaming watch", () => {
-    const result = classifyCliAgentCommand([
-      "session",
-      "watch",
-      "sess-1",
-      "--until",
-      "attention",
-      "--interval",
-      "500ms",
-      "--timeout",
-      "30s",
-    ]);
-
-    expect(result).toMatchObject({
-      ok: true,
-      invocation: {
-        args: [
-          "session",
-          "wait",
-          "sess-1",
-          "--for",
-          "attention",
-          "--poll",
-          "500ms",
-          "--timeout",
-          "30s",
-        ],
-        path: ["session", "wait"],
-        access: "read",
-      },
-    });
-  });
-
-  it("keeps agent watch help on the bounded wait surface", () => {
-    expect(classifyCliAgentCommand(["session", "watch", "help"])).toMatchObject({
-      ok: true,
-      invocation: { args: ["session", "wait", "help"], path: ["session", "wait"], isHelp: true },
-    });
-    expect(classifyCliAgentCommand(["session", "watch", "--help"])).toMatchObject({
-      ok: true,
-      invocation: { args: ["session", "wait", "--help"], path: ["session", "wait"], isHelp: true },
-    });
-  });
-
-  it.each([
-    ["session", "watch", "sess-1", "sess-2"],
-    ["session", "watch", "sess-1", "--all"],
-    ["session", "watch", "sess-1", "--until", "any-change"],
-    ["session", "watch", "sess-1", "--until", "idle", "--for", "attention"],
-  ])("rejects streaming or conflicting watch input %s", (...args) => {
-    expect(classifyCliAgentCommand(args)).toMatchObject({ ok: false, access: "denied" });
   });
 
   it("allows help only for the canonical agent command surface", () => {

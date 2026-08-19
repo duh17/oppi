@@ -190,7 +190,6 @@ const KNOWN_ACTIONS = new Set([
   "update",
   "validate",
   "wait",
-  "watch",
 ]);
 
 const KNOWN_VIEWS = new Set(["summary", "response", "outline", "messages", "tools"]);
@@ -235,7 +234,6 @@ const READ_ACTIONS = new Set([
   "trace-page",
   "validate",
   "wait",
-  "watch",
 ]);
 
 export function collectEvaluationBundle(input: string, variant: string): EvaluationBundle {
@@ -526,7 +524,7 @@ function classifyScenario(steps: EvaluationStep[]): EvaluationScenario {
   const hasSessionAction = (actions: string[]): boolean =>
     steps.some((step) => step.command === "session" && actions.includes(step.action));
 
-  if (hasSessionAction(["wait", "watch"]) || hasRoute("wait", "session")) {
+  if (hasSessionAction(["wait"]) || hasRoute("wait", "session")) {
     return "multi-session-monitoring";
   }
   if (hasRoute("session", "inspect", "response")) return "latest-response";
@@ -575,7 +573,7 @@ function isTaskCorrect(scenario: EvaluationScenario, steps: EvaluationStep[]): b
     case "multi-session-monitoring":
       return has(
         (step) =>
-          (step.command === "session" && ["wait", "watch"].includes(step.action)) ||
+          (step.command === "session" && step.action === "wait") ||
           (step.command === "wait" && step.action === "session"),
       );
     case "safe-mutation": {

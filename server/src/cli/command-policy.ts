@@ -1,4 +1,4 @@
-import { isHelpFlag, parseCliArgs, type ParsedCliArgs } from "./args.js";
+import { parseCliArgs, type ParsedCliArgs } from "./args.js";
 import { helpPathFor, isNestedHelpRequest, resolveHelpTopic } from "./help.js";
 
 export type CliAgentAccess = "read" | "mutation" | "destructive" | "denied";
@@ -117,7 +117,6 @@ export function listCliAgentCommandPolicies(): readonly CliCommandPolicy[] {
 
 export function classifyCliAgentCommand(rawArgs: readonly string[]): CliAgentClassification {
   const normalized = normalizeAgentArgs(rawArgs);
-  if (!normalized.ok) return normalized;
 
   let parsed: ParsedCliArgs;
   try {
@@ -226,56 +225,11 @@ export function unreviewableMutationBodyReason(
   return undefined;
 }
 
-function normalizeAgentArgs(
-  rawArgs: readonly string[],
-):
-  | { readonly ok: true; readonly args: readonly string[] }
-  | { readonly ok: false; readonly access: "denied"; readonly reason: string } {
-  const args = rawArgs[0] === "oppi" ? rawArgs.slice(1) : [...rawArgs];
-  if (args[0] !== "session" || args[1] !== "watch") {
-    return { ok: true, args };
-  }
-
-  let parsed: ParsedCliArgs;
-  try {
-    parsed = parseCliArgs(args);
-  } catch (error) {
-    return normalizationDenied(errorMessage(error));
-  }
-
-  const help = isHelpFlag(parsed.flags) || parsed.positional[0] === "help";
-  const sessionIds = parsed.positional.slice(1);
-  if (!help && sessionIds.length !== 1) {
-    return normalizationDenied("Only one session may use the bounded session watch alias");
-  }
-  if (parsed.flags.all === "true") {
-    return normalizationDenied("Streaming session watch is not exposed to agents");
-  }
-  if (parsed.flags.until?.trim().toLowerCase() === "any-change") {
-    return normalizationDenied("Streaming session watch is not exposed to agents");
-  }
-  if (Object.hasOwn(parsed.flags, "until") && Object.hasOwn(parsed.flags, "for")) {
-    return normalizationDenied("Conflicting flags: --until and --for");
-  }
-  if (Object.hasOwn(parsed.flags, "interval") && Object.hasOwn(parsed.flags, "poll")) {
-    return normalizationDenied("Conflicting flags: --interval and --poll");
-  }
-
-  const normalized = args.map((arg, index) => {
-    if (index === 1) return "wait";
-    if (arg === "--until") return "--for";
-    if (arg === "--interval") return "--poll";
-    return arg;
-  });
-  return { ok: true, args: normalized };
-}
-
-function normalizationDenied(reason: string): {
-  readonly ok: false;
-  readonly access: "denied";
-  readonly reason: string;
+function normalizeAgentArgs(rawArgs: readonly string[]): {
+  readonly args: readonly string[];
 } {
-  return { ok: false, access: "denied", reason };
+  const args = rawArgs[0] === "oppi" ? rawArgs.slice(1) : [...rawArgs];
+  return { args };
 }
 
 function commandPath(parsed: ParsedCliArgs): string[] {
@@ -287,9 +241,6 @@ function canonicalPath(path: readonly string[]): string[] {
   const normalized = path.map((part) => part.toLowerCase());
   if (normalized[0] === "workspace" && normalized[1] === "remove") {
     normalized[1] = "delete";
-  }
-  if (normalized[0] === "session" && normalized[1] === "watch") {
-    normalized[1] = "wait";
   }
   return normalized;
 }

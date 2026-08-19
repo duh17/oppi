@@ -152,6 +152,42 @@ describe("session command dispatch and output boundaries", () => {
     });
   });
 
+  it("wait resolves to a terminal JSON record when the session is idle", async () => {
+    request.mockResolvedValue({
+      session: { status: "ready", lastMessage: "done" },
+      events: [],
+      currentSeq: 1,
+    });
+
+    const { stdout } = await captureCliOutput(() =>
+      cmdSession(storage, "wait", ["sess-1"], { for: "idle", json: "true" }),
+    );
+
+    expect(request).toHaveBeenCalledWith(
+      storage,
+      "/sessions/sess-1/events?since=0",
+      undefined,
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: { session_id: "sess-1", reason: "idle", status: "ready" },
+    });
+  });
+
+  it("rejects removed session watch before making a local API request", async () => {
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSession(storage, "watch", ["sess-1"], { json: "true" }),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: false,
+      error: { message: expect.stringMatching(/^Usage: oppi session /) },
+    });
+    expect(String(JSON.parse(stdout).error.message)).not.toContain("watch");
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       action: "inspect",

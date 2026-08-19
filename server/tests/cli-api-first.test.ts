@@ -109,7 +109,7 @@ async function runTraceOutlineCli(entries: TraceOutlineFixtureEntry[]): Promise<
   }
 }
 
-// ── Session orchestration fixtures (steer/abort/watch/wait) ──
+// ── Session orchestration fixtures (steer/abort/wait) ──
 
 interface OrchRequest {
   method: string;
@@ -687,7 +687,7 @@ describe("CLI app-state API boundary", () => {
     );
   });
 
-  it.each(["changes", "diff", "dialogs", "respond"] as const)(
+  it.each(["watch", "changes", "diff", "dialogs", "respond"] as const)(
     "rejects removed session %s before making a local API request",
     async (command) => {
       await withOrchApi(
@@ -713,7 +713,6 @@ describe("CLI app-state API boundary", () => {
     ["get", ["get", "caller-1"]],
     ["send", ["send", "caller-1"]],
     ["abort", ["abort", "caller-1"]],
-    ["watch", ["watch", "other-1", "caller-1"]],
     ["wait", ["wait", "caller-1"]],
     ["read", ["read", "caller-1"]],
     ["events", ["events", "caller-1"]],
@@ -913,220 +912,6 @@ describe("CLI app-state API boundary", () => {
         const data = JSON.parse(outlineRun.stdout).data as Record<string, unknown>;
         expect(Object.keys(data).sort()).toEqual(["selected_turns", "summary", "text", "view"]);
         expect(data.selected_turns).toEqual([1]);
-      },
-    );
-  });
-
-  it("watch streams NDJSON transitions and resolves on idle", async () => {
-    let polls = 0;
-    await withOrchApi(
-      (res, ctx) => {
-        if (ctx.path === "/sessions/sess-1/events") {
-          polls += 1;
-          const status = polls >= 2 ? "ready" : "busy";
-          sendJson(res, {
-            session: { id: "sess-1", status, messageCount: polls },
-            events:
-              status === "ready"
-                ? [{ type: "message_end", role: "assistant", content: "Build succeeds" }]
-                : [{ type: "tool_start", tool: "bash" }],
-            currentSeq: polls,
-          });
-          return;
-        }
-        sendJson(res, {});
-      },
-      async ({ dataDir }) => {
-        const { stdout, code } = await runCliResult(
-          [
-            "session",
-            "watch",
-            "sess-1",
-            "--until",
-            "idle",
-            "--interval",
-            "20ms",
-            "--timeout",
-            "5s",
-            "--json",
-          ],
-          dataDir,
-        );
-        expect(code).toBe(0);
-        const events = stdout
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(events).toHaveLength(1);
-        expect(events[0]).toMatchObject({
-          event: "resolved",
-          session_id: "sess-1",
-          reason: "idle",
-          prev: "busy",
-          status: "ready",
-        });
-        expect(events[0]).not.toHaveProperty("pending_dialogs");
-      },
-    );
-  });
-
-  it("watch any-change resolves on new event activity without a status change", async () => {
-    let polls = 0;
-    await withOrchApi(
-      (res, ctx) => {
-        if (ctx.path === "/sessions/sess-1/events") {
-          polls += 1;
-          sendJson(res, {
-            session: { id: "sess-1", status: "busy" },
-            events: polls === 1 ? [] : [{ type: "tool_start", tool: "bash" }],
-            currentSeq: polls,
-          });
-          return;
-        }
-        sendJson(res, { dialogs: [] });
-      },
-      async ({ dataDir }) => {
-        const { stdout, code } = await runCliResult(
-          [
-            "session",
-            "watch",
-            "sess-1",
-            "--until",
-            "any-change",
-            "--interval",
-            "20ms",
-            "--timeout",
-            "2s",
-            "--json",
-          ],
-          dataDir,
-        );
-        expect(code).toBe(0);
-        const events = stdout
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(events).toHaveLength(1);
-        expect(events[0]).toMatchObject({
-          event: "resolved",
-          reason: "change",
-          status: "busy",
-          tool_calls: 1,
-        });
-      },
-    );
-  });
-
-  it("watch --all requires every session to currently meet a state condition", async () => {
-    const polls = new Map<string, number>();
-    await withOrchApi(
-      (res, ctx) => {
-        const match = ctx.path.match(/^\/sessions\/(s[12])\/events$/);
-        if (match) {
-          const id = match[1] ?? "";
-          const poll = (polls.get(id) ?? 0) + 1;
-          polls.set(id, poll);
-          const statuses = id === "s1" ? ["ready", "busy", "ready"] : ["busy", "ready", "ready"];
-          sendJson(res, {
-            session: { id, status: statuses[Math.min(poll - 1, statuses.length - 1)] },
-            events: [],
-            currentSeq: poll,
-          });
-          return;
-        }
-        sendJson(res, {});
-      },
-      async ({ dataDir }) => {
-        const { stdout, code } = await runCliResult(
-          [
-            "session",
-            "watch",
-            "s1",
-            "s2",
-            "--until",
-            "idle",
-            "--all",
-            "--interval",
-            "20ms",
-            "--timeout",
-            "2s",
-            "--json",
-          ],
-          dataDir,
-        );
-        expect(code).toBe(0);
-        expect(polls).toEqual(
-          new Map([
-            ["s1", 3],
-            ["s2", 3],
-          ]),
-        );
-        expect(JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}")).toMatchObject({
-          event: "resolved",
-          all: true,
-          sessions: [
-            { session_id: "s1", status: "ready" },
-            { session_id: "s2", status: "ready" },
-          ],
-        });
-      },
-    );
-  });
-
-  it("keeps API failures as one parseable NDJSON error record", async () => {
-    await withOrchApi(
-      (res) => sendJson(res, { error: "fixture failure" }, 500),
-      async ({ dataDir }) => {
-        const { stdout, code } = await runCliResult(
-          ["session", "watch", "sess-1", "--timeout", "2s", "--json"],
-          dataDir,
-        );
-        expect(code).toBe(1);
-        const lines = stdout.trim().split("\n");
-        expect(lines).toHaveLength(1);
-        expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
-          event: "error",
-          message: "fixture failure",
-          status: 500,
-        });
-      },
-    );
-  });
-
-  it("watch exits nonzero with an NDJSON timeout when the condition is never met", async () => {
-    await withOrchApi(
-      (res, ctx) => {
-        if (ctx.path === "/sessions/sess-1/events") {
-          sendJson(res, { session: { id: "sess-1", status: "busy" }, events: [], currentSeq: 1 });
-          return;
-        }
-        sendJson(res, {});
-      },
-      async ({ dataDir }) => {
-        const { stdout, code } = await runCliResult(
-          [
-            "session",
-            "watch",
-            "sess-1",
-            "--until",
-            "idle",
-            "--interval",
-            "20ms",
-            "--timeout",
-            "120ms",
-            "--json",
-          ],
-          dataDir,
-        );
-        expect(code).toBe(1);
-        const events = stdout
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(events).toHaveLength(1);
-        expect(events[0]).toMatchObject({ event: "timeout", condition: "idle" });
       },
     );
   });

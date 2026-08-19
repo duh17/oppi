@@ -206,7 +206,7 @@ describe("canonical Oppi command preparation", () => {
     });
   });
 
-  it("canonicalizes one-session watch to bounded wait", () => {
+  it("rejects the removed session watch command", () => {
     expect(
       prepareOppiCommand([
         "session",
@@ -217,14 +217,7 @@ describe("canonical Oppi command preparation", () => {
         "--interval",
         "500ms",
       ]),
-    ).toMatchObject({
-      ok: true,
-      command: {
-        args: ["session", "wait", "sess-1", "--for", "attention", "--poll", "500ms"],
-        path: ["session", "wait"],
-        access: "read",
-      },
-    });
+    ).toMatchObject({ ok: false });
   });
 });
 

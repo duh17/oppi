@@ -174,17 +174,28 @@ describe("centralized nested-help dispatch", () => {
   });
 
   it.each([
-    ["session", "changes"],
-    ["session", "diff"],
-    ["session", "dialogs"],
-    ["session", "respond"],
-    ["skill"],
-    ["skill", "list"],
-    ["skill", "get"],
-    ["skill", "file"],
-    ["skill", "update-file"],
-  ])("does not discover removed %s help", (path) => {
+    [["session", "watch"]],
+    [["session", "changes"]],
+    [["session", "diff"]],
+    [["session", "dialogs"]],
+    [["session", "respond"]],
+    [["skill"]],
+    [["skill", "list"]],
+    [["skill", "get"]],
+    [["skill", "file"]],
+    [["skill", "update-file"]],
+  ])("does not discover removed %j help", (path) => {
     expect(resolveHelpTopic(path)).toBeUndefined();
+  });
+
+  it("does not advertise session watch from remaining session help", () => {
+    const session = resolveHelpTopic(["session"]);
+    const wait = resolveHelpTopic(["session", "wait"]);
+    expect(session).toBeDefined();
+    expect(wait).toBeDefined();
+    expect(session?.subcommands?.some((item) => item.name.startsWith("watch"))).toBe(false);
+    expect(JSON.stringify(session)).not.toMatch(/session watch/);
+    expect(JSON.stringify(wait)).not.toMatch(/watch/);
   });
 
   it("handles unknown help topics deterministically without dispatch", async () => {
@@ -268,8 +279,8 @@ describe("centralized nested-help dispatch", () => {
       }
     }
 
-    expect(allPaths.length).toBe(77);
-    expect(paths.length).toBe(76);
+    expect(allPaths.length).toBe(76);
+    expect(paths.length).toBe(75);
     expect(app.runCli).not.toHaveBeenCalled();
     expect(lifecycle.installService).not.toHaveBeenCalled();
     expect(lifecycle.restartService).not.toHaveBeenCalled();

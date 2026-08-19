@@ -1,19 +1,12 @@
-/* eslint-disable no-console */
-import * as c from "../../ansi.js";
-import {
-  createAbortError,
-  throwIfAborted,
-  type LocalApiRequestOptions,
-} from "../local-api-client.js";
+import { throwIfAborted, type LocalApiRequestOptions } from "../local-api-client.js";
 import { apiStatus } from "../resources.js";
-import { parseDurationMs, sleepWithSignal } from "./wait.js";
+import { sleepWithSignal } from "./wait.js";
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 
-// ─── Watch / wait (shared polling core) ───
+// ─── Session wait poller ───
 //
-// A single state machine drives both `wait` (one session, resolves on a condition, prints the
-// terminal record) and `watch` (many sessions, streams one compact line per state transition).
+// `session wait` uses this state machine for one session and prints the terminal record.
 // Status comes from the live events/catch-up stream so busy→ready is observed without a tight
 // status poll; pending dialogs come from the per-session dialogs route only when the condition
 // needs them. Tool counts and the last assistant snippet are derived from the events already
@@ -406,125 +399,5 @@ export async function runSessionWatch(
       Math.min(options.intervalMs, Math.max(0, deadline - Date.now())),
       options.signal,
     );
-  }
-}
-
-function clipWatchSnippet(text: string, budget: number): string {
-  const oneLine = text.replace(/\s+/g, " ").trim();
-  if (oneLine.length <= budget) return oneLine;
-  return `${oneLine.slice(0, Math.max(0, budget - 1))}…`;
-}
-
-function formatWatchTransitionLine(transition: WatchTransition): string {
-  const time = new Date(transition.ts).toTimeString().slice(0, 8);
-  const state =
-    transition.prevStatus === undefined
-      ? `status=${transition.status ?? "?"}`
-      : `${transition.prevStatus}→${transition.status ?? "?"}`;
-  const reason = transition.reason ? ` reason=${transition.reason}` : "";
-  const dialogs =
-    transition.pendingDialogs !== undefined ? ` dialogs=${transition.pendingDialogs}` : "";
-  const prefix = `${time} ${transition.sessionId} ${state}${reason} tools=${transition.toolsThisTurn}${dialogs}`;
-  if (!transition.last) return prefix;
-  const budget = Math.max(8, 100 - prefix.length - 9);
-  return `${prefix} last='${clipWatchSnippet(transition.last, budget)}'`;
-}
-
-function watchTransitionJson(transition: WatchTransition): Record<string, unknown> {
-  return {
-    event: transition.kind,
-    ts: transition.ts,
-    session_id: transition.sessionId,
-    ...(transition.reason !== undefined ? { reason: transition.reason } : {}),
-    ...(transition.prevStatus !== undefined ? { prev: transition.prevStatus } : {}),
-    status: transition.status ?? null,
-    tool_calls: transition.toolsThisTurn,
-    ...(transition.pendingDialogs !== undefined
-      ? { pending_dialogs: transition.pendingDialogs }
-      : {}),
-    ...(transition.messageCount !== undefined ? { message_count: transition.messageCount } : {}),
-    ...(transition.last !== undefined ? { last: clipWatchSnippet(transition.last, 200) } : {}),
-  };
-}
-
-function watchResolvedJson(
-  outcome: Extract<WatchOutcome, { kind: "all" }>,
-): Record<string, unknown> {
-  return {
-    event: "resolved",
-    all: true,
-    condition: outcome.condition,
-    sessions: outcome.sessions.map((session) => ({
-      session_id: session.sessionId,
-      status: session.status ?? null,
-      ...(session.pendingDialogs !== undefined ? { pending_dialogs: session.pendingDialogs } : {}),
-    })),
-  };
-}
-
-function formatWatchResolved(outcome: Extract<WatchOutcome, { kind: "all" }>): string {
-  return `all ${outcome.sessions.length} sessions reached ${outcome.condition}`;
-}
-
-export async function watchSessions(
-  positional: string[],
-  flags: Record<string, string>,
-  jsonOutput: boolean,
-  call: SessionListApiCall,
-  signal?: AbortSignal,
-): Promise<void> {
-  const ids = positional.map((value) => value.trim()).filter(Boolean);
-  if (ids.length === 0) throw new Error("at least one session id is required");
-  if (new Set(ids).size !== ids.length) throw new Error("session ids must be unique");
-  const condition = parseWatchCondition(flags.until, "idle");
-  if (condition === "either") {
-    throw new Error("--until must be idle, attention, or any-change");
-  }
-  const emit = (transition: WatchTransition): void => {
-    if (jsonOutput) process.stdout.write(`${JSON.stringify(watchTransitionJson(transition))}\n`);
-    else console.log(formatWatchTransitionLine(transition));
-  };
-
-  try {
-    const outcome = await runSessionWatch(
-      ids,
-      {
-        condition,
-        requireAll: flags.all === "true",
-        intervalMs: parseDurationMs(flags.interval ?? "2s"),
-        timeoutMs: parseDurationMs(flags.timeout ?? "30m"),
-        ...(signal ? { signal } : {}),
-      },
-      call,
-      emit,
-    );
-    throwIfAborted(signal);
-    if (outcome.kind === "all") {
-      if (jsonOutput) process.stdout.write(`${JSON.stringify(watchResolvedJson(outcome))}\n`);
-      else console.log(formatWatchResolved(outcome));
-    }
-  } catch (err) {
-    if (signal?.aborted) throw createAbortError(signal);
-    if (err instanceof SessionWatchTimeout) {
-      if (jsonOutput) {
-        process.stdout.write(
-          `${JSON.stringify({ event: "timeout", condition: err.condition, pending: err.pending })}\n`,
-        );
-      } else {
-        console.log(c.red(`timeout: ${err.message}`));
-      }
-      process.exitCode = 1;
-      return;
-    }
-    if (jsonOutput) {
-      const message = err instanceof Error ? err.message : String(err);
-      const status = apiStatus(err);
-      process.stdout.write(
-        `${JSON.stringify({ event: "error", message, ...(status ? { status } : {}) })}\n`,
-      );
-      process.exitCode = 1;
-      return;
-    }
-    throw err;
   }
 }

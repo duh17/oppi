@@ -987,7 +987,7 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["session"],
     title: "Sessions",
     summary:
-      "List, launch, inspect, steer, watch, resume, fork, and stop Oppi sessions through the local server API.",
+      "List, launch, inspect, steer, wait, resume, fork, and stop Oppi sessions through the local server API.",
     usage: "oppi session <subcommand> [flags]",
     subcommands: [
       { name: "list", summary: "list sessions" },
@@ -995,7 +995,6 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "create", summary: "launch a workspace session" },
       { name: "send <id>", summary: "send text; steer a busy turn or queue a follow-up" },
       { name: "abort <id>", summary: "abort the current turn" },
-      { name: "watch <id...>", summary: "stream state transitions for sessions" },
       { name: "wait <id...>", summary: "block until idle or attention" },
       { name: "read <id>", summary: "show transcript-style trace entries" },
       { name: "events <id>", summary: "read live catch-up events" },
@@ -1012,11 +1011,11 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Plain 'send' prompts an idle session and steers a busy session at the next turn boundary; use '--follow-up' to wait until current work finishes.",
-      "Orchestrate with 'watch <id...>' for live transitions and 'wait <id>' to block on one condition.",
+      "Orchestrate with 'wait <id>' to block until a session is idle or needs attention.",
       "Inspect history progressively: 'inspect <id> --view summary' for counts, '--view outline' to choose turns, then '--view messages' or '--view tools'.",
     ],
     examples: [
-      { command: "oppi session watch 11111111-1111-4111-8111-111111111111 --until idle" },
+      { command: "oppi session wait 11111111-1111-4111-8111-111111111111 --for idle" },
       {
         command:
           'oppi session send 11111111-1111-4111-8111-111111111111 --text "focus on the failing test"',
@@ -1099,44 +1098,6 @@ const HELP_TOPICS: HelpTopic[] = [
     examples: [{ command: "oppi session abort 11111111-1111-4111-8111-111111111111" }],
   },
   {
-    path: ["session", "watch"],
-    title: "Watch sessions",
-    summary: "Stream one compact line per state transition for one or more sessions.",
-    usage:
-      "oppi session watch <id...> [--until idle|attention|any-change] [--all] [--interval <duration>] [--timeout <duration>] [--json]",
-    arguments: [{ name: "<id...>", summary: "one or more session ids" }],
-    flags: [
-      {
-        name: "--until",
-        value: "<condition>",
-        summary: "exit on idle, attention, or any-change (default idle)",
-      },
-      { name: "--all", summary: "require every watched session to meet --until (default any)" },
-      {
-        name: "--interval",
-        value: "<duration>",
-        summary: "poll interval such as 2 or 500ms; bare numbers are seconds (default 2s)",
-      },
-      {
-        name: "--timeout",
-        value: "<duration>",
-        summary: "max watch time such as 900, 30s, or 30m; bare numbers are seconds (default 30m)",
-      },
-      { name: "--json", summary: "emit NDJSON transition/resolution events" },
-    ],
-    notes: [
-      "Emits transitions only; the matching transition is the resolution event. any-change also detects event activity without a status change.",
-      "With --all, idle/attention must hold for every session at resolution; exits nonzero on timeout.",
-    ],
-    examples: [
-      { command: "oppi session watch 11111111-1111-4111-8111-111111111111 --until idle" },
-      {
-        command:
-          "oppi session watch 11111111-1111-4111-8111-111111111111 22222222-2222-4222-8222-222222222222 --until attention --json",
-      },
-    ],
-  },
-  {
     path: ["session", "wait"],
     title: "Wait for a session",
     summary:
@@ -1175,7 +1136,6 @@ const HELP_TOPICS: HelpTopic[] = [
       "One id keeps the single-session JSON envelope. Several ids resolve on the first match unless --all is set.",
       "Wait never streams transitions. It polls quietly and may print a compact still-waiting summary. JSON stays one envelope and includes progress[] when heartbeats fired.",
       "Defaults come from 14-day server telemetry: poll 2s ≈ half of turn TTFT p50 (4.3s); heartbeat 60s ≈ a quarter of turn duration p50 (236s). Override per call. See .internal/reports/session-wait-poll-defaults-2026-08-19.md.",
-      "Use session watch only in a human terminal for live transition lines. The oppi tool does not expose streaming watch.",
     ],
     examples: [
       { command: "oppi session wait 11111111-1111-4111-8111-111111111111 --for idle --json" },
