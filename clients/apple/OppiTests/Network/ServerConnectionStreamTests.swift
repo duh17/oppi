@@ -1069,6 +1069,9 @@ struct ServerConnectionStreamTests {
 
     private func makeExternalOpenConnection() -> ServerConnection {
         let (conn, _) = makeTestConnection(sessionId: "stale")
+        // CI has no server on localhost:7749. A real APIClient request can trip
+        // availability teardown and wipe the test transport before bind.
+        conn.setAPIClientForTesting(nil)
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         conn.sessionStore.upsert(makeTestSession(id: "stale", workspaceId: "w1", status: .busy))
         conn.sessionStore.upsert(makeTestSession(id: "target", workspaceId: "w1", status: .busy))

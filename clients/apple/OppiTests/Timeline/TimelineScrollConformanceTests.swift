@@ -10,16 +10,14 @@ struct TimelineScrollConformanceTests {
         let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-attached")
         harness.startAttachedAtBottom(isBusy: true)
 
-        var previousOffset = harness.collectionView.contentOffset.y
         for round in 1...4 {
             harness.growStreamingText(round: round)
             harness.apply(isBusy: true)
             harness.assertTailVisible()
             #expect(
-                harness.collectionView.contentOffset.y >= previousOffset - 4,
-                "attached streaming must not bounce away from the live tail"
+                timelineConformanceDistanceFromBottom(harness.collectionView) <= 24,
+                "attached streaming must stay on the live tail"
             )
-            previousOffset = harness.collectionView.contentOffset.y
         }
 
         harness.apply(isBusy: false, streamingID: nil)

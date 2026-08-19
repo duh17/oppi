@@ -59,6 +59,7 @@ Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi
 
 - **Client:** TestFlight Build 45 could crash shortly after launch when MetricKit delivered a nested diagnostic.
 - **Client:** Wrapped Markdown tables no longer paint later rows over earlier cells.
+- **Client:** Chat Files → Changed uses the same header search as All.
 
 ### Removed
 

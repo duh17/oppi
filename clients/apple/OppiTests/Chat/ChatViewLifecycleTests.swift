@@ -148,6 +148,7 @@ struct ChatViewLifecycleTests {
         let targetSessionId = "target-\(UUID().uuidString)"
         let workspaceId = "w1"
         let (connection, _) = makeTestConnection(sessionId: staleSessionId)
+        connection.setAPIClientForTesting(nil)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.sessionStore.upsert(makeTestSession(id: staleSessionId, workspaceId: workspaceId, status: .busy))
         connection.sessionStore.upsert(makeTestSession(id: targetSessionId, workspaceId: workspaceId, status: .busy))
