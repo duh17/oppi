@@ -11,7 +11,8 @@ BUILD_BASE="$APPLE_DIR/.build"
 LOG_DIR="$BUILD_BASE/logs"
 DEVICE_NAME="${OPPI_CI_SIM_DEVICE_NAME:-iPhone 17 Pro}"
 BOOT_TIMEOUT="${OPPI_CI_SIM_BOOT_TIMEOUT:-150}"
-# Two reboot retries allow three bounded readiness waits without an overall budget.
+# Extra waits continue the same first-boot. Rebooting mid-migration on hosted
+# runners restarts data migration and can stall simctl shutdown.
 BOOT_RETRIES=2
 SILENCE_TIMEOUT="${OPPI_CI_SIM_SILENCE_TIMEOUT:-180}"
 HANG_RETRIES="${OPPI_CI_SIM_HANG_RETRIES:-1}"
@@ -251,8 +252,7 @@ wait_for_boot_ready_with_retries() {
     fi
 
     if (( attempt < total_waits )); then
-      echo "[ci-simulator] Boot-readiness wait ${attempt}/${total_waits} failed (status ${status}); rebooting existing simulator before wait $((attempt + 1))/${total_waits}" >&2
-      reboot_existing_simulator
+      echo "[ci-simulator] Boot-readiness wait ${attempt}/${total_waits} failed (status ${status}); continuing the same first-boot before wait $((attempt + 1))/${total_waits}" >&2
     fi
   done
 
@@ -525,8 +525,7 @@ PY
     || { cat "$recovery_log" >&2; die "self-test: top-level boot recovery failed"; }
   assert_xcrun_calls "$recovery_calls" \
     "simctl list devices available -j" "simctl boot EXPECTED" \
-    "simctl bootstatus EXPECTED -b" "simctl shutdown EXPECTED" \
-    "simctl boot EXPECTED" "simctl bootstatus EXPECTED -b" \
+    "simctl bootstatus EXPECTED -b" "simctl bootstatus EXPECTED -b" \
     "simctl shutdown EXPECTED" \
     || die "self-test: top-level recovery simulator operation order/count changed"
   assert_no_simulator_mutation "$recovery_calls"
@@ -549,9 +548,7 @@ PY
     || die "self-test: exhausted boot readiness started xcodebuild"
   assert_xcrun_calls "$exhausted_calls" \
     "simctl list devices available -j" "simctl boot EXPECTED" \
-    "simctl bootstatus EXPECTED -b" "simctl shutdown EXPECTED" \
-    "simctl boot EXPECTED" "simctl bootstatus EXPECTED -b" \
-    "simctl shutdown EXPECTED" "simctl boot EXPECTED" \
+    "simctl bootstatus EXPECTED -b" "simctl bootstatus EXPECTED -b" \
     "simctl bootstatus EXPECTED -b" "simctl shutdown EXPECTED" \
     || die "self-test: exhausted boot readiness simulator operation order/count changed"
   assert_no_simulator_mutation "$exhausted_calls"
