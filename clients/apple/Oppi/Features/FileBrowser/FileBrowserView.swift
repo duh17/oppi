@@ -120,6 +120,18 @@ enum FileBrowserTreeNavigationReducer {
     static func popToBreadcrumb(path: String, selectedFile: FileBrowserSelection?) -> FileBrowserTreeNavigationMutation {
         FileBrowserTreeNavigationMutation(treeDirectoryPath: path, selectedFile: nil)
     }
+
+    /// Workspace-linked file destinations are registered only on the workspace stack.
+    /// Compact chat/tree-pane browsers must fall back to an in-sheet NavigationLink.
+    static func shouldUseWorkspaceLinkedFileDestination(
+        usesInlineCompactNavigation: Bool,
+        serverId: String?
+    ) -> Bool {
+        guard !usesInlineCompactNavigation, let serverId, !serverId.isEmpty else {
+            return false
+        }
+        return true
+    }
 }
 
 enum FileBrowserLayoutMode: Equatable {
@@ -936,7 +948,10 @@ struct FileBrowserView: View {
         name: String,
         navigationContext: FileBrowserNavigationContext?
     ) -> WorkspaceLinkedFileNavTarget? {
-        guard let serverId, !serverId.isEmpty else { return nil }
+        guard FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(
+            usesInlineCompactNavigation: usesInlineCompactDirectoryNavigation,
+            serverId: serverId
+        ), let serverId else { return nil }
         return .workspaceFile(
             serverId: serverId,
             workspaceId: workspaceId,

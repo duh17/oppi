@@ -188,6 +188,34 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(breadcrumb.selectedFile == nil)
     }
 
+    @Test func workspaceLinkedFileDestinationIsReservedForWorkspaceStack() {
+        // compactOnly/treePane stays in-sheet; the workspace destination is not registered there.
+        #expect(
+            FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(
+                usesInlineCompactNavigation: true,
+                serverId: "server-1"
+            ) == false
+        )
+        #expect(
+            FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(
+                usesInlineCompactNavigation: false,
+                serverId: "server-1"
+            ) == true
+        )
+        #expect(
+            FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(
+                usesInlineCompactNavigation: false,
+                serverId: nil
+            ) == false
+        )
+        #expect(
+            FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(
+                usesInlineCompactNavigation: false,
+                serverId: ""
+            ) == false
+        )
+    }
+
     @Test func fileNavigationContextMovesToAdjacentFilesWithoutWrapping() {
         let context = FileBrowserNavigationContext(files: [
             FileBrowserSelection(path: "a.png", name: "a.png", size: 10),
