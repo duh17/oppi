@@ -46,6 +46,8 @@ Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi
 - **Client/Server:** Skill Edit uses the guided composer. Wiki links can open host files the server can already read and focus line anchors.
 - **Client:** Double-tap zooms diagrams and images. Settings includes Privacy Policy and Support pages.
 - **Server:** `oppi quota` prints provider usage windows. Session and Agent create accept Pi tool and thinking flags.
+- **Server:** Allowlisted sandbox Oppi can spawn and steer sessions only in that workspace. Guest `ls` hides secret names.
+- **Server:** Clean, already-merged Oppi worktree removes skip the approval prompt under confirmDestructiveOnly.
 
 ### Changed
 
@@ -60,6 +62,7 @@ Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi
 - **Client:** TestFlight Build 45 could crash shortly after launch when MetricKit delivered a nested diagnostic.
 - **Client:** Wrapped Markdown tables no longer paint later rows over earlier cells.
 - **Client:** Chat Files → Changed uses the same header search as All.
+- **Client:** A ready session no longer opens empty when a web-search snippet cuts a UTF-16 surrogate pair.
 
 ### Removed
 
