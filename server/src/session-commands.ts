@@ -300,12 +300,7 @@ interface QueuedCompactCommand {
 }
 
 const IDLE_ONLY_COMMANDS = new Set(["compact", "navigate_tree", "reload"]);
-const IDENTITY_REPLACEMENT_COMMANDS = new Set([
-  "new_session",
-  "switch_session",
-  "fork",
-  "clone",
-]);
+const IDENTITY_REPLACEMENT_COMMANDS = new Set(["new_session", "switch_session", "fork", "clone"]);
 
 function identityReplacementError(commandType: string): Error {
   return new Error(
@@ -399,7 +394,6 @@ export class SessionCommandCoordinator {
         return { name };
       },
     ],
-
   ]);
 
   private static readonly SESSION_PASSTHROUGH_HANDLERS = new Map<string, SessionCommandHandler>([

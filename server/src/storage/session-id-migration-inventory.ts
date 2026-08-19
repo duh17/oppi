@@ -146,9 +146,7 @@ function collectPlannerInput(
   const paths: SessionIdMigrationPathInput[] = [];
   const coverage: InventoryCoverage = {
     acceptedInputs: ["explicitly named Pi JSONL traces under caller-approved roots"],
-    notInventoried: [
-      "runtime memory, event rings, push/live-activity state, and Apple-only state",
-    ],
+    notInventoried: ["runtime memory, event rings, push/live-activity state, and Apple-only state"],
     inspectedButAbsent: [],
     unavailable: [],
   };
@@ -963,7 +961,12 @@ function collectAttachmentManifests(
   );
   for (const entryName of readdirSync(realRoot).sort(compareDeterministic)) {
     const sessionDir = join(realRoot, entryName);
-    if (entryName === "." || entryName === ".." || entryName.includes("/") || entryName.includes("\\")) {
+    if (
+      entryName === "." ||
+      entryName === ".." ||
+      entryName.includes("/") ||
+      entryName.includes("\\")
+    ) {
       references.push(
         unclassifiedReference(
           `session-attachments:${entryName}`,
@@ -977,7 +980,10 @@ function collectAttachmentManifests(
       entry = lstatSync(sessionDir);
     } catch {
       references.push(
-        unclassifiedReference(`session-attachments:${entryName}`, "attachment directory is unreadable"),
+        unclassifiedReference(
+          `session-attachments:${entryName}`,
+          "attachment directory is unreadable",
+        ),
       );
       continue;
     }
@@ -1063,7 +1069,9 @@ function collectUploadRecords(
   }
   const realRoot = requireRealDirectory(root, "upload-record-root", references);
   if (!realRoot) return;
-  coverage.acceptedInputs.push("copied upload-store records; blobs inventoried by record sessionId only");
+  coverage.acceptedInputs.push(
+    "copied upload-store records; blobs inventoried by record sessionId only",
+  );
   for (const entryName of readdirSync(realRoot).sort(compareDeterministic)) {
     if (!entryName.endsWith(".json")) continue;
     const recordPath = join(realRoot, entryName);
@@ -1085,7 +1093,12 @@ function collectUploadRecords(
     if (parsed.sessionId === undefined || parsed.sessionId === null) continue;
     const recordId =
       typeof parsed.id === "string" && parsed.id ? parsed.id : entryName.replace(/\.json$/, "");
-    addSessionReference(parsed.sessionId, `upload-store:${recordId}:sessionId`, references, "rewrite");
+    addSessionReference(
+      parsed.sessionId,
+      `upload-store:${recordId}:sessionId`,
+      references,
+      "rewrite",
+    );
   }
 }
 
@@ -1103,9 +1116,7 @@ function collectUnnamedTraces(
   }
   const realRoot = requireRealDirectory(root, "unnamed-trace-root", references);
   if (!realRoot) return;
-  coverage.acceptedInputs.push(
-    "copied server-owned traces not named by a copied Session row",
-  );
+  coverage.acceptedInputs.push("copied server-owned traces not named by a copied Session row");
   const named = new Set(sessionRows.map((row) => row.sourceRowId));
   for (const entryName of readdirSync(realRoot).sort(compareDeterministic)) {
     const sessionId = basename(entryName, extname(entryName));
@@ -1193,7 +1204,10 @@ function loadTraceEvidenceListing(
   }
   if (!Array.isArray(parsed)) {
     references.push(
-      unclassifiedReference("trace-evidence-listing", "named-trace evidence listing is not an array"),
+      unclassifiedReference(
+        "trace-evidence-listing",
+        "named-trace evidence listing is not an array",
+      ),
     );
     return new Map();
   }
@@ -1276,7 +1290,9 @@ function listUserTables(db: SqliteDatabase): string[] {
 
 function tableColumns(db: SqliteDatabase, table: string): Set<string> {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: unknown }>;
-  return new Set(columns.flatMap((column) => (typeof column.name === "string" ? [column.name] : [])));
+  return new Set(
+    columns.flatMap((column) => (typeof column.name === "string" ? [column.name] : [])),
+  );
 }
 
 function hasSessionIdentityColumn(columns: ReadonlySet<string>): boolean {

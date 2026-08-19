@@ -283,12 +283,7 @@ export class SessionTraceService {
       trace = readSessionTraceFromFile(session.piSessionFile, traceOptions);
     }
     if ((!trace || trace.length === 0) && session.id) {
-      trace = readSessionTraceByUuid(
-        baseDir,
-        session.id,
-        session.workspaceId,
-        traceOptions,
-      );
+      trace = readSessionTraceByUuid(baseDir, session.id, session.workspaceId, traceOptions);
     }
 
     return trace;

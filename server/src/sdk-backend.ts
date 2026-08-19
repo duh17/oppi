@@ -571,7 +571,6 @@ function syncSessionIdentityFromManager(session: Session, manager: PiSessionMana
     knownFiles.add(sessionFile);
     session.piSessionFiles = [...knownFiles];
   }
-
 }
 
 /** Product fork: mint Session.id first, then create a distinct Pi JSONL with that id. */
@@ -583,9 +582,7 @@ export function forkPiSessionFrom(
   const manager = PiSessionManager.forkFrom(sourcePath, targetCwd, undefined, { id });
   const sessionId = manager.getSessionId();
   if (sessionId !== id) {
-    throw new Error(
-      `Forked Pi session id ${sessionId} does not match minted Session.id ${id}`,
-    );
+    throw new Error(`Forked Pi session id ${sessionId} does not match minted Session.id ${id}`);
   }
   return {
     sessionFile: manager.getSessionFile(),
