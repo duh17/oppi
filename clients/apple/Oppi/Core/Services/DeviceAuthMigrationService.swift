@@ -45,6 +45,13 @@ final class DeviceAuthMigrationService {
         guard server.deviceCredential == nil, server.token.hasPrefix("dt_"), server.baseURL != nil else {
             return server
         }
+#if DEBUG
+        // E2E injects the harness dt_ as the live token. Migrating it revokes
+        // that token, then later session calls fail closed with unknown_token.
+        if ProcessInfo.processInfo.environment["OPPI_E2E_DEVICE_TOKEN"] == server.token {
+            return server
+        }
+#endif
         let failureKey = Self.failureKey(for: server)
         if !force, failedMigrateTokens.contains(failureKey) {
             return server
