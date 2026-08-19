@@ -1065,6 +1065,108 @@ struct ServerConnectionStreamTests {
         }
     }
 
+    // MARK: - External open claim (notification / oppi://session tap)
+
+    private func makeExternalOpenConnection() -> ServerConnection {
+        let (conn, _) = makeTestConnection(sessionId: "stale")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.sessionStore.upsert(makeTestSession(id: "stale", workspaceId: "w1", status: .busy))
+        conn.sessionStore.upsert(makeTestSession(id: "target", workspaceId: "w1", status: .busy))
+        conn._connectStreamForTesting = { AsyncStream { _ in } }
+        return conn
+    }
+
+    @Test func externalOpenKeepsItsStreamWhenStaleSessionReenters() async {
+        let conn = makeExternalOpenConnection()
+        var streamConnects = 0
+        conn._connectStreamForTesting = {
+            streamConnects += 1
+            return AsyncStream { _ in }
+        }
+
+        await conn.prepareExternalSessionOpen(sessionId: "target")
+        #expect(conn.focusedSessionId == "target")
+        #expect(streamConnects == 1)
+
+        // A ChatView for the previous session is still mounted; its re-entry
+        // arrives while the tapped session's socket is still connecting.
+        conn.prepareForSessionReentry("stale")
+
+        #expect(conn.focusedSessionId == "target",
+                "A stale ChatView must not steal focus from the notification target")
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/target/stream")
+        #expect(streamConnects == 1, "The tapped session's stream must not be torn down and reopened")
+        #expect(conn.streamConsumptionTask != nil)
+
+        conn.disconnectStream()
+    }
+
+    @Test func externalOpenRefusesStaleStreamBind() async {
+        let conn = makeExternalOpenConnection()
+        await conn.prepareExternalSessionOpen(sessionId: "target")
+
+        let staleStream = await conn.streamSession("stale", routeScope: .workspace("w1"))
+
+        #expect(staleStream == nil, "A stale session must lose the shared focused-session transport")
+        #expect(conn.focusedSessionId == "target")
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/target/stream")
+
+        conn.disconnectStream()
+    }
+
+    @Test func externalOpenClaimReleasesAfterTargetViewBinds() async {
+        let conn = makeExternalOpenConnection()
+        await conn.prepareExternalSessionOpen(sessionId: "target")
+
+        // Appear is not enough: the claim stays until the target stream binds.
+        conn.prepareForSessionReentry("target")
+        conn.prepareForSessionReentry("stale")
+        #expect(conn.focusedSessionId == "target",
+                "A stale re-entry must stay refused until the target stream binds")
+
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+        _ = await conn.streamSession("target", workspaceId: "w1")
+        conn.prepareForSessionReentry("stale")
+
+        #expect(conn.focusedSessionId == "stale")
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/stale/stream")
+
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectStream()
+    }
+
+    @Test func externalOpenClaimExpiresSoUnboundTargetCannotPinFocus() async {
+        let conn = makeExternalOpenConnection()
+        conn._externalSessionOpenClaimWindowForTesting = .milliseconds(20)
+
+        await conn.prepareExternalSessionOpen(sessionId: "target")
+        try? await Task.sleep(for: .milliseconds(60))
+
+        conn.prepareForSessionReentry("stale")
+
+        #expect(conn.focusedSessionId == "stale",
+                "The claim is bounded so a target view that never mounts cannot pin arbitration")
+
+        conn.disconnectStream()
+    }
+
+    @Test func externalOpenRefusalIsRecordedInFocusArbitrationTelemetry() async {
+        let conn = makeExternalOpenConnection()
+        await conn.prepareExternalSessionOpen(sessionId: "target")
+
+        var events: [(outcome: String, metadata: [String: String])] = []
+        conn._onFocusArbitrationForTesting = { events.append(($0, $1)) }
+
+        conn.prepareForSessionReentry("stale")
+
+        #expect(events.map(\.outcome) == ["refused"])
+        #expect(events.first?.metadata["nextSessionId"] == "stale")
+        #expect(events.first?.metadata["previousSessionId"] == "target")
+
+        conn.disconnectStream()
+    }
+
     @Test func webSocketRejectsFrameWhenBoundSessionChangesWhileWaitingToSend() async {
         let (conn, _) = makeTestConnection(sessionId: "session-a")
         conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)

@@ -370,6 +370,42 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    @Test func staleSessionConnectYieldsToExternalSessionOpen() async {
+        let staleId = "stale-\(UUID().uuidString)"
+        let targetId = "target-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: staleId)
+
+        var streamCreated = false
+        manager._streamSessionForTesting = { _ in
+            streamCreated = true
+            return AsyncStream { $0.finish() }
+        }
+        var historyLoaded = false
+        manager._loadHistoryForTesting = { _, _ in
+            historyLoaded = true
+            return nil
+        }
+
+        let (connection, _) = makeTestConnection(sessionId: staleId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.sessionStore.upsert(makeTestSession(id: staleId, workspaceId: "w1", status: .busy))
+        connection.sessionStore.upsert(makeTestSession(id: targetId, workspaceId: "w1", status: .busy))
+        connection._connectStreamForTesting = { AsyncStream { _ in } }
+
+        await connection.prepareExternalSessionOpen(sessionId: targetId)
+
+        await manager.connect(connection: connection, sessionStore: connection.sessionStore)
+
+        #expect(!streamCreated, "A stale session must not open a stream over the notification target")
+        #expect(!historyLoaded)
+        #expect(connection.focusedSessionId == targetId)
+        #expect(connection.sessionStore.activeSessionId == targetId)
+        #expect(manager.entryState == .disconnected(reason: .cancelled))
+
+        manager.cleanup()
+        connection.disconnectStream()
+    }
+
     /// History reload always runs on entry, even when cache is present.
     /// Cache provides instant display; reload provides ground truth.
     @Test func initialConnectAlwaysSchedulesHistoryReloadWithCache() async {

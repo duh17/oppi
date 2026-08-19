@@ -351,6 +351,17 @@ final class ChatSessionManager {
     ) async {
         let generation = connectionGeneration
 
+        // A notification / deep-link open owns the focused session until its own
+        // view binds the stream. A ChatView still mounted for another session
+        // must not reclaim the active session, focus, or the shared transport —
+        // its timeline stays as-is instead of being reset behind the tap.
+        guard !connection.externalSessionOpenClaimBlocks(sessionId) else {
+            log.warning("Connect deferred for \(self.sessionId, privacy: .public): another session was opened externally")
+            transitionTo(.disconnected(reason: .cancelled))
+            scheduleConnectAfterExternalOpen(generation: generation, connection: connection)
+            return
+        }
+
         transitionTo(.idle)
         if let resolvedWorkspaceId = connection.sessionReentryWorkspaceId(
             for: sessionId,
@@ -1752,6 +1763,32 @@ final class ChatSessionManager {
     private func cancelPresentationReloadRetry() {
         presentationReloadRetryTask?.cancel()
         presentationReloadRetryTask = nil
+    }
+
+    /// The external-open claim is bounded. Re-arm the connect loop once it
+    /// settles so a session the user navigates back to still binds its stream
+    /// instead of staying silently unsubscribed.
+    private func scheduleConnectAfterExternalOpen(generation: Int, connection: ServerConnection) {
+        cancelAutoReconnect()
+        let claimedSessionId = sessionId
+        autoReconnectTask = Task { @MainActor [weak self, weak connection] in
+            while true {
+                guard let connection else { return }
+                guard connection.externalSessionOpenClaimBlocks(claimedSessionId) else { break }
+                do {
+                    try await Task.sleep(for: .milliseconds(250))
+                } catch {
+                    return
+                }
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  wantsAutoReconnect,
+                  generation == connectionGeneration else {
+                return
+            }
+            reconnect()
+        }
     }
 
     private func cancelAutoReconnect() {

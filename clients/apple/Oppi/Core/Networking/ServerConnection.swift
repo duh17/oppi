@@ -286,6 +286,9 @@ final class ServerConnection {
     /// Test seam: inspect bounded focus-arbitration telemetry.
     var _onFocusArbitrationForTesting: ((_ outcome: String, _ metadata: [String: String]) -> Void)?
 
+    /// Test seam: shorten the bounded external-open claim window.
+    var _externalSessionOpenClaimWindowForTesting: Duration?
+
     /// Test seam: replace compact sidebar Git summary HTTP fetches.
     var _getWorkspaceGitSummaryForTesting: ((String) async throws -> WorkspaceGitSummary)?
 
@@ -1558,6 +1561,60 @@ final class ServerConnection {
         }
     }
 
+    // MARK: - External Session Open Claim
+
+    /// A notification or `oppi://session` tap binds the focused-session stream
+    /// before navigation commits. A ChatView for a different session is often
+    /// still mounted at that moment: its `onAppear` re-entry or connect loop
+    /// would steal focus and tear down the socket that was opened for the
+    /// tapped session milliseconds earlier, leaving the target with an ask card
+    /// and no timeline. The claim makes the tapped session win focus
+    /// arbitration until its own view binds the stream.
+    private struct ExternalSessionOpenClaim {
+        let sessionId: String
+        let expiresAt: ContinuousClock.Instant
+    }
+
+    private var externalSessionOpenClaim: ExternalSessionOpenClaim?
+
+    /// Bounded so a target whose view never mounts cannot pin arbitration.
+    static let externalSessionOpenClaimWindow: Duration = .seconds(5)
+
+    private var effectiveExternalSessionOpenClaimWindow: Duration {
+        _externalSessionOpenClaimWindowForTesting ?? Self.externalSessionOpenClaimWindow
+    }
+
+    private func beginExternalSessionOpenClaim(for sessionId: String) {
+        externalSessionOpenClaim = ExternalSessionOpenClaim(
+            sessionId: sessionId,
+            expiresAt: ContinuousClock.now.advanced(by: effectiveExternalSessionOpenClaimWindow)
+        )
+    }
+
+    /// True while another session holds the external-open claim.
+    func externalSessionOpenClaimBlocks(_ sessionId: String) -> Bool {
+        guard let claim = externalSessionOpenClaim else { return false }
+        guard ContinuousClock.now < claim.expiresAt else {
+            externalSessionOpenClaim = nil
+            return false
+        }
+        return claim.sessionId != sessionId
+    }
+
+    private func resolveExternalSessionOpenClaim(for sessionId: String) {
+        guard externalSessionOpenClaim?.sessionId == sessionId else { return }
+        externalSessionOpenClaim = nil
+    }
+
+    private func recordExternalSessionOpenClaimRefusal(_ sessionId: String, context: String) {
+        recordFocusArbitration(
+            outcome: "refused",
+            previousSessionId: externalSessionOpenClaim?.sessionId,
+            nextSessionId: sessionId,
+            context: context
+        )
+    }
+
     // MARK: - Session Streaming
 
     private func clearFocusedSessionStreamEndpoint() {
@@ -1591,6 +1648,10 @@ final class ServerConnection {
     }
 
     func streamSession(_ sessionId: String, routeScope: SessionRouteScope) async -> AsyncStream<SessionStreamEvent>? {
+        guard !externalSessionOpenClaimBlocks(sessionId) else {
+            recordExternalSessionOpenClaimRefusal(sessionId, context: "stream_bind")
+            return nil
+        }
         await refreshStreamCapabilitiesIfNeeded()
         await waitWhileTransportDemotingIfNeeded()
         guard hasRequiredSplitStreamCapabilities else {
@@ -1598,6 +1659,9 @@ final class ServerConnection {
             return nil
         }
         prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
+        // The tapped session's own timeline now owns the stream; ordinary focus
+        // arbitration resumes for later navigation.
+        resolveExternalSessionOpenClaim(for: sessionId)
         return await sessionStreamCoordinator.streamSession(
             connection: self,
             sessionId: sessionId,
@@ -1948,6 +2012,10 @@ final class ServerConnection {
     /// continuations or tear down streams. The previous session's ChatSessionManager keeps
     /// receiving events via its per-session continuation and coalescer/reducer.
     func focusSession(_ sessionId: String) {
+        guard !externalSessionOpenClaimBlocks(sessionId) else {
+            recordExternalSessionOpenClaimRefusal(sessionId, context: "focus")
+            return
+        }
         cancelDeferredPlaybackDisconnect(for: sessionId)
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
@@ -1983,7 +2051,26 @@ final class ServerConnection {
         workspaceIdHint: String? = nil,
         routeScope: SessionRouteScope? = nil
     ) {
+        // Do not settle the claim here. Same-session re-entry is already
+        // unblocked; releasing on appear re-opens the steal window before
+        // streamSession binds.
+        bindSessionForReentry(
+            sessionId,
+            workspaceIdHint: workspaceIdHint,
+            routeScope: routeScope
+        )
+    }
+
+    private func bindSessionForReentry(
+        _ sessionId: String,
+        workspaceIdHint: String?,
+        routeScope: SessionRouteScope?
+    ) {
         _onPrepareForSessionReentryForTesting?(sessionId)
+        guard !externalSessionOpenClaimBlocks(sessionId) else {
+            recordExternalSessionOpenClaimRefusal(sessionId, context: "reentry")
+            return
+        }
         focusSession(sessionId)
 
         let session = sessionStore.session(id: sessionId)
@@ -2014,21 +2101,36 @@ final class ServerConnection {
         sessionId: String,
         workspaceIdHint: String? = nil
     ) async {
+        // Claim before the first await: the session record fetch and dialog
+        // hydration below are exactly the window in which a still-mounted
+        // ChatView for another session re-enters and steals the transport.
+        beginExternalSessionOpenClaim(for: sessionId)
         sessionStore.activeSessionId = sessionId
         await refreshSessionRecordIfPossible(sessionId: sessionId)
         let initialWorkspaceId = sessionReentryWorkspaceId(
             for: sessionId,
             workspaceIdHint: workspaceIdHint
         )
-        prepareForSessionReentry(sessionId, workspaceIdHint: initialWorkspaceId)
+        bindSessionForReentry(
+            sessionId,
+            workspaceIdHint: initialWorkspaceId,
+            routeScope: nil
+        )
         await hydrateSessionDialogs(sessionId: sessionId)
         let resolvedWorkspaceId = sessionReentryWorkspaceId(
             for: sessionId,
             workspaceIdHint: initialWorkspaceId
         )
         if resolvedWorkspaceId != initialWorkspaceId {
-            prepareForSessionReentry(sessionId, workspaceIdHint: resolvedWorkspaceId)
+            bindSessionForReentry(
+                sessionId,
+                workspaceIdHint: resolvedWorkspaceId,
+                routeScope: nil
+            )
         }
+        // Re-assert the active session: a losing ChatView's connect loop can
+        // still have overwritten this pointer during the awaits above.
+        sessionStore.activeSessionId = sessionId
     }
 
     /// Load current session JSON so tap does not trust a stale cached status.

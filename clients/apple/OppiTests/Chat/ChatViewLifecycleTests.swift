@@ -143,6 +143,45 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    @Test func staleChatViewAppearDoesNotStealNotificationTargetStream() async {
+        let staleSessionId = "stale-\(UUID().uuidString)"
+        let targetSessionId = "target-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let (connection, _) = makeTestConnection(sessionId: staleSessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.sessionStore.upsert(makeTestSession(id: staleSessionId, workspaceId: workspaceId, status: .busy))
+        connection.sessionStore.upsert(makeTestSession(id: targetSessionId, workspaceId: workspaceId, status: .busy))
+
+        var streamConnects = 0
+        connection._connectStreamForTesting = {
+            streamConnects += 1
+            return AsyncStream { _ in }
+        }
+
+        // Notification tap binds the target stream before navigation commits.
+        await connection.prepareExternalSessionOpen(sessionId: targetSessionId)
+        #expect(connection.focusedSessionId == targetSessionId)
+        #expect(streamConnects == 1)
+
+        // The previous session's ChatView is still mounted and appears again
+        // while the tapped session's socket is still connecting.
+        let host = makeHost(connection: connection, sessionId: staleSessionId)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        #expect(
+            connection.focusedSessionId == targetSessionId,
+            "A stale ChatView appearing must not steal focus from the notification target"
+        )
+        #expect(
+            connection.focusedSessionStreamURLForTesting?.path
+                == "/workspaces/\(workspaceId)/sessions/\(targetSessionId)/stream"
+        )
+        #expect(streamConnects == 1, "The notification target's socket must survive the stale appear")
+
+        host.teardown()
+        connection.disconnectStream()
+    }
+
     @Test func onDisappearDuringLocalPlaybackDisconnectsFocusedSession() async {
         let sessionId = "session-\(UUID().uuidString)"
         let (connection, _) = makeTestConnection(sessionId: sessionId)
