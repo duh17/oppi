@@ -298,6 +298,9 @@ final class ServerConnection {
     /// Test seam: replace generic `GET /sessions/:id` during external open.
     var _getSessionRecordForTesting: ((String) async throws -> Session)?
 
+    /// Test seam: replace workspace trace prefetch during external open.
+    var _getSessionTraceForTesting: ((String) async throws -> (session: Session, trace: [TraceEvent]))?
+
 
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest? {
@@ -2107,6 +2110,7 @@ final class ServerConnection {
         beginExternalSessionOpenClaim(for: sessionId)
         sessionStore.activeSessionId = sessionId
         await refreshSessionRecordIfPossible(sessionId: sessionId)
+        await prefetchSessionTimelineIfPossible(sessionId: sessionId)
         let initialWorkspaceId = sessionReentryWorkspaceId(
             for: sessionId,
             workspaceIdHint: workspaceIdHint
@@ -2149,6 +2153,60 @@ final class ServerConnection {
         } catch {
             recordRefreshEvent(
                 "session_record.refresh_failed",
+                level: .warning,
+                metadata: Self.refreshErrorMetadata(error)
+            )
+        }
+    }
+
+    /// Warm the timeline cache so ChatView's normal connect path is not blank
+    /// while the focused session WebSocket is opening.
+    func prefetchSessionTimelineIfPossible(sessionId: String) async {
+        do {
+            let session: Session
+            let trace: [TraceEvent]
+            var page: TracePageMetadata?
+            if let fetchHook = _getSessionTraceForTesting {
+                (session, trace) = try await fetchHook(sessionId)
+            } else if let apiClient,
+                      let routeScope = sessionStore.routeScope(for: sessionId) {
+                do {
+                    let response = try await apiClient.getSessionTracePage(
+                        scope: routeScope,
+                        sessionId: sessionId,
+                        previewBytes: 4_096
+                    )
+                    session = response.session
+                    trace = response.trace
+                    page = response.page
+                } catch {
+                    guard ChatSessionManager.shouldFallbackToFullTrace(error) else { throw error }
+                    let fallback = try await apiClient.getSession(
+                        scope: routeScope,
+                        sessionId: sessionId,
+                        traceView: .full
+                    )
+                    session = fallback.session
+                    trace = fallback.trace
+                    page = nil
+                }
+            } else {
+                return
+            }
+            sessionStore.upsert(session)
+            if let serverId = currentServerId {
+                await TimelineCache.shared.saveTrace(
+                    sessionId,
+                    serverId: serverId,
+                    events: trace,
+                    page: page
+                )
+            } else {
+                await TimelineCache.shared.saveTrace(sessionId, events: trace, page: page)
+            }
+        } catch {
+            recordRefreshEvent(
+                "session_trace.prefetch_failed",
                 level: .warning,
                 metadata: Self.refreshErrorMetadata(error)
             )

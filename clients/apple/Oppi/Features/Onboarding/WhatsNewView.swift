@@ -78,41 +78,49 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
+    /// Build 46 · Changes since Build 45
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "agents-schedules",
-            icon: "person.crop.circle.badge.checkmark",
-            iconColor: .themePurple,
-            title: String(localized: "Agents and schedules are easier to set up"),
-            description: String(localized: "We cleaned up Agent creation and editing, and made schedules simpler to configure.")
+            id: "device-https",
+            icon: "lock.iphone",
+            iconColor: .themeGreen,
+            title: String(localized: "Pair over HTTPS or Tailscale"),
+            description: String(localized: "Iroh is gone. Pair again if there is no HTTPS endpoint.")
         ),
         WhatsNewFeature(
-            id: "chat-controls",
-            icon: "bubble.left.and.bubble.right",
-            iconColor: .themeOrange,
-            title: String(localized: "Chat controls are more reliable"),
-            description: String(localized: "Context shows more Pi usage details, slash commands wait while the agent is busy, `/compact` works like a normal slash command, and extension prompts preserve your draft.")
+            id: "session-search",
+            icon: "magnifyingglass",
+            iconColor: .themeBlue,
+            title: String(localized: "Search from the bottom bar"),
+            description: String(localized: "Matches stay in a flat Results list, not hidden inside day groups.")
         ),
         WhatsNewFeature(
-            id: "workspace-wiki-links",
+            id: "wiki-links",
             icon: "link",
             iconColor: .themeCyan,
-            title: String(localized: "Open workspace files with wiki links"),
-            description: String(localized: "Ask an agent to cite workspace files as `[[wiki links]]`, then tap a link to open the file in Oppi.")
+            title: String(localized: "Wiki links open cited lines"),
+            description: String(localized: "Tap a cited line or range, or a host-file link the server can already read.")
         ),
         WhatsNewFeature(
-            id: "model-providers",
+            id: "quick-session",
+            icon: "plus.circle",
+            iconColor: .themeOrange,
+            title: String(localized: "Quick Session worktrees"),
+            description: String(localized: "Pick a worktree, then type / to autocomplete prompts and Skills.")
+        ),
+        WhatsNewFeature(
+            id: "skill-edit",
+            icon: "book.closed",
+            iconColor: .themePurple,
+            title: String(localized: "Skill Edit uses the composer"),
+            description: String(localized: "Change a Skill through the guided composer.")
+        ),
+        WhatsNewFeature(
+            id: "provider-quotas",
             icon: "cpu",
             iconColor: .themeBlue,
-            title: String(localized: "Model providers are easier to manage"),
-            description: String(localized: "Provider settings are easier to find, xAI shows quota and reset details, and extensions can supply custom model providers more reliably.")
-        ),
-        WhatsNewFeature(
-            id: "server-connections",
-            icon: "point.3.connected.trianglepath.dotted",
-            iconColor: .themeGreen,
-            title: String(localized: "More predictable server connections"),
-            description: String(localized: "Oppi now uses HTTPS/WSS for remote connections, normally through Tailscale or a directly reachable TLS endpoint.")
+            title: String(localized: "OpenCode Go quotas"),
+            description: String(localized: "Model Providers shows OpenCode Go usage next to Codex and xAI.")
         ),
     ]
 

@@ -208,9 +208,9 @@ final class ChatSessionManager {
         "chat.lastSeenSeq.\(sessionId)"
     }
 
-    private static func shouldFallbackToFullTrace(_ error: any Error) -> Bool {
+    static func shouldFallbackToFullTrace(_ error: any Error) -> Bool {
         guard case APIError.server(let status, _) = error else { return false }
-        return status == 404 || status == 405
+        return status == 404 || status == 405 || status == 409
     }
 
     private static func loadLastSeenSeq(sessionId: String) -> Int {

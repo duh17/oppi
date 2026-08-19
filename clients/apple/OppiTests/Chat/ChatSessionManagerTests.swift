@@ -40,6 +40,24 @@ struct ChatSessionManagerTests {
         return (data, response)
     }
 
+    @Test func staleTracePageFallsBackToFullSessionTrace() {
+        #expect(
+            ChatSessionManager.shouldFallbackToFullTrace(
+                APIError.server(status: 409, message: "Session trace is not synchronized")
+            )
+        )
+        #expect(
+            ChatSessionManager.shouldFallbackToFullTrace(
+                APIError.server(status: 404, message: "not found")
+            )
+        )
+        #expect(
+            !ChatSessionManager.shouldFallbackToFullTrace(
+                APIError.server(status: 500, message: "boom")
+            )
+        )
+    }
+
     @Test func initialState() {
         let manager = ChatSessionManager(sessionId: "test-123")
         #expect(manager.sessionId == "test-123")

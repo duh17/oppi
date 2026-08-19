@@ -415,18 +415,18 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "workspace-edit-skills")
     }
 
-    func testWhatsNewBuild45LightScreenshot() throws {
+    func testWhatsNewBuild46LightScreenshot() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(screen: "whats-new-build45-light", reduceMotion: true)
-        assertWhatsNewBuild45Content()
-        saveScreenshot(name: "whats-new-build45-light")
+        launchPreview(screen: "whats-new-build46-light", reduceMotion: true)
+        assertWhatsNewBuild46Content()
+        saveScreenshot(name: "whats-new-build46-light")
     }
 
-    func testWhatsNewBuild45DarkScreenshot() throws {
+    func testWhatsNewBuild46DarkScreenshot() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(screen: "whats-new-build45-dark", reduceMotion: true)
-        assertWhatsNewBuild45Content()
-        saveScreenshot(name: "whats-new-build45-dark")
+        launchPreview(screen: "whats-new-build46-dark", reduceMotion: true)
+        assertWhatsNewBuild46Content()
+        saveScreenshot(name: "whats-new-build46-dark")
     }
 
     func testModelProvidersQuotaInlinePreview() throws {
@@ -1063,7 +1063,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(ready.waitForExistence(timeout: 8), "Screenshot preview did not become ready")
     }
 
-    private func assertWhatsNewBuild45Content() {
+    private func assertWhatsNewBuild46Content() {
         // The launch arguments request reduced motion; this extra settle makes
         // the artifact safe even on simulators that ignore that preference.
         sleep(1)
@@ -1073,33 +1073,38 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 5), "What’s New title not visible")
         XCTAssertTrue(caption.waitForExistence(timeout: 5), "Build caption not visible")
         XCTAssertEqual(title.label, "What’s New in Oppi")
-        XCTAssertEqual(caption.label, "Version 1.1.0")
+        XCTAssertEqual(caption.label, "Version 1.1.1")
 
         let expectedFeatures = [
             (
-                id: "agents-schedules",
-                title: "Agents and schedules are easier to set up",
-                description: "We cleaned up Agent creation and editing, and made schedules simpler to configure."
+                id: "device-https",
+                title: "Pair over HTTPS or Tailscale",
+                description: "Iroh is gone. Pair again if there is no HTTPS endpoint."
             ),
             (
-                id: "chat-controls",
-                title: "Chat controls are more reliable",
-                description: "Context shows more Pi usage details, slash commands wait while the agent is busy, `/compact` works like a normal slash command, and extension prompts preserve your draft."
+                id: "session-search",
+                title: "Search from the bottom bar",
+                description: "Matches stay in a flat Results list, not hidden inside day groups."
             ),
             (
-                id: "workspace-wiki-links",
-                title: "Open workspace files with wiki links",
-                description: "Ask an agent to cite workspace files as `[[wiki links]]`, then tap a link to open the file in Oppi."
+                id: "wiki-links",
+                title: "Wiki links open cited lines",
+                description: "Tap a cited line or range, or a host-file link the server can already read."
             ),
             (
-                id: "model-providers",
-                title: "Model providers are easier to manage",
-                description: "Provider settings are easier to find, xAI shows quota and reset details, and extensions can supply custom model providers more reliably."
+                id: "quick-session",
+                title: "Quick Session worktrees",
+                description: "Pick a worktree, then type / to autocomplete prompts and Skills."
             ),
             (
-                id: "server-connections",
-                title: "More predictable server connections",
-                description: "Server connections use authenticated HTTPS/WSS, normally through LAN, Tailscale, or a reachable TLS endpoint."
+                id: "skill-edit",
+                title: "Skill Edit uses the composer",
+                description: "Change a Skill through the guided composer."
+            ),
+            (
+                id: "provider-quotas",
+                title: "OpenCode Go quotas",
+                description: "Model Providers shows OpenCode Go usage next to Codex and xAI."
             ),
         ]
 

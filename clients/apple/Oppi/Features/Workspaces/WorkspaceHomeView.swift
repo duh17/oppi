@@ -244,7 +244,7 @@ struct WorkspaceSessionScopedDestinationView: View {
 
     var body: some View {
         Group {
-            if let connection = scopedConnection {
+            if let connection = resolvedConnection {
                 ChatView(
                     sessionId: target.sessionId,
                     serverIdHint: target.serverId,
@@ -261,6 +261,13 @@ struct WorkspaceSessionScopedDestinationView: View {
             guard await coordinator.switchToServerReady(target.serverId) else { return }
             scopedConnection = coordinator.connection(for: target.serverId)
         }
+    }
+
+    /// Notification/deep-link open already awaited `switchToServerReady`.
+    /// Reuse that connection immediately so ChatView can bind the normal
+    /// session stream instead of sitting on "Connecting…".
+    private var resolvedConnection: ServerConnection? {
+        scopedConnection ?? coordinator.connection(for: target.serverId)
     }
 }
 

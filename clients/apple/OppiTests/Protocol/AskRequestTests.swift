@@ -1021,4 +1021,51 @@ struct AskRequestTests {
         )?.id == "ask-live")
         conn.disconnectStream()
     }
+
+    @Test @MainActor func externalSessionOpenPrefetchesTimelineForChatViewCache() async throws {
+        let sessionId = "child-trace"
+        let (conn, _) = makeTestConnection(sessionId: "parent")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1", status: .busy))
+        conn._connectStreamForTesting = { AsyncStream { _ in } }
+        conn._getSessionRecordForTesting = { id in
+            makeTestSession(id: id, workspaceId: "w1", status: .busy)
+        }
+        conn._getSessionDialogsForTesting = { _ in
+            APIClient.SessionDialogsResponse(dialogs: [], serverNow: 1)
+        }
+        conn._getSessionTraceForTesting = { id in
+            (
+                makeTestSession(id: id, workspaceId: "w1", status: .busy),
+                [
+                    TraceEvent(
+                        id: "user-1",
+                        type: .user,
+                        timestamp: "2026-08-18T00:00:00Z",
+                        text: "Stay in this session."
+                    ),
+                ]
+            )
+        }
+
+        await conn.prepareExternalSessionOpen(sessionId: sessionId)
+
+        let cached: CachedTrace?
+        if let serverId = conn.currentServerId ?? conn.sessionStore.activeServerId {
+            if let scoped = await TimelineCache.shared.loadTrace(sessionId, serverId: serverId) {
+                cached = scoped
+            } else {
+                cached = await TimelineCache.shared.loadTrace(sessionId)
+            }
+        } else {
+            cached = await TimelineCache.shared.loadTrace(sessionId)
+        }
+        #expect(cached?.events.contains(where: { $0.text == "Stay in this session." }) == true)
+        #expect(conn.focusedSessionStreamURLForTesting?.path == "/workspaces/w1/sessions/\(sessionId)/stream")
+        conn.disconnectStream()
+        if let serverId = conn.currentServerId {
+            await TimelineCache.shared.removeTrace(sessionId, serverId: serverId)
+        }
+        await TimelineCache.shared.removeTrace(sessionId)
+    }
 }

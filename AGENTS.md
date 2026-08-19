@@ -17,6 +17,7 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone 
   - ordinary protocol tests, which compare canonical bytes without writing tracked fixtures
   - the explicit `cd server && npm run protocol:fixtures:update` command when regeneration is intended
 - Generic extension UI must work for every extension. Read display behavior from protocol metadata; never branch on specific tool, extension, status, widget, or display names.
+- Keep agentic-loop evidence inspectable: goal evaluations, claims, continuation decisions, blockers, and their reasons. Do not hide or over-truncate that output.
 - Store files by purpose:
   - `.internal/` for lasting private work such as reports, research, and diagrams
   - `.pi/` for session state, todos, attachments, prompts, worktrees, and temporary caches
