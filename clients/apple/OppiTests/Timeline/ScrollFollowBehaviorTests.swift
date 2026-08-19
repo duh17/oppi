@@ -32,7 +32,7 @@ struct ScrollFollowBehaviorTests {
         #expect(harness.scrollController.isCurrentlyNearBottom,
                 "non-user-driven drift with content growth must stay attached")
 
-        // Even a large drift past exit threshold (250 > 200) is corrected
+        // Even a large passive drift past the true tail is corrected
         // when accompanied by content growth.
         metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 250, in: metricsView))
         metricsView.testContentSize = CGSize(width: 390, height: 1_400) // more growth
@@ -115,8 +115,8 @@ struct ScrollFollowBehaviorTests {
         metricsView.testIsTracking = true
         harness.coordinator.scrollViewWillBeginDragging(metricsView)
 
-        // Move up 150pt from bottom — past the enter threshold (120pt) so
-        // the detach sticks even after updateScrollState re-evaluates.
+        // Move up 150pt from bottom — past the true-tail enter threshold
+        // so the detach sticks even after updateScrollState re-evaluates.
         metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 150, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
 
@@ -124,10 +124,10 @@ struct ScrollFollowBehaviorTests {
     }
 
     @Test func smallUpwardScrollDetachSticksUntilDragEnds() async {
-        // User scrolls up just a little (50pt from bottom), within the enter
-        // threshold (120pt). The detach must still stick — the user clearly
-        // intends to scroll away. Re-attach should only happen when the user
-        // scrolls back *down* near the bottom.
+        // User scrolls up just a little (50pt from bottom). The detach must
+        // still stick — any user-owned upward movement leaves the true tail.
+        // Re-attach should only happen when the user scrolls back *down*
+        // near the bottom.
         let harness = makeTimelineHarness(sessionId: "session-a")
         let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
         metricsView.testContentSize = CGSize(width: 390, height: 1_100)
@@ -140,13 +140,13 @@ struct ScrollFollowBehaviorTests {
         metricsView.testIsTracking = true
         harness.coordinator.scrollViewWillBeginDragging(metricsView)
 
-        // Small scroll up: only 50pt from bottom (within enter threshold 120pt).
+        // Small scroll up: only 50pt from bottom.
         metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 50, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
 
         // Must stay detached — the user is actively scrolling up.
         #expect(!harness.scrollController.isCurrentlyNearBottom,
-                "detach should stick even within enter threshold during upward scroll")
+                "detach should stick after any user-owned upward scroll")
 
         // Auto-scroll must not fire while detached.
         var scrollCount = 0
@@ -168,8 +168,7 @@ struct ScrollFollowBehaviorTests {
 
     @Test func busyToIdleTransitionDoesNotReattachDetachedUser() {
         // When isBusy transitions false between tool calls, the apply method's
-        // updateScrollState must not re-attach a detached user — even if the
-        // user's scroll position is within the enter threshold.
+        // updateScrollState must not re-attach a detached user.
         let harness = makeTimelineHarness(sessionId: "session-a")
         let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
         metricsView.testContentSize = CGSize(width: 390, height: 2_000)
@@ -192,8 +191,8 @@ struct ScrollFollowBehaviorTests {
 
         // Now apply a configuration with isBusy=false (agent idle between tools).
         // The apply method's updateScrollState runs when !isBusy. It must not
-        // re-attach a user who explicitly detached, even though 80pt is within
-        // the 120pt enter threshold.
+        // re-attach a user who explicitly detached, even if a later layout
+        // pass would otherwise sample near-bottom geometry.
         let idleConfig = makeTimelineConfiguration(
             isBusy: false,
             sessionId: "session-a",
@@ -211,8 +210,8 @@ struct ScrollFollowBehaviorTests {
     }
 
     @Test func nearBottomHysteresisRequiresCloserReentryAfterDetach() {
-        // Thresholds: enter=120, exit=200.
-        // When detached, must get within enter threshold (120) to re-attach.
+        // Thresholds: enter=32, exit=32.
+        // When detached, must get within the true tail to re-attach.
         // Re-attach only happens during user-driven scrolls (back toward bottom).
         let harness = makeTimelineHarness(sessionId: "session-a")
         let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
@@ -224,13 +223,13 @@ struct ScrollFollowBehaviorTests {
         // Simulate user-driven scroll (e.g., scrolling back down toward bottom).
         metricsView.testIsDecelerating = true
 
-        // Distance 150 — beyond enter threshold (120), stays detached.
-        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 150, in: metricsView))
+        // Distance 80 — beyond the true tail, stays detached.
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 80, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
         #expect(!harness.scrollController.isCurrentlyNearBottom)
 
-        // Distance 80 — within enter threshold (120), re-attaches.
-        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 80, in: metricsView))
+        // Distance 16 — within the true tail, re-attaches.
+        metricsView.contentOffset = CGPoint(x: 0, y: timelineOffsetY(forDistanceFromBottom: 16, in: metricsView))
         harness.coordinator.scrollViewDidScroll(metricsView)
         #expect(harness.scrollController.isCurrentlyNearBottom)
     }

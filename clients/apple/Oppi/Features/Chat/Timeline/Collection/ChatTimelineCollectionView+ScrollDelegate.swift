@@ -74,6 +74,10 @@ extension ChatTimelineCollectionHost.Controller {
                 // without this left navigation restoration holding the last
                 // tail-attached anchor from before the user's drag.
                 updateScrollState(collectionView, preserveDetachedState: true)
+                if let anchoredCV = collectionView as? AnchoredCollectionView {
+                    anchoredCV.isDetachedFromBottom = true
+                    anchoredCV.captureDetachedAnchor()
+                }
                 updateDetachedStreamingHintVisibility()
                 return
             }
@@ -217,6 +221,15 @@ extension ChatTimelineCollectionHost.Controller {
             preserveDetachedState: preserveDetachedState
         ) {
             lastDistanceFromBottom = distanceFromBottom
+        }
+
+        // Logical attach is the pin off-switch. Jump, send, and a finger
+        // return to the tail must not leave a stale identity restore armed.
+        if !preserveDetachedState,
+           scrollController?.isCurrentlyNearBottom == true,
+           let anchoredCV = collectionView as? AnchoredCollectionView {
+            anchoredCV.isDetachedFromBottom = false
+            anchoredCV.clearDetachedAnchor()
         }
 
         if let targetID = scrollController?.pendingNavigationHighlightItemID {

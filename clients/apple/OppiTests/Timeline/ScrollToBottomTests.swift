@@ -12,6 +12,38 @@ private func timelineMaxOffsetY(_ collectionView: UICollectionView) -> CGFloat {
     )
 }
 
+@MainActor
+private func timelineItemScreenY(_ itemID: String, in windowed: WindowedTimelineHarness) throws -> CGFloat {
+    let index = try #require(windowed.coordinator.currentIDs.firstIndex(of: itemID))
+    let attrs = try #require(
+        windowed.collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0))
+    )
+    return attrs.frame.minY - windowed.collectionView.contentOffset.y
+}
+
+@MainActor
+private func firstVisibleTimelineItemID(in windowed: WindowedTimelineHarness) -> String? {
+    let collectionView = windowed.collectionView
+    let visibleRect = CGRect(
+        origin: collectionView.contentOffset,
+        size: collectionView.bounds.size
+    )
+    return windowed.coordinator.currentIDs.enumerated()
+        .compactMap { index, itemID -> (id: String, minY: CGFloat)? in
+            guard itemID != ChatTimelineCollectionHost.loadMoreID,
+                  itemID != ChatTimelineCollectionHost.workingIndicatorID,
+                  let attrs = collectionView.layoutAttributesForItem(
+                    at: IndexPath(item: index, section: 0)
+                  ),
+                  attrs.frame.intersects(visibleRect) else {
+                return nil
+            }
+            return (itemID, attrs.frame.minY)
+        }
+        .min { $0.minY < $1.minY }?
+        .id
+}
+
 /// Tests the full jump-to-bottom chain: detach → hint visible → requestScrollToBottom → scroll command processed.
 @Suite("Scroll to bottom button")
 struct ScrollToBottomTests {
@@ -71,7 +103,7 @@ struct ScrollToBottomTests {
     }
 
     @MainActor
-    @Test func activeTurnUpdatesPreserveViewportAfterDragStartDetaches() {
+    @Test func activeTurnUpdatesPreserveViewportAfterDragStartDetaches() throws {
         let windowed = makeWindowedTimelineHarness(
             sessionId: "session-reading-active-turn-updates",
             useAnchoredCollectionView: true
@@ -94,7 +126,9 @@ struct ScrollToBottomTests {
 
         setTimelineUserScrollOffsetY(windowed.collectionView, maxOffsetY * 0.45)
         windowed.coordinator.scrollViewWillBeginDragging(windowed.collectionView)
-        let readingOffsetY = windowed.collectionView.contentOffset.y
+        windowed.collectionView.layoutIfNeeded()
+        let readingItemID = try #require(firstVisibleTimelineItemID(in: windowed))
+        let readingScreenY = try timelineItemScreenY(readingItemID, in: windowed)
 
         items[items.count - 1] = .assistantMessage(
             id: "streaming",
@@ -112,12 +146,123 @@ struct ScrollToBottomTests {
         ))
         windowed.applyItems(items, isBusy: true, streamingID: "streaming")
 
-        #expect(abs(windowed.collectionView.contentOffset.y - readingOffsetY) < 2)
+        let afterScreenY = try timelineItemScreenY(readingItemID, in: windowed)
+        #expect(
+            abs(afterScreenY - readingScreenY) < 2,
+            "active-turn updates moved reading item \(readingItemID) by \(afterScreenY - readingScreenY)pt"
+        )
         #expect(!windowed.scrollController.isCurrentlyNearBottom)
     }
 
     @MainActor
-    @Test func dragStartNearLiveEdgeKeepsFollowAttached() {
+    @Test func readingTallUserMessageStaysFrozenAcrossSequentialToolAppends() throws {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "session-read-tall-prompt-during-tools",
+            useAnchoredCollectionView: true
+        )
+        let collectionView = windowed.collectionView
+        let anchored = try #require(collectionView as? AnchoredCollectionView)
+        let renderWindow = TimelineRenderWindowPolicy.standardWindow
+
+        var items: [ChatItem] = (0..<(renderWindow - 2)).map { index in
+            ChatItem.assistantMessage(
+                id: "history-\(index)",
+                text: String(repeating: "History \(index). ", count: 8),
+                timestamp: Date()
+            )
+        }
+
+        let userID = "user-tall-prompt"
+        let tallPrompt = (0..<70)
+            .map { "Please review clients/apple/Oppi/Features/Chat/File\($0).swift and keep this prompt on screen." }
+            .joined(separator: "\n")
+        items.append(.userMessage(id: userID, text: tallPrompt, images: [], timestamp: Date()))
+        items.append(.assistantMessage(id: "streaming", text: "Working…", timestamp: Date()))
+
+        func applyWindowedTail() {
+            windowed.applyItems(
+                Array(items.suffix(renderWindow)),
+                hiddenCount: max(0, items.count - renderWindow),
+                renderWindowStep: TimelineRenderWindowPolicy.renderWindowStep,
+                isBusy: true,
+                streamingID: "streaming"
+            )
+            collectionView.layoutIfNeeded()
+        }
+
+        applyWindowedTail()
+
+        let maxOffsetY = timelineMaxOffsetY(collectionView)
+        collectionView.contentOffset.y = maxOffsetY
+        collectionView.layoutIfNeeded()
+        windowed.scrollController.requestScrollToBottom()
+        windowed.coordinator.updateScrollState(collectionView)
+        #expect(windowed.scrollController.isCurrentlyNearBottom)
+
+        let userIndex = try #require(windowed.coordinator.currentIDs.firstIndex(of: userID))
+        let userAttrs = try #require(
+            collectionView.layoutAttributesForItem(at: IndexPath(item: userIndex, section: 0))
+        )
+        #expect(
+            userAttrs.frame.height > collectionView.bounds.height,
+            "precondition: just-sent user message must be taller than the viewport"
+        )
+
+        // Real drag from the live tail: begin, then pull the tall prompt up.
+        // Do not call detachFromBottomForUserScroll() directly.
+        anchored.testIsTracking = true
+        anchored.testIsDragging = true
+        windowed.coordinator.scrollViewWillBeginDragging(collectionView)
+        #expect(
+            windowed.scrollController.isCurrentlyNearBottom,
+            "touching the tail without upward movement must not detach"
+        )
+
+        let targetOffsetY = userAttrs.frame.minY - collectionView.adjustedContentInset.top
+        setTimelineUserScrollOffsetY(collectionView, targetOffsetY)
+        collectionView.layoutIfNeeded()
+        windowed.coordinator.scrollViewDidScroll(collectionView)
+        anchored.testIsTracking = false
+        anchored.testIsDragging = false
+        windowed.coordinator.scrollViewDidEndDragging(collectionView, willDecelerate: false)
+        collectionView.layoutIfNeeded()
+
+        let readingScreenY = try timelineItemScreenY(userID, in: windowed)
+        let offsetBeforeTools = collectionView.contentOffset.y
+        #expect(!windowed.scrollController.isCurrentlyNearBottom)
+
+        func appendTool(id: String, outputLines: Int) {
+            items.append(.toolCall(
+                id: id,
+                tool: "read",
+                argsSummary: "clients/apple/Oppi/Features/Chat/\(id).swift",
+                outputPreview: String(repeating: "tool output for \(id)\n", count: outputLines),
+                outputByteCount: outputLines * 32,
+                isError: false,
+                isDone: false
+            ))
+            applyWindowedTail()
+        }
+
+        appendTool(id: "tool-1", outputLines: 20)
+        let afterTool1ScreenY = try timelineItemScreenY(userID, in: windowed)
+        #expect(
+            abs(afterTool1ScreenY - readingScreenY) < 2,
+            "tool 1 moved reading item \(userID) screen Y by \(afterTool1ScreenY - readingScreenY)pt; offset delta=\(collectionView.contentOffset.y - offsetBeforeTools)"
+        )
+        #expect(!windowed.scrollController.isCurrentlyNearBottom)
+
+        appendTool(id: "tool-2", outputLines: 28)
+        let afterTool2ScreenY = try timelineItemScreenY(userID, in: windowed)
+        #expect(
+            abs(afterTool2ScreenY - readingScreenY) < 2,
+            "tool 2 moved reading item \(userID) screen Y by \(afterTool2ScreenY - readingScreenY)pt; offset delta=\(collectionView.contentOffset.y - offsetBeforeTools)"
+        )
+        #expect(!windowed.scrollController.isCurrentlyNearBottom)
+    }
+
+    @MainActor
+    @Test func dragStartBeyondTrueTailDetachesFollow() {
         let harness = makeTimelineHarness(sessionId: "session-near-live-edge")
         let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
         metricsView.testContentSize = CGSize(width: 390, height: 3_000)
@@ -132,9 +277,307 @@ struct ScrollToBottomTests {
         harness.coordinator.scrollViewWillBeginDragging(metricsView)
 
         #expect(
-            harness.scrollController.isCurrentlyNearBottom,
-            "dragging inside the bottom comfort band should preserve live follow"
+            !harness.scrollController.isCurrentlyNearBottom,
+            "80pt from bottom is already detached reading, not the true live tail"
         )
+    }
+
+    @MainActor
+    @Test func dragStartAtTrueTailKeepsFollowAttached() {
+        let harness = makeTimelineHarness(sessionId: "session-at-live-edge")
+        let metricsView = TimelineScrollMetricsCollectionView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        metricsView.testContentSize = CGSize(width: 390, height: 3_000)
+        metricsView.testVisibleIndexPaths = [IndexPath(item: 0, section: 0)]
+        metricsView.contentOffset = CGPoint(
+            x: 0,
+            y: timelineOffsetY(forDistanceFromBottom: 16, in: metricsView)
+        )
+
+        harness.scrollController.updateNearBottom(true)
+        metricsView.testIsTracking = true
+        harness.coordinator.scrollViewWillBeginDragging(metricsView)
+
+        #expect(
+            harness.scrollController.isCurrentlyNearBottom,
+            "touching the true tail without upward movement must keep live follow"
+        )
+    }
+
+    @MainActor
+    @Test func detachedDownwardDragIsNotRevertedByIdentityAnchor() throws {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "session-scroll-back-to-tail",
+            useAnchoredCollectionView: true
+        )
+        let collectionView = windowed.collectionView
+        let anchored = try #require(collectionView as? AnchoredCollectionView)
+
+        var items = (0..<24).map { index in
+            ChatItem.assistantMessage(
+                id: "history-\(index)",
+                text: String(repeating: "History \(index). ", count: 10),
+                timestamp: Date()
+            )
+        }
+        items.append(.assistantMessage(id: "streaming", text: "Working…", timestamp: Date()))
+        windowed.applyItems(items, isBusy: true, streamingID: "streaming")
+        collectionView.layoutIfNeeded()
+
+        let maxOffsetY = timelineMaxOffsetY(collectionView)
+        collectionView.contentOffset.y = maxOffsetY
+        collectionView.layoutIfNeeded()
+        windowed.scrollController.requestScrollToBottom()
+
+        anchored.testIsTracking = true
+        anchored.testIsDragging = true
+        windowed.coordinator.scrollViewWillBeginDragging(collectionView)
+        setTimelineUserScrollOffsetY(collectionView, maxOffsetY * 0.4)
+        windowed.coordinator.scrollViewDidScroll(collectionView)
+        collectionView.layoutIfNeeded()
+        #expect(!windowed.scrollController.isCurrentlyNearBottom)
+
+        let readingItemID = try #require(firstVisibleTimelineItemID(in: windowed))
+        let readingScreenY = try timelineItemScreenY(readingItemID, in: windowed)
+
+        // Real UIKit dragging writes offset without recapturing the sticky Y.
+        // The identity restore must not yank this downward movement back.
+        let downwardOffsetY = min(maxOffsetY, collectionView.contentOffset.y + 90)
+        #expect(downwardOffsetY - collectionView.contentOffset.y > 40)
+        anchored.applyOffsetCorrection(downwardOffsetY)
+        collectionView.layoutIfNeeded()
+
+        #expect(
+            abs(collectionView.contentOffset.y - downwardOffsetY) < 2,
+            "identity restore reverted a downward drag by \(collectionView.contentOffset.y - downwardOffsetY)pt"
+        )
+        #expect(
+            abs((try timelineItemScreenY(readingItemID, in: windowed)) - readingScreenY) > 20,
+            "downward drag must move the reading item, not pin it to the pre-drag screen Y"
+        )
+
+        anchored.testIsTracking = false
+        anchored.testIsDragging = false
+        windowed.coordinator.scrollViewDidEndDragging(collectionView, willDecelerate: false)
+    }
+
+    @MainActor
+    @Test func jumpToBottomDuringBusyStreamClearsIdentityPin() throws {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "session-jump-during-stream",
+            useAnchoredCollectionView: true
+        )
+        let collectionView = windowed.collectionView
+        let anchored = try #require(collectionView as? AnchoredCollectionView)
+
+        var items = (0..<18).map { index in
+            ChatItem.assistantMessage(
+                id: "history-\(index)",
+                text: String(repeating: "History \(index). ", count: 10),
+                timestamp: Date()
+            )
+        }
+        items.append(.assistantMessage(id: "streaming", text: "Working…", timestamp: Date()))
+        windowed.applyItems(items, isBusy: true, streamingID: "streaming")
+        collectionView.layoutIfNeeded()
+
+        let maxOffsetY = timelineMaxOffsetY(collectionView)
+        collectionView.contentOffset.y = maxOffsetY
+        collectionView.layoutIfNeeded()
+        windowed.scrollController.requestScrollToBottom()
+
+        anchored.testIsTracking = true
+        anchored.testIsDragging = true
+        windowed.coordinator.scrollViewWillBeginDragging(collectionView)
+        setTimelineUserScrollOffsetY(collectionView, maxOffsetY * 0.35)
+        windowed.coordinator.scrollViewDidScroll(collectionView)
+        anchored.testIsTracking = false
+        anchored.testIsDragging = false
+        windowed.coordinator.scrollViewDidEndDragging(collectionView, willDecelerate: false)
+        #expect(!windowed.scrollController.isCurrentlyNearBottom)
+        #expect(anchored.isDetachedFromBottom)
+        #expect(anchored.detachedAnchorIsActive)
+
+        windowed.scrollController.requestScrollToBottom()
+        items[items.count - 1] = .assistantMessage(
+            id: "streaming",
+            text: String(repeating: "Still streaming. ", count: 24),
+            timestamp: Date()
+        )
+        let jump = ChatTimelineScrollCommand(
+            id: "streaming",
+            anchor: .bottom,
+            animated: false,
+            nonce: 11
+        )
+        let jumpConfig = makeTimelineConfiguration(
+            items: items,
+            isBusy: true,
+            streamingAssistantID: "streaming",
+            scrollCommand: jump,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            toolSegmentStore: windowed.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer
+        )
+        windowed.coordinator.apply(configuration: jumpConfig, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        #expect(windowed.scrollController.isCurrentlyNearBottom)
+        #expect(!anchored.isDetachedFromBottom)
+        #expect(!anchored.detachedAnchorIsActive)
+
+        items[items.count - 1] = .assistantMessage(
+            id: "streaming",
+            text: String(repeating: "Still streaming. ", count: 48),
+            timestamp: Date()
+        )
+        windowed.applyItems(items, isBusy: true, streamingID: "streaming")
+        let distanceFromBottom = timelineMaxOffsetY(collectionView) - collectionView.contentOffset.y
+        #expect(
+            distanceFromBottom < 32,
+            "after jump, a later streaming tick must keep the live tail, distance=\(distanceFromBottom)"
+        )
+    }
+
+    @MainActor
+    @Test func fingerReattachDuringBusyStreamKeepsFollowingTokens() throws {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "session-finger-return-to-tail",
+            useAnchoredCollectionView: true
+        )
+        let collectionView = windowed.collectionView
+        let anchored = try #require(collectionView as? AnchoredCollectionView)
+
+        var items = (0..<18).map { index in
+            ChatItem.assistantMessage(
+                id: "history-\(index)",
+                text: String(repeating: "History \(index). ", count: 10),
+                timestamp: Date()
+            )
+        }
+        items.append(.assistantMessage(id: "streaming", text: "Working…", timestamp: Date()))
+        windowed.applyItems(items, isBusy: true, streamingID: "streaming")
+        collectionView.layoutIfNeeded()
+
+        let maxOffsetY = timelineMaxOffsetY(collectionView)
+        collectionView.contentOffset.y = maxOffsetY
+        collectionView.layoutIfNeeded()
+        windowed.scrollController.requestScrollToBottom()
+
+        anchored.testIsTracking = true
+        anchored.testIsDragging = true
+        windowed.coordinator.scrollViewWillBeginDragging(collectionView)
+        setTimelineUserScrollOffsetY(collectionView, maxOffsetY * 0.35)
+        windowed.coordinator.scrollViewDidScroll(collectionView)
+        anchored.testIsTracking = false
+        anchored.testIsDragging = false
+        windowed.coordinator.scrollViewDidEndDragging(collectionView, willDecelerate: false)
+        #expect(!windowed.scrollController.isCurrentlyNearBottom)
+        #expect(anchored.detachedAnchorIsActive)
+
+        // Finger returns to the true tail. This must clear the identity pin
+        // so the next token tick follows instead of restoring the mid-timeline Y.
+        anchored.testIsTracking = true
+        anchored.testIsDragging = true
+        windowed.coordinator.scrollViewWillBeginDragging(collectionView)
+        setTimelineUserScrollOffsetY(collectionView, timelineMaxOffsetY(collectionView))
+        windowed.coordinator.scrollViewDidScroll(collectionView)
+        anchored.testIsTracking = false
+        anchored.testIsDragging = false
+        windowed.coordinator.scrollViewDidEndDragging(collectionView, willDecelerate: false)
+        collectionView.layoutIfNeeded()
+
+        #expect(windowed.scrollController.isCurrentlyNearBottom)
+        #expect(!anchored.isDetachedFromBottom)
+        #expect(!anchored.detachedAnchorIsActive)
+
+        items[items.count - 1] = .assistantMessage(
+            id: "streaming",
+            text: String(repeating: "More tokens. ", count: 40),
+            timestamp: Date()
+        )
+        windowed.applyItems(items, isBusy: true, streamingID: "streaming")
+        let distanceFromBottom = timelineMaxOffsetY(collectionView) - collectionView.contentOffset.y
+        #expect(
+            distanceFromBottom < 32,
+            "after finger reattach, a later streaming tick must keep the live tail, distance=\(distanceFromBottom)"
+        )
+    }
+
+    @MainActor
+    @Test func detachedIdentitySkipsLoadMoreRowAtWindowTop() throws {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "session-read-past-text-at-window-top",
+            useAnchoredCollectionView: true
+        )
+        let collectionView = windowed.collectionView
+        let anchored = try #require(collectionView as? AnchoredCollectionView)
+        let renderWindow = TimelineRenderWindowPolicy.standardWindow
+
+        var items: [ChatItem] = (0..<(renderWindow + 8)).map { index in
+            ChatItem.assistantMessage(
+                id: "history-\(index)",
+                text: String(repeating: "Past session \(index). ", count: 8),
+                timestamp: Date()
+            )
+        }
+        items.append(.assistantMessage(id: "streaming", text: "Working…", timestamp: Date()))
+
+        func applyWindowedTail() {
+            windowed.applyItems(
+                Array(items.suffix(renderWindow)),
+                hiddenCount: max(0, items.count - renderWindow),
+                renderWindowStep: TimelineRenderWindowPolicy.renderWindowStep,
+                isBusy: true,
+                streamingID: "streaming"
+            )
+            collectionView.layoutIfNeeded()
+        }
+
+        applyWindowedTail()
+        #expect(windowed.coordinator.currentIDs.first == ChatTimelineCollectionHost.loadMoreID)
+
+        collectionView.setContentOffset(
+            CGPoint(x: 0, y: -collectionView.adjustedContentInset.top),
+            animated: false
+        )
+        collectionView.layoutIfNeeded()
+
+        anchored.testIsTracking = true
+        anchored.testIsDragging = true
+        windowed.coordinator.scrollViewWillBeginDragging(collectionView)
+        windowed.coordinator.scrollViewDidScroll(collectionView)
+        anchored.testIsTracking = false
+        anchored.testIsDragging = false
+        windowed.coordinator.scrollViewDidEndDragging(collectionView, willDecelerate: false)
+
+        let readingItemID = try #require(
+            firstVisibleTimelineItemID(in: windowed),
+            "first visible stable item must not be the load-more row"
+        )
+        #expect(readingItemID != ChatTimelineCollectionHost.loadMoreID)
+        let readingScreenY = try timelineItemScreenY(readingItemID, in: windowed)
+
+        // Grow the live tail in place so the suffix window does not evict the
+        // top reading item. This still exercises load-more as first visible.
+        items[items.count - 1] = .assistantMessage(
+            id: "streaming",
+            text: String(repeating: "Still working. ", count: 40),
+            timestamp: Date()
+        )
+        applyWindowedTail()
+
+        #expect(windowed.coordinator.currentIDs.contains(readingItemID))
+        let afterScreenY = try timelineItemScreenY(readingItemID, in: windowed)
+        #expect(
+            abs(afterScreenY - readingScreenY) < 2,
+            "streaming growth at the tail moved \(readingItemID) by \(afterScreenY - readingScreenY)pt"
+        )
+        #expect(!windowed.scrollController.isCurrentlyNearBottom)
     }
 
     @MainActor

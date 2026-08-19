@@ -84,26 +84,61 @@ final class AnchoredCollectionView: UICollectionView {
 
     // MARK: - Detached anchor
 
-    /// Anchors the first visible item during snapshot applies when the user
+    /// Anchors a stable timeline item during snapshot applies when the user
     /// is scrolled away from the bottom. Counteracts the self-sizing cascade
     /// from `UICollectionViewCompositionalLayout` which adjusts contentOffset
     /// outside `layoutSubviews()` as cells report their preferred sizes.
+    ///
+    /// Identity matters more than the raw first-visible index path: a windowed
+    /// suffix can insert/drop rows above the reader, so the same index path
+    /// may point at a different item on the next apply.
     private var detachedAnchorIP: IndexPath?
+    private var detachedAnchorItemID: String?
     private var detachedAnchorScreenY: CGFloat = 0
 
     /// Whether a detached anchor is currently captured.
-    var detachedAnchorIsActive: Bool { detachedAnchorIP != nil }
+    var detachedAnchorIsActive: Bool { detachedAnchorIP != nil || detachedAnchorItemID != nil }
 
     /// Capture the detached anchor for subsequent contentOffset corrections.
     /// Called before snapshot apply when the user is scrolled away from bottom.
     func captureDetachedAnchor() {
-        guard let firstIP = indexPathsForVisibleItems.min(by: { $0.item < $1.item }),
-              let attrs = layoutAttributesForItem(at: firstIP) else {
-            detachedAnchorIP = nil
+        // Isolated test fixtures host this view without a timeline
+        // controller. Keep the first-visible index-path pin so their
+        // self-sizing cascade coverage still works.
+        if timelineItemIDs().isEmpty {
+            guard let firstIP = indexPathsForVisibleItems.min(by: { $0.item < $1.item }),
+                  let attrs = layoutAttributesForItem(at: firstIP) else {
+                detachedAnchorIP = nil
+                detachedAnchorItemID = nil
+                return
+            }
+            detachedAnchorIP = firstIP
+            detachedAnchorItemID = nil
+            detachedAnchorScreenY = attrs.frame.origin.y - contentOffset.y
+            detachedSavedOffsetY = contentOffset.y
             return
         }
-        detachedAnchorIP = firstIP
-        detachedAnchorScreenY = attrs.frame.origin.y - contentOffset.y
+
+        let visibleRect = CGRect(origin: contentOffset, size: bounds.size)
+        let candidate = indexPathsForVisibleItems
+            .compactMap { indexPath -> (indexPath: IndexPath, attributes: UICollectionViewLayoutAttributes, itemID: String)? in
+                guard let attributes = layoutAttributesForItem(at: indexPath),
+                      attributes.frame.intersects(visibleRect),
+                      let itemID = stableItemID(at: indexPath) else {
+                    return nil
+                }
+                return (indexPath, attributes, itemID)
+            }
+            .min { $0.attributes.frame.minY < $1.attributes.frame.minY }
+
+        guard let candidate else {
+            detachedAnchorIP = nil
+            detachedAnchorItemID = nil
+            return
+        }
+        detachedAnchorIP = candidate.indexPath
+        detachedAnchorItemID = candidate.itemID
+        detachedAnchorScreenY = candidate.attributes.frame.origin.y - contentOffset.y
         detachedSavedOffsetY = contentOffset.y
     }
 
@@ -111,6 +146,7 @@ final class AnchoredCollectionView: UICollectionView {
     /// Clear the detached anchor after layout has settled.
     func clearDetachedAnchor() {
         detachedAnchorIP = nil
+        detachedAnchorItemID = nil
     }
 
     // MARK: - contentOffset interception
@@ -164,10 +200,21 @@ final class AnchoredCollectionView: UICollectionView {
             // and layoutSubviews anchoring handles it via captureAnchor/
             // restoreAnchor. Without this guard the didSet fights the
             // user's finger and locks scrolling in place.
-            if isDetachedFromBottom, detachedAnchorIP != nil,
-               !isTracking, !isDragging, !isDecelerating {
+            //
+            // When an item identity is captured, do not replay the raw
+            // pre-apply offset. A suffix-window shift changes content above
+            // the reader; layoutSubviews must restore that item's screen Y.
+            if isDetachedFromBottom, detachedAnchorIsActive,
+               !isUserOrProgrammaticScrollOwned {
                 let delta = contentOffset.y - detachedSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
+                if detachedAnchorItemID != nil {
+                    #if DEBUG
+                        _debugDidSetCorrectionCount += 1
+                    #endif
+                    setNeedsLayout()
+                    return
+                }
                 #if DEBUG
                     _debugDidSetCorrectionCount += 1
                 #endif
@@ -181,6 +228,25 @@ final class AnchoredCollectionView: UICollectionView {
         /// Tests cannot drive UIKit drag/deceleration flags directly, so this
         /// override allows deterministic anchoring coverage in unit tests.
         var forceAnchoringForTesting = false
+
+        /// Tests cannot start a real pan recognizer, so these flags let a
+        /// harness drive the same `isTracking` / `isDragging` / `isDecelerating`
+        /// paths the scroll delegate uses for user-owned follow detach.
+        var testIsTracking = false
+        var testIsDragging = false
+        var testIsDecelerating = false
+
+        override var isTracking: Bool {
+            testIsTracking || super.isTracking
+        }
+
+        override var isDragging: Bool {
+            testIsDragging || super.isDragging
+        }
+
+        override var isDecelerating: Bool {
+            testIsDecelerating || super.isDecelerating
+        }
 
         /// Optional hook to mutate layout state after anchor capture but before
         /// UIKit performs the layout pass. Used to simulate estimated→actual
@@ -253,7 +319,19 @@ final class AnchoredCollectionView: UICollectionView {
         if expandCollapseAnchorIP != nil {
             expandCollapseSavedOffsetY = contentOffset.y
         }
-        if isDetachedFromBottom, detachedAnchorIP != nil {
+        if isDetachedFromBottom, detachedAnchorIsActive {
+            if let identityIP = currentDetachedAnchorIndexPath() {
+                detachedAnchorIP = identityIP
+                if isUserOrProgrammaticScrollOwned,
+                   let attrs = layoutAttributesForItem(at: identityIP) {
+                    // User-owned movement must refresh the sticky Y. Otherwise
+                    // the next passive apply snaps back to the pre-drag screen.
+                    detachedAnchorScreenY = attrs.frame.origin.y - contentOffset.y
+                }
+            } else if detachedAnchorItemID != nil {
+                detachedAnchorItemID = nil
+                detachedAnchorIP = nil
+            }
             detachedSavedOffsetY = contentOffset.y
         }
 
@@ -265,6 +343,38 @@ final class AnchoredCollectionView: UICollectionView {
     }
 
     // MARK: - Private
+
+    private func timelineItemIDs() -> [String] {
+        (delegate as? ChatTimelineCollectionHost.Controller)?.currentIDs ?? []
+    }
+
+    private func stableItemID(at indexPath: IndexPath) -> String? {
+        let itemIDs = timelineItemIDs()
+        guard indexPath.item >= 0, indexPath.item < itemIDs.count else { return nil }
+        let itemID = itemIDs[indexPath.item]
+        if itemID == ChatTimelineCollectionHost.loadMoreID
+            || itemID == ChatTimelineCollectionHost.workingIndicatorID {
+            return nil
+        }
+        return itemID
+    }
+
+    private var isUserOrProgrammaticScrollOwned: Bool {
+        // Only real gestures. `isScrollAnimating` is also true during some
+        // snapshot/layout passes, which would disable the detached identity
+        // pin and let tool appends shove the reader again.
+        isTracking || isDragging || isDecelerating
+    }
+
+    private func currentDetachedAnchorIndexPath() -> IndexPath? {
+        if let detachedAnchorItemID {
+            guard let index = timelineItemIDs().firstIndex(of: detachedAnchorItemID) else {
+                return nil
+            }
+            return IndexPath(item: index, section: 0)
+        }
+        return detachedAnchorIP
+    }
 
     private var shouldAnchorDuringThisPass: Bool {
         // Always anchor when an expand/collapse is in flight.
@@ -300,9 +410,13 @@ final class AnchoredCollectionView: UICollectionView {
 
         // Prefer the expand/collapse anchor when active — it pins the exact
         // item the user tapped, preventing the header bar from shifting.
+        // When detached, prefer the captured item identity so a suffix-window
+        // shift cannot retarget the first-visible index path mid-apply.
         let anchorIP: IndexPath?
         if let ecIP = expandCollapseAnchorIP {
             anchorIP = ecIP
+        } else if isDetachedFromBottom, let identityIP = currentDetachedAnchorIndexPath() {
+            anchorIP = identityIP
         } else {
             anchorIP = indexPathsForVisibleItems.min(by: { $0.item < $1.item })
         }
@@ -320,8 +434,17 @@ final class AnchoredCollectionView: UICollectionView {
             return
         }
 
+        // Sticky identity Y is only for passive/ambient layout. During a
+        // user-owned drag it would fight the finger and lock the viewport.
+        let identityIP = currentDetachedAnchorIndexPath()
+        let targetScreenY = (!isUserOrProgrammaticScrollOwned
+            && isDetachedFromBottom
+            && detachedAnchorItemID != nil
+            && savedAnchorIP == identityIP)
+            ? detachedAnchorScreenY
+            : savedAnchorScreenY
         let newScreenY = newAttrs.frame.origin.y - contentOffset.y
-        let delta = newScreenY - savedAnchorScreenY
+        let delta = newScreenY - targetScreenY
 
         savedAnchorIP = nil
 

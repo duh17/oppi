@@ -300,10 +300,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             context.interactionContext
         }
 
-        /// Near-bottom hysteresis to avoid follow/unfollow flicker while
-        /// streaming text grows the tail between layout-time follow passes.
-        let nearBottomEnterThreshold: CGFloat = 120
-        let nearBottomExitThreshold: CGFloat = 200
+        /// Follow only at the true live tail. Any larger gap is detached
+        /// reading, including a tall just-sent user message.
+        let nearBottomEnterThreshold: CGFloat = 32
+        let nearBottomExitThreshold: CGFloat = 32
         let detachedProgrammaticArmMinDelta: CGFloat = 120
         let detachedProgrammaticCorrectionMaxDelta: CGFloat = 100
 
@@ -846,14 +846,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 cancelToolOutputLoadTasks(for: applyPlan.removedIDs)
             }
 
-            let previousIDs = currentIDs
-            currentIDs = applyPlan.nextIDs
-            currentItemByID = applyPlan.nextItemByID
-
-            // Enable passive anchoring before snapshot apply so layout passes
-            // during reconfigure preserve scroll position for detached users.
-            // When attached (near bottom), anchoring is off so explicit scroll
-            // commands and the ambient tail governor work without interference.
+            // Capture identity against the current layout / currentIDs before
+            // the rendered suffix is replaced. A later window shift can move
+            // the same item to a new index path.
             if let anchoredCV = collectionView as? AnchoredCollectionView {
                 let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
                 anchoredCV.isDetachedFromBottom = detached
@@ -861,6 +856,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     anchoredCV.captureDetachedAnchor()
                 }
             }
+
+            let previousIDs = currentIDs
+            currentIDs = applyPlan.nextIDs
+            currentItemByID = applyPlan.nextItemByID
 
             var forceReconfigureIDs: [String] = []
             if agentPresentationChanged {
@@ -1355,8 +1354,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             in collectionView: UICollectionView
         ) -> Bool {
             guard let scrollCommand,
-                  scrollCommand.nonce != lastHandledScrollCommandNonce,
-                  performScroll(scrollCommand, in: collectionView) else {
+                  scrollCommand.nonce != lastHandledScrollCommandNonce else {
+                return false
+            }
+            if case .bottom = scrollCommand.anchor,
+               let anchoredCV = collectionView as? AnchoredCollectionView {
+                anchoredCV.isDetachedFromBottom = false
+                anchoredCV.clearDetachedAnchor()
+            }
+            guard performScroll(scrollCommand, in: collectionView) else {
                 return false
             }
             lastHandledScrollCommandNonce = scrollCommand.nonce
