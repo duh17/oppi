@@ -900,12 +900,37 @@ final class ScreenshotPreviewUITests: XCTestCase {
         launchPreview(screen: "chat-file-panel")
 
         XCTAssertTrue(app.staticTexts["Files"].waitForExistence(timeout: 5), "Files panel header not visible")
+
+        let changedSearch = app.searchFields["Search changed files"]
+        let tabPicker = app.buttons["Changed"]
+        XCTAssertTrue(
+            changedSearch.waitForExistence(timeout: 5),
+            "Changed tab should use the shared header search field"
+        )
+        XCTAssertTrue(tabPicker.exists, "Changed/All picker not visible")
+        XCTAssertLessThan(
+            changedSearch.frame.maxY,
+            tabPicker.frame.minY + 4,
+            "Changed search should sit in the navigation drawer above the tab picker"
+        )
+        let sharedSearchMinY = changedSearch.frame.minY
         sleep(1)
         saveScreenshot(name: "chat-file-panel-portrait-changed")
 
         app.buttons["All"].tap()
         let clientsDirectory = app.staticTexts["clients"]
         XCTAssertTrue(clientsDirectory.waitForExistence(timeout: 5), "All-files browser did not open")
+        let allSearch = app.searchFields["Search files"]
+        XCTAssertTrue(
+            allSearch.waitForExistence(timeout: 5),
+            "All tab should keep the header search field"
+        )
+        XCTAssertEqual(
+            allSearch.frame.minY,
+            sharedSearchMinY,
+            accuracy: 8,
+            "Both tabs should place search in the same header location"
+        )
         sleep(1)
         saveScreenshot(name: "chat-file-panel-portrait-all")
 

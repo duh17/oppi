@@ -125,10 +125,10 @@ struct SessionFilesListView: View {
                     systemImage: "doc.text",
                     description: Text("This session hasn't created or edited any files yet.")
                 )
-                .background(Color.themeBgDark)
+                .themedScrollSurface()
             } else if groups.isEmpty {
                 ContentUnavailableView.search(text: searchText)
-                    .background(Color.themeBgDark)
+                    .themedScrollSurface()
             } else {
                 List {
                     ForEach(groups) { group in
@@ -142,8 +142,6 @@ struct SessionFilesListView: View {
                                         reviewNavigationFiles: reviewNavigationFiles,
                                         sessionTouchedNavigationContext: sessionTouchedNavigationContext
                                     )
-                                    .listRowBackground(Color.themeBgDark)
-                                    .listRowSeparatorTint(Color.themeComment.opacity(0.15))
                                 }
                             }
                         } header: {
@@ -162,9 +160,7 @@ struct SessionFilesListView: View {
                     }
                 }
                 .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .tint(.themeComment)
-                .background(Color.themeBgDark)
+                .themedListSurface()
             }
         }
         .task(id: sessionChangesLoadKey) {

@@ -148,18 +148,19 @@ struct ChatFileBrowserPanel: View {
     private var content: some View {
         switch selectedTab {
         case .changed:
-            VStack(spacing: 0) {
-                changedFileSearchField
-                SessionFilesListView(
-                    sessionId: sessionId,
-                    workspaceId: workspaceId,
-                    changedFiles: changedFiles,
-                    searchText: changedSearchText,
-                    fileDetailReviewCommentScope: fileDetailReviewCommentScope,
-                    serverId: serverId
-                )
-            }
-            .background(Color.themeBgDark)
+            SessionFilesListView(
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                changedFiles: changedFiles,
+                searchText: changedSearchText,
+                fileDetailReviewCommentScope: fileDetailReviewCommentScope,
+                serverId: serverId
+            )
+            .searchable(
+                text: $changedSearchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Search changed files"
+            )
         case .all:
             if let workspaceId {
                 FileBrowserView(
@@ -175,38 +176,8 @@ struct ChatFileBrowserPanel: View {
                     systemImage: "folder.badge.questionmark",
                     description: Text("This session is not attached to a workspace.")
                 )
-                .background(Color.themeBgDark)
+                .background(Color.themeBg)
             }
         }
-    }
-
-    private var changedFileSearchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.themeComment)
-
-            TextField("Search changed files", text: $changedSearchText)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.body)
-                .foregroundStyle(.themeFg)
-
-            if !changedSearchText.isEmpty {
-                Button {
-                    changedSearchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.themeComment)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear changed-file search")
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 42)
-        .background(Color.themeBgHighlight.opacity(0.7), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.themeBg)
     }
 }
