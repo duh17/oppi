@@ -161,6 +161,8 @@ export async function applyOppiToolPolicy(options: {
   policy: OppiApprovalPolicy;
   identity: OppiToolIdentity;
   signal?: AbortSignal;
+  dataDir?: string;
+  cwd?: string;
   approvalMessage?: string;
   approve?: (message: string) => Promise<boolean>;
   execute?: (prepared: PreparedOppiCommand, signal?: AbortSignal) => Promise<OppiToolCommandResult>;
@@ -181,7 +183,24 @@ export async function applyOppiToolPolicy(options: {
     throw new Error(OPPI_EXTENSION_READ_ONLY_ERROR);
   }
 
-  const approvalRequired = commandRequiresApproval(prepared, options.policy);
+  // Keep worktree remove classified as destructive. Skip the human prompt only
+  // when a fail-closed preflight immediately before execute proves the tree is
+  // a clean, inactive, Oppi-managed, already-merged checkout.
+  let provenSafe = false;
+  try {
+    provenSafe = await isProvenSafeCleanWorktreeRemove(options);
+  } catch (error) {
+    if (options.signal?.aborted || isAbortError(error)) {
+      auditPrepared(options, "aborted", "denied", startedAt);
+      return { kind: "cancelled", reason: "aborted" };
+    }
+    throw error;
+  }
+  if (options.signal?.aborted) {
+    auditPrepared(options, "aborted", "denied", startedAt);
+    return { kind: "cancelled", reason: "aborted" };
+  }
+  const approvalRequired = commandRequiresApproval(prepared, options.policy) && !provenSafe;
   let approvalOutcome = "not-required";
   if (approvalRequired) {
     if (!options.approve) {
@@ -325,6 +344,8 @@ export function createOppiToolExtensionFactory(options: {
           policy,
           identity,
           ...(signal ? { signal } : {}),
+          ...(dataDir !== undefined ? { dataDir } : {}),
+          ...(cwd !== undefined ? { cwd } : {}),
           ...(resolvedApprovalMessage ? { approvalMessage: resolvedApprovalMessage } : {}),
           ...(confirm ? { approve: confirm } : {}),
           execute: async (approvedCommand, approvedSignal) =>
@@ -457,6 +478,102 @@ function commandRequiresApproval(
   );
 }
 
+async function isProvenSafeCleanWorktreeRemove(options: {
+  prepared: PreparedOppiCommand;
+  policy: OppiApprovalPolicy;
+  dataDir?: string;
+  cwd?: string;
+  signal?: AbortSignal;
+}): Promise<boolean> {
+  if (options.policy !== "confirmDestructiveOnly") return false;
+  const { prepared } = options;
+  if (prepared.path[0] !== "worktree" || prepared.path[1] !== "remove" || prepared.isHelp) {
+    return false;
+  }
+
+  let parsed;
+  try {
+    parsed = parseCliArgs([...prepared.args]);
+  } catch {
+    return false;
+  }
+  // --force always prompts, including --force with an unexpected value.
+  if (Object.hasOwn(parsed.flags, "force")) return false;
+
+  const worktreeId = parsed.positional[1]?.trim();
+  const workspace = parsed.flags.workspace?.trim();
+  if (!worktreeId || !workspace) return false;
+
+  const lookup = await runPreparedRead(
+    ["worktree", "get", worktreeId, "--workspace", workspace],
+    options,
+  );
+  const lookupWorktree = isRecord(lookup?.worktree) ? lookup.worktree : undefined;
+  if (!lookup || !lookupWorktree) return false;
+  if (!isSafeManagedWorktree(lookupWorktree)) return false;
+
+  const statusResult = await runPreparedRead(
+    ["worktree", "status", worktreeId, "--workspace", workspace],
+    options,
+  );
+  const statusWorktree = isRecord(statusResult?.worktree) ? statusResult.worktree : undefined;
+  const gitStatus = isRecord(statusResult?.status) ? statusResult.status : undefined;
+  if (!statusResult || !statusWorktree || !gitStatus) return false;
+  if (!isSafeManagedWorktree(statusWorktree)) return false;
+  if (numberField(statusWorktree.activeSessionCount) !== 0) return false;
+  if (numberField(gitStatus.dirtyCount) !== 0) return false;
+  if (numberField(gitStatus.untrackedCount) !== 0) return false;
+  if (numberField(gitStatus.stagedCount) !== 0) return false;
+
+  // Workspace has no explicit default-branch field; preview into main.
+  const previewResult = await runPreparedRead(
+    [
+      "worktree",
+      "preview",
+      worktreeId,
+      "--workspace",
+      workspace,
+      "--into",
+      "main",
+      "--mode",
+      "merge",
+    ],
+    options,
+  );
+  const preview = isRecord(previewResult?.preview) ? previewResult.preview : undefined;
+  if (!preview || preview.alreadyMerged !== true) return false;
+  const previewWorktree = isRecord(preview.worktree) ? preview.worktree : undefined;
+  const previewId = stringField(previewWorktree?.id);
+  const lookupId = stringField(lookupWorktree.id);
+  if (previewId && lookupId && previewId !== lookupId) return false;
+  return true;
+}
+
+function isSafeManagedWorktree(worktree: Record<string, unknown>): boolean {
+  return worktree.managedByOppi === true && worktree.isMain === false;
+}
+
+async function runPreparedRead(
+  args: string[],
+  options: { dataDir?: string; cwd?: string; signal?: AbortSignal },
+): Promise<Record<string, unknown> | undefined> {
+  const prepared = prepareOppiCommand(args);
+  if (!prepared.ok) return undefined;
+  try {
+    const result = await executePreparedOppiCommand({
+      prepared: prepared.command,
+      ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {}),
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    if (!result.ok || !result.json?.ok || !isRecord(result.json.data)) return undefined;
+    return result.json.data;
+  } catch (error) {
+    if (options.signal?.aborted || isAbortError(error)) throw error;
+    return undefined;
+  }
+}
+
 async function resolveApprovalMessage(options: {
   prepared: PreparedOppiCommand;
   dataDir?: string;
@@ -549,6 +666,14 @@ function firstNonEmpty(...values: Array<string | undefined>): string | undefined
 
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

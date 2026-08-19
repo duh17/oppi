@@ -29,6 +29,106 @@ const successfulRun = (humanOutput = "\u001b[32mDone\u001b[0m\n"): CliRunResult 
   json: { ok: true, data: { accepted: true } },
 });
 
+const cliData = (data: Record<string, unknown>): CliRunResult => ({
+  ok: true,
+  exitCode: 0,
+  stdout: `${JSON.stringify({ ok: true, data }, null, 2)}\n`,
+  humanOutput: "ok\n",
+  json: { ok: true, data },
+});
+
+const cliError = (message: string): CliRunResult => ({
+  ok: false,
+  exitCode: 1,
+  stdout: `${JSON.stringify({ ok: false, error: { message } }, null, 2)}\n`,
+  humanOutput: message,
+  json: { ok: false, error: { message } },
+});
+
+const SAFE_REMOVE_WORKTREE = {
+  id: "wt_clean-merged-abc12345",
+  name: "clean-merged",
+  branch: "feat/clean-merged",
+  managedByOppi: true,
+  isMain: false,
+  activeSessionCount: 0,
+};
+
+const CLEAN_GIT_STATUS = {
+  dirtyCount: 0,
+  untrackedCount: 0,
+  stagedCount: 0,
+};
+
+function mockWorktreeRemovePreflight(
+  options: {
+    get?: CliRunResult;
+    status?: CliRunResult;
+    preview?: CliRunResult;
+    worktree?: Record<string, unknown>;
+    statusWorktree?: Record<string, unknown>;
+    gitStatus?: Record<string, unknown>;
+    alreadyMerged?: boolean;
+  } = {},
+): void {
+  const worktree = { ...SAFE_REMOVE_WORKTREE, ...options.worktree };
+  canonicalRun.mockImplementation(async (args) => {
+    if (args[0] === "worktree" && args[1] === "get") {
+      return (
+        options.get ??
+        cliData({
+          workspaceId: "oppi",
+          worktree,
+        })
+      );
+    }
+    if (args[0] === "worktree" && args[1] === "status") {
+      return (
+        options.status ??
+        cliData({
+          workspaceId: "oppi",
+          worktree: { ...worktree, ...options.statusWorktree },
+          status: { ...CLEAN_GIT_STATUS, ...options.gitStatus },
+        })
+      );
+    }
+    if (args[0] === "worktree" && args[1] === "preview") {
+      return (
+        options.preview ??
+        cliData({
+          workspaceId: "oppi",
+          preview: {
+            alreadyMerged: options.alreadyMerged ?? true,
+            worktree: { id: worktree.id },
+          },
+        })
+      );
+    }
+    throw new Error(`unexpected preflight command: ${args.join(" ")}`);
+  });
+}
+
+async function applyWorktreeRemovePolicy(
+  options: {
+    policy?: OppiApprovalPolicy;
+    args?: string[];
+    approve?: () => Promise<boolean>;
+  } = {},
+) {
+  const approve = vi.fn(options.approve ?? (async () => true));
+  const execute = vi.fn(async () => ({ ok: true }) as OppiToolCommandResult);
+  const result = await applyOppiToolPolicy({
+    prepared: prepared(
+      options.args ?? ["worktree", "remove", SAFE_REMOVE_WORKTREE.id, "--workspace", "oppi"],
+    ),
+    policy: options.policy ?? "confirmDestructiveOnly",
+    identity: "ordinary",
+    approve,
+    execute,
+  });
+  return { approve, execute, result };
+}
+
 function prepared(args: string[], callerSessionId?: string): PreparedOppiCommand {
   const result = prepareOppiCommand(args, callerSessionId ? { callerSessionId } : undefined);
   expect(result, args.join(" ")).toMatchObject({ ok: true });
@@ -349,6 +449,140 @@ describe("Oppi approval policy", () => {
   });
 });
 
+describe("clean worktree remove auto-approval", () => {
+  it("skips the prompt for a proven-safe clean merged remove under confirmDestructiveOnly", async () => {
+    mockWorktreeRemovePreflight();
+    expect(
+      prepared(["worktree", "remove", SAFE_REMOVE_WORKTREE.id, "--workspace", "oppi"]).access,
+    ).toBe("destructive");
+
+    const { approve, execute, result } = await applyWorktreeRemovePolicy();
+
+    expect(approve).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ kind: "executed" });
+    const previewArgs = canonicalRun.mock.calls.find((call) => call[0][1] === "preview")?.[0];
+    expect(previewArgs).toEqual(
+      expect.arrayContaining(["worktree", "preview", SAFE_REMOVE_WORKTREE.id, "--into", "main"]),
+    );
+  });
+
+  it.each([
+    ["dirty", { gitStatus: { dirtyCount: 1 } }],
+    ["untracked", { gitStatus: { untrackedCount: 1 } }],
+    ["staged", { gitStatus: { stagedCount: 1 } }],
+  ] as const)("still prompts when the worktree is %s", async (_label, preflight) => {
+    mockWorktreeRemovePreflight(preflight);
+
+    const { approve, execute, result } = await applyWorktreeRemovePolicy();
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ kind: "executed" });
+  });
+
+  it("cancels instead of prompting when preflight is aborted", async () => {
+    const controller = new AbortController();
+    canonicalRun.mockImplementation(async () => {
+      controller.abort();
+      const error = new Error("Operation aborted");
+      error.name = "AbortError";
+      throw error;
+    });
+    const approve = vi.fn(async () => true);
+    const execute = vi.fn(async () => ({ ok: true }) as OppiToolCommandResult);
+
+    await expect(
+      applyOppiToolPolicy({
+        prepared: prepared(["worktree", "remove", SAFE_REMOVE_WORKTREE.id, "--workspace", "oppi"]),
+        policy: "confirmDestructiveOnly",
+        identity: "ordinary",
+        signal: controller.signal,
+        approve,
+        execute,
+      }),
+    ).resolves.toMatchObject({ kind: "cancelled", reason: "aborted" });
+    expect(approve).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("still prompts when --force is present", async () => {
+    mockWorktreeRemovePreflight();
+
+    const { approve, execute } = await applyWorktreeRemovePolicy({
+      args: ["worktree", "remove", SAFE_REMOVE_WORKTREE.id, "--workspace", "oppi", "--force"],
+    });
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("still prompts when the branch is not merged into the workspace default", async () => {
+    mockWorktreeRemovePreflight({ alreadyMerged: false });
+
+    const { approve, execute } = await applyWorktreeRemovePolicy();
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["unmanaged", { worktree: { managedByOppi: false } }],
+    ["main", { worktree: { isMain: true } }],
+    ["active", { statusWorktree: { activeSessionCount: 1 } }],
+  ] as const)("still prompts when the worktree is %s", async (_label, preflight) => {
+    mockWorktreeRemovePreflight(preflight);
+
+    const { approve, execute } = await applyWorktreeRemovePolicy();
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["lookup", { get: cliError("Worktree not found") }],
+    ["status", { status: cliError("status failed") }],
+    ["preview", { preview: cliError("preview failed") }],
+  ] as const)("still prompts when %s fails", async (_label, preflight) => {
+    mockWorktreeRemovePreflight(preflight);
+
+    const { approve, execute } = await applyWorktreeRemovePolicy();
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("still prompts under confirmAllChanges even when the remove is proven safe", async () => {
+    mockWorktreeRemovePreflight();
+
+    const { approve, execute } = await applyWorktreeRemovePolicy({
+      policy: "confirmAllChanges",
+    });
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("denies a worktree remove under readOnly without a prompt", async () => {
+    mockWorktreeRemovePreflight();
+    const approve = vi.fn(async () => true);
+    const execute = vi.fn(async () => ({ ok: true }) as OppiToolCommandResult);
+
+    await expect(
+      applyOppiToolPolicy({
+        prepared: prepared(["worktree", "remove", SAFE_REMOVE_WORKTREE.id, "--workspace", "oppi"]),
+        policy: "readOnly",
+        identity: "ordinary",
+        approve,
+        execute,
+      }),
+    ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
+    expect(approve).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(canonicalRun).not.toHaveBeenCalled();
+  });
+});
+
 describe("thin Oppi extension", () => {
   it("shows a complete, display-safe, shell-replayable input before ANSI output", async () => {
     const humanOutput = "\u001b[1mSession created\u001b[0m\n";
@@ -499,12 +733,13 @@ describe("thin Oppi extension", () => {
       "Approve Oppi command",
       "Remove this worktree?\nName: wt_missing-abc12345\nWorkspace: oppi",
     );
-    expect(canonicalRun).toHaveBeenCalledTimes(1);
+    expect(canonicalRun.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(canonicalRun.mock.calls[0]?.[0].slice(0, 3)).toEqual([
       "worktree",
       "get",
       "wt_missing-abc12345",
     ]);
+    expect(canonicalRun.mock.calls.every((call) => call[0][1] !== "remove")).toBe(true);
   });
 
   it("preserves compact cancellation metadata without executing", async () => {
