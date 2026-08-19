@@ -11,6 +11,7 @@ import { cmdWorkspace } from "./commands/workspace.js";
 import { cmdWorktree } from "./commands/worktree.js";
 import { createCliConfigStorage, createCliConnectionConfig } from "./connection-config.js";
 import { helpPathFor, isNestedHelpRequest, resolveHelpTopic, writeCliHelpOutput } from "./help.js";
+import { cmdModels } from "./commands/models.js";
 import { cmdQuota } from "./quota.js";
 import {
   captureCliOutput,
@@ -116,6 +117,9 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
       return;
     case "quota":
       await cmdQuota(connection, flags.json === "true", options.signal);
+      return;
+    case "models":
+      await cmdModels(connection, positional, flags, options.signal);
       return;
     case "agent":
       await cmdAgent(connection, positional[0], positional.slice(1), flags);

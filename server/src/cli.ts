@@ -1098,6 +1098,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
 
     case "status":
     case "quota":
+    case "models":
     case "agent":
     case "workspace":
     case "worktree":

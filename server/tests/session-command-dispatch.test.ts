@@ -71,6 +71,72 @@ describe("session command dispatch and output boundaries", () => {
     expect(envelope.data.sessions[1]).toMatchObject({ id: null, name: "partial" });
   });
 
+  it("waits for any of several session ids by default", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path.includes("/sessions/a/events")) {
+        return { session: { status: "busy" }, events: [], currentSeq: 1 };
+      }
+      if (path.includes("/sessions/b/events")) {
+        return {
+          session: { status: "ready", lastMessage: "done" },
+          events: [],
+          currentSeq: 2,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSession(storage, "wait", ["a", "b"], { for: "idle", json: "true", timeout: "1s" }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: { session_id: "b", reason: "idle", status: "ready" },
+    });
+  });
+
+  it("waits until every session is idle when --all is set", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path.includes("/sessions/a/events") || path.includes("/sessions/b/events")) {
+        return { session: { status: "ready" }, events: [], currentSeq: 1 };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSession(storage, "wait", ["a", "b"], {
+        for: "idle",
+        all: "true",
+        json: "true",
+        timeout: "1s",
+      }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        condition: "idle",
+        sessions: [{ session_id: "a", status: "ready" }, { session_id: "b", status: "ready" }],
+      },
+    });
+  });
+
+  it("rejects duplicate wait session ids", async () => {
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSession(storage, "wait", ["a", "a"], { json: "true" }),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: false,
+      error: { message: "session ids must be unique" },
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("maps malformed API failures to a stable nonzero JSON envelope", async () => {
     request.mockRejectedValue(Object.assign(new Error("bad response"), { status: 502 }));
 
@@ -104,6 +170,12 @@ describe("session command dispatch and output boundaries", () => {
       positional: ["s"],
       flags: { limit: "2", json: "true" },
       message: "Unsupported flag for 'session inspect': --limit",
+    },
+    {
+      action: "wait",
+      positional: ["s"],
+      flags: { poll: "2s", interval: "2s", json: "true" },
+      message: "Conflicting flags: --interval and --poll",
     },
   ])(
     "rejects conflicting command input: $action",

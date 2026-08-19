@@ -2,8 +2,10 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { parseCliArgs } from "./cli/args.js";
+import { readFileSync } from "node:fs";
 import {
   classifyCliAgentCommand,
+  inlineStdinMutationBodies,
   unreviewableMutationBodyReason,
   type CliAgentAccess,
 } from "./cli/command-policy.js";
@@ -52,7 +54,7 @@ const authenticPreparedCommands = new WeakSet<object>();
 
 export function prepareOppiCommand(
   rawArgs: readonly string[],
-  context: Readonly<{ callerSessionId?: string }> = {},
+  context: Readonly<{ callerSessionId?: string; readStdin?: () => string }> = {},
 ): PrepareOppiCommandResult {
   const args = rawArgs[0] === "oppi" ? rawArgs.slice(1) : [...rawArgs];
   if (args.length === 0) return denied("oppi command args are required");
@@ -74,16 +76,31 @@ export function prepareOppiCommand(
 
   const classified = classifyCliAgentCommand(args);
   if (!classified.ok) return denied(classified.reason);
+  let invocationArgs = [...classified.invocation.args];
+  if (classified.invocation.access !== "read" && !classified.invocation.isHelp) {
+    const inlined = inlineStdinMutationBodies(
+      invocationArgs,
+      context.readStdin ?? readStdinMutationBody,
+    );
+    if (!inlined.ok) return denied(inlined.reason);
+    invocationArgs = inlined.args;
+    const inlinedChars = invocationArgs.reduce((total, arg) => total + arg.length, 0);
+    if (inlinedChars > MAX_OPPI_TOOL_ARGUMENT_CHARS) {
+      return denied(
+        `oppi command arguments exceed the ${MAX_OPPI_TOOL_ARGUMENT_CHARS}-character limit`,
+      );
+    }
+  }
   const bodyReason =
     classified.invocation.access === "read"
       ? undefined
-      : unreviewableMutationBodyReason(args, classified.invocation.isHelp);
+      : unreviewableMutationBodyReason(invocationArgs, classified.invocation.isHelp);
   if (bodyReason) return denied(bodyReason);
 
   const path = Object.freeze([...classified.invocation.path]);
   const command = Object.freeze({
     access: classified.invocation.access,
-    args: Object.freeze([...classified.invocation.args]),
+    args: Object.freeze(invocationArgs),
     path,
     command: path[0] ?? "",
     ...(path[1] !== undefined ? { action: path[1] } : {}),
@@ -92,6 +109,10 @@ export function prepareOppiCommand(
   }) satisfies PreparedOppiCommand;
   authenticPreparedCommands.add(command);
   return Object.freeze({ ok: true, command });
+}
+
+function readStdinMutationBody(): string {
+  return readFileSync(0, "utf-8");
 }
 
 export async function executePreparedOppiCommand(options: {
@@ -209,12 +230,12 @@ export function createOppiToolExtensionFactory(options: {
       description:
         "Run one exposed Oppi CLI command as JSON under the configured server approval policy.",
       promptSnippet:
-        "Run exposed Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, status, and provider quota.",
+        "Run exposed Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, status, models, and provider quota.",
       promptGuidelines: [
         "Use oppi for Oppi app state instead of shell or filesystem tools, and use read commands before asking about discoverable state.",
         "Route session questions by intent and take the smallest sufficient step: orientation uses session list; current progress uses session inspect <id> --view summary; latest response uses session inspect <id> --view response directly, without summary or outline first.",
         "For historical investigation, use session search or session inspect <id> --view outline first, then request only bounded session messages or tools; use trace-outline only when exact entry ids are needed, followed by trace-page or tool-output for the smallest range.",
-        "Use session wait for bounded monitoring. The CLI session watch stream is not exposed to agents; one-session watch requests normalize to wait, while multi-session, --all, and any-change streaming are denied.",
+        "Use session wait for bounded monitoring of one or more sessions; pass --all to require every id. Default poll is 2s; --poll/--interval and --summary-every override, and --summary-every 0 disables heartbeats. The CLI session watch stream is not exposed to agents; one-session watch requests normalize to wait, while multi-session watch, watch --all, and any-change streaming are denied.",
         "Use Oppi mutation commands only after the user asks for them; read the current state first and let the configured policy control approval.",
         "To edit a saved Agent, run 'oppi agent get <agent>' first, then patch only the changed fields with 'oppi agent update <agent> --definition-json'. Update is a PATCH: omitted fields stay, nested resources/sessionDefaults/launchConstraints merge, and JSON null clears a field or nested key. Allowed top-level keys are name, icon, description, instructions, resources, sessionDefaults, launchConstraints; launch-only keys (target, workspaceId, worktreeId, cwd, schedule, attachments, images) are rejected. sessionDefaults.tools must name real tools available at launch; unavailable names are dropped from the session with a warning.",
       ],

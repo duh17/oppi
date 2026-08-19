@@ -395,4 +395,78 @@ describe("session watch command contract", () => {
       message,
     );
   });
+
+  it("emits compact wait summaries on a timer, not a transition stream", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const summaries = vi.fn();
+    const promise = runSessionWatch(
+      ["a", "b"],
+      {
+        condition: "idle",
+        requireAll: true,
+        intervalMs: 10,
+        timeoutMs: 80,
+        summaryEveryMs: 25,
+        onSummary: summaries,
+      },
+      async <T>(path: string): Promise<T> => {
+        const id = path.includes("/sessions/a/") ? "a" : "b";
+        return {
+          session: { status: "busy" },
+          events: id === "a" ? [{ type: "tool_start" }] : [],
+          currentSeq: 1,
+        } as T;
+      },
+      vi.fn(),
+    );
+    const settled = promise.then(
+      (value) => ({ status: "resolved" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(summaries).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30);
+    await vi.advanceTimersByTimeAsync(30);
+    await vi.advanceTimersByTimeAsync(20);
+    const result = await settled;
+    expect(result.status).toBe("rejected");
+    expect(result.status === "rejected" && result.error).toMatchObject({
+      message: expect.stringContaining("Timed out"),
+    });
+    expect(summaries.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(summaries.mock.calls.length).toBeLessThan(6);
+    expect(summaries.mock.calls[0]?.[0]).toMatchObject({
+      sessions: [{ sessionId: "a", status: "busy" }, { sessionId: "b", status: "busy" }],
+    });
+  });
+
+  it("skips wait summaries when summaryEveryMs is 0", async () => {
+    vi.useFakeTimers();
+    const summaries = vi.fn();
+    const promise = runSessionWatch(
+      ["s"],
+      {
+        condition: "idle",
+        requireAll: false,
+        intervalMs: 10,
+        timeoutMs: 30,
+        summaryEveryMs: 0,
+        onSummary: summaries,
+      },
+      async <T>(): Promise<T> => ({ session: { status: "busy" }, events: [] }) as T,
+      vi.fn(),
+    );
+    const settled = promise.then(
+      (value) => ({ status: "resolved" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(30);
+    const result = await settled;
+    expect(result.status).toBe("rejected");
+    expect(summaries).not.toHaveBeenCalled();
+  });
 });

@@ -30,6 +30,7 @@ export type CliAgentClassification =
 const COMMAND_POLICIES: readonly CliCommandPolicy[] = [
   { path: ["status"], access: "read" },
   { path: ["quota"], access: "read" },
+  { path: ["models"], access: "read" },
 
   { path: ["workspace", "list"], access: "read" },
   { path: ["workspace", "get"], access: "read" },
@@ -156,6 +157,51 @@ export function classifyCliAgentCommand(rawArgs: readonly string[]): CliAgentCla
   };
 }
 
+export function inlineStdinMutationBodies(
+  args: readonly string[],
+  readStdin: () => string,
+):
+  | { readonly ok: true; readonly args: string[] }
+  | { readonly ok: false; readonly reason: string } {
+  const indexes: number[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index] ?? "";
+    if (!value.startsWith("--")) continue;
+    const separator = value.indexOf("=");
+    const flag = separator === -1 ? value.slice(2) : value.slice(2, separator);
+    if (!MUTABLE_BODY_FLAGS.has(flag)) continue;
+    const body = separator === -1 ? args[index + 1] : value.slice(separator + 1);
+    if (body !== "@-") continue;
+    indexes.push(index);
+  }
+  if (indexes.length === 0) return { ok: true, args: [...args] };
+
+  let stdin: string;
+  try {
+    stdin = readStdin();
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `Could not read stdin for @-: ${errorMessage(error)}`,
+    };
+  }
+  if (!stdin.trim()) {
+    return { ok: false, reason: "Mutation body from stdin must not be empty" };
+  }
+
+  const next = [...args];
+  for (const index of indexes) {
+    const value = next[index] ?? "";
+    const separator = value.indexOf("=");
+    if (separator === -1) {
+      next[index + 1] = stdin;
+    } else {
+      next[index] = `${value.slice(0, separator + 1)}${stdin}`;
+    }
+  }
+  return { ok: true, args: next };
+}
+
 export function unreviewableMutationBodyReason(
   args: readonly string[],
   isHelp = false,
@@ -249,6 +295,7 @@ function canonicalPath(path: readonly string[]): string[] {
 }
 
 function policyFor(path: readonly string[], isHelp: boolean): CliCommandPolicy | undefined {
+  if (isHelp && path.length === 0) return { path, access: "read" };
   const exact = POLICY_BY_KEY.get(pathKey(path));
   if (exact) return isHelp && exact.access !== "denied" ? { path, access: "read" } : exact;
   if (!isHelp || path.length !== 1) return POLICY_BY_KEY.get(pathKey(path));

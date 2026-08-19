@@ -171,6 +171,107 @@ describe("canonical CLI runner", () => {
     expect(request).toHaveBeenCalledWith(expect.anything(), "/server/provider-quotas", undefined);
   });
 
+  it("renders models help without contacting the server", async () => {
+    const result = await runCli(["models", "--help"], {
+      dataDir: "/tmp/oppi-runner-models-help-test",
+      captureHuman: true,
+      forceJson: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, exitCode: 0 });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      data: { help: { path: ["models"], title: "Models" } },
+    });
+    expect(result.humanOutput).toContain("oppi models");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("groups models by provider with quota colors and Pi-style columns", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path === "/models") {
+        return {
+          models: [
+            {
+              id: "openai-codex/gpt-5.6-sol",
+              name: "gpt-5.6-sol",
+              provider: "openai-codex",
+              contextWindow: 272_000,
+            },
+            {
+              id: "omlx/Qwen3.8-27B-8bit",
+              name: "Qwen3.8-27B-8bit",
+              provider: "omlx",
+              contextWindow: 262_144,
+            },
+            {
+              id: "openai-codex/gpt-5.4",
+              name: "gpt-5.4",
+              provider: "openai-codex",
+              contextWindow: 272_000,
+            },
+          ],
+        } as never;
+      }
+      if (path === "/server/provider-quotas") {
+        return {
+          providers: [
+            {
+              providerId: "openai-codex",
+              displayName: "Codex",
+              authenticated: true,
+              planType: "prolite",
+              windows: [
+                {
+                  key: "weekly",
+                  shortLabel: "7d",
+                  title: "Weekly",
+                  usedPercent: 73,
+                  remainingPercent: 27,
+                  limitWindowSeconds: 604_800,
+                  resetAt: null,
+                  includeWeekdayInReset: true,
+                },
+              ],
+              credits: { hasCredits: false, unlimited: false, balance: "0" },
+              prepaidBalanceCents: null,
+              fetchedAt: 1_786_785_160_944,
+            },
+          ],
+          fetchedAt: 1_786_785_160_944,
+        } as never;
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const result = await runCli(["models", "sol"], {
+      dataDir: "/tmp/oppi-runner-models-test",
+      captureHuman: true,
+      forceJson: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, exitCode: 0 });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      data: {
+        query: "sol",
+        providers: [
+          {
+            provider: "openai-codex",
+            display_name: "Codex",
+            models: [{ id: "openai-codex/gpt-5.6-sol", name: "gpt-5.6-sol" }],
+          },
+        ],
+      },
+    });
+    expect(result.humanOutput).toContain("Codex");
+    expect(result.humanOutput).toContain("27% left");
+    expect(result.humanOutput).toContain("openai-codex/gpt-5.6-sol");
+    expect(result.humanOutput).toContain("272K");
+    expect(result.humanOutput).not.toContain("Qwen3.8-27B-8bit");
+    expect(result.humanOutput).toContain("\u001b[");
+  });
+
   it("returns one error envelope for a malformed provider quota response", async () => {
     request.mockResolvedValueOnce({
       providers: [{ displayName: 42, windows: "broken" }],

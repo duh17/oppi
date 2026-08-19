@@ -69,13 +69,38 @@ export type WatchOutcome =
       sessions: Array<{ sessionId: string; status?: string; pendingDialogs?: number }>;
     };
 
+export type WaitProgressSession = {
+  sessionId: string;
+  status?: string;
+  pendingDialogs?: number;
+  toolsThisTurn: number;
+};
+
+export type WaitProgressSnapshot = {
+  ts: number;
+  elapsedMs: number;
+  sessions: WaitProgressSession[];
+};
+
 interface WatchOptions {
   condition: SessionWatchCondition;
   requireAll: boolean;
   intervalMs: number;
   timeoutMs: number;
+  /** 0 disables heartbeats. Used by wait, not by streaming watch. */
+  summaryEveryMs?: number;
+  onSummary?: (snapshot: WaitProgressSnapshot) => void;
   signal?: AbortSignal;
 }
+
+/**
+ * Wait defaults from 14-day server telemetry (2026-08-19):
+ * - server.turn_ttft_ms p50 = 4.3s → poll at half TTFT, clamped to 2s
+ * - server.turn_duration_ms p50 = 236s → heartbeat at ~1/4 turn = 60s
+ * See .internal/reports/session-wait-poll-defaults-2026-08-19.md
+ */
+export const WAIT_DEFAULT_POLL = "2s";
+export const WAIT_DEFAULT_SUMMARY_EVERY = "60s";
 
 class SessionWatchTimeout extends Error {
   constructor(
@@ -286,6 +311,9 @@ export async function runSessionWatch(
     });
   }
   const deadline = Date.now() + options.timeoutMs;
+  const startedAt = Date.now();
+  const summaryEveryMs = options.summaryEveryMs ?? 0;
+  let lastSummaryAt = startedAt;
 
   for (;;) {
     for (const id of ids) {
@@ -355,6 +383,24 @@ export async function runSessionWatch(
         options.condition,
         ids.filter((id) => !states.get(id)?.met),
       );
+    }
+    if (summaryEveryMs > 0 && Date.now() - lastSummaryAt >= summaryEveryMs) {
+      lastSummaryAt = Date.now();
+      options.onSummary?.({
+        ts: lastSummaryAt,
+        elapsedMs: lastSummaryAt - startedAt,
+        sessions: ids.map((id) => {
+          const state = states.get(id);
+          return {
+            sessionId: id,
+            toolsThisTurn: state?.toolsThisTurn ?? 0,
+            ...(state?.status !== undefined ? { status: state.status } : {}),
+            ...(state?.pendingDialogs !== undefined
+              ? { pendingDialogs: state.pendingDialogs }
+              : {}),
+          };
+        }),
+      });
     }
     await sleepWithSignal(
       Math.min(options.intervalMs, Math.max(0, deadline - Date.now())),

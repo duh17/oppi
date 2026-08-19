@@ -95,6 +95,10 @@ export function quotaHeadroomState(
   return "critical";
 }
 
+export function formatQuotaRemaining(remainingPercent: number): string {
+  return quotaColor(remainingPercent, `${formatPercent(remainingPercent)} left`);
+}
+
 function quotaColor(remainingPercent: number, text: string): string {
   switch (quotaHeadroomState(remainingPercent)) {
     case "healthy":

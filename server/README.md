@@ -173,6 +173,8 @@ oppi serve [--host <h>]      # start server
 oppi init                    # interactive first-time setup
 oppi pair [--host <h>]       # regenerate pairing QR + invite link
 oppi status                  # server, network, and pairing status
+oppi quota                   # provider plan and remaining quota
+oppi models [query]          # enabled models by provider, with quota
 oppi doctor                  # security and environment diagnostics
 oppi workspace ...           # list/inspect/create/update/delete workspaces
 oppi worktree ...            # list/create/open/preview/remove worktrees
@@ -193,7 +195,7 @@ Managed host sessions cannot use `oppi session` to target themselves. They may c
 
 ### Saved Agents and schedules
 
-Saved Agents store reusable Agent definitions. An optional `icon` string accepts one Unicode emoji or an SF Symbol name; `icon: null` clears it. Saved-Agent launches and Oppi control sessions snapshot the current Agent version and icon into session launch metadata, so later Agent edits do not change existing session rows or chat identity. Unsupported SF Symbols and malformed persisted values render the generic Agent icon without affecting execution. The shipped Oppi agent is limited to server-managed `oppi`, structured `ask`, and Pi's stock `read` and `edit`, with a minimal system prompt that points at `oppi help` and packaged docs. It can ask native clarifying questions and wait for session status with `oppi session wait` or its bounded one-session `oppi session watch` alias. Destructive Oppi commands require explicit approval by default; stock file reads/edits use host permissions and do not pass through Oppi approval, while `write`, `bash`, and other filesystem tools remain unavailable. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.
+Saved Agents store reusable Agent definitions. An optional `icon` string accepts one Unicode emoji or an SF Symbol name; `icon: null` clears it. Saved-Agent launches and Oppi control sessions snapshot the current Agent version and icon into session launch metadata, so later Agent edits do not change existing session rows or chat identity. Unsupported SF Symbols and malformed persisted values render the generic Agent icon without affecting execution. The shipped Oppi agent is limited to server-managed `oppi`, structured `ask`, and Pi's stock `read` and `edit`, with a minimal system prompt that points at `oppi help` and packaged docs. It can ask native clarifying questions and wait for one or more session statuses with `oppi session wait`, or use the bounded one-session `oppi session watch` alias. Destructive Oppi commands require explicit approval by default; stock file reads/edits use host permissions and do not pass through Oppi approval, while `write`, `bash`, and other filesystem tools remain unavailable. Launch inputs such as workspace, worktree, prompt, and session name stay on `oppi session create`, so the same Agent definition can run in different workspaces.
 
 Schedules store a trigger and an action. `oppi schedule create` accepts `--at`, `--every`, or `--cron`; actions can start a new session in a workspace or send input to an existing session. The background schedule runner materializes due runs, dispatches active schedules, and records run history. Pause or archive a schedule to stop future automatic runs.
 

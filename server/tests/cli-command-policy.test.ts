@@ -6,6 +6,7 @@ describe("CLI agent access policy", () => {
   it.each([
     ["status", "read"],
     ["quota", "read"],
+    ["models", "read"],
     ["workspace list", "read"],
     ["workspace update", "mutation"],
     ["workspace delete", "destructive"],
@@ -165,6 +166,17 @@ describe("CLI agent access policy", () => {
       ok: true,
       invocation: { access: "read", path: ["config"] },
     });
-    expect(classifyCliAgentCommand(["help"])).toMatchObject({ ok: false, access: "denied" });
+    expect(classifyCliAgentCommand(["help"])).toMatchObject({
+      ok: true,
+      invocation: { access: "read", path: [], isHelp: true },
+    });
+    expect(classifyCliAgentCommand(["--help"])).toMatchObject({
+      ok: true,
+      invocation: { access: "read", path: [], isHelp: true },
+    });
+    expect(classifyCliAgentCommand(["-h"])).toMatchObject({
+      ok: true,
+      invocation: { access: "read", path: [], isHelp: true },
+    });
   });
 });

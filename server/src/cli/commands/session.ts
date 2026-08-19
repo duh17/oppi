@@ -47,7 +47,14 @@ import {
   resolveSendStreamingKind,
   sendSessionInput,
 } from "./session-interactions.js";
-import { parseWatchCondition, runSessionWatch, watchSessions } from "./session-watch.js";
+import {
+  parseWatchCondition,
+  runSessionWatch,
+  watchSessions,
+  WAIT_DEFAULT_POLL,
+  WAIT_DEFAULT_SUMMARY_EVERY,
+  type WaitProgressSnapshot,
+} from "./session-watch.js";
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => void;
@@ -164,41 +171,84 @@ export async function cmdSession(
     }
 
     if (mode === "wait") {
-      const id = requirePositional(positional, "session id is required");
+      const ids = positional.map((value) => value.trim()).filter(Boolean);
+      if (ids.length === 0) throw new Error("session id is required");
+      if (new Set(ids).size !== ids.length) throw new Error("session ids must be unique");
       const condition = parseWatchCondition(flags.for, "either");
       if (condition === "any-change") {
         throw new Error("--for must be idle, attention, or either");
       }
+      const requireAll = flags.all === "true" && ids.length > 1;
+      const progress: WaitProgressSnapshot[] = [];
+      const summaryEveryMs = parseDurationMs(flags["summary-every"] ?? WAIT_DEFAULT_SUMMARY_EVERY);
       const outcome = await runSessionWatch(
-        [id],
+        ids,
         {
           condition,
-          requireAll: false,
-          intervalMs: parseDurationMs(flags.poll ?? "1s"),
+          requireAll,
+          intervalMs: parseDurationMs(flags.poll ?? WAIT_DEFAULT_POLL),
           timeoutMs: parseDurationMs(flags.timeout ?? "10m"),
+          summaryEveryMs,
+          onSummary: (snapshot) => {
+            if (progress.length < 50) progress.push(snapshot);
+            if (!jsonOutput) writeHumanLine(formatWaitProgress(snapshot));
+          },
           ...(callerContext.signal ? { signal: callerContext.signal } : {}),
         },
         call,
         () => {},
       );
       throwIfAborted(callerContext.signal);
-      const status = outcome.kind === "session" ? (outcome.status ?? null) : null;
-      const reason = outcome.kind === "session" ? outcome.reason : condition;
-      const pendingDialogs = outcome.kind === "session" ? outcome.pendingDialogs : undefined;
-      const outputDelta = outcome.kind === "session" ? outcome.outputDelta : undefined;
-      const outputDeltaKind = outcome.kind === "session" ? outcome.outputDeltaKind : undefined;
+      const progressJson =
+        progress.length > 0 ? { progress: progress.map(progressJsonSnapshot) } : {};
+      if (outcome.kind === "all") {
+        output(
+          {
+            condition: outcome.condition,
+            sessions: outcome.sessions.map((session) => ({
+              session_id: session.sessionId,
+              status: session.status ?? null,
+              ...(session.pendingDialogs !== undefined
+                ? { pending_dialogs: session.pendingDialogs }
+                : {}),
+            })),
+            ...progressJson,
+          },
+          () => {
+            printDetails("✓ Wait condition met", [
+              ["Condition", outcome.condition],
+              ["Sessions", outcome.sessions.length],
+            ]);
+            printList(
+              "Sessions",
+              outcome.sessions.map((session) => ({
+                id: session.sessionId,
+                status: session.status ?? "unknown",
+                title: session.sessionId,
+              })),
+            );
+          },
+        );
+        return;
+      }
+      const status = outcome.status ?? null;
+      const reason = outcome.reason;
+      const pendingDialogs = outcome.pendingDialogs;
+      const outputDelta = outcome.outputDelta;
+      const outputDeltaKind = outcome.outputDeltaKind;
       output(
         {
-          session_id: id,
+          session_id: outcome.sessionId,
           reason,
           status,
           ...(pendingDialogs !== undefined ? { pending_dialogs: pendingDialogs } : {}),
           ...(outputDelta !== undefined ? { output_delta: outputDelta } : {}),
           ...(outputDeltaKind !== undefined ? { output_delta_kind: outputDeltaKind } : {}),
+          ...progressJson,
         },
         () => {
           const waitDetails: [string, unknown][] = [
-            ["Session", codeValue(id)],
+            ["Session", codeValue(outcome.sessionId)],
             ["Reason", reason],
             ["Status", status ?? "unknown"],
           ];
@@ -546,7 +596,7 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   send: ["follow-up", "json", "steer", "text"],
   abort: ["json"],
   watch: ["all", "interval", "json", "timeout", "until"],
-  wait: ["for", "json", "poll", "timeout"],
+  wait: ["all", "for", "interval", "json", "poll", "summary-every", "timeout"],
   read: ["json", "tail"],
   events: ["json", "since"],
   trace: ["include", "json"],
@@ -569,7 +619,10 @@ function normalizeSessionFlagAliases(
     mode === "inspect"
       ? ([["turn", "turns"]] as const)
       : mode === "wait"
-        ? ([["until", "for"]] as const)
+        ? ([
+            ["until", "for"],
+            ["interval", "poll"],
+          ] as const)
         : [];
   if (aliases.length === 0) return flags;
 
@@ -596,13 +649,14 @@ function assertSessionFlags(mode: string, flags: Record<string, string>): void {
 }
 
 function sessionTargetsForMode(mode: string, positional: string[]): string[] {
-  if (mode === "watch") return positional.map((value) => value.trim()).filter(Boolean);
+  if (mode === "watch" || mode === "wait") {
+    return positional.map((value) => value.trim()).filter(Boolean);
+  }
   if (
     [
       "get",
       "send",
       "abort",
-      "wait",
       "read",
       "events",
       "trace",
@@ -684,6 +738,29 @@ function savedAgentReference(agent: string | undefined): string | undefined {
   if (!normalized || normalized === "default" || normalized === "workspace_default")
     return undefined;
   return normalized;
+}
+
+function formatWaitProgress(snapshot: WaitProgressSnapshot): string {
+  const elapsed = Math.max(1, Math.round(snapshot.elapsedMs / 1000));
+  const rows = snapshot.sessions.map((session) => {
+    const dialogs =
+      session.pendingDialogs !== undefined ? ` dialogs=${session.pendingDialogs}` : "";
+    return `    ${session.sessionId}  ${session.status ?? "?"}  tools=${session.toolsThisTurn}${dialogs}`;
+  });
+  return [`  still waiting (${elapsed}s)`, ...rows].join("\n");
+}
+
+function progressJsonSnapshot(snapshot: WaitProgressSnapshot): Record<string, unknown> {
+  return {
+    ts: snapshot.ts,
+    elapsed_ms: snapshot.elapsedMs,
+    sessions: snapshot.sessions.map((session) => ({
+      session_id: session.sessionId,
+      status: session.status ?? null,
+      tools_this_turn: session.toolsThisTurn,
+      ...(session.pendingDialogs !== undefined ? { pending_dialogs: session.pendingDialogs } : {}),
+    })),
+  };
 }
 
 function hasToolPolicy(policy: {

@@ -68,6 +68,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "pair", summary: "show a signed pairing QR/link for the iOS app" },
       { name: "status", summary: "show server, network, and pairing status" },
       { name: "quota", summary: "show plan and remaining quota for configured model providers" },
+      { name: "models", summary: "list enabled models grouped by provider, with quota" },
       { name: "doctor", summary: "run security and environment diagnostics" },
       { name: "server", summary: "install, restart, stop, or inspect the launchd service" },
       { name: "config", summary: "show, get, set, or validate server config" },
@@ -86,7 +87,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Default output is terminal-friendly for humans and agents; use '--json' for strict machine parsing.",
-      "Help, version, init, serve, pair, status, doctor, config, server, and update are available during setup; quota, workspace, worktree, session, Agent, schedule, and wait commands require local owner credentials and a running server.",
+      "Help, version, init, serve, pair, status, doctor, config, server, and update are available during setup; quota, models, workspace, worktree, session, Agent, schedule, and wait commands require local owner credentials and a running server.",
       "Use '<noun> help' or '<command> --help' for flags and deeper examples.",
       "Use '--json' with help for an agent-readable description of the same topic.",
     ],
@@ -182,6 +183,27 @@ const HELP_TOPICS: HelpTopic[] = [
       "Providers without credentials or usage windows remain visible so missing configuration is explicit.",
     ],
     examples: [{ command: "oppi quota" }, { command: "oppi quota --json" }],
+  },
+  {
+    path: ["models"],
+    title: "Models",
+    summary: "List enabled models grouped by provider, with quota and context window.",
+    usage: "oppi models [query] [--json]",
+    arguments: [{ name: "[query]", summary: "optional fuzzy filter on provider, name, or id" }],
+    flags: [
+      { name: "--query", value: "<text>", summary: "same as the positional query" },
+      { name: "--json", summary: "write the standard JSON envelope" },
+    ],
+    notes: [
+      "Groups match the in-app model picker: provider sections, then name, canonical id, and context window.",
+      "Provider quota uses the same green / yellow / red remaining-percent colors as 'oppi quota'.",
+      "The catalog is GET /models, filtered by Pi enabledModels. Quota comes from /server/provider-quotas.",
+    ],
+    examples: [
+      { command: "oppi models" },
+      { command: "oppi models sol" },
+      { command: "oppi models --json" },
+    ],
   },
   {
     path: ["doctor"],
@@ -974,7 +996,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "send <id>", summary: "send text; steer a busy turn or queue a follow-up" },
       { name: "abort <id>", summary: "abort the current turn" },
       { name: "watch <id...>", summary: "stream state transitions for sessions" },
-      { name: "wait <id>", summary: "block until idle or attention" },
+      { name: "wait <id...>", summary: "block until idle or attention" },
       { name: "read <id>", summary: "show transcript-style trace entries" },
       { name: "events <id>", summary: "read live catch-up events" },
       { name: "trace <id>", summary: "show raw trace entries" },
@@ -1108,15 +1130,20 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     examples: [
       { command: "oppi session watch 11111111-1111-4111-8111-111111111111 --until idle" },
-      { command: "oppi session watch sess_1 sess_2 --until attention --json" },
+      {
+        command:
+          "oppi session watch 11111111-1111-4111-8111-111111111111 22222222-2222-4222-8222-222222222222 --until attention --json",
+      },
     ],
   },
   {
     path: ["session", "wait"],
     title: "Wait for a session",
-    summary: "Block until a session is idle or needs attention, then print the terminal state.",
-    usage: "oppi session wait <id> [--for idle|attention|either] [--timeout <duration>] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    summary:
+      "Block until one or more sessions are idle or need attention, then print the terminal state.",
+    usage:
+      "oppi session wait <id...> [--for idle|attention|either] [--all] [--poll <duration>] [--summary-every <duration>] [--timeout <duration>] [--json]",
+    arguments: [{ name: "<id...>", summary: "one or more session ids" }],
     flags: [
       {
         name: "--for",
@@ -1124,20 +1151,38 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "idle, attention, or either (default either)",
       },
       {
+        name: "--all",
+        summary: "require every listed session to meet --for (default any)",
+      },
+      {
         name: "--timeout",
         value: "<duration>",
         summary: "max wait such as 900, 30s, or 10m; bare numbers are seconds (default 10m)",
       },
       {
-        name: "--poll",
+        name: "--poll, --interval",
         value: "<duration>",
-        summary: "poll interval such as 1 or 500ms; bare numbers are seconds (default 1s)",
+        summary: "how often to check session state; default 2s from turn TTFT p50/2",
+      },
+      {
+        name: "--summary-every",
+        value: "<duration>",
+        summary: "compact heartbeat while still waiting; default 60s; 0 disables",
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    notes: ["Use watch for multiple sessions or live state transitions."],
+    notes: [
+      "One id keeps the single-session JSON envelope. Several ids resolve on the first match unless --all is set.",
+      "Wait never streams transitions. It polls quietly and may print a compact still-waiting summary. JSON stays one envelope and includes progress[] when heartbeats fired.",
+      "Defaults come from 14-day server telemetry: poll 2s ≈ half of turn TTFT p50 (4.3s); heartbeat 60s ≈ a quarter of turn duration p50 (236s). Override per call. See .internal/reports/session-wait-poll-defaults-2026-08-19.md.",
+      "Use session watch only in a human terminal for live transition lines. The oppi tool does not expose streaming watch.",
+    ],
     examples: [
       { command: "oppi session wait 11111111-1111-4111-8111-111111111111 --for idle --json" },
+      {
+        command:
+          "oppi session wait 11111111-1111-4111-8111-111111111111 22222222-2222-4222-8222-222222222222 --for idle --all --timeout 20m",
+      },
     ],
   },
   {

@@ -268,8 +268,8 @@ describe("centralized nested-help dispatch", () => {
       }
     }
 
-    expect(allPaths.length).toBe(76);
-    expect(paths.length).toBe(75);
+    expect(allPaths.length).toBe(77);
+    expect(paths.length).toBe(76);
     expect(app.runCli).not.toHaveBeenCalled();
     expect(lifecycle.installService).not.toHaveBeenCalled();
     expect(lifecycle.restartService).not.toHaveBeenCalled();

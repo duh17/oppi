@@ -80,14 +80,57 @@ describe("canonical Oppi command preparation", () => {
   });
 
   it.each([
-    ["session", "create", "--workspace", "ws-1", "--prompt", "@-"],
-    ["session", "send", "sess-1", "--text", "@-"],
     ["agent", "update", "agent-1", "--definition", "agent.json"],
     ["schedule", "update", "sch-1", "--definition", "schedule.json"],
-  ])("rejects mutable mutation body input %s", (...args) => {
+  ])("rejects file-backed mutation body input %s", (...args) => {
     expect(prepareOppiCommand(args)).toMatchObject({
       ok: false,
-      reason: expect.stringMatching(/inline|stdin|file/i),
+      reason: expect.stringMatching(/inline|file/i),
+    });
+  });
+
+  it("inlines --prompt @- into the approved argument snapshot", () => {
+    const result = prepareOppiCommand(
+      ["session", "create", "--workspace", "ws-1", "--prompt", "@-"],
+      { readStdin: () => "Review the failing CLI test." },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.command.args).toEqual([
+      "session",
+      "create",
+      "--workspace",
+      "ws-1",
+      "--prompt",
+      "Review the failing CLI test.",
+    ]);
+  });
+
+  it("inlines --text @- into the approved argument snapshot", () => {
+    const result = prepareOppiCommand(["session", "send", "sess-1", "--text", "@-"], {
+      readStdin: () => "Focus on the timeout.",
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.command.args).toEqual([
+      "session",
+      "send",
+      "sess-1",
+      "--text",
+      "Focus on the timeout.",
+    ]);
+  });
+
+  it("rejects empty stdin for @- mutation bodies", () => {
+    expect(
+      prepareOppiCommand(["session", "send", "sess-1", "--text", "@-"], {
+        readStdin: () => "   \n",
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/stdin|empty/i),
     });
   });
 
@@ -133,6 +176,17 @@ describe("canonical Oppi command preparation", () => {
     ]) {
       expect(prepareOppiCommand(args), args.join(" ")).toMatchObject({ ok: false });
     }
+  });
+
+  it("allows root help through the agent wrapper", () => {
+    expect(prepareOppiCommand(["help"])).toMatchObject({
+      ok: true,
+      command: { isHelp: true, path: [] },
+    });
+    expect(prepareOppiCommand(["--help"])).toMatchObject({
+      ok: true,
+      command: { isHelp: true, path: [] },
+    });
   });
 
   it("allows redacted config reads and classifies config set as mutation", () => {
