@@ -17,7 +17,7 @@ SILENCE_TIMEOUT="${OPPI_CI_SIM_SILENCE_TIMEOUT:-180}"
 HANG_RETRIES="${OPPI_CI_SIM_HANG_RETRIES:-1}"
 POLL_INTERVAL="${OPPI_CI_SIM_POLL_INTERVAL:-5}"
 TERMINATION_GRACE="${OPPI_CI_SIM_TERMINATION_GRACE:-5}"
-CONTROL_TIMEOUT="${OPPI_CI_SIM_CONTROL_TIMEOUT:-30}"
+CONTROL_TIMEOUT="${OPPI_CI_SIM_CONTROL_TIMEOUT:-90}"
 RETRY_DEADLINE="${OPPI_CI_SIM_RETRY_DEADLINE:-0}"
 DERIVED_DATA="${OPPI_CI_DERIVED_DATA_PATH:-$BUILD_BASE/ci}"
 SIM_UDID=""
@@ -46,7 +46,7 @@ Environment:
   OPPI_CI_SIM_HANG_RETRIES      Reboot-and-retry count after silence (default: 1)
   OPPI_CI_SIM_POLL_INTERVAL     Seconds between process checks (default: 5)
   OPPI_CI_SIM_TERMINATION_GRACE Seconds before hung process groups get KILL (default: 5)
-  OPPI_CI_SIM_CONTROL_TIMEOUT  Timeout for simulator boot/shutdown commands (default: 30)
+  OPPI_CI_SIM_CONTROL_TIMEOUT  Timeout for simulator boot/shutdown commands (default: 90)
   OPPI_CI_SIM_RETRY_DEADLINE   Skip retry after this elapsed run time; 0 disables (default: 0)
   OPPI_CI_DERIVED_DATA_PATH     DerivedData path (default: clients/apple/.build/ci)
 EOF
@@ -722,10 +722,12 @@ run_command_attempt() {
 
 reboot_existing_simulator() {
   echo "[ci-simulator] Rebooting existing simulator $SIM_UDID without erasing it" >&2
+  # A stuck Shutdown must not abort the job. The next bootstatus wait is the
+  # real readiness gate, and cleanup already treats shutdown as best-effort.
   run_simctl_bounded "$CONTROL_TIMEOUT" shutdown "$SIM_UDID" >/dev/null 2>&1 \
-    || die "existing simulator $SIM_UDID failed to shut down within ${CONTROL_TIMEOUT}s"
+    || echo "[ci-simulator] shutdown did not finish within ${CONTROL_TIMEOUT}s; continuing" >&2
   run_simctl_bounded "$CONTROL_TIMEOUT" boot "$SIM_UDID" >/dev/null 2>&1 \
-    || die "existing simulator $SIM_UDID failed to start reboot within ${CONTROL_TIMEOUT}s"
+    || echo "[ci-simulator] boot after reboot did not finish within ${CONTROL_TIMEOUT}s; continuing to bootstatus wait" >&2
 }
 
 restart_existing_simulator() {
