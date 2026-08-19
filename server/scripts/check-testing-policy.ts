@@ -158,7 +158,7 @@ export function checkTestingPolicy(
     check(tracked.status === 0, `required testing file is not tracked: ${requiredPath}`);
   }
 
-  // 4. Declared CI workflows must exist and invoke the threshold-enforced gates.
+  // 4. Declared CI workflows, if any, must exist and invoke the threshold-enforced gates.
   if (policy.ci?.serverWorkflow) {
     const workflowPath = path.join(repoRoot, policy.ci.serverWorkflow);
     check(existsSync(workflowPath), `server CI workflow missing: ${policy.ci.serverWorkflow}`);

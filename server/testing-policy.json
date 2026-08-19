@@ -25,18 +25,14 @@
     }
   },
   "ci": {
-    "serverWorkflow": ".github/workflows/server.yml",
-    "appleWorkflow": ".github/workflows/apple.yml",
     "coverageGate": "ci-coverage",
-    "note": "Pre-push is change-aware and non-coverage; GitHub Actions owns full threshold-enforced coverage."
+    "note": "Pre-push is change-aware and non-coverage. Full threshold-enforced coverage and release gates run locally via test:gate:ci-coverage and oppi-workflow.sh release-all. GitHub Actions only runs repository hygiene."
   },
   "tooling": {
     "requiredTrackedFiles": [
       ".githooks/pre-push",
       "scripts/pre-push-plan.ts",
       "scripts/pre-push-plan.test.ts",
-      ".github/workflows/server.yml",
-      ".github/workflows/apple.yml",
       ".github/workflows/hygiene.yml"
     ]
   },

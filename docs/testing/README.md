@@ -7,12 +7,12 @@ Use these canonical test commands for the Oppi monorepo.
 - Gate policy: `server/testing-policy.json`
 - Change-aware local gate: `.githooks/pre-push`
 - Explicit full non-coverage gate: `cd server && npm run test:gate:pr-fast`
-- Full threshold-enforced coverage: GitHub Actions and `cd server && npm run test:gate:ci-coverage` (`test:coverage` on the server)
+- Full threshold-enforced coverage: local `cd server && npm run test:gate:ci-coverage` (`test:coverage` on the server) and `oppi-workflow.sh release-all`
 - Coverage thresholds live in `server/vitest.config.ts` and `clients/apple/scripts/check-coverage.sh`.
 
 The local hook reads the refs Git pushes, classifies changed paths, and runs platform checks concurrently. Server changes run static checks plus Vitest's affected tests; server configuration and protocol changes run the full non-coverage suite. Apple changes compile affected test bundles with the repository simulator pool. Each lane requires its relevant worktree paths to match the pushed commit. Successful lanes are cached by commit, pushed range, lane mode, path set, and toolchain so retries do not repeat completed work.
 
-Full server and Apple unit coverage runs in `.github/workflows/server.yml` and `.github/workflows/apple.yml`. Coverage is deliberately asynchronous; pre-push keeps compile, static-analysis, architecture, and affected-test failures local. On pull requests, both workflows always publish stable `Server CI required` and `Apple CI required` checks while running expensive coverage only for relevant paths. Those two summary checks can be required globally. Main-branch push runs remain path-filtered. `.github/workflows/hygiene.yml` runs secret and file-size checks for every push and pull request.
+Full server and Apple unit coverage run on the local workstation. Pre-push keeps compile, static-analysis, architecture, and affected-test failures on the push path. Use `cd server && npm run test:gate:ci-coverage` and `clients/apple/scripts/check-coverage.sh` for threshold-enforced coverage, or `oppi-workflow.sh release-all` for a release cut. `.github/workflows/hygiene.yml` still runs secret and file-size checks for every push and pull request.
 
 ## Server
 
@@ -183,7 +183,7 @@ cd clients/apple
 ./scripts/check-coverage.sh
 ```
 
-CI maintainers can validate the GitHub path against an existing simulator whose runtime matches the active Xcode iOS Simulator SDK:
+The single-device CI simulator runner is optional local coverage, not a GitHub job:
 
 ```bash
 cd clients/apple
@@ -192,13 +192,9 @@ OPPI_SIMULATOR_RUNNER=ci ./scripts/check-coverage.sh
 
 Do not run this command concurrently. It deliberately has no local lock and uses one existing device with one CI DerivedData path. Normal local builds and tests must use `sim-pool.sh`.
 
-`check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Invalid or unavailable simulator-runner configuration returns `8`. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. Swift package resolution returns `7` after both the restored-cache attempt and an empty-cache retry fail. A failed collection is not a coverage shortfall. The script prints package-resolution, build/test, report, and analysis wall times; Apple CI also enables Xcode's build timing summary.
+`check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Invalid or unavailable simulator-runner configuration returns `8`. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. Swift package resolution returns `7` after both the restored-cache attempt and an empty-cache retry fail. A failed collection is not a coverage shortfall. The script prints package-resolution, build/test, report, and analysis wall times.
 
 The local pool gives a simulator boot two 120-second readiness waits by default. For a new simulator, the second wait continues the same first-boot data migration instead of erasing and restarting it. Set `OPPI_SIM_POOL_BOOT_TIMEOUT` to change each wait or `OPPI_SIM_POOL_BOOT_RETRIES` to change the number of additional waits.
-
-Apple CI selects an existing `iPhone 17 Pro` by default and waits up to 150 seconds per boot-readiness attempt. If readiness fails, it shuts down and boots the same device without erasing it, up to two times, for three total waits. Simulator boot and shutdown commands have a separate 30-second limit. Set `OPPI_CI_SIM_DEVICE_NAME`, `OPPI_CI_SIM_RUNTIME`, or `OPPI_CI_SIM_BOOT_TIMEOUT` only when the pinned runner image or Xcode changes. A missing device fails with the available iOS simulator inventory; the CI runner does not create a replacement. Boot wait attempt counts, timeout, and outcome—including exhausted boot-preparation failures before `xcodebuild` starts—are recorded in the CI summary, while `bootstatus` output remains visible. If `xcodebuild` stops producing output for 300 seconds in the GitHub workflow, the runner terminates the complete build process group, reboots the same device without erasing it, and retries once with a distinct result-bundle path. It skips the retry when the coverage run has already used 900 seconds, which preserves time for diagnostics before the 40-minute job limit.
-
-Apple CI caches only SwiftPM's downloaded repositories and binary artifacts. The exact cache key includes the runner OS and architecture, Xcode build, and `Package.resolved`; there are no partial restore keys. The current dependency set is about 200 MB before cache compression. The cache excludes package checkouts, manifests, DerivedData, build products, and test artifacts. This keeps entries well below GitHub's 10 GB per-repository cache limit and avoids caching compiler output. A cache miss or cache-service failure performs a normal package fetch. If Xcode rejects a restored cache, `check-coverage.sh` deletes only its disposable runner-temp cache root and retries package resolution from empty state before compiling.
 
 The tracked pre-push hook is `.githooks/pre-push`. It does not collect coverage; it runs the faster local checks described above. Install it into a clone's configured hook directory after reviewing any existing local hook:
 
