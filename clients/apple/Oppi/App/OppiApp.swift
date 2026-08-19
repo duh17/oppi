@@ -1271,30 +1271,16 @@ struct OppiApp: App {
             ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
         do {
 #if DEBUG
-            let bootstrap: InviteBootstrapResult
-            if let e2eDeviceToken = ProcessInfo.processInfo.environment["OPPI_E2E_DEVICE_TOKEN"],
-               !e2eDeviceToken.isEmpty {
-                let effectiveCredentials = credentials.withAuthToken(e2eDeviceToken)
-                guard let baseURL = effectiveCredentials.baseURL else {
-                    throw InviteBootstrapError.message("Invalid E2E invite URL")
+            // E2E must pair through the invite. Injecting the harness `dt_` token
+            // lets ConnectionCoordinator migrate it, then later calls fail closed.
+            let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials,
+                existingCredentials: existingCredentials
+            ) { reason in
+                if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
+                    return true
                 }
-                let api = APIClient(
-                    baseURL: baseURL,
-                    token: e2eDeviceToken,
-                    tlsCertFingerprint: effectiveCredentials.normalizedTLSCertFingerprint
-                )
-                let sessions = try await api.listSessionsFromWorkspaces()
-                bootstrap = InviteBootstrapResult(effectiveCredentials: effectiveCredentials, sessions: sessions)
-            } else {
-                bootstrap = try await InviteBootstrapService.validateAndBootstrap(
-                    credentials: credentials,
-                    existingCredentials: existingCredentials
-                ) { reason in
-                    if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
-                        return true
-                    }
-                    return await BiometricService.shared.authenticate(reason: reason)
-                }
+                return await BiometricService.shared.authenticate(reason: reason)
             }
 #else
             let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
