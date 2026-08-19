@@ -186,7 +186,7 @@ export async function applyOppiToolPolicy(options: {
   // Keep worktree remove classified as destructive. Skip the human prompt only
   // when a fail-closed preflight immediately before execute proves the tree is
   // a clean, inactive, Oppi-managed, already-merged checkout.
-  let provenSafe = false;
+  let provenSafe: boolean;
   try {
     provenSafe = await isProvenSafeCleanWorktreeRemove(options);
   } catch (error) {
