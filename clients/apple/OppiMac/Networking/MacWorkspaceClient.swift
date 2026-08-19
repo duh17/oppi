@@ -179,7 +179,10 @@ actor MacWorkspaceClient {
                 queryItems: queryItems
             )
         )
-        return try JSONDecoder().decode(SessionTracePage.self, from: data)
+        return try JSONDecoder().decode(
+            SessionTracePage.self,
+            from: JSONUnpairedSurrogateRepair.repairing(data)
+        )
     }
 
     func createWorkspaceSession(

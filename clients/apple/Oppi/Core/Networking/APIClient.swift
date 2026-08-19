@@ -479,7 +479,10 @@ actor APIClient: ClientLogUploading {
     ) async throws -> (session: Session, trace: [TraceEvent]) {
         let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))?view=\(traceView.rawValue)")
         struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
-        let response = try JSONDecoder().decode(Response.self, from: data)
+        let response = try JSONDecoder().decode(
+            Response.self,
+            from: JSONUnpairedSurrogateRepair.repairing(data)
+        )
         return (response.session, response.trace)
     }
 
@@ -539,7 +542,10 @@ actor APIClient: ClientLogUploading {
         components.queryItems = items.isEmpty ? nil : items
         let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
         let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/trace-page\(query)")
-        return try JSONDecoder().decode(SessionTracePageResponse.self, from: data)
+        return try JSONDecoder().decode(
+            SessionTracePageResponse.self,
+            from: JSONUnpairedSurrogateRepair.repairing(data)
+        )
     }
 
     func getSessionTraceOutline(

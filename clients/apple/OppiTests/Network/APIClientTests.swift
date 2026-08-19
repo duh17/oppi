@@ -802,6 +802,39 @@ struct APIClientTests {
         #expect(response.metrics.scannedBytes == 123)
     }
 
+    @Test func getSessionTracePageRepairsTruncatedWebSearchSurrogate() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/w1/sessions/s1/trace-page")
+            return self.mockResponse(json: """
+            {
+                "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
+                "trace":[
+                    {
+                        "id":"seg-1","type":"system","timestamp":"2025-01-01T00:00:00Z",
+                        "text":"Artificial Analysis Intelligence Index v4.1.1 includes: GDPval-AA v2, \\ud835...",
+                        "callSegments":[{"text":"GDPval-AA v2, \\ud835...","style":"muted"}]
+                    }
+                ],
+                "page":{"hasOlder":false,"olderCursor":null,"traceVersion":"1","previewBytes":4096,"staleCursor":false},
+                "metrics":{"rawEntryCount":1,"traceEventCount":1,"selectedRawEntryCount":1,"jsonlBytes":1,"scannedBytes":1,"readMs":1,"parseMs":1,"selectMs":1,"formatMs":1,"previewMs":1}
+            }
+            """)
+        }
+
+        let response = try await client.getWorkspaceSessionTracePage(
+            workspaceId: "w1",
+            sessionId: "s1",
+            previewBytes: 4096
+        )
+
+        #expect(response.trace.count == 1)
+        #expect(response.trace[0].text?.contains("\u{FFFD}") == true)
+        #expect(response.trace[0].callSegments?.first?.text.contains("\u{FFFD}") == true)
+    }
+
     @Test func getSessionTracePageCanRequestAroundEntryPage() async throws {
         let client = makeClient()
         defer { cleanup() }
