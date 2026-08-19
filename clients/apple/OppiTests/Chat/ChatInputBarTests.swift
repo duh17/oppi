@@ -733,6 +733,137 @@ struct ChatInputBarTests {
         #expect(displayedText == "")
     }
 
+    @Test("Submitted custom ask stays cleared after the server drops the pending request")
+    func submittedCustomAskStaysClearedAfterPendingRequestIsCleared() throws {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Why?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        let submittedText = "because the larger tables should download"
+        let transition = try #require(ChatInputBar<EmptyView>.askComposerSendTransition(
+            request: request,
+            currentPage: 0,
+            draftAnswers: [:],
+            text: submittedText
+        ))
+
+        #expect(transition.shouldSubmit)
+        #expect(transition.nextComposerText.isEmpty)
+
+        let whileVisible = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: request,
+            activeQuestionID: "q1",
+            draftAnswers: transition.answers,
+            keepComposerClearedForSubmittedRequestID: request.id
+        )
+        #expect(whileVisible == "")
+
+        let retainedID = ChatInputBar<EmptyView>.retainedSubmittedAskRequestID(
+            current: request.id,
+            incomingRequestID: nil
+        )
+        #expect(retainedID == request.id)
+
+        let afterServerCleared = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: nil,
+            activeQuestionID: "q1",
+            draftAnswers: transition.answers,
+            keepComposerClearedForSubmittedRequestID: retainedID
+        )
+        #expect(afterServerCleared != submittedText)
+        #expect(afterServerCleared != "because the larger tables should download")
+    }
+
+    @Test("Ask submit clearance empties composer and keeps the submitted mark after settle")
+    func askSubmitClearanceEmptiesComposerAndRetainsSubmittedMark() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Why?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        let submittedText = "typed custom answer"
+        let clearance = ChatInputBar<EmptyView>.askComposerSubmitClearance(request: request)
+
+        #expect(clearance.nextComposerText.isEmpty)
+        #expect(clearance.submittedRequestID == request.id)
+
+        let retainedID = ChatInputBar<EmptyView>.retainedSubmittedAskRequestID(
+            current: clearance.submittedRequestID,
+            incomingRequestID: nil
+        )
+        #expect(retainedID == request.id)
+
+        let replacement = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: nil,
+            activeQuestionID: "q1",
+            draftAnswers: ["q1": .custom(submittedText)],
+            keepComposerClearedForSubmittedRequestID: retainedID
+        )
+        #expect(replacement != submittedText)
+    }
+
+    @Test(arguments: [
+        (current: String?.some("ask-1"), incoming: String?.none, expected: String?.some("ask-1")),
+        (current: String?.some("ask-1"), incoming: String?.some("ask-1"), expected: String?.some("ask-1")),
+        (current: String?.some("ask-1"), incoming: String?.some("ask-2"), expected: String?.none),
+        (current: String?.none, incoming: String?.some("ask-2"), expected: String?.none),
+        (current: String?.none, incoming: String?.none, expected: String?.none),
+    ])
+    func submittedAskMarkSurvivesUntilADifferentAskArrives(
+        current: String?,
+        incoming: String?,
+        expected: String?
+    ) {
+        #expect(
+            ChatInputBar<EmptyView>.retainedSubmittedAskRequestID(
+                current: current,
+                incomingRequestID: incoming
+            ) == expected
+        )
+    }
+
+    @Test("Ask composer clearing state retains the submitted mark until a different ask arrives")
+    func askComposerClearingStateRetainsSubmittedMarkUntilDifferentAsk() {
+        let request = AskRequest(
+            id: "ask-1",
+            sessionId: "s1",
+            questions: [AskQuestion(id: "q1", question: "Why?", options: [], multiSelect: false)],
+            allowCustom: true,
+            timeout: nil
+        )
+        let submittedText = "because the larger tables should download"
+        var state = AskComposerClearingState(
+            currentPage: 1,
+            draftAnswers: ["q1": .custom(submittedText)]
+        )
+
+        let nextComposerText = state.markSubmitted(request: request)
+        #expect(nextComposerText.isEmpty)
+        #expect(state.submittedRequestID == request.id)
+
+        state.applyRequestIDChange(nil)
+        #expect(state.submittedRequestID == request.id)
+        #expect(state.currentPage == 0)
+        #expect(state.draftAnswers.isEmpty)
+        #expect(nextComposerText.isEmpty)
+
+        let afterRequestCleared = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: nil,
+            activeQuestionID: "q1",
+            draftAnswers: state.draftAnswers,
+            keepComposerClearedForSubmittedRequestID: state.submittedRequestID
+        )
+        #expect(afterRequestCleared != submittedText)
+
+        state.applyRequestIDChange("ask-2")
+        #expect(state.submittedRequestID == nil)
+    }
+
     @Test("Unsubmitted custom ask restores the stored text for the active page")
     func unsubmittedCustomAskRestoresStoredText() {
         let request = AskRequest(

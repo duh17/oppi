@@ -181,6 +181,56 @@ struct ChatComposerDraftControllerTests {
         #expect(controller.repoPointers.map(\.path) == ["Sources/App.swift"])
     }
 
+    @Test func submittedAskAnswerDoesNotOverwriteRestoredMessageDraft() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "pre-ask draft")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        controller.setMode(.ask)
+        controller.updateVisibleText("because the larger tables should download", for: .ask)
+        #expect(store.record(for: key)?.payload.text == "pre-ask draft")
+
+        controller.clearSubmittedAskAnswer()
+        #expect(controller.text.isEmpty)
+        #expect(store.record(for: key)?.payload.text == "pre-ask draft")
+
+        controller.setMode(.message)
+        #expect(controller.text == "pre-ask draft")
+
+        controller.updateVisibleText("because the larger tables should download", for: .message)
+        #expect(controller.text == "pre-ask draft")
+        #expect(store.record(for: key)?.payload.text == "pre-ask draft")
+
+        controller.updateVisibleText("next real message", for: .message)
+        #expect(controller.text == "next real message")
+        #expect(store.record(for: key)?.payload.text == "next real message")
+    }
+
+    @Test func submittedAskAnswerDoesNotBecomeMessageDraft() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        controller.setMode(.ask)
+        controller.updateVisibleText("submitted custom answer", for: .ask)
+        controller.clearSubmittedAskAnswer()
+        #expect(controller.text.isEmpty)
+        #expect(store.record(for: key) == nil)
+
+        controller.setMode(.message)
+        controller.updateVisibleText("submitted custom answer", for: .message)
+        #expect(controller.text.isEmpty)
+        #expect(store.record(for: key) == nil)
+    }
+
     @Test func retargetingReviewCommentClearsOnlyTransientInput() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

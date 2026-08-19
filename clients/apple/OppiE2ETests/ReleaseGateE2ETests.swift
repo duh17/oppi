@@ -65,6 +65,15 @@ final class ReleaseGateE2ETests: E2ETestCase {
         let answer = try waitForE2EHarnessResponse(sessionId: sessionId, requestId: answerRequestId)
         XCTAssertEqual(answer["value"] as? String, "{\"answer\":\"gate ask answer\"}")
         XCTAssertNil(answer["cancelled"])
+
+        let chatInput = app.textViews["chat.input"]
+        XCTAssertTrue(waitForElementToExist(chatInput, timeout: 5), "Chat input missing after ask submit")
+        let composerValue = waitForInputValue(chatInput, containing: "", timeout: 1)
+        XCTAssertFalse(
+            composerValue.contains("gate ask answer"),
+            "Composer still contains the submitted ask answer after send. Value: \(composerValue)"
+        )
+
         try settleE2EUIRequest(sessionId: sessionId, requestId: answerRequestId)
 
         let ignoreRequestId = "gate-ask-ignore"

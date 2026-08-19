@@ -1617,6 +1617,8 @@ struct ChatView: View {
         guard let ask = activeComposerAskRequest,
               let payload = ask.responsePayload(from: answers) else { return }
 
+        composerDraftController.clearSubmittedAskAnswer()
+
         Task {
             do {
                 try await connection.respondToExtensionUI(
@@ -1632,6 +1634,8 @@ struct ChatView: View {
 
     private func handleComposerAskIgnoreAll() {
         guard let ask = activeComposerAskRequest else { return }
+
+        composerDraftController.clearSubmittedAskAnswer()
 
         Task {
             do {

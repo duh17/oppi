@@ -18,6 +18,9 @@ final class ChatComposerDraftController {
 
     var text: String {
         didSet {
+            if !isApplyingVisiblePayload, mode == .ask, !text.isEmpty {
+                lastAskVisibleText = text
+            }
             guard !isApplyingVisiblePayload, mode == .message else { return }
             messagePayload.text = text
             persistMessagePayload()
@@ -40,6 +43,8 @@ final class ChatComposerDraftController {
     @ObservationIgnored private var initialSeed: ComposerDraftPayload?
     @ObservationIgnored private var isEphemeral = false
     @ObservationIgnored private var isApplyingVisiblePayload = false
+    @ObservationIgnored private var lastAskVisibleText = ""
+    @ObservationIgnored private var discardedAskSubmissionText: String?
 
     init(
         initialText: String = "",
@@ -113,6 +118,8 @@ final class ChatComposerDraftController {
         isEphemeral = true
         initialSeed = nil
         messagePayload = .empty
+        lastAskVisibleText = ""
+        discardedAskSubmissionText = nil
         mode = .message
         applyVisiblePayload(.empty)
     }
@@ -136,8 +143,31 @@ final class ChatComposerDraftController {
     }
 
     func updateVisibleText(_ newText: String, for newMode: Mode) {
+        if shouldIgnoreDiscardedAskSubmission(newText, for: newMode) {
+            if mode != newMode {
+                setMode(newMode)
+            }
+            return
+        }
+        if newMode == .message {
+            discardedAskSubmissionText = nil
+            lastAskVisibleText = ""
+        }
         setMode(newMode)
+        if newMode == .ask, !newText.isEmpty {
+            lastAskVisibleText = newText
+        }
         text = newText
+    }
+
+    /// Forget a just-submitted or ignored ask answer so a stale composer write
+    /// cannot become the restored message draft after the ask card leaves.
+    func clearSubmittedAskAnswer() {
+        let candidate = text.isEmpty ? lastAskVisibleText : text
+        discardedAskSubmissionText = candidate.isEmpty ? nil : candidate
+        if mode == .ask {
+            applyVisiblePayload(.empty)
+        }
     }
 
     func replaceMessage(
@@ -214,6 +244,15 @@ final class ChatComposerDraftController {
         if mode == .message {
             applyVisiblePayload(messagePayload)
         }
+    }
+
+    private func shouldIgnoreDiscardedAskSubmission(_ newText: String, for newMode: Mode) -> Bool {
+        guard newMode == .message,
+              let discarded = discardedAskSubmissionText,
+              !discarded.isEmpty else {
+            return false
+        }
+        return newText == discarded
     }
 
     private func persistMessagePayload() {

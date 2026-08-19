@@ -10,6 +10,31 @@ enum ChatInputPrimaryActionKind: Equatable {
     case stop
 }
 
+/// Owns inline-ask paging, draft answers, and the submitted-request mark
+/// that keeps the composer empty after submit/ignore until a different ask arrives.
+struct AskComposerClearingState: Equatable {
+    var currentPage = 0
+    var draftAnswers: [String: AskAnswer] = [:]
+    var submittedRequestID: String?
+
+    /// Final submit or ignore: mark this request submitted and clear composer text.
+    mutating func markSubmitted(request: AskRequest?) -> String {
+        submittedRequestID = request?.id
+        return ""
+    }
+
+    /// Ask request id changed. Reset page and drafts. Keep the submitted mark
+    /// unless a *different* ask id arrived. Clearing the pending request after
+    /// a successful send must not drop the mark.
+    mutating func applyRequestIDChange(_ incomingRequestID: String?) {
+        currentPage = 0
+        draftAnswers = [:]
+        if let incomingRequestID, incomingRequestID != submittedRequestID {
+            submittedRequestID = nil
+        }
+    }
+}
+
 /// Chat input bar with full-width composer and action row.
 ///
 /// **Layout**:
@@ -68,9 +93,7 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var showCamera = false
     @State private var showFileImporter = false
     @State private var inlineVisualLineCount = 1
-    @State private var askCurrentPage = 0
-    @State private var askDraftAnswers: [String: AskAnswer] = [:]
-    @State private var keepComposerClearedForSubmittedAskRequestID: String?
+    @State private var askClearing = AskComposerClearingState()
     @State private var isBusyModePickerPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -135,18 +158,18 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var activeAskQuestionID: String? {
         guard let askRequest,
-              askCurrentPage >= 0,
-              askCurrentPage < askRequest.questions.count else {
+              askClearing.currentPage >= 0,
+              askClearing.currentPage < askRequest.questions.count else {
             return nil
         }
-        return askRequest.questions[askCurrentPage].id
+        return askRequest.questions[askClearing.currentPage].id
     }
 
     private var pendingAskSendTransition: AskComposerSendTransition? {
         Self.askComposerSendTransition(
             request: askRequest,
-            currentPage: askCurrentPage,
-            draftAnswers: askDraftAnswers,
+            currentPage: askClearing.currentPage,
+            draftAnswers: askClearing.draftAnswers,
             text: composerDisplayText
         )
     }
@@ -312,15 +335,13 @@ struct ChatInputBar<ActionRow: View>: View {
                 onFileSuggestionQuery: onFileSuggestionQuery
             )
         }
-        .onChange(of: askRequest?.id) { _, _ in
-            askCurrentPage = 0
-            askDraftAnswers = [:]
-            keepComposerClearedForSubmittedAskRequestID = nil
+        .onChange(of: askRequest?.id) { _, newID in
+            askClearing.applyRequestIDChange(newID)
         }
-        .onChange(of: askCurrentPage) { _, _ in
+        .onChange(of: askClearing.currentPage) { _, _ in
             syncComposerTextWithActiveAskQuestion()
         }
-        .onChange(of: askDraftAnswers) { _, _ in
+        .onChange(of: askClearing.draftAnswers) { _, _ in
             syncComposerTextWithActiveAskQuestion()
         }
         .onChange(of: photoSelection) { _, items in
@@ -531,10 +552,16 @@ struct ChatInputBar<ActionRow: View>: View {
     private func askCard(request: AskRequest) -> some View {
         AskCard(
             request: request,
-            currentPage: $askCurrentPage,
-            answers: $askDraftAnswers,
-            onSubmit: { answers in onAskSubmit?(answers) },
-            onIgnoreAll: { onAskIgnoreAll?() },
+            currentPage: $askClearing.currentPage,
+            answers: $askClearing.draftAnswers,
+            onSubmit: { answers in
+                markAskRequestSubmitted()
+                onAskSubmit?(answers)
+            },
+            onIgnoreAll: {
+                markAskRequestSubmitted()
+                onAskIgnoreAll?()
+            },
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
         )
     }
@@ -729,6 +756,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var ignoreAskActionButton: some View {
         Button(action: {
+            markAskRequestSubmitted()
             onAskIgnoreAll?()
             FeatureEducationTips.markPromptAnswered()
         }) {
@@ -1033,12 +1061,46 @@ struct ChatInputBar<ActionRow: View>: View {
         draftAnswers: [String: AskAnswer],
         keepComposerClearedForSubmittedRequestID: String?
     ) -> String? {
+        if let submittedRequestID = keepComposerClearedForSubmittedRequestID {
+            // A settled submitted request must not revive the custom answer.
+            // Return nil so a restored pre-ask message draft is not overwritten.
+            if request == nil {
+                return nil
+            }
+            if request?.id == submittedRequestID {
+                return ""
+            }
+        }
         guard let request else { return nil }
         guard request.allowCustom else { return "" }
-        if keepComposerClearedForSubmittedRequestID == request.id {
-            return ""
-        }
         return customAskText(answers: draftAnswers, questionID: activeQuestionID)
+    }
+
+    /// Keep the submitted-ask mark until a *different* ask id appears.
+    /// Clearing the pending request after a successful send must not drop it.
+    static func retainedSubmittedAskRequestID(
+        current: String?,
+        incomingRequestID: String?
+    ) -> String? {
+        var state = AskComposerClearingState(submittedRequestID: current)
+        state.applyRequestIDChange(incomingRequestID)
+        return state.submittedRequestID
+    }
+
+    struct AskComposerSubmitClearance: Equatable {
+        let nextComposerText: String
+        let submittedRequestID: String?
+    }
+
+    /// Any final ask submit or ignore clears visible composer text and marks
+    /// that request submitted before draft-answer sync can restore it.
+    static func askComposerSubmitClearance(request: AskRequest?) -> AskComposerSubmitClearance {
+        var state = AskComposerClearingState()
+        let nextComposerText = state.markSubmitted(request: request)
+        return AskComposerSubmitClearance(
+            nextComposerText: nextComposerText,
+            submittedRequestID: state.submittedRequestID
+        )
     }
 
     struct AskComposerSendTransition: Equatable {
@@ -1096,8 +1158,8 @@ struct ChatInputBar<ActionRow: View>: View {
         guard let desiredText = Self.composerTextForActiveAskQuestion(
             request: askRequest,
             activeQuestionID: activeAskQuestionID,
-            draftAnswers: askDraftAnswers,
-            keepComposerClearedForSubmittedRequestID: keepComposerClearedForSubmittedAskRequestID
+            draftAnswers: askClearing.draftAnswers,
+            keepComposerClearedForSubmittedRequestID: askClearing.submittedRequestID
         ) else { return }
         guard text != desiredText || textBeforeRecording != nil else { return }
         text = desiredText
@@ -1133,6 +1195,7 @@ struct ChatInputBar<ActionRow: View>: View {
             return
         }
         if askRequest != nil {
+            markAskRequestSubmitted()
             onAskIgnoreAll?()
             FeatureEducationTips.markPromptAnswered()
             return
@@ -1146,28 +1209,34 @@ struct ChatInputBar<ActionRow: View>: View {
     private func handleAskComposerSendIfNeeded() -> Bool {
         guard let transition = Self.askComposerSendTransition(
             request: askRequest,
-            currentPage: askCurrentPage,
-            draftAnswers: askDraftAnswers,
+            currentPage: askClearing.currentPage,
+            draftAnswers: askClearing.draftAnswers,
             text: composerDisplayText
         ) else {
             return false
         }
 
-        askDraftAnswers = transition.answers
-        text = transition.nextComposerText
-        textBeforeRecording = nil
-
         if transition.shouldSubmit {
-            keepComposerClearedForSubmittedAskRequestID = askRequest?.id
+            markAskRequestSubmitted()
+            askClearing.draftAnswers = transition.answers
             onAskSubmit?(transition.answers)
             FeatureEducationTips.markPromptAnswered()
-        } else {
-            withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
-                askCurrentPage = transition.nextPage
-            }
+            return true
+        }
+
+        askClearing.draftAnswers = transition.answers
+        text = transition.nextComposerText
+        textBeforeRecording = nil
+        withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
+            askClearing.currentPage = transition.nextPage
         }
 
         return true
+    }
+
+    private func markAskRequestSubmitted() {
+        text = askClearing.markSubmitted(request: askRequest)
+        textBeforeRecording = nil
     }
 
     private func handleAlternateSend() {
