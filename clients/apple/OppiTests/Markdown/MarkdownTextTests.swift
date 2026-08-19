@@ -2413,6 +2413,7 @@ struct SessionFileFullScreenContentBuilderTests {
             workspaceID: "workspace-1",
             serverBaseURL: serverBaseURL,
             workspaceHostMount: "/Users/example/workspace/oppi",
+            workspaceRuntime: .host,
             fetchSessionFileData: { _ in Data([1]) },
             sessionID: "session-1"
         )
@@ -2437,6 +2438,7 @@ struct SessionFileFullScreenContentBuilderTests {
             workspaceID: "workspace-1",
             serverBaseURL: serverBaseURL,
             workspaceHostMount: "/tmp",
+            workspaceRuntime: .host,
             fetchSessionFileData: { _ in Data([1]) },
             sessionID: "session-1"
         )

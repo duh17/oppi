@@ -369,8 +369,8 @@ export class GondolinManager {
   }
 
   /**
-   * When this session is ready/stopped/error, start the 15-minute idle timer
-   * if no other session in the workspace is still busy.
+   * When this session has stopped, start the 15-minute idle timer if no other
+   * session in the workspace still holds the VM.
    */
   noteWorkspaceIdle(workspaceId: string, sessionId: string): void {
     const sessions = this.busySessions.get(workspaceId);

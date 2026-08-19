@@ -14,12 +14,19 @@ export function notifySandboxWorkspaceActivity(
   } | null,
 ): void {
   if (!session.workspaceId || workspace?.runtime !== "sandbox") return;
-  if (session.status === "busy") {
-    vm?.noteWorkspaceBusy?.(session.workspaceId, session.id);
+  // Ready/starting/stopping sessions still hold the VM in the session runtime.
+  // Only stopped/error may arm idle teardown.
+  if (session.status === "stopped" || session.status === "error") {
+    vm?.noteWorkspaceIdle?.(session.workspaceId, session.id);
     return;
   }
-  if (session.status === "ready" || session.status === "stopped" || session.status === "error") {
-    vm?.noteWorkspaceIdle?.(session.workspaceId, session.id);
+  if (
+    session.status === "busy" ||
+    session.status === "ready" ||
+    session.status === "starting" ||
+    session.status === "stopping"
+  ) {
+    vm?.noteWorkspaceBusy?.(session.workspaceId, session.id);
   }
 }
 

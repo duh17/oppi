@@ -52,7 +52,7 @@ New sandbox sessions behave as follows:
 - Global host agent instructions are not exposed to sandbox sessions.
 - Sandbox Oppi does not expose hostMount or host session file paths.
 
-Running sessions keep their current cwd and VM until they are stopped. Start a new session after changing sandbox settings that affect cwd, hosts, or environment. Skill mounts still come from whichever session booted the VM; they do not recycle a live VM. A new session is enough; a server restart is not required. Idle VMs stop after 15 minutes with no busy session; next use boots on demand.
+Running sessions keep their current cwd and VM until they are stopped. Start a new session after changing sandbox settings that affect cwd, hosts, or environment. Skill mounts still come from whichever session booted the VM; they do not recycle a live VM. A new session is enough; a server restart is not required. Idle VMs stop 15 minutes after every sandbox session in that workspace has stopped. A ready session keeps the VM so the next prompt does not hit a closed handle. A new session after teardown boots on demand.
 
 ## Default safety model
 

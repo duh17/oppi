@@ -8,12 +8,15 @@ enum SessionFileFullScreenContentBuilder {
         workspaceID: String?,
         serverBaseURL: URL?,
         workspaceHostMount: String?,
+        workspaceRuntime: WorkspaceRuntime?,
         fetchSessionFileData: ((String) async throws -> Data)?,
         sessionID: String
     ) -> FullScreenCodeContent {
-        let displayPath = MarkdownWikiLinkRewriter.resolvedHostPath(filePath) != nil
-            ? filePath
-            : (filePath.workspaceRelativePath(hostMount: workspaceHostMount) ?? filePath)
+        let displayPath = SessionTouchedFileLoadRoute.navigationTitle(
+            path: filePath,
+            fileName: filePath.lastPathComponentForDisplay,
+            workspaceRuntime: workspaceRuntime
+        )
 
         guard let workspaceID,
               let serverBaseURL,
@@ -80,14 +83,21 @@ struct SessionTouchedFileContentView: View {
         }
     }
 
-    private var currentWorkspaceHostMount: String? {
+    private var currentWorkspace: Workspace? {
         if let activeServerId = workspaceStore.activeServerId,
            let workspace = workspaceStore.workspacesByServer[activeServerId]?
            .first(where: { $0.id == workspaceId }) {
-            return workspace.hostMount
+            return workspace
         }
+        return workspaceStore.workspaces.first(where: { $0.id == workspaceId })
+    }
 
-        return workspaceStore.workspaces.first(where: { $0.id == workspaceId })?.hostMount
+    private var currentWorkspaceHostMount: String? {
+        currentWorkspace?.hostMount
+    }
+
+    private var currentWorkspaceRuntime: WorkspaceRuntime? {
+        currentWorkspace?.runtime
     }
 
     private func fullScreenContent(text: String) -> FullScreenCodeContent {
@@ -97,6 +107,7 @@ struct SessionTouchedFileContentView: View {
             workspaceID: workspaceId,
             serverBaseURL: loadedServerBaseURL,
             workspaceHostMount: currentWorkspaceHostMount,
+            workspaceRuntime: currentWorkspaceRuntime,
             fetchSessionFileData: fetchSessionFileData,
             sessionID: sessionId
         )
@@ -114,7 +125,11 @@ struct SessionTouchedFileContentView: View {
         .navigationTitle(
             isUsingFileViewer
                 ? ""
-                : (MarkdownWikiLinkRewriter.resolvedHostPath(currentFilePath) != nil ? currentFilePath : currentFileName)
+                : SessionTouchedFileLoadRoute.navigationTitle(
+                    path: currentFilePath,
+                    fileName: currentFileName,
+                    workspaceRuntime: currentWorkspaceRuntime
+                )
         )
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)
@@ -200,31 +215,43 @@ struct SessionTouchedFileContentView: View {
         }
         loadedServerBaseURL = api.baseURL
         let workspaceHostMount = currentWorkspaceHostMount
-        fetchSessionFileData = { [api, workspaceId, sessionId] path in
-            if MarkdownWikiLinkRewriter.resolvedHostPath(path) != nil {
-                return try await api.browseHostFile(path: path)
-            }
-            let previewPath = path.workspaceRelativePath(hostMount: workspaceHostMount) ?? path
-            return try await api.getSessionFileData(
-                workspaceId: workspaceId,
-                sessionId: sessionId,
-                path: previewPath
-            )
-        }
-        let requestedPath = currentFilePath
-        let isHostPath = MarkdownWikiLinkRewriter.resolvedHostPath(requestedPath) != nil
-        let previewPath = isHostPath
-            ? requestedPath
-            : (requestedPath.workspaceRelativePath(hostMount: workspaceHostMount) ?? requestedPath)
-        phase = .loading
-        do {
-            let data = try await (isHostPath
-                ? api.browseHostFile(path: previewPath)
-                : api.browseSessionTouchedFile(
+        let workspaceRuntime = currentWorkspaceRuntime
+        fetchSessionFileData = { [api, workspaceId, sessionId, workspaceRuntime, workspaceHostMount] path in
+            switch SessionTouchedFileLoadRoute.resolve(
+                path: path,
+                workspaceRuntime: workspaceRuntime,
+                hostMount: workspaceHostMount
+            ) {
+            case let .hostFile(hostPath):
+                return try await api.browseHostFile(path: hostPath)
+            case let .sessionRaw(rawPath):
+                return try await api.getSessionFileData(
                     workspaceId: workspaceId,
                     sessionId: sessionId,
-                    path: previewPath
-                ))
+                    path: rawPath
+                )
+            }
+        }
+        let requestedPath = currentFilePath
+        let route = SessionTouchedFileLoadRoute.resolve(
+            path: requestedPath,
+            workspaceRuntime: workspaceRuntime,
+            hostMount: workspaceHostMount
+        )
+        phase = .loading
+        do {
+            let data = try await {
+                switch route {
+                case let .hostFile(hostPath):
+                    return try await api.browseHostFile(path: hostPath)
+                case let .sessionRaw(rawPath):
+                    return try await api.browseSessionTouchedFile(
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        path: rawPath
+                    )
+                }
+            }()
             guard isCurrentFile(requestedPath) else { return }
 
             let ext = (requestedPath as NSString).pathExtension.lowercased()

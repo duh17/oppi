@@ -23,7 +23,7 @@ describe("notifySandboxWorkspaceActivity", () => {
     expect(vm.noteWorkspaceIdle).not.toHaveBeenCalled();
   });
 
-  it.each(["ready", "stopped", "error"] as const)(
+  it.each(["stopped", "error"] as const)(
     "notifies idle when a sandbox session is %s",
     (status) => {
       const vm = {
@@ -42,8 +42,8 @@ describe("notifySandboxWorkspaceActivity", () => {
     },
   );
 
-  it.each(["starting", "stopping"] as const)(
-    "does not start teardown while a sandbox session is %s",
+  it.each(["ready", "starting", "stopping"] as const)(
+    "keeps the VM while a sandbox session is %s",
     (status) => {
       const vm = {
         noteWorkspaceBusy: vi.fn(),
@@ -56,7 +56,7 @@ describe("notifySandboxWorkspaceActivity", () => {
         vm,
       );
 
-      expect(vm.noteWorkspaceBusy).not.toHaveBeenCalled();
+      expect(vm.noteWorkspaceBusy).toHaveBeenCalledWith("ws-1", "s1");
       expect(vm.noteWorkspaceIdle).not.toHaveBeenCalled();
     },
   );
