@@ -61,6 +61,55 @@ afterEach(() => {
   canonicalRun.mockReset();
 });
 
+describe("sandbox-scoped Oppi command preparation", () => {
+  const sandboxScope = { workspaceId: "MGXU8ses", workspaceName: "deep-research" };
+
+  it("pins session create to the caller sandbox workspace", () => {
+    const result = prepareOppiCommand(
+      ["session", "create", "--workspace", "deep-research", "--prompt", "gather"],
+      { callerSessionId: "caller", sandboxScope },
+    );
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.command.args).toEqual([
+      "session",
+      "create",
+      "--workspace",
+      "MGXU8ses",
+      "--prompt",
+      "gather",
+    ]);
+    expect(result.command.sandboxScope).toEqual(sandboxScope);
+  });
+
+  it("denies host-escaping sandbox commands", () => {
+    expect(
+      prepareOppiCommand(["workspace", "create", "--name", "x"], {
+        callerSessionId: "caller",
+        sandboxScope,
+      }),
+    ).toMatchObject({ ok: false });
+    expect(
+      prepareOppiCommand(["session", "create", "--workspace", "oppi", "--prompt", "no"], {
+        callerSessionId: "caller",
+        sandboxScope,
+      }),
+    ).toMatchObject({ ok: false });
+    expect(
+      prepareOppiCommand(["session", "list", "--all"], {
+        callerSessionId: "caller",
+        sandboxScope,
+      }),
+    ).toMatchObject({ ok: false });
+    expect(
+      prepareOppiCommand(["session", "wait", "child-1", "--all"], {
+        callerSessionId: "caller",
+        sandboxScope,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+});
+
 describe("canonical Oppi command preparation", () => {
   it("keeps one immutable approved snapshot and bounds input before CLI parsing", () => {
     const raw = ["session", "send", "sess-1", "--text", "keep this body"];

@@ -83,6 +83,7 @@ function makeService(
       deleteSession,
       getDataDir: () => process.cwd(),
       getSession,
+      getWorkspace: vi.fn(),
       listSessions,
       findSessionByLaunchIdempotencyKey,
       claimSessionLaunchRecovery,
@@ -108,6 +109,50 @@ function makeService(
 }
 
 describe("AgentLaunchService", () => {
+  it("rejects sandbox parents launching into another workspace or granting nested delegation", async () => {
+    const parent = makeSession({ id: "parent-sand", workspaceId: "sand-1" });
+    const getWorkspace = vi.fn((id: string) =>
+      id === "sand-1" ? makeWorkspace({ id: "sand-1", runtime: "sandbox" }) : undefined,
+    );
+    const service = new AgentLaunchService({
+      storage: {
+        createSession: vi.fn(),
+        saveSession: vi.fn(),
+        deleteSession: vi.fn(() => false),
+        getDataDir: vi.fn(() => process.cwd()),
+        getSession: vi.fn((id: string) => (id === parent.id ? parent : undefined)),
+        getWorkspace,
+        listSessions: vi.fn(() => [parent]),
+        findSessionByLaunchIdempotencyKey: vi.fn(),
+        claimSessionLaunchRecovery: vi.fn(),
+      },
+      sessions: {
+        startSession: vi.fn(async (sessionId: string) => makeSession({ id: sessionId })),
+        sendPrompt: vi.fn(async () => undefined),
+      },
+      ensureSessionContextWindow: (session) => session,
+    });
+
+    await expect(
+      service.launch({
+        agent: { name: "Scout" },
+        target: { workspace: makeWorkspace({ id: "host-1", name: "oppi" }) },
+        parentSessionId: parent.id,
+        prompt: "no",
+      }),
+    ).rejects.toThrow(/same sandbox workspace/);
+
+    await expect(
+      service.launch({
+        agent: { name: "Scout" },
+        target: { workspace: makeWorkspace({ id: "sand-1", runtime: "sandbox" }) },
+        parentSessionId: parent.id,
+        allowNestedDelegation: true,
+        prompt: "no",
+      }),
+    ).rejects.toThrow(/cannot authorize nested delegation/);
+  });
+
   it("creates a session from instructions/resources/session defaults and target workspace", async () => {
     const { service, createSession, saveSession } = makeService();
     const agent: AgentDefinition = {
@@ -764,6 +809,7 @@ describe("AgentLaunchService", () => {
         deleteSession: vi.fn(() => false),
         getDataDir: vi.fn(() => process.cwd()),
         getSession: vi.fn(),
+        getWorkspace: vi.fn(),
         listSessions: vi.fn(() => (persistedWinner ? [persistedWinner] : [])),
         findSessionByLaunchIdempotencyKey: vi.fn(() => persistedWinner),
         claimSessionLaunchRecovery: vi.fn(() => undefined),
@@ -821,6 +867,7 @@ describe("AgentLaunchService", () => {
         deleteSession: vi.fn(() => false),
         getDataDir: vi.fn(() => process.cwd()),
         getSession: vi.fn((sessionId: string) => (sessionId === root.id ? root : undefined)),
+        getWorkspace: vi.fn(),
         listSessions: vi.fn(() => (persistedWinner ? [persistedWinner] : [root])),
         findSessionByLaunchIdempotencyKey: vi.fn(() => persistedWinner),
         claimSessionLaunchRecovery: vi.fn(() => undefined),

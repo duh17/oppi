@@ -22,11 +22,13 @@ import {
   writeJsonEnvelope,
 } from "./output.js";
 import { cmdStatus } from "./status.js";
+import type { SandboxOppiScope } from "../sandbox-oppi-policy.js";
 
 export type CliRunOptions = Readonly<{
   dataDir?: string;
   cwd?: string;
   callerSessionId?: string;
+  sandboxScope?: SandboxOppiScope;
   captureHuman?: boolean;
   forceJson?: boolean;
   signal?: AbortSignal;
@@ -137,9 +139,10 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
         positional.slice(1),
         flags,
         options.cwd ?? process.cwd(),
-        options.callerSessionId || options.signal
+        options.callerSessionId || options.signal || options.sandboxScope
           ? {
               ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
+              ...(options.sandboxScope ? { sandboxScope: options.sandboxScope } : {}),
               ...(options.signal ? { signal: options.signal } : {}),
             }
           : undefined,

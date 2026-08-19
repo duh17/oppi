@@ -8,12 +8,14 @@
  * Adapted from https://github.com/earendil-works/gondolin/blob/main/host/examples/pi-gondolin.ts
  */
 
-import { relative, resolve, posix } from "node:path";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { join, relative, resolve, posix } from "node:path";
 import type {
   BashOperations,
   ReadOperations,
   WriteOperations,
   EditOperations,
+  LsOperations,
 } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -92,6 +94,27 @@ export function toGuestPath(
   }
 
   return posix.join(guestWorkspace, rel.split(/[\\/]/).join("/"));
+}
+
+/**
+ * Map a sandbox tool path back onto the host workspace mount.
+ *
+ * Sandbox sessions advertise guest cwd `/workspace/<slug>`. Host-backed
+ * ls/find/grep still run on the Mac, so they must not stat that guest path.
+ * The workspace mount is the same tree the guest already sees.
+ */
+export function toHostPath(absolutePath: string, hostCwd: string, guestCwd: string): string {
+  const resolved = resolve(absolutePath);
+  const guestRoot = resolve(guestCwd);
+  const hostRoot = resolve(hostCwd);
+  const guestPrefix = guestRoot.endsWith("/") ? guestRoot : `${guestRoot}/`;
+
+  if (resolved === guestRoot) return hostRoot;
+  if (resolved.startsWith(guestPrefix)) {
+    return join(hostRoot, resolved.slice(guestPrefix.length));
+  }
+
+  throw new Error(`Path is outside the sandbox workspace: ${absolutePath}`);
 }
 
 // ─── Bash ───
@@ -257,5 +280,56 @@ export function createGondolinEditOps(
     readFile: readOps.readFile,
     writeFile: writeOps.writeFile,
     access: readOps.access,
+  };
+}
+
+// ─── Ls ───
+
+/**
+ * Host-mount ls after remapping guest `/workspace/<slug>` paths.
+ * Realpath must stay under the host mount. Shadowed secret names are hidden.
+ */
+export function createSandboxLsOps(
+  hostCwd: string,
+  guestCwd: string,
+  options: { shouldShadow?: (posixPath: string) => boolean } = {},
+): LsOperations {
+  const shouldShadow = options.shouldShadow ?? (() => false);
+
+  const contained = (absolutePath: string): string => {
+    const mapped = toHostPath(absolutePath, hostCwd, guestCwd);
+    const realRoot = realpathSync(hostCwd);
+    const realTarget = existsSync(mapped) ? realpathSync(mapped) : mapped;
+    const rootPrefix = realRoot.endsWith("/") ? realRoot : `${realRoot}/`;
+    if (realTarget !== realRoot && !realTarget.startsWith(rootPrefix)) {
+      throw new Error(`Path is outside the sandbox workspace: ${absolutePath}`);
+    }
+    const rel = relative(realRoot, existsSync(mapped) ? realTarget : mapped);
+    const posixPath = posix.join("/", rel.split(/[\\/]/).join("/").replace(/^\.$/, ""));
+    if (shouldShadow(posixPath === "/" ? "/" : posixPath)) {
+      throw new Error(`ENOENT: no such file or directory, access '${absolutePath}'`);
+    }
+    return existsSync(mapped) ? realTarget : mapped;
+  };
+
+  return {
+    exists(absolutePath: string) {
+      try {
+        return existsSync(contained(absolutePath));
+      } catch {
+        return false;
+      }
+    },
+    stat(absolutePath: string) {
+      return statSync(contained(absolutePath));
+    },
+    readdir(absolutePath: string) {
+      const dir = contained(absolutePath);
+      return readdirSync(dir).filter((name) => {
+        const rel = relative(realpathSync(hostCwd), join(dir, name));
+        const posixPath = posix.join("/", rel.split(/[\\/]/).join("/"));
+        return !shouldShadow(posixPath);
+      });
+    },
   };
 }

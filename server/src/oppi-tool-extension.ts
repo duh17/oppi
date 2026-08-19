@@ -14,9 +14,10 @@ import { redactCredentialString, redactCredentialValue } from "./credential-reda
 import { createLogger } from "./logger.js";
 import type { OppiApprovalPolicy } from "./oppi-extension-settings.js";
 import { assertNotSelfTargetingSession } from "./session-caller-identity.js";
+import { restrictSandboxOppiCommand, type SandboxOppiScope } from "./sandbox-oppi-policy.js";
 
 export type { OppiApprovalPolicy } from "./oppi-extension-settings.js";
-export type OppiToolIdentity = "ordinary" | "control";
+export type OppiToolIdentity = "ordinary" | "control" | "sandbox";
 
 export type PreparedOppiCommand = Readonly<{
   access: Exclude<CliAgentAccess, "denied">;
@@ -26,6 +27,7 @@ export type PreparedOppiCommand = Readonly<{
   action?: string;
   isHelp: boolean;
   callerSessionId?: string;
+  sandboxScope?: SandboxOppiScope;
 }>;
 
 export type PrepareOppiCommandResult =
@@ -54,7 +56,11 @@ const authenticPreparedCommands = new WeakSet<object>();
 
 export function prepareOppiCommand(
   rawArgs: readonly string[],
-  context: Readonly<{ callerSessionId?: string; readStdin?: () => string }> = {},
+  context: Readonly<{
+    callerSessionId?: string;
+    readStdin?: () => string;
+    sandboxScope?: SandboxOppiScope;
+  }> = {},
 ): PrepareOppiCommandResult {
   const args = rawArgs[0] === "oppi" ? rawArgs.slice(1) : [...rawArgs];
   if (args.length === 0) return denied("oppi command args are required");
@@ -98,6 +104,16 @@ export function prepareOppiCommand(
   if (bodyReason) return denied(bodyReason);
 
   const path = Object.freeze([...classified.invocation.path]);
+  if (context.sandboxScope) {
+    const restricted = restrictSandboxOppiCommand({
+      path,
+      args: invocationArgs,
+      isHelp: classified.invocation.isHelp,
+      scope: context.sandboxScope,
+    });
+    if (!restricted.ok) return denied(restricted.reason);
+    invocationArgs = [...restricted.args];
+  }
   const command = Object.freeze({
     access: classified.invocation.access,
     args: Object.freeze(invocationArgs),
@@ -106,6 +122,7 @@ export function prepareOppiCommand(
     ...(path[1] !== undefined ? { action: path[1] } : {}),
     isHelp: classified.invocation.isHelp,
     ...(context.callerSessionId ? { callerSessionId: context.callerSessionId } : {}),
+    ...(context.sandboxScope ? { sandboxScope: context.sandboxScope } : {}),
   }) satisfies PreparedOppiCommand;
   authenticPreparedCommands.add(command);
   return Object.freeze({ ok: true, command });
@@ -132,6 +149,7 @@ export async function executePreparedOppiCommand(options: {
     ...(options.prepared.callerSessionId
       ? { callerSessionId: options.prepared.callerSessionId }
       : {}),
+    ...(options.prepared.sandboxScope ? { sandboxScope: options.prepared.sandboxScope } : {}),
     captureHuman: true,
     forceJson: true,
     ...(options.signal ? { signal: options.signal } : {}),
@@ -217,27 +235,38 @@ export function createOppiToolExtensionFactory(options: {
   policySnapshot: Readonly<{ approvalPolicy: OppiApprovalPolicy }>;
   identity: OppiToolIdentity;
   callerSessionId: string;
+  sandboxScope?: SandboxOppiScope;
 }): ExtensionFactory {
   const policy = options.policySnapshot.approvalPolicy;
   const dataDir = options.dataDir;
   const identity = options.identity;
   const callerSessionId = options.callerSessionId;
+  const sandboxScope = options.sandboxScope;
+  const sandboxScoped = identity === "sandbox" || sandboxScope !== undefined;
 
   return (pi) => {
     pi.registerTool({
       name: "oppi",
       label: "Oppi",
-      description:
-        "Run one exposed Oppi CLI command as JSON under the configured server approval policy.",
-      promptSnippet:
-        "Run exposed Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, status, models, and provider quota.",
+      description: sandboxScoped
+        ? "Run sandbox-scoped Oppi CLI commands for this sandbox workspace only."
+        : "Run one exposed Oppi CLI command as JSON under the configured server approval policy.",
+      promptSnippet: sandboxScoped
+        ? "Create, send, inspect, wait, and stop sessions in this sandbox workspace only. Cannot create host workspaces, edit Agents, or touch schedules or config."
+        : "Run exposed Oppi CLI commands as JSON for workspaces, worktrees, Agents, Skills, sessions, schedules, status, models, and provider quota.",
       promptGuidelines: [
         "Use oppi for Oppi app state instead of shell or filesystem tools, and use read commands before asking about discoverable state.",
         "Route session questions by intent and take the smallest sufficient step: orientation uses session list; current progress uses session inspect <id> --view summary; latest response uses session inspect <id> --view response directly, without summary or outline first.",
         "For historical investigation, use session search or session inspect <id> --view outline first, then request only bounded session messages or tools; use trace-outline only when exact entry ids are needed, followed by trace-page or tool-output for the smallest range.",
         "Use session wait for bounded monitoring of one or more sessions; pass --all to require every id. Default poll is 2s; --poll/--interval and --summary-every override, and --summary-every 0 disables heartbeats.",
-        "Use Oppi mutation commands only after the user asks for them; read the current state first and let the configured policy control approval.",
-        "To edit a saved Agent, run 'oppi agent get <agent>' first, then patch only the changed fields with 'oppi agent update <agent> --definition-json'. Update is a PATCH: omitted fields stay, nested resources/sessionDefaults/launchConstraints merge, and JSON null clears a field or nested key. Allowed top-level keys are name, icon, description, instructions, resources, sessionDefaults, launchConstraints; launch-only keys (target, workspaceId, worktreeId, cwd, schedule, attachments, images) are rejected. sessionDefaults.tools must name real tools available at launch; unavailable names are dropped from the session with a warning.",
+        sandboxScoped
+          ? "Only session list/get/inspect/wait/create/send/abort/stop, agent list/get, workspace get, quota, and models are available. Children stay in this sandbox workspace. Do not pass --allow-nested-delegation or --all."
+          : "Use Oppi mutation commands only after the user asks for them; read the current state first and let the configured policy control approval.",
+        ...(sandboxScoped
+          ? []
+          : [
+              "To edit a saved Agent, run 'oppi agent get <agent>' first, then patch only the changed fields with 'oppi agent update <agent> --definition-json'. Update is a PATCH: omitted fields stay, nested resources/sessionDefaults/launchConstraints merge, and JSON null clears a field or nested key. Allowed top-level keys are name, icon, description, instructions, resources, sessionDefaults, launchConstraints; launch-only keys (target, workspaceId, worktreeId, cwd, schedule, attachments, images) are rejected. sessionDefaults.tools must name real tools available at launch; unavailable names are dropped from the session with a warning.",
+            ]),
       ],
       parameters: Type.Object({
         args: Type.Array(Type.String(), {
@@ -265,7 +294,10 @@ export function createOppiToolExtensionFactory(options: {
           throw new Error("oppi args must be an array of strings");
         }
 
-        const classified = prepareOppiCommand(params.args, { callerSessionId });
+        const classified = prepareOppiCommand(params.args, {
+          callerSessionId,
+          ...(sandboxScope ? { sandboxScope } : {}),
+        });
         if (!classified.ok) {
           audit(identity, "denied", policy, "denied", "denied", "denied", Date.now());
           throw new Error(redactCredentialString(classified.reason));

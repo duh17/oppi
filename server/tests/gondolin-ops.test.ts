@@ -1,7 +1,12 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import {
   toGuestPath,
+  toHostPath,
   GUEST_WORKSPACE,
+  createSandboxLsOps,
   createGondolinBashOps,
   createGondolinReadOps,
   createGondolinWriteOps,
@@ -63,6 +68,65 @@ describe("GUEST_WORKSPACE", () => {
   });
 });
 
+describe("toHostPath", () => {
+  const hostCwd = "/Users/alice/workspace/myproject";
+  const guestCwd = "/workspace/myproject";
+
+  it("maps the guest workspace root to the host mount", () => {
+    expect(toHostPath(guestCwd, hostCwd, guestCwd)).toBe(hostCwd);
+  });
+
+  it("maps a nested guest path onto the host mount", () => {
+    expect(toHostPath(`${guestCwd}/notes/packet.md`, hostCwd, guestCwd)).toBe(
+      `${hostCwd}/notes/packet.md`,
+    );
+  });
+
+  it("rejects host-absolute paths that are not guest-mapped", () => {
+    expect(() => toHostPath(`${hostCwd}/notes/packet.md`, hostCwd, guestCwd)).toThrow(
+      /outside the sandbox workspace/,
+    );
+  });
+
+  it("rejects paths outside both roots", () => {
+    expect(() => toHostPath("/etc/passwd", hostCwd, guestCwd)).toThrow(
+      /outside the sandbox workspace/,
+    );
+  });
+
+  it("does not treat a sibling guest slug as inside the workspace", () => {
+    expect(() => toHostPath("/workspace/myproject-other/file", hostCwd, guestCwd)).toThrow(
+      /outside the sandbox workspace/,
+    );
+  });
+});
+
+describe("createSandboxLsOps", () => {
+  const guestCwd = "/workspace/box";
+  const shadow = (posixPath: string) =>
+    posixPath.endsWith("/.env") || posixPath === "/.env" || posixPath.split("/").includes(".ssh");
+
+  it("hides shadowed names and rejects symlink escapes", () => {
+    const hostCwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-ls-"));
+    try {
+      writeFileSync(join(hostCwd, "packet.md"), "ok\n");
+      writeFileSync(join(hostCwd, ".env"), "SECRET=1\n");
+      mkdirSync(join(hostCwd, ".ssh"));
+      symlinkSync("/etc", join(hostCwd, "escape"));
+      const ops = createSandboxLsOps(hostCwd, guestCwd, { shouldShadow: shadow });
+
+      expect(ops.readdir(guestCwd)).toEqual(expect.arrayContaining(["packet.md"]));
+      expect(ops.readdir(guestCwd)).not.toContain(".env");
+      expect(ops.readdir(guestCwd)).not.toContain(".ssh");
+      expect(ops.exists(`${guestCwd}/.env`)).toBe(false);
+      expect(ops.exists(`${guestCwd}/escape`)).toBe(false);
+      expect(() => ops.stat(`${guestCwd}/escape`)).toThrow(/outside the sandbox workspace/);
+    } finally {
+      rmSync(hostCwd, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── Mock VM ───
 
 function createMockProcess(
@@ -73,7 +137,7 @@ function createMockProcess(
     chunks?: Array<{ stream: "stdout" | "stderr"; data: string }>;
   } = {},
 ): GondolinProcess {
-  const { exitCode = 0, stdout = "", stderr = "", chunks } = overrides;
+  const { exitCode = 0, stdout = "", chunks } = overrides;
   const stdoutBuf = Buffer.from(stdout);
   const result: GondolinExecResult = {
     exitCode,

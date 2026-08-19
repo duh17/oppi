@@ -543,6 +543,15 @@ function recordDroppedAgentToolsWarning(
   });
 }
 
+function sandboxAgentAllowlistsOppi(
+  agentDefinition: AgentDefinition | undefined,
+  session: Session,
+): boolean {
+  const launchAllowed = session.launch?.tools?.allowed;
+  if (launchAllowed) return launchAllowed.includes("oppi");
+  return agentDefinition?.sessionDefaults?.tools?.includes("oppi") === true;
+}
+
 function reserveOppiToolPolicy(options: {
   allowed?: readonly string[];
   excluded?: readonly string[];
@@ -746,6 +755,11 @@ export class SdkBackend {
         return oppiSettingsHolder.snapshot.approvalPolicy;
       },
     };
+    const sandboxOppiRequested =
+      sandboxMode &&
+      isOppiOwnedSession &&
+      !isolatedControlRuntime &&
+      sandboxAgentAllowlistsOppi(agentDefinition, session);
     const ordinaryOppiExtension: InlineExtension | undefined = ordinaryManagedRuntime
       ? {
           name: "oppi",
@@ -760,7 +774,25 @@ export class SdkBackend {
             })(pi);
           },
         }
-      : undefined;
+      : sandboxOppiRequested && workspace
+        ? {
+            name: "oppi",
+            factory: (pi) => {
+              const snapshot = oppiSettingsHolder.snapshot;
+              if (!snapshot.enabled) return;
+              return createOppiToolExtensionFactory({
+                ...(config.dataDir !== undefined ? { dataDir: config.dataDir } : {}),
+                policySnapshot: snapshot,
+                identity: "sandbox",
+                callerSessionId: session.id,
+                sandboxScope: {
+                  workspaceId: workspace.id,
+                  ...(workspace.name ? { workspaceName: workspace.name } : {}),
+                },
+              })(pi);
+            },
+          }
+        : undefined;
     let assertSelectedResourcesAvailableBeforeReload: (() => void) | undefined;
     let consumeSelectedResourceReloadError: (() => Error | undefined) | undefined;
     const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async ({
@@ -897,7 +929,7 @@ export class SdkBackend {
               ? [ordinaryOppiExtension]
               : []),
         ],
-        ...(ordinaryManagedRuntime
+        ...(ordinaryManagedRuntime || sandboxOppiRequested
           ? {
               extensionsOverride: (base) =>
                 oppiSettingsHolder.snapshot.enabled
@@ -1098,7 +1130,8 @@ export class SdkBackend {
       let sandboxTools: any[] | undefined;
       if (workspace?.runtime === "sandbox") {
         // Pre-flight: check QEMU availability before attempting VM creation.
-        const { isQemuAvailable, GondolinManager } = await import("./gondolin-manager.js");
+        const { isQemuAvailable, GondolinManager, shouldShadowSandboxWorkspacePath } =
+          await import("./gondolin-manager.js");
         if (!(await isQemuAvailable())) {
           throw new Error(
             "Sandbox mode requires QEMU but it is not installed on the server. " +
@@ -1111,6 +1144,7 @@ export class SdkBackend {
           createGondolinReadOps,
           createGondolinWriteOps,
           createGondolinEditOps,
+          createSandboxLsOps,
         } = await import("./gondolin-ops.js");
 
         // Lazy singleton — shared across all sessions for VM reuse.
@@ -1152,6 +1186,12 @@ export class SdkBackend {
           createWriteToolDefinition(sessionCwd, {
             operations: createGondolinWriteOps(vm, sessionCwd, guestCwd),
           }),
+          createLsToolDefinition(sessionCwd, {
+            operations: createSandboxLsOps(hostCwd, guestCwd, {
+              shouldShadow: (posixPath) =>
+                shouldShadowSandboxWorkspacePath({ op: "readdir", path: posixPath }),
+            }),
+          }),
         ];
         log.info("sdk.sandbox_vm_ready", { workspaceId: workspace.id || "unknown" });
       }
@@ -1172,9 +1212,10 @@ export class SdkBackend {
         excluded: launchToolPolicy?.excluded,
         noTools: launchToolPolicy?.noTools ?? (sandboxTools ? ("builtin" as const) : undefined),
       };
-      const effectiveToolPolicy = ordinaryManagedRuntime
-        ? reserveOppiToolPolicy(configuredToolPolicy)
-        : configuredToolPolicy;
+      const effectiveToolPolicy =
+        ordinaryManagedRuntime || sandboxOppiRequested
+          ? reserveOppiToolPolicy(configuredToolPolicy)
+          : configuredToolPolicy;
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,

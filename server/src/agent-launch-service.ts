@@ -97,6 +97,7 @@ export interface AgentLaunchServiceDeps {
     | "findSessionByLaunchIdempotencyKey"
     | "getDataDir"
     | "getSession"
+    | "getWorkspace"
     | "listSessions"
     | "saveSession"
   >;
@@ -391,6 +392,22 @@ export class AgentLaunchService {
       throw new DelegationPolicyError(
         "Nested delegation is not authorized for this caller session",
       );
+    }
+
+    const parentWorkspace = parent.workspaceId
+      ? this.deps.storage.getWorkspace(parent.workspaceId)
+      : undefined;
+    if (parentWorkspace?.runtime === "sandbox") {
+      if (request.target.workspace.id !== parent.workspaceId) {
+        throw new DelegationPolicyError(
+          "Sandbox sessions can only launch children in the same sandbox workspace",
+        );
+      }
+      if (request.allowNestedDelegation) {
+        throw new DelegationPolicyError("Sandbox sessions cannot authorize nested delegation");
+      }
+      // Children of a sandbox parent stay in-workspace and cannot spawn.
+      return { parentSessionId };
     }
 
     // The nested-delegation grant propagates down the subtree: children of an

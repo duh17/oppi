@@ -612,6 +612,152 @@ describe("SdkBackend sandbox", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  it("injects sandbox-scoped Oppi when the Agent allowlists it", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-oppi-allowlist-"));
+    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+    const execResult = {
+      exitCode: 0,
+      stdout: "",
+      stdoutBuffer: Buffer.alloc(0),
+      ok: true,
+    };
+    const vm = {
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readFile: vi.fn(async () => Buffer.alloc(0)),
+        writeFile: vi.fn(async () => undefined),
+      },
+      exec: vi.fn(() =>
+        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
+      ),
+    };
+    const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+    const previousManager = sdkBackendType._gondolinManager;
+    sdkBackendType._gondolinManager = manager;
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession({
+          ephemeral: true,
+          launch: {
+            status: "launching",
+            requestedAt: 1,
+            tools: { allowed: ["read", "oppi"] },
+          },
+        }),
+        workspace: {
+          id: "MGXU8ses",
+          name: "deep-research",
+          runtime: "sandbox",
+          hostMount: cwd,
+          extensions: [],
+        } as Workspace,
+        agentDefinition: {
+          name: "Deep Research",
+          sessionDefaults: { tools: ["read", "oppi"] },
+        },
+        getOppiExtensionSettings: vi.fn(() => ({
+          enabled: true,
+          approvalPolicy: "confirmDestructiveOnly" as const,
+          mobileOutputGuideEnabled: false,
+          revision: 1,
+        })),
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(backend.session.getActiveToolNames()).toContain("oppi");
+      const oppi = backend.session.getToolDefinition("oppi");
+      expect(oppi?.description).toContain("sandbox-scoped");
+    } finally {
+      await backend?.dispose();
+      sdkBackendType._gondolinManager = previousManager;
+      qemuSpy.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("lists sandbox guest paths with ls instead of probing the host", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-ls-guest-"));
+    writeFileSync(join(cwd, "packet.md"), "ok\n");
+    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+    const execResult = {
+      exitCode: 0,
+      stdout: "packet.md\n",
+      stdoutBuffer: Buffer.from("packet.md\n"),
+      ok: true,
+    };
+    const vm = {
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readdir: vi.fn(async () => ["packet.md"]),
+        readFile: vi.fn(async () => Buffer.from("ok\n")),
+        writeFile: vi.fn(async () => undefined),
+        stat: vi.fn(async () => ({ isDirectory: () => true, isFile: () => false })),
+      },
+      exec: vi.fn(() =>
+        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
+      ),
+    };
+    const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+    const previousManager = sdkBackendType._gondolinManager;
+    sdkBackendType._gondolinManager = manager;
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession({
+          ephemeral: true,
+          launch: {
+            status: "launching",
+            requestedAt: 1,
+            tools: { allowed: ["ls", "find", "read", "bash"] },
+          },
+        }),
+        workspace: {
+          id: "w1",
+          name: "Sandbox Ls Guest",
+          runtime: "sandbox",
+          hostMount: cwd,
+          extensions: [],
+        } as Workspace,
+        agentDefinition: {
+          name: "Sandbox Lister",
+          sessionDefaults: { tools: ["ls", "find", "read", "bash"] },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      const guestRoot = "/workspace/sandbox-ls-guest";
+      expect(backend.session.getActiveToolNames()).toEqual(
+        expect.arrayContaining(["ls", "find", "read", "bash"]),
+      );
+      const ls = backend.session.getToolDefinition("ls");
+      expect(ls).toBeDefined();
+      const result = await ls!.execute(
+        "ls-guest",
+        { path: guestRoot },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      const text = result.content.map((part) => ("text" in part ? part.text : "")).join("\n");
+      expect(text).toContain("packet.md");
+      expect(text).not.toMatch(/Path not found/i);
+    } finally {
+      await backend?.dispose();
+      sdkBackendType._gondolinManager = previousManager;
+      qemuSpy.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("SdkBackend host extensions", () => {
