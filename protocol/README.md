@@ -8,14 +8,14 @@ Canonical JSON fixtures and transport notes for the Oppi client-server protocol 
 | ------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `server-messages.json`    | Canonical focused-stream `ServerMessage` shapes the iOS client must handle | Built by `server/tests/protocol-fixtures.ts`; updated only by the explicit server script |
 | `app-event-messages.json` | Canonical global app-stream `AppEventMessage` shapes                       | Built by `server/tests/protocol-fixtures.ts`; updated only by the explicit server script |
-| `pi-events.json`          | All pi SDK `AgentSessionEvent` shapes                                      | Hand-maintained reference (used to test `translatePiEvent` in `session-protocol.ts`)     |
+| `pi-events.json`          | Representative Pi `AgentSessionEvent` shapes, plus a few related backend/RPC frames | Hand-maintained catalog; `server/tests/pi-events-fixture.test.ts` loads it and runs the AgentSessionEvent examples through `translatePiEvent` |
 
 ## How they're used
 
 - **`server-messages.json`** is built in memory from typed server examples and compared byte-for-byte with the committed fixture by ordinary tests. The iOS app tests its focused-stream decoder against every committed example to ensure both sides agree on the wire format.
 - **`app-event-messages.json`** is built in memory and compared byte-for-byte by ordinary tests. The app stream uses these fixtures for row, attention, extension UI, and workspace invalidation events.
 - Malformed and future compatibility examples stay separate from the typed canonical server-message set; they exercise decoder fallback without weakening compile-time discriminator coverage.
-- **`pi-events.json`** documents the upstream Pi SDK event shapes that the server translates into `ServerMessage` types.
+- **`pi-events.json`** is a hand-maintained catalog of upstream Pi event shapes. `server/tests/pi-events-fixture.test.ts` reads the file, requires one example for every named `translatePiEvent` case, and runs those examples through the translator. `response`, `extension_ui_request`, and `extension_error` stay in the catalog but are not `translatePiEvent` inputs.
 
 ## WebSocket stream topology
 
@@ -46,4 +46,4 @@ npm run protocol:fixtures:update
 
 Then rerun the focused server protocol tests and verify that only an intended fixture change is present. Apple protocol tests decode every committed `server-messages.json` and `app-event-messages.json` example; named malformed/future compatibility cases remain covered without a second discriminator inventory.
 
-For `pi-events.json`, update manually when the pi SDK adds new event types.
+For `pi-events.json`, update manually when the pi SDK adds an event type that `translatePiEvent` handles, or when a catalog-only backend/RPC shape should stay documented. Bump `_meta.eventCount` to match `events.length`.

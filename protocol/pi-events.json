@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "description": "Canonical pi SDK events — emitted by AgentSession.subscribe(). Used to test server-side event translation (session-protocol.ts translatePiEvent).",
-    "generated": "2026-02-21T02:30:00Z",
-    "eventCount": 34
+    "description": "Hand-maintained Pi AgentSessionEvent catalog plus a few related backend/RPC frames. server/tests/pi-events-fixture.test.ts loads this file and runs the AgentSessionEvent examples through translatePiEvent.",
+    "generated": "2026-08-19T18:30:00Z",
+    "eventCount": 35
   },
   "events": [
     {
@@ -239,6 +239,10 @@
     {
       "_label": "agent_end: pi finishes processing",
       "type": "agent_end"
+    },
+    {
+      "_label": "agent_settled: runtime is idle after agent_end",
+      "type": "agent_settled"
     },
     {
       "_label": "response success: RPC response with correlation id",
