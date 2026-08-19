@@ -126,6 +126,7 @@ private struct ExtensionNativeSurfaceExpandedViewport: View {
     let identifierSuffix: String
     let maxHeight: CGFloat
     let onOpenFullScreen: () -> Void
+    var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
 
     private var displayBlocks: [ExtensionUINativeBlock] {
@@ -149,6 +150,7 @@ private struct ExtensionNativeSurfaceExpandedViewport: View {
                         ExtensionNativeBlockView(
                             block: block,
                             isDetail: true,
+                            linkContext: linkContext,
                             onOpenURL: onOpenURL
                         )
                     }
@@ -373,6 +375,7 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
     let title: String
     let subtitle: String?
     let statusText: String?
+    var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
 
     private var displayBlocks: [ExtensionUINativeBlock] {
@@ -422,6 +425,7 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
                             ExtensionNativeBlockView(
                                 block: block,
                                 isDetail: true,
+                                linkContext: linkContext,
                                 onOpenURL: onOpenURL
                             )
                         }
@@ -439,6 +443,7 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
 private struct ExtensionNativeBlockView: View {
     let block: ExtensionUINativeBlock
     var isDetail: Bool = false
+    var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
 
     var body: some View {
@@ -446,7 +451,7 @@ private struct ExtensionNativeBlockView: View {
         case .text(_, let spans):
             ExtensionNativeTextSpansView(spans: spans, onOpenURL: onOpenURL)
         case .markdown(_, let markdown):
-            ExtensionNativeMarkdownView(markdown: markdown)
+            ExtensionNativeMarkdownView(markdown: markdown, linkContext: linkContext, onOpenURL: onOpenURL)
         case .section(_, let title, let subtitle, let blocks):
             VStack(alignment: .leading, spacing: 6) {
                 if let title, !title.isEmpty {
@@ -460,13 +465,23 @@ private struct ExtensionNativeBlockView: View {
                         .foregroundStyle(.themeComment)
                 }
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, child in
-                    ExtensionNativeBlockView(block: child, isDetail: isDetail, onOpenURL: onOpenURL)
+                    ExtensionNativeBlockView(
+                        block: child,
+                        isDetail: isDetail,
+                        linkContext: linkContext,
+                        onOpenURL: onOpenURL
+                    )
                 }
             }
             .padding(10)
             .extensionGlassInset(cornerRadius: 12)
         case .activityList(_, let rows):
-            ExtensionNativeActivityListView(rows: rows, startsExpanded: isDetail, onOpenURL: onOpenURL)
+            ExtensionNativeActivityListView(
+                rows: rows,
+                startsExpanded: isDetail,
+                linkContext: linkContext,
+                onOpenURL: onOpenURL
+            )
         case .progress(let base, let label, let value, let indeterminate):
             ExtensionNativeProgressBlockView(
                 base: base,
@@ -568,9 +583,21 @@ private struct ExtensionNativeProgressBlockView: View {
 
 private struct ExtensionNativeMarkdownView: View {
     let markdown: String
+    var linkContext: ExtensionSurfaceLinkContext = .empty
+    var onOpenURL: ((URL) -> Bool)?
+
+    private var rewrittenMarkdown: String {
+        ExtensionNativeMarkdownSupport.rewrittenMarkdown(
+            markdown,
+            serverID: linkContext.serverID,
+            workspaceID: linkContext.workspaceID,
+            sessionID: linkContext.sessionID,
+            sourceDirectory: linkContext.sourceDirectory
+        )
+    }
 
     private var attributedMarkdown: AttributedString? {
-        try? AttributedString(markdown: markdown)
+        try? AttributedString(markdown: rewrittenMarkdown)
     }
 
     var body: some View {
@@ -578,12 +605,15 @@ private struct ExtensionNativeMarkdownView: View {
             if let attributedMarkdown {
                 Text(attributedMarkdown)
             } else {
-                Text(markdown)
+                Text(rewrittenMarkdown)
             }
         }
         .font(.caption)
         .foregroundStyle(.themeFg)
         .fixedSize(horizontal: false, vertical: true)
+        .environment(\.openURL, OpenURLAction { url in
+            onOpenURL?(url) == true ? .handled : .systemAction
+        })
     }
 }
 
@@ -778,6 +808,7 @@ private extension ExtensionUITextSpan {
 private struct ExtensionNativeActivityListView: View {
     let rows: [ExtensionUIActivityRow]
     var startsExpanded: Bool = false
+    var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
 
     var body: some View {
@@ -786,6 +817,7 @@ private struct ExtensionNativeActivityListView: View {
                 ExtensionNativeActivityRowView(
                     row: row,
                     startsExpanded: startsExpanded,
+                    linkContext: linkContext,
                     onOpenURL: onOpenURL
                 )
             }
@@ -798,6 +830,7 @@ private struct ExtensionNativeActivityRowView: View {
 
     let row: ExtensionUIActivityRow
     var startsExpanded: Bool = false
+    var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
 
     @State private var isExpanded = false
@@ -839,7 +872,7 @@ private struct ExtensionNativeActivityRowView: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(accessibilityLabel)
                 .accessibilityValue(accessibilityValue)
-                .accessibilityHint("Opens the related session")
+                .accessibilityHint(linkAccessibilityHint ?? "")
                 .accessibilityIdentifier(activityRowAccessibilityIdentifier)
             } else if canExpandInline && !startsExpanded {
                 Button {
@@ -863,6 +896,7 @@ private struct ExtensionNativeActivityRowView: View {
                 ExtensionNativeActivityListView(
                     rows: childRows,
                     startsExpanded: startsExpanded,
+                    linkContext: linkContext,
                     onOpenURL: onOpenURL
                 )
                 .padding(.leading, 22)
@@ -877,6 +911,18 @@ private struct ExtensionNativeActivityRowView: View {
             return nil
         }
         return url
+    }
+
+    private var linkAccessibilityHint: String? {
+        guard let url = linkedURL else { return nil }
+        return ExtensionSurfaceLinkRouting.accessibilityHint(
+            for: ExtensionSurfaceLinkRouting.action(
+                for: url,
+                serverID: linkContext.serverID,
+                workspaceID: linkContext.workspaceID,
+                currentSessionId: linkContext.sessionID ?? ""
+            )
+        )
     }
 
     private var activityRowAccessibilityIdentifier: String {
@@ -1579,6 +1625,7 @@ private struct ExtensionSurfaceDrawer: View {
     let entry: ExtensionSurfaceStripEntry
     let placement: ExtensionSurfacePlacementGroup
     var messageQueue: MessageQueueSurfaceConfiguration?
+    var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
     let onCollapse: () -> Void
 
@@ -1632,6 +1679,7 @@ private struct ExtensionSurfaceDrawer: View {
                     title: entry.title,
                     subtitle: entry.subtitle,
                     statusText: statusText,
+                    linkContext: linkContext,
                     onOpenURL: onOpenURL
                 )
             }
@@ -1674,6 +1722,7 @@ private struct ExtensionSurfaceDrawer: View {
                 identifierSuffix: identifierSuffix,
                 maxHeight: 260,
                 onOpenFullScreen: { nativeDetailPresented = true },
+                linkContext: linkContext,
                 onOpenURL: onOpenURL
             )
         case .widget(let widget, _, _):
@@ -1720,6 +1769,7 @@ struct ExtensionSurfacePanel: View {
     let surface: ExtensionSurfaceState
     let placement: ExtensionSurfacePlacementGroup
     var messageQueue: MessageQueueSurfaceConfiguration? = nil
+    var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)? = nil
     var onExpandedEntryChange: ((Bool) -> Void)? = nil
 
@@ -1804,6 +1854,7 @@ struct ExtensionSurfacePanel: View {
                     entry: activeEntry,
                     placement: placement,
                     messageQueue: messageQueue,
+                    linkContext: linkContext,
                     onOpenURL: onOpenURL,
                     onCollapse: collapseActiveEntry
                 )

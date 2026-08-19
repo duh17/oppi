@@ -795,6 +795,7 @@ struct ChatView: View {
                             surface: surface,
                             placement: .aboveEditor,
                             messageQueue: (showsMessageQueue || hasMessageQueueDraft) ? messageQueueSurfaceConfiguration : nil,
+                            linkContext: extensionSurfaceLinkContext,
                             onOpenURL: openExtensionSurfaceURL,
                             onExpandedEntryChange: { expanded in
                                 if expanded { dismissKeyboard() }
@@ -881,6 +882,7 @@ struct ChatView: View {
                     ExtensionSurfacePanel(
                         surface: surface,
                         placement: .belowEditor,
+                        linkContext: extensionSurfaceLinkContext,
                         onOpenURL: openExtensionSurfaceURL
                     )
                     .padding(.horizontal, 16)
@@ -1286,19 +1288,44 @@ struct ChatView: View {
         reviewComments.clearSent(ids: ids)
     }
 
+    private var extensionSurfaceLinkContext: ExtensionSurfaceLinkContext {
+        ExtensionSurfaceLinkContext(
+            serverID: serverIdHint ?? connection.currentServerId ?? sessionStore.activeServerId,
+            workspaceID: session?.workspaceId ?? sessionStore.workspaceId(for: sessionId),
+            sessionID: sessionId
+        )
+    }
+
     @MainActor
     private func openExtensionSurfaceURL(_ url: URL) -> Bool {
-        let defaultWorkspaceId = session?.workspaceId ?? sessionStore.workspaceId(for: sessionId)
-        guard let link = ExtensionSurfaceSessionLink.parse(url, defaultWorkspaceId: defaultWorkspaceId) else {
+        let context = extensionSurfaceLinkContext
+        switch ExtensionSurfaceLinkRouting.action(
+            for: url,
+            serverID: context.serverID,
+            workspaceID: context.workspaceID,
+            currentSessionId: sessionId
+        ) {
+        case .pushSession(let link):
+            connection.prepareForSessionReentry(link.sessionId, workspaceIdHint: link.workspaceId)
+            sessionRouteToOpen = SessionRoute(id: link.sessionId, workspaceId: link.workspaceId)
+            return true
+        case .ignore:
+            return true
+        case .resourceReference(let reference):
+            NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
+            return true
+        case .webLink(let destination):
+            NotificationCenter.default.post(name: .webLinkTapped, object: destination)
+            return true
+        case .fileLink(let payload):
+            NotificationCenter.default.post(name: .fileLinkTapped, object: payload)
+            return true
+        case .inviteDeepLink(let destination):
+            NotificationCenter.default.post(name: .inviteDeepLinkTapped, object: destination)
+            return true
+        case .unhandled:
             return false
         }
-        guard link.sessionId != sessionId else {
-            return true
-        }
-
-        connection.prepareForSessionReentry(link.sessionId, workspaceIdHint: link.workspaceId)
-        sessionRouteToOpen = SessionRoute(id: link.sessionId, workspaceId: link.workspaceId)
-        return true
     }
 
     @MainActor

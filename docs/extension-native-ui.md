@@ -155,7 +155,7 @@ export interface ExtensionUIActivityRow {
 }
 ```
 
-Use activity lists for persistent task state: running jobs, queued work, progress, substeps, and recent results. `link` is a generic row navigation target, such as `oppi://session/<id>`, and must route through app-level link handling. The model is generic and must not encode extension-specific concepts in the protocol.
+Use activity lists for persistent task state: running jobs, queued work, progress, substeps, and recent results. `link` is a generic row navigation target, such as `oppi://session/<id>`, and must route through app-level link handling. Structured `span.link` and `activityRow.link` fields stay real URLs; they do not accept `[[wiki]]` grammar. The model is generic and must not encode extension-specific concepts in the protocol.
 
 Recommended Apple state mapping:
 
@@ -501,7 +501,7 @@ Rules:
 | Pi TUI component or pattern                       | Native block           | Apple design                                                           |
 | ------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------- |
 | `Text`                                            | `text` or `markdown`   | native `Text` with wrapping and Dynamic Type                           |
-| `Markdown`                                        | `markdown`             | existing markdown renderer                                             |
+| `Markdown`                                        | `markdown`             | caption-sized markdown that honors the same chat link policy           |
 | `Box`                                             | `section`              | rounded card, theme background, subtle stroke                          |
 | `Container`                                       | `section.blocks`       | vertical stack                                                         |
 | `Spacer`                                          | `spacer`               | native spacing token                                                   |
@@ -622,7 +622,7 @@ The native contract should feel like an Apple app, not a remote terminal with pr
 - Label surfaces with their source when the prompt could be surprising, such as the extension name, workspace, or session.
 - Make it clear when a response will be sent to the running session/server.
 - Sensitive fields must not be echoed, persisted in chat history, or written to routine logs.
-- Extension text and links are untrusted content. Links route through normal platform URL handling and app navigation policy.
+- Extension text and links are untrusted content. Links route through normal platform URL handling and app navigation policy. Native `markdown` blocks honor the same chat link policy: wiki links rewrite to resource-reference URLs, then classified destinations open through the existing chat handlers. Structured `span.link` / `activityRow.link` fields remain real URLs.
 
 ### App Review posture
 
@@ -729,6 +729,7 @@ Native UI is display and input only. It must not grant extensions direct client-
 - Future actions must return events or responses to the server/extension; clients must not execute extension-defined commands locally.
 - External links require normal platform URL handling and can be restricted by scheme.
 - Internal links such as `oppi://session/<id>` should route through generic app navigation, not extension-specific code.
+- Native `markdown` blocks honor the same chat link policy as assistant markdown. Structured link fields remain real URLs and do not accept wiki-link grammar.
 - Future image/data references must be scoped to the session/workspace and checked by the server.
 
 ### Authoring API
