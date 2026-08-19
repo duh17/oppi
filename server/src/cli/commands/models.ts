@@ -19,6 +19,7 @@ type ModelProviderGroup = {
   provider: string;
   display_name: string;
   quota: ProviderQuota | null;
+  local: boolean;
   models: ModelListRow[];
 };
 
@@ -90,6 +91,7 @@ function groupModelsByProvider(
         provider,
         display_name: quota?.displayName || provider,
         quota,
+        local: isLocalProvider(rows),
         models: [...rows].sort((left, right) => left.name.localeCompare(right.name)),
       };
     })
@@ -120,7 +122,7 @@ function renderModelGroups(
     writeHumanLine("");
     const plan = group.quota?.planType ? `  ${c.dim(group.quota.planType)}` : "";
     writeHumanLine(`  ${c.bold(group.display_name)}${plan}`);
-    renderProviderQuota(group.quota);
+    renderProviderStatus(group.quota, group.local);
 
     const nameWidth = Math.max(12, ...group.models.map((model) => model.name.length));
     const idWidth = Math.max(18, ...group.models.map((model) => model.id.length));
@@ -136,7 +138,15 @@ function renderModelGroups(
   writeHumanLine("");
 }
 
-function renderProviderQuota(quota: ProviderQuota | null): void {
+function isLocalProvider(models: readonly ModelListRow[]): boolean {
+  return models.length > 0 && models.every((model) => model.authKind === "local");
+}
+
+function renderProviderStatus(quota: ProviderQuota | null, local: boolean): void {
+  if (local) {
+    writeHumanLine(`    ${c.dim("Local")}`);
+    return;
+  }
   if (!quota) {
     writeHumanLine(`    ${c.dim("No quota reported")}`);
     return;

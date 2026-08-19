@@ -197,6 +197,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "Groups match the in-app model picker: provider sections, then name, canonical id, and context window.",
       "Provider quota uses the same green / yellow / red remaining-percent colors as 'oppi quota'.",
+      "Providers whose models are all authKind=local are labeled Local and carry local=true in JSON. Missing quota on a cloud provider is still 'No quota reported'.",
       "The catalog is GET /models, filtered by Pi enabledModels. Quota comes from /server/provider-quotas.",
     ],
     examples: [

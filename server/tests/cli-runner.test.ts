@@ -272,6 +272,99 @@ describe("canonical CLI runner", () => {
     expect(result.humanOutput).toContain("\u001b[");
   });
 
+  it("labels local providers separately from cloud providers with no quota adapter", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path === "/models") {
+        return {
+          models: [
+            {
+              id: "omlx/Qwen3.8-27B-8bit",
+              name: "Qwen3.8 27B (Local VLM 8-bit)",
+              provider: "omlx",
+              contextWindow: 262_144,
+              authKind: "local",
+            },
+            {
+              id: "ds4/deepseek-v4-flash",
+              name: "DeepSeek V4 Flash (ds4)",
+              provider: "ds4",
+              contextWindow: 200_000,
+              authKind: "local",
+            },
+            {
+              id: "qwen-token-plan/qwen3.8-max",
+              name: "Qwen3.8 Max",
+              provider: "qwen-token-plan",
+              contextWindow: 1_000_000,
+              authKind: "apiKey",
+            },
+            {
+              id: "openai-codex/gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              provider: "openai-codex",
+              contextWindow: 272_000,
+              authKind: "subscription",
+            },
+          ],
+        } as never;
+      }
+      if (path === "/server/provider-quotas") {
+        return {
+          providers: [
+            {
+              providerId: "openai-codex",
+              displayName: "Codex",
+              authenticated: true,
+              planType: "prolite",
+              windows: [
+                {
+                  key: "weekly",
+                  shortLabel: "7d",
+                  title: "Weekly",
+                  usedPercent: 73,
+                  remainingPercent: 27,
+                  limitWindowSeconds: 604_800,
+                  resetAt: null,
+                  includeWeekdayInReset: true,
+                },
+              ],
+              credits: { hasCredits: false, unlimited: false, balance: "0" },
+              prepaidBalanceCents: null,
+              fetchedAt: 1_786_785_160_944,
+            },
+          ],
+          fetchedAt: 1_786_785_160_944,
+        } as never;
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const result = await runCli(["models"], {
+      dataDir: "/tmp/oppi-runner-models-local-test",
+      captureHuman: true,
+      forceJson: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, exitCode: 0 });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      data: {
+        providers: [
+          { provider: "openai-codex", local: false },
+          { provider: "ds4", local: true },
+          { provider: "omlx", local: true },
+          { provider: "qwen-token-plan", local: false },
+        ],
+      },
+    });
+    const human = result.humanOutput.replace(/\u001b\[[0-9;]*m/g, "");
+    expect(human).toMatch(/ds4\n\s+Local/);
+    expect(human).toMatch(/omlx\n\s+Local/);
+    expect(human).toMatch(/qwen-token-plan\n\s+No quota reported/);
+    expect(human).not.toMatch(/ds4\n\s+No quota reported/);
+    expect(human).not.toMatch(/omlx\n\s+No quota reported/);
+  });
+
   it("returns one error envelope for a malformed provider quota response", async () => {
     request.mockResolvedValueOnce({
       providers: [{ displayName: 42, windows: "broken" }],
