@@ -136,6 +136,34 @@ struct ChatSessionManagerTests {
         #expect(manager.lastSyncFailed == true)
     }
 
+    @Test func connectSchedulesHistoryReloadWhenSessionStreamUnavailable() async {
+        let sessionId = "history-fallback-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId, workspaceIdHint: "w1")
+        var loadCalls = 0
+        manager._loadHistoryForTesting = { _, _ in
+            loadCalls += 1
+            return (eventCount: 4, lastEventId: "evt-4")
+        }
+
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: false)
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
+
+        await manager.connect(connection: connection, sessionStore: sessionStore)
+
+        let loaded = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { loadCalls == 1 && manager.lastSuccessfulSyncAt != nil }
+        }
+        #expect(loaded, "History reload should still run when the session stream cannot open")
+        if case .disconnected(let reason) = manager.entryState {
+            #expect(reason == .fatalError)
+        } else {
+            Issue.record("Expected disconnected fatalError, got \(manager.entryState)")
+        }
+        manager.cleanup()
+    }
+
     @Test func forceHistoryReloadTreatsEmptyTreeTraceAsAuthoritative() async {
         let sessionId = "force-reload-empty-tree"
         let firstMessage = "Root prompt restored to the composer"

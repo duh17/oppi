@@ -421,7 +421,14 @@ final class ChatSessionManager {
         }
 
         guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
-            markSyncFailed()
+            // Keep HTTP history as a fallback when the bound socket cannot open.
+            // Notification re-entry can fail stream setup after focus is already set.
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                sessionStore: sessionStore,
+                cachedSignature: latestTraceSignature
+            )
             transitionTo(.disconnected(reason: .fatalError))
             let message = resolveRouteScope(from: sessionStore) == nil
                 ? "Missing session route context"

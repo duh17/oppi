@@ -350,6 +350,179 @@ struct ServerConnectionStreamTests {
         #expect(receivedEvents.first?.meta?.currentSeq == 80)
     }
 
+    /// Notification tap / in-app re-entry opens the bound socket before ChatView
+    /// registers a per-session continuation. Bootstrap frames must park and then
+    /// drain in order when `streamSession` attaches.
+    @Test func focusedBootstrapFramesParkUntilStreamSessionAttaches() async {
+        let sessionId = "s1"
+        let (conn, _) = makeTestConnection(sessionId: sessionId)
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
+        conn.sessionStore.upsert(session)
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+
+        conn.prepareForSessionReentry(sessionId)
+        #expect(conn.sessionEventContinuations[sessionId] == nil)
+        #expect(conn.focusedSessionId == sessionId)
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: sessionId,
+            seq: 1,
+            currentSeq: 3,
+            message: .connected(session: session)
+        ))
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: sessionId,
+            seq: 2,
+            currentSeq: 3,
+            message: .state(session: session)
+        ))
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: sessionId,
+            seq: 3,
+            currentSeq: 3,
+            message: .textDelta(delta: "hello")
+        ))
+
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: sessionId,
+            routeScope: .workspace("w1")
+        )
+        #expect(stream != nil, "streamSession should attach a consumer after the socket is already connected")
+
+        var received: [ServerMessage] = []
+        let consumeTask = Task {
+            guard let stream else { return }
+            for await event in stream {
+                await MainActor.run { received.append(event.message) }
+                if received.count >= 3 { break }
+            }
+        }
+
+        let delivered = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { received.count >= 3 }
+        }
+        consumeTask.cancel()
+
+        #expect(delivered, "Focused bootstrap frames must drain when streamSession attaches")
+        #expect(received.count >= 3)
+        if received.count >= 3 {
+            #expect(received[0] == .connected(session: session))
+            #expect(received[1] == .state(session: session))
+            #expect(received[2] == .textDelta(delta: "hello"))
+        }
+
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectStream()
+    }
+
+    @Test func focusedParkedFrameBoundKeepsConnectedAndState() async {
+        let sessionId = "s1"
+        let (conn, _) = makeTestConnection(sessionId: sessionId)
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
+        conn.sessionStore.upsert(session)
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+        conn.prepareForSessionReentry(sessionId)
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: sessionId,
+            seq: 1,
+            currentSeq: 80,
+            message: .connected(session: session)
+        ))
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: sessionId,
+            seq: 2,
+            currentSeq: 80,
+            message: .state(session: session)
+        ))
+        for index in 3...80 {
+            conn.routeStreamMessage(StreamMessage(
+                sessionId: sessionId,
+                seq: index,
+                currentSeq: 80,
+                message: .textDelta(delta: "d\(index)")
+            ))
+        }
+
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: sessionId,
+            routeScope: .workspace("w1")
+        )
+        #expect(stream != nil)
+
+        var received: [ServerMessage] = []
+        let consumeTask = Task {
+            guard let stream else { return }
+            for await event in stream {
+                await MainActor.run { received.append(event.message) }
+                if received.count >= 64 { break }
+            }
+        }
+
+        let delivered = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { received.count >= 2 }
+        }
+        consumeTask.cancel()
+
+        #expect(delivered)
+        #expect(received.count <= 64, "Parked focused frames must stay bounded")
+        #expect(received.contains(.connected(session: session)))
+        #expect(received.contains(.state(session: session)))
+
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectStream()
+    }
+
+    @Test func nonFocusedFramesAreNotParkedForLaterAttach() async {
+        let (conn, _) = makeTestConnection(sessionId: "focused")
+        conn.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        conn.sessionStore.upsert(makeTestSession(id: "focused", workspaceId: "w1", status: .ready))
+        conn.sessionStore.upsert(makeTestSession(id: "background", workspaceId: "w1", status: .busy))
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+        conn.prepareForSessionReentry("focused")
+
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "background",
+            seq: 1,
+            currentSeq: 1,
+            message: .textDelta(delta: "should-not-park")
+        ))
+
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: "background",
+            routeScope: .workspace("w1")
+        )
+        #expect(stream != nil)
+
+        var received: [ServerMessage] = []
+        let consumeTask = Task {
+            guard let stream else { return }
+            for await event in stream {
+                await MainActor.run { received.append(event.message) }
+            }
+        }
+        let stayedEmpty = await waitForMainActorConditionToStayTrue(
+            for: .milliseconds(80),
+            poll: .milliseconds(10)
+        ) {
+            received.isEmpty
+        }
+        consumeTask.cancel()
+
+        #expect(stayedEmpty, "Cross-session frames without a consumer must not replay on later attach")
+
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectStream()
+    }
+
     // MARK: - reconnectIfNeeded restarts dead stream
 
     @Test func reconnectIfNeededRestartsDeadBoundSessionStream() async {

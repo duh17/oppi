@@ -99,7 +99,7 @@ final class SessionStreamCoordinator {
         continuationGenerationBySession[sessionId] = continuationGeneration
 
         let perSessionStream = AsyncStream<SessionStreamEvent> { continuation in
-            connection.sessionEventContinuations[sessionId] = continuation
+            connection.attachSessionEventContinuation(sessionId, continuation)
 
             continuation.onTermination = { [weak self, weak connection] _ in
                 Task { @MainActor in

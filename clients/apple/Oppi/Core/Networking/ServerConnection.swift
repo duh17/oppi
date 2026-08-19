@@ -1023,8 +1023,11 @@ final class ServerConnection {
 
         // Tear down old WS + consumption task. Per-session continuations
         // are preserved; the active endpoint will be reopened below.
+        // Drop parks from the dying socket so attach does not replay two
+        // bootstrap generations after a path-change reconnect.
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
+        parkedFocusedSessionFrames.removeAll()
         wsClient.disconnect()
 
         refreshPreparedFocusedSessionEndpointAfterEndpointChange()
@@ -1050,6 +1053,14 @@ final class ServerConnection {
 
     /// Per-session continuations for routing stream messages with metadata in-band.
     internal var sessionEventContinuations: [String: AsyncStream<SessionStreamEvent>.Continuation] = [:]
+
+    /// Focused-session frames that arrived after `connectStream()` but before
+    /// `streamSession` registered a continuation. Notification tap and in-app
+    /// re-entry open the bound socket first; without this buffer the server
+    /// bootstrap (`connected`, catch-up, `state`) is dropped and later
+    /// `connectStream()` is a no-op because the socket is already connected.
+    private var parkedFocusedSessionFrames: [String: [SessionStreamEvent]] = [:]
+    private static let parkedFocusedSessionFrameLimit = 64
 
     /// Connect the active session WebSocket endpoint.
     ///
@@ -1106,6 +1117,7 @@ final class ServerConnection {
         sessionStreamCoordinator.noteStreamDisconnected()
         streamConsumptionTask?.cancel()
         streamConsumptionTask = nil
+        parkedFocusedSessionFrames.removeAll()
         for (_, cont) in sessionEventContinuations {
             cont.finish()
         }
@@ -1395,13 +1407,20 @@ final class ServerConnection {
         resolveBoundaryCommandResult(message, meta: frameEvent.meta)
 
         // Route to per-session continuation if active. Metadata stays attached
-        // to the message through SessionStreamEvent.
-        if let sessionId, let cont = sessionEventContinuations[sessionId] {
-            cont.yield(SessionStreamEvent(
+        // to the message through SessionStreamEvent. If the session is already
+        // focused but ChatView has not attached yet, park the frame so the
+        // bootstrap is not lost.
+        if let sessionId {
+            let event = SessionStreamEvent(
                 sessionId: sessionId,
                 message: message,
                 meta: frameEvent.meta
-            ))
+            )
+            if let cont = sessionEventContinuations[sessionId] {
+                cont.yield(event)
+            } else if isFocusedSession(sessionId) {
+                parkFocusedSessionFrame(event)
+            }
         }
 
         // Also process events from non-focused sessions. If a non-focused full
@@ -1803,8 +1822,74 @@ final class ServerConnection {
 
     /// Close local continuations for a specific session stream.
     func closeSessionStreamContinuations(_ sessionId: String) {
+        parkedFocusedSessionFrames.removeValue(forKey: sessionId)
         sessionEventContinuations[sessionId]?.finish()
         sessionEventContinuations.removeValue(forKey: sessionId)
+    }
+
+    /// Attach the live consumer and replay any frames parked while the socket
+    /// was already bound. Drain happens before later `connectStream()` work so
+    /// bootstrap stays ahead of newly arriving live frames.
+    func attachSessionEventContinuation(
+        _ sessionId: String,
+        _ continuation: AsyncStream<SessionStreamEvent>.Continuation
+    ) {
+        sessionEventContinuations[sessionId] = continuation
+        drainParkedFocusedSessionFrames(for: sessionId)
+    }
+
+    private func parkFocusedSessionFrame(_ event: SessionStreamEvent) {
+        var buffer = parkedFocusedSessionFrames[event.sessionId] ?? []
+        if buffer.count >= Self.parkedFocusedSessionFrameLimit {
+            if let index = buffer.firstIndex(where: { !Self.isProtectedParkedSessionMessage($0.message) }) {
+                let dropped = buffer.remove(at: index)
+                ClientLog.info("Stream", "Dropped oldest non-protected parked frame", metadata: [
+                    "sessionId": event.sessionId,
+                    "droppedType": dropped.message.typeLabel,
+                    "incomingType": event.message.typeLabel,
+                    "limit": String(Self.parkedFocusedSessionFrameLimit),
+                ])
+            } else if !Self.isProtectedParkedSessionMessage(event.message) {
+                ClientLog.info("Stream", "Dropped parked frame at bound", metadata: [
+                    "sessionId": event.sessionId,
+                    "type": event.message.typeLabel,
+                    "limit": String(Self.parkedFocusedSessionFrameLimit),
+                ])
+                return
+            }
+            // Protected bootstrap frames may exceed the bound so connected/state
+            // are never evicted. The overflow is a handful of UI frames, not catch-up.
+        }
+        if buffer.isEmpty {
+            ClientLog.info("Stream", "Parking focused session frames until consumer attaches", metadata: [
+                "sessionId": event.sessionId,
+                "type": event.message.typeLabel,
+            ])
+        }
+        buffer.append(event)
+        parkedFocusedSessionFrames[event.sessionId] = buffer
+    }
+
+    private func drainParkedFocusedSessionFrames(for sessionId: String) {
+        guard let continuation = sessionEventContinuations[sessionId] else { return }
+        let parked = parkedFocusedSessionFrames.removeValue(forKey: sessionId) ?? []
+        guard !parked.isEmpty else { return }
+        ClientLog.info("Stream", "Draining parked focused session frames", metadata: [
+            "sessionId": sessionId,
+            "count": String(parked.count),
+        ])
+        for event in parked {
+            continuation.yield(event)
+        }
+    }
+
+    private static func isProtectedParkedSessionMessage(_ message: ServerMessage) -> Bool {
+        switch message {
+        case .connected, .state, .sessionSummary, .extensionUIRequest, .extensionUINotification:
+            return true
+        default:
+            return false
+        }
     }
 
     private func cancelDeferredPlaybackDisconnect(for sessionId: String) {
@@ -1866,6 +1951,9 @@ final class ServerConnection {
         cancelDeferredPlaybackDisconnect(for: sessionId)
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
+            if let previousSessionId {
+                parkedFocusedSessionFrames.removeValue(forKey: previousSessionId)
+            }
             recordFocusArbitration(
                 outcome: "requested",
                 previousSessionId: previousSessionId,
