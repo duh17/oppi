@@ -8,7 +8,7 @@ Do not use mirror mode for server-owned SDK sessions, `pi -p`, JSON mode, RPC mo
 
 ## Prerequisites
 
-- Oppi server `0.45.0` or newer is running.
+- Oppi server `0.47.0` or newer is running.
 - The owner-only local socket exists at `$OPPI_DATA_DIR/run/oppi.sock` (normally `~/.config/oppi/run/oppi.sock`).
 - You are starting Pi in interactive terminal mode.
 

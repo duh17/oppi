@@ -38,7 +38,35 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.0` build `45`, `oppi-server@0.46.0` with bundled Pi runtime `0.84.2`, and `oppi-mirror@0.46.0`.
+Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi runtime `0.84.2`, and unpublished `oppi-mirror@0.47.0`.
+
+### Added
+
+- **Client:** Session search lives in the bottom toolbar. Quick Session can pick a worktree, and `/` autocompletes workspace prompts and Skills before the session exists.
+- **Client/Server:** Skill Edit uses the guided composer. Wiki links can open host files the server can already read and focus line anchors.
+- **Client:** Double-tap zooms diagrams and images. Settings includes Privacy Policy and Support pages.
+- **Server:** `oppi quota` prints provider usage windows. Session and Agent create accept Pi tool and thinking flags.
+
+### Changed
+
+- **Compatibility:** Build 46 requires `oppi-server@0.47.0` and `oppi-mirror@0.47.0`.
+- **Client/Server:** Pairing uses a per-device key and short-lived HTTPS token. Iroh pairing is gone; re-pair over HTTPS or Tailscale if there is no HTTPS endpoint.
+- **Client/Server:** Public session identity is Pi `Session.id` only.
+- **Server:** Bundled Pi runtime packages move from `0.84.1` to `0.84.2`.
+- **Mirror:** The extension connects over the owner Unix socket. Slash input from Oppi expands as Pi commands.
+
+### Fixed
+
+- **Client:** TestFlight Build 45 could crash shortly after launch when MetricKit delivered a nested diagnostic.
+- **Client:** Wrapped Markdown tables no longer paint later rows over earlier cells.
+
+### Removed
+
+- **Client/Server:** Iroh pairing and the public `piSessionId` dual-ID path.
+
+## [0.46.0] - 2026-08-10
+
+Target: iOS `1.1.0` build `45`, `oppi-server@0.46.0` with bundled Pi runtime `0.84.1`, and `oppi-mirror@0.46.0`.
 
 ### Added
 
@@ -49,10 +77,9 @@ Target: iOS `1.1.0` build `45`, `oppi-server@0.46.0` with bundled Pi runtime `0.
 ### Changed
 
 - **Server:** Custom provider extensions appear in the model picker and provider-auth list after install, a detected source edit, or enable/disable without an Oppi server restart. Active sessions still need `/reload`.
-- **Protocol/Client/Server:** Agent, schedule, Skill, workspace, model, and session APIs changed incompatibly; Build 44 requires `oppi-server@0.46.0`.
+- **Protocol/Client/Server:** Agent, schedule, Skill, workspace, model, and session APIs changed incompatibly; Build 45 requires `oppi-server@0.46.0`.
 - **Server:** Explicit model selection fails visibly when the requested model is unavailable instead of substituting another provider or model.
 - **Client/Server:** Session, tool, Markdown, and cached-content presentation survives navigation, replay, and reconnection more consistently.
-- **Server:** Updated the bundled Pi runtime packages from `0.84.1` to `0.84.2`, including streamed JSON/RPC usage on `message_update` and `sendUserMessage({ expandPromptTemplates })`.
 - **Server:** Oppi Mirror bootstrap input now expands slash commands, skills, and prompt templates through Pi instead of sending them as literal text.
 
 ### Fixed
@@ -301,7 +328,8 @@ Target: iOS `1.1.0` build `45`, `oppi-server@0.46.0` with bundled Pi runtime `0.
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/v0.44.1...HEAD
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/duh17/oppi/compare/v0.44.1...v0.46.0
 [0.44.1]: https://github.com/duh17/oppi/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/duh17/oppi/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/duh17/oppi/compare/v0.43.0...v0.43.1
