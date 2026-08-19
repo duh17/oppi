@@ -324,6 +324,7 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
       id: "live-test",
       name: "Live Test",
       runtime: "sandbox" as const,
+      sandboxConfig: { allowedHosts: [] as string[] },
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };

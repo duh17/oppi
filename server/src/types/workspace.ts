@@ -8,7 +8,7 @@ export type WorkspaceRuntimeMode = "host" | "sandbox";
 export interface WorkspaceSandboxConfig {
   /** Allowed egress hosts for network access. Omitted = Gondolin default allow-all; [] = deny all. */
   allowedHosts?: string[];
-  /** Extra environment variables injected into the sandbox VM. */
+  /** Non-secret guest config such as PATH or LANG. Do not put provider credentials here. */
   env?: Record<string, string>;
 }
 

@@ -1,21 +1,24 @@
 /**
  * Gondolin-backed tool operations for sandboxed workspace execution.
  *
- * Maps pi SDK tool operations (bash, read, write, edit) into a Gondolin
- * micro-VM. Host paths are translated to /workspace inside the guest,
- * and all file I/O and command execution runs in QEMU isolation.
+ * Maps pi SDK tool operations (bash, read, write, edit, ls, find, grep)
+ * into a Gondolin micro-VM. Host paths are translated to /workspace inside
+ * the guest, and all file I/O and command execution runs in QEMU isolation.
+ * Guest grep/find never spawn host rg/fd.
  *
  * Adapted from https://github.com/earendil-works/gondolin/blob/main/host/examples/pi-gondolin.ts
  */
 
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { join, relative, resolve, posix } from "node:path";
+import { isAbsolute, join, relative, resolve, posix } from "node:path";
+import { Type } from "typebox";
 import type {
   BashOperations,
   ReadOperations,
   WriteOperations,
   EditOperations,
   LsOperations,
+  FindOperations,
+  ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -44,6 +47,13 @@ export interface GondolinVm {
 export interface GondolinFs {
   access(path: string): Promise<void>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+  /** Guest directory listing. Sandbox ls requires this instead of host remount. */
+  listDir?(dirPath: string, options?: { cwd?: string; signal?: AbortSignal }): Promise<string[]>;
+  /** Guest stat. Sandbox ls requires this instead of host remount. */
+  stat?(
+    filePath: string,
+    options?: { cwd?: string; signal?: AbortSignal },
+  ): Promise<{ isDirectory: () => boolean; isFile?: () => boolean }>;
   readFile(path: string, options?: { encoding?: null }): Promise<Buffer>;
   writeFile(
     path: string,
@@ -99,9 +109,9 @@ export function toGuestPath(
 /**
  * Map a sandbox tool path back onto the host workspace mount.
  *
- * Sandbox sessions advertise guest cwd `/workspace/<slug>`. Host-backed
- * ls/find/grep still run on the Mac, so they must not stat that guest path.
- * The workspace mount is the same tree the guest already sees.
+ * Sandbox sessions advertise guest cwd `/workspace/<slug>`. File tools now
+ * stay on the guest VFS; this helper remains for callers that still need
+ * the host mount equivalent of a guest path.
  */
 export function toHostPath(absolutePath: string, hostCwd: string, guestCwd: string): string {
   const resolved = resolve(absolutePath);
@@ -285,51 +295,266 @@ export function createGondolinEditOps(
 
 // ─── Ls ───
 
+function guestPosixRelative(guestPath: string, guestWorkspace: string): string {
+  const rel = posix.relative(guestWorkspace, guestPath);
+  if (rel.startsWith("..")) {
+    throw new Error(`Path is outside the sandbox workspace: ${guestPath}`);
+  }
+  return posix.join("/", rel === "" ? "" : rel);
+}
+
 /**
- * Host-mount ls after remapping guest `/workspace/<slug>` paths.
- * Realpath must stay under the host mount. Shadowed secret names are hidden.
+ * Guest ls through vm.fs.listDir/stat. Paths must stay inside the workspace
+ * mount. Shadowed secret names are hidden. Host remount is not used.
  */
 export function createSandboxLsOps(
-  hostCwd: string,
-  guestCwd: string,
+  vm: GondolinVm,
+  localCwd: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
   options: { shouldShadow?: (posixPath: string) => boolean } = {},
 ): LsOperations {
   const shouldShadow = options.shouldShadow ?? (() => false);
+  const listDir = vm.fs.listDir?.bind(vm.fs);
+  const statFs = vm.fs.stat?.bind(vm.fs);
 
   const contained = (absolutePath: string): string => {
-    const mapped = toHostPath(absolutePath, hostCwd, guestCwd);
-    const realRoot = realpathSync(hostCwd);
-    const realTarget = existsSync(mapped) ? realpathSync(mapped) : mapped;
-    const rootPrefix = realRoot.endsWith("/") ? realRoot : `${realRoot}/`;
-    if (realTarget !== realRoot && !realTarget.startsWith(rootPrefix)) {
-      throw new Error(`Path is outside the sandbox workspace: ${absolutePath}`);
-    }
-    const rel = relative(realRoot, existsSync(mapped) ? realTarget : mapped);
-    const posixPath = posix.join("/", rel.split(/[\\/]/).join("/").replace(/^\.$/, ""));
+    const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
+    const posixPath = guestPosixRelative(guestPath, guestWorkspace);
     if (shouldShadow(posixPath === "/" ? "/" : posixPath)) {
       throw new Error(`ENOENT: no such file or directory, access '${absolutePath}'`);
     }
-    return existsSync(mapped) ? realTarget : mapped;
+    return guestPath;
   };
 
   return {
-    exists(absolutePath: string) {
+    async exists(absolutePath: string) {
       try {
-        return existsSync(contained(absolutePath));
+        await vm.fs.access(contained(absolutePath));
+        return true;
       } catch {
         return false;
       }
     },
-    stat(absolutePath: string) {
-      return statSync(contained(absolutePath));
+    async stat(absolutePath: string) {
+      if (!statFs) throw new Error("Sandbox ls requires vm.fs.stat");
+      return statFs(contained(absolutePath));
     },
-    readdir(absolutePath: string) {
-      const dir = contained(absolutePath);
-      return readdirSync(dir).filter((name) => {
-        const rel = relative(realpathSync(hostCwd), join(dir, name));
-        const posixPath = posix.join("/", rel.split(/[\\/]/).join("/"));
-        return !shouldShadow(posixPath);
+    async readdir(absolutePath: string) {
+      if (!listDir) throw new Error("Sandbox ls requires vm.fs.listDir");
+      const guestPath = contained(absolutePath);
+      const posixPath = guestPosixRelative(guestPath, guestWorkspace);
+      const entries = await listDir(guestPath);
+      return entries.filter((name) => {
+        const child = posix.join(posixPath === "/" ? "" : posixPath, name);
+        const normalized = child.startsWith("/") ? child : `/${child}`;
+        return !shouldShadow(normalized);
       });
+    },
+  };
+}
+
+// ─── Find ───
+
+function findMatchArgs(pattern: string): string[] {
+  if (pattern.includes("/")) {
+    let pathPat = pattern.replaceAll("**", "*");
+    if (!pathPat.startsWith("/") && !pathPat.startsWith("*")) {
+      pathPat = `*/${pathPat}`;
+    }
+    return ["-path", pathPat];
+  }
+  return ["-name", pattern];
+}
+
+function findPruneNames(ignore: string[]): string[] {
+  const names: string[] = [];
+  for (const glob of ignore) {
+    const trimmed = glob.replace(/\*\//g, "").replace(/\*\*/g, "").replaceAll("/", "");
+    if (trimmed && !trimmed.includes("*") && !names.includes(trimmed)) names.push(trimmed);
+  }
+  return names.length > 0 ? names : ["node_modules", ".git"];
+}
+
+async function awaitGuestExec(
+  vm: GondolinVm,
+  args: string[],
+  options?: { cwd?: string; signal?: AbortSignal },
+): Promise<GondolinExecResult> {
+  return vm.exec(args, {
+    cwd: options?.cwd,
+    signal: options?.signal,
+    stdout: "buffer",
+    stderr: "buffer",
+  });
+}
+
+/**
+ * Guest find through Alpine `find` via vm.exec. Do not use host fd.
+ * Pi's createFindToolDefinition calls glob() instead of spawning fd when
+ * this operations object is supplied.
+ */
+export function createGondolinFindOps(
+  vm: GondolinVm,
+  localCwd: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
+): FindOperations {
+  return {
+    async exists(absolutePath: string) {
+      try {
+        const guestPath = toGuestPath(localCwd, absolutePath, guestWorkspace);
+        await vm.fs.access(guestPath);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async glob(pattern, cwd, options) {
+      const guestPath = toGuestPath(localCwd, cwd, guestWorkspace);
+      const prune = findPruneNames(options.ignore);
+      // Gondolin array exec is execve-style and does not search PATH.
+      const args = ["/usr/bin/find", guestPath];
+      if (prune.length > 0) {
+        args.push("(");
+        for (const [index, name] of prune.entries()) {
+          if (index > 0) args.push("-o");
+          args.push("-name", name);
+        }
+        args.push(")", "-prune", "-o");
+      }
+      args.push("-type", "f", ...findMatchArgs(pattern), "-print");
+      const result = await awaitGuestExec(vm, args, { cwd: guestWorkspace });
+      if (!result.ok && !result.stdout.trim()) {
+        throw new Error(result.stdout.trim() || `find exited with code ${result.exitCode}`);
+      }
+      const lines = result.stdout
+        .split("\n")
+        .map((line) => line.replace(/\r$/, "").trim())
+        .filter(Boolean);
+      return lines.slice(0, Math.max(1, options.limit));
+    },
+  };
+}
+
+// ─── Grep ───
+
+const sandboxGrepSchema = Type.Object({
+  pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
+  path: Type.Optional(
+    Type.String({ description: "Directory or file to search (default: current directory)" }),
+  ),
+  glob: Type.Optional(
+    Type.String({ description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'" }),
+  ),
+  ignoreCase: Type.Optional(
+    Type.Boolean({ description: "Case-insensitive search (default: false)" }),
+  ),
+  literal: Type.Optional(
+    Type.Boolean({ description: "Treat pattern as literal string instead of regex (default: false)" }),
+  ),
+  context: Type.Optional(
+    Type.Number({
+      description: "Number of lines to show before and after each match (default: 0)",
+    }),
+  ),
+  limit: Type.Optional(
+    Type.Number({ description: "Maximum number of matches to return (default: 100)" }),
+  ),
+});
+
+function isHostHomeTildePath(input: string): boolean {
+  return input === "~" || input.startsWith("~/") || input.startsWith("~\\");
+}
+
+/**
+ * Resolve a sandbox grep/find path against the guest cwd. `~` is never expanded
+ * to the host home directory. `..` cannot leave the workspace mount.
+ */
+export function resolveSandboxToolPath(
+  input: string | undefined,
+  localCwd: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
+): string {
+  const raw = (input ?? ".").trim() || ".";
+  if (isHostHomeTildePath(raw)) {
+    throw new Error(`Path is outside the sandbox workspace: ${raw}`);
+  }
+  const resolved = isAbsolute(raw) ? resolve(raw) : resolve(localCwd, raw);
+  return toGuestPath(localCwd, resolved, guestWorkspace);
+}
+
+async function detectGuestRg(
+  vm: GondolinVm,
+  guestWorkspace: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const result = await awaitGuestExec(vm, ["/bin/sh", "-c", "command -v rg"], {
+    cwd: guestWorkspace,
+    signal,
+  });
+  const rgPath = result.stdout.trim().split(/\s+/)[0];
+  // Gondolin array exec does not search PATH, so only use an absolute rg.
+  if (result.ok && rgPath.startsWith("/")) return rgPath;
+  return undefined;
+}
+
+/**
+ * Guest grep ToolDefinition. Prefer guest `rg` when `command -v rg` succeeds,
+ * otherwise guest `grep`. Never call createGrepToolDefinition (host rg).
+ */
+export function createSandboxGrepToolDefinition(
+  vm: GondolinVm,
+  localCwd: string,
+  guestWorkspace: string = GUEST_WORKSPACE,
+): ToolDefinition<typeof sandboxGrepSchema> {
+  return {
+    name: "grep",
+    label: "grep",
+    description:
+      "Search file contents inside the sandbox workspace. Paths outside the workspace mount are rejected. Prefers guest rg when present, otherwise guest grep.",
+    promptSnippet: "Search file contents in the sandbox workspace",
+    parameters: sandboxGrepSchema,
+    async execute(_toolCallId, params, signal) {
+      const pattern = String(params.pattern ?? "");
+      const guestPath = resolveSandboxToolPath(
+        typeof params.path === "string" ? params.path : undefined,
+        localCwd,
+        guestWorkspace,
+      );
+      const ignoreCase = params.ignoreCase === true;
+      const literal = params.literal === true;
+      const glob = typeof params.glob === "string" ? params.glob : undefined;
+      const context =
+        typeof params.context === "number" && params.context > 0 ? params.context : 0;
+      const limit =
+        typeof params.limit === "number" && params.limit > 0 ? params.limit : 100;
+
+      const rgPath = await detectGuestRg(vm, guestWorkspace, signal);
+      // Gondolin array exec is execve-style and does not search PATH.
+      const args = rgPath
+        ? [rgPath, "--line-number", "--color=never", "--hidden"]
+        : ["/bin/grep", "-n", "-H", "-R"];
+      if (ignoreCase) args.push(rgPath ? "--ignore-case" : "-i");
+      if (literal) args.push(rgPath ? "--fixed-strings" : "-F");
+      if (glob) {
+        if (rgPath) args.push("--glob", glob);
+        else args.push(`--include=${glob}`);
+      }
+      if (context > 0) args.push(rgPath ? "--context" : "-C", String(context));
+      args.push("--", pattern, guestPath);
+
+      const result = await awaitGuestExec(vm, args, { cwd: guestWorkspace, signal });
+      if (!result.ok && result.exitCode !== 1) {
+        throw new Error(result.stdout.trim() || `Search exited with code ${result.exitCode}`);
+      }
+      const lines = result.stdout
+        .split("\n")
+        .map((line) => line.replace(/\r$/, ""))
+        .filter((line) => line.length > 0)
+        .slice(0, limit);
+      if (lines.length === 0) {
+        return { content: [{ type: "text", text: "No matches found" }], details: undefined };
+      }
+      return { content: [{ type: "text", text: lines.join("\n") }], details: undefined };
     },
   };
 }

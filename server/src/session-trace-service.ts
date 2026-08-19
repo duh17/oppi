@@ -20,6 +20,7 @@ import {
 import { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { resolveWorkspaceUserPath } from "./workspace-user-path.js";
 import type { Storage } from "./storage.js";
 import {
   collectSessionTraceJsonlPaths,
@@ -400,7 +401,17 @@ export class SessionTraceService {
       return { kind: "workspace-root-not-found" };
     }
 
-    const requestedPath = resolveSessionRawPath(reqPath, realWorkspaceRoot);
+    const mappedPath = resolveWorkspaceUserPath({
+      workspace: params.workspace,
+      requestedPath: reqPath,
+      session: params.session,
+      dataDir: this.deps.storage.getDataDir(),
+    });
+    const requestedPath =
+      mappedPath ??
+      (params.workspace.runtime === "sandbox"
+        ? null
+        : resolveSessionRawPath(reqPath, realWorkspaceRoot));
     if (!requestedPath) {
       return { kind: "path-outside-workspace" };
     }
@@ -412,10 +423,9 @@ export class SessionTraceService {
       return { kind: "file-not-found" };
     }
 
-    if (
-      !isPathWithinRoot(resolvedPath, realWorkspaceRoot) &&
-      !this.sessionReportsPath(params.session, reqPath)
-    ) {
+    const allowReportedEscape =
+      params.workspace.runtime !== "sandbox" && this.sessionReportsPath(params.session, reqPath);
+    if (!isPathWithinRoot(resolvedPath, realWorkspaceRoot) && !allowReportedEscape) {
       return { kind: "path-outside-workspace" };
     }
 

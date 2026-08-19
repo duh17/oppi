@@ -79,7 +79,7 @@ import {
   buildOppiSystemPromptAppend,
   getOppiDocsPath,
 } from "./oppi-docs.js";
-import type { ReadonlyMount } from "./gondolin-manager.js";
+import type { ReadonlyMount, VmSecretDefinition } from "./gondolin-manager.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
@@ -524,6 +524,28 @@ function findUnavailableConfiguredAgentTools(
   return [...new Set(configuredAllowed)].filter((name) => !excluded.has(name) && !active.has(name));
 }
 
+/** VM-backed tools a sandbox session may expose. Host grep/find are not in this set. */
+const SANDBOX_TOOL_NAMES = ["read", "bash", "edit", "write", "ls", "find", "grep"] as const;
+const SANDBOX_TOOL_NAME_SET = new Set<string>(SANDBOX_TOOL_NAMES);
+
+function intersectSandboxToolAllowlist(
+  allowed: readonly string[] | undefined,
+  reserved: readonly string[] = [],
+): { allowed?: string[]; dropped: string[] } {
+  if (!allowed) return { dropped: [] };
+  const reservedSet = new Set(reserved);
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  for (const name of allowed) {
+    if (SANDBOX_TOOL_NAME_SET.has(name) || reservedSet.has(name)) {
+      if (!kept.includes(name)) kept.push(name);
+    } else if (!dropped.includes(name)) {
+      dropped.push(name);
+    }
+  }
+  return { allowed: kept, dropped };
+}
+
 function recordDroppedAgentToolsWarning(
   session: Session,
   configuredAllowed: readonly string[],
@@ -615,6 +637,26 @@ export class SdkBackend {
   static readonly RUNTIME_LIFECYCLE_TIMEOUT_MS = SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private static _gondolinManager: any;
+
+  /** Stop one workspace VM. No-op when sandbox mode has never booted. */
+  static async stopWorkspaceVm(workspaceId: string): Promise<void> {
+    await SdkBackend._gondolinManager?.stopWorkspaceVm?.(workspaceId);
+  }
+
+  /** Stop every workspace VM. Wired from server shutdown. */
+  static async stopAllWorkspaceVms(): Promise<void> {
+    await SdkBackend._gondolinManager?.stopAll?.();
+  }
+
+  /** Cancel idle VM teardown while this sandbox session is busy. */
+  static noteWorkspaceBusy(workspaceId: string, sessionId: string): void {
+    SdkBackend._gondolinManager?.noteWorkspaceBusy?.(workspaceId, sessionId);
+  }
+
+  /** Start idle VM teardown when this sandbox session is ready/stopped/error. */
+  static noteWorkspaceIdle(workspaceId: string, sessionId: string): void {
+    SdkBackend._gondolinManager?.noteWorkspaceIdle?.(workspaceId, sessionId);
+  }
 
   private runtime: AgentSessionRuntime;
   private unsub: (() => void) | null = null;
@@ -1144,7 +1186,9 @@ export class SdkBackend {
           createGondolinReadOps,
           createGondolinWriteOps,
           createGondolinEditOps,
+          createGondolinFindOps,
           createSandboxLsOps,
+          createSandboxGrepToolDefinition,
         } = await import("./gondolin-ops.js");
 
         // Lazy singleton — shared across all sessions for VM reuse.
@@ -1156,7 +1200,7 @@ export class SdkBackend {
         // Do not inject Oppi/pi provider credentials into the guest by default.
         // The host process owns model calls; sandbox commands must opt into any
         // future secret bridge explicitly instead of inheriting LLM API keys.
-        const secrets: Record<string, { value: string; headerName?: string }> = {};
+        const secrets: Record<string, VmSecretDefinition> = {};
 
         // Mount only the read-only resources whose paths were rewritten into
         // sandbox-visible locations. Do NOT mount agentDir itself — it contains
@@ -1173,6 +1217,8 @@ export class SdkBackend {
           guestCwd,
         );
 
+        // Authoritative sandbox set. Custom grep/find overwrite host builtins
+        // in Pi's registry; do not call createGrepToolDefinition (host rg).
         sandboxTools = [
           createReadToolDefinition(sessionCwd, {
             operations: createGondolinReadOps(vm, sessionCwd, guestCwd),
@@ -1187,11 +1233,15 @@ export class SdkBackend {
             operations: createGondolinWriteOps(vm, sessionCwd, guestCwd),
           }),
           createLsToolDefinition(sessionCwd, {
-            operations: createSandboxLsOps(hostCwd, guestCwd, {
+            operations: createSandboxLsOps(vm, sessionCwd, guestCwd, {
               shouldShadow: (posixPath) =>
                 shouldShadowSandboxWorkspacePath({ op: "readdir", path: posixPath }),
             }),
           }),
+          createFindToolDefinition(sessionCwd, {
+            operations: createGondolinFindOps(vm, sessionCwd, guestCwd),
+          }),
+          createSandboxGrepToolDefinition(vm, sessionCwd, guestCwd),
         ];
         log.info("sdk.sandbox_vm_ready", { workspaceId: workspace.id || "unknown" });
       }
@@ -1212,10 +1262,20 @@ export class SdkBackend {
         excluded: launchToolPolicy?.excluded,
         noTools: launchToolPolicy?.noTools ?? (sandboxTools ? ("builtin" as const) : undefined),
       };
-      const effectiveToolPolicy =
+      const reservedToolPolicy =
         ordinaryManagedRuntime || sandboxOppiRequested
           ? reserveOppiToolPolicy(configuredToolPolicy)
           : configuredToolPolicy;
+      const sandboxAllowlist = sandboxTools
+        ? intersectSandboxToolAllowlist(
+            reservedToolPolicy.allowed,
+            reservedToolPolicy.allowed?.includes("oppi") ? ["oppi"] : [],
+          )
+        : { allowed: reservedToolPolicy.allowed, dropped: [] };
+      const effectiveToolPolicy = {
+        ...reservedToolPolicy,
+        ...(sandboxAllowlist.allowed ? { allowed: sandboxAllowlist.allowed } : {}),
+      };
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,

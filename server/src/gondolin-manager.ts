@@ -2,16 +2,37 @@
  * Gondolin micro-VM lifecycle manager.
  *
  * One VM per workspace, shared across all sessions in that workspace.
- * VMs are lazily created on first access and stopped on workspace
- * teardown or server shutdown.
+ * VMs are lazily created on first access and stopped after 15 minutes
+ * with no busy session, or on workspace teardown / server shutdown.
  */
 
 import { posix } from "node:path";
-import type { CreateHttpHooksOptions, CreateHttpHooksResult } from "@earendil-works/gondolin";
+import {
+  createShadowPathPredicate,
+  type CreateHttpHooksOptions,
+  type CreateHttpHooksResult,
+} from "@earendil-works/gondolin";
 import type { Workspace } from "./types.js";
 import { GUEST_WORKSPACE, type GondolinVm } from "./gondolin-ops.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
+
+/** Stop an idle sandbox workspace VM after 15 minutes with no busy session. */
+export const WORKSPACE_VM_IDLE_TEARDOWN_MS = 15 * 60 * 1000;
+
+export interface IdleTeardownHandle {
+  cancel(): void;
+}
+
+export type IdleTeardownScheduler = (
+  callback: () => void | Promise<void>,
+  delayMs: number,
+) => IdleTeardownHandle;
+
+export interface GondolinManagerOptions {
+  idleTeardownMs?: number;
+  scheduleIdleTeardown?: IdleTeardownScheduler;
+}
 
 /**
  * Factory function that creates a Gondolin VM.
@@ -44,28 +65,54 @@ const DEFAULT_SHADOW_PATHS = [
   "/.config/gcloud",
   "/.gnupg",
   "/.ssh",
+  "/.pi",
+  "/.git-credentials",
+  "/.kube",
+  "/.docker/config.json",
+  "/.pgpass",
 ];
 
-const DEFAULT_SHADOW_FILE_NAMES = new Set([".env", ".envrc", ".npmrc", ".pypirc", ".netrc"]);
-const DEFAULT_SHADOW_DIR_NAMES = new Set([".aws", ".azure", ".gnupg", ".ssh"]);
+const DEFAULT_SHADOW_FILE_NAMES = new Set([
+  ".env",
+  ".envrc",
+  ".npmrc",
+  ".pypirc",
+  ".netrc",
+  ".git-credentials",
+  ".pgpass",
+]);
+const DEFAULT_SHADOW_DIR_NAMES = new Set([".aws", ".azure", ".gnupg", ".ssh", ".pi", ".kube"]);
+
+// Prefix-closed at the mount root via Gondolin; basename/segment rules still
+// hide the same names anywhere under the mount. Case is folded first so
+// `/.CONFIG/gcloud/...` and `/.SSH` match the path list, not only exact case.
+const matchesShadowedPath = createShadowPathPredicate(DEFAULT_SHADOW_PATHS);
 
 export function shouldShadowSandboxWorkspacePath(ctx: { op: string; path: string }): boolean {
-  const normalized = posix.normalize(ctx.path.startsWith("/") ? ctx.path : `/${ctx.path}`);
-  if (DEFAULT_SHADOW_PATHS.includes(normalized)) return true;
+  const normalized = posix
+    .normalize(ctx.path.startsWith("/") ? ctx.path : `/${ctx.path}`)
+    .toLowerCase();
+  if (matchesShadowedPath({ ...ctx, path: normalized })) return true;
+  if (normalized.endsWith("/.docker/config.json")) return true;
 
-  const segments = normalized
-    .split("/")
-    .filter(Boolean)
-    .map((segment) => segment.toLowerCase());
+  const segments = normalized.split("/").filter(Boolean);
   if (segments.some((segment) => DEFAULT_SHADOW_DIR_NAMES.has(segment))) return true;
 
-  const name = posix.basename(normalized).toLowerCase();
+  const name = posix.basename(normalized);
   return (
     DEFAULT_SHADOW_FILE_NAMES.has(name) ||
     name.startsWith(".env.") ||
     name.endsWith(".pem") ||
-    name.endsWith(".key")
+    name.endsWith(".key") ||
+    name.endsWith(".p12") ||
+    name.endsWith(".pfx")
   );
+}
+
+export interface VmSecretDefinition {
+  value: string;
+  /** Explicit non-wildcard hosts this secret may be injected to. */
+  hosts: string[];
 }
 
 export interface VmFactoryOptions {
@@ -74,32 +121,69 @@ export interface VmFactoryOptions {
   guestWorkspacePath?: string;
   allowedHosts?: string[];
   /** Secret definitions for host-mediated HTTP injection. Keys are env var names. */
-  secrets?: Record<string, { value: string; headerName?: string }>;
+  secrets?: Record<string, VmSecretDefinition>;
   /** Additional host paths to mount read-only. Strings mount at the same guest path. */
   readonlyMounts?: ReadonlyMountSpec[];
-  /** Extra environment variables for the guest VM. */
+  /** Non-secret guest env such as PATH or LANG. Do not put provider credentials here. */
   extraEnv?: Record<string, string>;
+  /** Shown by `gondolin list`. Prefer the workspace id. */
+  sessionLabel?: string;
 }
 
-/**
- * Default factory using the real Gondolin SDK.
- *
- * Dynamically imports `@earendil-works/gondolin` so the module is
- * only required at runtime when sandbox mode is actually used.
- */
+interface WorkspaceVmEntry {
+  vm: GondolinVm & { close(): Promise<void> };
+  fingerprint: string;
+}
+
+/** Canonical VM identity so workspace cwd/host/env changes recycle a stale VM. */
+export function workspaceVmFingerprint(options: {
+  hostCwd: string;
+  guestWorkspacePath?: string;
+  allowedHosts?: string[];
+  extraEnv?: Record<string, string>;
+}): string {
+  const extraEnv = Object.fromEntries(
+    Object.entries(options.extraEnv ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+  );
+
+  return JSON.stringify({
+    hostCwd: options.hostCwd,
+    guestWorkspacePath: options.guestWorkspacePath ?? GUEST_WORKSPACE,
+    allowedHosts: options.allowedHosts ?? null,
+    extraEnv,
+  });
+}
+
+function isExplicitNonWildcardHostList(hosts: string[] | undefined): hosts is string[] {
+  if (!Array.isArray(hosts) || hosts.length === 0) return false;
+  // Gondolin trims/lowercases hosts; " * " must not become allow-all.
+  return hosts.every((host) => {
+    const normalized = host.trim().toLowerCase();
+    return normalized.length > 0 && !normalized.includes("*");
+  });
+}
+
+function gondolinSecretsFrom(
+  secrets: Record<string, VmSecretDefinition> | undefined,
+): Record<string, { hosts: string[]; value: string }> | undefined {
+  // Do not invent hosts from allowedHosts or ["*"]. Empty {} stays empty.
+  if (!secrets) return undefined;
+
+  return Object.fromEntries(
+    Object.entries(secrets).map(([name, secret]) => {
+      if (!isExplicitNonWildcardHostList(secret.hosts)) {
+        throw new Error(`sandbox secret "${name}" requires an explicit non-wildcard host list`);
+      }
+      return [name, { hosts: secret.hosts, value: secret.value }];
+    }),
+  );
+}
+
 export function buildVmHttpHooks(
   createHttpHooks: (options?: CreateHttpHooksOptions) => CreateHttpHooksResult,
   options: Pick<VmFactoryOptions, "allowedHosts" | "secrets">,
 ): Pick<CreateHttpHooksResult, "httpHooks" | "env"> {
-  // Transform secrets to Gondolin SDK format (hosts + value per key)
-  const gondolinSecrets = options.secrets
-    ? Object.fromEntries(
-        Object.entries(options.secrets).map(([key, { value }]) => [
-          key,
-          { hosts: options.allowedHosts ?? ["*"], value },
-        ]),
-      )
-    : undefined;
+  const gondolinSecrets = gondolinSecretsFrom(options.secrets);
 
   const { httpHooks: baseHttpHooks, env } = createHttpHooks({
     allowedHosts: options.allowedHosts,
@@ -121,6 +205,12 @@ export function buildVmHttpHooks(
   return { httpHooks: baseHttpHooks, env };
 }
 
+/**
+ * Default factory using the real Gondolin SDK.
+ *
+ * Dynamically imports `@earendil-works/gondolin` so the module is
+ * only required at runtime when sandbox mode is actually used.
+ */
 export async function defaultVmFactory(
   options: VmFactoryOptions,
 ): Promise<GondolinVm & { close(): Promise<void> }> {
@@ -156,10 +246,17 @@ export async function defaultVmFactory(
   // Merge httpHooks env (secret placeholders) with workspace-level extra env.
   const mergedEnv = options.extraEnv ? { ...env, ...options.extraEnv } : env;
 
+  // Gondolin defaults (64 MiB). Set explicitly so guest HTTP bodies stay capped.
+  const guestMaxHttpBodyBytes = 64 * 1024 * 1024;
+
   const vm = await VM.create({
     vfs: { mounts },
     httpHooks,
     env: mergedEnv,
+    allowWebSockets: false,
+    maxHttpBodyBytes: guestMaxHttpBodyBytes,
+    maxHttpResponseBodyBytes: guestMaxHttpBodyBytes,
+    ...(options.sessionLabel ? { sessionLabel: options.sessionLabel } : {}),
   });
 
   const shellProbe = await vm.exec(["/bin/sh", "-lc", "command -v bash || true"]);
@@ -170,40 +267,73 @@ export async function defaultVmFactory(
 
 const log = createLogger({ base: { component: "gondolin_manager" } });
 
+function defaultIdleTeardownScheduler(
+  callback: () => void | Promise<void>,
+  delayMs: number,
+): IdleTeardownHandle {
+  const timer = setTimeout(() => {
+    void callback();
+  }, delayMs);
+  return {
+    cancel: () => clearTimeout(timer),
+  };
+}
+
 export class GondolinManager {
-  /** workspaceId → running VM */
-  private vms = new Map<string, GondolinVm & { close(): Promise<void> }>();
+  /** workspaceId → running VM plus the config fingerprint it was booted with */
+  private vms = new Map<string, WorkspaceVmEntry>();
   /** workspaceId → in-flight startup promise (prevents double-start) */
   private starting = new Map<string, Promise<GondolinVm & { close(): Promise<void> }>>();
+  /** workspaceId → session IDs currently in a busy turn */
+  private busySessions = new Map<string, Set<string>>();
+  /** workspaceId → pending idle stop */
+  private idleTimers = new Map<string, IdleTeardownHandle>();
   private readonly factory: VmFactory;
+  private readonly idleTeardownMs: number;
+  private readonly scheduleIdleTeardown: IdleTeardownScheduler;
 
-  constructor(factory: VmFactory = defaultVmFactory) {
+  constructor(factory: VmFactory = defaultVmFactory, options: GondolinManagerOptions = {}) {
     this.factory = factory;
+    this.idleTeardownMs = options.idleTeardownMs ?? WORKSPACE_VM_IDLE_TEARDOWN_MS;
+    this.scheduleIdleTeardown = options.scheduleIdleTeardown ?? defaultIdleTeardownScheduler;
   }
 
   /**
    * Return an existing VM for this workspace, or create one.
    *
    * Concurrent calls for the same workspace coalesce onto a single
-   * startup promise to avoid spinning up duplicate VMs.
+   * startup promise to avoid spinning up duplicate VMs. A later call with a
+   * different workspace cwd/host/env fingerprint closes the old VM and boots a new one.
+   * Per-session readonly skill mounts are not part of that identity.
    */
   async ensureWorkspaceVm(
     workspace: Workspace,
     hostCwd: string,
-    secrets?: Record<string, { value: string; headerName?: string }>,
+    secrets?: Record<string, VmSecretDefinition>,
     readonlyMounts?: ReadonlyMountSpec[],
     extraEnv?: Record<string, string>,
     guestWorkspacePath?: string,
   ): Promise<GondolinVm> {
     const id = workspace.id;
+    const fingerprint = workspaceVmFingerprint({
+      hostCwd,
+      guestWorkspacePath,
+      allowedHosts: workspace.sandboxConfig?.allowedHosts,
+      extraEnv,
+    });
 
-    // Already running
-    const existing = this.vms.get(id);
-    if (existing) return existing;
-
-    // Already starting — coalesce
+    // Already starting — coalesce even if this call wants a different fingerprint.
     const inflight = this.starting.get(id);
     if (inflight) return inflight;
+
+    const existing = this.vms.get(id);
+    if (existing) {
+      if (existing.fingerprint === fingerprint) return existing.vm;
+      await this.stopWorkspaceVm(id);
+    }
+
+    const inflightAfterStop = this.starting.get(id);
+    if (inflightAfterStop) return inflightAfterStop;
 
     const promise = this.startVm(
       workspace,
@@ -217,22 +347,49 @@ export class GondolinManager {
 
     try {
       const vm = await promise;
-      this.vms.set(id, vm);
+      this.vms.set(id, { vm, fingerprint });
       return vm;
     } finally {
       this.starting.delete(id);
     }
   }
 
+  /**
+   * A busy sandbox session in this workspace cancels idle teardown.
+   * Called from the session-status path; this module does not import sessions.ts.
+   */
+  noteWorkspaceBusy(workspaceId: string, sessionId: string): void {
+    let sessions = this.busySessions.get(workspaceId);
+    if (!sessions) {
+      sessions = new Set();
+      this.busySessions.set(workspaceId, sessions);
+    }
+    sessions.add(sessionId);
+    this.clearIdleTimer(workspaceId);
+  }
+
+  /**
+   * When this session is ready/stopped/error, start the 15-minute idle timer
+   * if no other session in the workspace is still busy.
+   */
+  noteWorkspaceIdle(workspaceId: string, sessionId: string): void {
+    const sessions = this.busySessions.get(workspaceId);
+    sessions?.delete(sessionId);
+    if (sessions && sessions.size === 0) this.busySessions.delete(workspaceId);
+    if (this.hasBusySession(workspaceId)) return;
+    this.armIdleTimer(workspaceId);
+  }
+
   async stopWorkspaceVm(workspaceId: string): Promise<void> {
-    const vm = this.vms.get(workspaceId);
-    if (!vm) return;
+    this.clearIdleTimer(workspaceId);
+    const existing = this.vms.get(workspaceId);
+    if (!existing) return;
 
     this.vms.delete(workspaceId);
     log.info("gondolin.vm_stopping", { workspaceId });
 
     try {
-      await vm.close();
+      await existing.vm.close();
     } catch (err) {
       log.error("gondolin.vm_stop.failed", {
         workspaceId,
@@ -251,13 +408,41 @@ export class GondolinManager {
   }
 
   getVm(workspaceId: string): GondolinVm | undefined {
-    return this.vms.get(workspaceId);
+    return this.vms.get(workspaceId)?.vm;
+  }
+
+  private hasBusySession(workspaceId: string): boolean {
+    return (this.busySessions.get(workspaceId)?.size ?? 0) > 0;
+  }
+
+  private armIdleTimer(workspaceId: string): void {
+    if (this.idleTimers.has(workspaceId)) return;
+    if (!this.vms.has(workspaceId) && !this.starting.has(workspaceId)) return;
+    const handle = this.scheduleIdleTeardown(
+      () => this.onIdleTeardown(workspaceId),
+      this.idleTeardownMs,
+    );
+    this.idleTimers.set(workspaceId, handle);
+  }
+
+  private clearIdleTimer(workspaceId: string): void {
+    const handle = this.idleTimers.get(workspaceId);
+    if (!handle) return;
+    handle.cancel();
+    this.idleTimers.delete(workspaceId);
+  }
+
+  private async onIdleTeardown(workspaceId: string): Promise<void> {
+    this.idleTimers.delete(workspaceId);
+    // Do not stop mid-turn if a session became busy after the timer was queued.
+    if (this.hasBusySession(workspaceId)) return;
+    await this.stopWorkspaceVm(workspaceId);
   }
 
   private async startVm(
     workspace: Workspace,
     hostCwd: string,
-    secrets?: Record<string, { value: string; headerName?: string }>,
+    secrets?: Record<string, VmSecretDefinition>,
     readonlyMounts?: ReadonlyMountSpec[],
     extraEnv?: Record<string, string>,
     guestWorkspacePath?: string,
@@ -277,6 +462,7 @@ export class GondolinManager {
       secrets,
       readonlyMounts,
       extraEnv,
+      sessionLabel: workspace.id,
     });
 
     log.info("gondolin.vm_ready", { workspaceId: workspace.id });

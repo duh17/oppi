@@ -18,6 +18,7 @@ import {
   captureHumanCliOutput,
   setCapturedCliExitCode,
   type CliJsonEnvelope,
+  withSandboxScopedCliJson,
   writeHumanLine,
   writeJsonEnvelope,
 } from "./output.js";
@@ -95,6 +96,16 @@ export async function runCli(
 }
 
 async function executeCliCommand(args: readonly string[], options: CliRunOptions): Promise<void> {
+  if (options.sandboxScope) {
+    return withSandboxScopedCliJson(() => executeUnscopedCliCommand(args, options));
+  }
+  return executeUnscopedCliCommand(args, options);
+}
+
+async function executeUnscopedCliCommand(
+  args: readonly string[],
+  options: CliRunOptions,
+): Promise<void> {
   const { command, flags, positional } = parseCliArgs([...args]);
   if (isNestedHelpRequest(command, positional, flags)) {
     const topic = resolveHelpTopic(helpPathFor(command, positional));

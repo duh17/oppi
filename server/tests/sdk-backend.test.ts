@@ -695,7 +695,7 @@ describe("SdkBackend sandbox", () => {
       fs: {
         access: vi.fn(async () => undefined),
         mkdir: vi.fn(async () => undefined),
-        readdir: vi.fn(async () => ["packet.md"]),
+        listDir: vi.fn(async () => ["packet.md"]),
         readFile: vi.fn(async () => Buffer.from("ok\n")),
         writeFile: vi.fn(async () => undefined),
         stat: vi.fn(async () => ({ isDirectory: () => true, isFile: () => false })),
@@ -751,12 +751,295 @@ describe("SdkBackend sandbox", () => {
       const text = result.content.map((part) => ("text" in part ? part.text : "")).join("\n");
       expect(text).toContain("packet.md");
       expect(text).not.toMatch(/Path not found/i);
+      expect(vm.fs.listDir).toHaveBeenCalled();
+      expect(vm.fs.stat).toHaveBeenCalled();
+      expect(JSON.stringify(vm.fs.listDir.mock.calls)).toContain(guestRoot);
     } finally {
       await backend?.dispose();
       sdkBackendType._gondolinManager = previousManager;
       qemuSpy.mockRestore();
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  describe("guest grep/find", () => {
+    function toolText(result: { content: Array<{ type?: string; text?: string }> }): string {
+      return result.content.map((part) => ("text" in part ? (part.text ?? "") : "")).join("\n");
+    }
+
+    function createGuestSearchVm() {
+      const execCalls: Array<{ args: string[] | string; options?: unknown }> = [];
+      const vm = {
+        fs: {
+          access: vi.fn(async () => undefined),
+          mkdir: vi.fn(async () => undefined),
+          listDir: vi.fn(async () => ["notes.md"]),
+          readFile: vi.fn(async () => Buffer.from("guest-workspace-hit\n")),
+          writeFile: vi.fn(async () => undefined),
+          stat: vi.fn(async (path: string) => ({
+            isDirectory: () => !String(path).endsWith(".md"),
+            isFile: () => String(path).endsWith(".md"),
+          })),
+        },
+        exec: vi.fn((args: string[] | string, options?: unknown) => {
+          execCalls.push({ args, options });
+          const argv = Array.isArray(args) ? args : [args];
+          const joined = argv.join(" ");
+          if (joined.includes("command -v rg")) {
+            return Object.assign(
+              Promise.resolve({
+                exitCode: 1,
+                stdout: "",
+                stdoutBuffer: Buffer.alloc(0),
+                ok: false,
+              }),
+              { output: async function* () {} },
+            );
+          }
+          const stdout =
+            argv[0] === "/usr/bin/find" || argv[0] === "find" || /(?:^|\s|\/)find(?:\s|$)/.test(joined)
+              ? "notes.md\n"
+              : "notes.md:1: guest-workspace-hit\n";
+          return Object.assign(
+            Promise.resolve({
+              exitCode: 0,
+              stdout,
+              stdoutBuffer: Buffer.from(stdout),
+              ok: true,
+            }),
+            { output: async function* () {} },
+          );
+        }),
+      };
+      return { vm, execCalls };
+    }
+
+    it("cannot read ~/.pi/agent/auth.json or outside-mount files through allowlisted grep/find", async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-guest-search-deny-"));
+      const outsideDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-guest-search-outside-"));
+      const hostSecret = `f1-host-secret-${Date.now()}`;
+      const outsideFile = join(outsideDir, "secret.txt");
+      writeFileSync(join(cwd, "notes.md"), "host-mount-notes\n");
+      writeFileSync(outsideFile, `${hostSecret}\n`);
+      const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+      const { vm, execCalls } = createGuestSearchVm();
+      const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+      const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+      const previousManager = sdkBackendType._gondolinManager;
+      sdkBackendType._gondolinManager = manager;
+      let backend: SdkBackend | undefined;
+
+      try {
+        backend = await SdkBackend.create({
+          session: makeSession({
+            ephemeral: true,
+            launch: {
+              status: "launching",
+              requestedAt: 1,
+              tools: { allowed: ["read", "bash", "grep", "find"] },
+            },
+          }),
+          workspace: {
+            id: "w1",
+            name: "Sandbox Guest Search Deny",
+            runtime: "sandbox",
+            hostMount: cwd,
+            extensions: [],
+          } as Workspace,
+          agentDefinition: {
+            name: "Sandbox Searcher",
+            sessionDefaults: { tools: ["read", "bash", "grep", "find"] },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        });
+
+        expect(backend.session.getActiveToolNames()).toEqual(
+          expect.arrayContaining(["read", "bash", "grep", "find"]),
+        );
+        const guestRoot = "/workspace/sandbox-guest-search-deny";
+        const grep = backend.session.getToolDefinition("grep");
+        const find = backend.session.getToolDefinition("find");
+        expect(grep).toBeDefined();
+        expect(find).toBeDefined();
+
+        const leakFrom = async (
+          tool: NonNullable<typeof grep>,
+          params: Record<string, unknown>,
+        ): Promise<string> => {
+          try {
+            const result = await tool.execute("deny", params, undefined, undefined, {} as never);
+            return toolText(result);
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+          }
+        };
+
+        const authLeak = await leakFrom(grep!, {
+          pattern: ".",
+          path: "~/.pi/agent/auth.json",
+        });
+        const outsideGrepLeak = await leakFrom(grep!, {
+          pattern: hostSecret,
+          path: outsideFile,
+        });
+        const outsideFindLeak = await leakFrom(find!, {
+          pattern: "secret.txt",
+          path: outsideDir,
+        });
+        const parentEscapeLeak = await leakFrom(grep!, {
+          pattern: hostSecret,
+          path: join(guestRoot, "..", "..", "..", "etc", "passwd"),
+        });
+
+        expect(authLeak).toMatch(/outside the sandbox workspace|Path not found|No matches found/i);
+        expect(outsideGrepLeak).not.toContain(hostSecret);
+        expect(outsideGrepLeak).toMatch(
+          /outside the sandbox workspace|Path not found|No matches found/i,
+        );
+        expect(outsideFindLeak).not.toContain(hostSecret);
+        expect(outsideFindLeak).not.toContain(outsideFile);
+        expect(parentEscapeLeak).not.toContain(hostSecret);
+        expect(JSON.stringify(execCalls)).not.toContain(outsideFile);
+        expect(JSON.stringify(execCalls)).not.toContain(homedir());
+      } finally {
+        await backend?.dispose();
+        sdkBackendType._gondolinManager = previousManager;
+        qemuSpy.mockRestore();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(outsideDir, { recursive: true, force: true });
+      }
+    });
+
+    it("searches workspace files through the mock VM instead of host rg/fd", async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-guest-search-hit-"));
+      writeFileSync(join(cwd, "notes.md"), "host-mount-notes\n");
+      const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+      const { vm, execCalls } = createGuestSearchVm();
+      const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+      const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+      const previousManager = sdkBackendType._gondolinManager;
+      sdkBackendType._gondolinManager = manager;
+      let backend: SdkBackend | undefined;
+
+      try {
+        backend = await SdkBackend.create({
+          session: makeSession({
+            ephemeral: true,
+            launch: {
+              status: "launching",
+              requestedAt: 1,
+              tools: { allowed: ["read", "bash", "grep", "find"] },
+            },
+          }),
+          workspace: {
+            id: "w1",
+            name: "Sandbox Guest Search Hit",
+            runtime: "sandbox",
+            hostMount: cwd,
+            extensions: [],
+          } as Workspace,
+          agentDefinition: {
+            name: "Sandbox Searcher",
+            sessionDefaults: { tools: ["read", "bash", "grep", "find"] },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        });
+
+        const guestRoot = "/workspace/sandbox-guest-search-hit";
+        const grep = backend.session.getToolDefinition("grep");
+        const find = backend.session.getToolDefinition("find");
+        expect(grep).toBeDefined();
+        expect(find).toBeDefined();
+        expect(grep?.description.toLowerCase()).toContain("sandbox");
+
+        const grepResult = await grep!.execute(
+          "grep-guest",
+          { pattern: "guest-workspace-hit", path: guestRoot },
+          undefined,
+          undefined,
+          {} as never,
+        );
+        const findResult = await find!.execute(
+          "find-guest",
+          { pattern: "*.md", path: guestRoot },
+          undefined,
+          undefined,
+          {} as never,
+        );
+        const grepText = toolText(grepResult);
+        const findText = toolText(findResult);
+
+        expect(grepText).toContain("guest-workspace-hit");
+        expect(grepText).not.toContain("host-mount-notes");
+        expect(findText).toContain("notes.md");
+        expect(vm.exec).toHaveBeenCalled();
+        const execDump = JSON.stringify(execCalls);
+        expect(execDump).toContain(guestRoot);
+        expect(execDump).not.toContain("/opt/homebrew/bin/rg");
+        expect(execDump).not.toContain("/opt/homebrew/bin/fd");
+        expect(execDump).not.toMatch(/"fd"/);
+      } finally {
+        await backend?.dispose();
+        sdkBackendType._gondolinManager = previousManager;
+        qemuSpy.mockRestore();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps allowlisted grep/find active as guest tools and drops other names", async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-guest-search-drop-"));
+      const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+      const { vm } = createGuestSearchVm();
+      const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+      const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+      const previousManager = sdkBackendType._gondolinManager;
+      sdkBackendType._gondolinManager = manager;
+      let backend: SdkBackend | undefined;
+      const session = makeSession({
+        ephemeral: true,
+        launch: {
+          status: "launching",
+          requestedAt: 1,
+          tools: { allowed: ["read", "bash", "grep", "find", "computer"] },
+        },
+      });
+
+      try {
+        backend = await SdkBackend.create({
+          session,
+          workspace: {
+            id: "w1",
+            name: "Sandbox Guest Search Drop",
+            runtime: "sandbox",
+            hostMount: cwd,
+            extensions: [],
+          } as Workspace,
+          agentDefinition: {
+            name: "Sandbox Searcher",
+            sessionDefaults: { tools: ["read", "bash", "grep", "find", "computer"] },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        });
+
+        const active = backend.session.getActiveToolNames();
+        expect(active).toEqual(expect.arrayContaining(["read", "bash", "grep", "find"]));
+        expect(active).not.toContain("computer");
+        expect(backend.session.getToolDefinition("grep")?.description.toLowerCase()).toContain(
+          "sandbox",
+        );
+        expect(session.warnings?.[0]).toContain(
+          "Configured Agent tool is unavailable and was dropped from this session: computer",
+        );
+      } finally {
+        await backend?.dispose();
+        sdkBackendType._gondolinManager = previousManager;
+        qemuSpy.mockRestore();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    });
   });
 });
 

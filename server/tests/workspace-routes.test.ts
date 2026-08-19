@@ -9,11 +9,7 @@ import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
-import type {
-  Session,
-  Workspace,
-  WorkspaceReviewDiffResponse,
-} from "../src/types.js";
+import type { Session, Workspace, WorkspaceReviewDiffResponse } from "../src/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
@@ -351,6 +347,34 @@ describe("workspaces module", () => {
     }
   });
 
+  it("stops the workspace VM when deleting a workspace", async () => {
+    const deleteWorkspace = vi.fn(() => true);
+    const stopWorkspaceVm = vi.fn(async () => undefined);
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => undefined),
+        deleteWorkspace,
+      },
+      stopWorkspaceVm,
+    } as unknown as RouteContext;
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "DELETE",
+      path: "/workspaces/ws-1",
+      url: new URL("http://localhost/workspaces/ws-1"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+    expect(deleteWorkspace).toHaveBeenCalledWith("ws-1");
+    expect(stopWorkspaceVm).toHaveBeenCalledWith("ws-1");
+  });
+
   it("blocks workspace deletion while Oppi-managed worktrees exist", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-worktree-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-worktree-data-"));
@@ -375,12 +399,14 @@ describe("workspaces module", () => {
         { dataDir },
       );
       const deleteWorkspace = vi.fn();
+      const stopWorkspaceVm = vi.fn(async () => undefined);
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => workspace),
           getDataDir: vi.fn(() => dataDir),
           deleteWorkspace,
         },
+        stopWorkspaceVm,
       } as unknown as RouteContext;
       const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
       const res = makeResponse();
@@ -399,6 +425,7 @@ describe("workspaces module", () => {
         error: "Workspace has Oppi-managed worktrees; remove them before deleting the workspace",
       });
       expect(deleteWorkspace).not.toHaveBeenCalled();
+      expect(stopWorkspaceVm).not.toHaveBeenCalled();
       expect(existsSync(worktree.path)).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -420,12 +447,14 @@ describe("workspaces module", () => {
       };
       mkdirSync(join(dataDir, "worktrees", "ws-1", "wt_stale"), { recursive: true });
       const deleteWorkspace = vi.fn();
+      const stopWorkspaceVm = vi.fn(async () => undefined);
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => workspace),
           getDataDir: vi.fn(() => dataDir),
           deleteWorkspace,
         },
+        stopWorkspaceVm,
       } as unknown as RouteContext;
       const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
       const res = makeResponse();
@@ -444,6 +473,7 @@ describe("workspaces module", () => {
         error: "Workspace has Oppi-managed worktrees; remove them before deleting the workspace",
       });
       expect(deleteWorkspace).not.toHaveBeenCalled();
+      expect(stopWorkspaceVm).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });

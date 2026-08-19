@@ -1,14 +1,29 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
+import { createHttpHooks, VM } from "@earendil-works/gondolin";
 import {
   buildVmHttpHooks,
+  defaultVmFactory,
   GondolinManager,
   isQemuAvailable,
   shouldShadowSandboxWorkspacePath,
+  WORKSPACE_VM_IDLE_TEARDOWN_MS,
+  type IdleTeardownScheduler,
   type VmFactory,
   type VmFactoryOptions,
 } from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import type { Workspace } from "../src/types.js";
+
+vi.mock("@earendil-works/gondolin", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/gondolin")>();
+  return {
+    ...actual,
+    VM: {
+      ...actual.VM,
+      create: vi.fn(),
+    },
+  };
+});
 
 // ─── Helpers ───
 
@@ -66,6 +81,27 @@ function makeFactory(): {
   };
   return { factory, calls, vms };
 }
+
+// ─── defaultVmFactory ───
+
+describe("defaultVmFactory", () => {
+  it("passes allowWebSockets: false into VM.create", async () => {
+    const vm = {
+      exec: vi.fn(async () => ({ stdout: "/bin/bash\n" })),
+    };
+    vi.mocked(VM.create).mockResolvedValue(vm as never);
+
+    await defaultVmFactory({ hostCwd: "/tmp/oppi-sandbox-f6" });
+
+    expect(VM.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowWebSockets: false,
+        maxHttpBodyBytes: 64 * 1024 * 1024,
+        maxHttpResponseBodyBytes: 64 * 1024 * 1024,
+      }),
+    );
+  });
+});
 
 // ─── GondolinManager ───
 
@@ -153,6 +189,150 @@ describe("GondolinManager", () => {
 
     expect(calls[0].allowedHosts).toBeUndefined();
   });
+
+  it("labels the VM with the workspace id for gondolin list", async () => {
+    const { factory, calls } = makeFactory();
+    manager = new GondolinManager(factory);
+
+    const ws = makeWorkspace({ id: "ws-label" });
+    await manager.ensureWorkspaceVm(ws, "/path");
+
+    expect(calls[0].sessionLabel).toBe("ws-label");
+  });
+});
+
+describe("workspace VM fingerprint reuse", () => {
+  let manager: GondolinManager;
+
+  afterEach(async () => {
+    if (manager) await manager.stopAll();
+  });
+
+  it.each([
+    {
+      name: "allowedHosts",
+      first: { sandboxConfig: { allowedHosts: ["api.example.com"] } },
+      firstCwd: "/path",
+      second: { sandboxConfig: { allowedHosts: ["cdn.example.com"] } },
+      secondCwd: "/path",
+    },
+    {
+      name: "hostCwd",
+      first: {},
+      firstCwd: "/path/a",
+      second: {},
+      secondCwd: "/path/b",
+    },
+  ])(
+    "closes the old VM and boots a new one when $name changes",
+    async ({ first, firstCwd, second, secondCwd }) => {
+      const { factory, calls, vms } = makeFactory();
+      manager = new GondolinManager(factory);
+
+      const firstWs = makeWorkspace({ id: "w1", ...first });
+      const firstVm = await manager.ensureWorkspaceVm(firstWs, firstCwd);
+      const secondWs = makeWorkspace({ id: "w1", ...second });
+      const secondVm = await manager.ensureWorkspaceVm(secondWs, secondCwd);
+
+      expect(firstVm).toBe(vms[0]);
+      expect(secondVm).toBe(vms[1]);
+      expect(secondVm).not.toBe(firstVm);
+      expect(vms[0].close).toHaveBeenCalledOnce();
+      expect(calls).toHaveLength(2);
+      expect(manager.getVm("w1")).toBe(vms[1]);
+    },
+  );
+
+  it("reuses the VM when the fingerprint is unchanged", async () => {
+    const { factory, calls, vms } = makeFactory();
+    manager = new GondolinManager(factory);
+
+    const firstWs = makeWorkspace({
+      id: "w1",
+      sandboxConfig: { allowedHosts: ["api.example.com"], env: { FOO: "1" } },
+    });
+    const mounts = [
+      { hostPath: "/skills/b", guestPath: "/guest/b" },
+      { hostPath: "/skills/a", guestPath: "/guest/a" },
+    ];
+    const firstVm = await manager.ensureWorkspaceVm(
+      firstWs,
+      "/path",
+      undefined,
+      mounts,
+      { FOO: "1" },
+      "/workspace/slug",
+    );
+
+    const secondWs = makeWorkspace({
+      id: "w1",
+      sandboxConfig: { allowedHosts: ["api.example.com"], env: { FOO: "1" } },
+    });
+    const reorderedMounts = [
+      { hostPath: "/skills/a", guestPath: "/guest/a" },
+      { hostPath: "/skills/b", guestPath: "/guest/b" },
+    ];
+    const secondVm = await manager.ensureWorkspaceVm(
+      secondWs,
+      "/path",
+      undefined,
+      reorderedMounts,
+      { FOO: "1" },
+      "/workspace/slug",
+    );
+
+    expect(secondVm).toBe(firstVm);
+    expect(vms[0].close).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("closes the old VM when extraEnv changes", async () => {
+    const { factory, vms } = makeFactory();
+    manager = new GondolinManager(factory);
+
+    const ws = makeWorkspace({ id: "w1" });
+    const firstVm = await manager.ensureWorkspaceVm(ws, "/path", undefined, undefined, {
+      FOO: "1",
+    });
+    const afterEnv = await manager.ensureWorkspaceVm(ws, "/path", undefined, undefined, {
+      FOO: "2",
+    });
+
+    expect(afterEnv).not.toBe(firstVm);
+    expect(vms[0].close).toHaveBeenCalledOnce();
+    expect(manager.getVm("w1")).toBe(vms[1]);
+  });
+
+  it("reuses the live VM when only readonlyMounts differ", async () => {
+    const { factory, calls, vms } = makeFactory();
+    manager = new GondolinManager(factory);
+
+    const ws = makeWorkspace({
+      id: "w1",
+      sandboxConfig: { allowedHosts: ["api.example.com"] },
+    });
+    const firstVm = await manager.ensureWorkspaceVm(
+      ws,
+      "/path",
+      undefined,
+      [{ hostPath: "/skills/agent-a", guestPath: "/workspace/slug/.pi/skills/a" }],
+      { FOO: "1" },
+      "/workspace/slug",
+    );
+    const secondVm = await manager.ensureWorkspaceVm(
+      ws,
+      "/path",
+      undefined,
+      [{ hostPath: "/skills/agent-b", guestPath: "/workspace/slug/.pi/skills/b" }],
+      { FOO: "1" },
+      "/workspace/slug",
+    );
+
+    expect(secondVm).toBe(firstVm);
+    expect(vms[0].close).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+    expect(manager.getVm("w1")).toBe(firstVm);
+  });
 });
 
 describe("stopWorkspaceVm", () => {
@@ -190,6 +370,131 @@ describe("stopWorkspaceVm", () => {
 
     expect(vm1).not.toBe(vm2);
     expect(calls).toHaveLength(2);
+
+    await manager.stopAll();
+  });
+});
+
+function makeIdleScheduler(): {
+  schedule: IdleTeardownScheduler;
+  fire: (index?: number) => Promise<void>;
+  delays: number[];
+  cancelled: boolean[];
+} {
+  const callbacks: Array<() => void | Promise<void>> = [];
+  const delays: number[] = [];
+  const cancelled: boolean[] = [];
+  const schedule: IdleTeardownScheduler = (callback, delayMs) => {
+    const index = callbacks.length;
+    callbacks.push(callback);
+    delays.push(delayMs);
+    cancelled.push(false);
+    return {
+      cancel: () => {
+        cancelled[index] = true;
+      },
+    };
+  };
+  return {
+    schedule,
+    fire: async (index = callbacks.length - 1) => {
+      const callback = callbacks[index];
+      if (!callback || cancelled[index]) return;
+      await callback();
+    },
+    delays,
+    cancelled,
+  };
+}
+
+describe("workspace VM idle teardown", () => {
+  it("closes the VM 15 minutes after the last busy session goes idle", async () => {
+    const { factory, vms } = makeFactory();
+    const scheduler = makeIdleScheduler();
+    const manager = new GondolinManager(factory, {
+      idleTeardownMs: WORKSPACE_VM_IDLE_TEARDOWN_MS,
+      scheduleIdleTeardown: scheduler.schedule,
+    });
+    const ws = makeWorkspace({ id: "w1" });
+
+    await manager.ensureWorkspaceVm(ws, "/path");
+    manager.noteWorkspaceBusy("w1", "s1");
+    manager.noteWorkspaceIdle("w1", "s1");
+
+    expect(scheduler.delays).toEqual([WORKSPACE_VM_IDLE_TEARDOWN_MS]);
+    expect(vms[0].close).not.toHaveBeenCalled();
+
+    await scheduler.fire();
+
+    expect(vms[0].close).toHaveBeenCalledOnce();
+    expect(manager.isRunning("w1")).toBe(false);
+  });
+
+  it("cancels teardown when a session becomes busy before 15 minutes", async () => {
+    const { factory, vms } = makeFactory();
+    const scheduler = makeIdleScheduler();
+    const manager = new GondolinManager(factory, {
+      idleTeardownMs: WORKSPACE_VM_IDLE_TEARDOWN_MS,
+      scheduleIdleTeardown: scheduler.schedule,
+    });
+    const ws = makeWorkspace({ id: "w1" });
+
+    await manager.ensureWorkspaceVm(ws, "/path");
+    manager.noteWorkspaceBusy("w1", "s1");
+    manager.noteWorkspaceIdle("w1", "s1");
+    manager.noteWorkspaceBusy("w1", "s1");
+
+    await scheduler.fire();
+
+    expect(scheduler.cancelled[0]).toBe(true);
+    expect(vms[0].close).not.toHaveBeenCalled();
+    expect(manager.isRunning("w1")).toBe(true);
+
+    await manager.stopAll();
+  });
+
+  it("does not stop the VM when one session goes idle while another stays busy", async () => {
+    const { factory, vms } = makeFactory();
+    const scheduler = makeIdleScheduler();
+    const manager = new GondolinManager(factory, {
+      idleTeardownMs: WORKSPACE_VM_IDLE_TEARDOWN_MS,
+      scheduleIdleTeardown: scheduler.schedule,
+    });
+    const ws = makeWorkspace({ id: "w1" });
+
+    await manager.ensureWorkspaceVm(ws, "/path");
+    manager.noteWorkspaceBusy("w1", "s1");
+    manager.noteWorkspaceBusy("w1", "s2");
+    manager.noteWorkspaceIdle("w1", "s1");
+
+    expect(scheduler.delays).toEqual([]);
+    await scheduler.fire();
+    expect(vms[0].close).not.toHaveBeenCalled();
+    expect(manager.isRunning("w1")).toBe(true);
+
+    await manager.stopAll();
+  });
+
+  it("creates a new VM when ensureWorkspaceVm runs after idle teardown", async () => {
+    const { factory, calls, vms } = makeFactory();
+    const scheduler = makeIdleScheduler();
+    const manager = new GondolinManager(factory, {
+      idleTeardownMs: WORKSPACE_VM_IDLE_TEARDOWN_MS,
+      scheduleIdleTeardown: scheduler.schedule,
+    });
+    const ws = makeWorkspace({ id: "w1" });
+
+    const first = await manager.ensureWorkspaceVm(ws, "/path");
+    manager.noteWorkspaceBusy("w1", "s1");
+    manager.noteWorkspaceIdle("w1", "s1");
+    await scheduler.fire();
+    const second = await manager.ensureWorkspaceVm(ws, "/path");
+
+    expect(first).toBe(vms[0]);
+    expect(second).toBe(vms[1]);
+    expect(second).not.toBe(first);
+    expect(calls).toHaveLength(2);
+    expect(manager.getVm("w1")).toBe(vms[1]);
 
     await manager.stopAll();
   });
@@ -279,8 +584,46 @@ describe("sandbox workspace shadow policy", () => {
     }
   });
 
+  it("hides children of /.config/gcloud, not only the directory exact path", () => {
+    expect(
+      shouldShadowSandboxWorkspacePath({
+        op: "open",
+        path: "/.config/gcloud/application_default_credentials.json",
+      }),
+    ).toBe(true);
+  });
+
+  it("hides case variants of .SSH", () => {
+    expect(shouldShadowSandboxWorkspacePath({ op: "open", path: "/.SSH/id_rsa" })).toBe(true);
+    expect(shouldShadowSandboxWorkspacePath({ op: "open", path: "/repo/.SSH/config" })).toBe(true);
+  });
+
+  it.each([
+    ["/.pi/agent/auth.json"],
+    ["/.git-credentials"],
+    ["/repo/.git-credentials"],
+    ["/.kube/config"],
+    ["/app/.kube/config"],
+    ["/.docker/config.json"],
+    ["/app/.docker/config.json"],
+    ["/.pgpass"],
+    ["/home/.pgpass"],
+    ["/certs/client.p12"],
+    ["/certs/client.pfx"],
+    ["/.CONFIG/gcloud/application_default_credentials.json"],
+  ] as const)("hides credential path %s", (path) => {
+    expect(shouldShadowSandboxWorkspacePath({ op: "open", path })).toBe(true);
+  });
+
   it("does not hide ordinary project files", () => {
-    const allowed = ["/README.md", "/src/config.ts", "/docs/keybindings.md", "/pem-notes.txt"];
+    const allowed = [
+      "/README.md",
+      "/src/config.ts",
+      "/docs/keybindings.md",
+      "/pem-notes.txt",
+      "/.config/git/config",
+      "/.docker/daemon.json",
+    ];
 
     for (const path of allowed) {
       expect(shouldShadowSandboxWorkspacePath({ op: "open", path })).toBe(false);
@@ -289,93 +632,126 @@ describe("sandbox workspace shadow policy", () => {
 });
 
 describe("buildVmHttpHooks", () => {
+  const publicHttpsProbe = {
+    hostname: "example.com",
+    ip: "93.184.216.34",
+    family: 4 as const,
+    port: 443,
+    protocol: "https" as const,
+  };
+
   it("passes omitted allowedHosts through to Gondolin's allow-all default", () => {
-    const createHttpHooks = vi.fn(() => ({
-      httpHooks: {
-        isIpAllowed: () => true,
-      },
-      env: {},
-    }));
+    const createHttpHooksSpy = vi.fn(createHttpHooks);
 
-    buildVmHttpHooks(createHttpHooks, {});
+    buildVmHttpHooks(createHttpHooksSpy, {});
 
-    expect(createHttpHooks).toHaveBeenCalledWith({ allowedHosts: undefined, secrets: undefined });
+    expect(createHttpHooksSpy).toHaveBeenCalledWith({
+      allowedHosts: undefined,
+      secrets: undefined,
+    });
   });
 
   it("passes an explicit empty allowedHosts list to Gondolin and denies all egress", async () => {
-    const createHttpHooks = vi.fn(() => ({
-      httpHooks: {
-        isIpAllowed: () => true,
-      },
-      env: {},
-    }));
+    const createHttpHooksSpy = vi.fn(createHttpHooks);
 
+    const { httpHooks } = buildVmHttpHooks(createHttpHooksSpy, {
+      allowedHosts: [],
+    });
+
+    expect(createHttpHooksSpy).toHaveBeenCalledWith({ allowedHosts: [], secrets: undefined });
+    await expect(httpHooks.isIpAllowed?.(publicHttpsProbe)).resolves.toBe(false);
+  });
+
+  it("treats an empty allowedHosts list as deny-all via real createHttpHooks", async () => {
     const { httpHooks } = buildVmHttpHooks(createHttpHooks, {
       allowedHosts: [],
     });
 
-    expect(createHttpHooks).toHaveBeenCalledWith({ allowedHosts: [], secrets: undefined });
-    await expect(
-      httpHooks.isIpAllowed?.({
-        hostname: "example.com",
-        ip: "93.184.216.34",
-        family: 4,
-        port: 443,
-        protocol: "https",
-      }),
-    ).resolves.toBe(false);
-  });
-
-  it("treats an empty allowedHosts list as deny-all", async () => {
-    const { httpHooks } = buildVmHttpHooks(
-      () => ({
-        httpHooks: {
-          isIpAllowed: () => true,
-        },
-        env: {},
-      }),
-      {
-        allowedHosts: [],
-      },
-    );
-
-    await expect(
-      httpHooks.isIpAllowed?.({
-        hostname: "example.com",
-        ip: "93.184.216.34",
-        family: 4,
-        port: 443,
-        protocol: "https",
-      }),
-    ).resolves.toBe(false);
+    await expect(httpHooks.isIpAllowed?.(publicHttpsProbe)).resolves.toBe(false);
   });
 
   it("preserves Gondolin host allowlists when allowedHosts is non-empty", async () => {
-    const baseIsIpAllowed = vi.fn(() => true);
-    const { httpHooks } = buildVmHttpHooks(
-      () => ({
-        httpHooks: {
-          isIpAllowed: baseIsIpAllowed,
-        },
-        env: {},
-      }),
-      {
-        allowedHosts: ["api.example.com"],
-      },
-    );
+    const { httpHooks } = buildVmHttpHooks(createHttpHooks, {
+      allowedHosts: ["api.example.com"],
+    });
 
     await expect(
-      Promise.resolve(
-        httpHooks.isIpAllowed?.({
-          hostname: "api.example.com",
-          ip: "93.184.216.34",
-          family: 4,
-          port: 443,
-          protocol: "https",
-        }),
-      ),
+      httpHooks.isIpAllowed?.({
+        hostname: "api.example.com",
+        ip: "93.184.216.34",
+        family: 4,
+        port: 443,
+        protocol: "https",
+      }),
     ).resolves.toBe(true);
-    expect(baseIsIpAllowed).toHaveBeenCalledOnce();
+    await expect(httpHooks.isIpAllowed?.(publicHttpsProbe)).resolves.toBe(false);
+  });
+
+  it.each([
+    {
+      name: "omitted hosts",
+      secret: { value: "sk-test" },
+    },
+    {
+      name: "empty hosts",
+      secret: { value: "sk-test", hosts: [] },
+    },
+    {
+      name: "wildcard hosts",
+      secret: { value: "sk-test", hosts: ["*"] },
+    },
+    {
+      name: "mixed wildcard hosts",
+      secret: { value: "sk-test", hosts: ["api.example.com", "*"] },
+    },
+    {
+      name: "whitespace-padded wildcard hosts",
+      secret: { value: "sk-test", hosts: [" * "] },
+    },
+    {
+      name: "blank hosts",
+      secret: { value: "sk-test", hosts: ["  "] },
+    },
+  ])("fails closed for a secret with $name", ({ secret }) => {
+    const createHttpHooksSpy = vi.fn(createHttpHooks);
+
+    expect(() =>
+      buildVmHttpHooks(createHttpHooksSpy, {
+        secrets: {
+          API_KEY: secret as { value: string; hosts: string[] },
+        },
+      }),
+    ).toThrow(/explicit non-wildcard host list/);
+    expect(createHttpHooksSpy).not.toHaveBeenCalled();
+  });
+
+  it("passes an empty secrets object through without inventing hosts", () => {
+    const createHttpHooksSpy = vi.fn(createHttpHooks);
+
+    buildVmHttpHooks(createHttpHooksSpy, { secrets: {} });
+
+    expect(createHttpHooksSpy).toHaveBeenCalledWith({
+      allowedHosts: undefined,
+      secrets: {},
+    });
+  });
+
+  it("forwards an explicit secret host list as-is", () => {
+    const createHttpHooksSpy = vi.fn(createHttpHooks);
+
+    buildVmHttpHooks(createHttpHooksSpy, {
+      allowedHosts: ["other.example.com"],
+      secrets: {
+        API_KEY: { value: "sk-test", hosts: ["api.example.com"] },
+      },
+    });
+
+    expect(createHttpHooksSpy).toHaveBeenCalledWith({
+      allowedHosts: ["other.example.com"],
+      secrets: {
+        API_KEY: { hosts: ["api.example.com"], value: "sk-test" },
+      },
+    });
   });
 });
 

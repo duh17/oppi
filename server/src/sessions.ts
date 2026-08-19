@@ -44,8 +44,9 @@ import {
 import type { SearchIndex } from "./search-index.js";
 import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
-import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS } from "./sdk-backend.js";
+import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS, SdkBackend } from "./sdk-backend.js";
 import type { SessionStopTimers } from "./session-stop.js";
+import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -449,11 +450,21 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   // ─── Persistence ───
 
   private markSessionDirty(key: string): void {
+    const active = this.active.get(key);
+    if (active) this.syncSandboxWorkspaceActivity(active.session);
     this.broadcaster.markSessionDirty(key);
   }
 
   private persistSessionNow(key: string, session: Session): void {
     this.broadcaster.persistSessionNow(key, session);
+    this.syncSandboxWorkspaceActivity(session);
+  }
+
+  private syncSandboxWorkspaceActivity(session: Session): void {
+    const workspace = session.workspaceId
+      ? this.storage.getWorkspace(session.workspaceId)
+      : undefined;
+    notifySandboxWorkspaceActivity(session, workspace, SdkBackend);
   }
 
   // ─── Session End ───

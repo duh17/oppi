@@ -1,6 +1,3 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import {
   toGuestPath,
@@ -11,6 +8,8 @@ import {
   createGondolinReadOps,
   createGondolinWriteOps,
   createGondolinEditOps,
+  createGondolinFindOps,
+  createSandboxGrepToolDefinition,
   type GondolinVm,
   type GondolinProcess,
   type GondolinExecResult,
@@ -106,24 +105,24 @@ describe("createSandboxLsOps", () => {
   const shadow = (posixPath: string) =>
     posixPath.endsWith("/.env") || posixPath === "/.env" || posixPath.split("/").includes(".ssh");
 
-  it("hides shadowed names and rejects symlink escapes", () => {
-    const hostCwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-ls-"));
-    try {
-      writeFileSync(join(hostCwd, "packet.md"), "ok\n");
-      writeFileSync(join(hostCwd, ".env"), "SECRET=1\n");
-      mkdirSync(join(hostCwd, ".ssh"));
-      symlinkSync("/etc", join(hostCwd, "escape"));
-      const ops = createSandboxLsOps(hostCwd, guestCwd, { shouldShadow: shadow });
+  it("lists through vm.fs, hides shadowed names, and rejects paths outside the workspace", async () => {
+    const listDir = vi.fn(async () => ["packet.md", ".env", ".ssh"]);
+    const access = vi.fn(async (path: string) => {
+      if (path.endsWith("/.env") || path.endsWith("/.ssh")) throw new Error("ENOENT");
+    });
+    const stat = vi.fn(async () => ({ isDirectory: () => true }));
+    const vm = createMockVm(undefined, { listDir, access, stat });
+    const ops = createSandboxLsOps(vm, guestCwd, guestCwd, { shouldShadow: shadow });
 
-      expect(ops.readdir(guestCwd)).toEqual(expect.arrayContaining(["packet.md"]));
-      expect(ops.readdir(guestCwd)).not.toContain(".env");
-      expect(ops.readdir(guestCwd)).not.toContain(".ssh");
-      expect(ops.exists(`${guestCwd}/.env`)).toBe(false);
-      expect(ops.exists(`${guestCwd}/escape`)).toBe(false);
-      expect(() => ops.stat(`${guestCwd}/escape`)).toThrow(/outside the sandbox workspace/);
-    } finally {
-      rmSync(hostCwd, { recursive: true, force: true });
-    }
+    expect(await ops.readdir(guestCwd)).toEqual(["packet.md"]);
+    expect(await ops.exists(`${guestCwd}/.env`)).toBe(false);
+    expect(await ops.exists(`${guestCwd}/packet.md`)).toBe(true);
+    await expect(ops.stat("/etc/passwd")).rejects.toThrow(/outside the sandbox workspace/);
+    await expect(ops.stat(`${guestCwd}/../../../etc/passwd`)).rejects.toThrow(
+      /outside the sandbox workspace/,
+    );
+    expect(listDir).toHaveBeenCalledWith(guestCwd);
+    expect(vm.exec).not.toHaveBeenCalled();
   });
 });
 
@@ -172,11 +171,13 @@ function createMockVm(
     fs: {
       access: vi.fn(async () => undefined),
       mkdir: vi.fn(async () => undefined),
+      listDir: vi.fn(async () => []),
+      stat: vi.fn(async () => ({ isDirectory: () => false, isFile: () => true })),
       readFile: vi.fn(async () => Buffer.from("")),
       writeFile: vi.fn(async () => undefined),
       ...fsOverrides,
     },
-    exec: execImpl ?? (() => createMockProcess()),
+    exec: vi.fn(execImpl ?? (() => createMockProcess())),
   };
 }
 
@@ -465,5 +466,168 @@ describe("createGondolinEditOps", () => {
 
     const ops = createGondolinEditOps(vm, localCwd);
     await expect(ops.access(`${localCwd}/file.ts`)).resolves.toBeUndefined();
+  });
+});
+
+// ─── FindOperations ───
+
+describe("createGondolinFindOps", () => {
+  const guestCwd = "/workspace/myproject";
+
+  it("runs Alpine find through vm.exec, not host fd", async () => {
+    const calls: Array<{ args: string[] | string; options: Record<string, unknown> }> = [];
+    const vm = createMockVm((args, options) => {
+      calls.push({ args, options: options ?? {} });
+      return createMockProcess({ stdout: "/workspace/myproject/notes.md\n" });
+    });
+    const ops = createGondolinFindOps(vm, guestCwd, guestCwd);
+    expect(await ops.exists(guestCwd)).toBe(true);
+    const results = await ops.glob("*.md", guestCwd, {
+      ignore: ["**/node_modules/**", "**/.git/**"],
+      limit: 100,
+    });
+    expect(results).toEqual(["/workspace/myproject/notes.md"]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args[0]).toBe("/usr/bin/find");
+    expect(calls[0].args[0]).toMatch(/^\//);
+    expect(calls[0].args).toContain("-name");
+    expect(calls[0].args).toContain("*.md");
+    expect(calls[0].args).not.toContain("fd");
+  });
+
+  it("rejects find paths outside the workspace mount", async () => {
+    const vm = createMockVm();
+    const ops = createGondolinFindOps(vm, guestCwd, guestCwd);
+    expect(await ops.exists("/etc/passwd")).toBe(false);
+    expect(await ops.exists("~/.pi/agent/auth.json")).toBe(false);
+    await expect(
+      ops.glob("*", "/Users/alice/.pi/agent", { ignore: [], limit: 10 }),
+    ).rejects.toThrow(/outside the sandbox workspace/);
+    expect(vm.exec).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Guest grep ───
+
+describe("createSandboxGrepToolDefinition", () => {
+  const guestCwd = "/workspace/myproject";
+
+  function toolText(result: { content: Array<{ type?: string; text?: string }> }): string {
+    return result.content.map((part) => ("text" in part ? (part.text ?? "") : "")).join("\n");
+  }
+
+  it("prefers guest rg when command -v rg succeeds", async () => {
+    const calls: string[][] = [];
+    const vm = createMockVm((args) => {
+      const argv = Array.isArray(args) ? args : [args];
+      calls.push(argv);
+      if (argv.join(" ").includes("command -v rg")) {
+        return createMockProcess({ stdout: "/usr/bin/rg\n" });
+      }
+      return createMockProcess({ stdout: "notes.md:1: guest-workspace-hit\n" });
+    });
+    const grep = createSandboxGrepToolDefinition(vm, guestCwd, guestCwd);
+    expect(grep.name).toBe("grep");
+    const result = await grep.execute(
+      "g1",
+      { pattern: "guest-workspace-hit", path: guestCwd },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(toolText(result)).toContain("guest-workspace-hit");
+    expect(calls[0]?.join(" ")).toContain("command -v rg");
+    expect(calls[1]?.[0]).toBe("/usr/bin/rg");
+    expect(calls.some((argv) => argv[0] === "grep")).toBe(false);
+  });
+
+  it("falls back to guest grep when rg is missing", async () => {
+    const calls: string[][] = [];
+    const vm = createMockVm((args) => {
+      const argv = Array.isArray(args) ? args : [args];
+      calls.push(argv);
+      if (argv.join(" ").includes("command -v rg")) {
+        return createMockProcess({ exitCode: 1 });
+      }
+      return createMockProcess({ stdout: "notes.md:1: guest-workspace-hit\n" });
+    });
+    const grep = createSandboxGrepToolDefinition(vm, guestCwd, guestCwd);
+    const result = await grep.execute(
+      "g1",
+      { pattern: "guest-workspace-hit" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(toolText(result)).toContain("guest-workspace-hit");
+    expect(calls[1]?.[0]).toBe("/bin/grep");
+    expect(calls[1]?.[0]).toMatch(/^\//);
+  });
+
+  it("uses absolute guest binaries for find and grep argv[0]", async () => {
+    const findCalls: string[][] = [];
+    const findVm = createMockVm((args) => {
+      findCalls.push(Array.isArray(args) ? args : [args]);
+      return createMockProcess({ stdout: "notes.md\n" });
+    });
+    await createGondolinFindOps(findVm, guestCwd, guestCwd).glob("*.md", guestCwd, {
+      ignore: [],
+      limit: 10,
+    });
+    expect(findCalls[0]?.[0]).toMatch(/^\//);
+    expect(findCalls[0]?.[0]).toBe("/usr/bin/find");
+
+    const grepCalls: string[][] = [];
+    const grepVm = createMockVm((args) => {
+      const argv = Array.isArray(args) ? args : [args];
+      grepCalls.push(argv);
+      if (argv.join(" ").includes("command -v rg")) {
+        return createMockProcess({ exitCode: 1 });
+      }
+      return createMockProcess({ stdout: "notes.md:1: hit\n" });
+    });
+    await createSandboxGrepToolDefinition(grepVm, guestCwd, guestCwd).execute(
+      "g1",
+      { pattern: "hit" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const grepArgv = grepCalls.find((argv) => argv[0] !== "/bin/sh");
+    expect(grepArgv?.[0]).toMatch(/^\//);
+    expect(grepArgv?.[0]).toBe("/bin/grep");
+  });
+
+  it("rejects ~ and .. paths that would escape to the host", async () => {
+    const vm = createMockVm();
+    const grep = createSandboxGrepToolDefinition(vm, guestCwd, guestCwd);
+    await expect(
+      grep.execute(
+        "g1",
+        { pattern: ".", path: "~/.pi/agent/auth.json" },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+    ).rejects.toThrow(/outside the sandbox workspace/);
+    await expect(
+      grep.execute(
+        "g1",
+        { pattern: ".", path: "/Users/alice/secret.txt" },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+    ).rejects.toThrow(/outside the sandbox workspace/);
+    await expect(
+      grep.execute(
+        "g1",
+        { pattern: ".", path: "../../../../etc/passwd" },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+    ).rejects.toThrow(/outside the sandbox workspace/);
+    expect(vm.exec).not.toHaveBeenCalled();
   });
 });

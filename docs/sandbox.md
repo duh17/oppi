@@ -2,7 +2,7 @@
 
 Sandbox workspaces run agent file tools and shell commands in a local Gondolin Linux micro-VM. They let an agent inspect or modify a project without giving generated code broad access to the host filesystem or host environment, while keeping network policy explicit and configurable.
 
-Oppi uses [`@earendil-works/gondolin`](https://www.npmjs.com/package/@earendil-works/gondolin) as the sandbox runtime and Pi's SDK tool plumbing to route `read`, `bash`, `edit`, and `write` into the VM.
+Oppi uses [`@earendil-works/gondolin`](https://www.npmjs.com/package/@earendil-works/gondolin) as the sandbox runtime and Pi's SDK tool plumbing to route `read`, `bash`, `edit`, `write`, `ls`, `find`, and `grep` into the VM.
 
 ## Quick start
 
@@ -40,33 +40,35 @@ A sandbox workspace has two parts:
 New sandbox sessions behave as follows:
 
 - The visible cwd is `/workspace/<workspace-slug>`.
+- Users browse sandbox artifacts on the host mount; guest `/workspace/<slug>` paths are accepted and mapped.
 - If no host path is selected, Oppi creates a backing directory under `~/sandbox/<slug>` on the server host.
-- `read`, `edit`, and `write` use Gondolin's guest filesystem API and reject paths outside the configured workspace mount.
+- `read`, `edit`, `write`, and `ls` use Gondolin's guest filesystem API and reject paths outside the configured workspace mount.
 - `bash` runs inside the VM with cwd mapped to the workspace mount. Shell commands can inspect the guest filesystem, but host paths remain unavailable unless explicitly mounted.
 - Model API calls run from the host process; the VM does not need provider API keys for normal agent operation.
-- Oppi/Pi provider API keys and per-command host environment variables are not forwarded into the VM by default. Pi may forward only non-secret session metadata (`PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, and `PI_SESSION_ID`) per command; workspace sandbox environment variables are injected at VM creation time.
-- Network egress follows Gondolin's default: omitted `allowedHosts` means allow all. Set an explicit allowlist, or set `allowedHosts: []` to deny all.
+- Oppi/Pi provider API keys and per-command host environment variables are not forwarded into the VM by default. Pi may forward only non-secret session metadata (`PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, and `PI_SESSION_ID`) per command. Workspace `sandboxConfig.env` is for non-secret guest config such as `PATH` and `LANG`, not provider credentials.
+- Network egress follows Gondolin's default: omitted `allowedHosts` means allow all. Set an explicit allowlist, or set `allowedHosts: []` to deny all. Guest WebSocket upgrades are off; Oppi session WSS is host-side and unchanged.
 - Selected skills are mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`.
 - Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model.
 - Global host agent instructions are not exposed to sandbox sessions.
+- Sandbox Oppi does not expose hostMount or host session file paths.
 
-Running sessions keep their current cwd and VM until restarted. Start a new session after changing sandbox settings that affect cwd, mounts, or network policy.
+Running sessions keep their current cwd and VM until they are stopped. Start a new session after changing sandbox settings that affect cwd, hosts, or environment. Skill mounts still come from whichever session booted the VM; they do not recycle a live VM. A new session is enough; a server restart is not required. Idle VMs stop after 15 minutes with no busy session; next use boots on demand.
 
 ## Default safety model
 
 Sandbox workspaces separate host and guest environments. Configure network access deliberately for the task.
 
-| Surface          | Default                                                                                                                                                                                    | How to change it                                                              |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Compute          | Commands run in a QEMU Linux micro-VM                                                                                                                                                      | Requires QEMU on the server                                                   |
-| Workspace path   | `/workspace/<workspace-slug>` inside the VM                                                                                                                                                | Workspace name determines the slug                                            |
-| Host filesystem  | Only the selected workspace backing directory is mounted                                                                                                                                   | Pick a project path, or leave blank for `~/sandbox/<slug>`                    |
-| Secret files     | Common secret paths are hidden from the workspace mount, including `.env*`, `.npmrc`, `.ssh`, `.aws`, `*.pem`, and `*.key`                                                                 | Keep secrets outside the mounted project when possible                        |
-| Network egress   | Gondolin default: omitted `allowedHosts` allows all HTTP/TLS egress                                                                                                                        | Edit **Allowed Hosts** in the workspace editor; use an empty list to deny all |
-| Host environment | Per-command host env is ignored except non-secret Pi session metadata (`PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, `PI_SESSION_ID`); workspace sandbox env is injected at VM creation | Configure explicit sandbox env on the workspace                               |
-| Provider secrets | Not injected into the VM                                                                                                                                                                   | Future secret bridging must be explicit and scoped                            |
-| Tools            | VM-backed `read`, `bash`, `edit`, `write`                                                                                                                                                  | Server/API/admin can set an authoritative tool allowlist                      |
-| Context          | Workspace-local context is allowed; global host agent config is hidden                                                                                                                     | Put sandbox-specific instructions in the workspace or Oppi workspace prompt   |
+| Surface          | Default                                                                                                                                                                                                                                                                         | How to change it                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Compute          | Commands run in a QEMU Linux micro-VM                                                                                                                                                                                                                                           | Requires QEMU on the server                                                   |
+| Workspace path   | `/workspace/<workspace-slug>` inside the VM                                                                                                                                                                                                                                     | Workspace name determines the slug                                            |
+| Host filesystem  | Only the selected workspace backing directory is mounted                                                                                                                                                                                                                        | Pick a project path, or leave blank for `~/sandbox/<slug>`                    |
+| Secret files     | Common secret paths are hidden from the workspace mount, including prefix-closed directories such as `.ssh`, `.aws`, `.config/gcloud`, `.pi`, and `.kube`, plus `.env*`, `.npmrc`, `.git-credentials`, `.docker/config.json`, `.pgpass`, `*.pem`, `*.key`, `*.p12`, and `*.pfx` | Keep secrets outside the mounted project when possible                        |
+| Network egress   | Gondolin default: omitted `allowedHosts` allows all HTTP/TLS egress                                                                                                                                                                                                             | Edit **Allowed Hosts** in the workspace editor; use an empty list to deny all |
+| Host environment | Per-command host env is ignored except non-secret Pi session metadata (`PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, `PI_SESSION_ID`); `sandboxConfig.env` injects non-secret guest config such as `PATH` and `LANG`                                                         | Configure explicit non-secret sandbox env on the workspace                    |
+| Provider secrets | Not injected into the VM                                                                                                                                                                                                                                                        | Future secret bridging must be explicit and host-scoped; do not use env       |
+| Tools            | VM-backed `read`, `bash`, `edit`, `write`, `ls`, `find`, `grep`. Host `rg`/`fd` are not registered.                                                                                                                                                                             | Server/API/admin can set an allowlist; it is intersected with this set        |
+| Context          | Workspace-local context is allowed; global host agent config is hidden                                                                                                                                                                                                          | Put sandbox-specific instructions in the workspace or Oppi workspace prompt   |
 
 Existing sandbox workspaces keep their saved network settings. Omitted `allowedHosts` and `allowedHosts: ["*"]` both allow all. Clear the Allowed Hosts field to store `allowedHosts: []` and deny all.
 
@@ -104,7 +106,7 @@ Allowed hosts can receive any data the guest can read. Treat every allowed desti
 
 Do not add `api.openai.com`, `api.anthropic.com`, or another model provider host just to make the agent work. Normal model requests happen on the trusted host side.
 
-Allow a provider host only if you intentionally want commands inside the VM to call that provider. Even then, the VM has no provider credential unless you explicitly provide one through a future scoped secret bridge or a workspace-specific environment variable.
+Allow a provider host only if you intentionally want commands inside the VM to call that provider. Even then, the VM has no provider credential. Do not put provider keys in `sandboxConfig.env`.
 
 ## Configure tools and extensions
 
@@ -114,10 +116,13 @@ Oppi's sandbox replaces Pi's host-backed built-in tools with VM-backed versions 
 - `bash`
 - `edit`
 - `write`
+- `ls`
+- `find` (Alpine `find` in the guest, not host `fd`)
+- `grep` (guest `rg` when present, otherwise guest `grep`; never host `rg`)
 
-If `workspace.tools` is unset, those tools are active by default. If `workspace.tools` is set, it becomes an allowlist across built-in, custom, and extension tools.
+That set is authoritative. If `workspace.tools` is unset, those tools are active by default. If `workspace.tools`, a launch allowlist, or an Agent allowlist is set, Oppi intersects it with the sandbox set and drops any other name (with a session warning). Host `grep`/`find` cannot stay registered.
 
-File tools are workspace-scoped. A `read`, `edit`, or `write` request for a path outside the workspace fails instead of being remapped to a guest absolute path. Use `bash` when you intentionally need to inspect the VM's own Linux filesystem, such as `/etc/os-release`.
+File tools are workspace-scoped. A `read`, `edit`, `write`, `ls`, `find`, or `grep` request for a path outside the workspace — including `~` and `..` escapes — fails instead of being remapped to a guest absolute path. Use `bash` when you intentionally need to inspect the VM's own Linux filesystem, such as `/etc/os-release`.
 
 Host-side extensions are different from VM tools. Installed Pi package tools, including an installed `ask` extension, run in the trusted Oppi/Pi host process unless they explicitly delegate work into the sandbox. Enable extensions deliberately.
 
@@ -173,7 +178,7 @@ Pi's example `examples/extensions/sandbox/` uses `@anthropic-ai/sandbox-runtime`
 
 - **QEMU is missing:** install QEMU on the server host and start a new session.
 - **A command should not reach the network:** clear **Allowed Hosts** to deny all, or add only the required hosts.
-- **A command cannot reach an expected host:** add that host to **Allowed Hosts**, then start a new session if the VM was already running.
+- **A command cannot reach an expected host:** add that host to **Allowed Hosts**, then start a new session. A server restart is not required.
 - **A command cannot read `.env` or `.ssh`:** this is expected. Common secret paths are hidden from the workspace mount.
 - **A file tool cannot read `/etc/passwd` or another absolute path:** this is expected. File tools are limited to the workspace mount; use `bash` to inspect guest-only system files when needed.
 - **The session shows the wrong cwd:** stop that session and start a new one so the session picks up the sandbox cwd.

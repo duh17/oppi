@@ -24,6 +24,7 @@ import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { AppEventStreamMux } from "./app-event-stream.js";
 import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
+import { SdkBackend } from "./sdk-backend.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { shouldRecordHttpRequestMetric } from "./http-request-metrics.js";
 import { ModelCatalog } from "./model-catalog.js";
@@ -742,6 +743,7 @@ export class Server {
         if (finalized) this.closeLegacyTokenConnections();
       },
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
+      stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
     });
   }
 
@@ -916,6 +918,7 @@ export class Server {
     let shutdownError: unknown;
     try {
       await this.sessions.stopAll();
+      await SdkBackend.stopAllWorkspaceVms();
       this.liveActivity.shutdown();
       this.push.shutdown();
       this.searchIndex?.close();

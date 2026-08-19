@@ -45,6 +45,7 @@ import {
   WorkspaceQuickActionSessionError,
 } from "../workspace-quick-action-session.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
+import { deleteWorkspaceAndStopVm } from "../workspace-sandbox-lifecycle.js";
 import {
   hasPendingBlockingUIRequest,
   type PendingUIRequestProvider,
@@ -228,7 +229,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
   }
 
-  function handleDeleteWorkspace(wsId: string, res: ServerResponse): void {
+  async function handleDeleteWorkspace(wsId: string, res: ServerResponse): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (workspace) {
       const dataDir = ctx.storage.getDataDir();
@@ -247,7 +248,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
     }
 
-    ctx.storage.deleteWorkspace(wsId);
+    await deleteWorkspaceAndStopVm(wsId, {
+      deleteWorkspace: (workspaceId) => ctx.storage.deleteWorkspace(workspaceId),
+      stopWorkspaceVm: ctx.stopWorkspaceVm,
+    });
     helpers.json(res, { ok: true });
   }
 
@@ -955,7 +959,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       }
 
       if (method === "DELETE") {
-        handleDeleteWorkspace(wsMatch[1], res);
+        await handleDeleteWorkspace(wsMatch[1], res);
         return true;
       }
     }

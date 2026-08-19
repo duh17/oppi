@@ -36,6 +36,8 @@ export interface RouteContext {
   onMigrationFinalized?: (finalized: boolean) => void;
   /** Close every network device/access/legacy socket when the owner token rotates. */
   onOwnerTokenRotated?: () => void;
+  /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */
+  stopWorkspaceVm?: (workspaceId: string) => void | Promise<void>;
 }
 
 export interface RouteHelpers {

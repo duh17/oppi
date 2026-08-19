@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Dirent, Stats } from "node:fs";
 import { createReadStream } from "node:fs";
 import { opendir, stat, realpath, readdir } from "node:fs/promises";
-import { join, extname, relative } from "node:path";
+import { join, extname, relative, isAbsolute } from "node:path";
 import {
   decodeWorkspaceRoutePath,
   getContentType,
@@ -22,6 +22,7 @@ import type {
   FileIndexResponse,
   Workspace,
 } from "../types.js";
+import { resolveWorkspaceUserPath } from "../workspace-user-path.js";
 import { resolveWorkspaceWorktree } from "../worktrees.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
@@ -86,7 +87,15 @@ export async function resolveWorkspaceFilePath(
   workspaceRoot: string,
   requestedPath: string,
 ): Promise<string | null> {
-  const joined = join(workspaceRoot, requestedPath);
+  // Absolute paths must not be joined onto the root. Node path.join may either
+  // discard the root or append the absolute segment; both break sandbox guest
+  // paths mapped onto the host mount.
+  const joined =
+    !requestedPath || requestedPath === "."
+      ? workspaceRoot
+      : isAbsolute(requestedPath)
+        ? requestedPath
+        : join(workspaceRoot, requestedPath);
 
   let realFile: string;
   try {
@@ -365,7 +374,17 @@ export function createWorkspaceFileRoutes(
 
     const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
     if (!workspaceRoot) return;
-    const realFile = await resolveWorkspaceFilePath(workspaceRoot, requestedPath);
+    const mappedPath = resolveWorkspaceUserPath({
+      workspace,
+      requestedPath,
+      hostMount: workspaceRoot,
+      dataDir: ctx.storage.getDataDir(),
+    });
+    if (!mappedPath) {
+      helpers.error(res, 404, "File not found");
+      return;
+    }
+    const realFile = await resolveWorkspaceFilePath(workspaceRoot, mappedPath);
     if (!realFile) {
       helpers.error(res, 404, "File not found");
       return;
@@ -460,7 +479,17 @@ export function createWorkspaceFileRoutes(
     if (!workspaceRoot) return;
     // Strip trailing slash for path resolution
     const dirPath = requestedPath.endsWith("/") ? requestedPath.slice(0, -1) : requestedPath;
-    const result = await listDirectoryEntries(workspaceRoot, dirPath);
+    const mappedPath = resolveWorkspaceUserPath({
+      workspace,
+      requestedPath: dirPath || ".",
+      hostMount: workspaceRoot,
+      dataDir: ctx.storage.getDataDir(),
+    });
+    if (!mappedPath) {
+      helpers.error(res, 404, "Directory not found");
+      return;
+    }
+    const result = await listDirectoryEntries(workspaceRoot, mappedPath);
 
     if (!result) {
       helpers.error(res, 404, "Directory not found");
@@ -484,8 +513,18 @@ export function createWorkspaceFileRoutes(
 
     const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
     if (!workspaceRoot) return;
+    const mappedRoot = resolveWorkspaceUserPath({
+      workspace,
+      requestedPath: ".",
+      hostMount: workspaceRoot,
+      dataDir: ctx.storage.getDataDir(),
+    });
+    if (!mappedRoot) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
 
-    const response = await getFileIndex(workspaceRoot);
+    const response = await getFileIndex(mappedRoot);
     helpers.json(res, response);
   }
 

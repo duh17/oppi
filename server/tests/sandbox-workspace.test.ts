@@ -204,7 +204,7 @@ describe("GondolinManager secret forwarding", () => {
     };
 
     const secrets = {
-      ANTHROPIC_API_KEY: { value: "sk-ant-xxx", headerName: "Authorization" },
+      ANTHROPIC_API_KEY: { value: "sk-ant-xxx", hosts: ["api.anthropic.com"] },
     };
 
     await manager.ensureWorkspaceVm(workspace, "/tmp/ws", secrets);
