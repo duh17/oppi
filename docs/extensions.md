@@ -65,7 +65,6 @@ For ordinary Pi extensions, disabled rows are still visible in the server catalo
 | Active goal extension   | User Pi resource settings or auto-discovered extension path   | Standalone `pi-goal` package             | pi resource loader | Canonical durable-goal implementation maintained in its own repository                                        |
 | Disabled goal prototype | Not enabled                                                   | `pi-extensions/goal`                     | not loaded         | Preserved while compaction recovery, task timing, and snapshot migration are audited in the pi-goal workspace |
 | Browser video example   | Pi package/settings install or auto-discovered extension path | `pi-extensions/browser-automation-video` | pi resource loader | Oppi-compatible Pi package: registers a public Pi tool and uses Oppi's attachment helper when available       |
-| Related work extension  | Pi package/settings install or auto-discovered extension path | `pi-extensions/related`                  | pi resource loader | Portable Pi package: agent-authored related-work board; generic widget + URL/wiki rendering                   |
 | Mobile UI compatibility | Native Oppi client + server bridge                            | Protocol and UI bridge code              | Oppi server/client | Maps common `ctx.ui` calls to native cards/dialogs; see [`extension-native-ui.md`](extension-native-ui.md)    |
 
 This split keeps consent clear: installing Oppi does not install a pi extension package.
