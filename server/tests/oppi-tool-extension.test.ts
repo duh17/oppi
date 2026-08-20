@@ -157,6 +157,25 @@ function registeredTool(
   return tool;
 }
 
+function commandFromTranscript(expandedText: string, humanOutput: string): string {
+  const prefix = "$ ";
+  const suffix = humanOutput ? `\n\n${humanOutput}` : "\n";
+  expect(expandedText.startsWith(prefix)).toBe(true);
+  expect(expandedText.endsWith(suffix)).toBe(true);
+  return expandedText.slice(prefix.length, expandedText.length - suffix.length);
+}
+
+function quotedArgAfterFlag(command: string, flag: string): string {
+  const marker = `${flag} `;
+  const index = command.lastIndexOf(marker);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return command.slice(index + marker.length);
+}
+
+function bashPrintf(quoted: string): string {
+  return execFileSync("/bin/bash", ["-c", `printf %s ${quoted}`], { encoding: "utf8" });
+}
+
 afterEach(() => {
   canonicalRun.mockReset();
 });
@@ -615,21 +634,64 @@ describe("thin Oppi extension", () => {
         outcome: "result",
         data: { accepted: true },
         expandedText:
-          "$ oppi session create --workspace oppi --prompt $'Review café.\\nChen\\'s full prompt stays visible.\\xc2\\x85\\x1b[31m\\xe2\\x80\\xa8\\xe2\\x80\\xae'\n\n" +
+          "$ oppi session create --workspace oppi --prompt $'Review café.\nChen\\'s full prompt stays visible.\\xc2\\x85\\x1b[31m\\xe2\\x80\\xa8\\xe2\\x80\\xae'\n\n" +
           humanOutput,
         presentationFormat: "terminal",
         exitCode: 0,
       },
     });
 
-    let commandLine = result.details.expandedText.split("\n", 1)[0] ?? "";
-    const promptPrefix = "$ oppi session create --workspace oppi --prompt ";
-    expect(commandLine.startsWith(promptPrefix)).toBe(true);
-    commandLine = commandLine.slice(promptPrefix.length);
-    const replayed = execFileSync("/bin/bash", ["-c", `printf %s ${commandLine}`], {
-      encoding: "utf8",
-    });
-    expect(replayed).toBe(prompt);
+    const command = commandFromTranscript(result.details.expandedText, humanOutput);
+    expect(command).toContain("Review café.\nChen\\'s full prompt stays visible.");
+    expect(command).not.toContain("\\nChen");
+    expect(command).not.toContain(" \\\n");
+    const quotedPrompt = quotedArgAfterFlag(command, "--prompt");
+    expect(bashPrintf(quotedPrompt)).toBe(prompt);
+  });
+
+  it("keeps multiline prompts readable without wrapping flags", async () => {
+    const humanOutput = "created\n";
+    const prompt = "Task tier: 3\nTask: Repair the current test-only Quiet Mode paired-server E2E.";
+    canonicalRun.mockResolvedValueOnce(successfulRun(humanOutput));
+    const tool = registeredTool();
+
+    const result = (await tool.execute(
+      "call-pretty",
+      {
+        args: [
+          "session",
+          "create",
+          "--workspace",
+          "oppi",
+          "--worktree",
+          "wt_feat-quiet-mode-d0Ky0jUw",
+          "--model",
+          "xai/grok-4.6",
+          "--thinking",
+          "high",
+          "--name",
+          "grok-repair-quiet-e2e-fixture",
+          "--idempotency-key",
+          "20260820-grok-repair-quiet-e2e-fixture-v1",
+          "--exclude-tools",
+          "goal_update,goal_status",
+          "--json",
+          "--prompt",
+          prompt,
+        ],
+      },
+      undefined,
+      undefined,
+      { hasUI: false, ui: {} },
+    )) as { details: { expandedText: string } };
+
+    expect(result.details.expandedText).toBe(
+      `$ oppi session create --workspace oppi --worktree wt_feat-quiet-mode-d0Ky0jUw --model xai/grok-4.6 --thinking high --name grok-repair-quiet-e2e-fixture --idempotency-key 20260820-grok-repair-quiet-e2e-fixture-v1 --exclude-tools goal_update,goal_status --json --prompt 'Task tier: 3
+Task: Repair the current test-only Quiet Mode paired-server E2E.'\n\n${humanOutput}`,
+    );
+    const command = commandFromTranscript(result.details.expandedText, humanOutput);
+    expect(command).not.toContain(" \\\n");
+    expect(bashPrintf(quotedArgAfterFlag(command, "--prompt"))).toBe(prompt);
   });
 
   it("bounds model-facing JSON while keeping the complete terminal transcript", async () => {

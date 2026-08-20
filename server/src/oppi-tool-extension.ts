@@ -698,6 +698,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Display-only shell transcript. Execution still uses the raw argv. */
 function terminalTranscript(args: readonly string[], humanOutput: string): string {
   const command = ["oppi", ...args].map(shellQuote).join(" ");
   return humanOutput ? `$ ${command}\n\n${humanOutput}` : `$ ${command}\n`;
@@ -706,12 +707,13 @@ function terminalTranscript(args: readonly string[], humanOutput: string): strin
 function shellQuote(value: string): string {
   if (value.length === 0) return "''";
   if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
-  if (containsTerminalControl(value)) return `$'${bashAnsiCString(value)}'`;
+  if (requiresAnsiCQuote(value)) return `$'${bashAnsiCString(value)}'`;
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function containsTerminalControl(value: string): boolean {
+function requiresAnsiCQuote(value: string): boolean {
   return Array.from(value).some((character) => {
+    if (character === "\n" || character === "\t") return false;
     const codePoint = character.codePointAt(0) ?? 0;
     return (
       codePoint < 0x20 ||
@@ -735,7 +737,7 @@ function bashAnsiCString(value: string): string {
         case "'":
           return "\\'";
         case "\n":
-          return "\\n";
+          return "\n";
         case "\r":
           return "\\r";
         case "\t":
