@@ -6,9 +6,10 @@ import UIKit
 
 /// Pending local upload attachment shown in the composer before send.
 struct PendingAttachment: Identifiable, Sendable {
-    enum Source: Sendable {
+    enum Source: Sendable, Equatable {
         case image
         case localFile
+        case uploaded(ChatAttachmentRef)
     }
 
     let id: String
@@ -18,6 +19,46 @@ struct PendingAttachment: Identifiable, Sendable {
     let imageAttachment: ImageAttachment?
     let localFileData: Data?
     let localMimeType: String?
+    let uploadedReference: ChatAttachmentRef?
+
+    init(
+        id: String,
+        source: Source,
+        displayName: String,
+        thumbnail: UIImage?,
+        imageAttachment: ImageAttachment?,
+        localFileData: Data?,
+        localMimeType: String?,
+        uploadedReference: ChatAttachmentRef? = nil
+    ) {
+        self.id = id
+        self.source = source
+        self.displayName = displayName
+        self.thumbnail = thumbnail
+        self.imageAttachment = imageAttachment
+        self.localFileData = localFileData
+        self.localMimeType = localMimeType
+        if let uploadedReference {
+            self.uploadedReference = uploadedReference
+        } else if case .uploaded(let reference) = source {
+            self.uploadedReference = reference
+        } else {
+            self.uploadedReference = nil
+        }
+    }
+
+    static func uploaded(_ reference: ChatAttachmentRef) -> PendingAttachment {
+        PendingAttachment(
+            id: reference.id,
+            source: .uploaded(reference),
+            displayName: reference.name,
+            thumbnail: nil,
+            imageAttachment: nil,
+            localFileData: nil,
+            localMimeType: reference.mimeType,
+            uploadedReference: reference
+        )
+    }
 
     static func localFile(
         name: String,
@@ -32,7 +73,8 @@ struct PendingAttachment: Identifiable, Sendable {
             thumbnail: thumbnail,
             imageAttachment: nil,
             localFileData: data,
-            localMimeType: mimeType
+            localMimeType: mimeType,
+            uploadedReference: nil
         )
     }
 
@@ -44,6 +86,83 @@ struct PendingAttachment: Identifiable, Sendable {
             return inferred.preferredMIMEType ?? "application/octet-stream"
         }
         return "application/octet-stream"
+    }
+}
+
+extension PendingAttachment {
+    var composerDraftMetadata: ComposerDraftAttachment {
+        let source: ComposerDraftAttachment.Source
+        switch self.source {
+        case .image:
+            source = .image
+        case .localFile:
+            source = .localFile
+        case .uploaded:
+            source = .uploaded
+        }
+        let sizeBytes: Int
+        if let uploadedReference {
+            sizeBytes = uploadedReference.sizeBytes
+        } else if let imageAttachment,
+                  let data = Data(base64Encoded: imageAttachment.data, options: .ignoreUnknownCharacters) {
+            sizeBytes = data.count
+        } else {
+            sizeBytes = localFileData?.count ?? 0
+        }
+        return ComposerDraftAttachment(
+            id: id,
+            displayName: displayName,
+            mimeType: uploadedReference?.mimeType ?? localMimeType ?? imageAttachment?.mimeType ?? "application/octet-stream",
+            source: source,
+            relativePath: uploadedReference?.workspacePath,
+            sizeBytes: sizeBytes,
+            uploadedReference: uploadedReference
+        )
+    }
+
+    var composerDraftData: Data? {
+        switch source {
+        case .image:
+            guard let imageAttachment else { return nil }
+            return Data(base64Encoded: imageAttachment.data, options: .ignoreUnknownCharacters)
+        case .localFile:
+            return localFileData
+        case .uploaded:
+            return nil
+        }
+    }
+
+    init?(composerDraftAttachment: ComposerDraftAttachment, data: Data?) {
+        switch composerDraftAttachment.source {
+        case .uploaded:
+            guard let reference = composerDraftAttachment.uploadedReference else { return nil }
+            self = .uploaded(reference)
+        case .image:
+            guard let data else { return nil }
+            self.init(
+                id: composerDraftAttachment.id,
+                source: .image,
+                displayName: composerDraftAttachment.displayName,
+                thumbnail: UIImage(data: data),
+                imageAttachment: ImageAttachment(
+                    data: data.base64EncodedString(),
+                    mimeType: composerDraftAttachment.mimeType
+                ),
+                localFileData: nil,
+                localMimeType: nil
+            )
+        case .localFile:
+            guard let data else { return nil }
+            self.init(
+                id: composerDraftAttachment.id,
+                source: .localFile,
+                displayName: composerDraftAttachment.displayName,
+                thumbnail: composerDraftAttachment.mimeType.hasPrefix("image/") ? UIImage(data: data) : nil,
+                imageAttachment: nil,
+                localFileData: data,
+                localMimeType: composerDraftAttachment.mimeType
+            )
+        }
     }
 }
 

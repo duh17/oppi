@@ -250,6 +250,57 @@ struct ChatComposerDraftControllerTests {
         #expect(store.record(for: key)?.payload.text == "normal message")
     }
 
+    @Test func dispatchClearingTheVisibleAttachmentBarDoesNotClearPendingSubmission() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let attachment = PendingAttachment.localFile(
+            name: "notes.txt",
+            data: Data("notes".utf8),
+            mimeType: "text/plain"
+        )
+        let controller = ChatComposerDraftController(
+            initialText: "send this",
+            initialPendingAttachments: [attachment]
+        )
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        _ = controller.beginSubmission()
+        controller.setPendingAttachments([]) // ChatView's dispatch cleanup
+
+        #expect(store.record(for: key)?.payload.text == "send this")
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [attachment.id])
+    }
+
+    @Test func askAndReviewTransitionsRestoreMessageAttachments() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let attachment = PendingAttachment.localFile(
+            name: "notes.txt",
+            data: Data("notes".utf8),
+            mimeType: "text/plain"
+        )
+        let controller = ChatComposerDraftController(
+            initialText: "message",
+            initialPendingAttachments: [attachment]
+        )
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        controller.setMode(.ask)
+        controller.setPendingAttachments([])
+        controller.setMode(.reviewComment)
+        controller.setPendingAttachments([])
+        controller.setMode(.message)
+
+        #expect(controller.pendingAttachments.map(\.id) == [attachment.id])
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [attachment.id])
+    }
+
     @Test func acknowledgedSubmissionClearsMatchingDraft() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -325,6 +376,39 @@ struct ChatComposerDraftControllerTests {
         #expect(controller.text == "failed message\n\nnew typing")
         #expect(controller.repoPointers.map(\.path) == ["Sources/Old.swift", "Sources/New.swift"])
         #expect(store.record(for: key)?.payload.text == "failed message\n\nnew typing")
+    }
+
+    @Test func restoresPhotoAndFileAttachmentsWithTheMessageDraft() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let photo = PendingAttachment(
+            id: "photo-1",
+            source: .image,
+            displayName: "photo.png",
+            thumbnail: nil,
+            imageAttachment: ImageAttachment(data: Data([0x89, 0x50, 0x4E, 0x47]).base64EncodedString(), mimeType: "image/png"),
+            localFileData: nil,
+            localMimeType: nil,
+            uploadedReference: nil
+        )
+        let file = PendingAttachment.localFile(name: "notes.txt", data: Data("notes".utf8), mimeType: "text/plain")
+        let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: key, isEphemeral: false)
+        controller.setPendingAttachments([photo, file])
+        controller.text = "Review these"
+        await store.flush()
+
+        let reloadedStore = fixture.makeStore()
+        await reloadedStore.load()
+        let reloadedController = ChatComposerDraftController()
+        reloadedController.attach(store: reloadedStore, key: key, isEphemeral: false)
+
+        #expect(reloadedController.text == "Review these")
+        #expect(reloadedController.pendingAttachments.map(\.displayName) == ["photo.png", "notes.txt"])
+        #expect(reloadedController.pendingAttachments.map(\.source) == [.image, .localFile])
     }
 
     @Test func ephemeralSessionDraftRemainsMemoryOnly() async throws {

@@ -1,7 +1,8 @@
 import Foundation
 
-struct MessageQueueComposerRestorePlan: Equatable, Sendable {
+struct MessageQueueComposerRestorePlan: Sendable {
     let text: String
+    let pendingAttachments: [PendingAttachment]
     let restoredCount: Int
     let clearedQueue: MessageQueueState
 }
@@ -9,7 +10,8 @@ struct MessageQueueComposerRestorePlan: Equatable, Sendable {
 enum MessageQueueComposerRestore {
     static func plan(
         queue: MessageQueueState,
-        currentText: String
+        currentText: String,
+        currentPendingAttachments: [PendingAttachment] = []
     ) -> MessageQueueComposerRestorePlan? {
         let queuedItems = queue.steering + queue.followUp
         guard !queuedItems.isEmpty else { return nil }
@@ -17,12 +19,23 @@ enum MessageQueueComposerRestore {
         let queuedText = queuedItems
             .map(restorableText)
             .joined(separator: "\n\n")
+        var seenAttachmentIDs = Set<String>()
+        let pendingAttachments = queuedItems
+            .flatMap { $0.attachments ?? [] }
+            .compactMap { attachment -> PendingAttachment? in
+                guard seenAttachmentIDs.insert(attachment.id).inserted else { return nil }
+                return .uploaded(attachment)
+            }
+        let allAttachments = pendingAttachments + currentPendingAttachments.filter {
+            !seenAttachmentIDs.contains($0.id)
+        }
         let combinedText = [queuedText, currentText]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n\n")
 
         return MessageQueueComposerRestorePlan(
             text: combinedText,
+            pendingAttachments: allAttachments,
             restoredCount: queuedItems.count,
             clearedQueue: MessageQueueState(
                 version: queue.version + 1,
@@ -33,12 +46,6 @@ enum MessageQueueComposerRestore {
     }
 
     private static func restorableText(for item: MessageQueueItem) -> String {
-        guard let attachments = item.attachments, !attachments.isEmpty else {
-            return item.message
-        }
-        return UserMessageAttachmentPresentation.appendAttachedFilesBlock(
-            to: item.message,
-            attachments: attachments
-        )
+        item.message
     }
 }

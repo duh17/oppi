@@ -13,7 +13,7 @@ enum PendingAttachmentUploader {
         let localAttachments = sourceAttachments.filter {
             $0.source == .image || $0.source == .localFile
         }
-        guard !localAttachments.isEmpty else { return [] }
+        guard !sourceAttachments.isEmpty else { return [] }
 
         let imageAutoResize: Bool
         if localAttachments.contains(where: { $0.source == .image }) {
@@ -23,8 +23,17 @@ enum PendingAttachmentUploader {
         }
 
         var uploaded: [ChatAttachmentRef] = []
-        for (index, pending) in localAttachments.enumerated() {
-            onProgress?("Uploading attachment \(index + 1) of \(localAttachments.count)…")
+        var uploadIndex = 0
+        for pending in sourceAttachments {
+            if case .uploaded = pending.source {
+                if let reference = pending.uploadedReference {
+                    uploaded.append(reference)
+                }
+                continue
+            }
+
+            uploadIndex += 1
+            onProgress?("Uploading attachment \(uploadIndex) of \(localAttachments.count)…")
 
             let payload: (data: Data, mimeType: String, name: String)
             switch pending.source {
@@ -48,7 +57,7 @@ enum PendingAttachmentUploader {
                     imageUploadName(
                         displayName: pending.displayName,
                         mimeType: uploadAttachment.mimeType,
-                        index: index
+                        index: uploadIndex - 1
                     )
                 )
             case .localFile:
@@ -57,6 +66,8 @@ enum PendingAttachmentUploader {
                     throw APIError.server(status: 400, message: "Invalid pending file data")
                 }
                 payload = (data, mimeType, pending.displayName)
+            case .uploaded:
+                continue
             }
 
             let upload = try await api.createSessionAttachmentUpload(

@@ -4,6 +4,43 @@ import Testing
 
 @Suite("Pending attachment uploader", .serialized)
 struct PendingAttachmentUploaderTests {
+    @Test func alreadyUploadedAttachmentPassesThroughWithoutNetworkUpload() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [TestURLProtocol.self]
+        let client = APIClient(
+            baseURL: URL(string: "http://localhost:7749")!,
+            token: "test-token",
+            configuration: configuration
+        )
+        defer { TestURLProtocol.handler = nil }
+        var requestCount = 0
+        TestURLProtocol.handler = { _ in
+            requestCount += 1
+            return Self.response(status: 500, json: "{}")
+        }
+        let reference = ChatAttachmentRef(
+            type: "attachment",
+            id: "att-existing",
+            source: .upload,
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 5,
+            sha256: nil,
+            kind: .text,
+            workspacePath: ".pi/attachments/session/notes.txt"
+        )
+
+        let uploaded = try await PendingAttachmentUploader.upload(
+            [.uploaded(reference)],
+            api: client,
+            scope: .workspace("ws-1"),
+            sessionId: "session-1"
+        )
+
+        #expect(uploaded == [reference])
+        #expect(requestCount == 0)
+    }
+
     @Test func uploadsLocalFileIntoExistingAgentSession() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TestURLProtocol.self]

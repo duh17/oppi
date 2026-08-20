@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Oppi
 
@@ -58,8 +59,8 @@ struct MessageQueueComposerRestoreTests {
         #expect(plan == nil)
     }
 
-    @Test("Given queued uploaded files, when stop restores the queue, then file references stay visible in the composer")
-    func uploadedFileReferencesArePreservedInComposerText() {
+    @Test("Given queued uploaded files, when stop restores the queue, then attachments return to the composer")
+    func uploadedFileReferencesReturnAsPendingAttachments() {
         let attachment = ChatAttachmentRef(
             type: "attachment",
             id: "att-1",
@@ -90,7 +91,42 @@ struct MessageQueueComposerRestoreTests {
         )
 
         #expect(plan?.restoredCount == 1)
-        #expect(plan?.text == "read this\n\nAttached files:\n- notes.txt: .pi/attachments/s1/notes.txt")
+        #expect(plan?.text == "read this")
+        #expect(plan?.pendingAttachments.map(\.id) == ["att-1"])
+        if let source = plan?.pendingAttachments.first?.source,
+           case .uploaded(let restored) = source {
+            #expect(restored == attachment)
+        } else {
+            Issue.record("Queued attachment was not restored as an uploaded pending attachment")
+        }
         #expect(plan?.clearedQueue.version == 3)
+    }
+
+    @Test("Given queued and current attachments, when stop restores the queue, then all attachments stay on the bar")
+    func queuedAttachmentsJoinCurrentComposerAttachments() {
+        let queued = ChatAttachmentRef(
+            type: "attachment",
+            id: "queued",
+            source: .upload,
+            name: "queued.txt",
+            mimeType: "text/plain",
+            sizeBytes: 4,
+            sha256: nil,
+            kind: .text,
+            workspacePath: nil
+        )
+        let current = PendingAttachment.localFile(name: "current.txt", data: Data("now".utf8), mimeType: "text/plain")
+        let plan = MessageQueueComposerRestore.plan(
+            queue: MessageQueueState(
+                version: 1,
+                steering: [MessageQueueItem(id: "s1", message: "queued", attachments: [queued], createdAt: 1)],
+                followUp: []
+            ),
+            currentText: "draft",
+            currentPendingAttachments: [current]
+        )
+
+        #expect(plan?.text == "queued\n\ndraft")
+        #expect(plan?.pendingAttachments.map(\.id) == ["queued", current.id])
     }
 }

@@ -35,6 +35,14 @@ final class ChatComposerDraftController {
         }
     }
 
+    var pendingAttachments: [PendingAttachment] {
+        didSet {
+            guard !isApplyingVisiblePayload, mode == .message else { return }
+            messagePayload.attachments = pendingAttachments.map(\.composerDraftMetadata)
+            persistMessagePayload()
+        }
+    }
+
     private(set) var mode: Mode = .message
 
     @ObservationIgnored private weak var store: ComposerDraftStore?
@@ -45,17 +53,21 @@ final class ChatComposerDraftController {
     @ObservationIgnored private var isApplyingVisiblePayload = false
     @ObservationIgnored private var lastAskVisibleText = ""
     @ObservationIgnored private var discardedAskSubmissionText: String?
+    @ObservationIgnored private var isSubmissionInFlight = false
 
     init(
         initialText: String = "",
-        initialRepoPointers: [PendingFileReference] = []
+        initialRepoPointers: [PendingFileReference] = [],
+        initialPendingAttachments: [PendingAttachment] = []
     ) {
         let payload = ComposerDraftPayload(
             text: initialText,
-            repoPointers: initialRepoPointers.map(\.composerDraftPointer)
+            repoPointers: initialRepoPointers.map(\.composerDraftPointer),
+            attachments: initialPendingAttachments.map(\.composerDraftMetadata)
         )
         text = initialText
         repoPointers = initialRepoPointers
+        pendingAttachments = initialPendingAttachments
         messagePayload = payload
         initialSeed = payload.isEmpty ? nil : payload
     }
@@ -80,6 +92,7 @@ final class ChatComposerDraftController {
         let pendingUnscopedPayload = self.key == nil && !messagePayload.isEmpty
             ? messagePayload
             : nil
+        let pendingUnscopedAttachments = self.key == nil ? pendingAttachments : []
         self.store = store
         self.key = key
         self.isEphemeral = isEphemeral
@@ -101,14 +114,35 @@ final class ChatComposerDraftController {
         }
 
         messagePayload = restoredPayload
+        let restoredAttachments: [PendingAttachment]
         if isEphemeral {
             store.clearDraft(for: key)
-        } else if !restoredPayload.isEmpty, store.record(for: key)?.payload != restoredPayload {
-            store.setDraft(restoredPayload, for: key)
+            restoredAttachments = pendingUnscopedAttachments
+        } else if let record = store.record(for: key), record.payload == restoredPayload {
+            restoredAttachments = restoredPayload.attachments.compactMap { attachment in
+                PendingAttachment(
+                    composerDraftAttachment: attachment,
+                    data: store.attachmentData(for: key, attachmentID: attachment.id)
+                )
+            }
+        } else {
+            restoredAttachments = pendingUnscopedAttachments
+            if !restoredPayload.isEmpty {
+                let normalized = store.setDraft(
+                    restoredPayload,
+                    attachmentData: Dictionary(uniqueKeysWithValues: restoredAttachments.compactMap {
+                        guard let data = $0.composerDraftData else { return nil }
+                        return ($0.id, data)
+                    }),
+                    for: key
+                )
+                messagePayload = normalized?.payload ?? restoredPayload
+            }
         }
+        pendingAttachments = restoredAttachments
 
         if mode == .message {
-            applyVisiblePayload(restoredPayload)
+            applyVisiblePayload(messagePayload)
         }
     }
 
@@ -118,8 +152,10 @@ final class ChatComposerDraftController {
         isEphemeral = true
         initialSeed = nil
         messagePayload = .empty
+        pendingAttachments = []
         lastAskVisibleText = ""
         discardedAskSubmissionText = nil
+        isSubmissionInFlight = false
         mode = .message
         applyVisiblePayload(.empty)
     }
@@ -170,13 +206,24 @@ final class ChatComposerDraftController {
         }
     }
 
+    func setPendingAttachments(_ attachments: [PendingAttachment]) {
+        guard mode == .message else { return }
+        guard !(isSubmissionInFlight && messagePayload.isEmpty && attachments.isEmpty) else { return }
+        pendingAttachments = attachments
+    }
+
     func replaceMessage(
         text: String,
-        repoPointers: [PendingFileReference]? = nil
+        repoPointers: [PendingFileReference]? = nil,
+        pendingAttachments: [PendingAttachment]? = nil
     ) {
         messagePayload.text = text
         if let repoPointers {
             messagePayload.repoPointers = repoPointers.map(\.composerDraftPointer)
+        }
+        if let pendingAttachments {
+            self.pendingAttachments = pendingAttachments
+            messagePayload.attachments = pendingAttachments.map(\.composerDraftMetadata)
         }
         persistMessagePayload()
         if mode == .message {
@@ -193,6 +240,7 @@ final class ChatComposerDraftController {
 
     func clearMessage() {
         messagePayload = .empty
+        pendingAttachments = []
         persistMessagePayload()
         if mode == .message {
             applyVisiblePayload(.empty)
@@ -207,7 +255,11 @@ final class ChatComposerDraftController {
             revision: revision,
             wasEphemeral: isEphemeral
         )
+        isSubmissionInFlight = true
         messagePayload = .empty
+        isApplyingVisiblePayload = true
+        pendingAttachments = []
+        isApplyingVisiblePayload = false
         if mode == .message {
             applyVisiblePayload(.empty)
         }
@@ -215,6 +267,7 @@ final class ChatComposerDraftController {
     }
 
     func completeSubmission(_ snapshot: SubmissionSnapshot) {
+        isSubmissionInFlight = false
         guard !snapshot.wasEphemeral,
               let snapshotKey = snapshot.key,
               let revision = snapshot.revision else {
@@ -225,18 +278,44 @@ final class ChatComposerDraftController {
 
     func failSubmission(_ snapshot: SubmissionSnapshot) {
         guard key == snapshot.key else { return }
+        isSubmissionInFlight = false
 
         if messagePayload.isEmpty {
             messagePayload = snapshot.payload
+            pendingAttachments = snapshot.payload.attachments.compactMap { attachment in
+                guard let key else { return nil }
+                return PendingAttachment(
+                    composerDraftAttachment: attachment,
+                    data: store?.attachmentData(for: key, attachmentID: attachment.id)
+                )
+            }
             if !isEphemeral,
                let key,
                store?.record(for: key)?.payload != snapshot.payload {
-                store?.setDraft(snapshot.payload, for: key)
+                store?.setDraft(
+                    snapshot.payload,
+                    attachmentData: Dictionary(uniqueKeysWithValues: pendingAttachments.compactMap { attachment -> (String, Data)? in
+                        guard let data = attachment.composerDraftData else { return nil }
+                        return (attachment.id, data)
+                    }),
+                    for: key
+                )
             }
         } else if messagePayload != snapshot.payload {
             messagePayload = Self.combinedPayload(
                 failed: snapshot.payload,
                 current: messagePayload
+            )
+            let failedAttachments = snapshot.payload.attachments.compactMap { attachment -> PendingAttachment? in
+                guard let key else { return nil }
+                return PendingAttachment(
+                    composerDraftAttachment: attachment,
+                    data: store?.attachmentData(for: key, attachmentID: attachment.id)
+                )
+            }
+            pendingAttachments = Self.combinedAttachments(
+                failed: failedAttachments,
+                current: pendingAttachments
             )
             persistMessagePayload()
         }
@@ -260,7 +339,17 @@ final class ChatComposerDraftController {
         if messagePayload.isEmpty {
             store.clearDraft(for: key)
         } else {
-            store.setDraft(messagePayload, for: key)
+            let record = store.setDraft(
+                messagePayload,
+                attachmentData: Dictionary(uniqueKeysWithValues: pendingAttachments.compactMap { attachment -> (String, Data)? in
+                    guard let data = attachment.composerDraftData else { return nil }
+                    return (attachment.id, data)
+                }),
+                for: key
+            )
+            if let record {
+                messagePayload = record.payload
+            }
         }
     }
 
@@ -288,7 +377,23 @@ final class ChatComposerDraftController {
         let combinedPointers = (failed.repoPointers + current.repoPointers).filter { pointer in
             seenPointers.insert("\(pointer.kind.rawValue):\(pointer.path)").inserted
         }
-        return ComposerDraftPayload(text: combinedText, repoPointers: combinedPointers)
+        var seenAttachments = Set<String>()
+        let combinedAttachments = (failed.attachments + current.attachments).filter {
+            seenAttachments.insert($0.id).inserted
+        }
+        return ComposerDraftPayload(
+            text: combinedText,
+            repoPointers: combinedPointers,
+            attachments: combinedAttachments
+        )
+    }
+
+    private static func combinedAttachments(
+        failed: [PendingAttachment],
+        current: [PendingAttachment]
+    ) -> [PendingAttachment] {
+        var seen = Set<String>()
+        return (failed + current).filter { seen.insert($0.id).inserted }
     }
 }
 

@@ -53,13 +53,39 @@ private struct ComposerDraftFallbackDocument: Codable, Sendable {
 
 private enum ComposerDraftPersistenceError: LocalizedError {
     case unsupportedVersion(Int)
+    case invalidAttachmentSidecarPath
+    case missingAttachmentData
 
     var errorDescription: String? {
         switch self {
         case .unsupportedVersion(let version):
             return "Unsupported composer draft schema version: \(version)"
+        case .invalidAttachmentSidecarPath:
+            return "Invalid composer draft attachment sidecar path."
+        case .missingAttachmentData:
+            return "Missing composer draft attachment sidecar data."
         }
     }
+}
+
+private let composerDraftSidecarDirectoryName = "draft-attachments"
+private let composerDraftSidecarIOQueue = DispatchQueue(
+    label: "dev.chenda.Oppi.composer-draft-sidecars",
+    qos: .utility
+)
+
+private func composerDraftSidecarDirectoryURL(for fileURL: URL) -> URL {
+    fileURL.deletingLastPathComponent()
+        .appending(path: composerDraftSidecarDirectoryName, directoryHint: .isDirectory)
+}
+
+private func composerDraftSidecarURL(fileURL: URL, relativePath: String) -> URL? {
+    guard relativePath.hasPrefix("\(composerDraftSidecarDirectoryName)/"),
+          !relativePath.contains("..") else {
+        return nil
+    }
+    return fileURL.deletingLastPathComponent()
+        .appending(path: relativePath, directoryHint: .notDirectory)
 }
 
 private func configureComposerDraftStorageURL(_ url: URL) throws {
@@ -105,6 +131,59 @@ private func writeProtectedComposerDraftData(_ data: Data, to destinationURL: UR
     }
 }
 
+private func writeAttachmentSidecars(
+    oldPayload: ComposerDraftPayload?,
+    newPayload: ComposerDraftPayload,
+    blobs: [String: Data],
+    fileURL: URL
+) throws {
+    let oldPaths = Set(oldPayload?.attachments.compactMap(\.relativePath) ?? [])
+    let newPaths = Set(newPayload.attachments.compactMap(\.relativePath))
+    let fileManager = FileManager.default
+
+    for attachment in newPayload.attachments where attachment.source == .image || attachment.source == .localFile {
+        guard let relativePath = attachment.relativePath,
+              let url = composerDraftSidecarURL(fileURL: fileURL, relativePath: relativePath) else {
+            throw ComposerDraftPersistenceError.invalidAttachmentSidecarPath
+        }
+        if oldPayload?.attachments.first(where: { $0.id == attachment.id })?.relativePath == relativePath,
+           fileManager.fileExists(atPath: url.path) {
+            continue
+        }
+        guard let data = blobs[attachment.id] else {
+            throw ComposerDraftPersistenceError.missingAttachmentData
+        }
+        try writeProtectedComposerDraftData(data, to: url)
+    }
+
+    for relativePath in oldPaths.subtracting(newPaths) {
+        if let url = composerDraftSidecarURL(fileURL: fileURL, relativePath: relativePath) {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+
+    let sidecarDirectory = composerDraftSidecarDirectoryURL(for: fileURL)
+    if newPayload.attachments.contains(where: { $0.relativePath != nil && ($0.source == .image || $0.source == .localFile) }) {
+        try fileManager.createDirectory(at: sidecarDirectory, withIntermediateDirectories: true)
+        try configureComposerDraftStorageURL(sidecarDirectory)
+    }
+}
+
+private func deleteAttachmentSidecars(for payload: ComposerDraftPayload, fileURL: URL) {
+    let fileManager = FileManager.default
+    for relativePath in payload.attachments.compactMap(\.relativePath) {
+        if let url = composerDraftSidecarURL(fileURL: fileURL, relativePath: relativePath) {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+    let directory = composerDraftSidecarDirectoryURL(for: fileURL)
+    guard fileManager.fileExists(atPath: directory.path) else { return }
+    let hasFiles = (try? fileManager.contentsOfDirectory(atPath: directory.path).isEmpty == false) ?? false
+    if !hasFiles {
+        try? fileManager.removeItem(at: directory)
+    }
+}
+
 private func composerDraftRecordIsNewer(
     _ candidate: ComposerDraftRecord,
     than current: ComposerDraftRecord
@@ -134,6 +213,28 @@ private actor ComposerDraftPersistence {
             throw ComposerDraftPersistenceError.unsupportedVersion(document.version)
         }
         return document.records
+    }
+
+    func loadAttachmentSidecars(
+        for records: [ComposerDraftRecord],
+        fileURL: URL
+    ) -> [ComposerDraftKey: [String: Data]] {
+        var result: [ComposerDraftKey: [String: Data]] = [:]
+        for record in records {
+            var blobs: [String: Data] = [:]
+            for attachment in record.payload.attachments where attachment.source == .image || attachment.source == .localFile {
+                guard let relativePath = attachment.relativePath,
+                      let url = composerDraftSidecarURL(fileURL: fileURL, relativePath: relativePath),
+                      let data = try? Data(contentsOf: url) else {
+                    continue
+                }
+                blobs[attachment.id] = data
+            }
+            if !blobs.isEmpty {
+                result[record.key] = blobs
+            }
+        }
+        return result
     }
 
     func loadLifecycleFallback() throws -> ComposerDraftFallbackDocument? {
@@ -182,11 +283,13 @@ final class ComposerDraftStore {
     @ObservationIgnored private var records: [ComposerDraftKey: ComposerDraftRecord] = [:]
     @ObservationIgnored private var latestRevisionByKey: [ComposerDraftKey: UInt64] = [:]
     @ObservationIgnored private let persistence: ComposerDraftPersistence
+    @ObservationIgnored private let persistenceFileURL: URL
     @ObservationIgnored private let lifecycleFallbackURL: URL
     @ObservationIgnored private let saveDelay: Duration
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var pendingLegacyDraft: PendingLegacyDraft?
     @ObservationIgnored private var fallbackDocument = ComposerDraftFallbackDocument.empty
+    @ObservationIgnored private var attachmentDataByKey: [ComposerDraftKey: [String: Data]] = [:]
 
     private static let quickSessionDraftKey = ComposerDraftKey(
         serverID: "__oppi_local__",
@@ -206,6 +309,7 @@ final class ComposerDraftStore {
             fileURL: resolvedFileURL,
             lifecycleFallbackURL: fallbackURL
         )
+        persistenceFileURL = resolvedFileURL
         lifecycleFallbackURL = fallbackURL
         self.saveDelay = saveDelay
     }
@@ -218,6 +322,12 @@ final class ComposerDraftStore {
             for record in loadedRecords {
                 mergeLoadedRecord(record)
             }
+            mergeLoadedAttachmentSidecars(
+                await persistence.loadAttachmentSidecars(
+                    for: loadedRecords,
+                    fileURL: persistenceFileURL
+                )
+            )
         } catch {
             lastError = "Failed to load local message drafts."
             composerDraftLogger.error("Draft load failed: \(error.localizedDescription, privacy: .public)")
@@ -227,6 +337,12 @@ final class ComposerDraftStore {
             if let fallback = try await persistence.loadLifecycleFallback() {
                 fallbackDocument = fallback
                 applyLoadedFallback(fallback)
+                mergeLoadedAttachmentSidecars(
+                    await persistence.loadAttachmentSidecars(
+                        for: Array(records.values),
+                        fileURL: persistenceFileURL
+                    )
+                )
             }
         } catch {
             lastError = "Failed to load the latest message draft fallback."
@@ -243,18 +359,45 @@ final class ComposerDraftStore {
         records[key]
     }
 
+    private func mergeLoadedAttachmentSidecars(_ loaded: [ComposerDraftKey: [String: Data]]) {
+        for (key, blobs) in loaded {
+            attachmentDataByKey[key] = blobs
+        }
+    }
+
     var quickSessionDraftText: String {
-        guard let key = Self.quickSessionDraftKey else { return "" }
-        return records[key]?.payload.text ?? ""
+        quickSessionDraftPayload.text
+    }
+
+    var quickSessionDraftPayload: ComposerDraftPayload {
+        guard let key = Self.quickSessionDraftKey else { return .empty }
+        return records[key]?.payload ?? .empty
+    }
+
+    func quickSessionDraftAttachmentData() -> [String: Data] {
+        guard let key = Self.quickSessionDraftKey else { return [:] }
+        return attachmentDataByKey[key] ?? [:]
     }
 
     @discardableResult
     func setQuickSessionDraftText(_ text: String) -> ComposerDraftRecord? {
         guard let key = Self.quickSessionDraftKey else { return nil }
-        if text == quickSessionDraftText {
-            return records[key]
-        }
-        return setDraft(.init(text: text, repoPointers: []), for: key)
+        var payload = quickSessionDraftPayload
+        payload.text = text
+        return setDraft(
+            payload,
+            attachmentData: quickSessionDraftAttachmentData(),
+            for: key
+        )
+    }
+
+    @discardableResult
+    func setQuickSessionDraft(
+        _ payload: ComposerDraftPayload,
+        attachmentData: [String: Data] = [:]
+    ) -> ComposerDraftRecord? {
+        guard let key = Self.quickSessionDraftKey else { return nil }
+        return setDraft(payload, attachmentData: attachmentData, for: key)
     }
 
     func saveQuickSessionLifecycleFallback() {
@@ -269,23 +412,71 @@ final class ComposerDraftStore {
     }
 
     @discardableResult
-    func setDraft(_ payload: ComposerDraftPayload, for key: ComposerDraftKey) -> ComposerDraftRecord? {
+    func setDraft(
+        _ payload: ComposerDraftPayload,
+        attachmentData: [String: Data] = [:],
+        for key: ComposerDraftKey
+    ) -> ComposerDraftRecord? {
         guard !payload.isEmpty else {
             clearDraft(for: key)
+            return nil
+        }
+
+        let oldPayload = records[key]?.payload
+        var normalizedPayload = payload
+        for index in normalizedPayload.attachments.indices {
+            guard normalizedPayload.attachments[index].source == .image
+                    || normalizedPayload.attachments[index].source == .localFile else {
+                continue
+            }
+            if normalizedPayload.attachments[index].relativePath == nil {
+                normalizedPayload.attachments[index].relativePath = oldPayload?.attachments.first {
+                    $0.id == normalizedPayload.attachments[index].id
+                }?.relativePath ?? "\(composerDraftSidecarDirectoryName)/\(UUID().uuidString).blob"
+            }
+        }
+
+        var blobs = attachmentDataByKey[key] ?? [:]
+        for attachment in normalizedPayload.attachments {
+            if let data = attachmentData[attachment.id] {
+                blobs[attachment.id] = data
+            }
+        }
+        let retainedIDs = Set(normalizedPayload.attachments.map(\.id))
+        blobs = blobs.filter { retainedIDs.contains($0.key) }
+        do {
+            // Keep the synchronous revision/rollback contract while moving file I/O
+            // off the main actor. Debounced JSON persistence remains actor-owned.
+            try composerDraftSidecarIOQueue.sync {
+                try writeAttachmentSidecars(
+                    oldPayload: oldPayload,
+                    newPayload: normalizedPayload,
+                    blobs: blobs,
+                    fileURL: persistenceFileURL
+                )
+            }
+        } catch {
+            lastError = "Failed to save local message draft attachments."
+            composerDraftLogger.error("Draft attachment write failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
 
         let revision = (latestRevisionByKey[key] ?? records[key]?.revision ?? 0) &+ 1
         let record = ComposerDraftRecord(
             key: key,
-            payload: payload,
+            payload: normalizedPayload,
             revision: revision,
             updatedAt: Date()
         )
         latestRevisionByKey[key] = revision
         records[key] = record
+        attachmentDataByKey[key] = blobs
         scheduleSave()
         return record
+    }
+
+    func attachmentData(for key: ComposerDraftKey, attachmentID: String) -> Data? {
+        attachmentDataByKey[key]?[attachmentID]
     }
 
     @discardableResult
@@ -296,6 +487,10 @@ final class ComposerDraftStore {
         }
 
         records.removeValue(forKey: key)
+        attachmentDataByKey.removeValue(forKey: key)
+        composerDraftSidecarIOQueue.sync {
+            deleteAttachmentSidecars(for: current.payload, fileURL: persistenceFileURL)
+        }
         latestRevisionByKey[key] = max(latestRevisionByKey[key] ?? 0, current.revision)
         recordClearTombstone(for: current)
         scheduleSave()
@@ -317,6 +512,19 @@ final class ComposerDraftStore {
     /// the debounced main document write. Pending clear tombstones are preserved.
     func saveLifecycleFallback(_ record: ComposerDraftRecord?) {
         guard let record, !record.payload.isEmpty else { return }
+        do {
+            try composerDraftSidecarIOQueue.sync {
+                try writeAttachmentSidecars(
+                    oldPayload: nil,
+                    newPayload: record.payload,
+                    blobs: attachmentDataByKey[record.key] ?? [:],
+                    fileURL: persistenceFileURL
+                )
+            }
+        } catch {
+            lastError = "Failed to save the latest message draft attachments before suspension."
+            composerDraftLogger.error("Draft lifecycle attachment write failed: \(error.localizedDescription, privacy: .public)")
+        }
         latestRevisionByKey[record.key] = max(latestRevisionByKey[record.key] ?? 0, record.revision)
         var activeRecords = fallbackDocument.activeRecords
         activeRecords.removeAll { $0.key == record.key }

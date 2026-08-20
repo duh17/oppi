@@ -43,6 +43,132 @@ struct ComposerDraftStoreTests {
         #expect(reloaded.record(for: key)?.revision == 1)
     }
 
+    @Test func roundTripsPhotoAndFileMetadataWithSidecarBytesWithoutEmbeddingBinaryInJSON() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let key = try fixture.key()
+        let photoBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x00])
+        let fileBytes = Data("log contents".utf8)
+        let payload = ComposerDraftPayload(
+            text: "",
+            repoPointers: [],
+            attachments: [
+                .init(id: "photo-1", displayName: "photo.png", mimeType: "image/png", source: .image, relativePath: nil, sizeBytes: photoBytes.count),
+                .init(id: "file-1", displayName: "notes.txt", mimeType: "text/plain", source: .localFile, relativePath: nil, sizeBytes: fileBytes.count),
+            ]
+        )
+
+        let store = fixture.makeStore()
+        await store.load()
+        store.setDraft(payload, attachmentData: [
+            "photo-1": photoBytes,
+            "file-1": fileBytes,
+        ], for: key)
+        await store.flush()
+
+        let json = try Data(contentsOf: fixture.fileURL)
+        #expect(String(decoding: json, as: UTF8.self).contains("photo.png"))
+        #expect(!json.elementsEqual(photoBytes))
+        #expect(FileManager.default.fileExists(atPath: fixture.sidecarDirectoryURL.path))
+
+        let reloaded = fixture.makeStore()
+        await reloaded.load()
+        #expect(reloaded.record(for: key)?.payload.attachments.map(\.displayName) == ["photo.png", "notes.txt"])
+        #expect(reloaded.attachmentData(for: key, attachmentID: "photo-1") == photoBytes)
+        #expect(reloaded.attachmentData(for: key, attachmentID: "file-1") == fileBytes)
+    }
+
+    @Test func sidecarWriteFailureDoesNotPublishTheDraftRecord() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let payload = ComposerDraftPayload(
+            text: "",
+            repoPointers: [],
+            attachments: [.init(
+                id: "invalid-path",
+                displayName: "photo.jpg",
+                mimeType: "image/jpeg",
+                source: .image,
+                relativePath: "outside/photo.blob",
+                sizeBytes: 3
+            )]
+        )
+
+        #expect(store.setDraft(payload, attachmentData: ["invalid-path": Data("jpg".utf8)], for: key) == nil)
+        #expect(store.record(for: key) == nil)
+    }
+
+    @Test func updatingAnotherKeyDoesNotDeleteFirstKeysSidecarBytes() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let firstKey = try fixture.key(sessionID: "session-a")
+        let secondKey = try fixture.key(sessionID: "session-b")
+        let firstBytes = Data("session A photo".utf8)
+
+        store.setDraft(
+            .init(
+                text: "",
+                repoPointers: [],
+                attachments: [.init(id: "photo-a", displayName: "a.jpg", mimeType: "image/jpeg", source: .image, relativePath: nil, sizeBytes: firstBytes.count)]
+            ),
+            attachmentData: ["photo-a": firstBytes],
+            for: firstKey
+        )
+        await store.flush()
+
+        store.setDraft(.init(text: "session B text", repoPointers: []), for: secondKey)
+        await store.flush()
+
+        #expect(store.attachmentData(for: firstKey, attachmentID: "photo-a") == firstBytes)
+        let reloaded = fixture.makeStore()
+        await reloaded.load()
+        #expect(reloaded.attachmentData(for: firstKey, attachmentID: "photo-a") == firstBytes)
+    }
+
+    @Test func photoOnlyDraftIsNonEmptyAndClearDeletesSidecars() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let key = try fixture.key()
+        let store = fixture.makeStore()
+        await store.load()
+        let record = store.setDraft(
+            .init(
+                text: "",
+                repoPointers: [],
+                attachments: [.init(id: "photo-1", displayName: "photo.jpg", mimeType: "image/jpeg", source: .image, relativePath: nil, sizeBytes: 3)]
+            ),
+            attachmentData: ["photo-1": Data("jpg".utf8)],
+            for: key
+        )
+        #expect(record != nil)
+        await store.flush()
+        #expect(FileManager.default.fileExists(atPath: fixture.sidecarDirectoryURL.path))
+
+        #expect(store.clearDraft(for: key))
+        #expect(!FileManager.default.fileExists(atPath: fixture.sidecarDirectoryURL.path))
+        let reloaded = fixture.makeStore()
+        await reloaded.load()
+        #expect(reloaded.record(for: key) == nil)
+    }
+
+    @Test func ephemeralFallbackDoesNotCreateSidecars() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController()
+        controller.attach(store: store, key: key, isEphemeral: true)
+        controller.setPendingAttachments([.localFile(name: "secret.txt", data: Data("secret".utf8), mimeType: "text/plain")])
+        #expect(store.record(for: key) == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.sidecarDirectoryURL.path))
+    }
+
     @Test func quickSessionTextSurvivesReloadAndClearsDurably() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -205,9 +331,23 @@ struct ComposerDraftStoreTests {
                     kind: .workspaceFile,
                     displayPrefix: nil
                 ),
+            ],
+            attachments: [
+                .init(
+                    id: "lifecycle-file",
+                    displayName: "latest.log",
+                    mimeType: "text/plain",
+                    source: .localFile,
+                    relativePath: "draft-attachments/lifecycle-file.blob",
+                    sizeBytes: 12
+                ),
             ]
         )
-        let record = try #require(store.setDraft(payload, for: key))
+        let record = try #require(store.setDraft(
+            payload,
+            attachmentData: ["lifecycle-file": Data("latest log!".utf8)],
+            for: key
+        ))
 
         store.saveLifecycleFallback(record)
 
@@ -216,6 +356,7 @@ struct ComposerDraftStoreTests {
         let relaunched = fixture.makeStore()
         await relaunched.load()
         #expect(relaunched.record(for: key)?.payload == payload)
+        #expect(relaunched.attachmentData(for: key, attachmentID: "lifecycle-file") == Data("latest log!".utf8))
 
         relaunched.clearDraft(for: key)
         let afterClear = fixture.makeStore()
@@ -315,6 +456,14 @@ struct ComposerDraftStoreTests {
 
         var fallbackURL: URL {
             rootURL.appending(path: "active-draft-fallback-v2.json", directoryHint: .notDirectory)
+        }
+
+        var sidecarDirectoryURL: URL {
+            rootURL.appending(path: "draft-attachments", directoryHint: .isDirectory)
+        }
+
+        func key(sessionID: String = "session") throws -> ComposerDraftKey {
+            try #require(ComposerDraftKey(serverID: "server", workspaceID: "workspace", sessionID: sessionID))
         }
 
         init() throws {

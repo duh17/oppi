@@ -347,6 +347,16 @@ struct ChatView: View {
         )
     }
 
+    private var composerPendingAttachmentsBinding: Binding<[PendingAttachment]> {
+        Binding(
+            get: { pendingAttachments },
+            set: { newAttachments in
+                pendingAttachments = newAttachments
+                composerDraftController.setPendingAttachments(newAttachments)
+            }
+        )
+    }
+
     private var availableSlashCommands: [SlashCommand] {
         Self.availableSlashCommands(from: chatState.slashCommands)
     }
@@ -594,7 +604,10 @@ struct ChatView: View {
                 appNavigation.pendingQuickSessionAttachments = nil
 
                 // Pre-fill the composer so the user sees their message while connecting.
-                composerDraftController.replaceMessage(text: message)
+                composerDraftController.replaceMessage(
+                    text: message,
+                    pendingAttachments: attachments
+                )
                 pendingAttachments = attachments
 
                 // Wait for the session stream to be established AND the WebSocket
@@ -835,7 +848,7 @@ struct ChatView: View {
                 ChatInputBar(
                     text: composerTextBinding,
                     textBeforeRecording: $composerTextBeforeRecording,
-                    pendingAttachments: $pendingAttachments,
+                    pendingAttachments: composerPendingAttachmentsBinding,
                     pendingRepoPointers: composerRepoPointersBinding,
 
                     isBusy: isBusy,
@@ -1194,12 +1207,17 @@ struct ChatView: View {
         guard connection.isFocusedSession(sessionId),
               let plan = MessageQueueComposerRestore.plan(
                   queue: messageQueueState,
-                  currentText: composerDraftController.text
+                  currentText: composerDraftController.text,
+                  currentPendingAttachments: pendingAttachments
               ) else {
             return false
         }
 
-        composerDraftController.replaceMessage(text: plan.text)
+        composerDraftController.replaceMessage(
+            text: plan.text,
+            pendingAttachments: plan.pendingAttachments
+        )
+        pendingAttachments = plan.pendingAttachments
         composerTextBeforeRecording = nil
         messageQueueStore.apply(plan.clearedQueue, for: sessionId)
         if !showComposer {
@@ -1336,6 +1354,7 @@ struct ChatView: View {
             key: composerDraftKey,
             isEphemeral: composerDraftIsMemoryOnly
         )
+        pendingAttachments = composerDraftController.pendingAttachments
         synchronizeComposerMode()
     }
 
@@ -1349,6 +1368,11 @@ struct ChatView: View {
             showComposer = false
         }
         composerDraftController.setMode(mode)
+        if mode == .message {
+            pendingAttachments = composerDraftController.pendingAttachments
+        } else {
+            pendingAttachments = []
+        }
     }
 
     @MainActor
@@ -1446,6 +1470,7 @@ struct ChatView: View {
         )
         if !pendingAttachments.contains(where: { $0.id == attachment.id }) {
             pendingAttachments.append(attachment)
+            composerDraftController.setPendingAttachments(pendingAttachments)
         }
     }
 
@@ -1688,6 +1713,7 @@ struct ChatView: View {
         let originalInputText = composerDraftController.text
         let originalPendingAttachments = pendingAttachments
         let originalPendingRepoPointers = composerDraftController.repoPointers
+        composerDraftController.setPendingAttachments(originalPendingAttachments)
         let submission = composerDraftController.beginSubmission()
         let reviewText = reviewComments.appendReviewBlock(
             to: originalInputText,
@@ -2138,7 +2164,7 @@ struct ChatView: View {
         ExpandedComposerView(
             text: composerTextBinding,
             textBeforeRecording: $composerTextBeforeRecording,
-            pendingAttachments: $pendingAttachments,
+            pendingAttachments: composerPendingAttachmentsBinding,
             pendingRepoPointers: composerRepoPointersBinding,
             isBusy: isBusy,
             busyStreamingBehavior: busyStreamingBehavior,

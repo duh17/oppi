@@ -333,8 +333,11 @@ struct QuickSessionSheet: View {
             guard isInitialized else { return }
             Task { await loadAgentsForSelectedServer() }
         }
-        .onChange(of: text) { _, newValue in
-            composerDraftStore?.setQuickSessionDraftText(newValue)
+        .onChange(of: text) { _, _ in
+            persistQuickSessionDraft()
+        }
+        .onChange(of: pendingAttachments.map(\.id)) { _, _ in
+            persistQuickSessionDraft()
         }
     }
 
@@ -658,7 +661,23 @@ struct QuickSessionSheet: View {
     private func setupInitialState() async {
         if let composerDraftStore {
             await composerDraftStore.load()
-            text = composerDraftStore.quickSessionDraftText
+            let payload = composerDraftStore.quickSessionDraftPayload
+            text = payload.text
+            pendingRepoPointers = payload.repoPointers.map { pointer in
+                PendingFileReference(
+                    path: pointer.path,
+                    isDirectory: pointer.isDirectory,
+                    kind: pointer.kind == .workspaceFile ? .workspaceFile : .reviewFile,
+                    displayPrefix: pointer.displayPrefix
+                )
+            }
+            let attachmentData = composerDraftStore.quickSessionDraftAttachmentData()
+            pendingAttachments = payload.attachments.compactMap { attachment in
+                PendingAttachment(
+                    composerDraftAttachment: attachment,
+                    data: attachmentData[attachment.id]
+                )
+            }
         }
 
         let launchContext = navigation.pendingQuickSessionLaunchContext
@@ -744,6 +763,27 @@ struct QuickSessionSheet: View {
                 mimeType: attachment.mimeType
             )
         }
+    }
+
+    @discardableResult
+    private func persistQuickSessionDraft() -> ComposerDraftRecord? {
+        let payload = ComposerDraftPayload(
+            text: text,
+            repoPointers: pendingRepoPointers.map { pointer in
+                ComposerDraftRepoPointer(
+                    path: pointer.path,
+                    isDirectory: pointer.isDirectory,
+                    kind: pointer.kind == .workspaceFile ? .workspaceFile : .reviewFile,
+                    displayPrefix: pointer.displayPrefix
+                )
+            },
+            attachments: pendingAttachments.map(\.composerDraftMetadata)
+        )
+        let data: [String: Data] = Dictionary(uniqueKeysWithValues: pendingAttachments.compactMap { attachment -> (String, Data)? in
+            guard let data = attachment.composerDraftData else { return nil }
+            return (attachment.id, data)
+        })
+        return composerDraftStore?.setQuickSessionDraft(payload, attachmentData: data)
     }
 
     private func appendInitialText(_ value: String?) {
@@ -976,9 +1016,7 @@ struct QuickSessionSheet: View {
         let modelId = selectedAgentId == nil ? selectedModelId : agentModelOverride
         let thinking = thinkingLevel
         let agentThinking = agentThinkingOverride
-        let submittedDraftRevision = composerDraftStore?
-            .setQuickSessionDraftText(text)?
-            .revision
+        let submittedDraftRevision = persistQuickSessionDraft()?.revision
 
         isCreating = true
         error = nil
