@@ -52,6 +52,16 @@ enum MathSymbolTable {
         return nil
     }
 
+    /// Punctuation that TeX math mode treats as a command only because the
+    /// bare character is already syntax. `\_` is a literal underscore, not an
+    /// unknown operator.
+    static func escapedLiteral(for command: String) -> String? {
+        switch command {
+        case "_": return "_"
+        default: return nil
+        }
+    }
+
     // MARK: - Operator Table
 
     private static let operatorTable: [String: MathOperator] = [

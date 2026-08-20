@@ -548,6 +548,17 @@ struct TeXMathParserConformanceTests {
         #expect(result == [.font(.roman, body: [.variable("d")])])
     }
 
+    @Test func escapedUnderscoreInsideMathrmIsLiteralText() {
+        let result = parser.parse("\\mathrm{target\\_burn}")
+        #expect(result == [
+            .font(.roman, body: [
+                .variable("t"), .variable("a"), .variable("r"), .variable("g"),
+                .variable("e"), .variable("t"), .text("_"),
+                .variable("b"), .variable("u"), .variable("r"), .variable("n"),
+            ])
+        ])
+    }
+
     @Test func mathbfFont() {
         let result = parser.parse("\\mathbf{x}")
         #expect(result == [.font(.bold, body: [.variable("x")])])

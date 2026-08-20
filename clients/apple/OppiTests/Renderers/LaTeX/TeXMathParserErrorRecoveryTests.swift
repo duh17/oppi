@@ -98,6 +98,19 @@ struct TeXMathParserErrorRecoveryTests {
         }
     }
 
+    @Test func escapedUnderscoreInsideMathrmIsRenderable() {
+        let sources = [
+            #"\mathrm{target\_burn} = R / T"#,
+            #"\mathrm{recent\_burn} = \max(0, R_{\mathrm{prev}} - R_{\mathrm{now}}) / \mathrm{lookback}"#,
+            #"\mathrm{pace\_ratio} = \mathrm{recent\_burn} \times T / R"#,
+        ]
+        for source in sources {
+            let result = parser.parseValidated(source)
+            #expect(result.diagnostics.isEmpty, "Unexpected diagnostics for \(source): \(result.diagnostics)")
+            #expect(result.isRenderable)
+        }
+    }
+
     @Test func recoveredOrUnsupportedTeXIsNotRenderable() {
         let malformed: [(String, TeXMathDiagnostic)] = [
             ("\\frac{a}", .missingArgument(command: "frac", position: 2)),

@@ -162,6 +162,12 @@ private struct LatexRenderingPreview: View {
 
     Inline math: $x^2 + y^2 = z^2$ and \(\alpha \leq \beta\) appear within this sentence.
 
+    If historical quota snapshots exist, use the smallest stable lookback that covers several sessions:
+
+    - \(\mathrm{target\_burn} = R / T\)
+    - \(\mathrm{recent\_burn} = \max(0, R_{\mathrm{prev}} - R_{\mathrm{now}}) / \mathrm{lookback}\), smoothed over that window using the same unit as T
+    - \(\mathrm{pace\_ratio} = \mathrm{recent\_burn} \times T / R\)
+
     The formulas above should align with this surrounding selectable text, not replace or shrink it.
 
     **Displayed formula**

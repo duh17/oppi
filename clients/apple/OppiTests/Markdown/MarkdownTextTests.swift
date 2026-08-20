@@ -331,6 +331,109 @@ struct FlatSegmentBuildTests {
         #expect(textSegmentString(segments) == "A \u{FFFC} B")
     }
 
+    @Test func bulletListInlineParenLatexRendersFormulasInsteadOfRawSource() {
+        let markdown = #"""
+        If historical quota snapshots exist, use the smallest stable lookback that covers several sessions:
+
+        - \(\mathrm{target\_burn} = R / T\)
+        - \(\mathrm{recent\_burn} = \max(0, R_{\mathrm{prev}} - R_{\mathrm{now}}) / \mathrm{lookback}\), smoothed over that window using the same unit as T
+        - \(\mathrm{pace\_ratio} = \mathrm{recent\_burn} \times T / R\)
+        """#
+
+        let blocks = parseCommonMark(markdown)
+        guard case .unorderedList(let items) = blocks.last else {
+            Issue.record("Expected the quota formulas as an unordered list, got \(blocks)")
+            return
+        }
+        #expect(items.count == 3)
+
+        let itemSources = items.map { item in
+            item.compactMap { block -> String? in
+                guard case .paragraph(let inlines) = block else { return nil }
+                return plainText(from: inlines)
+            }.joined()
+        }
+        #expect(itemSources[0].contains(#"\(\mathrm{target\_burn} = R / T\)"#))
+        #expect(itemSources[1].contains(#"\(\mathrm{recent\_burn}"#))
+        #expect(itemSources[1].contains(#"R_{\mathrm{prev}}"#))
+        #expect(itemSources[2].contains(#"\(\mathrm{pace\_ratio}"#))
+
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        let attachments = inlineMathAttachments(in: segments)
+        let visible = textSegmentString(segments) ?? ""
+
+        #expect(attachments.count == 3)
+        #expect(attachments.allSatisfy { $0.image?.size.width ?? 0 > 0 })
+        #expect(!visible.contains(#"\("#))
+        #expect(!visible.contains(#"\mathrm"#))
+        #expect(!visible.contains(#"\_"#))
+        #expect(visible.contains("smoothed over that window"))
+    }
+
+    @Test func paragraphAndDollarMathrmUnderscoreFormulasRenderAsAttachments() {
+        let paragraph = FlatSegment.build(
+            from: parseCommonMark(#"See \(\mathrm{target\_burn} = R / T\)."#),
+            themeID: .dark
+        )
+        let dollars = FlatSegment.build(
+            from: parseCommonMark(#"See $\mathrm{target\_burn} = R / T$."#),
+            themeID: .dark
+        )
+        #expect(inlineMathAttachments(in: paragraph).count == 1)
+        #expect(inlineMathAttachments(in: dollars).count == 1)
+        #expect(!(textSegmentString(paragraph) ?? "").contains(#"\mathrm"#))
+        #expect(!(textSegmentString(dollars) ?? "").contains(#"\mathrm"#))
+    }
+
+    @Test func bulletListSimpleParenLatexStillRenders() {
+        let segments = FlatSegment.build(
+            from: parseCommonMark(#"- \(\alpha \leq \beta\)"#),
+            themeID: .dark
+        )
+        let visible = textSegmentString(segments) ?? ""
+        #expect(inlineMathAttachments(in: segments).count == 1)
+        #expect(visible.contains("•"))
+        #expect(!visible.contains(#"\("#))
+    }
+
+    @Test func inlineCodeAndFencesKeepParenDelimitersLiteral() {
+        let markdown = #"""
+        Keep `\(\alpha\)` and:
+
+        ```
+        \(\mathrm{target\_burn}\)
+        ```
+        """#
+        let segments = FlatSegment.build(from: parseCommonMark(markdown), themeID: .dark)
+        #expect(inlineMathAttachments(in: segments).isEmpty)
+        let visible = segments.compactMap { segment -> String? in
+            guard case .text(let attributed) = segment else { return nil }
+            return String(attributed.characters)
+        }.joined()
+        #expect(visible.contains(#"\(\alpha\)"#))
+        guard segments.contains(where: {
+            if case .codeBlock(_, let code) = $0 {
+                return code.contains(#"\(\mathrm{target\_burn}\)"#)
+            }
+            return false
+        }) else {
+            Issue.record("Expected a fenced code block that keeps the exact \\( source, got \(segments)")
+            return
+        }
+    }
+
+    @Test func listLayoutKeepsOrdinaryParenthesesAndBackslashes() {
+        let segments = FlatSegment.build(
+            from: parseCommonMark(#"- cost (R) / time (T) uses \\le only as prose"#),
+            themeID: .dark
+        )
+        let visible = textSegmentString(segments) ?? ""
+        #expect(inlineMathAttachments(in: segments).isEmpty)
+        #expect(visible.contains("•"))
+        #expect(visible.contains("cost (R) / time (T)"))
+        #expect(visible.contains(#"\le"#))
+    }
+
     @Test func inlineDollarLatexTextChainRendersAsFormulaAttachment() {
         let blocks = parseCommonMark("$\\text{First} \\rightarrow \\text{Second} \\rightarrow \\text{Done}$\n")
         let segments = FlatSegment.build(from: blocks, themeID: .dark)

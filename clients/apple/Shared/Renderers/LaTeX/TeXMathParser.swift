@@ -197,7 +197,8 @@ private enum TeXMathValidator {
                     } else {
                         append(.unmatchedRight)
                     }
-                } else if MathSymbolTable.lookup(command) == nil {
+                } else if MathSymbolTable.lookup(command) == nil,
+                          MathSymbolTable.escapedLiteral(for: command) == nil {
                     append(.unsupportedCommand(command))
                 }
 
@@ -764,6 +765,11 @@ private struct ParserState {
     // MARK: Command Parsing
 
     mutating func parseCommand(_ name: String) -> MathNode? {
+        if let literal = MathSymbolTable.escapedLiteral(for: name) {
+            pos += 1
+            return .text(literal)
+        }
+
         guard let result = MathSymbolTable.lookup(name) else {
             // Unknown command — skip it and return as a variable
             pos += 1

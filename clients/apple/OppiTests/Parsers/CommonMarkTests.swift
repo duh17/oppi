@@ -753,6 +753,35 @@ struct CommonMarkTests {
         #expect(hasStrong)
     }
 
+    @Test func bulletListInlineParenLatexKeepsExactMathSource() {
+        let markdown = #"""
+        - \(\mathrm{target\_burn} = R / T\)
+        - \(\mathrm{recent\_burn} = \max(0, R_{\mathrm{prev}} - R_{\mathrm{now}}) / \mathrm{lookback}\), smoothed over that window using the same unit as T
+        - \(\mathrm{pace\_ratio} = \mathrm{recent\_burn} \times T / R\)
+        """#
+
+        let blocks = parseCommonMark(markdown)
+        guard case .unorderedList(let items) = blocks.first else {
+            Issue.record("Expected one unordered list, got \(blocks)")
+            return
+        }
+        #expect(items.count == 3)
+
+        let itemSources = items.map { item in
+            item.compactMap { block -> String? in
+                guard case .paragraph(let inlines) = block else { return nil }
+                return plainText(from: inlines)
+            }.joined()
+        }
+
+        #expect(itemSources == [
+            #"\(\mathrm{target\_burn} = R / T\)"#,
+            #"\(\mathrm{recent\_burn} = \max(0, R_{\mathrm{prev}} - R_{\mathrm{now}}) / \mathrm{lookback}\), smoothed over that window using the same unit as T"#,
+            #"\(\mathrm{pace\_ratio} = \mathrm{recent\_burn} \times T / R\)"#,
+        ])
+        #expect(!itemSources.joined().contains("opmath"))
+    }
+
     // MARK: - Task Lists
 
     @Test func taskListUnchecked() {
