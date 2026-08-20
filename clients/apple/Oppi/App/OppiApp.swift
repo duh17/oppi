@@ -1037,7 +1037,7 @@ struct OppiApp: App {
                     userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
                 )
             }
-            navigation.openWorkspaceLinkedFile(
+            navigation.openReferencedWorkspaceLinkedFile(
                 .workspaceFile(
                     serverId: file.serverID,
                     workspaceId: file.workspaceID,
@@ -1045,7 +1045,15 @@ struct OppiApp: App {
                     path: file.path,
                     lineAnchor: reference.lineAnchor
                 ),
-                workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace)
+                workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
+                sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
+                    reference.sourceServerID.map { sourceServerID in
+                        WorkspaceSessionNavTarget(
+                            serverId: sourceServerID,
+                            sessionId: sourceSessionID
+                        )
+                    }
+                }
             )
 
         case .hostFile(let file):
@@ -1070,13 +1078,21 @@ struct OppiApp: App {
             }
             // Host files stay on the current stack. Do not select another
             // workspace or pretend the file lives in this checkout.
-            navigation.openWorkspaceLinkedFile(
+            navigation.openReferencedWorkspaceLinkedFile(
                 .hostFile(
                     serverId: file.serverID,
                     workspaceId: reference.workspaceID ?? "",
                     path: file.path,
                     lineAnchor: reference.lineAnchor
-                )
+                ),
+                sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
+                    reference.sourceServerID.map { sourceServerID in
+                        WorkspaceSessionNavTarget(
+                            serverId: sourceServerID,
+                            sessionId: sourceSessionID
+                        )
+                    }
+                }
             )
         }
     }

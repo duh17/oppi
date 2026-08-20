@@ -431,6 +431,53 @@ final class AppNavigation {
         }
     }
 
+    /// Push a wiki-linked file from the currently visible chat without changing
+    /// the chat's all-sessions/workspace filter. This keeps Back on the file
+    /// destination pointed at the source chat instead of a newly selected
+    /// workspace inbox.
+    func openReferencedWorkspaceLinkedFile(
+        _ target: WorkspaceLinkedFileNavTarget,
+        workspace: WorkspaceNavTarget? = nil,
+        sourceSession: WorkspaceSessionNavTarget?
+    ) {
+        selectedTab = .workspaces
+        guard let sourceSession else {
+            openWorkspaceLinkedFile(target, workspace: workspace)
+            return
+        }
+
+        switch workspaceNavigationPresentation {
+        case .stack:
+            guard case .session(let current) = workspaceStackRouteElements.last,
+                  Self.isSameSession(current, sourceSession) else {
+                openWorkspaceLinkedFile(target, workspace: workspace)
+                return
+            }
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.linkedFileDiagnosticContext(target),
+                routeElement: .linkedFile(target)
+            )
+        case .split:
+            let currentSession: WorkspaceSessionNavTarget? = {
+                if case .session(let pushed) = splitDetailPathElements.last {
+                    return pushed
+                }
+                if splitDetailPathElements.isEmpty,
+                   case .session(let root) = splitDetailTarget {
+                    return root
+                }
+                return nil
+            }()
+            guard let currentSession, Self.isSameSession(currentSession, sourceSession) else {
+                openWorkspaceLinkedFile(target, workspace: workspace)
+                return
+            }
+            pushSplitDetailLinkedFile(target)
+            splitColumnVisibility = .detailOnly
+        }
+    }
+
     private static func isSameSession(
         _ lhs: WorkspaceSessionNavTarget,
         _ rhs: WorkspaceSessionNavTarget

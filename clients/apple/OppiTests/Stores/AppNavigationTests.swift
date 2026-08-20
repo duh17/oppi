@@ -296,6 +296,76 @@ struct AppNavigationShellRoutingTests {
         ))
     }
 
+    @Test func referencedWorkspaceFilePreservesChatBackStackAcrossPresentations() {
+        let source = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "source",
+            workspaceId: "workspace-1"
+        )
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        let file = WorkspaceLinkedFileNavTarget.workspaceFile(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            path: "notes/linked.md"
+        )
+
+        for presentation in [WorkspaceNavigationPresentation.stack, .split] {
+            let navigation = AppNavigation()
+            navigation.setWorkspaceNavigationPresentation(presentation)
+            navigation.openWorkspaceSession(source)
+
+            navigation.openReferencedWorkspaceLinkedFile(
+                file,
+                workspace: workspace,
+                sourceSession: source
+            )
+
+            switch presentation {
+            case .stack:
+                #expect(navigation.workspacePath.count == 2)
+                #expect(navigation.selectedWorkspaceFilter == nil)
+                navigation.workspacePath.removeLast()
+                #expect(navigation.workspacePath.count == 1)
+                #expect(navigation.selectedWorkspaceFilter == nil)
+            case .split:
+                #expect(navigation.splitDetailTarget == .session(source))
+                #expect(navigation.splitDetailPath.count == 1)
+                navigation.splitDetailPath.removeLast()
+                #expect(navigation.splitDetailTarget == .session(source))
+            }
+        }
+    }
+
+    @Test func referencedWorkspaceFileFallsBackToExplicitWorkspaceNavigationWhenSourceIsNotVisible() {
+        let navigation = AppNavigation()
+        let source = WorkspaceSessionNavTarget(
+            serverId: "server-1",
+            sessionId: "source",
+            workspaceId: "workspace-1"
+        )
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        let file = WorkspaceLinkedFileNavTarget.workspaceFile(
+            serverId: "server-1",
+            workspaceId: "workspace-1",
+            path: "notes/linked.md"
+        )
+
+        navigation.openReferencedWorkspaceLinkedFile(
+            file,
+            workspace: workspace,
+            sourceSession: source
+        )
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.selectedWorkspaceFilter == workspace)
+    }
+
     @Test func visibleSplitDiagnosticContextTracksNonSessionPathTop() {
         let navigation = AppNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
