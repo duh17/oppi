@@ -1092,7 +1092,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     @objc private func copyTapped() {
-        UIPasteboard.general.string = makePresentation().copyText
+        FullScreenCopyDestination.write(makePresentation().copyText)
         copyButton?.image = UIImage(systemName: "checkmark")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.copyButton?.image = UIImage(systemName: "doc.on.doc")

@@ -788,6 +788,28 @@ enum FullScreenLineAnchorLayout {
 
 }
 
+/// Clipboard writes for full-screen copy actions.
+///
+/// Unit tests replace ``testWriteOverride`` so they never touch
+/// `UIPasteboard.general`. Reading or writing the system pasteboard can hang
+/// the simulator pasteboardd / paste-permission prompt on the test main thread.
+@MainActor
+enum FullScreenCopyDestination {
+    #if DEBUG
+    static var testWriteOverride: ((String) -> Void)?
+    #endif
+
+    static func write(_ text: String) {
+        #if DEBUG
+        if let testWriteOverride {
+            testWriteOverride(text)
+            return
+        }
+        #endif
+        UIPasteboard.general.string = text
+    }
+}
+
 /// UITextView variant that carries review-comment routing context.
 ///
 /// The owning `UITextViewDelegate` builds the menu when UIKit asks for it.
@@ -1192,7 +1214,7 @@ final class FullScreenReviewCommentTextView: UITextView {
             image: UIImage(systemName: "doc.on.doc"),
             identifier: synthesizedCopyActionIdentifier
         ) { _ in
-            UIPasteboard.general.string = rawSelectedText
+            FullScreenCopyDestination.write(rawSelectedText)
         }
         return [copyAction] + suggestedActions
     }

@@ -1542,19 +1542,18 @@ struct FullScreenReviewCommentSelectionTests {
 
     @Test func fullScreenTerminalCopyStripsANSI() throws {
         let formatted = "\u{001B}[1m$\u{001B}[0m oppi status\n\u{001B}[32mPaired\u{001B}[0m"
-        let previousPasteboardValue = UIPasteboard.general.string
-        defer { UIPasteboard.general.string = previousPasteboardValue }
+        let copied = try capturingFullScreenCopy {
+            let controller = FullScreenCodeViewController(
+                content: .terminal(content: formatted, command: nil)
+            )
+            controller.loadViewIfNeeded()
+            let navigationController = try #require(controller.children.first as? UINavigationController)
+            let contentController = try #require(navigationController.topViewController)
+            _ = try #require(contentController.navigationItem.rightBarButtonItems?.last)
+            _ = controller.perform(Selector("copyTapped"))
+        }
 
-        let controller = FullScreenCodeViewController(
-            content: .terminal(content: formatted, command: nil)
-        )
-        controller.loadViewIfNeeded()
-        let navigationController = try #require(controller.children.first as? UINavigationController)
-        let contentController = try #require(navigationController.topViewController)
-        _ = try #require(contentController.navigationItem.rightBarButtonItems?.last)
-        _ = controller.perform(Selector("copyTapped"))
-
-        #expect(UIPasteboard.general.string == ANSIParser.strip(formatted))
+        #expect(copied == ANSIParser.strip(formatted))
     }
 
     @Test func fullScreenViewerUpdatesResourceActionState() throws {
@@ -1740,12 +1739,12 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
 
         let copyAction = try #require(menu.children.compactMap { $0 as? UIAction }.first { $0.title == "Copy" })
-        let previous = UIPasteboard.general.string
-        defer { UIPasteboard.general.string = previous }
-        let button = UIButton(type: .system)
-        button.addAction(copyAction, for: .touchUpInside)
-        button.sendActions(for: .touchUpInside)
-        #expect(UIPasteboard.general.string == "    inde")
+        let copied = try capturingFullScreenCopy {
+            let button = UIButton(type: .system)
+            button.addAction(copyAction, for: .touchUpInside)
+            button.sendActions(for: .touchUpInside)
+        }
+        #expect(copied == "    inde")
     }
 
     @Test func nativeDelegateMenuSynthesizesCopyWhenSuggestedActionsEmpty() throws {
@@ -1774,12 +1773,12 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
 
         let copyAction = try #require(menu.children.compactMap { $0 as? UIAction }.first { $0.title == "Copy" })
-        let previous = UIPasteboard.general.string
-        defer { UIPasteboard.general.string = previous }
-        let button = UIButton(type: .system)
-        button.addAction(copyAction, for: .touchUpInside)
-        button.sendActions(for: .touchUpInside)
-        #expect(UIPasteboard.general.string == "    inde")
+        let copied = try capturingFullScreenCopy {
+            let button = UIButton(type: .system)
+            button.addAction(copyAction, for: .touchUpInside)
+            button.sendActions(for: .touchUpInside)
+        }
+        #expect(copied == "    inde")
     }
 
     @Test func nativeNilCommentMenuStillSuppressesFallbackForSameSelection() throws {
@@ -1798,6 +1797,14 @@ struct FullScreenReviewCommentSelectionTests {
         ))
         #expect(timelineActionTitles(in: menu) == ["Copy"])
         #expect(!textView.shouldPresentFallbackEditMenuForTesting())
+    }
+
+    private func capturingFullScreenCopy(_ body: () throws -> Void) throws -> String? {
+        var copied: String?
+        FullScreenCopyDestination.testWriteOverride = { copied = $0 }
+        defer { FullScreenCopyDestination.testWriteOverride = nil }
+        try body()
+        return copied
     }
 
     private func makeController(
