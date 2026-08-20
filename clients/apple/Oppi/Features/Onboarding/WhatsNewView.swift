@@ -122,6 +122,13 @@ struct WhatsNewView: View {
             title: String(localized: "OpenCode Go quotas"),
             description: String(localized: "Model Providers shows OpenCode Go usage next to Codex and xAI.")
         ),
+        WhatsNewFeature(
+            id: "chat-reliability",
+            icon: "arrow.triangle.2.circlepath",
+            iconColor: .themeGreen,
+            title: String(localized: "Chat and timeline stay steady"),
+            description: String(localized: "Rows hold position in live updates; recovery avoids duplicate or empty rows where supported, while cached inbox/session state stays visible through brief HTTPS transitions.")
+        ),
     ]
 
     var body: some View {
