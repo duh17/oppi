@@ -64,6 +64,11 @@ struct ServerCredentials: Codable, Sendable, Equatable {
 
     var resolvedScheme: ServerScheme { scheme ?? .https }
 
+    /// Route identity for connection reuse. Rotating `at_` fields, display name,
+    /// and pairing tokens are excluded; a leftover static token is kept when this
+    /// server has no device credential.
+    var transportIdentity: ServerTransportIdentity { ServerTransportIdentity(self) }
+
     var baseURL: URL? {
         guard !host.isEmpty, (1...65_535).contains(port) else { return nil }
         return URL(string: "\(resolvedScheme.rawValue)://\(host):\(port)")
@@ -204,6 +209,33 @@ struct ServerCredentials: Codable, Sendable, Equatable {
         let remainder = normalized.count % 4
         if remainder > 0 { normalized += String(repeating: "=", count: 4 - remainder) }
         return Data(base64Encoded: normalized)
+    }
+}
+
+/// Stable HTTPS/WSS route identity. Token rotation on the same device must not
+/// look like a new server.
+struct ServerTransportIdentity: Equatable, Hashable, Sendable {
+    let host: String
+    let port: Int
+    let scheme: ServerScheme
+    let serverFingerprint: String?
+    let tlsCertFingerprint: String?
+    let deviceId: String?
+    let leftoverToken: String?
+
+    init(_ credentials: ServerCredentials) {
+        self.host = credentials.host
+        self.port = credentials.port
+        self.scheme = credentials.resolvedScheme
+        self.serverFingerprint = credentials.normalizedServerFingerprint
+        self.tlsCertFingerprint = credentials.normalizedTLSCertFingerprint
+        if let deviceId = credentials.deviceCredential?.deviceId, !deviceId.isEmpty {
+            self.deviceId = deviceId
+            self.leftoverToken = nil
+        } else {
+            self.deviceId = nil
+            self.leftoverToken = credentials.token
+        }
     }
 }
 

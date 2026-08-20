@@ -42,6 +42,13 @@ final class ChatSessionManager {
         case bareMessages(AsyncStream<ServerMessage>)
     }
 
+    private enum FocusedStreamSetupDisposition {
+        case bound(SessionStreamInput)
+        case retryable
+        case missingRoute
+        case terminalUnavailable
+    }
+
     private struct TraceHistorySnapshot {
         let session: Session
         let trace: [TraceEvent]
@@ -135,6 +142,7 @@ final class ChatSessionManager {
     // periphery:ignore - shortens deterministic retry tests without changing
     // the bounded production policy.
     var _presentationReloadRetryDelayForTesting: Duration?
+    var _focusedStreamSetupRetryDelayForTesting: Duration?
 #endif
 
     init(
@@ -285,6 +293,140 @@ final class ChatSessionManager {
         return .events(stream)
     }
 
+    private static let focusedStreamSetupMaxAttempts = 8
+
+    private func bindFocusedSessionStream(
+        generation: Int,
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) async -> SessionStreamInput? {
+        var attempt = 0
+        while true {
+            if generation != connectionGeneration {
+                clearFocusedStreamRecovery(on: connection)
+                transitionTo(.disconnected(reason: .generationChanged))
+                return nil
+            }
+            guard !Task.isCancelled else {
+                clearFocusedStreamRecovery(on: connection)
+                transitionTo(.disconnected(reason: .cancelled))
+                return nil
+            }
+
+            switch await focusedStreamSetupDisposition(
+                connection: connection,
+                sessionStore: sessionStore
+            ) {
+            case .bound(let stream):
+                clearFocusedStreamRecovery(on: connection)
+                return stream
+            case .missingRoute:
+                failFocusedStreamSetup(
+                    connection: connection,
+                    message: "Missing session route context"
+                )
+                return nil
+            case .terminalUnavailable:
+                failFocusedStreamSetup(
+                    connection: connection,
+                    message: "Session stream unavailable"
+                )
+                return nil
+            case .retryable:
+                connection.setFocusedSessionStreamRecovering(true, sessionId: sessionId)
+                if connection.externalSessionOpenClaimBlocks(sessionId) {
+                    if await waitWhileExternalSessionOpenClaimBlocks(connection: connection) {
+                        continue
+                    }
+                    clearFocusedStreamRecovery(on: connection)
+                    transitionTo(.disconnected(reason: .cancelled))
+                    return nil
+                }
+                attempt += 1
+                if attempt >= Self.focusedStreamSetupMaxAttempts {
+                    // Temporary unavailability exhausted its bind budget.
+                    // Keep recovering and use the existing auto-reconnect loop
+                    // instead of a fatal timeline row.
+                    transitionTo(.disconnected(reason: .streamEnded))
+                    scheduleAutoReconnect(
+                        after: focusedStreamSetupRetryDelay(for: attempt),
+                        generation: generation
+                    )
+                    return nil
+                }
+                if await waitForFocusedStreamSetupRetry(attempt: attempt) {
+                    continue
+                }
+                clearFocusedStreamRecovery(on: connection)
+                transitionTo(.disconnected(reason: .cancelled))
+                return nil
+            }
+        }
+    }
+
+    private func focusedStreamSetupDisposition(
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) async -> FocusedStreamSetupDisposition {
+        if let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) {
+            return .bound(stream)
+        }
+        if resolveRouteScope(from: sessionStore) == nil {
+            return .missingRoute
+        }
+        if connection.isFocusedStreamBindTerminal() {
+            return .terminalUnavailable
+        }
+        return .retryable
+    }
+
+    private func failFocusedStreamSetup(connection: ServerConnection, message: String) {
+        clearFocusedStreamRecovery(on: connection)
+        transitionTo(.disconnected(reason: .fatalError))
+        if !suppressTimelineMutationWhilePaused() {
+            reducer.process(.error(sessionId: sessionId, message: message))
+        }
+    }
+
+    private func clearFocusedStreamRecovery(on connection: ServerConnection) {
+        connection.setFocusedSessionStreamRecovering(false, sessionId: sessionId)
+    }
+
+    private func waitWhileExternalSessionOpenClaimBlocks(connection: ServerConnection) async -> Bool {
+        while connection.externalSessionOpenClaimBlocks(sessionId) {
+            if Task.isCancelled { return false }
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return false
+            }
+        }
+        return !Task.isCancelled
+    }
+
+    private func focusedStreamSetupRetryDelay(for attempt: Int) -> Duration {
+#if DEBUG
+        if let override = _focusedStreamSetupRetryDelayForTesting {
+            return override
+        }
+#endif
+        return Self.reconnectDelay(for: attempt).duration
+    }
+
+    private func waitForFocusedStreamSetupRetry(attempt: Int) async -> Bool {
+        let delay = focusedStreamSetupRetryDelay(for: attempt)
+        if delay <= .zero {
+            await Task.yield()
+            return !Task.isCancelled
+        }
+        do {
+            try await Task.sleep(for: delay)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     private func markSyncStarted() {
         isSyncing = true
     }
@@ -431,33 +573,23 @@ final class ChatSessionManager {
             log.warning("Session \(self.sessionId) refreshed as \(String(describing: refreshedStatus), privacy: .public) — opening live stream")
         }
 
-        guard let stream = await openSessionStream(connection: connection, sessionStore: sessionStore) else {
-            // Keep HTTP history as a fallback when the bound socket cannot open.
-            // Notification re-entry can fail stream setup after focus is already set.
-            scheduleHistoryReload(
-                generation: generation,
-                connection: connection,
-                sessionStore: sessionStore,
-                cachedSignature: latestTraceSignature
-            )
-            transitionTo(.disconnected(reason: .fatalError))
-            let message = resolveRouteScope(from: sessionStore) == nil
-                ? "Missing session route context"
-                : "Session stream unavailable"
-            if !suppressTimelineMutationWhilePaused() {
-                reducer.process(.error(sessionId: sessionId, message: message))
-            }
-            return
-        }
-
-        // Always fetch fresh trace in background — independent of WS/catch-up.
-        // Cache gives instant display; this gives ground truth.
+        // Keep HTTP history as a fallback when the bound socket cannot open.
+        // Cache gives instant display; this gives ground truth even while the
+        // focused stream is still waiting to bind.
         scheduleHistoryReload(
             generation: generation,
             connection: connection,
             sessionStore: sessionStore,
             cachedSignature: latestTraceSignature
         )
+
+        guard let stream = await bindFocusedSessionStream(
+            generation: generation,
+            connection: connection,
+            sessionStore: sessionStore
+        ) else {
+            return
+        }
 
         transitionTo(.awaitingConnected(workspaceId: workspaceIdForState(from: sessionStore)))
 

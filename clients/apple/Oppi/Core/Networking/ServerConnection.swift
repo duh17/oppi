@@ -97,6 +97,10 @@ final class ServerConnection {
     /// replacement commit (or budgeted retry) is still outstanding. UI and stream
     /// open paths treat this as recovering, not settled offline-on-LAN.
     private(set) var isTransportDemoting = false
+    /// Session that currently owns focused-stream recovery presentation.
+    /// Derived `isFocusedSessionStreamRecovering` is true only while this owner
+    /// is the focused session (or focus has not been assigned yet).
+    private var focusedStreamRecoverySessionId: String?
 
     var requiredSplitStreamCapabilitiesStatusForDiagnostics: String {
         if streamCapabilitiesRefreshFailed, streamCapabilitiesLoaded, missingRequiredSplitStreamCapabilities.isEmpty {
@@ -301,6 +305,11 @@ final class ServerConnection {
     /// Test seam: replace workspace trace prefetch during external open.
     var _getSessionTraceForTesting: ((String) async throws -> (session: Session, trace: [TraceEvent]))?
 
+#if DEBUG
+    var _focusedStreamReadinessPollForTesting: Duration?
+    var _onFocusedStreamReadinessWaitForTesting: (() -> Void)?
+#endif
+
 
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest? {
@@ -399,6 +408,58 @@ final class ServerConnection {
             return false
         }
         return configureHTTP(credentials: credentials, selection: selection)
+    }
+
+    /// Update the in-memory device-credential snapshot for the same device ID.
+    /// Does not disconnect, reconfigure, bump generations, or replace sessions.
+    @discardableResult
+    func applyPersistedDeviceCredential(_ credential: DeviceCredential) -> Bool {
+        guard let current = credentials,
+              let existing = current.deviceCredential,
+              existing.deviceId == credential.deviceId else {
+            return false
+        }
+        if existing != credential {
+            credentials = current.withDeviceCredential(credential)
+        }
+        return true
+    }
+
+    /// Adopt the complete incoming snapshot when the HTTPS/WSS route is unchanged.
+    @discardableResult
+    func applyPersistedSameRouteCredentials(_ incoming: ServerCredentials) -> Bool {
+        guard hasSameTransportIdentity(as: incoming) else { return false }
+        if credentials != incoming {
+            credentials = incoming
+        }
+        return true
+    }
+
+    func hasSameTransportIdentity(as incoming: ServerCredentials) -> Bool {
+        credentials?.transportIdentity == incoming.transportIdentity
+    }
+
+    /// Configured HTTPS/WSS clients and a selected endpoint. A disconnected
+    /// socket can still be reused; a missing client or endpoint cannot.
+    var hasViableConfiguredTransport: Bool {
+        credentials != nil && apiClient != nil && wsClient != nil && endpointSelection != nil
+    }
+
+    var isFocusedSessionStreamRecovering: Bool {
+        guard let owner = focusedStreamRecoverySessionId else { return false }
+        if let focusedSessionId {
+            return owner == focusedSessionId
+        }
+        return true
+    }
+
+    func setFocusedSessionStreamRecovering(_ recovering: Bool, sessionId: String) {
+        if recovering {
+            if let focusedSessionId, focusedSessionId != sessionId { return }
+            focusedStreamRecoverySessionId = sessionId
+        } else if focusedStreamRecoverySessionId == sessionId {
+            focusedStreamRecoverySessionId = nil
+        }
     }
 
     /// Walk authorized candidates serially and commit only the first candidate
@@ -1656,7 +1717,7 @@ final class ServerConnection {
             return nil
         }
         await refreshStreamCapabilitiesIfNeeded()
-        await waitWhileTransportDemotingIfNeeded()
+        await waitForFocusedStreamBindReadinessIfNeeded(sessionId: sessionId)
         guard hasRequiredSplitStreamCapabilities else {
             recordSessionStreamUnavailable(reason: streamCapabilityUnavailableReason())
             return nil
@@ -1672,22 +1733,54 @@ final class ServerConnection {
         )
     }
 
-    /// Silence watchdog and session re-entry can race a Wi‑Fi→cell demotion.
-    /// Wait briefly for the replacement route instead of failing open on the
-    /// mid-reconfigure hole (`endpointSelection == nil`, stale `transport=lan`).
-    private func waitWhileTransportDemotingIfNeeded() async {
-        guard isTransportDemoting || endpointSelection == nil else {
+    /// Silence watchdog and session re-entry can race a Wi‑Fi→cell demotion or
+    /// cold-launch capability load. Wait for a bindable route instead of failing
+    /// open on that hole. Loaded-missing capability and fail-closed stay terminal.
+    func waitForFocusedStreamBindReadinessIfNeeded(sessionId: String) async {
+        if isFocusedStreamBindReady() || isFocusedStreamBindTerminal() {
             return
         }
-        for _ in 0..<50 {
-            if !isTransportDemoting, endpointSelection != nil {
-                return
-            }
-            if transportFailureDisposition == .failClosed {
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(100))
+        setFocusedSessionStreamRecovering(true, sessionId: sessionId)
+#if DEBUG
+        _onFocusedStreamReadinessWaitForTesting?()
+#endif
+        let poll = focusedStreamReadinessPoll()
+        defer {
+            setFocusedSessionStreamRecovering(false, sessionId: sessionId)
         }
+        for _ in 0..<50 {
+            if Task.isCancelled { return }
+            if isFocusedStreamBindReady() || isFocusedStreamBindTerminal() {
+                return
+            }
+            do {
+                try await Task.sleep(for: poll)
+            } catch {
+                return
+            }
+        }
+    }
+
+    func isFocusedStreamBindReady() -> Bool {
+        !isTransportDemoting
+            && endpointSelection != nil
+            && wsClient != nil
+            && hasRequiredSplitStreamCapabilities
+    }
+
+    func isFocusedStreamBindTerminal() -> Bool {
+        transportFailureDisposition == .failClosed
+            || (streamCapabilitiesLoaded && !missingRequiredSplitStreamCapabilities.isEmpty)
+            || focusedSessionStreamEndpointIsUnsupported()
+    }
+
+    private func focusedStreamReadinessPoll() -> Duration {
+#if DEBUG
+        if let poll = _focusedStreamReadinessPollForTesting {
+            return poll
+        }
+#endif
+        return .milliseconds(100)
     }
 
     private func prepareFocusedSessionStreamEndpoint(sessionId: String, routeScope: SessionRouteScope) {
@@ -2221,6 +2314,7 @@ final class ServerConnection {
             cancelDeferredQueueSync()
             commands.failAllTurnSends(error: WebSocketError.notConnected)
             commands.failAllCommands(error: WebSocketError.notConnected)
+            setFocusedSessionStreamRecovering(false, sessionId: sessionId)
         }
 
         disconnectSessionResources(for: sessionId)

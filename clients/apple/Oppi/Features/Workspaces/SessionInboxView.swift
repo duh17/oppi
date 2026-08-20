@@ -710,7 +710,8 @@ struct SessionInboxView: View {
             serverStatusPresentation(for: server),
             hasSyncFailure: connection.workspaceStore.lastSyncFailed
                 || connection.sessionStore.lastSyncFailed,
-            isPreparing: coordinator.preparingServerIds.contains(server.id)
+            isPreparing: coordinator.preparingServerIds.contains(server.id),
+            isFocusedStreamRecovering: connection.isFocusedSessionStreamRecovering
         )
     }
 

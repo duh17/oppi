@@ -145,6 +145,153 @@ struct ConnectionCoordinatorTests {
         #expect(client.calls == 1)
     }
 
+    @Test func rotatingDeviceAccessTokenDoesNotRecomposeTransport() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let server = try deviceAuthServer(accessToken: "at_old", expiresAt: 1_000_000)
+        store.addOrUpdate(server)
+
+        let first = await coordinator.ensureConnectionReady(for: server)
+        let wsBefore = first.wsClient
+        let streamGeneration = first.persistentStreamGenerationForTesting
+        let configurationGeneration = first.transportConfigurationGenerationForTesting
+        #expect(wsBefore != nil)
+        #expect(first.apiClient != nil)
+
+        var rotated = try #require(store.server(for: server.id))
+        rotated.deviceCredential = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_rotated",
+            expiresAt: 2_000_000,
+            refreshChallenge: DeviceAuthChallenge(
+                nonce: "n2",
+                audience: DeviceAuthSession.refreshAudience,
+                expiresAt: 3_000_000
+            )
+        )
+        store.addOrUpdate(rotated)
+
+        let after = await coordinator.ensureConnectionReady(
+            for: try #require(store.server(for: server.id))
+        )
+
+        #expect(after === first, "Same-route token rotation must keep the live connection")
+        #expect(after.wsClient === wsBefore, "Rotating at_ must not replace the focused WebSocket client")
+        #expect(
+            after.persistentStreamGenerationForTesting == streamGeneration,
+            "Rotating at_ must not rebuild persistent streams"
+        )
+        #expect(
+            after.transportConfigurationGenerationForTesting == configurationGeneration,
+            "Rotating at_ must not bump transport configuration generation"
+        )
+        #expect(after.credentials?.deviceCredential?.accessToken == "at_rotated")
+        #expect(after.credentials?.deviceCredential?.expiresAt == 2_000_000)
+        #expect(after.credentials?.name == rotated.name)
+    }
+
+    @Test func sameRouteRotationDoesNotReuseDeadTransport() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let server = try deviceAuthServer(accessToken: "at_old", expiresAt: 1_000_000)
+        store.addOrUpdate(server)
+
+        let first = await coordinator.ensureConnectionReady(for: server)
+        #expect(first.apiClient != nil)
+        #expect(first.wsClient != nil)
+        let configurationGeneration = first.transportConfigurationGenerationForTesting
+        first.setAPIClientForTesting(nil)
+        #expect(!first.hasViableConfiguredTransport)
+
+        var rotated = try #require(store.server(for: server.id))
+        rotated.deviceCredential = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_rotated",
+            expiresAt: 2_000_000,
+            refreshChallenge: nil
+        )
+        store.addOrUpdate(rotated)
+
+        let after = await coordinator.ensureConnectionReady(
+            for: try #require(store.server(for: server.id))
+        )
+
+        #expect(after === first, "Dead same-route transport must be rebuilt on the same connection")
+        #expect(after.apiClient != nil, "Unconfigured HTTP must be recomposed")
+        #expect(after.wsClient != nil, "Unconfigured WebSocket must be recomposed")
+        #expect(after.hasViableConfiguredTransport)
+        #expect(after.credentials?.deviceCredential?.accessToken == "at_rotated")
+        #expect(
+            after.transportConfigurationGenerationForTesting != configurationGeneration,
+            "Dead transport must not skip reconfigure"
+        )
+    }
+
+    @Test func renamingPairedServerDoesNotRecomposeTransport() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let server = try deviceAuthServer(accessToken: "at_stable", expiresAt: 2_000_000)
+        store.addOrUpdate(server)
+
+        let first = await coordinator.ensureConnectionReady(for: server)
+        let wsBefore = first.wsClient
+        let streamGeneration = first.persistentStreamGenerationForTesting
+
+        var renamed = try #require(store.server(for: server.id))
+        renamed.name = "Studio Renamed"
+        store.addOrUpdate(renamed)
+
+        let after = await coordinator.ensureConnectionReady(
+            for: try #require(store.server(for: server.id))
+        )
+
+        #expect(after === first)
+        #expect(after.wsClient === wsBefore)
+        #expect(after.persistentStreamGenerationForTesting == streamGeneration)
+        #expect(after.credentials?.name == "Studio Renamed")
+    }
+
+    @Test func hostOrDeviceIdChangeStillRecomposesTransport() async throws {
+        let (coordinator, store) = makeCoordinator()
+        let server = try deviceAuthServer(accessToken: "at_old", expiresAt: 1_000_000)
+        store.addOrUpdate(server)
+
+        let first = await coordinator.ensureConnectionReady(for: server)
+        let wsBefore = first.wsClient
+        let streamGeneration = first.persistentStreamGenerationForTesting
+        let configurationGeneration = first.transportConfigurationGenerationForTesting
+
+        var moved = try #require(store.server(for: server.id))
+        moved.host = "studio-b.example.test"
+        store.addOrUpdate(moved)
+
+        let afterHost = await coordinator.ensureConnectionReady(
+            for: try #require(store.server(for: server.id))
+        )
+        #expect(afterHost === first)
+        #expect(afterHost.wsClient !== wsBefore)
+        #expect(afterHost.persistentStreamGenerationForTesting != streamGeneration)
+        #expect(afterHost.transportConfigurationGenerationForTesting != configurationGeneration)
+        #expect(afterHost.credentials?.host == "studio-b.example.test")
+
+        let wsAfterHost = afterHost.wsClient
+        let streamGenerationAfterHost = afterHost.persistentStreamGenerationForTesting
+
+        var otherDevice = try #require(store.server(for: server.id))
+        otherDevice.deviceCredential = DeviceCredential(
+            deviceId: "dev_other",
+            accessToken: "at_other",
+            expiresAt: 3_000_000,
+            refreshChallenge: nil
+        )
+        store.addOrUpdate(otherDevice, replacingStoredDeviceCredential: true)
+
+        let afterDevice = await coordinator.ensureConnectionReady(
+            for: try #require(store.server(for: server.id))
+        )
+        #expect(afterDevice === first)
+        #expect(afterDevice.wsClient !== wsAfterHost)
+        #expect(afterDevice.persistentStreamGenerationForTesting != streamGenerationAfterHost)
+        #expect(afterDevice.credentials?.deviceCredential?.deviceId == "dev_other")
+    }
+
     @Test func migrateReplacementRebindsExistingLiveConnection() async throws {
         let (coordinator, store) = makeCoordinator()
         let leftover = try leftoverDtServer()
@@ -875,6 +1022,9 @@ struct ConnectionCoordinatorTests {
 
     @Test func refreshServerDoesNotMarkSyncFailedWithoutAPIClient() async {
         let (coordinator, _) = makeCoordinator()
+        coordinator._serverInfoBootstrapForTesting = { _, _ in
+            throw URLError(.notConnectedToInternet)
+        }
         let server = makeServer(id: "sha256:refresh-no-api", name: "Unavailable")
         coordinator.serverStore.addOrUpdate(server)
 
@@ -1123,6 +1273,30 @@ struct ConnectionCoordinatorTests {
             token: "sk_test",
             configuration: configuration
         )
+    }
+
+    private func deviceAuthServer(
+        accessToken: String,
+        expiresAt: Int64,
+        name: String = "Studio",
+        host: String = "studio.example.test",
+        deviceId: String = "dev_1"
+    ) throws -> PairedServer {
+        let credentials = ServerCredentials(
+            host: host,
+            port: 7749,
+            token: "",
+            name: name,
+            scheme: .https,
+            serverFingerprint: "sha256:device-auth-identity",
+            deviceCredential: DeviceCredential(
+                deviceId: deviceId,
+                accessToken: accessToken,
+                expiresAt: expiresAt,
+                refreshChallenge: nil
+            )
+        )
+        return try #require(PairedServer(from: credentials))
     }
 
     private func leftoverDtServer() throws -> PairedServer {

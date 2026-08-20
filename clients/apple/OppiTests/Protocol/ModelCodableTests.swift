@@ -358,6 +358,169 @@ struct ServerCredentialsTests {
 
         #expect(decoded.serverFingerprint == "sha256:abc123")
     }
+
+    @Test func rotatingAccessTokenAndDisplayFieldsKeepTheSameIdentity() {
+        let original = ServerCredentials(
+            host: "studio.example.test",
+            port: 7749,
+            token: "",
+            name: "Studio",
+            scheme: .https,
+            pairingToken: "pair_old",
+            serverFingerprint: "sha256:device-auth-identity",
+            tlsCertFingerprint: "sha256:tls",
+            deviceCredential: DeviceCredential(
+                deviceId: "dev_1",
+                accessToken: "at_old",
+                expiresAt: 1_000_000,
+                refreshChallenge: DeviceAuthChallenge(
+                    nonce: "n1",
+                    audience: DeviceAuthSession.refreshAudience,
+                    expiresAt: 1_500_000
+                )
+            )
+        )
+        let rotated = ServerCredentials(
+            host: original.host,
+            port: original.port,
+            token: "",
+            name: "Studio Renamed",
+            scheme: original.scheme,
+            pairingToken: "pair_new",
+            serverFingerprint: original.serverFingerprint,
+            tlsCertFingerprint: original.tlsCertFingerprint,
+            deviceCredential: DeviceCredential(
+                deviceId: "dev_1",
+                accessToken: "at_rotated",
+                expiresAt: 2_000_000,
+                refreshChallenge: DeviceAuthChallenge(
+                    nonce: "n2",
+                    audience: DeviceAuthSession.refreshAudience,
+                    expiresAt: 2_500_000
+                )
+            )
+        )
+
+        #expect(original.transportIdentity == rotated.transportIdentity)
+        #expect(original != rotated)
+    }
+
+    @Test func leftoverStaticTokenIsPartOfIdentityUntilDeviceCredentialExists() {
+        let leftover = ServerCredentials(
+            host: "pairing.example.test",
+            port: 7749,
+            token: "dt_legacy",
+            name: "Legacy",
+            scheme: .https,
+            serverFingerprint: "sha256:leftover-dt"
+        )
+        let rotatedLeftover = ServerCredentials(
+            host: leftover.host,
+            port: leftover.port,
+            token: "dt_other",
+            name: leftover.name,
+            scheme: leftover.scheme,
+            serverFingerprint: leftover.serverFingerprint
+        )
+        let migrated = leftover.withDeviceCredential(
+            DeviceCredential(
+                deviceId: "dev_1",
+                accessToken: "at_replacement",
+                expiresAt: 2_000_000,
+                refreshChallenge: nil
+            )
+        )
+
+        #expect(leftover.transportIdentity != rotatedLeftover.transportIdentity)
+        #expect(leftover.transportIdentity != migrated.transportIdentity)
+        #expect(leftover.transportIdentity.leftoverToken == "dt_legacy")
+        #expect(migrated.transportIdentity.deviceId == "dev_1")
+        #expect(migrated.transportIdentity.leftoverToken == nil)
+    }
+
+    @Test func hostPortSchemeFingerprintAndDeviceIdChangeIdentity() {
+        let base = ServerCredentials(
+            host: "studio.example.test",
+            port: 7749,
+            token: "",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:device-auth-identity",
+            tlsCertFingerprint: "sha256:tls",
+            deviceCredential: DeviceCredential(
+                deviceId: "dev_1",
+                accessToken: "at_old",
+                expiresAt: 1_000_000,
+                refreshChallenge: nil
+            )
+        )
+
+        #expect(base.transportIdentity != ServerCredentials(
+            host: "studio-b.example.test",
+            port: base.port,
+            token: "",
+            name: base.name,
+            scheme: base.scheme,
+            serverFingerprint: base.serverFingerprint,
+            tlsCertFingerprint: base.tlsCertFingerprint,
+            deviceCredential: base.deviceCredential
+        ).transportIdentity)
+        #expect(base.transportIdentity != ServerCredentials(
+            host: base.host,
+            port: 8443,
+            token: "",
+            name: base.name,
+            scheme: base.scheme,
+            serverFingerprint: base.serverFingerprint,
+            tlsCertFingerprint: base.tlsCertFingerprint,
+            deviceCredential: base.deviceCredential
+        ).transportIdentity)
+        #expect(base.transportIdentity != ServerCredentials(
+            host: base.host,
+            port: base.port,
+            token: "",
+            name: base.name,
+            scheme: .http,
+            serverFingerprint: base.serverFingerprint,
+            tlsCertFingerprint: base.tlsCertFingerprint,
+            deviceCredential: base.deviceCredential
+        ).transportIdentity)
+        #expect(base.transportIdentity != ServerCredentials(
+            host: base.host,
+            port: base.port,
+            token: "",
+            name: base.name,
+            scheme: base.scheme,
+            serverFingerprint: "sha256:other-fingerprint",
+            tlsCertFingerprint: base.tlsCertFingerprint,
+            deviceCredential: base.deviceCredential
+        ).transportIdentity)
+        #expect(base.transportIdentity != ServerCredentials(
+            host: base.host,
+            port: base.port,
+            token: "",
+            name: base.name,
+            scheme: base.scheme,
+            serverFingerprint: base.serverFingerprint,
+            tlsCertFingerprint: "sha256:other-tls",
+            deviceCredential: base.deviceCredential
+        ).transportIdentity)
+        #expect(base.transportIdentity != ServerCredentials(
+            host: base.host,
+            port: base.port,
+            token: "",
+            name: base.name,
+            scheme: base.scheme,
+            serverFingerprint: base.serverFingerprint,
+            tlsCertFingerprint: base.tlsCertFingerprint,
+            deviceCredential: DeviceCredential(
+                deviceId: "dev_other",
+                accessToken: "at_old",
+                expiresAt: 1_000_000,
+                refreshChallenge: nil
+            )
+        ).transportIdentity)
+    }
 }
 
 private struct SignedInviteEnvelopeV3Fixture: Codable {

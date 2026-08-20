@@ -182,6 +182,165 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    @Test func connectRetriesTemporaryStreamSetupWithoutErrorThenBinds() async {
+        let sessionId = "stream-retry-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId, workspaceIdHint: "w1")
+        manager._loadHistoryForTesting = { _, _ in
+            (eventCount: 2, lastEventId: "evt-2")
+        }
+
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setAPIClientForTesting(nil)
+        connection._focusedStreamReadinessPollForTesting = .milliseconds(5)
+        connection.wsClient?._setStatusForTesting(.disconnected)
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
+
+        var startedWait = false
+        connection._onFocusedStreamReadinessWaitForTesting = {
+            startedWait = true
+        }
+        let frames = ScriptedFrameStreamFactory()
+        connection._connectStreamForTesting = {
+            connection.wsClient?._setStatusForTesting(.connected)
+            return frames.makeStream()
+        }
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+        defer {
+            connectTask.cancel()
+            manager.cleanup()
+            connection.disconnectSession()
+        }
+
+        #expect(await waitForMainActorCondition {
+            startedWait && connection.isFocusedSessionStreamRecovering
+        })
+        #expect(manager.entryState != .disconnected(reason: .fatalError))
+        #expect(!manager.reducer.items.contains { item in
+            if case .error(_, let message) = item {
+                return message.contains("Session stream unavailable")
+            }
+            return false
+        })
+
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        let bound = await waitForMainActorCondition(timeout: .seconds(2)) {
+            if case .awaitingConnected = manager.entryState { return true }
+            return manager.entryState == .streaming
+        }
+        #expect(bound, "The same connect task should bind once the focused stream is ready")
+        #expect(await frames.waitForCreated(1, timeoutMs: 1_000))
+        #expect(!connection.isFocusedSessionStreamRecovering)
+        #expect(!manager.reducer.items.contains { item in
+            if case .error = item { return true }
+            return false
+        })
+
+        frames.finish(index: 0)
+        connectTask.cancel()
+        _ = await connectTask.value
+    }
+
+    @Test func connectMissingRouteStaysTerminalWithoutRetry() async {
+        let sessionId = "missing-route-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        manager._loadHistoryForTesting = { _, _ in
+            (eventCount: 1, lastEventId: "evt-1")
+        }
+
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: nil))
+
+        await manager.connect(connection: connection, sessionStore: sessionStore)
+
+        if case .disconnected(let reason) = manager.entryState {
+            #expect(reason == .fatalError)
+        } else {
+            Issue.record("Expected disconnected fatalError, got \(manager.entryState)")
+        }
+        #expect(manager.reducer.items.contains { item in
+            if case .error(_, let message) = item {
+                return message.contains("Missing session route context")
+            }
+            return false
+        })
+        manager.cleanup()
+    }
+
+    @Test func connectTemporaryStreamSetupExhaustionDoesNotEmitFatalError() async {
+        let sessionId = "stream-exhaust-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId, workspaceIdHint: "w1")
+        manager._loadHistoryForTesting = { _, _ in
+            (eventCount: 2, lastEventId: "evt-2")
+        }
+        manager._focusedStreamSetupRetryDelayForTesting = .zero
+
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.setAPIClientForTesting(nil)
+        connection._focusedStreamReadinessPollForTesting = .milliseconds(1)
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
+
+        await manager.connect(connection: connection, sessionStore: sessionStore)
+
+        if case .disconnected(let reason) = manager.entryState {
+            #expect(reason != .fatalError)
+        } else {
+            Issue.record("Expected disconnected after temporary exhaustion, got \(manager.entryState)")
+        }
+        #expect(!manager.reducer.items.contains { item in
+            if case .error(_, let message) = item {
+                return message.contains("Session stream unavailable")
+            }
+            return false
+        })
+        #expect(connection.isFocusedSessionStreamRecovering)
+        #expect(await waitForMainActorCondition {
+            manager.connectionGeneration >= 1
+        })
+        manager.cleanup()
+        connection.disconnectSession()
+    }
+
+    @Test func connectExternalOpenClaimDoesNotEmitFatalError() async {
+        let sessionId = "claim-blocked-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId, workspaceIdHint: "w1")
+        manager._loadHistoryForTesting = { _, _ in
+            (eventCount: 1, lastEventId: "evt-1")
+        }
+
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        // Avoid a real localhost:7749 probe; availability teardown would drop
+        // the claim before connect() can observe it.
+        connection.setAPIClientForTesting(nil)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection._connectStreamForTesting = { AsyncStream { $0.finish() } }
+        await connection.prepareExternalSessionOpen(sessionId: "other-\(UUID().uuidString)")
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
+
+        await manager.connect(connection: connection, sessionStore: sessionStore)
+
+        if case .disconnected(let reason) = manager.entryState {
+            #expect(reason == .cancelled)
+        } else {
+            Issue.record("Expected cancelled while another session holds the open claim, got \(manager.entryState)")
+        }
+        #expect(!manager.reducer.items.contains { item in
+            if case .error(_, let message) = item {
+                return message.contains("Session stream unavailable")
+            }
+            return false
+        })
+        manager.cleanup()
+        connection.disconnectSession()
+    }
+
     @Test func forceHistoryReloadTreatsEmptyTreeTraceAsAuthoritative() async {
         let sessionId = "force-reload-empty-tree"
         let firstMessage = "Root prompt restored to the composer"

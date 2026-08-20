@@ -195,6 +195,96 @@ struct ServerHealthTests {
         #expect(ServerBadgeConnectionState(presentation) == .connecting)
     }
 
+    @Test func focusedStreamRecoveryOverlaysBadgeWithoutChangingAppEventGreenHealth() throws {
+        let health = ServerHealth.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            transportStates: [.disconnected, .connected],
+            hasCachedCatalog: true
+        )
+        let presentation = WorkspaceServerStatusPresentation.derive(health: health)
+        #expect(health.transportState == .connected)
+        #expect(ServerBadgeConnectionState(presentation) == .connected)
+
+        let recovering = ServerBadgeConnectionState(
+            presentation,
+            isFocusedStreamRecovering: true
+        )
+        #expect(recovering == .recovering)
+        #expect(recovering.title == "Recovering")
+
+        let credentials = ServerCredentials(
+            host: "paired.test",
+            port: 7749,
+            token: "dt_focused_stream_recovery",
+            name: "Paired HTTPS",
+            scheme: .https,
+            serverFingerprint: "sha256:FOCUSEDSTREAMRECOVERY"
+        )
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        let connection = ServerConnection()
+        #expect(connection.configure(credentials: credentials))
+        connection.setFocusedSessionStreamRecovering(true, sessionId: "focused-stream")
+
+        #expect(ServerConnectionLanePresentation.title(
+            server: server,
+            connection: connection,
+            state: .connected,
+            isPreparing: false
+        ) == FocusedSessionStreamRecoveryPresentation.message)
+    }
+
+    @Test func focusedStreamRecoveryDoesNotMaskOfflineSyncFailedOrDisconnectedLane() throws {
+        let offline = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            isTransportConnected: false,
+            hasCachedCatalog: true
+        )
+        #expect(ServerBadgeConnectionState(
+            offline,
+            isFocusedStreamRecovering: true
+        ) == .disconnected)
+
+        let live = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .live,
+            freshnessLabel: "Updated now",
+            isTransportConnected: true,
+            hasCachedCatalog: true
+        )
+        #expect(ServerBadgeConnectionState(
+            live,
+            hasSyncFailure: true,
+            isFocusedStreamRecovering: true
+        ) == .syncFailed)
+
+        let credentials = ServerCredentials(
+            host: "paired.test",
+            port: 7749,
+            token: "dt_focused_stream_recovery",
+            name: "Paired HTTPS",
+            scheme: .https,
+            serverFingerprint: "sha256:FOCUSEDSTREAMRECOVERYMASK"
+        )
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        let connection = ServerConnection()
+        #expect(connection.configure(credentials: credentials))
+        connection.setFocusedSessionStreamRecovering(true, sessionId: "focused-stream")
+
+        #expect(ServerConnectionLanePresentation.title(
+            server: server,
+            connection: connection,
+            state: .disconnected,
+            isPreparing: false
+        ) != FocusedSessionStreamRecoveryPresentation.message)
+        #expect(ServerConnectionLanePresentation.title(
+            server: server,
+            connection: connection,
+            state: .syncFailed,
+            isPreparing: false
+        ) != FocusedSessionStreamRecoveryPresentation.message)
+    }
+
     @Test func successfulFreshnessKeepsServerReachableWithoutAnOpenStream() {
         let health = ServerHealth.derive(
             freshnessState: .live,

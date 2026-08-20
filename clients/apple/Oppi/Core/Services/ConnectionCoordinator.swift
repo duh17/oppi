@@ -129,7 +129,13 @@ final class ConnectionCoordinator {
     private func ensureHTTPConnectionForTesting(for server: PairedServer) -> ServerConnection {
         let serverId = server.id
         if let existing = connections[serverId] {
-            if existing.credentials != server.credentials {
+            if existing.hasSameTransportIdentity(as: server.credentials) {
+                existing.applyPersistedSameRouteCredentials(server.credentials)
+                if existing.hasViableConfiguredTransport {
+                    return existing
+                }
+            }
+            if existing.credentials != server.credentials || !existing.hasViableConfiguredTransport {
                 existing.disconnectStream()
                 existing.disconnectAppEventStream()
                 existing.setDiscoveredLANEndpoint(bestLANEndpoint(forServerId: serverId))
@@ -177,7 +183,7 @@ final class ConnectionCoordinator {
         if let preparation = connectionPreparationTasks[serverId] {
             let prepared = await preparation.task.value ?? disconnectedSentinel
             let latestServer = serverStore.server(for: serverId) ?? server
-            let requestChanged = preparation.credentials != latestServer.credentials
+            let requestChanged = preparation.credentials.transportIdentity != latestServer.credentials.transportIdentity
             if forceReconfigure, !preparation.isForced || requestChanged {
                 finishConnectionPreparation(serverId: serverId, id: preparation.id)
                 return await ensureConnectionReady(
@@ -199,12 +205,14 @@ final class ConnectionCoordinator {
             return prepared
         }
         let latestServer = serverStore.server(for: serverId) ?? server
-        if !forceReconfigure,
-           let existing = connections[serverId],
-           existing.credentials == latestServer.credentials,
-           existing.apiClient != nil,
-           latestServer.deviceCredential != nil || !latestServer.token.hasPrefix("dt_") {
-            return existing
+        if !forceReconfigure, let existing = connections[serverId] {
+            if existing.hasSameTransportIdentity(as: latestServer.credentials) {
+                existing.applyPersistedSameRouteCredentials(latestServer.credentials)
+                if existing.hasViableConfiguredTransport,
+                   latestServer.deviceCredential != nil || !latestServer.token.hasPrefix("dt_") {
+                    return existing
+                }
+            }
         }
 
         preparingServerIds.insert(serverId)
@@ -248,7 +256,17 @@ final class ConnectionCoordinator {
         let serverId = server.id
         let initialLANEndpoint = await initialLANEndpoint(for: server)
         if let existing = connections[serverId] {
-            if forceReconfigure || existing.credentials != server.credentials {
+            let sameRoute = existing.hasSameTransportIdentity(as: server.credentials)
+            if sameRoute {
+                existing.applyPersistedSameRouteCredentials(server.credentials)
+            }
+            if !forceReconfigure, sameRoute, existing.hasViableConfiguredTransport {
+                #if DEBUG
+                _onConnectionPreparedForTesting?(serverId, existing)
+                #endif
+                return existing
+            }
+            if forceReconfigure || !sameRoute || !existing.hasViableConfiguredTransport {
                 if existing.credentials == nil {
                     logger.info("Preparing transport for paired server")
                 } else {
@@ -272,6 +290,7 @@ final class ConnectionCoordinator {
                     server: server,
                     initialEndpoint: initialLANEndpoint
                 )
+                adoptLatestSameRouteCredentials(on: existing, serverId: serverId)
             }
             #if DEBUG
             _onConnectionPreparedForTesting?(serverId, existing)
@@ -294,6 +313,7 @@ final class ConnectionCoordinator {
             server: server,
             initialEndpoint: initialLANEndpoint
         )
+        adoptLatestSameRouteCredentials(on: connection, serverId: serverId)
         initializeStores(for: connection, serverId: serverId)
         #if DEBUG
         _onConnectionPreparedForTesting?(serverId, connection)
@@ -363,6 +383,13 @@ final class ConnectionCoordinator {
         }
     }
 
+    /// A refresh during bootstrap can land in the store before `credentials`
+    /// is committed on the connection. Adopt that snapshot without rebuilding.
+    private func adoptLatestSameRouteCredentials(on connection: ServerConnection, serverId: String) {
+        guard let latest = serverStore.server(for: serverId)?.credentials else { return }
+        connection.applyPersistedSameRouteCredentials(latest)
+    }
+
     private func configureConnection(
         _ connection: ServerConnection,
         credentials: ServerCredentials,
@@ -371,10 +398,11 @@ final class ConnectionCoordinator {
         let deviceCredentialObserver: ServerConnectionDeviceCredentialObserver = { [weak self] result in
             guard let self, let serverId = credentials.normalizedServerFingerprint else { return }
             do {
-                try self.serverStore.persistDeviceCredentialRefresh(
+                let merged = try self.serverStore.persistDeviceCredentialRefresh(
                     id: serverId,
                     result: result
                 )
+                self.connections[serverId]?.applyPersistedDeviceCredential(merged)
             } catch {
                 ClientLog.error("DeviceCredential", "Failed to persist device-credential refresh", metadata: [
                     "serverId": serverId,
@@ -719,11 +747,13 @@ final class ConnectionCoordinator {
         _ server: PairedServer,
         shouldActivate: @escaping @MainActor () -> Bool = { true }
     ) async -> Bool {
-        if server.id == activeServerId,
-           let connection = connections[server.id],
-           connection.credentials == server.credentials,
-           connection.apiClient != nil {
-            return shouldActivate()
+        if server.id == activeServerId, let connection = connections[server.id] {
+            if connection.hasSameTransportIdentity(as: server.credentials) {
+                connection.applyPersistedSameRouteCredentials(server.credentials)
+                if connection.hasViableConfiguredTransport {
+                    return shouldActivate()
+                }
+            }
         }
 
         return await PreparedServerActivation.run(

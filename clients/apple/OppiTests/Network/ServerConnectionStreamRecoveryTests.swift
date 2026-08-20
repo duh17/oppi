@@ -352,6 +352,209 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connectCalls >= 1)
     }
 
+    @Test func applyPersistedDeviceCredentialUpdatesSnapshotWithoutRecomposing() {
+        let connection = makeConnection()
+        defer { cleanup(connection) }
+        let original = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_old",
+            expiresAt: 1_000_000,
+            refreshChallenge: nil
+        )
+        #expect(connection.configure(credentials: ServerCredentials(
+            host: "studio.example.test",
+            port: 7749,
+            token: "",
+            name: "Studio",
+            scheme: .https,
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            deviceCredential: original
+        )))
+        let wsBefore = connection.wsClient
+        let streamGeneration = connection.persistentStreamGenerationForTesting
+        let configurationGeneration = connection.transportConfigurationGenerationForTesting
+
+        let rotated = DeviceCredential(
+            deviceId: "dev_1",
+            accessToken: "at_rotated",
+            expiresAt: 2_000_000,
+            refreshChallenge: DeviceAuthChallenge(
+                nonce: "n2",
+                audience: DeviceAuthSession.refreshAudience,
+                expiresAt: 3_000_000
+            )
+        )
+        #expect(connection.applyPersistedDeviceCredential(rotated))
+        #expect(connection.credentials?.deviceCredential?.accessToken == "at_rotated")
+        #expect(connection.wsClient === wsBefore)
+        #expect(connection.persistentStreamGenerationForTesting == streamGeneration)
+        #expect(connection.transportConfigurationGenerationForTesting == configurationGeneration)
+
+        let otherDevice = DeviceCredential(
+            deviceId: "dev_other",
+            accessToken: "at_other",
+            expiresAt: 3_000_000,
+            refreshChallenge: nil
+        )
+        #expect(!connection.applyPersistedDeviceCredential(otherDevice))
+        #expect(connection.credentials?.deviceCredential?.accessToken == "at_rotated")
+        #expect(connection.wsClient === wsBefore)
+        #expect(connection.persistentStreamGenerationForTesting == streamGeneration)
+    }
+
+    @Test func applyPersistedSameRouteCredentialsKeepsTheCompleteIncomingSnapshot() {
+        let connection = makeConnection()
+        defer { cleanup(connection) }
+        let original = ServerCredentials(
+            host: "studio.example.test",
+            port: 7749,
+            token: "",
+            name: "Studio",
+            scheme: .https,
+            pairingToken: "pair_old",
+            serverFingerprint: "sha256:SERVERFINGERPRINTABCDEF",
+            tlsCertFingerprint: "sha256:TLSFINGERPRINTABCDEF",
+            deviceCredential: DeviceCredential(
+                deviceId: "dev_1",
+                accessToken: "at_old",
+                expiresAt: 1_000_000,
+                refreshChallenge: nil
+            )
+        )
+        #expect(connection.configure(credentials: original))
+        let wsBefore = connection.wsClient
+        let streamGeneration = connection.persistentStreamGenerationForTesting
+
+        let incoming = ServerCredentials(
+            host: original.host,
+            port: original.port,
+            token: "",
+            name: "Studio Renamed",
+            scheme: original.scheme,
+            pairingToken: "pair_new",
+            serverFingerprint: original.serverFingerprint,
+            tlsCertFingerprint: original.tlsCertFingerprint,
+            deviceCredential: DeviceCredential(
+                deviceId: "dev_1",
+                accessToken: "at_rotated",
+                expiresAt: 2_000_000,
+                refreshChallenge: DeviceAuthChallenge(
+                    nonce: "n2",
+                    audience: DeviceAuthSession.refreshAudience,
+                    expiresAt: 3_000_000
+                )
+            )
+        )
+        #expect(connection.applyPersistedSameRouteCredentials(incoming))
+        #expect(connection.credentials == incoming)
+        #expect(connection.credentials?.pairingToken == "pair_new")
+        #expect(connection.credentials?.name == "Studio Renamed")
+        #expect(connection.wsClient === wsBefore)
+        #expect(connection.persistentStreamGenerationForTesting == streamGeneration)
+    }
+
+    @Test func focusedStreamRecoveryIsOwnedByTheFocusedSession() {
+        let connection = makeConnection()
+        defer { cleanup(connection) }
+        connection._setActiveSessionIdForTesting("session-a")
+
+        connection.setFocusedSessionStreamRecovering(true, sessionId: "session-a")
+        #expect(connection.isFocusedSessionStreamRecovering)
+
+        connection.setFocusedSessionStreamRecovering(true, sessionId: "session-b")
+        #expect(connection.isFocusedSessionStreamRecovering)
+
+        connection.setFocusedSessionStreamRecovering(false, sessionId: "session-b")
+        #expect(connection.isFocusedSessionStreamRecovering)
+
+        connection._setActiveSessionIdForTesting("session-b")
+        #expect(!connection.isFocusedSessionStreamRecovering)
+
+        connection.setFocusedSessionStreamRecovering(true, sessionId: "session-b")
+        #expect(connection.isFocusedSessionStreamRecovering)
+
+        connection.setFocusedSessionStreamRecovering(false, sessionId: "session-a")
+        #expect(connection.isFocusedSessionStreamRecovering)
+
+        connection.setFocusedSessionStreamRecovering(false, sessionId: "session-b")
+        #expect(!connection.isFocusedSessionStreamRecovering)
+    }
+
+    @Test func streamSessionWaitsForCapabilitiesThenBinds() async {
+        let connection = makeConnection()
+        defer { cleanup(connection) }
+        connection.setAPIClientForTesting(nil)
+        connection._focusedStreamReadinessPollForTesting = .milliseconds(5)
+        var connectCalls = 0
+        connection._connectStreamForTesting = {
+            connectCalls += 1
+            return AsyncStream { $0.finish() }
+        }
+
+        var startedWait = false
+        connection._onFocusedStreamReadinessWaitForTesting = {
+            startedWait = true
+        }
+
+        async let stream = connection.streamSession("s1", workspaceId: "w1")
+        #expect(await waitForMainActorCondition {
+            startedWait && connectCalls == 0
+        })
+        #expect(connection.isFocusedSessionStreamRecovering)
+
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        let opened = await stream
+        #expect(opened != nil)
+        #expect(connectCalls >= 1)
+        #expect(!connection.isFocusedSessionStreamRecovering)
+        #expect(
+            connection.focusedSessionStreamURLForTesting?.path
+                == "/workspaces/w1/sessions/s1/stream"
+        )
+    }
+
+    @Test func streamSessionDoesNotWaitForLoadedMissingCapabilityOrFailClosed() async {
+        let missing = makeConnection()
+        defer { cleanup(missing) }
+        missing.setSplitStreamCapabilitiesForTesting(sessionStream: false)
+        missing.wsClient?._setStatusForTesting(.connected)
+        var missingWaitStarted = false
+        missing._onFocusedStreamReadinessWaitForTesting = { missingWaitStarted = true }
+
+        let missingStream = await missing.streamSession("s1", workspaceId: "w1")
+        #expect(missingStream == nil)
+        #expect(!missingWaitStarted)
+
+        let closed = makeConnection()
+        defer { cleanup(closed) }
+        closed.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        closed.failTransportTerminallyForTesting()
+        var closedWaitStarted = false
+        closed._onFocusedStreamReadinessWaitForTesting = { closedWaitStarted = true }
+
+        let closedStream = await closed.streamSession("s1", workspaceId: "w1")
+        #expect(closedStream == nil)
+        #expect(!closedWaitStarted)
+    }
+
+    @Test func cancelledReadinessWaitDoesNotSpinAndClearsRecovery() async {
+        let connection = makeConnection()
+        defer { cleanup(connection) }
+        connection._focusedStreamReadinessPollForTesting = .milliseconds(20)
+        var waitStarted = false
+        connection._onFocusedStreamReadinessWaitForTesting = { waitStarted = true }
+
+        let waitTask = Task { @MainActor in
+            await connection.waitForFocusedStreamBindReadinessIfNeeded(sessionId: "s1")
+        }
+        #expect(await waitForMainActorCondition { waitStarted })
+        #expect(connection.isFocusedSessionStreamRecovering)
+
+        waitTask.cancel()
+        _ = await waitTask.value
+        #expect(!connection.isFocusedSessionStreamRecovering)
+    }
+
     @Test func endpointDiagnosticsRedactHostsAndQueryStrings() {
         let url = URL(string: "wss://secret-node.tail123.ts.net:7749/workspaces/private/sessions/private/stream?token=abc")
 

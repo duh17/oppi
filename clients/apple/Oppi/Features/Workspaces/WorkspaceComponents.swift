@@ -212,7 +212,8 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
     init(
         _ presentation: WorkspaceServerStatusPresentation,
         hasSyncFailure: Bool = false,
-        isPreparing: Bool = false
+        isPreparing: Bool = false,
+        isFocusedStreamRecovering: Bool = false
     ) {
         if isPreparing {
             self = hasSyncFailure ? .recovering : .connecting
@@ -225,7 +226,7 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
 
         switch presentation.state {
         case .live, .stale:
-            self = .connected
+            self = isFocusedStreamRecovering ? .recovering : .connected
         case .syncing:
             self = .connecting
         case .offline:
@@ -263,6 +264,10 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
     }
 }
 
+enum FocusedSessionStreamRecoveryPresentation {
+    static let message = "Recovering session stream"
+}
+
 @MainActor
 enum ServerConnectionLanePresentation {
     static func title(
@@ -281,6 +286,15 @@ enum ServerConnectionLanePresentation {
         // composition is nil. Don't claim "via local network" in that hole.
         if connection.isTransportDemoting {
             return "Recovering connection"
+        }
+
+        if connection.isFocusedSessionStreamRecovering {
+            switch state {
+            case .disconnected, .syncFailed:
+                break
+            default:
+                return FocusedSessionStreamRecoveryPresentation.message
+            }
         }
 
         let lane = connection.transportPath == .lan ? "local network HTTPS" : "paired HTTPS"
