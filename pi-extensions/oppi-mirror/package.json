@@ -1,6 +1,6 @@
 {
   "name": "oppi-mirror",
-  "version": "0.47.0",
+  "version": "0.47.1",
   "description": "Pi extension for mirroring live terminal sessions into Oppi.",
   "type": "module",
   "license": "MIT",
