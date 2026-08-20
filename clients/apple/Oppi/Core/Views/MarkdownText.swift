@@ -46,7 +46,8 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
-        sourceDirectory: String? = nil
+        sourceDirectory: String? = nil,
+        worktreeId: String? = nil
     ) -> [FlatSegment]? {
         guard shouldCache(content) else { return nil }
         let key = stableKey(
@@ -56,7 +57,8 @@ final class MarkdownSegmentCache: @unchecked Sendable {
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory
+            sourceDirectory: sourceDirectory,
+            worktreeId: worktreeId
         )
         lock.lock()
         defer { lock.unlock() }
@@ -75,6 +77,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceDirectory: String? = nil,
+        worktreeId: String? = nil,
         segments: [FlatSegment]
     ) {
         let sourceBytes = content.utf8.count
@@ -87,7 +90,8 @@ final class MarkdownSegmentCache: @unchecked Sendable {
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory
+            sourceDirectory: sourceDirectory,
+            worktreeId: worktreeId
         )
         lock.lock()
         defer { lock.unlock() }
@@ -133,7 +137,8 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         workspaceID: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
-        sourceDirectory: String? = nil
+        sourceDirectory: String? = nil,
+        worktreeId: String? = nil
     ) -> UInt64 {
         // FNV-1a 64-bit hash (stable across process launches).
         var hash: UInt64 = 14_695_981_039_346_656_037
@@ -153,6 +158,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         mix(sessionID, separator: 0xFC)
         mix(serverBaseURL?.absoluteString, separator: 0xFB)
         mix(sourceDirectory, separator: 0xFA)
+        mix(worktreeId, separator: 0xF8)
         mix(content, separator: 0xF9)
         return hash
     }
@@ -162,21 +168,31 @@ final class MarkdownSegmentCache: @unchecked Sendable {
 
 enum WorkspaceFileURL {
     /// Build `{base}/workspaces/{workspaceID}/raw/{path}`.
-    static func make(baseURL: URL, workspaceID: String, filePath: String) -> URL? {
+    ///
+    /// `worktreeId` uses the same query name as `APIClient` workspace fetches.
+    /// Nil, blank, and `main` omit the query so main-checkout URLs keep their
+    /// historical identity.
+    static func make(baseURL: URL, workspaceID: String, filePath: String, worktreeId: String? = nil) -> URL? {
         guard !workspaceID.isEmpty else { return nil }
         let normalizedPath = filePath.hasPrefix("/") ? String(filePath.dropFirst()) : filePath
         guard !normalizedPath.isEmpty else { return nil }
 
-        return baseURL
+        let url = baseURL
             .appendingPathComponent("workspaces")
             .appendingPathComponent(workspaceID)
             .appendingPathComponent("raw")
             .appendingPathComponent(normalizedPath)
+        guard let queryItem = worktreeQueryItem(worktreeId) else { return url }
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        components.queryItems = [queryItem]
+        return components.url ?? url
     }
 
     /// Parse `{base}/workspaces/{workspaceID}/raw/{path}`.
     /// Also accepts legacy `/files/` URLs from older transcript renders.
-    static func parse(_ url: URL) -> (workspaceID: String, filePath: String)? {
+    static func parse(_ url: URL) -> (workspaceID: String, filePath: String, worktreeId: String?)? {
         let components = url.pathComponents
 
         guard let workspaceIndex = components.firstIndex(of: "workspaces"),
@@ -197,7 +213,23 @@ enum WorkspaceFileURL {
         let filePath = components[(routeIndex + 1)...].joined(separator: "/")
         guard !filePath.isEmpty else { return nil }
 
-        return (workspaceID: workspaceID, filePath: filePath)
+        return (workspaceID: workspaceID, filePath: filePath, worktreeId: worktreeId(from: url))
+    }
+
+    /// Same query name as `APIClient.workspaceWorktreeQueryItems`. Nil, blank,
+    /// and `main` omit the item so cache identity matches the implicit checkout.
+    private static func worktreeQueryItem(_ worktreeId: String?) -> URLQueryItem? {
+        let trimmed = worktreeId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty, trimmed != "main" else { return nil }
+        return URLQueryItem(name: "worktreeId", value: trimmed)
+    }
+
+    private static func worktreeId(from url: URL) -> String? {
+        let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "worktreeId" })?
+            .value
+        return worktreeQueryItem(value)?.value
     }
 }
 
@@ -284,6 +316,9 @@ enum FlatSegment: Sendable {
         /// Used to resolve relative image paths like `images/foo.png`
         /// → `docs/images/foo.png` in the workspace.
         sourceDirectory: String? = nil,
+        /// Source-session firstCheckout worktree for workspace image URLs.
+        /// Nil/main omit the query so unrelated callers stay checkout-blind.
+        worktreeId: String? = nil,
         /// Timeline markdown merges adjacent text-like blocks so native text
         /// selection can cross paragraphs. Full-screen readers can disable
         /// merging and virtualize at paragraph/list granularity while using the
@@ -298,6 +333,7 @@ enum FlatSegment: Sendable {
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceDirectory: sourceDirectory,
+            worktreeId: worktreeId,
             mergeAdjacentTextSegments: mergeAdjacentTextSegments
         ).segments
     }
@@ -310,6 +346,7 @@ enum FlatSegment: Sendable {
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceDirectory: String? = nil,
+        worktreeId: String? = nil,
         mergeAdjacentTextSegments: Bool = true
     ) -> BuildResult {
         buildResult(
@@ -320,6 +357,7 @@ enum FlatSegment: Sendable {
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceDirectory: sourceDirectory,
+            worktreeId: worktreeId,
             sourceLineRanges: blocks.map(\.lineRange),
             mergeAdjacentTextSegments: mergeAdjacentTextSegments
         )
@@ -333,6 +371,7 @@ enum FlatSegment: Sendable {
         sessionID: String?,
         serverBaseURL: URL?,
         sourceDirectory: String?,
+        worktreeId: String? = nil,
         sourceLineRanges: [ClosedRange<Int>?]? = nil,
         mergeAdjacentTextSegments: Bool
     ) -> BuildResult {
@@ -528,7 +567,8 @@ enum FlatSegment: Sendable {
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     serverBaseURL: serverBaseURL,
-                    sourceDirectory: sourceDirectory
+                    sourceDirectory: sourceDirectory,
+                    worktreeId: worktreeId
                 ) {
                     for segment in imageSegments {
                         switch segment {
@@ -1389,7 +1429,8 @@ enum FlatSegment: Sendable {
         workspaceID: String?,
         sessionID: String?,
         serverBaseURL: URL?,
-        sourceDirectory: String? = nil
+        sourceDirectory: String? = nil,
+        worktreeId: String? = nil
     ) -> [Self]? {
         #if DEBUG
         warnIfRelativeImagesNeedWorkspaceContext(inlines: inlines, workspaceID: workspaceID)
@@ -1419,7 +1460,8 @@ enum FlatSegment: Sendable {
                    workspaceID: workspaceID,
                    sessionID: sessionID,
                    serverBaseURL: serverBaseURL,
-                   sourceDirectory: sourceDirectory
+                   sourceDirectory: sourceDirectory,
+                   worktreeId: worktreeId
                ) {
                 flushPendingInlines()
                 segments.append(.image(alt: alt, url: imageURL))
@@ -1482,17 +1524,20 @@ enum FlatSegment: Sendable {
     /// Handles two cases:
     /// - **Relative paths** (e.g. `screenshots/img.jpeg`): resolved against
     ///   the workspace file API when `workspaceID` and `serverBaseURL` are set.
+    ///   `worktreeId` is the source-session firstCheckout; nil/main omit the
+    ///   query so NativeMarkdownImageView cache identity stays checkout-aware.
     /// - **Absolute URLs** (e.g. `https://example.com/photo.jpg`): passed
     ///   through directly for `NativeMarkdownImageView` to show as tap-to-load
     ///   remote images.
     ///
-    /// Skips `data:` URIs (too large to display inline).
+    /// Skips `data:` URIs, `file://`, and absolute `/` or `~` filesystem paths.
     private static func resolveImageURL(
         source: String?,
         workspaceID: String?,
         sessionID: String?,
         serverBaseURL: URL?,
-        sourceDirectory: String? = nil
+        sourceDirectory: String? = nil,
+        worktreeId: String? = nil
     ) -> URL? {
         guard let source, !source.isEmpty else { return nil }
 
@@ -1526,7 +1571,12 @@ enum FlatSegment: Sendable {
             resolvedPath = (dir as NSString).appendingPathComponent(source)
         }
 
-        return WorkspaceFileURL.make(baseURL: baseURL, workspaceID: workspaceID, filePath: resolvedPath)
+        return WorkspaceFileURL.make(
+            baseURL: baseURL,
+            workspaceID: workspaceID,
+            filePath: resolvedPath,
+            worktreeId: worktreeId
+        )
     }
 
     // MARK: - Inline Markdown Rendering

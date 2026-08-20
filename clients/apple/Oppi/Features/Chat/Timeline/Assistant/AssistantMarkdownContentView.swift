@@ -52,6 +52,9 @@ final class AssistantMarkdownContentView: UIView {
         let serverID: String?
         /// Workspace context for resolving inline image paths and file candidates.
         let workspaceID: String?
+        /// Source-session firstCheckout worktree for workspace image URL identity.
+        /// Nil/main omit the query, matching `WorkspaceFileURL.make`.
+        let worktreeId: String?
         /// Session context retained for review and full-screen presentation.
         let sessionID: String?
         let serverBaseURL: URL?
@@ -89,6 +92,7 @@ final class AssistantMarkdownContentView: UIView {
             reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
             serverID: String? = nil,
             workspaceID: String? = nil,
+            worktreeId: String? = nil,
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
@@ -105,6 +109,7 @@ final class AssistantMarkdownContentView: UIView {
             self.reviewCommentSourceContext = reviewCommentSourceContext
             self.serverID = serverID
             self.workspaceID = workspaceID
+            self.worktreeId = worktreeId
             self.sessionID = sessionID
             self.serverBaseURL = serverBaseURL
             self.sourceFilePath = sourceFilePath
@@ -123,6 +128,7 @@ final class AssistantMarkdownContentView: UIView {
             reviewCommentSourceContext: ReviewCommentSourceContext? = nil,
             serverID: String? = nil,
             workspaceID: String? = nil,
+            worktreeId: String? = nil,
             sessionID: String? = nil,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
@@ -140,6 +146,7 @@ final class AssistantMarkdownContentView: UIView {
                 reviewCommentSourceContext: reviewCommentSourceContext,
                 serverID: serverID,
                 workspaceID: workspaceID,
+                worktreeId: worktreeId,
                 sessionID: sessionID,
                 serverBaseURL: serverBaseURL,
                 sourceFilePath: sourceFilePath,
@@ -159,6 +166,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.reviewCommentSourceContext == rhs.reviewCommentSourceContext
                 && lhs.serverID == rhs.serverID
                 && lhs.workspaceID == rhs.workspaceID
+                && lhs.worktreeId == rhs.worktreeId
                 && lhs.sessionID == rhs.sessionID
                 && lhs.serverBaseURL == rhs.serverBaseURL
                 && lhs.sourceFilePath == rhs.sourceFilePath

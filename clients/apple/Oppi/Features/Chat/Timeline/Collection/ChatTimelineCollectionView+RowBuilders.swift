@@ -26,6 +26,12 @@ extension ChatTimelineCollectionHost.Controller {
         // Unified native markdown renderer — handles all content (plain
         // text, rich markdown, code blocks, tables) via
         // AssistantMarkdownContentView.
+        let sourceSession = connection?.sessionStore.session(id: sessionId)
+        let sourceSessionResolved = sourceSession?.workspaceId == workspaceId
+        let firstCheckout = WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
+            sourceSessionResolved: sourceSessionResolved,
+            sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil
+        )
         return AssistantTimelineRowConfiguration(
             text: text,
             isStreaming: isStreaming,
@@ -39,10 +45,26 @@ extension ChatTimelineCollectionHost.Controller {
             interactionContext: interactionContext,
             serverID: serverId,
             workspaceID: workspaceId,
+            worktreeId: firstCheckout,
             serverBaseURL: connection?.apiClient?.baseURL,
             fetchWorkspaceFile: connection?.apiClient.map { client in
-                { workspaceID, path in
-                    try await client.fetchWorkspaceFile(workspaceID: workspaceID, path: path)
+                return { [sourceSession] workspaceID, path in
+                    // Missing or foreign source session lists main (nil),
+                    // matching WorkspaceWikiLinkFileLookupPolicy.
+                    let sourceSessionResolved = sourceSession?.workspaceId == workspaceID
+                    return try await WorkspaceMarkdownImageFileLookup.fetch(
+                        workspaceID: workspaceID,
+                        path: path,
+                        sourceSessionResolved: sourceSessionResolved,
+                        sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil,
+                        fetchWorkspaceFile: { @Sendable workspaceID, path, worktreeId in
+                            try await client.fetchWorkspaceFile(
+                                workspaceID: workspaceID,
+                                path: path,
+                                worktreeId: worktreeId
+                            )
+                        }
+                    )
                 }
             },
             fetchSessionFile: nil

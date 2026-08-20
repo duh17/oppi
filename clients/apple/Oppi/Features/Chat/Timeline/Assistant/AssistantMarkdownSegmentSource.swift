@@ -10,6 +10,7 @@ final class AssistantMarkdownSegmentSource {
         let sessionID: String?
         let serverBaseURL: URL?
         let sourceDirectory: String?
+        let worktreeId: String?
     }
 
     /// Cached state for tail-only re-parsing during streaming.
@@ -57,7 +58,8 @@ final class AssistantMarkdownSegmentSource {
                workspaceID: config.workspaceID,
                sessionID: config.sessionID,
                serverBaseURL: config.serverBaseURL,
-               sourceDirectory: config.sourceDirectory
+               sourceDirectory: config.sourceDirectory,
+               worktreeId: config.worktreeId
            ) {
             return Self.applyReaderPreferences(to: cached, config: config)
         }
@@ -77,6 +79,7 @@ final class AssistantMarkdownSegmentSource {
             sessionID: config.sessionID,
             serverBaseURL: config.serverBaseURL,
             sourceDirectory: config.sourceDirectory,
+            worktreeId: config.worktreeId,
             mergeAdjacentTextSegments: mergeAdjacentTextSegments
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
@@ -98,6 +101,7 @@ final class AssistantMarkdownSegmentSource {
                 sessionID: config.sessionID,
                 serverBaseURL: config.serverBaseURL,
                 sourceDirectory: config.sourceDirectory,
+                worktreeId: config.worktreeId,
                 segments: segments
             )
         }
@@ -127,6 +131,7 @@ final class AssistantMarkdownSegmentSource {
             sessionID: config.sessionID,
             serverBaseURL: config.serverBaseURL,
             sourceDirectory: config.sourceDirectory,
+            worktreeId: config.worktreeId,
             mergeAdjacentTextSegments: mergeAdjacentTextSegments
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
@@ -172,13 +177,15 @@ final class AssistantMarkdownSegmentSource {
         let sessionID = config.sessionID
         let serverBaseURL = config.serverBaseURL
         let sourceDirectory = config.sourceDirectory
+        let worktreeId = config.worktreeId
         let buildContext = SegmentBuildContext(
             themeID: themeID,
             serverID: serverID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory
+            sourceDirectory: sourceDirectory,
+            worktreeId: worktreeId
         )
         let contentUTF8 = content.utf8
         // Reference definitions can retroactively resolve links in already-finalized
@@ -226,7 +233,8 @@ final class AssistantMarkdownSegmentSource {
                         workspaceID: workspaceID,
                         sessionID: sessionID,
                         serverBaseURL: serverBaseURL,
-                        sourceDirectory: sourceDirectory
+                        sourceDirectory: sourceDirectory,
+                        worktreeId: worktreeId
                     )
                 }
 
@@ -237,7 +245,8 @@ final class AssistantMarkdownSegmentSource {
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     serverBaseURL: serverBaseURL,
-                    sourceDirectory: sourceDirectory
+                    sourceDirectory: sourceDirectory,
+                    worktreeId: worktreeId
                 )
                 let buildEnd = MarkdownStreamingPerf.timestampNs()
                 let segments = mergeSegments(prefix: prefixSegments, tail: tailSegments)
@@ -263,7 +272,8 @@ final class AssistantMarkdownSegmentSource {
                             workspaceID: workspaceID,
                             sessionID: sessionID,
                             serverBaseURL: serverBaseURL,
-                            sourceDirectory: sourceDirectory
+                            sourceDirectory: sourceDirectory,
+                            worktreeId: worktreeId
                         )
                         let newPrefixSegments = mergeSegments(
                             prefix: prefixSegments,
@@ -306,7 +316,8 @@ final class AssistantMarkdownSegmentSource {
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory
+            sourceDirectory: sourceDirectory,
+            worktreeId: worktreeId
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
 
@@ -332,6 +343,7 @@ final class AssistantMarkdownSegmentSource {
                 sessionID: sessionID,
                 serverBaseURL: serverBaseURL,
                 sourceDirectory: sourceDirectory,
+                worktreeId: worktreeId,
                 buildContext: buildContext
             )
         }
@@ -350,6 +362,7 @@ final class AssistantMarkdownSegmentSource {
         sessionID: String?,
         serverBaseURL: URL?,
         sourceDirectory: String?,
+        worktreeId: String?,
         buildContext: SegmentBuildContext
     ) {
         guard allBlocks.count >= 2, lastBlockLine > 1 else {
@@ -371,7 +384,8 @@ final class AssistantMarkdownSegmentSource {
             workspaceID: workspaceID,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory
+            sourceDirectory: sourceDirectory,
+            worktreeId: worktreeId
         )
 
         streamingState = StreamingParseState(

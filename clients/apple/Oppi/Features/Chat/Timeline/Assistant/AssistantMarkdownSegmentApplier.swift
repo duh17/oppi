@@ -843,6 +843,7 @@ private struct SegmentRenderContext: Equatable {
     let sessionID: String?
     let serverBaseURL: URL?
     let sourceDirectory: String?
+    let worktreeId: String?
 
     init(_ config: AssistantMarkdownContentView.Configuration) {
         themeID = config.themeID
@@ -851,6 +852,7 @@ private struct SegmentRenderContext: Equatable {
         sessionID = config.sessionID
         serverBaseURL = config.serverBaseURL
         sourceDirectory = config.sourceDirectory
+        worktreeId = config.worktreeId
     }
 }
 

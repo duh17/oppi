@@ -25,6 +25,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let serverID: String?
     /// Workspace context for resolving markdown image paths.
     let workspaceID: String?
+    /// Source-session firstCheckout worktree for workspace image URL identity.
+    let worktreeId: String?
     let serverBaseURL: URL?
     /// Closure for fetching a workspace file by path. Wraps `APIClient.fetchWorkspaceFile`
     /// at the caller site so view-layer files stay decoupled from `APIClient` directly.
@@ -45,6 +47,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         interactionContext: TimelineInteractionContext? = nil,
         serverID: String? = nil,
         workspaceID: String? = nil,
+        worktreeId: String? = nil,
         serverBaseURL: URL? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
@@ -61,6 +64,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.interactionContext = interactionContext
         self.serverID = serverID
         self.workspaceID = workspaceID
+        self.worktreeId = worktreeId
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
@@ -307,6 +311,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             reviewCommentSourceContext: reviewCommentSourceContext,
             serverID: configuration.serverID,
             workspaceID: configuration.workspaceID,
+            worktreeId: configuration.worktreeId,
             sessionID: configuration.sessionId,
             serverBaseURL: configuration.serverBaseURL,
             perfSurface: .inlineAssistant
