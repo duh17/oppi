@@ -35,6 +35,11 @@ final class AnchoredCollectionView: UICollectionView {
     /// the ~55μs UIView.bounds setter cost on every didSet entry.
     private var pendingCorrectionOffsetY: CGFloat?
 
+    /// `applyOffsetCorrection` owns the viewport until the next identity
+    /// capture. Follow-up layout passes re-apply this Y so self-sizing
+    /// cannot walk the offset back toward the pre-scroll position.
+    private var frozenOffsetY: CGFloat?
+
     /// Set by the timeline controller before each snapshot apply so layout
     /// passes preserve the first visible item's screen position for users
     /// who scrolled away from the bottom. Without this, cell height changes
@@ -71,12 +76,17 @@ final class AnchoredCollectionView: UICollectionView {
     /// Clear the expand/collapse anchor after layout passes have settled.
     func clearExpandCollapseAnchor() {
         expandCollapseAnchorIP = nil
+        pendingCorrectionOffsetY = nil
     }
 
     /// Apply an absolute contentOffset.y correction while suppressing the
     /// didSet interceptor and any internal layout passes that UIKit
     /// triggers when setting contentOffset on a UICollectionView.
-    func applyOffsetCorrection(_ targetOffsetY: CGFloat) {
+    func applyOffsetCorrection(_ targetOffsetY: CGFloat, freezeUntilCapture: Bool = false) {
+        // An explicit offset owns the viewport. Drop any deferred cascade
+        // restore so the next layoutSubviews cannot replay the old Y.
+        pendingCorrectionOffsetY = nil
+        frozenOffsetY = freezeUntilCapture ? targetOffsetY : nil
         isApplyingAnchorCorrection = true
         contentOffset.y = targetOffsetY
         isApplyingAnchorCorrection = false
@@ -102,6 +112,7 @@ final class AnchoredCollectionView: UICollectionView {
     /// Capture the detached anchor for subsequent contentOffset corrections.
     /// Called before snapshot apply when the user is scrolled away from bottom.
     func captureDetachedAnchor() {
+        frozenOffsetY = nil
         // Isolated test fixtures host this view without a timeline
         // controller. Keep the first-visible index-path pin so their
         // self-sizing cascade coverage still works.
@@ -147,6 +158,7 @@ final class AnchoredCollectionView: UICollectionView {
     func clearDetachedAnchor() {
         detachedAnchorIP = nil
         detachedAnchorItemID = nil
+        frozenOffsetY = nil
     }
 
     // MARK: - contentOffset interception
@@ -205,6 +217,7 @@ final class AnchoredCollectionView: UICollectionView {
             // pre-apply offset. A suffix-window shift changes content above
             // the reader; layoutSubviews must restore that item's screen Y.
             if isDetachedFromBottom, detachedAnchorIsActive,
+               frozenOffsetY == nil,
                !isUserOrProgrammaticScrollOwned {
                 let delta = contentOffset.y - detachedSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
@@ -335,6 +348,14 @@ final class AnchoredCollectionView: UICollectionView {
             detachedSavedOffsetY = contentOffset.y
         }
 
+        if expandCollapseAnchorIP == nil,
+           let frozenOffsetY,
+           abs(contentOffset.y - frozenOffsetY) > 0.5 {
+            isApplyingAnchorCorrection = true
+            contentOffset.y = frozenOffsetY
+            isApplyingAnchorCorrection = false
+        }
+
         #if DEBUG
             _debugLayoutAnchorCount += 1
             _debugLayoutAnchorNanos += (_captureEnd &- _captureStart)
@@ -400,7 +421,9 @@ final class AnchoredCollectionView: UICollectionView {
         // programmatic scrolls (scrollToItem) set contentOffset before the
         // layout pass — the anchor captures the post-scroll position and
         // restores it (no-op).
-        return isDetachedFromBottom
+        // Skip while an explicit offset correction is in charge; a later
+        // captureDetachedAnchor() re-enables the pin for snapshot applies.
+        return isDetachedFromBottom && frozenOffsetY == nil
     }
 
     private func captureAnchor() {

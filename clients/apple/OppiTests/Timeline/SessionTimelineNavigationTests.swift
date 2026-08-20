@@ -36,24 +36,33 @@ struct SessionTimelineNavigationTests {
 
         let anchorID = "msg-20"
         let anchorIndex = try #require(harness.coordinator.currentIDs.firstIndex(of: anchorID))
-        harness.collectionView.scrollToItem(
-            at: IndexPath(item: anchorIndex, section: 0),
-            at: .top,
-            animated: false
-        )
+        let anchorPath = IndexPath(item: anchorIndex, section: 0)
         settleTimelineLayout(harness.collectionView, passes: 3)
+        let anchorAttrs = try #require(
+            harness.collectionView.layoutAttributesForItem(at: anchorPath)
+        )
+        harness.scrollController.detachFromBottomForUserScroll()
+        if let anchoredCV = harness.collectionView as? AnchoredCollectionView {
+            anchoredCV.isDetachedFromBottom = true
+        }
         setTimelineUserScrollOffsetY(
             harness.collectionView,
-            harness.collectionView.contentOffset.y + 37
+            anchorAttrs.frame.minY - harness.collectionView.adjustedContentInset.top + 37
         )
-        harness.coordinator.updateScrollState(harness.collectionView)
-        harness.scrollController.detachFromBottomForUserScroll()
+        harness.coordinator.updateScrollState(
+            harness.collectionView,
+            preserveDetachedState: true
+        )
 
         let before = try #require(
             harness.collectionView.layoutAttributesForItem(
                 at: IndexPath(item: anchorIndex, section: 0)
             )
         ).frame.minY - harness.collectionView.contentOffset.y
+        #expect(
+            abs(before + 37) < 8,
+            "setup should place \(anchorID) near -37pt, got relativeY=\(before) offset=\(harness.collectionView.contentOffset.y) minY=\(anchorAttrs.frame.minY)"
+        )
         harness.scrollController.suspendForNavigation()
 
         let changedItems: [ChatItem] = [

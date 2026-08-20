@@ -848,11 +848,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             // Capture identity against the current layout / currentIDs before
             // the rendered suffix is replaced. A later window shift can move
-            // the same item to a new index path.
+            // the same item to a new index path. Skip when a viewport jump is
+            // pending: the identity pin would fight relative-Y restoration.
             if let anchoredCV = collectionView as? AnchoredCollectionView {
                 let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
                 anchoredCV.isDetachedFromBottom = detached
-                if detached {
+                let pendingViewportRestore: Bool = {
+                    guard case .viewport = configuration.scrollCommand?.anchor else {
+                        return false
+                    }
+                    return isPendingScrollCommand(configuration.scrollCommand)
+                }()
+                if pendingViewportRestore {
+                    anchoredCV.clearDetachedAnchor()
+                } else if detached {
                     anchoredCV.captureDetachedAnchor()
                 }
             }
@@ -1357,10 +1366,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                   scrollCommand.nonce != lastHandledScrollCommandNonce else {
                 return false
             }
-            if case .bottom = scrollCommand.anchor,
-               let anchoredCV = collectionView as? AnchoredCollectionView {
-                anchoredCV.isDetachedFromBottom = false
-                anchoredCV.clearDetachedAnchor()
+            if let anchoredCV = collectionView as? AnchoredCollectionView {
+                switch scrollCommand.anchor {
+                case .bottom:
+                    anchoredCV.isDetachedFromBottom = false
+                    anchoredCV.clearDetachedAnchor()
+                case .viewport, .top:
+                    // Identity pin would fight the programmatic jump.
+                    anchoredCV.clearDetachedAnchor()
+                }
             }
             guard performScroll(scrollCommand, in: collectionView) else {
                 return false

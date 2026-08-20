@@ -535,10 +535,8 @@ func expectTimelineRowsUseConfigurationType<T>(
 func setTimelineUserScrollOffsetY(_ collectionView: UICollectionView, _ rawOffsetY: CGFloat) {
     if let anchoredCV = collectionView as? AnchoredCollectionView {
         anchoredCV.clearExpandCollapseAnchor()
-        anchoredCV.applyOffsetCorrection(rawOffsetY)
-        if anchoredCV.isDetachedFromBottom {
-            anchoredCV.captureDetachedAnchor()
-        }
+        anchoredCV.applyOffsetCorrection(rawOffsetY, freezeUntilCapture: true)
+        settleTimelineLayout(collectionView)
     } else {
         collectionView.contentOffset.y = rawOffsetY
     }

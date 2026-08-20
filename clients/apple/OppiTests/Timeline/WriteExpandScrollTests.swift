@@ -123,7 +123,6 @@ struct WriteExpandScrollTests {
         let scrollUpAmount: CGFloat = 200
         let targetOffset = offsetAfterExpand - scrollUpAmount
         setTimelineUserScrollOffsetY(wh.collectionView, targetOffset)
-        wh.collectionView.layoutIfNeeded()
 
         let offsetAfterScrollUp = wh.collectionView.contentOffset.y
         let scrollUpDrift = abs(offsetAfterScrollUp - targetOffset)
@@ -133,7 +132,6 @@ struct WriteExpandScrollTests {
         // Simulate scrolling down past the expanded row.
         let scrollDownTarget = offsetAfterExpand + scrollUpAmount
         setTimelineUserScrollOffsetY(wh.collectionView, scrollDownTarget)
-        wh.collectionView.layoutIfNeeded()
 
         let offsetAfterScrollDown = wh.collectionView.contentOffset.y
         let scrollDownDrift = abs(offsetAfterScrollDown - scrollDownTarget)
@@ -400,7 +398,6 @@ struct WriteExpandScrollTests {
         // Verify scrolling works after collapse.
         let scrollTarget = offsetAfterCollapse - 300
         setTimelineUserScrollOffsetY(wh.collectionView, max(0, scrollTarget))
-        wh.collectionView.layoutIfNeeded()
 
         let drift = abs(wh.collectionView.contentOffset.y - max(0, scrollTarget))
         #expect(drift < 5.0,
