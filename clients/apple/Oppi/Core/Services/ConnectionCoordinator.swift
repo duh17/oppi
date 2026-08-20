@@ -879,9 +879,8 @@ final class ConnectionCoordinator {
             forceReconfigure: true
         )
         guard connection.credentials != nil, connection.apiClient != nil else {
-            let failedConnection = connections[serverId] ?? connection
-            failedConnection.workspaceStore.markSyncFailed()
-            failedConnection.sessionStore.markSyncFailed()
+            // HTTPS/WSS is not ready yet. Leave lastSyncFailed unchanged so a
+            // later catalog/session request can still be the first failure.
             return
         }
         await refreshServer(serverId, force: true)
@@ -900,9 +899,8 @@ final class ConnectionCoordinator {
         let connection = await ensureConnectionReady(for: server)
         guard connection !== disconnectedSentinel, connection.apiClient != nil else {
             logger.error("Cannot refresh server without a configured API client")
-            let failedConnection = connections[serverId] ?? connection
-            failedConnection.workspaceStore.markSyncFailed()
-            failedConnection.sessionStore.markSyncFailed()
+            // Missing apiClient means the request was not attempted. Do not
+            // treat transport preparation as a workspace/session sync failure.
             return
         }
 

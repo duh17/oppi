@@ -873,7 +873,7 @@ struct ConnectionCoordinatorTests {
         #expect(connection.sessionStore.listProjectionSessions.isEmpty)
     }
 
-    @Test func refreshServerMarksSyncFailedWithoutAPIClient() async {
+    @Test func refreshServerDoesNotMarkSyncFailedWithoutAPIClient() async {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:refresh-no-api", name: "Unavailable")
         coordinator.serverStore.addOrUpdate(server)
@@ -883,8 +883,27 @@ struct ConnectionCoordinatorTests {
 
         await coordinator.refreshServer(server.id, force: true)
 
-        #expect(connection.workspaceStore.lastSyncFailed)
-        #expect(connection.sessionStore.lastSyncFailed)
+        #expect(connection.apiClient == nil)
+        #expect(!connection.workspaceStore.lastSyncFailed)
+        #expect(!connection.sessionStore.lastSyncFailed)
+    }
+
+    @Test func retryServerConnectionDoesNotMarkSyncFailedWithoutAPIClient() async {
+        let (coordinator, _) = makeCoordinator()
+        coordinator._serverInfoBootstrapForTesting = { _, _ in
+            throw URLError(.notConnectedToInternet)
+        }
+        let server = makeServer(id: "sha256:retry-no-api", name: "Unavailable")
+        coordinator.serverStore.addOrUpdate(server)
+
+        let connection = coordinator.ensureConnection(for: server)
+        connection.setAPIClientForTesting(nil)
+
+        await coordinator.retryServerConnection(server.id)
+
+        #expect(connection.apiClient == nil)
+        #expect(!connection.workspaceStore.lastSyncFailed)
+        #expect(!connection.sessionStore.lastSyncFailed)
     }
 
     // MARK: - LAN Discovery Integration

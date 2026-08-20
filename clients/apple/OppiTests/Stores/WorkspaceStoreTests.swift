@@ -313,6 +313,33 @@ struct ServerBadgeConnectionStateTests {
         ) == .connecting)
     }
 
+    @Test func transportNotReadyWithoutSyncFailureIsNotUpdateFailed() {
+        let presentation = WorkspaceServerStatusPresentation.derive(
+            freshnessState: .offline,
+            freshnessLabel: "Updated never",
+            isTransportConnected: false,
+            hasCachedCatalog: true
+        )
+
+        let preparing = ServerBadgeConnectionState(
+            presentation,
+            hasSyncFailure: false,
+            isPreparing: true
+        )
+        #expect(preparing == .connecting)
+        #expect(preparing != .syncFailed)
+        #expect(preparing.title == "Connecting")
+
+        let offline = ServerBadgeConnectionState(
+            presentation,
+            hasSyncFailure: false,
+            isPreparing: false
+        )
+        #expect(offline == .disconnected)
+        #expect(offline != .syncFailed)
+        #expect(offline.title == "Offline")
+    }
+
     @Test func offlinePresentationMapsToDisconnectedBadge() {
         let presentation = WorkspaceServerStatusPresentation.derive(
             freshnessState: .offline,

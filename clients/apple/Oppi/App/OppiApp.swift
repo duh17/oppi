@@ -1826,10 +1826,10 @@ struct OppiApp: App {
         }
         if selectedServerReady {
             MetricKitService.shared.setUploadClient(preparedConnection.apiClient)
-        } else {
-            launchConnection.workspaceStore.markSyncFailed()
-            launchConnection.sessionStore.markSyncFailed()
         }
+        // Transport not-ready is not a catalog/session sync failure. Keep the
+        // cached inbox and Connecting/Recovering until an actual list request
+        // fails. Launch telemetry below still records offline_cache_only.
 
         // Prepare other paired servers even when the selected server is offline.
         // One unavailable host must not suppress their refresh, push, or metrics setup.
