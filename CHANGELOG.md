@@ -38,7 +38,14 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi runtime `0.84.2`, and unpublished `oppi-mirror@0.47.0`.
+## [0.47.0] - 2026-08-20
+
+Target: iOS `1.1.1` build `46`, `oppi-server@0.47.0` with bundled Pi runtime `0.84.2`, and `oppi-mirror@0.47.0`.
+
+### Notes
+
+- Published npm `oppi-server@0.47.0` and `oppi-mirror@0.47.0` from `ff4c989f`.
+- iOS `1.1.1` build `46` remains the coordinated client target.
 
 ### Added
 
@@ -67,6 +74,11 @@ Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi
 ### Removed
 
 - **Client/Server:** Iroh pairing and the public `piSessionId` dual-ID path.
+
+### Migration notes
+
+- **Server:** Update npm installs with `npm install -g oppi-server@0.47.0`. App-managed runtimes update through the Oppi app bundle, not `oppi update`.
+- **Mirror extension:** Install or refresh `oppi-mirror@0.47.0`, then use `/reload` in any already-running interactive Pi session.
 
 ## [0.46.0] - 2026-08-10
 
