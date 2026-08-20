@@ -449,7 +449,9 @@ const sandboxGrepSchema = Type.Object({
     Type.Boolean({ description: "Case-insensitive search (default: false)" }),
   ),
   literal: Type.Optional(
-    Type.Boolean({ description: "Treat pattern as literal string instead of regex (default: false)" }),
+    Type.Boolean({
+      description: "Treat pattern as literal string instead of regex (default: false)",
+    }),
   ),
   context: Type.Optional(
     Type.Number({
@@ -523,10 +525,8 @@ export function createSandboxGrepToolDefinition(
       const ignoreCase = params.ignoreCase === true;
       const literal = params.literal === true;
       const glob = typeof params.glob === "string" ? params.glob : undefined;
-      const context =
-        typeof params.context === "number" && params.context > 0 ? params.context : 0;
-      const limit =
-        typeof params.limit === "number" && params.limit > 0 ? params.limit : 100;
+      const context = typeof params.context === "number" && params.context > 0 ? params.context : 0;
+      const limit = typeof params.limit === "number" && params.limit > 0 ? params.limit : 100;
 
       const rgPath = await detectGuestRg(vm, guestWorkspace, signal);
       // Gondolin array exec is execve-style and does not search PATH.
