@@ -1233,6 +1233,25 @@ private struct WorkspaceSidebarDragState {
     var horizontalTranslation: CGFloat = 0
 }
 
+/// Compact-drawer scroll ownership for the inbox `List`.
+///
+/// The leading-edge reveal is a `simultaneousGesture`, so the inbox collection
+/// view stays tracking unless we disable it after horizontal intent. UIKit then
+/// draws the trailing indicator on the peeking sliver. Hide that indicator for
+/// the whole `progress > 0` window, including the settled peek.
+enum WorkspaceInboxSidebarScrollPolicy {
+    static func shouldDisableInboxScrolling(
+        isHorizontalReveal: Bool,
+        sidebarProgress: CGFloat
+    ) -> Bool {
+        isHorizontalReveal || sidebarProgress > 0
+    }
+
+    static func shouldHideInboxScrollIndicators(sidebarProgress: CGFloat) -> Bool {
+        sidebarProgress > 0
+    }
+}
+
 /// Sessions-first home surface for compact widths.
 ///
 /// Layout: the workspace sidebar sits *beneath* the session layer. The session
@@ -1273,6 +1292,13 @@ struct WorkspaceSessionInboxStackRootView: View {
             // The edge-pan fights the interactive back-swipe once a destination
             // is pushed, so only arm it at the stack root.
             let edgePanEnabled = nav.workspacePath.isEmpty && !isSidebarPresented
+            let disableInboxScrolling = WorkspaceInboxSidebarScrollPolicy.shouldDisableInboxScrolling(
+                isHorizontalReveal: sidebarDrag.axis == .horizontal,
+                sidebarProgress: sidebarProgress
+            )
+            let hideInboxIndicators = WorkspaceInboxSidebarScrollPolicy.shouldHideInboxScrollIndicators(
+                sidebarProgress: sidebarProgress
+            )
 
             ZStack(alignment: .topLeading) {
                 // Base backdrop: the corner cutouts and safe-area strips revealed
@@ -1299,6 +1325,10 @@ struct WorkspaceSessionInboxStackRootView: View {
                     SessionInboxView(
                         onOpenSidebar: { settleSidebar(open: true) }
                     )
+                    // Keep these on the inbox root only. Applying them to the
+                    // NavigationStack would leak into pushed chat.
+                    .scrollDisabled(disableInboxScrolling)
+                    .scrollIndicators(hideInboxIndicators ? .hidden : .automatic, axes: .vertical)
                     .navigationDestination(for: WorkspaceNavTarget.self) { target in
                         WorkspaceScopedDestinationView(target: target)
                     }
