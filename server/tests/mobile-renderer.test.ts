@@ -164,7 +164,7 @@ describe("oppi renderer", () => {
       args: ["session", "trace-page", "sess-1", "--target-events", "20"],
       title: "oppi session trace-page",
     },
-    { args: ["session", "wait", "sess-1", "--for", "idle"], title: "oppi session wait" },
+    { args: ["session", "wait", "sess-1", "--for", "idle"], title: "oppi session wait sess-1 · idle" },
     {
       args: ["session", "create", "--workspace", "ws-1", "--prompt", "Review"],
       title: "oppi session create",
@@ -221,6 +221,43 @@ describe("oppi renderer", () => {
 
     expect(textOf(segs)).toBe("oppi session send");
     expect(textOf(segs)).not.toContain("private message");
+  });
+
+  it("includes shortened wait targets and the effective condition immediately", () => {
+    const segs = reg.renderCall("oppi", {
+      args: [
+        "session",
+        "wait",
+        "5c6965d2-591a-4f6c-9676-f7fa400cf370",
+        "--for",
+        "either",
+        "--timeout",
+        "20m",
+      ],
+    });
+
+    expect(textOf(segs)).toBe("oppi session wait 5c6965d2… · either");
+    expect(textOf(segs)).not.toContain("20m");
+    expect(textOf(segs)).not.toContain("--timeout");
+  });
+
+  it("keeps short wait ids as-is and defaults omitted --for to either", () => {
+    expect(textOf(reg.renderCall("oppi", { args: ["session", "wait", "sess-1"] }))).toBe(
+      "oppi session wait sess-1 · either",
+    );
+    expect(
+      textOf(reg.renderCall("oppi", { args: ["session", "wait", "VdIJFnVV", "--for", "idle"] })),
+    ).toBe("oppi session wait VdIJFnVV · idle");
+  });
+
+  it("caps wait titles at two ids then +N", () => {
+    expect(
+      textOf(
+        reg.renderCall("oppi", {
+          args: ["session", "wait", "one", "two", "three", "four", "--timeout", "5m"],
+        }),
+      ),
+    ).toBe("oppi session wait one two +2 · either");
   });
 
   it("shows a concise result count for session search", () => {

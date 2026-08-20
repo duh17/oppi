@@ -137,6 +137,7 @@ export async function executePreparedOppiCommand(options: {
   dataDir?: string;
   cwd?: string;
   signal?: AbortSignal;
+  onLiveSnapshot?: (text: string) => void;
 }): Promise<OppiToolCommandResult> {
   if (!authenticPreparedCommands.has(options.prepared)) {
     throw new Error("Unrecognized prepared Oppi command");
@@ -153,6 +154,7 @@ export async function executePreparedOppiCommand(options: {
     captureHuman: true,
     forceJson: true,
     ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.onLiveSnapshot ? { onLiveSnapshot: options.onLiveSnapshot } : {}),
   });
 }
 
@@ -311,7 +313,7 @@ export function createOppiToolExtensionFactory(options: {
             : [],
       }),
       executionMode: "sequential",
-      async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params, signal, onUpdate, ctx) {
         if (
           !Array.isArray(params.args) ||
           !params.args.every((value): value is string => typeof value === "string")
@@ -360,6 +362,16 @@ export function createOppiToolExtensionFactory(options: {
               ...(dataDir !== undefined ? { dataDir } : {}),
               ...(cwd !== undefined ? { cwd } : {}),
               ...(approvedSignal ? { signal: approvedSignal } : {}),
+              ...(typeof onUpdate === "function"
+                ? {
+                    onLiveSnapshot: (text: string) => {
+                      onUpdate({
+                        content: [{ type: "text" as const, text }],
+                        details: { presentationFormat: "markdown" as const },
+                      });
+                    },
+                  }
+                : {}),
             }),
         });
 

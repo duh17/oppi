@@ -74,6 +74,54 @@ function safeTitlePart(value: string, max = 40): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
+const waitBooleanFlags = new Set(["--all", "--json", "--help", "-h"]);
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function shortenWaitSessionId(id: string): string {
+  return uuidPattern.test(id) ? `${id.slice(0, 8)}…` : id;
+}
+
+/** Collapsed wait titles include targets and --for immediately from args. */
+function waitTitleSuffix(commandArgs: string[]): string {
+  const ids: string[] = [];
+  let condition = "either";
+  for (let index = 2; index < commandArgs.length; index += 1) {
+    const arg = commandArgs[index];
+    if (!arg) continue;
+    if (arg === "--for") {
+      const value = commandArgs[index + 1];
+      if (value && !value.startsWith("--")) {
+        condition = value;
+        index += 1;
+      }
+      continue;
+    }
+    if (arg.startsWith("--for=")) {
+      const value = arg.slice("--for=".length);
+      if (value) condition = value;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      const flag = arg.split("=", 1)[0] ?? arg;
+      if (!waitBooleanFlags.has(flag) && !arg.includes("=")) {
+        const next = commandArgs[index + 1];
+        if (next && !next.startsWith("-")) index += 1;
+      }
+      continue;
+    }
+    ids.push(arg);
+  }
+
+  const shown = ids
+    .slice(0, 2)
+    .map((id) => safeTitlePart(shortenWaitSessionId(id)))
+    .filter(Boolean);
+  const extra = ids.length > 2 ? ` +${ids.length - 2}` : "";
+  const idPart = shown.length > 0 ? ` ${shown.join(" ")}${extra}` : "";
+  return `${idPart} · ${safeTitlePart(condition, 20) || "either"}`;
+}
+
 const styledSegmentStyles = new Set([
   "bold",
   "muted",
@@ -459,10 +507,12 @@ const oppi: MobileToolRenderer = {
       resource === "command" || commandArgs[1]?.startsWith("--")
         ? ""
         : safeTitlePart(commandArgs[1] || "");
+    const waitSuffix =
+      resource === "session" && action === "wait" ? waitTitleSuffix(commandArgs) : "";
     return [
       { text: "oppi ", style: "bold" },
       { text: resource, style: "accent" },
-      ...(action ? [{ text: ` ${action}`, style: "muted" as const }] : []),
+      ...(action ? [{ text: ` ${action}${waitSuffix}`, style: "muted" as const }] : []),
     ];
   },
   renderResult(details, isError) {

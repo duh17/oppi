@@ -828,6 +828,49 @@ describe("thin Oppi extension", () => {
     });
   });
 
+  it("streams wait live snapshots through onUpdate without changing the final JSON envelope", async () => {
+    const snapshot = [
+      "Waiting for either",
+      "",
+      "child",
+      "oppi://session/sess-1",
+      "status=busy  tools=1",
+    ].join("\n");
+    canonicalRun.mockImplementation(async (_args, options) => {
+      options?.onLiveSnapshot?.(snapshot);
+      return successfulRun();
+    });
+    const onUpdate = vi.fn();
+    const tool = registeredTool();
+
+    const result = (await tool.execute(
+      "call-wait-live",
+      { args: ["session", "wait", "sess-1", "--for", "either"] },
+      undefined,
+      onUpdate,
+      { hasUI: false, ui: {} },
+    )) as {
+      content: Array<{ type: string; text: string }>;
+      details: { presentationFormat?: string; outcome?: string };
+    };
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate).toHaveBeenCalledWith({
+      content: [{ type: "text", text: snapshot }],
+      details: { presentationFormat: "markdown" },
+    });
+    expect(canonicalRun).toHaveBeenCalledOnce();
+    expect(canonicalRun.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        forceJson: true,
+        onLiveSnapshot: expect.any(Function),
+      }),
+    );
+    expect(result.content[0]?.text).toContain('"ok": true');
+    expect(result.details.outcome).toBe("result");
+    expect(result.details.presentationFormat).toBe("terminal");
+  });
+
   it("fails closed when the tool has no confirmation UI for a required approval", async () => {
     const tool = registeredTool("confirmAllChanges");
 

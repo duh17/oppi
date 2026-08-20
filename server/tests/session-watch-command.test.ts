@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { parseWatchCondition, runSessionWatch } from "../src/cli/commands/session-watch.js";
+import {
+  formatWaitLiveSnapshot,
+  parseWatchCondition,
+  runSessionWatch,
+} from "../src/cli/commands/session-watch.js";
 import { sleepWithSignal } from "../src/cli/commands/wait.js";
 
 function errorWithStatus(message: string, status: number): Error & { status: number } {
@@ -394,6 +398,177 @@ describe("session wait poller contract", () => {
     await vi.advanceTimersByTimeAsync(30);
     const result = await settled;
     expect(result.status).toBe("rejected");
+    expect(summaries).not.toHaveBeenCalled();
+  });
+
+  it("formats a live wait card with name, deep link, status, tools, and last snippet", () => {
+    expect(
+      formatWaitLiveSnapshot("either", {
+        ts: 1,
+        elapsedMs: 2_000,
+        sessions: [
+          {
+            sessionId: "5c6965d2-591a-4f6c-9676-f7fa400cf370",
+            name: "impl-detached-timeline-follow-20260819",
+            status: "busy",
+            toolsThisTurn: 3,
+            last: "Good, it's busy and already working...",
+          },
+        ],
+      }),
+    ).toBe(
+      [
+        "Waiting for either",
+        "",
+        "impl-detached-timeline-follow-20260819",
+        "oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370",
+        "status=busy  tools=3",
+        "",
+        "Last:",
+        "Good, it's busy and already working...",
+      ].join("\n"),
+    );
+  });
+
+  it("emits a live snapshot after the first incomplete poll", async () => {
+    vi.useFakeTimers();
+    const live = vi.fn();
+    const summaries = vi.fn();
+    const promise = runSessionWatch(
+      ["5c6965d2-591a-4f6c-9676-f7fa400cf370"],
+      {
+        condition: "either",
+        requireAll: false,
+        intervalMs: 20,
+        timeoutMs: 80,
+        summaryEveryMs: 60_000,
+        onSummary: summaries,
+        onLiveSnapshot: live,
+      },
+      async <T>(path: string): Promise<T> => {
+        if (path.endsWith("/dialogs")) return { dialogs: [] } as T;
+        return {
+          session: {
+            status: "busy",
+            name: "impl-detached-timeline-follow-20260819",
+            lastMessage: "Good, it's busy and already working...",
+          },
+          events: [{ type: "tool_start" }, { type: "tool_start" }, { type: "tool_start" }],
+          currentSeq: 1,
+        } as T;
+      },
+      vi.fn(),
+    );
+    const settled = promise.then(
+      (value) => ({ status: "resolved" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(summaries).not.toHaveBeenCalled();
+    expect(live).toHaveBeenCalledTimes(1);
+    expect(live.mock.calls[0]?.[0]).toContain("Waiting for either");
+    expect(live.mock.calls[0]?.[0]).toContain("impl-detached-timeline-follow-20260819");
+    expect(live.mock.calls[0]?.[0]).toContain(
+      "oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370",
+    );
+    expect(live.mock.calls[0]?.[0]).toContain("status=busy  tools=3");
+    expect(live.mock.calls[0]?.[0]).toContain("Good, it's busy and already working...");
+
+    await vi.advanceTimersByTimeAsync(80);
+    const result = await settled;
+    expect(result.status).toBe("rejected");
+    expect(live).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not emit a live snapshot when the baseline is already idle", async () => {
+    const live = vi.fn();
+    await runSessionWatch(
+      ["s"],
+      {
+        condition: "idle",
+        requireAll: false,
+        intervalMs: 10,
+        timeoutMs: 100,
+        onLiveSnapshot: live,
+      },
+      async <T>(): Promise<T> =>
+        ({ session: { status: "ready", name: "done-child" }, events: [], currentSeq: 1 }) as T,
+      vi.fn(),
+    );
+
+    expect(live).not.toHaveBeenCalled();
+  });
+
+  it("replaces the live snapshot on 60s summaries", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const live = vi.fn();
+    const summaries = vi.fn();
+    const promise = runSessionWatch(
+      ["s"],
+      {
+        condition: "idle",
+        requireAll: false,
+        intervalMs: 10,
+        timeoutMs: 80,
+        summaryEveryMs: 25,
+        onSummary: summaries,
+        onLiveSnapshot: live,
+      },
+      async <T>(): Promise<T> => ({ session: { status: "busy", name: "child" }, events: [] }) as T,
+      vi.fn(),
+    );
+    const settled = promise.then(
+      (value) => ({ status: "resolved" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live).toHaveBeenCalledTimes(1);
+    expect(summaries).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(30);
+    await vi.advanceTimersByTimeAsync(30);
+    await vi.advanceTimersByTimeAsync(20);
+    const result = await settled;
+    expect(result.status).toBe("rejected");
+    expect(summaries.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(live.mock.calls.length).toBe(1 + summaries.mock.calls.length);
+  });
+
+  it("still emits the initial live snapshot when summaryEveryMs is 0", async () => {
+    vi.useFakeTimers();
+    const live = vi.fn();
+    const summaries = vi.fn();
+    const promise = runSessionWatch(
+      ["s"],
+      {
+        condition: "idle",
+        requireAll: false,
+        intervalMs: 10,
+        timeoutMs: 30,
+        summaryEveryMs: 0,
+        onSummary: summaries,
+        onLiveSnapshot: live,
+      },
+      async <T>(): Promise<T> => ({ session: { status: "busy" }, events: [] }) as T,
+      vi.fn(),
+    );
+    const settled = promise.then(
+      (value) => ({ status: "resolved" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(live).toHaveBeenCalledTimes(1);
+    expect(live.mock.calls[0]?.[0]).toContain("Waiting for idle");
+    expect(summaries).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(30);
+    const result = await settled;
+    expect(result.status).toBe("rejected");
+    expect(live).toHaveBeenCalledTimes(1);
     expect(summaries).not.toHaveBeenCalled();
   });
 });

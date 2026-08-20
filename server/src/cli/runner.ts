@@ -33,6 +33,7 @@ export type CliRunOptions = Readonly<{
   captureHuman?: boolean;
   forceJson?: boolean;
   signal?: AbortSignal;
+  onLiveSnapshot?: (text: string) => void;
 }>;
 
 export type CliRunResult = Readonly<{
@@ -150,11 +151,15 @@ async function executeUnscopedCliCommand(
         positional.slice(1),
         flags,
         options.cwd ?? process.cwd(),
-        options.callerSessionId || options.signal || options.sandboxScope
+        options.callerSessionId ||
+        options.signal ||
+        options.sandboxScope ||
+        options.onLiveSnapshot
           ? {
               ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
               ...(options.sandboxScope ? { sandboxScope: options.sandboxScope } : {}),
               ...(options.signal ? { signal: options.signal } : {}),
+              ...(options.onLiveSnapshot ? { onLiveSnapshot: options.onLiveSnapshot } : {}),
             }
           : undefined,
       );

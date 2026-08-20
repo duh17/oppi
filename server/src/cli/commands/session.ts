@@ -67,6 +67,8 @@ export interface SessionCliCallerContext {
   sandboxScope?: SandboxOppiScope;
   /** Cancels long-running in-process session commands such as wait polling. */
   signal?: AbortSignal;
+  /** UI-only wait snapshots. Not printed on the human CLI. */
+  onLiveSnapshot?: (text: string) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -209,6 +211,9 @@ export async function cmdSession(
             if (progress.length < 50) progress.push(snapshot);
             if (!jsonOutput) writeHumanLine(formatWaitProgress(snapshot));
           },
+          ...(callerContext.onLiveSnapshot
+            ? { onLiveSnapshot: callerContext.onLiveSnapshot }
+            : {}),
           ...(callerContext.signal ? { signal: callerContext.signal } : {}),
         },
         call,

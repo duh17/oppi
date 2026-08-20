@@ -749,6 +749,54 @@ struct ToolPresentationBuilderTests {
         #expect(config.copyOutputText == content)
     }
 
+    @Test("expanded running generic tool shows streamed output instead of waiting placeholder")
+    func expandedRunningGenericToolShowsStreamedOutput() {
+        let snapshot = """
+        Waiting for either
+
+        impl-detached-timeline-follow-20260819
+        oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370
+        status=busy  tools=3
+
+        Last:
+        Good, it's busy and already working...
+        """
+
+        let empty = ToolPresentationBuilder.build(
+            itemID: "t-empty", tool: "oppi",
+            argsSummary: "session wait 5c6965d2 --for either",
+            outputPreview: "",
+            isError: false, isDone: false,
+            context: emptyContext(expanded: ["t-empty"])
+        )
+        guard case .status(let placeholder) = empty.expandedContent else {
+            Issue.record("Expected .status placeholder while output is empty")
+            return
+        }
+        #expect(placeholder == "Waiting for output…")
+
+        let streamed = ToolPresentationBuilder.build(
+            itemID: "t-wait", tool: "oppi",
+            argsSummary: "session wait 5c6965d2 --for either",
+            outputPreview: snapshot,
+            isError: false, isDone: false,
+            context: emptyContext(
+                details: .object(["presentationFormat": .string("markdown")]),
+                expanded: ["t-wait"],
+                fullOutput: snapshot
+            )
+        )
+
+        guard case .markdown(let text) = streamed.expandedContent else {
+            Issue.record("Expected streamed snapshot as markdown, got \(String(describing: streamed.expandedContent))")
+            return
+        }
+        #expect(text.contains("Waiting for either"))
+        #expect(text.contains("oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370"))
+        #expect(text.contains("status=busy  tools=3"))
+        #expect(!text.contains("Waiting for output…"))
+    }
+
     @Test("streaming expanded tool without body renders status placeholder")
     func streamingExpandedToolWithoutBodyRendersStatusPlaceholder() {
         let config = ToolPresentationBuilder.build(

@@ -31,6 +31,7 @@ interface WatchSessionState {
   outputDelta: string;
   seenBaseline: boolean;
   met: boolean;
+  name?: string;
 }
 
 interface WatchTransition {
@@ -67,6 +68,8 @@ export type WaitProgressSession = {
   status?: string;
   pendingDialogs?: number;
   toolsThisTurn: number;
+  name?: string;
+  last?: string;
 };
 
 export type WaitProgressSnapshot = {
@@ -83,6 +86,8 @@ interface WatchOptions {
   /** 0 disables heartbeats. Used by wait, not by streaming watch. */
   summaryEveryMs?: number;
   onSummary?: (snapshot: WaitProgressSnapshot) => void;
+  /** UI-only full-card replacements. Not printed on the human CLI. */
+  onLiveSnapshot?: (text: string) => void;
   signal?: AbortSignal;
 }
 
@@ -117,6 +122,61 @@ export function parseWatchCondition(
   throw new Error("condition must be idle, attention, either, or any-change");
 }
 
+const MAX_LIVE_LAST_CHARS = 280;
+
+function recordSessionName(state: WatchSessionState, name: unknown): void {
+  if (typeof name === "string" && name.trim()) state.name = name.trim();
+}
+
+function truncateLiveLast(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= MAX_LIVE_LAST_CHARS) return normalized;
+  return `${normalized.slice(0, MAX_LIVE_LAST_CHARS - 1)}…`;
+}
+
+export function formatWaitLiveSnapshot(
+  condition: SessionWatchCondition,
+  snapshot: WaitProgressSnapshot,
+): string {
+  const blocks = snapshot.sessions.map((session) => {
+    const lines: string[] = [];
+    if (session.name) lines.push(session.name);
+    lines.push(`oppi://session/${session.sessionId}`);
+    const dialogs =
+      typeof session.pendingDialogs === "number" && session.pendingDialogs > 0
+        ? `  dialogs=${session.pendingDialogs}`
+        : "";
+    lines.push(`status=${session.status ?? "?"}  tools=${session.toolsThisTurn}${dialogs}`);
+    if (session.last) {
+      lines.push("", "Last:", truncateLiveLast(session.last));
+    }
+    return lines.join("\n");
+  });
+  return [`Waiting for ${condition}`, "", blocks.join("\n\n")].join("\n");
+}
+
+function waitProgressSnapshot(
+  ids: string[],
+  states: Map<string, WatchSessionState>,
+  startedAt: number,
+): WaitProgressSnapshot {
+  return {
+    ts: Date.now(),
+    elapsedMs: Date.now() - startedAt,
+    sessions: ids.map((id) => {
+      const state = states.get(id);
+      return {
+        sessionId: id,
+        toolsThisTurn: state?.toolsThisTurn ?? 0,
+        ...(state?.status !== undefined ? { status: state.status } : {}),
+        ...(state?.pendingDialogs !== undefined ? { pendingDialogs: state.pendingDialogs } : {}),
+        ...(state?.name !== undefined ? { name: state.name } : {}),
+        ...(state?.last !== undefined ? { last: state.last } : {}),
+      };
+    }),
+  };
+}
+
 function isIdleSessionStatus(status: string | undefined): boolean {
   // A turn has settled once the runtime leaves the working states. Terminal stopped/error
   // sessions also count as idle so a supervisor wait resolves instead of timing out.
@@ -140,7 +200,7 @@ async function observeSession(
 
   try {
     const events = await call<{
-      session?: { status?: string; messageCount?: number; lastMessage?: string };
+      session?: { status?: string; messageCount?: number; lastMessage?: string; name?: string };
       events?: Array<Record<string, unknown>>;
       currentSeq?: number;
     }>(
@@ -148,6 +208,7 @@ async function observeSession(
       signal ? { signal } : undefined,
     );
     status = events.session?.status;
+    recordSessionName(state, events.session?.name);
     if (typeof events.session?.messageCount === "number") {
       state.messageCount = events.session.messageCount;
     }
@@ -171,9 +232,10 @@ async function observeSession(
     throwIfAborted(signal);
     if (apiStatus(err) === 404) {
       const snapshot = await call<{
-        session?: { status?: string; messageCount?: number; lastMessage?: string };
+        session?: { status?: string; messageCount?: number; lastMessage?: string; name?: string };
       }>(`/sessions/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
       status = snapshot.session?.status;
+      recordSessionName(state, snapshot.session?.name);
       if (typeof snapshot.session?.messageCount === "number") {
         state.messageCount = snapshot.session.messageCount;
       }
@@ -307,6 +369,7 @@ export async function runSessionWatch(
   const startedAt = Date.now();
   const summaryEveryMs = options.summaryEveryMs ?? 0;
   let lastSummaryAt = startedAt;
+  let emittedLiveSnapshot = false;
 
   for (;;) {
     for (const id of ids) {
@@ -377,23 +440,15 @@ export async function runSessionWatch(
         ids.filter((id) => !states.get(id)?.met),
       );
     }
+    const progress = waitProgressSnapshot(ids, states, startedAt);
+    if (!emittedLiveSnapshot) {
+      emittedLiveSnapshot = true;
+      options.onLiveSnapshot?.(formatWaitLiveSnapshot(options.condition, progress));
+    }
     if (summaryEveryMs > 0 && Date.now() - lastSummaryAt >= summaryEveryMs) {
       lastSummaryAt = Date.now();
-      options.onSummary?.({
-        ts: lastSummaryAt,
-        elapsedMs: lastSummaryAt - startedAt,
-        sessions: ids.map((id) => {
-          const state = states.get(id);
-          return {
-            sessionId: id,
-            toolsThisTurn: state?.toolsThisTurn ?? 0,
-            ...(state?.status !== undefined ? { status: state.status } : {}),
-            ...(state?.pendingDialogs !== undefined
-              ? { pendingDialogs: state.pendingDialogs }
-              : {}),
-          };
-        }),
-      });
+      options.onSummary?.(progress);
+      options.onLiveSnapshot?.(formatWaitLiveSnapshot(options.condition, progress));
     }
     await sleepWithSignal(
       Math.min(options.intervalMs, Math.max(0, deadline - Date.now())),
