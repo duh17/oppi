@@ -1541,3 +1541,267 @@ struct AssistantTimelineRowContentViewTests {
         return mdView
     }
 }
+
+@Suite("Native table markdown link routing")
+@MainActor
+struct NativeTableMarkdownLinkRoutingTests {
+    @Test func clipAndWrapModeCellsShareTheTableDelegate() throws {
+        let clipTable = makeClipTable(linkURL: "https://example.com/docs")
+        let wrapTable = makeWrapTable(linkURL: "https://example.com/docs")
+
+        let clipCells = visibleTableTextViews(in: clipTable)
+        let wrapCells = visibleTableTextViews(in: wrapTable)
+
+        #expect(clipCells.count == 1, "Short tables should stay in clip mode")
+        #expect(wrapCells.count > 1, "A clamped column should enter wrap mode")
+        #expect(clipCells.allSatisfy { $0.delegate === clipTable })
+        #expect(wrapCells.allSatisfy { $0.delegate === wrapTable })
+    }
+
+    @Test func httpsClipModeCellTapPostsWebLinkTapped() throws {
+        let url = try #require(URL(string: "https://example.com/docs"))
+        try expectTableTap(
+            on: makeClipTable(linkURL: url.absoluteString),
+            url: url,
+            posts: .webLinkTapped,
+            object: url
+        )
+    }
+
+    @Test func httpsWrapModeCellTapPostsWebLinkTapped() throws {
+        let url = try #require(URL(string: "https://example.com/docs"))
+        try expectTableTap(
+            on: makeWrapTable(linkURL: url.absoluteString),
+            url: url,
+            posts: .webLinkTapped,
+            object: url
+        )
+    }
+
+    @Test func sessionCellTapPostsInAppDeepLinkWithSourceServer() throws {
+        let url = try #require(URL(string: "oppi://session/RV97TbYj"))
+        var receivedURL: URL?
+        var receivedSourceServerID: String?
+        let observer = NotificationCenter.default.addObserver(
+            forName: .inAppDeepLinkTapped,
+            object: nil,
+            queue: .main
+        ) { notification in
+            receivedURL = notification.object as? URL
+            receivedSourceServerID = notification.userInfo?[
+                Notification.Name.inAppDeepLinkSourceServerIDKey
+            ] as? String
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let tableView = makeClipTable(linkURL: url.absoluteString)
+        var defaultUsed = false
+        let defaultAction = UIAction { _ in defaultUsed = true }
+        let action = try #require(tableView.primaryAction(for: url, defaultAction: defaultAction))
+        #expect(action !== defaultAction)
+        action.performWithSender(nil, target: nil)
+
+        #expect(receivedURL == url)
+        #expect(receivedSourceServerID == "server-1")
+        #expect(!defaultUsed)
+    }
+
+    @Test func fileCellTapPostsFileLinkTapped() throws {
+        let url = try #require(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
+        let tableView = makeClipTable(linkURL: url.absoluteString)
+        var received: FileLinkPayload?
+        let observer = NotificationCenter.default.addObserver(
+            forName: .fileLinkTapped,
+            object: nil,
+            queue: .main
+        ) { notification in
+            received = notification.object as? FileLinkPayload
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        var defaultUsed = false
+        let defaultAction = UIAction { _ in defaultUsed = true }
+        let action = try #require(tableView.primaryAction(for: url, defaultAction: defaultAction))
+        #expect(action !== defaultAction)
+        action.performWithSender(nil, target: nil)
+
+        let payload = try #require(received)
+        #expect(payload.workspaceID == "workspace-1")
+        #expect(payload.filePath == "/Users/example/workspace/oppi/server/src/server.ts")
+        #expect(payload.originalURL == url)
+        #expect(!defaultUsed)
+    }
+
+    @Test func wikiCellTapStillPostsResourceReferenceTapped() throws {
+        let reference = ResourceReference(
+            target: "RV97TbYj",
+            sourceServerID: "server-1",
+            workspaceID: "workspace-1",
+            sourceSessionID: "session-source",
+            fileCandidatePath: "RV97TbYj.md"
+        )
+        let url = try #require(ResourceReferenceURL.make(reference))
+        try expectTableTap(
+            on: makeClipTable(linkURL: url.absoluteString),
+            url: url,
+            posts: .resourceReferenceTapped,
+            object: reference
+        )
+    }
+
+    @Test func inviteCellTapPostsInviteDeepLinkTapped() throws {
+        let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload"))
+        try expectTableTap(
+            on: makeClipTable(linkURL: url.absoluteString),
+            url: url,
+            posts: .inviteDeepLinkTapped,
+            object: url
+        )
+    }
+
+    @Test func trailingEncodedBacktickIsNormalizedBeforeRouting() throws {
+        let rawURL = try #require(URL(string: "https://example.com/docs%60"))
+        let normalizedURL = try #require(URL(string: "https://example.com/docs"))
+        try expectTableTap(
+            on: makeClipTable(linkURL: rawURL.absoluteString),
+            url: rawURL,
+            posts: .webLinkTapped,
+            object: normalizedURL
+        )
+    }
+
+    @Test func mailtoCellTapUsesSystemDefault() throws {
+        let url = try #require(URL(string: "mailto:support@example.com"))
+        let tableView = makeClipTable(linkURL: url.absoluteString)
+        var defaultUsed = false
+        let defaultAction = UIAction { _ in defaultUsed = true }
+        let action = try #require(tableView.primaryAction(for: url, defaultAction: defaultAction))
+        #expect(action === defaultAction)
+        action.performWithSender(nil, target: nil)
+        #expect(defaultUsed)
+    }
+}
+
+@Suite("Native table nested scroll ownership")
+@MainActor
+struct NativeTableNestedScrollOwnershipTests {
+    @Test func selectableClipAndWrapTableCellsRejectVerticalPan() throws {
+        try expectSelectableNonScrollableTableCellsRejectVerticalPan(
+            makeClipTable(linkURL: "https://example.com/docs")
+        )
+        try expectSelectableNonScrollableTableCellsRejectVerticalPan(
+            makeWrapTable(linkURL: "https://example.com/docs")
+        )
+    }
+}
+
+@MainActor
+private func makeClipTable(linkURL: String) -> NativeTableBlockView {
+    makeNativeTable(
+        headers: [[.text("Link")]],
+        rows: [[[.link(children: [.text("docs")], destination: linkURL)]]]
+    )
+}
+
+@MainActor
+private func makeWrapTable(linkURL: String) -> NativeTableBlockView {
+    let longNotes = String(repeating: "wrap-column-notes-", count: 20)
+    return makeNativeTable(
+        headers: [[.text("Link")], [.text("Notes")]],
+        rows: [[
+            [.link(children: [.text("docs")], destination: linkURL)],
+            [.text(longNotes)],
+        ]]
+    )
+}
+
+@MainActor
+private func makeNativeTable(
+    headers: [[MarkdownInline]],
+    rows: [[[MarkdownInline]]],
+    serverID: String? = "server-1",
+    workspaceID: String? = "workspace-1"
+) -> NativeTableBlockView {
+    let tableView = NativeTableBlockView()
+    tableView.configureResourceReferenceScope(serverID: serverID, workspaceID: workspaceID)
+    tableView.apply(
+        headers: headers,
+        rows: rows,
+        palette: ThemeRuntimeState.currentPalette()
+    )
+    tableView.frame = CGRect(x: 0, y: 0, width: 370, height: 220)
+    tableView.layoutIfNeeded()
+    return tableView
+}
+
+@MainActor
+private func visibleTableTextViews(in tableView: NativeTableBlockView) -> [UITextView] {
+    timelineAllTextViews(in: tableView).filter { !$0.isHidden && $0.bounds.width > 1 }
+}
+
+@MainActor
+private func expectTableTap(
+    on tableView: NativeTableBlockView,
+    url: URL,
+    posts name: Notification.Name,
+    object expected: Any
+) throws {
+    var received: Any?
+    let observer = NotificationCenter.default.addObserver(
+        forName: name,
+        object: nil,
+        queue: .main
+    ) { notification in
+        received = notification.object
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    var defaultUsed = false
+    let defaultAction = UIAction { _ in defaultUsed = true }
+    let action = try #require(tableView.primaryAction(for: url, defaultAction: defaultAction))
+    #expect(action !== defaultAction)
+    action.performWithSender(nil, target: nil)
+
+    #expect(!defaultUsed)
+    if let expectedURL = expected as? URL {
+        #expect(received as? URL == expectedURL)
+    } else if let expectedReference = expected as? ResourceReference {
+        #expect(received as? ResourceReference == expectedReference)
+    } else {
+        Issue.record("Unsupported expected notification object \(expected)")
+    }
+}
+
+@MainActor
+private func expectSelectableNonScrollableTableCellsRejectVerticalPan(
+    _ tableView: NativeTableBlockView
+) throws {
+    // Attach so UITextView's pan recognizer is live. Without that, the default
+    // `gestureRecognizerShouldBegin` path may not return true for selectable
+    // non-scrollable cells, and the oracle would not go red.
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.addSubview(tableView)
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    tableView.layoutIfNeeded()
+
+    let cells = visibleTableTextViews(in: tableView)
+    #expect(!cells.isEmpty)
+    for cell in cells {
+        #expect(cell.isSelectable)
+        #expect(!cell.isScrollEnabled)
+        #expect(
+            cell.gestureRecognizerShouldBegin(cell.panGestureRecognizer) == false,
+            "Selectable non-scrollable table cells must reject vertical pan"
+        )
+    }
+
+    let nestedScroll = try #require(
+        timelineAllScrollViews(in: tableView).compactMap { $0 as? HorizontalPanPassthroughScrollView }.first
+    )
+    nestedScroll.panVelocityOverrideForTesting = CGPoint(x: -240, y: 6)
+    #expect(
+        nestedScroll.gestureRecognizerShouldBegin(nestedScroll.panGestureRecognizer),
+        "Nested HorizontalPanPassthroughScrollView must still begin horizontal pan"
+    )
+}

@@ -1342,26 +1342,49 @@ final class NativeTableBlockView: UIView {
 }
 
 extension NativeTableBlockView: UITextViewDelegate {
+    /// Classify a table-cell URL for tap/long-press behavior. Exposed for testing.
+    func classifyLink(_ url: URL) -> LinkAction {
+        MarkdownLinkInteractionSupport.classify(
+            url,
+            serverID: resourceReferenceServerID,
+            workspaceID: resourceReferenceWorkspaceID
+        )
+    }
+
+    /// Clip-mode and wrap-mode cells share this helper via the table delegate.
+    func primaryAction(for url: URL, defaultAction: UIAction) -> UIAction? {
+        MarkdownLinkInteractionSupport.primaryAction(
+            for: classifyLink(url),
+            defaultAction: defaultAction
+        )
+    }
+
     func textView(
         _ textView: UITextView,
         primaryActionFor textItem: UITextItem,
         defaultAction: UIAction
     ) -> UIAction? {
-        guard case let .link(url) = textItem.content,
-              let reference = ResourceReferenceURL.parse(url),
-              ResourceReferenceTapScope.matches(
-                reference,
-                serverID: resourceReferenceServerID,
-                workspaceID: resourceReferenceWorkspaceID
-              ) else {
+        guard case let .link(url) = textItem.content else {
             return defaultAction
         }
+        return primaryAction(for: url, defaultAction: defaultAction)
+    }
 
-        return UIAction { _ in
-            NotificationCenter.default.post(
-                name: .resourceReferenceTapped,
-                object: reference
-            )
+    func textView(
+        _ textView: UITextView,
+        menuConfigurationFor textItem: UITextItem,
+        defaultMenu: UIMenu
+    ) -> UITextItem.MenuConfiguration? {
+        guard case let .link(url) = textItem.content else {
+            return UITextItem.MenuConfiguration(menu: defaultMenu)
+        }
+
+        return MarkdownLinkInteractionSupport.menuConfiguration(
+            for: classifyLink(url),
+            defaultMenu: defaultMenu,
+            textView: textView
+        ) { normalizedURL, sourceView in
+            FileSharePresenter.share(normalizedURL, sourceView: sourceView)
         }
     }
 

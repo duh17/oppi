@@ -39,6 +39,17 @@ final class BaselineSafeTextView: UITextView, ReviewCommentSourceLineRangeResolv
 
     }
 
+    /// Non-scrollable cells (paragraph markdown, table clip/wrap) still install a
+    /// pan recognizer. Reject that pan so the outer timeline owns vertical drags,
+    /// matching user-row `VerticalPanPassthroughTextView`.
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === panGestureRecognizer, !isScrollEnabled {
+            return false
+        }
+
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
     // MARK: - Baseline safety
 
     // periphery:ignore - @objc override of UIKit private baseline query; prevents assertion during detach
