@@ -63,7 +63,24 @@ cd server && npm run test:gate:pr-fast
 # Apple
 cd clients/apple && xcodegen generate
 cd clients/apple && ./scripts/sim-pool.sh \
-  run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
+ run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
 cd clients/apple && ./scripts/sim-pool.sh \
-  run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
+ run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
+```
+
+## Cursor Cloud specific instructions
+
+The Cloud Agent VM is Linux, so only the `server/` workspace runs here; the Apple client needs macOS and Xcode. The base image ships Node 22 as the default `node`, but the server requires Node 24+ (`engines.node >=24`). Node 24 and Bun are installed via `nvm`/`~/.bun`; a login shell (or sourcing `~/.nvm/nvm.sh` and using the default alias) selects Node 24.
+
+Two platform-injected settings make the server suite fail unless neutralized per invocation:
+
+- `NO_COLOR=1` / `TERM=dumb` disable ANSI output, breaking CLI tests that assert on color escapes.
+- The managed global git config forces `commit.gpgsign=true` with an SSH signer that intermittently stalls for 20+ seconds, so git-heavy tests (worktrees, workspace git diff) exceed the 10s test timeout.
+
+Run the server checks and tests like this (leaves the managed git config untouched for your own signed commits):
+
+```bash
+cd server
+env -u NO_COLOR -u FORCE_COLOR GIT_CONFIG_GLOBAL=/dev/null npm run check
+env -u NO_COLOR -u FORCE_COLOR GIT_CONFIG_GLOBAL=/dev/null npm test
 ```
