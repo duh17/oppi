@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clipListCell,
   compactSessionListRow,
+  formatSessionListRelativeTime,
   listSessions,
   sessionWorkspaceMeta,
 } from "../src/cli/commands/session-list.js";
@@ -54,17 +55,50 @@ describe("session list command contract", () => {
         status: "busy,error",
         worktree: "wt one",
         limit: "25",
+        since: "2026-07-01",
+        until: "2026-07-31T12:30:00Z",
       },
       async <T>(path: string): Promise<T> => {
         calls.push(path);
-        return { sessions: [{ id: "one" }] } as T;
+        return {
+          sessions: [
+            {
+              id: "one",
+              status: "busy",
+              worktreeId: "wt one",
+              lastActivity: Date.parse("2026-07-10T00:00:00Z"),
+            },
+          ],
+        } as T;
       },
     );
 
     expect(calls).toEqual([
-      "/sessions?worktreeId=wt+one&status=busy%2Cerror&limit=25&agentId=agent%2Fone",
+      "/sessions?worktreeId=wt+one&status=busy%2Cerror&limit=25&agentId=agent%2Fone&since=2026-07-01&until=2026-07-31T12%3A30%3A00Z",
     ]);
-    expect(result.sessions).toEqual([{ id: "one" }]);
+    expect(result.sessions?.map((row) => row.id)).toEqual(["one"]);
+  });
+
+  it("uses explicit bounds instead of the default recent window and limits after activity filtering", async () => {
+    const calls: string[] = [];
+    const result = await listSessions(
+      storage,
+      { since: "2026-07-01", until: "2026-07-02", limit: "1" },
+      async <T>(path: string): Promise<T> => {
+        calls.push(path);
+        return {
+          serverNow: Date.parse("2026-07-03T00:00:00Z"),
+          sessions: [
+            { id: "too-old", lastActivity: Date.parse("2026-06-30T23:59:59Z") },
+            { id: "fallback", lastModified: Date.parse("2026-07-02T12:00:00Z") },
+            { id: "inside", lastActivity: Date.parse("2026-07-01T12:00:00Z") },
+          ],
+        } as T;
+      },
+    );
+
+    expect(calls).toEqual(["/sessions/recent?since=2026-07-01&until=2026-07-02"]);
+    expect(result.sessions?.map((row) => row.id)).toEqual(["fallback"]);
   });
 
   it("uses the app workspace collection, time window, and stable active/stopped split", async () => {
@@ -104,6 +138,39 @@ describe("session list command contract", () => {
     expect(result.stopped?.map((row) => row.id)).toEqual(["stopped"]);
   });
 
+  it("passes one-sided explicit bounds to workspace listing without the implicit window", async () => {
+    resolveRequest.mockResolvedValue({ workspace: { id: "ws-1" } });
+    const calls: string[] = [];
+
+    const result = await listSessions(
+      storage,
+      { workspace: "ws-1", until: "2026-07-02", limit: "1" },
+      async <T>(path: string): Promise<T> => {
+        calls.push(path);
+        return {
+          active: [
+            {
+              id: "future",
+              status: "busy",
+              lastActivity: new Date(2026, 6, 3, 1, 0, 0, 0).getTime(),
+            },
+          ],
+          stopped: [
+            {
+              id: "inside",
+              status: "stopped",
+              lastActivity: new Date(2026, 6, 2, 23, 59, 59, 999).getTime(),
+            },
+            { id: "older", status: "stopped", lastActivity: new Date(2026, 6, 1).getTime() },
+          ],
+        } as T;
+      },
+    );
+
+    expect(calls).toEqual(["/workspaces/ws-1/sessions?status=active%2Cstopped&until=2026-07-02"]);
+    expect(result.sessions?.map((row) => row.id)).toEqual(["inside"]);
+  });
+
   it("falls back from a workspace id lookup and uses generic listing for custom statuses", async () => {
     const notFound = Object.assign(new Error("missing"), { status: 404 });
     resolveRequest
@@ -127,6 +194,18 @@ describe("session list command contract", () => {
     await expect(
       listSessions(storage, { limit }, async <T>(): Promise<T> => ({ sessions: [] }) as T),
     ).rejects.toThrow("--limit must be a positive integer");
+  });
+
+  it.each([
+    [{ since: "not-a-date" }, "invalid session list timestamp: not-a-date"],
+    [
+      { since: "2026-07-03", until: "2026-07-02" },
+      "session list since must be before or equal to until",
+    ],
+  ])("rejects invalid date bounds before calling the API", async (flags, message) => {
+    const call = vi.fn(async <T>(): Promise<T> => ({ sessions: [] }) as T);
+    await expect(listSessions(storage, flags, call)).rejects.toThrow(message);
+    expect(call).not.toHaveBeenCalled();
   });
 
   it("treats malformed or empty recent-session collections as empty", async () => {
@@ -166,5 +245,17 @@ describe("session list command contract", () => {
     );
     expect(clipListCell("  abcdef  ", 4)).toBe("abc…");
     expect(clipListCell(null, 4)).toBe("");
+  });
+
+  it.each([
+    [Date.parse("2026-07-03T11:59:45Z"), "just now"],
+    [Date.parse("2026-07-03T11:48:00Z"), "12m ago"],
+    [Date.parse("2026-07-03T09:00:00Z"), "3h ago"],
+    [Date.parse("2026-06-30T12:00:00Z"), "3d ago"],
+    [Number.NaN, ""],
+  ])("formats deterministic compact relative activity for %s", (activity, expected) => {
+    expect(formatSessionListRelativeTime(activity, Date.parse("2026-07-03T12:00:00Z"))).toBe(
+      expected,
+    );
   });
 });

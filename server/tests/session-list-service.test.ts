@@ -60,6 +60,7 @@ function makeService(
     workspaces?: Workspace[];
     recentSessions?: Record<string, Session[]>;
     allSessions?: Record<string, Session[]>;
+    timeRangeSessions?: Record<string, Session[]>;
     stoppedSessions?: Record<string, Session[]>;
     stoppedBuckets?: Record<string, WorkspaceStoppedTimeBucketSnapshot[]>;
     knownSessions?: Session[];
@@ -85,6 +86,9 @@ function makeService(
       ),
       listAllWorkspaceSessionSnapshots: vi.fn(
         (workspaceId: string) => options.allSessions?.[workspaceId] ?? [],
+      ),
+      listWorkspaceTimeRangeSessionSnapshots: vi.fn(
+        (workspaceId: string) => options.timeRangeSessions?.[workspaceId] ?? [],
       ),
       listStoppedWorkspaceTimeRangeSessionSnapshots: vi.fn(
         (workspaceId: string) => options.stoppedSessions?.[workspaceId] ?? [],
@@ -176,6 +180,56 @@ describe("SessionListService", () => {
       expect(result.sessions[1]).not.toHaveProperty("piSessionFile");
       expect(result.sessions[1]).not.toHaveProperty("piSessionId");
       expect(result.sessions[1]).not.toHaveProperty("warnings");
+    });
+
+    it("uses bounded workspace queries and exactly filters stored and live active rows", () => {
+      const sinceMs = 1_000;
+      const untilMs = 2_000;
+      const { service, deps } = makeService({
+        timeRangeSessions: {
+          "ws-1": [
+            makeSession({ id: "stored-before", status: "ready", lastActivity: sinceMs - 1 }),
+            makeSession({ id: "stored-until", status: "ready", lastActivity: untilMs }),
+          ],
+        },
+        activeSessions: [
+          makeSession({ id: "live-inside", status: "busy", lastActivity: sinceMs }),
+          makeSession({ id: "live-after", status: "busy", lastActivity: untilMs + 1 }),
+        ],
+      });
+
+      const result = service.listRecentWorkspaceSessionSummaries({
+        recentDays: 0,
+        sinceMs,
+        untilMs,
+      });
+
+      expect(deps.storage.listWorkspaceTimeRangeSessionSnapshots).toHaveBeenCalledWith(
+        "ws-1",
+        sinceMs,
+        untilMs + 1,
+      );
+      expect(deps.storage.listAllWorkspaceSessionSnapshots).not.toHaveBeenCalled();
+      expect(result.sessions.map((session) => session.id)).toEqual(["stored-until", "live-inside"]);
+    });
+
+    it("uses safe SQLite bounds for one-sided activity ranges", () => {
+      const { service, deps } = makeService();
+
+      service.listRecentWorkspaceSessionSummaries({ recentDays: 0, sinceMs: 1_000 });
+      expect(deps.storage.listWorkspaceTimeRangeSessionSnapshots).toHaveBeenLastCalledWith(
+        "ws-1",
+        1_000,
+        Number.MAX_SAFE_INTEGER,
+      );
+
+      service.listRecentWorkspaceSessionSummaries({ recentDays: 0, untilMs: 2_000 });
+      expect(deps.storage.listWorkspaceTimeRangeSessionSnapshots).toHaveBeenLastCalledWith(
+        "ws-1",
+        Number.MIN_SAFE_INTEGER,
+        2_001,
+      );
+      expect(deps.storage.listAllWorkspaceSessionSnapshots).not.toHaveBeenCalled();
     });
   });
 

@@ -53,6 +53,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("keeps list JSON compact when the API returns partial rows", async () => {
     request.mockResolvedValue({
+      serverNow: 1_000,
       sessions: [{ id: "s", status: "busy", lastModified: 5 }, { name: "partial" }],
     });
 
@@ -60,15 +61,80 @@ describe("session command dispatch and output boundaries", () => {
       cmdSession(storage, "list", [], { json: "true" }),
     );
 
-    const envelope = JSON.parse(stdout) as { data: { sessions: Array<Record<string, unknown>> } };
-    expect(envelope.data.sessions).toHaveLength(2);
-    expect(envelope.data.sessions[0]).toMatchObject({
-      id: "s",
-      status: "busy",
-      last_activity: 5,
-      pending_asks: 0,
+    expect(JSON.parse(stdout)).toEqual({
+      ok: true,
+      data: {
+        sessions: [
+          {
+            id: "s",
+            status: "busy",
+            name: null,
+            workspace_id: null,
+            workspace_name: null,
+            worktree_id: null,
+            model: null,
+            runtime: null,
+            last_activity: 5,
+            message_count: null,
+            pending_asks: 0,
+          },
+          {
+            id: null,
+            status: null,
+            name: "partial",
+            workspace_id: null,
+            workspace_name: null,
+            worktree_id: null,
+            model: null,
+            runtime: null,
+            last_activity: null,
+            message_count: null,
+            pending_asks: 0,
+          },
+        ],
+      },
     });
-    expect(envelope.data.sessions[1]).toMatchObject({ id: null, name: "partial" });
+  });
+
+  it("accepts and forwards session list date flags", async () => {
+    request.mockResolvedValue({ sessions: [], serverNow: 1_000 });
+
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSession(storage, "list", [], {
+        since: "2026-07-01",
+        until: "2026-07-02",
+        json: "true",
+      }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(request).toHaveBeenCalledWith(
+      storage,
+      "/sessions/recent?since=2026-07-01&until=2026-07-02",
+      undefined,
+    );
+    expect(JSON.parse(stdout)).toEqual({ ok: true, data: { sessions: [] } });
+  });
+
+  it("appends relative activity to human list rows using serverNow", async () => {
+    request.mockResolvedValue({
+      serverNow: Date.parse("2026-07-03T12:00:00Z"),
+      sessions: [
+        {
+          id: "s",
+          status: "busy",
+          name: "Working",
+          lastActivity: Date.parse("2026-07-03T10:00:00Z"),
+        },
+      ],
+    });
+
+    const captured = await captureCliOutput(() => cmdSession(storage, "list", [], {}), {
+      includeHuman: true,
+    });
+
+    expect(captured.humanStdout).toContain("Working");
+    expect(captured.humanStdout).toContain("2h ago");
   });
 
   it("waits for any of several session ids by default", async () => {
@@ -119,7 +185,10 @@ describe("session command dispatch and output boundaries", () => {
       ok: true,
       data: {
         condition: "idle",
-        sessions: [{ session_id: "a", status: "ready" }, { session_id: "b", status: "ready" }],
+        sessions: [
+          { session_id: "a", status: "ready" },
+          { session_id: "b", status: "ready" },
+        ],
       },
     });
   });
@@ -163,11 +232,7 @@ describe("session command dispatch and output boundaries", () => {
       cmdSession(storage, "wait", ["sess-1"], { for: "idle", json: "true" }),
     );
 
-    expect(request).toHaveBeenCalledWith(
-      storage,
-      "/sessions/sess-1/events?since=0",
-      undefined,
-    );
+    expect(request).toHaveBeenCalledWith(storage, "/sessions/sess-1/events?since=0", undefined);
     expect(JSON.parse(stdout)).toMatchObject({
       ok: true,
       data: { session_id: "sess-1", reason: "idle", status: "ready" },

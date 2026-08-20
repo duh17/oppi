@@ -1029,7 +1029,8 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "List sessions",
     summary:
       "List app-style session rows, optionally filtered by workspace, worktree, status, or limit.",
-    usage: "oppi session list [--workspace <workspace>] [--worktree <worktree>] [--json]",
+    usage:
+      "oppi session list [--workspace <workspace>] [--worktree <worktree>] [--since <time>] [--until <time>] [--json]",
     flags: [
       { name: "--workspace", value: "<workspace>", summary: "workspace id or unique name" },
       { name: "--worktree", value: "<worktree>", summary: "worktree id" },
@@ -1039,11 +1040,23 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "active, stopped, or a concrete session status",
       },
       { name: "--limit", value: "<count>", summary: "maximum sessions to return" },
+      {
+        name: "--since",
+        value: "<time>",
+        summary: "filter to sessions active at or after this time",
+      },
+      {
+        name: "--until",
+        value: "<time>",
+        summary: "filter to sessions active at or before this time",
+      },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
       "Without --workspace, this uses the same recent cross-workspace projection as the app home view.",
       "With --workspace, this uses the workspace session-list projection and includes importable local Pi TUI sessions.",
+      "Time bounds accept epoch milliseconds, ISO timestamps, or local-calendar YYYY-MM-DD dates; --until YYYY-MM-DD includes the whole day.",
+      "An explicit --since or --until replaces the default three-day stopped-session window.",
     ],
     examples: [{ command: "oppi session list --workspace ws_123 --json" }],
   },

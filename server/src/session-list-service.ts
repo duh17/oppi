@@ -67,6 +67,7 @@ export type SessionListArchiveBucket = {
 
 export interface RecentWorkspaceSessionSummariesResult {
   sessions: ManagedSessionListRow[];
+  serverNow: number;
 }
 
 export interface WorkspaceSessionCollectionResult {
@@ -94,6 +95,7 @@ export interface SessionListServiceDeps {
     | "listRecentWorkspaceSessionSnapshots"
     | "listSessions"
     | "listStoppedWorkspaceTimeRangeSessionSnapshots"
+    | "listWorkspaceTimeRangeSessionSnapshots"
     | "listWorkspaceStoppedTimeBuckets"
     | "listWorkspaces"
   >;
@@ -115,22 +117,34 @@ export class SessionListService {
 
   listRecentWorkspaceSessionSummaries(params: {
     recentDays: number;
+    sinceMs?: number;
+    untilMs?: number;
     nowMs?: number;
   }): RecentWorkspaceSessionSummariesResult {
     const serverNow = params.nowMs ?? Date.now();
+    const hasExplicitTimeRange = params.sinceMs !== undefined || params.untilMs !== undefined;
     const workspaceSessions = this.deps.storage
       .listWorkspaces()
       .flatMap((workspace) =>
-        (params.recentDays > 0
-          ? this.deps.storage.listRecentWorkspaceSessionSnapshots(
+        (hasExplicitTimeRange
+          ? this.deps.storage.listWorkspaceTimeRangeSessionSnapshots(
               workspace.id,
-              params.recentDays,
-              serverNow,
+              params.sinceMs ?? Number.MIN_SAFE_INTEGER,
+              exclusiveSessionRangeUntil(params.untilMs),
             )
-          : this.deps.storage.listAllWorkspaceSessionSnapshots(workspace.id)
+          : params.recentDays > 0
+            ? this.deps.storage.listRecentWorkspaceSessionSnapshots(
+                workspace.id,
+                params.recentDays,
+                serverNow,
+              )
+            : this.deps.storage.listAllWorkspaceSessionSnapshots(workspace.id)
         ).filter(isOpenableManagedListSession),
       );
-    const cutoffMs = params.recentDays > 0 ? serverNow - params.recentDays * 86_400_000 : undefined;
+    const cutoffMs =
+      !hasExplicitTimeRange && params.recentDays > 0
+        ? serverNow - params.recentDays * 86_400_000
+        : undefined;
     const controlSessions = this.deps.storage
       .listSessions()
       .filter(
@@ -140,23 +154,25 @@ export class SessionListService {
           (cutoffMs === undefined || session.lastActivity >= cutoffMs),
       );
     const projectedSessions = [...workspaceSessions, ...controlSessions];
+    const mergedSessions = mergeActiveSessionsAcrossWorkspaces(
+      this.deps.sessionRuntimes,
+      projectedSessions,
+      cutoffMs === undefined ? {} : { cutoffMs },
+    ).filter((session) => sessionMatchesInclusiveTimeRange(session, params));
 
     const sessions = this.buildManagedSessionListRows(
-      mergeActiveSessionsAcrossWorkspaces(
-        this.deps.sessionRuntimes,
-        projectedSessions,
-        cutoffMs === undefined ? {} : { cutoffMs },
-      ),
+      mergedSessions,
       collectPendingAttentionCounts(this.deps.sessionRuntimes),
     );
 
-    return { sessions };
+    return { sessions, serverNow };
   }
 
   listWorkspaceSessionRows(params: {
     workspace: Workspace;
     statuses: ReadonlySet<SessionStatusFilter>;
     timeRange?: { sinceMs: number; untilMs: number };
+    filterActiveByTimeRange?: boolean;
     worktreeId?: string;
     nowMs?: number;
   }): WorkspaceSessionCollectionResult {
@@ -177,6 +193,7 @@ export class SessionListService {
         params.workspace.id,
         attention,
         params.worktreeId,
+        params.filterActiveByTimeRange ? params.timeRange : undefined,
       );
     }
 
@@ -232,6 +249,7 @@ export class SessionListService {
     workspaceId: string,
     attention: PendingAttentionCounts,
     worktreeId?: string,
+    timeRange?: { sinceMs: number; untilMs: number },
   ): ManagedSessionListRow[] {
     const sessions = mergeActiveWorkspaceSessions(
       this.deps.sessionRuntimes,
@@ -240,7 +258,12 @@ export class SessionListService {
       { worktreeId },
     )
       .filter(isOpenableManagedListSession)
-      .filter(isActiveListSession);
+      .filter(isActiveListSession)
+      .filter(
+        (session) =>
+          !timeRange ||
+          (session.lastActivity >= timeRange.sinceMs && session.lastActivity < timeRange.untilMs),
+      );
     return this.buildManagedSessionListRows(sessions, attention).sort(compareActiveSessionListRows);
   }
 
@@ -353,6 +376,22 @@ export class SessionListService {
 
 interface PendingAttentionCounts {
   asks: Map<string, number>;
+}
+
+function exclusiveSessionRangeUntil(inclusiveUntilMs: number | undefined): number {
+  if (inclusiveUntilMs === undefined || inclusiveUntilMs >= Number.MAX_SAFE_INTEGER) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return inclusiveUntilMs + 1;
+}
+
+function sessionMatchesInclusiveTimeRange(
+  session: Session,
+  timeRange: { sinceMs?: number; untilMs?: number },
+): boolean {
+  if (timeRange.sinceMs !== undefined && session.lastActivity < timeRange.sinceMs) return false;
+  if (timeRange.untilMs !== undefined && session.lastActivity > timeRange.untilMs) return false;
+  return true;
 }
 
 function sessionMatchesWorkspaceListFilters(

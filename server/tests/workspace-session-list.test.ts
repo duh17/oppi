@@ -238,6 +238,44 @@ describe("workspace session list routes", () => {
     ]);
   });
 
+  it("accepts list-style date bounds and includes the whole local until day", async () => {
+    const mock = createMockContext(makeWorkspace({ hostMount: "/tmp" }));
+    const sinceMs = new Date(2026, 6, 1, 0, 0, 0, 0).getTime();
+    const untilExclusiveMs = new Date(2026, 6, 3, 0, 0, 0, 0).getTime();
+
+    mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([
+      makeSession({ id: "active-inside", status: "busy", lastActivity: sinceMs + 1_000 }),
+      makeSession({ id: "active-after", status: "busy", lastActivity: untilExclusiveMs }),
+    ]);
+    mock.storage.listStoppedWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
+      makeSession({
+        id: "stopped-end-of-day",
+        status: "stopped",
+        lastActivity: untilExclusiveMs - 1,
+      }),
+    ]);
+
+    await dispatch(
+      mock,
+      "/workspaces/ws-1/sessions",
+      "https://localhost/workspaces/ws-1/sessions?status=active,stopped&since=2026-07-01&until=2026-07-02",
+    );
+
+    expect(mock.errors).toEqual([]);
+    expect(mock.storage.listStoppedWorkspaceTimeRangeSessionSnapshots).toHaveBeenCalledWith(
+      "ws-1",
+      sinceMs,
+      untilExclusiveMs,
+      "main",
+    );
+    const response = mock.responses[0]?.data as {
+      active: Array<{ id: string }>;
+      stopped: Array<{ id: string }>;
+    };
+    expect(response.active.map((row) => row.id)).toEqual(["active-inside"]);
+    expect(response.stopped.map((row) => row.id)).toEqual(["stopped-end-of-day"]);
+  });
+
   it("returns sectioned active and stopped workspace session rows", async () => {
     const mock = createMockContext(makeWorkspace({ hostMount: "/tmp" }));
     const sinceMs = Date.parse("2026-05-13T00:00:00Z");
@@ -385,6 +423,34 @@ describe("workspace session list routes", () => {
         importableLocalCount: 1,
       }),
     ]);
+  });
+
+  it("filters the global recent path by explicit activity bounds instead of recentDays", async () => {
+    const mock = createMockContext();
+    const sinceMs = 1_000;
+    const untilMs = 2_000;
+    mock.storage.listWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
+      makeSession({ id: "newer-outside", status: "ready", lastActivity: untilMs + 1 }),
+      makeSession({ id: "inside", status: "ready", lastActivity: untilMs }),
+      makeSession({ id: "older-outside", status: "stopped", lastActivity: sinceMs - 1 }),
+    ]);
+
+    await dispatch(
+      mock,
+      "/sessions/recent",
+      `https://localhost/sessions/recent?since=${sinceMs}&until=${untilMs}`,
+    );
+
+    expect(mock.errors).toEqual([]);
+    expect(mock.storage.listWorkspaceTimeRangeSessionSnapshots).toHaveBeenCalledWith(
+      "ws-1",
+      sinceMs,
+      untilMs + 1,
+    );
+    expect(mock.storage.listAllWorkspaceSessionSnapshots).not.toHaveBeenCalled();
+    expect(mock.storage.listRecentWorkspaceSessionSnapshots).not.toHaveBeenCalled();
+    const response = mock.responses[0]?.data as { sessions: Array<{ id: string }> };
+    expect(response.sessions.map((row) => row.id)).toEqual(["inside"]);
   });
 
   it("returns aggregated recent workspace session summaries as thin summaries", async () => {
@@ -574,6 +640,57 @@ describe("workspace session list routes", () => {
       pendingAskCount: 1,
     });
     expect(response.active[0]).not.toHaveProperty("pendingPermissionCount");
+  });
+
+  it("filters generic and Agent rows by activity before applying limit", async () => {
+    const mock = createMockContext();
+    mock.storage.listSessions.mockReturnValue([
+      makeSession({
+        id: "outside-new",
+        lastActivity: 4_000,
+        launch: { agentId: "agent-1", agentVersion: 1 },
+      }),
+      makeSession({
+        id: "inside-new",
+        lastActivity: 2_500,
+        launch: { agentId: "agent-1", agentVersion: 1 },
+      }),
+      makeSession({
+        id: "inside-old",
+        lastActivity: 2_000,
+        launch: { agentId: "agent-1", agentVersion: 1 },
+      }),
+    ]);
+
+    await dispatch(
+      mock,
+      "/sessions",
+      "https://localhost/sessions?agentId=agent-1&since=1500&until=3000&limit=1",
+    );
+
+    expect(mock.errors).toEqual([]);
+    const response = mock.responses[0]?.data as { sessions: Array<{ id: string }> };
+    expect(response.sessions.map((row) => row.id)).toEqual(["inside-new"]);
+  });
+
+  it.each([
+    ["/sessions", "/sessions", "since=not-a-date"],
+    ["/sessions/recent", "/sessions/recent", "since=not-a-date"],
+    ["/workspaces/ws-1/sessions", "/workspaces/ws-1/sessions", "status=active&since=not-a-date"],
+  ])("rejects invalid list bounds on %s", async (path, pathname, query) => {
+    const mock = createMockContext();
+    await dispatch(mock, path, `https://localhost${pathname}?${query}`);
+    expect(mock.errors).toEqual([
+      { status: 400, message: "invalid session list timestamp: not-a-date" },
+    ]);
+  });
+
+  it("rejects reversed generic list bounds", async () => {
+    const mock = createMockContext();
+    await dispatch(mock, "/sessions", "https://localhost/sessions?since=3000&until=2000");
+    expect(mock.errors).toEqual([
+      { status: 400, message: "session list since must be before or equal to until" },
+    ]);
   });
 
   it("returns only the requested stopped bucket contents", async () => {

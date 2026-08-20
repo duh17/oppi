@@ -1,3 +1,4 @@
+import { parseSessionTimeRange, type SessionTimeRange } from "../../session-time-range.js";
 import type { Session } from "../../types.js";
 import type { LocalApiConnection, LocalApiRequestOptions } from "../local-api-client.js";
 import { resolveWorkspaceIdForCli } from "../resources.js";
@@ -53,6 +54,15 @@ export function clipListCell(value: unknown, maxLength: number): string {
   return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
+export function formatSessionListRelativeTime(activityMs: number, nowMs: number): string {
+  if (!Number.isFinite(activityMs) || !Number.isFinite(nowMs)) return "";
+  const elapsedMs = Math.max(0, nowMs - activityMs);
+  if (elapsedMs < 60_000) return "just now";
+  if (elapsedMs < 3_600_000) return `${Math.floor(elapsedMs / 60_000)}m ago`;
+  if (elapsedMs < 86_400_000) return `${Math.floor(elapsedMs / 3_600_000)}h ago`;
+  return `${Math.floor(elapsedMs / 86_400_000)}d ago`;
+}
+
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
 
 function querySuffix(params: URLSearchParams): string {
@@ -97,13 +107,31 @@ function stoppedWorkspaceRows(rows: SessionListRow[]): SessionListRow[] {
   return rows.filter((session) => session.status === "stopped");
 }
 
+function sessionListActivity(session: SessionListRow): number | undefined {
+  const activity = session.lastActivity ?? session.lastModified;
+  return typeof activity === "number" && Number.isFinite(activity) ? activity : undefined;
+}
+
+function sessionMatchesTimeRange(session: SessionListRow, timeRange: SessionTimeRange): boolean {
+  if (timeRange.sinceMs === undefined && timeRange.untilMs === undefined) return true;
+  const activity = sessionListActivity(session);
+  if (activity === undefined) return false;
+  if (timeRange.sinceMs !== undefined && activity < timeRange.sinceMs) return false;
+  if (timeRange.untilMs !== undefined && activity > timeRange.untilMs) return false;
+  return true;
+}
+
 function applySessionListClientFilters(
   sessions: SessionListRow[],
   flags: Record<string, string>,
+  timeRange: SessionTimeRange,
 ): SessionListRow[] {
   const statuses = normalizeStatusFilter(flags.status);
   const limit = parsePositiveLimit(flags.limit);
-  let filtered = sessions.filter((session) => sessionMatchesStatus(session, statuses));
+  let filtered = sessions.filter(
+    (session) =>
+      sessionMatchesTimeRange(session, timeRange) && sessionMatchesStatus(session, statuses),
+  );
   if (flags.worktree) {
     filtered = filtered.filter((session) => (session.worktreeId ?? "main") === flags.worktree);
   }
@@ -113,9 +141,16 @@ function applySessionListClientFilters(
   return filtered;
 }
 
+function sessionListTimeRange(flags: Record<string, string>): SessionTimeRange {
+  const parsed = parseSessionTimeRange(flags.since, flags.until, "session list");
+  if (parsed.error) throw new Error(parsed.error);
+  return parsed;
+}
+
 async function listWorkspaceSessionsLikeApp(
   workspaceId: string,
   flags: Record<string, string>,
+  timeRange: SessionTimeRange,
   call: SessionListApiCall,
 ): Promise<SessionListResponse & WorkspaceSessionCollectionResponse> {
   const statuses = normalizeStatusFilter(flags.status);
@@ -123,7 +158,11 @@ async function listWorkspaceSessionsLikeApp(
   const nowMs = Date.now();
   const params = new URLSearchParams();
   params.set("status", workspaceStatuses.join(","));
-  if (workspaceStatuses.includes("stopped")) {
+  const hasExplicitTimeRange = timeRange.sinceMs !== undefined || timeRange.untilMs !== undefined;
+  if (hasExplicitTimeRange) {
+    if (flags.since) params.set("since", flags.since);
+    if (flags.until) params.set("until", flags.until);
+  } else if (workspaceStatuses.includes("stopped")) {
     params.set("sinceMs", String(nowMs - DEFAULT_SESSION_LIST_RECENT_DAYS * DAY_MS));
     params.set("untilMs", String(nowMs + 1));
   }
@@ -135,6 +174,7 @@ async function listWorkspaceSessionsLikeApp(
   const sessions = applySessionListClientFilters(
     [...(response.active ?? []), ...(response.stopped ?? [])],
     flags,
+    timeRange,
   );
 
   return {
@@ -147,22 +187,30 @@ async function listWorkspaceSessionsLikeApp(
 
 async function listRecentSessionsLikeApp(
   flags: Record<string, string>,
+  timeRange: SessionTimeRange,
   call: SessionListApiCall,
 ): Promise<SessionListResponse> {
   const params = new URLSearchParams();
-  params.set("recentDays", String(DEFAULT_SESSION_LIST_RECENT_DAYS));
+  if (timeRange.sinceMs !== undefined || timeRange.untilMs !== undefined) {
+    if (flags.since) params.set("since", flags.since);
+    if (flags.until) params.set("until", flags.until);
+  } else {
+    params.set("recentDays", String(DEFAULT_SESSION_LIST_RECENT_DAYS));
+  }
   const response = await call<SessionListResponse>(`/sessions/recent${querySuffix(params)}`);
   return {
     ...response,
     sessions: applySessionListClientFilters(
       Array.isArray(response.sessions) ? response.sessions : [],
       flags,
+      timeRange,
     ),
   };
 }
 
 async function listGenericSessions(
   flags: Record<string, string>,
+  timeRange: SessionTimeRange,
   call: SessionListApiCall,
   workspaceId?: string,
 ): Promise<SessionListResponse> {
@@ -172,7 +220,17 @@ async function listGenericSessions(
   if (flags.status) params.set("status", flags.status);
   if (flags.limit) params.set("limit", flags.limit);
   if (flags.agent) params.set("agentId", flags.agent);
-  return call<SessionListResponse>(`/sessions${querySuffix(params)}`);
+  if (flags.since) params.set("since", flags.since);
+  if (flags.until) params.set("until", flags.until);
+  const response = await call<SessionListResponse>(`/sessions${querySuffix(params)}`);
+  return {
+    ...response,
+    sessions: applySessionListClientFilters(
+      Array.isArray(response.sessions) ? response.sessions : [],
+      flags,
+      timeRange,
+    ),
+  };
 }
 
 export async function listSessions(
@@ -181,18 +239,19 @@ export async function listSessions(
   call: SessionListApiCall,
 ): Promise<SessionListResponse> {
   const statuses = normalizeStatusFilter(flags.status);
+  const timeRange = sessionListTimeRange(flags);
 
   if (flags.workspace) {
     const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace);
     if (!flags.agent && isWorkspaceListStatusFilter(statuses)) {
-      return listWorkspaceSessionsLikeApp(workspaceId, flags, call);
+      return listWorkspaceSessionsLikeApp(workspaceId, flags, timeRange, call);
     }
-    return listGenericSessions(flags, call, workspaceId);
+    return listGenericSessions(flags, timeRange, call, workspaceId);
   }
 
   if (!flags.agent) {
-    return listRecentSessionsLikeApp(flags, call);
+    return listRecentSessionsLikeApp(flags, timeRange, call);
   }
 
-  return listGenericSessions(flags, call);
+  return listGenericSessions(flags, timeRange, call);
 }

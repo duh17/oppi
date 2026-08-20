@@ -198,6 +198,20 @@ describe("centralized nested-help dispatch", () => {
     expect(JSON.stringify(wait)).not.toMatch(/watch/);
   });
 
+  it("documents session list date filters and accepted time syntax", () => {
+    const list = resolveHelpTopic(["session", "list"]);
+    expect(list?.usage).toContain("--since <time>");
+    expect(list?.usage).toContain("--until <time>");
+    expect(list?.flags).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "--since", value: "<time>" }),
+        expect.objectContaining({ name: "--until", value: "<time>" }),
+      ]),
+    );
+    expect(list?.notes?.join(" ")).toContain("epoch milliseconds");
+    expect(list?.notes?.join(" ")).toContain("YYYY-MM-DD");
+  });
+
   it("handles unknown help topics deterministically without dispatch", async () => {
     const roots = listCliHelpTopicPaths().filter((path) => path.length === 1);
 

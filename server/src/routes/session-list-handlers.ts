@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { SessionListService, type SessionStatusFilter } from "../session-list-service.js";
+import { parseSessionTimeRange, type SessionTimeRange } from "../session-time-range.js";
 import type { Session } from "../types.js";
 import { pendingAskSnapshots as collectPendingAskSnapshots } from "../session-attention.js";
 import { normalizeSessionWorktreeId } from "../worktrees.js";
@@ -84,65 +85,12 @@ export function createSessionListRouteHandlers(
     });
   }
 
-  function sessionSearchTimeRange(url: URL): {
-    sinceMs?: number;
-    untilMs?: number;
-    error?: string;
-  } {
-    const sinceRaw = url.searchParams.get("since") ?? url.searchParams.get("sinceMs") ?? undefined;
-    const untilRaw = url.searchParams.get("until") ?? url.searchParams.get("untilMs") ?? undefined;
-    const sinceMs = parseSessionSearchTimeBound(sinceRaw, false);
-    const untilMs = parseSessionSearchTimeBound(untilRaw, true);
-    if (sinceMs.error) return { error: sinceMs.error };
-    if (untilMs.error) return { error: untilMs.error };
-    if (
-      sinceMs.value !== undefined &&
-      untilMs.value !== undefined &&
-      sinceMs.value > untilMs.value
-    ) {
-      return { error: "since must be before or equal to until" };
-    }
-    return {
-      ...(sinceMs.value !== undefined ? { sinceMs: sinceMs.value } : {}),
-      ...(untilMs.value !== undefined ? { untilMs: untilMs.value } : {}),
-    };
-  }
-
-  function parseSessionSearchTimeBound(
-    raw: string | undefined,
-    isEnd: boolean,
-  ): { value?: number; error?: string } {
-    const trimmed = raw?.trim();
-    if (!trimmed) return {};
-    const numeric = Number.parseInt(trimmed, 10);
-    if (/^\d+$/.test(trimmed) && Number.isFinite(numeric)) {
-      return { value: numeric };
-    }
-
-    const dateOnly = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (dateOnly) {
-      const year = Number.parseInt(dateOnly[1] ?? "", 10);
-      const monthIndex = Number.parseInt(dateOnly[2] ?? "", 10) - 1;
-      const day = Number.parseInt(dateOnly[3] ?? "", 10);
-      const date = new Date(year, monthIndex, day, 0, 0, 0, 0);
-      if (
-        Number.isNaN(date.getTime()) ||
-        date.getFullYear() !== year ||
-        date.getMonth() !== monthIndex ||
-        date.getDate() !== day
-      ) {
-        return { error: `invalid session search date: ${trimmed}` };
-      }
-      if (!isEnd) return { value: date.getTime() };
-      date.setDate(date.getDate() + 1);
-      return { value: date.getTime() - 1 };
-    }
-
-    const ms = Date.parse(trimmed);
-    if (Number.isNaN(ms)) {
-      return { error: `invalid session search timestamp: ${trimmed}` };
-    }
-    return { value: ms };
+  function sessionSearchTimeRange(url: URL): SessionTimeRange & { error?: string } {
+    return parseSessionTimeRange(
+      url.searchParams.get("since") ?? url.searchParams.get("sinceMs") ?? undefined,
+      url.searchParams.get("until") ?? url.searchParams.get("untilMs") ?? undefined,
+      "session search",
+    );
   }
 
   function pendingAskSnapshots(workspaceId: string): Array<Record<string, unknown>> {
@@ -170,14 +118,30 @@ export function createSessionListRouteHandlers(
     timeRange?: { sinceMs: number; untilMs: number };
     error?: string;
   } {
-    const hasSince = url.searchParams.has("sinceMs");
-    const hasUntil = url.searchParams.has("untilMs");
-    if (!hasSince && !hasUntil) {
+    const hasListSince = url.searchParams.has("since");
+    const hasListUntil = url.searchParams.has("until");
+    const hasSinceMs = url.searchParams.has("sinceMs");
+    const hasUntilMs = url.searchParams.has("untilMs");
+    if ((hasListSince || hasListUntil) && (hasSinceMs || hasUntilMs)) {
+      return { error: "use since/until or sinceMs/untilMs, not both" };
+    }
+    if (hasListSince || hasListUntil) {
+      const parsed = parseSessionTimeRange(
+        url.searchParams.get("since") ?? undefined,
+        url.searchParams.get("until") ?? undefined,
+        "session list",
+      );
+      if (parsed.error) return { error: parsed.error };
+      const sinceMs = parsed.sinceMs ?? Number.MIN_SAFE_INTEGER;
+      const inclusiveUntilMs = parsed.untilMs ?? Number.MAX_SAFE_INTEGER - 1;
+      return { timeRange: { sinceMs, untilMs: inclusiveUntilMs + 1 } };
+    }
+    if (!hasSinceMs && !hasUntilMs) {
       return {};
     }
 
     const timeRange = parseRequiredTimeRange(url);
-    if (!timeRange || !hasSince || !hasUntil) {
+    if (!timeRange || !hasSinceMs || !hasUntilMs) {
       return { error: "sinceMs and untilMs must form a valid range when provided" };
     }
 
@@ -232,9 +196,21 @@ export function createSessionListRouteHandlers(
     res: ServerResponse,
   ): void {
     const url = new URL(req.url ?? "/", "http://localhost");
+    const timeRange = parseSessionTimeRange(
+      url.searchParams.get("since") ?? undefined,
+      url.searchParams.get("until") ?? undefined,
+      "session list",
+    );
+    if (timeRange.error) {
+      helpers.error(res, 400, timeRange.error);
+      return;
+    }
+    const hasExplicitTimeRange = timeRange.sinceMs !== undefined || timeRange.untilMs !== undefined;
     const recentDaysParam = Number.parseInt(url.searchParams.get("recentDays") ?? "", 10);
     const recentDays =
-      Number.isFinite(recentDaysParam) && recentDaysParam > 0 ? recentDaysParam : 0;
+      !hasExplicitTimeRange && Number.isFinite(recentDaysParam) && recentDaysParam > 0
+        ? recentDaysParam
+        : 0;
     const serverNow = Date.now();
 
     helpers.compressedJson(
@@ -242,6 +218,8 @@ export function createSessionListRouteHandlers(
       res,
       listService.listRecentWorkspaceSessionSummaries({
         recentDays,
+        ...(timeRange.sinceMs !== undefined ? { sinceMs: timeRange.sinceMs } : {}),
+        ...(timeRange.untilMs !== undefined ? { untilMs: timeRange.untilMs } : {}),
         nowMs: serverNow,
       }),
     );
@@ -338,6 +316,7 @@ export function createSessionListRouteHandlers(
         workspace,
         statuses: parsedStatus.statuses,
         ...(parsedTimeRange.timeRange ? { timeRange: parsedTimeRange.timeRange } : {}),
+        filterActiveByTimeRange: url.searchParams.has("since") || url.searchParams.has("until"),
         worktreeId: worktreeSelection.worktreeId,
         nowMs: Date.now(),
       }),
@@ -368,6 +347,15 @@ export function createSessionListRouteHandlers(
       helpers.error(res, 400, "limit must be a positive integer");
       return;
     }
+    const timeRange = parseSessionTimeRange(
+      url.searchParams.get("since") ?? undefined,
+      url.searchParams.get("until") ?? undefined,
+      "session list",
+    );
+    if (timeRange.error) {
+      helpers.error(res, 400, timeRange.error);
+      return;
+    }
 
     let sessions = Array.from(byId.values());
     if (workspaceId) {
@@ -388,6 +376,11 @@ export function createSessionListRouteHandlers(
         }),
       );
     }
+    sessions = sessions.filter((session) => {
+      if (timeRange.sinceMs !== undefined && session.lastActivity < timeRange.sinceMs) return false;
+      if (timeRange.untilMs !== undefined && session.lastActivity > timeRange.untilMs) return false;
+      return true;
+    });
 
     sessions = sessions
       .map((session) => ctx.ensureSessionContextWindow(session))

@@ -30,6 +30,7 @@ import { parseDurationMs } from "./wait.js";
 import {
   clipListCell,
   compactSessionListRow,
+  formatSessionListRelativeTime,
   listSessions,
   sessionWorkspaceMeta,
 } from "./session-list.js";
@@ -103,15 +104,26 @@ export async function cmdSession(
       const result = await listSessions(storage, flags, call);
       const sessions = Array.isArray(result.sessions) ? result.sessions : [];
       output({ sessions: sessions.map(compactSessionListRow) }, () => {
+        const nowMs =
+          typeof result.serverNow === "number" && Number.isFinite(result.serverNow)
+            ? result.serverNow
+            : Date.now();
         printList(
           `Sessions (${sessions.length})`,
           sessions.map((session) => {
             const path = clipListCell(session.path ?? session.piSessionFile ?? "", 56);
+            const activity = session.lastActivity ?? session.lastModified;
+            const relativeActivity =
+              typeof activity === "number" ? formatSessionListRelativeTime(activity, nowMs) : "";
             return {
               id: session.id ?? "?",
               status: session.status ?? "?",
               title: clipListCell(session.name ?? session.firstMessage ?? "(unnamed)", 88),
-              meta: [sessionWorkspaceMeta(session), `worktree ${session.worktreeId ?? "main"}`],
+              meta: [
+                sessionWorkspaceMeta(session),
+                `worktree ${session.worktreeId ?? "main"}`,
+                relativeActivity,
+              ],
               details: path ? [`path ${path}`] : [],
             };
           }),
@@ -579,7 +591,7 @@ function resolvePromptInput(value: string | undefined, flag: "--prompt" | "--tex
 }
 
 const SESSION_FLAGS: Record<string, readonly string[]> = {
-  list: ["agent", "json", "limit", "status", "workspace", "worktree"],
+  list: ["agent", "json", "limit", "since", "status", "until", "workspace", "worktree"],
   get: ["json"],
   create: [
     "agent",
