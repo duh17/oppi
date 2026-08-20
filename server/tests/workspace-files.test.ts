@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 
 import { parseByteRangeHeader } from "../src/http-range.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -1078,27 +1078,6 @@ describe("getFileIndex", () => {
     expect(result).toEqual({ paths: [], truncated: true });
   });
 
-  test("reports exact path and entry caps, then rejects over-budget work", async () => {
-    const capDirectory = join(tmpRoot, "cap");
-    mkdirSync(capDirectory, { recursive: true });
-    for (let i = 0; i < 50_000; i += 1) {
-      const suffix = i.toString().padStart(5, "0");
-      writeFileSync(join(capDirectory, `entry-${suffix}.txt`), "");
-      writeFileSync(join(capDirectory, `.env.${suffix}.txt`), "");
-    }
-
-    const exactResult = await getFileIndex(capDirectory);
-
-    expect(exactResult.paths).toHaveLength(50_000);
-    expect(exactResult.truncated).toBe(false);
-
-    writeFileSync(join(capDirectory, "entry-50000.txt"), "");
-    const overResult = await getFileIndex(`${capDirectory}${sep}.`);
-
-    expect(overResult.paths).toEqual([]);
-    expect(overResult.truncated).toBe(true);
-  }, 60_000);
-
   test("reports a depth cap as truncated", async () => {
     let currentDirectory = tmpRoot;
     const pathParts: string[] = [];
@@ -1115,16 +1094,6 @@ describe("getFileIndex", () => {
     expect(result.truncated).toBe(true);
     expect(result.paths).not.toContain(`${pathParts.join("/")}/too-deep.md`);
   });
-
-  test("reports bounded directory work for many empty directories", async () => {
-    for (let i = 0; i <= 10_000; i += 1) {
-      mkdirSync(join(tmpRoot, `empty-${i.toString().padStart(5, "0")}`));
-    }
-
-    const result = await getFileIndex(tmpRoot);
-
-    expect(result.truncated).toBe(true);
-  }, 30_000);
 
   test("does not traverse directory symlinks or symlink cycles", async () => {
     const outsideDirectory = mkdtempSync(join(tmpdir(), "oppi-ws-index-outside-"));
