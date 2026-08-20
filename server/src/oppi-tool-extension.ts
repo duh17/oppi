@@ -237,14 +237,20 @@ export async function applyOppiToolPolicy(options: {
       auditPrepared(options, "aborted", "denied", startedAt);
       return { kind: "cancelled", reason: "aborted" };
     }
-    auditPrepared(options, approvalOutcome, result.ok ? "success" : "error", startedAt);
+    auditPrepared(
+      options,
+      approvalOutcome,
+      result.ok ? "success" : "error",
+      startedAt,
+      result.ok ? undefined : commandFailureDetails(prepared, result),
+    );
     return { kind: "executed", result };
   } catch (error) {
     if (options.signal?.aborted) {
       auditPrepared(options, "aborted", "denied", startedAt);
       return { kind: "cancelled", reason: "aborted" };
     }
-    auditPrepared(options, approvalOutcome, "error", startedAt);
+    auditPrepared(options, approvalOutcome, "error", startedAt, thrownFailureDetails(error));
     throw error;
   }
 }
@@ -788,11 +794,92 @@ function sessionTargets(prepared: PreparedOppiCommand): string[] {
   return target ? [target] : [];
 }
 
+export type OppiToolAuditRecord = Readonly<{
+  level: "info" | "warn";
+  identity: OppiToolIdentity;
+  access: CliAgentAccess;
+  policy: OppiApprovalPolicy;
+  action: string;
+  outcome: string;
+  result: string;
+  duration: number;
+  code?: string;
+  error?: string;
+}>;
+
+export function buildOppiToolAudit(input: {
+  identity: OppiToolIdentity;
+  access: CliAgentAccess;
+  policy: OppiApprovalPolicy;
+  action: string;
+  outcome: string;
+  result: string;
+  startedAt: number;
+  now?: number;
+  code?: string;
+  error?: string;
+}): OppiToolAuditRecord {
+  const duration = Math.min(
+    MAX_AUDIT_DURATION_MS,
+    Math.max(0, (input.now ?? Date.now()) - input.startedAt),
+  );
+  const isError = input.result === "error";
+  const error = input.error ? redactCredentialString(input.error) : undefined;
+  const code = input.code ?? (isError && !error ? "unknown" : undefined);
+  const level: "info" | "warn" = isError && code !== "timeout" ? "warn" : "info";
+  return {
+    level,
+    identity: input.identity,
+    access: input.access,
+    policy: input.policy,
+    action: input.action,
+    outcome: input.outcome,
+    result: input.result,
+    duration,
+    ...(code !== undefined ? { code } : {}),
+    ...(error !== undefined ? { error } : {}),
+  };
+}
+
+function commandFailureDetails(
+  prepared: PreparedOppiCommand,
+  result: OppiToolCommandResult,
+): { code: string; error: string } {
+  const jsonError = result.json && result.json.ok === false ? result.json.error : undefined;
+  const message = result.error?.message ?? jsonError?.message;
+  const code = jsonError?.code;
+  if (isSessionWaitTimeout(prepared, message, code)) {
+    return { code: "timeout", error: message ?? "wait timed out" };
+  }
+  return {
+    code: code ?? "command_failed",
+    error: message ?? `CLI exited ${result.exitCode}`,
+  };
+}
+
+function thrownFailureDetails(error: unknown): { code: string; error: string } {
+  return {
+    code: "exception",
+    error: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function isSessionWaitTimeout(
+  prepared: PreparedOppiCommand,
+  message: string | undefined,
+  code: string | undefined,
+): boolean {
+  if (code === "timeout") return true;
+  if (prepared.path[0] !== "session" || prepared.path[1] !== "wait") return false;
+  return typeof message === "string" && /^Timed out waiting for /.test(message);
+}
+
 function auditPrepared(
   options: Pick<Parameters<typeof applyOppiToolPolicy>[0], "prepared" | "policy" | "identity">,
   outcome: string,
   result: string,
   startedAt: number,
+  details?: { code?: string; error?: string },
 ): void {
   audit(
     options.identity,
@@ -802,6 +889,7 @@ function auditPrepared(
     outcome,
     result,
     startedAt,
+    details,
   );
 }
 
@@ -813,15 +901,28 @@ function audit(
   outcome: string,
   result: string,
   startedAt: number,
+  details?: { code?: string; error?: string },
 ): void {
-  log.info("oppi_tool.audit", {
+  const record = buildOppiToolAudit({
     identity,
     access,
     policy,
     action,
     outcome,
     result,
-    duration: Math.min(MAX_AUDIT_DURATION_MS, Math.max(0, Date.now() - startedAt)),
+    startedAt,
+    ...details,
+  });
+  log[record.level]("oppi_tool.audit", {
+    identity: record.identity,
+    access: record.access,
+    policy: record.policy,
+    action: record.action,
+    outcome: record.outcome,
+    result: record.result,
+    duration: record.duration,
+    ...(record.code !== undefined ? { code: record.code } : {}),
+    ...(record.error !== undefined ? { error: record.error } : {}),
   });
 }
 

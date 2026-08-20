@@ -217,6 +217,30 @@ export function formatUnauthorizedAuthLog(opts: {
   return `${ts()} [auth] 401 ${method} ${opts.path} — auth: ${authPresent ? "present" : "missing"}${reason}`;
 }
 
+const EXPECTED_UNKNOWN_TOKEN_WS_PATHS = new Set(["/app/events/stream", "/dictation/stream"]);
+
+/**
+ * First-pass 401 log level. We do not track first vs repeat unknown_token.
+ * The Apple client retries WS /app/events/stream and /dictation/stream after
+ * refresh, so unknown_token on those two paths is the expected handshake and
+ * logs at info. Revoked, evicted, missing/malformed, owner_on_network, expired,
+ * and unknown_token on any other transport or path stay warn.
+ */
+export function unauthorizedAuthLogLevel(opts: {
+  transport: "http" | "ws";
+  path: string;
+  reason: string;
+}): "info" | "warn" {
+  if (
+    opts.transport === "ws" &&
+    opts.reason === "unknown_token" &&
+    EXPECTED_UNKNOWN_TOKEN_WS_PATHS.has(opts.path)
+  ) {
+    return "info";
+  }
+  return "warn";
+}
+
 /**
  * Collapse dynamic path segments (UUIDs, hex IDs) into `:id` placeholders
  * so HTTP request metrics aggregate by route pattern, not by resource.
@@ -1315,14 +1339,17 @@ export class Server {
 
     const authResult = this.authenticate(req);
     if (!authResult.ok) {
-      log.warn("auth.unauthorized", {
-        transport: "http",
-        method,
-        path,
-        authPresent: hasAuthHeader(req.headers.authorization),
-        reason: authResult.reason,
-        ...(authResult.deviceId ? { device: authResult.deviceId } : {}),
-      });
+      log[unauthorizedAuthLogLevel({ transport: "http", path, reason: authResult.reason })](
+        "auth.unauthorized",
+        {
+          transport: "http",
+          method,
+          path,
+          authPresent: hasAuthHeader(req.headers.authorization),
+          reason: authResult.reason,
+          ...(authResult.deviceId ? { device: authResult.deviceId } : {}),
+        },
+      );
       this.error(res, 401, "Unauthorized");
       return;
     }
@@ -1367,7 +1394,13 @@ export class Server {
 
     const authResult = this.authenticate(req);
     if (!authResult.ok) {
-      log.warn("auth.unauthorized", {
+      log[
+        unauthorizedAuthLogLevel({
+          transport: "ws",
+          path: url.pathname,
+          reason: authResult.reason,
+        })
+      ]("auth.unauthorized", {
         transport: "ws",
         path: url.pathname,
         authPresent: hasAuthHeader(req.headers.authorization),

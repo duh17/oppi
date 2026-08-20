@@ -171,7 +171,8 @@ export class WsMessageHandler {
       case "abort_bash": {
         const commandStart = Date.now();
 
-        log.info("ws.command.received", {
+        // Heartbeat pair: received/completed are debug. Failures stay warn.
+        log.debug("ws.command.received", {
           connId: meta.connId,
           sessionId: session.id,
           runtime: runtimeLogTag(session),
@@ -182,7 +183,7 @@ export class WsMessageHandler {
         try {
           await this.deps.sessions.forwardClientCommand(session.id, msg, msg.requestId);
 
-          log.info("ws.command.completed", {
+          log.debug("ws.command.completed", {
             connId: meta.connId,
             sessionId: session.id,
             runtime: runtimeLogTag(session),
@@ -348,7 +349,8 @@ export class WsMessageHandler {
     const startedAt = Date.now();
     const requestId = msg.requestId;
 
-    log.info("ws.queue_command.received", {
+    // Heartbeat pair: received/completed are debug. Failures stay warn.
+    log.debug("ws.queue_command.received", {
       connId: meta.connId,
       sessionId: session.id,
       runtime: runtimeLogTag(session),
@@ -362,7 +364,7 @@ export class WsMessageHandler {
       if (requestId) {
         send(runtimeCommandSuccess("get_queue", requestId, queue));
       }
-      log.info("ws.queue_command.completed", {
+      log.debug("ws.queue_command.completed", {
         connId: meta.connId,
         sessionId: session.id,
         runtime: runtimeLogTag(session),
@@ -401,7 +403,7 @@ export class WsMessageHandler {
     const startedAt = Date.now();
     const requestId = msg.requestId;
 
-    log.info("ws.queue_command.received", {
+    log.debug("ws.queue_command.received", {
       connId: meta.connId,
       sessionId: session.id,
       runtime: runtimeLogTag(session),
@@ -421,7 +423,7 @@ export class WsMessageHandler {
       if (requestId) {
         send(runtimeCommandSuccess("set_queue", requestId, queue));
       }
-      log.info("ws.queue_command.completed", {
+      log.debug("ws.queue_command.completed", {
         connId: meta.connId,
         sessionId: session.id,
         runtime: runtimeLogTag(session),
