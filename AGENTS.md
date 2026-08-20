@@ -70,7 +70,7 @@ cd clients/apple && ./scripts/sim-pool.sh \
 
 ## Cursor Cloud specific instructions
 
-The Cloud Agent VM is Linux, so only the `server/` workspace runs here; the Apple client needs macOS and Xcode. The base image ships Node 22 as the default `node`, but the server requires Node 24+ (`engines.node >=24`). Node 24 and Bun are installed via `nvm`/`~/.bun`; a login shell (or sourcing `~/.nvm/nvm.sh` and using the default alias) selects Node 24.
+The Cloud Agent VM is Linux, so only the `server/` workspace runs here; the Apple client needs macOS and Xcode. The server requires Node 24+ (`engines.node >=24`). The environment makes `node`, `npm`, `npx`, and `bun` resolve to the correct versions in every shell (Node 24 shadows the platform's Node 22 shim), so plain `node`/`npm` commands and the built `oppi` CLI work without sourcing anything.
 
 Two platform-injected settings make the server suite fail unless neutralized per invocation:
 
