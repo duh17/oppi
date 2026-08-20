@@ -420,14 +420,34 @@ describe("session wait poller contract", () => {
       [
         "Waiting for either",
         "",
-        "impl-detached-timeline-follow-20260819",
-        "oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370",
+        "impl\\-detached\\-timeline\\-follow\\-20260819",
+        "[Open session](oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370)",
         "status=busy  tools=3",
         "",
         "Last:",
-        "Good, it's busy and already working...",
+        "Good, it's busy and already working\\.\\.\\.",
       ].join("\n"),
     );
+  });
+
+  it("escapes markdown and bounds untrusted live card text", () => {
+    const name = `# [session](javascript:bad) *bold* ${"x".repeat(200)}`;
+    const last = `**restyle** [untrusted](https://bad.example) ${"x".repeat(400)}`;
+    const rendered = formatWaitLiveSnapshot("either", {
+      ts: 1,
+      elapsedMs: 2_000,
+      sessions: [{ sessionId: "special", name, status: "busy", toolsThisTurn: 1, last }],
+    });
+
+    expect(rendered).toContain("\\# \\[session\\]\\(javascript\\:bad\\) \\*bold\\*");
+    expect(rendered).toContain("[Open session](oppi://session/special)");
+    expect(rendered).toContain(
+      "Last:\n\\*\\*restyle\\*\\* \\[untrusted\\]\\(https\\://bad\\.example\\)",
+    );
+    expect(rendered.split("\n")[2]).toMatch(/…$/);
+    expect(rendered.split("\n")[7]).toMatch(/…$/);
+    expect(rendered).not.toContain("**restyle**");
+    expect(rendered).not.toContain("[session](javascript:bad)");
   });
 
   it("emits a live snapshot after the first incomplete poll", async () => {
@@ -468,12 +488,12 @@ describe("session wait poller contract", () => {
     expect(summaries).not.toHaveBeenCalled();
     expect(live).toHaveBeenCalledTimes(1);
     expect(live.mock.calls[0]?.[0]).toContain("Waiting for either");
-    expect(live.mock.calls[0]?.[0]).toContain("impl-detached-timeline-follow-20260819");
+    expect(live.mock.calls[0]?.[0]).toContain("impl\\-detached\\-timeline\\-follow\\-20260819");
     expect(live.mock.calls[0]?.[0]).toContain(
       "oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370",
     );
     expect(live.mock.calls[0]?.[0]).toContain("status=busy  tools=3");
-    expect(live.mock.calls[0]?.[0]).toContain("Good, it's busy and already working...");
+    expect(live.mock.calls[0]?.[0]).toContain("Good, it's busy and already working\\.\\.\\.");
 
     await vi.advanceTimersByTimeAsync(80);
     const result = await settled;

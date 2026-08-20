@@ -122,16 +122,25 @@ export function parseWatchCondition(
   throw new Error("condition must be idle, attention, either, or any-change");
 }
 
+const MAX_LIVE_NAME_CHARS = 120;
 const MAX_LIVE_LAST_CHARS = 280;
 
 function recordSessionName(state: WatchSessionState, name: unknown): void {
   if (typeof name === "string" && name.trim()) state.name = name.trim();
 }
 
-function truncateLiveLast(text: string): string {
+function truncateLiveText(text: string, maxChars: number): string {
   const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= MAX_LIVE_LAST_CHARS) return normalized;
-  return `${normalized.slice(0, MAX_LIVE_LAST_CHARS - 1)}…`;
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars - 1)}…`;
+}
+
+function escapeLiveMarkdown(text: string): string {
+  return text.replace(/[\\`*_{}\x5b\x5d()#+.!|<>~=:\x2d\x24]/g, "\\$&");
+}
+
+function truncateLiveLast(text: string): string {
+  return truncateLiveText(text, MAX_LIVE_LAST_CHARS);
 }
 
 export function formatWaitLiveSnapshot(
@@ -140,15 +149,17 @@ export function formatWaitLiveSnapshot(
 ): string {
   const blocks = snapshot.sessions.map((session) => {
     const lines: string[] = [];
-    if (session.name) lines.push(session.name);
-    lines.push(`oppi://session/${session.sessionId}`);
+    if (session.name) {
+      lines.push(escapeLiveMarkdown(truncateLiveText(session.name, MAX_LIVE_NAME_CHARS)));
+    }
+    lines.push(`[Open session](oppi://session/${session.sessionId})`);
     const dialogs =
       typeof session.pendingDialogs === "number" && session.pendingDialogs > 0
         ? `  dialogs=${session.pendingDialogs}`
         : "";
     lines.push(`status=${session.status ?? "?"}  tools=${session.toolsThisTurn}${dialogs}`);
     if (session.last) {
-      lines.push("", "Last:", truncateLiveLast(session.last));
+      lines.push("", "Last:", escapeLiveMarkdown(truncateLiveLast(session.last)));
     }
     return lines.join("\n");
   });
