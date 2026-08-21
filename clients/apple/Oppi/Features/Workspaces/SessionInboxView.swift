@@ -311,12 +311,9 @@ struct SessionInboxView: View {
         let data = viewData
 
         List {
-            if selectedWorkspace == nil,
-               ProviderSetupPromptPolicy.shouldShow(for: providerSetupState),
-               let selectedServer {
-                Section {
+            if showsProviderSetupPrompt, let selectedServer {
+                ProviderSetupPromptListSection {
                     providerSetupPrompt(for: selectedServer)
-                        .listRowBackground(theme.bg.primary)
                 }
             }
 
@@ -369,7 +366,10 @@ struct SessionInboxView: View {
                     stoppedSessionSection(group)
                 }
 
-                if data.isEmpty {
+                if ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
+                    isEmpty: data.isEmpty,
+                    showsProviderSetup: showsProviderSetupPrompt
+                ) {
                     Section {
                         emptyState
                             .listRowBackground(theme.bg.primary)
@@ -501,6 +501,12 @@ struct SessionInboxView: View {
         .navigationDestination(for: ModelProvidersNavTarget.self) { target in
             ModelProvidersScopedDestinationView(target: target)
         }
+    }
+
+    private var showsProviderSetupPrompt: Bool {
+        selectedWorkspace == nil
+            && ProviderSetupPromptPolicy.shouldShow(for: providerSetupState)
+            && selectedServer != nil
     }
 
     private var inboxNavigationTitle: String {
@@ -636,25 +642,12 @@ struct SessionInboxView: View {
     }
 
     private func providerSetupPrompt(for server: PairedServer) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Finish server setup", systemImage: "key.fill")
-                .font(.headline)
-                .foregroundStyle(.themeFg)
-
-            Text("Connect a model provider before starting a session on \(server.name).")
-                .font(.subheadline)
-                .foregroundStyle(.themeComment)
-
-            Button {
-                navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
-            } label: {
-                Label("Configure Model Provider", systemImage: "plus.circle.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("workspace.providerSetup.open")
+        ProviderSetupPromptCard(
+            message: "Connect a model provider before starting a session on \(server.name).",
+            openAccessibilityIdentifier: "workspace.providerSetup.open"
+        ) {
+            navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
     }
 
     private func loadProviderSetupState() async {

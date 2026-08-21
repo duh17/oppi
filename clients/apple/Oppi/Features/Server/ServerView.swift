@@ -223,30 +223,12 @@ struct ServerView: View {
     }
 
     private func providerSetupCard(for server: PairedServer) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Finish server setup", systemImage: "key.fill")
-                .font(.headline)
-                .foregroundStyle(.themeFg)
-
-            Text("Connect a model provider so new sessions can run on this server.")
-                .font(.subheadline)
-                .foregroundStyle(.themeComment)
-
-            Button {
-                navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
-            } label: {
-                Label("Configure Model Provider", systemImage: "plus.circle.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("server.providerSetup.open")
+        ProviderSetupPromptCard(
+            message: "Connect a model provider so new sessions can run on this server.",
+            openAccessibilityIdentifier: "server.providerSetup.open"
+        ) {
+            navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(.themeComment.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(.themeComment.opacity(0.18), lineWidth: 1)
-        )
     }
 
     // MARK: - Range Picker

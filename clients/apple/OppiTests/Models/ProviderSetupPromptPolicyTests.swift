@@ -37,6 +37,39 @@ struct ProviderSetupPromptPolicyTests {
         #expect(!ProviderSetupPromptPolicy.shouldShow(for: state))
     }
 
+    @Test func inboxEmptyStateHidesWhileProviderSetupPromptIsShowing() {
+        #expect(
+            !ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
+                isEmpty: true,
+                showsProviderSetup: true
+            )
+        )
+    }
+
+    @Test func inboxEmptyStateShowsWhenInboxIsEmptyWithoutProviderSetup() {
+        #expect(
+            ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
+                isEmpty: true,
+                showsProviderSetup: false
+            )
+        )
+    }
+
+    @Test func inboxEmptyStateStaysHiddenWhenInboxHasSessions() {
+        #expect(
+            !ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
+                isEmpty: false,
+                showsProviderSetup: true
+            )
+        )
+        #expect(
+            !ProviderSetupPromptPolicy.shouldShowInboxEmptyState(
+                isEmpty: false,
+                showsProviderSetup: false
+            )
+        )
+    }
+
     private func provider(authenticated: Bool) -> ProviderAuthProviderStatus {
         ProviderAuthProviderStatus(
             id: "provider",

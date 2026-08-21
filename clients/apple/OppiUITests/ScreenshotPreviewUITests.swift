@@ -456,6 +456,45 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "model-providers-quota-inline")
     }
 
+    func testInboxProviderSetupEmptyScreenshot() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let readyIdentifier = "screenshot.providerSetup.empty.\(UUID().uuidString)"
+        launchPreview(
+            screen: "inbox-provider-setup-empty",
+            environment: ["SCREENSHOT_READY_ID": readyIdentifier],
+            readyIdentifier: readyIdentifier
+        )
+
+        XCTAssertTrue(app.staticTexts["Finish server setup"].waitForExistence(timeout: 5))
+        let configureButton = app.buttons["workspace.providerSetup.open"]
+        XCTAssertTrue(configureButton.waitForExistence(timeout: 5))
+        assertProviderSetupButtonLayout(configureButton)
+        XCTAssertFalse(app.staticTexts["No Active Sessions"].exists)
+        saveScreenshot(name: "inbox-provider-setup-empty")
+    }
+
+    func testInboxProviderSetupWithSessionsScreenshot() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let readyIdentifier = "screenshot.providerSetup.withSessions.\(UUID().uuidString)"
+        launchPreview(
+            screen: "inbox-provider-setup-with-sessions",
+            environment: ["SCREENSHOT_READY_ID": readyIdentifier],
+            readyIdentifier: readyIdentifier
+        )
+
+        let sessionTitle = app.staticTexts["Review provider setup card"]
+        XCTAssertTrue(sessionTitle.waitForExistence(timeout: 5))
+        XCTAssertTrue(sessionTitle.isHittable, "Seeded session row must be visible in screenshot proof")
+        let setupTitle = app.staticTexts["Finish server setup"]
+        XCTAssertTrue(setupTitle.waitForExistence(timeout: 5))
+        XCTAssertTrue(setupTitle.isHittable, "Provider setup card must be fully visible in screenshot proof")
+        let configureButton = app.buttons["workspace.providerSetup.open"]
+        XCTAssertTrue(configureButton.waitForExistence(timeout: 5))
+        assertProviderSetupButtonLayout(configureButton)
+        sleep(1) // Let the second preview launch finish replacing its saved scene snapshot.
+        saveScreenshot(name: "inbox-provider-setup-with-sessions")
+    }
+
     func testExtensionWidgetPreview() throws {
         launchPreview(screen: "extension-widget")
 
@@ -1050,6 +1089,38 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
     // MARK: - Helpers
 
+    private func assertProviderSetupButtonLayout(
+        _ button: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(button.isHittable, "Provider setup action must be visible", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(
+            button.frame.height,
+            43.5,
+            "Provider setup action must preserve a 44-point touch target",
+            file: file,
+            line: line
+        )
+        XCTAssertLessThan(
+            button.frame.width,
+            app.frame.width - 80,
+            "Provider setup action must keep native intrinsic padding instead of becoming a full-width slab",
+            file: file,
+            line: line
+        )
+        let leadingMargin = button.frame.minX - app.frame.minX
+        let trailingMargin = app.frame.maxX - button.frame.maxX
+        XCTAssertEqual(
+            leadingMargin,
+            trailingMargin,
+            accuracy: 2,
+            "Provider setup action must use balanced horizontal margins",
+            file: file,
+            line: line
+        )
+    }
+
     private func waitForKeyboardToDismiss(timeout: TimeInterval = 3) -> Bool {
         let keyboard = app.keyboards.firstMatch
         let disappeared = XCTNSPredicateExpectation(
@@ -1070,7 +1141,8 @@ final class ScreenshotPreviewUITests: XCTestCase {
     private func launchPreview(
         screen: String,
         reduceMotion: Bool = false,
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        readyIdentifier: String = "screenshot.ready"
     ) {
         app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
@@ -1084,7 +1156,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         app.launch()
 
         // Wait for the preview to signal readiness.
-        let ready = app.descendants(matching: .any)["screenshot.ready"]
+        let ready = app.descendants(matching: .any)[readyIdentifier]
         XCTAssertTrue(ready.waitForExistence(timeout: 8), "Screenshot preview did not become ready")
     }
 

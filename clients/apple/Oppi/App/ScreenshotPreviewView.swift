@@ -39,6 +39,10 @@ struct ScreenshotPreviewView: View {
             ServerResourcesScreenshotPreview(screen: .oppiPending)
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
+        case "inbox-provider-setup-empty":
+            InboxProviderSetupPreview(showsSessions: false)
+        case "inbox-provider-setup-with-sessions":
+            InboxProviderSetupPreview(showsSessions: true)
         case "agent-icons":
             AgentIconProofPreview()
         case "agent-icon-title-bar-stress":
@@ -2843,6 +2847,65 @@ private extension PiSessionAttributes.ContentState {
         primaryAddedLines: nil,
         primaryRemovedLines: nil,
         sessionStartDate: nil
+    )
+}
+
+// MARK: - Inbox Provider Setup Preview
+
+/// All Sessions chrome for the first-login provider-setup card.
+///
+/// Uses the production list-section wrapper and `SessionRow` so screenshot
+/// acceptance cannot drift from inbox insets. Does not instantiate the full
+/// inbox stores.
+private struct InboxProviderSetupPreview: View {
+    @Environment(\.theme) private var theme
+
+    let showsSessions: Bool
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ProviderSetupPromptListSection {
+                    ProviderSetupPromptCard(
+                        message: "Connect a model provider before starting a session on Preview Server.",
+                        openAccessibilityIdentifier: "workspace.providerSetup.open"
+                    ) {}
+                }
+
+                if showsSessions {
+                    Section {
+                        SessionRow(
+                            presentation: SessionRowPresentationBuilder.make(
+                                session: Self.previewSession,
+                                workspaceContext: "oppi"
+                            )
+                        )
+                        .listRowBackground(theme.bg.primary)
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .themedListSurface()
+            .navigationTitle("All Sessions")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .accessibilityIdentifier(
+            ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
+        )
+    }
+
+    private static let previewSession = Session(
+        id: "preview-session",
+        workspaceId: "preview-workspace",
+        workspaceName: "oppi",
+        name: "Review provider setup card",
+        status: .ready,
+        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+        lastActivity: Date(timeIntervalSince1970: 1_700_000_100),
+        model: "gpt-5.5",
+        messageCount: 4,
+        tokens: TokenUsage(input: 1_000, output: 500),
+        cost: 0.12
     )
 }
 
