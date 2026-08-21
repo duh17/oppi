@@ -18,7 +18,7 @@ Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.
 
    On first run, Oppi prints a pairing QR code and invite link.
 
-2. Open Oppi on iPhone, then choose **Pair Nearby Mac**, **Scan QR Code**, or **Enter manually / Connect to Server**. Opening an `oppi://connect` invite also starts pairing.
+2. Open Oppi on iPhone, then choose **Scan QR Code** or **Enter manually / Connect to Server**. Opening an `oppi://connect` invite also starts pairing.
 
 3. Confirm server trust. If local authentication is enabled, iOS asks for it before accepting the server identity.
 
@@ -44,7 +44,7 @@ Generate a new invite:
 oppi pair
 ```
 
-Then pair through Nearby Mac, QR scan, manual entry, or the invite link.
+Then pair through QR scan, manual entry, or the invite link.
 
 For remote HTTPS pairing, generate an invite with an explicit host:
 

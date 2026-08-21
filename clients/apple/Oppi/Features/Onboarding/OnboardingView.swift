@@ -1,6 +1,5 @@
 import SwiftUI
 import VisionKit
-import MultipeerConnectivity
 
 /// Mode for the onboarding flow.
 enum OnboardingMode {
@@ -8,6 +7,33 @@ enum OnboardingMode {
     case initial
     /// Adding an additional server from Settings.
     case addServer
+}
+
+/// Idle pairing buttons on first-run and add-server onboarding.
+/// Nearby Mac pairing is omitted until the Mac app can advertise.
+enum OnboardingIdlePairingCTA: Equatable {
+    case scanQR
+    case enterManually
+    case connectWithoutCamera
+
+    static func visible(canScan: Bool) -> [Self] {
+        canScan ? [.scanQR, .enterManually] : [.connectWithoutCamera]
+    }
+
+    var title: String {
+        switch self {
+        case .scanQR: "Scan QR Code"
+        case .enterManually: "Enter manually"
+        case .connectWithoutCamera: "Connect to Server"
+        }
+    }
+
+    var isPrimary: Bool {
+        switch self {
+        case .scanQR, .connectWithoutCamera: true
+        case .enterManually: false
+        }
+    }
 }
 
 struct OnboardingView: View {
@@ -19,15 +45,34 @@ struct OnboardingView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var nearbyPairing = NearbyPairingBrowser()
     @State private var showScanner = false
     @State private var showManualEntry = false
-    @State private var showNearbyPairing = false
     @State private var connectionTest: ConnectionTestState = .idle
 
     /// VisionKit scanner requires camera + on-device ML support.
     private var canScan: Bool {
         DataScannerViewController.isSupported && DataScannerViewController.isAvailable
+    }
+
+    @ViewBuilder
+    private func idlePairingButton(_ cta: OnboardingIdlePairingCTA) -> some View {
+        if cta.isPrimary {
+            Button(cta.title) { activate(cta) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+        } else {
+            Button(cta.title) { activate(cta) }
+                .font(.subheadline)
+        }
+    }
+
+    private func activate(_ cta: OnboardingIdlePairingCTA) {
+        switch cta {
+        case .scanQR:
+            showScanner = true
+        case .enterManually, .connectWithoutCamera:
+            showManualEntry = true
+        }
     }
 
     var body: some View {
@@ -62,30 +107,8 @@ struct OnboardingView: View {
             VStack(spacing: 16) {
                 switch connectionTest {
                 case .idle:
-                    Button("Pair Nearby Mac") {
-                        showNearbyPairing = true
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-
-                    if canScan {
-                        Button("Scan QR Code") {
-                            showScanner = true
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                    }
-
-                    if canScan {
-                        Button("Enter manually") {
-                            showManualEntry = true
-                        }
-                        .font(.subheadline)
-                    } else {
-                        Button("Connect to Server") {
-                            showManualEntry = true
-                        }
-                        .font(.subheadline)
+                    ForEach(OnboardingIdlePairingCTA.visible(canScan: canScan), id: \.title) { cta in
+                        idlePairingButton(cta)
                     }
 
                 case .testing:
@@ -158,24 +181,6 @@ struct OnboardingView: View {
                 Task { await testConnection(credentials) }
             }
         }
-        .sheet(isPresented: $showNearbyPairing) {
-            NearbyPairingSheet(
-                browser: nearbyPairing,
-                onInviteURL: { url in
-                    showNearbyPairing = false
-                    Task { await testConnection(inviteURL: url) }
-                }
-            )
-        }
-    }
-
-    private func testConnection(inviteURL: URL) async {
-        guard let credentials = InviteBootstrapService.credentials(from: inviteURL) else {
-            connectionTest = .failed("Received an invalid nearby invite. Try again or use the QR code.")
-            return
-        }
-
-        await testConnection(credentials)
     }
 
     private func testConnection(_ credentials: ServerCredentials) async {
@@ -240,89 +245,6 @@ private enum ConnectionTestState {
     case testing
     case success
     case failed(String)
-}
-
-private struct NearbyPairingSheet: View {
-    let browser: NearbyPairingBrowser
-    let onInviteURL: (URL) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Text(browser.state.statusText ?? "Looking for nearby Macs…")
-                        .foregroundStyle({
-                            if case .failed = browser.state {
-                                return AnyShapeStyle(.themeRed)
-                            }
-                            return AnyShapeStyle(.themeComment)
-                        }())
-                }
-
-                if browser.candidates.isEmpty {
-                    Section("Nearby Macs") {
-                        ContentUnavailableView(
-                            "No Mac Found Yet",
-                            systemImage: "macbook.and.iphone",
-                            description: Text("Keep Oppi open on your Mac's pairing screen. You can still use the QR code or invite link instead.")
-                        )
-                    }
-                } else {
-                    Section("Nearby Macs") {
-                        ForEach(browser.candidates) { candidate in
-                            Button {
-                                browser.invite(candidate)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(candidate.displayName)
-                                        .foregroundStyle(.themeFg)
-                                    if let detailText = candidate.detailText {
-                                        Text(detailText)
-                                            .font(.caption)
-                                            .foregroundStyle(.themeComment)
-                                    }
-                                }
-                            }
-                            .disabled(!canInvite)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Pair Nearby Mac")
-            .navigationBarTitleDisplayMode(.inline)
-            .themedListSurface()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Retry") {
-                        browser.retry()
-                    }
-                }
-            }
-            .task {
-                browser.onInviteURL = onInviteURL
-                browser.start()
-            }
-            .onDisappear {
-                browser.onInviteURL = nil
-                browser.stop()
-            }
-        }
-    }
-
-    private var canInvite: Bool {
-        if case .discovering = browser.state {
-            return true
-        }
-        if case .failed = browser.state {
-            return true
-        }
-        return false
-    }
 }
 
 // MARK: - Manual Entry
