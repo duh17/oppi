@@ -130,3 +130,151 @@ struct MessageQueueComposerRestoreTests {
         #expect(plan?.pendingAttachments.map(\.id) == ["queued", current.id])
     }
 }
+
+@Suite("MessageQueueAttachmentPresentation")
+struct MessageQueueAttachmentPresentationTests {
+    @Test func visibleAttachmentsShowPhotoThumbnailsAndFilePills() {
+        let photo = ChatAttachmentRef(
+            type: "attachment",
+            id: "att-photo",
+            source: .upload,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+            sha256: nil,
+            kind: nil,
+            workspacePath: nil
+        )
+        let file = ChatAttachmentRef(
+            type: "attachment",
+            id: "att-file",
+            source: .upload,
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 4,
+            sha256: nil,
+            kind: .text,
+            workspacePath: nil
+        )
+        let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
+        let item = MessageQueueItem(
+            id: "q1",
+            message: "look",
+            attachments: [photo, file],
+            optimisticImages: [image],
+            createdAt: 1
+        )
+
+        let chips = MessageQueueAttachmentPresentation.visibleAttachments(for: item)
+        #expect(chips == [
+            .photo(id: "att-photo", name: "shot.png", image: image),
+            .file(id: "att-file", name: "notes.txt"),
+        ])
+    }
+
+    @Test func widgetSubtitleNamesQueuedPhotosAndFiles() {
+        #expect(
+            MessageQueueAttachmentPresentation.widgetSubtitle(
+                steeringCount: 1,
+                followUpCount: 0,
+                photoCount: 0,
+                fileCount: 0
+            ) == "1 steering • 0 follow-up"
+        )
+        #expect(
+            MessageQueueAttachmentPresentation.widgetSubtitle(
+                steeringCount: 1,
+                followUpCount: 1,
+                photoCount: 1,
+                fileCount: 2
+            ) == "1 steering • 1 follow-up • 1 photo • 2 files"
+        )
+        #expect(
+            MessageQueueAttachmentPresentation.mediaHint(photoCount: 1, fileCount: 2)
+                == "1 photo • 2 files"
+        )
+        #expect(MessageQueueAttachmentPresentation.mediaHint(photoCount: 0, fileCount: 0) == nil)
+    }
+
+    @Test func imageAttachmentsWithoutLocalBytesStayPhotos() {
+        let photo = ChatAttachmentRef(
+            type: "attachment",
+            id: "att-photo",
+            source: .upload,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+            sha256: nil,
+            kind: nil,
+            workspacePath: nil
+        )
+        let item = MessageQueueItem(
+            id: "q1",
+            message: "look",
+            attachments: [photo],
+            createdAt: 1
+        )
+
+        #expect(
+            MessageQueueAttachmentPresentation.visibleAttachments(for: item) == [
+                .photo(id: "att-photo", name: "shot.png", image: nil),
+            ]
+        )
+        let counts = MessageQueueAttachmentPresentation.mediaCounts(
+            in: MessageQueueState(version: 1, steering: [item], followUp: [])
+        )
+        #expect(counts.photos == 1)
+        #expect(counts.files == 0)
+    }
+
+    @Test func mediaCountsUseVisibleAttachments() {
+        let queue = MessageQueueState(
+            version: 1,
+            steering: [
+                MessageQueueItem(
+                    id: "s1",
+                    message: "photo",
+                    attachments: [
+                        ChatAttachmentRef(
+                            type: "attachment",
+                            id: "att-photo",
+                            source: .upload,
+                            name: "shot.png",
+                            mimeType: "image/png",
+                            sizeBytes: 5,
+                            sha256: nil,
+                            kind: nil,
+                            workspacePath: nil
+                        )
+                    ],
+                    optimisticImages: [ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")],
+                    createdAt: 1
+                )
+            ],
+            followUp: [
+                MessageQueueItem(
+                    id: "f1",
+                    message: "file",
+                    attachments: [
+                        ChatAttachmentRef(
+                            type: "attachment",
+                            id: "att-file",
+                            source: .upload,
+                            name: "notes.txt",
+                            mimeType: "text/plain",
+                            sizeBytes: 4,
+                            sha256: nil,
+                            kind: .text,
+                            workspacePath: nil
+                        )
+                    ],
+                    createdAt: 2
+                )
+            ]
+        )
+
+        let counts = MessageQueueAttachmentPresentation.mediaCounts(in: queue)
+        #expect(counts.photos == 1)
+        #expect(counts.files == 1)
+    }
+}

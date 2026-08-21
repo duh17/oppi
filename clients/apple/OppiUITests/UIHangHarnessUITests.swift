@@ -903,7 +903,7 @@ final class UIMessageQueueHarnessUITests: UIHarnessTestCase {
             imageAttachment.waitForExistence(timeout: 4),
             "An image-only queued message should show its image name"
         )
-        XCTAssertEqual(imageAttachment.label, "Attachment image-1.jpg")
+        XCTAssertEqual(imageAttachment.label, "Photo image-1.jpg")
 
         let fileAttachment = app.descendants(matching: .any)["chat.messageQueue.attachment.harness-file"]
         XCTAssertTrue(

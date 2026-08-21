@@ -201,4 +201,146 @@ struct MessageQueueStoreTests {
             )
         ])
     }
+
+    @Test func applyKeepsOptimisticMediaWhenServerOmitsAttachments() {
+        let store = MessageQueueStore()
+        let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
+        let photo = ChatAttachmentRef(
+            type: "attachment",
+            id: "att-photo",
+            source: .upload,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+            sha256: nil,
+            kind: nil,
+            workspacePath: ".pi/attachments/demo/shot.png"
+        )
+        let file = ChatAttachmentRef(
+            type: "attachment",
+            id: "att-file",
+            source: .upload,
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 4,
+            sha256: nil,
+            kind: .text,
+            workspacePath: ".pi/attachments/demo/notes.txt"
+        )
+
+        _ = store.enqueueOptimisticItem(
+            for: "s1",
+            kind: .steer,
+            message: "look at these",
+            attachments: [photo, file],
+            optimisticImages: [image],
+            id: "turn-1"
+        )
+
+        store.apply(
+            MessageQueueState(
+                version: 3,
+                steering: [
+                    MessageQueueItem(
+                        id: "turn-1",
+                        message: "look at these",
+                        createdAt: 2
+                    )
+                ],
+                followUp: []
+            ),
+            for: "s1"
+        )
+
+        let item = store.queue(for: "s1").steering.first
+        #expect(item?.attachments == [photo, file])
+        #expect(item?.optimisticImages == [image])
+        #expect(store.queue(for: "s1").version == 3)
+    }
+
+    @Test func applyDoesNotCopyMediaOntoADifferentQueuedItem() {
+        let store = MessageQueueStore()
+        let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
+        let file = ChatAttachmentRef(
+            type: "attachment",
+            id: "att-file",
+            source: .upload,
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 4,
+            sha256: nil,
+            kind: .text,
+            workspacePath: nil
+        )
+
+        _ = store.enqueueOptimisticItem(
+            for: "s1",
+            kind: .steer,
+            message: "with file",
+            attachments: [file],
+            optimisticImages: [image],
+            id: "turn-1"
+        )
+
+        store.apply(
+            MessageQueueState(
+                version: 4,
+                steering: [
+                    MessageQueueItem(id: "turn-2", message: "plain text", createdAt: 3)
+                ],
+                followUp: []
+            ),
+            for: "s1"
+        )
+
+        let item = store.queue(for: "s1").steering.first
+        #expect(item?.id == "turn-2")
+        #expect(item?.attachments == nil)
+        #expect(item?.optimisticImages == nil)
+    }
+
+    @Test func applyKeepsLocalThumbsWhenServerQueueHasAttachmentRefs() {
+        let store = MessageQueueStore()
+        let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
+        let photo = ChatAttachmentRef(
+            type: "attachment",
+            id: "att-photo",
+            source: .upload,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+            sha256: nil,
+            kind: nil,
+            workspacePath: ".pi/attachments/demo/shot.png"
+        )
+
+        _ = store.enqueueOptimisticItem(
+            for: "s1",
+            kind: .steer,
+            message: "look",
+            attachments: [photo],
+            optimisticImages: [image],
+            id: "turn-1"
+        )
+
+        store.apply(
+            MessageQueueState(
+                version: 3,
+                steering: [
+                    MessageQueueItem(
+                        id: "turn-1",
+                        message: "look",
+                        attachments: [photo],
+                        createdAt: 2
+                    )
+                ],
+                followUp: []
+            ),
+            for: "s1"
+        )
+
+        let item = store.queue(for: "s1").steering.first
+        #expect(item?.attachments == [photo])
+        #expect(item?.optimisticImages == [image])
+    }
 }

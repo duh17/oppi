@@ -49,7 +49,9 @@ final class MessageQueueStore {
             return
         }
 
-        queuesBySessionId[sessionId] = state
+        queuesBySessionId[sessionId] = state.preservingLocalMedia(
+            from: queuesBySessionId[sessionId]
+        )
     }
 
     func clear(sessionId: String) {

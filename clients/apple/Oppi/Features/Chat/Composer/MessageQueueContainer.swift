@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private extension View {
     func messageQueuePanelChrome(cornerRadius: CGFloat = 18) -> some View {
@@ -32,6 +33,8 @@ enum MessageQueueContainerPresentation {
 }
 
 struct MessageQueueContainer: View {
+    private static let queuedAttachmentTileSize: CGFloat = 36
+
     private struct StatusBannerModel {
         let title: String
         let message: String
@@ -306,7 +309,9 @@ struct MessageQueueContainer: View {
         HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 6) {
                 TextField(
-                    item.attachments?.isEmpty == false ? "Add a message (optional)" : "Queued message",
+                    MessageQueueAttachmentPresentation.visibleAttachments(for: item).isEmpty
+                        ? "Queued message"
+                        : "Add a message (optional)",
                     text: binding,
                     axis: .vertical
                 )
@@ -331,22 +336,63 @@ struct MessageQueueContainer: View {
 
     @ViewBuilder
     private func queuedAttachmentStrip(for item: MessageQueueItem) -> some View {
-        if let attachments = item.attachments, !attachments.isEmpty {
+        let chips = MessageQueueAttachmentPresentation.visibleAttachments(for: item)
+        if !chips.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(attachments) { attachment in
-                        QueuedAttachmentPill(attachment: attachment)
+                    ForEach(chips) { chip in
+                        queuedAttachmentChip(chip)
                     }
                 }
             }
-        } else if let optimisticImages = item.optimisticImages, !optimisticImages.isEmpty {
-            Label(
-                optimisticImages.count == 1 ? "Image attached" : "\(optimisticImages.count) images attached",
-                systemImage: "photo.fill"
-            )
-            .font(.caption2)
-            .foregroundStyle(.themeComment)
+            .frame(height: Self.queuedAttachmentTileSize)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    @ViewBuilder
+    private func queuedAttachmentChip(_ chip: MessageQueueVisibleAttachment) -> some View {
+        switch chip {
+        case .photo(let id, let name, let image):
+            queuedPhotoThumb(id: id, name: name, image: image)
+        case .file(let id, let name):
+            QueuedAttachmentPill(id: id, name: name)
+        }
+    }
+
+    @ViewBuilder
+    private func queuedPhotoThumb(id: String, name: String, image: ImageAttachment?) -> some View {
+        let decodedImage: UIImage? = {
+            guard let image,
+                  let data = Data(base64Encoded: image.data, options: .ignoreUnknownCharacters) else {
+                return nil
+            }
+            return UIImage(data: data)
+        }()
+
+        Group {
+            if let decodedImage {
+                Image(uiImage: decodedImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                ZStack {
+                    Color.themeRecessedInset
+                    Image(systemName: "photo")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeComment)
+                }
+            }
+        }
+        .frame(width: Self.queuedAttachmentTileSize, height: Self.queuedAttachmentTileSize)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("chat.messageQueue.attachment.\(id)")
+        .accessibilityLabel("Photo \(name)")
     }
 
     private func rowActions(kind: MessageQueueKind, index: Int) -> some View {
@@ -549,13 +595,14 @@ struct MessageQueueContainer: View {
 }
 
 private struct QueuedAttachmentPill: View {
-    let attachment: ChatAttachmentRef
+    let id: String
+    let name: String
 
     var body: some View {
         HStack(spacing: 4) {
-            FileIcon.forPath(attachment.name).iconView(size: 12, font: .appTag)
+            FileIcon.forPath(name).iconView(size: 12, font: .appTag)
 
-            Text(attachment.name)
+            Text(name)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.themeFg)
                 .lineLimit(1)
@@ -564,8 +611,8 @@ private struct QueuedAttachmentPill: View {
         .padding(.vertical, 4)
         .background(.themeComment.opacity(0.1), in: Capsule())
         .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier("chat.messageQueue.attachment.\(attachment.id)")
-        .accessibilityLabel("Attachment \(attachment.name)")
+        .accessibilityIdentifier("chat.messageQueue.attachment.\(id)")
+        .accessibilityLabel("Attachment \(name)")
     }
 }
 

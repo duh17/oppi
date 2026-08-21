@@ -1393,7 +1393,7 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
     case status(id: String, key: String, text: String)
     case native(ExtensionNativeSurfaceState, statusText: String?)
     case widget(ExtensionWidgetState, statusText: String?, titleOverride: String?)
-    case messageQueue(steeringCount: Int, followUpCount: Int)
+    case messageQueue(steeringCount: Int, followUpCount: Int, photoCount: Int, fileCount: Int)
 
     var id: String {
         switch self {
@@ -1441,8 +1441,23 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
             return widget.lines
                 .map { ANSIParser.strip($0).trimmingCharacters(in: .whitespacesAndNewlines) }
                 .first { !$0.isEmpty && $0 != header.title }
-        case .messageQueue(let steeringCount, let followUpCount):
-            return "\(steeringCount) steering • \(followUpCount) follow-up"
+        case .messageQueue(let steeringCount, let followUpCount, _, _):
+            return MessageQueueAttachmentPresentation.countSubtitle(
+                steeringCount: steeringCount,
+                followUpCount: followUpCount
+            )
+        }
+    }
+
+    var mediaSubtitle: String? {
+        switch self {
+        case .messageQueue(_, _, let photoCount, let fileCount):
+            return MessageQueueAttachmentPresentation.mediaHint(
+                photoCount: photoCount,
+                fileCount: fileCount
+            )
+        case .title, .status, .native, .widget:
+            return nil
         }
     }
 
@@ -1472,7 +1487,7 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
             return Self.nativeTone(nativeSurface.surface)
         case .widget:
             return .accent
-        case .messageQueue(let steeringCount, let followUpCount):
+        case .messageQueue(let steeringCount, let followUpCount, _, _):
             return steeringCount + followUpCount > 0 ? .success : .neutral
         case .status:
             return .accent
@@ -1596,6 +1611,15 @@ private struct ExtensionSurfaceStripPill: View {
                         .frame(maxWidth: 150, alignment: .leading)
                 }
 
+                if let mediaSubtitle = entry.mediaSubtitle?.trimmedNonEmpty {
+                    Text(mediaSubtitle)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityIdentifier("chat.messageQueue.widget.media")
+                }
+
                 Image(systemName: isActive ? "chevron.down" : "chevron.right")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.themeComment)
@@ -1617,7 +1641,16 @@ private struct ExtensionSurfaceStripPill: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)")
         .accessibilityLabel("\(isActive ? "Collapse" : "Expand") \(entry.title) \(entry.kindLabel)")
-        .accessibilityValue(entry.subtitle ?? (isActive ? "Expanded" : "Collapsed"))
+        .accessibilityValue(accessibilityValueText)
+    }
+
+    private var accessibilityValueText: String {
+        let parts = [entry.subtitle, entry.mediaSubtitle]
+            .compactMap { $0?.trimmedNonEmpty }
+        if !parts.isEmpty {
+            return parts.joined(separator: " • ")
+        }
+        return isActive ? "Expanded" : "Collapsed"
     }
 }
 
@@ -1648,6 +1681,11 @@ private struct ExtensionSurfaceDrawer: View {
                         Text(subtitle)
                             .font(.caption)
                             .foregroundStyle(.themeComment)
+                    }
+                    if let mediaSubtitle = entry.mediaSubtitle?.trimmedNonEmpty {
+                        Text(mediaSubtitle)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeFg)
                             .lineLimit(1)
                     }
                 }
@@ -1814,9 +1852,12 @@ struct ExtensionSurfacePanel: View {
             }
         })
         if let messageQueue, messageQueue.hasVisibleEntry {
+            let media = MessageQueueAttachmentPresentation.mediaCounts(in: messageQueue.queue)
             result.append(.messageQueue(
                 steeringCount: messageQueue.queue.steering.count,
-                followUpCount: messageQueue.queue.followUp.count
+                followUpCount: messageQueue.queue.followUp.count,
+                photoCount: media.photos,
+                fileCount: media.files
             ))
         }
         return result
