@@ -60,6 +60,7 @@ struct ChatTimelineView: View {
     let scrollController: ChatScrollController
     let sessionManager: ChatSessionManager
     let audioLifecycleCoordinator: AudioLifecycleCoordinator?
+    var quietModeEnabled: Bool = false
     let onFork: (String) -> Void
     let onBackSwipe: () -> Void
     let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -72,24 +73,51 @@ struct ChatTimelineView: View {
     @State private var renderWindow = Self.initialRenderWindow
     @State private var scrollCommandNonce = 0
     @State private var pendingScrollCommand: ChatTimelineScrollCommand?
-
-    private var visibleItems: ArraySlice<ChatItem> {
-        reducer.items.suffix(renderWindow)
-    }
-
-    private var hiddenCount: Int {
-        max(0, reducer.items.count - visibleItems.count)
-    }
+    @State private var expandedQuietTurnIDs: Set<String> = []
 
     private var showsWorkingIndicator: Bool {
         isBusy && (extensionWorkingState?.visible ?? true)
+    }
+
+    private var projection: QuietTimelineProjection {
+        return QuietTimelineProjection.make(
+            items: reducer.items,
+            isQuiet: quietModeEnabled,
+            isBusy: isBusy,
+            expandedTurnIDs: expandedQuietTurnIDs,
+            liveStartedAt: liveWorkStartedAt
+        )
+    }
+
+    /// Per-strip elapsed time. The manager stamps when the trailing fold
+    /// group opened, so each live strip counts only its own work instead of
+    /// the whole server turn.
+    private var liveWorkStartedAt: Date? {
+        guard quietModeEnabled, isBusy else { return nil }
+        return sessionManager.quietWorkStartedAt
+    }
+
+    private var renderedItems: ArraySlice<ChatItem> {
+        reducer.items.suffix(renderWindow)
+    }
+
+    private var renderedItemIDs: Set<String> {
+        Set(renderedItems.map(\.id))
+    }
+
+    private var visibleRows: [TimelineDisplayRow] {
+        projection.rows(forRenderedItemIDs: renderedItemIDs)
+    }
+
+    private var hiddenCount: Int {
+        max(0, reducer.items.count - renderedItems.count)
     }
 
     private var bottomItemID: String? {
         if showsWorkingIndicator {
             return ChatTimelineCollectionHost.workingIndicatorID
         }
-        return visibleItems.last?.id
+        return visibleRows.last?.id
     }
 
     private func syncRenderWindow() {
@@ -107,7 +135,7 @@ struct ChatTimelineView: View {
         guard scrollController.needsInitialScroll else { return }
         guard let bottomItemID else { return }
 
-        let availableFullTimelineItemIDs = reducer.items.map(\.id)
+        let availableFullTimelineItemIDs = projection.fullTimelineItemIDs
         guard let placement = scrollController.initialPlacement(
             availableFullTimelineItemIDs: availableFullTimelineItemIDs,
             bottomItemID: bottomItemID
@@ -131,10 +159,20 @@ struct ChatTimelineView: View {
     }
 
     var body: some View {
+        let projection = self.projection
+        let visibleRows = projection.rows(forRenderedItemIDs: renderedItemIDs)
         ChatTimelineCollectionHost(
             configuration: .init(
-                items: Array(visibleItems),
-                fullTimelineItemIDs: reducer.items.map(\.id),
+                items: visibleRows.compactMap { row in
+                    if case .item(let item) = row { return item }
+                    return nil
+                },
+                displayRows: visibleRows,
+                workLineByID: Dictionary(uniqueKeysWithValues: visibleRows.compactMap { row in
+                    guard case .quietWork(let workLine) = row else { return nil }
+                    return (workLine.id, workLine)
+                }),
+                fullTimelineItemIDs: projection.fullTimelineItemIDs,
                 hiddenCount: hiddenCount,
                 hasOlderServerPage: sessionManager.hasOlderTracePage,
                 renderWindowStep: Self.renderWindowStep,
@@ -149,6 +187,9 @@ struct ChatTimelineView: View {
                 routeScope: routeScope,
                 onFork: onFork,
                 onBackSwipe: onBackSwipe,
+                onQuietWorkLineToggle: { turnID in
+                    expandedQuietTurnIDs.formSymmetricDifference([turnID])
+                },
                 onShowEarlier: {
                     switch TimelineRenderWindowPolicy.showEarlierAction(
                         currentWindow: renderWindow,
@@ -213,10 +254,19 @@ struct ChatTimelineView: View {
             syncRenderWindow()
             consumeInitialScrollIfNeeded()
         }
+        .onChange(of: quietModeEnabled) { _, isEnabled in
+            if !isEnabled {
+                expandedQuietTurnIDs.removeAll()
+            }
+            consumeInitialScrollIfNeeded()
+        }
+        .onChange(of: sessionId) { _, _ in
+            expandedQuietTurnIDs.removeAll()
+        }
         // Jump-to-bottom button lives in ChatView (above the footer overlay) to avoid
         // the footer's z-order blocking taps on this overlay.
         .onChange(of: reducer.renderVersion) { _, _ in
-            scrollController.itemCount = visibleItems.count
+            scrollController.itemCount = visibleRows.count
             _ = scrollController.consumeHasNewItems()
             // Ambient streaming follow is handled inside the collection view
             // after layout settles. SwiftUI only issues explicit scroll
@@ -230,7 +280,14 @@ struct ChatTimelineView: View {
         }
         .onChange(of: scrollController.scrollTargetID) { _, targetID in
             guard targetID != nil else { return }
-            if let targetID, !visibleItems.contains(where: { $0.id == targetID }) {
+            if let targetID, !visibleRows.contains(where: { $0.id == targetID }) {
+                if let workLine = projection.rows.compactMap({ row -> QuietTimelineWorkLine? in
+                    guard case .quietWork(let workLine) = row,
+                          workLine.sourceItemIDs.contains(targetID) else { return nil }
+                    return workLine
+                }).first {
+                    expandedQuietTurnIDs.insert(workLine.turnID)
+                }
                 renderWindow = reducer.items.count
             }
             scrollController.handleScrollTarget { target in

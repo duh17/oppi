@@ -446,6 +446,27 @@ struct ChatScrollControllerTests {
         #expect(restoration == TimelineViewportRestoration(itemID: "replacement-180", relativeY: 18))
     }
 
+    @Test func renderedWindowRestoreMapsCollapsedSourceToSyntheticWorkLine() {
+        let restoration = TimelineViewportRestoration(
+            itemID: "tool-1",
+            relativeY: 31
+        )
+
+        let resolved = TimelineViewportRestorationResolver.resolveRenderedWindow(
+            restoration,
+            availableFullTimelineItemIDs: ["u1", "tool-1", "assistant-1"],
+            renderedTimelineItemIDs: ["u1", "quiet-work-line:u1", "assistant-1"],
+            renderedIDForFullTimelineItemID: { id in
+                id == "tool-1" ? "quiet-work-line:u1" : id
+            }
+        )
+
+        #expect(resolved == TimelineViewportRestoration(
+            itemID: "quiet-work-line:u1",
+            relativeY: 31
+        ))
+    }
+
     @Test func tailAttachedNavigationReentryReturnsToCurrentBottom() {
         let controller = makeTestScrollController()
         controller.updateNearBottom(true)

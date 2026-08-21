@@ -1700,12 +1700,12 @@ describe("agent routes", () => {
         method: "PATCH",
         path: `/agents/${agent.id}`,
         url: new URL(`http://localhost/agents/${agent.id}`),
-        req: makeRequest({ sessionDefaults: { model: "model", unexpected: true } }) as never,
+        req: makeRequest({ sessionDefaults: { model: "model", compactTurns: "on" } }) as never,
         res: nestedRes as unknown as ServerResponse,
       });
       expect(nestedRes.statusCode).toBe(400);
       expect(JSON.parse(nestedRes.body)).toEqual({
-        error: "sessionDefaults has unexpected field: unexpected",
+        error: "sessionDefaults has unexpected field: compactTurns",
       });
 
       const emptyRes = makeResponse();

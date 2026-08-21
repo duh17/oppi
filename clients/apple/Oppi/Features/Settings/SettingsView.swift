@@ -20,6 +20,7 @@ struct SettingsView: View {
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
     @State private var voiceReplyMode = AppPreferences.Voice.replyMode
     @State private var hapticFeedbackEnabled = AppPreferences.Interaction.isHapticFeedbackEnabled
+    @State private var quietModeEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
 
     var body: some View {
         List {
@@ -102,6 +103,18 @@ struct SettingsView: View {
                     WorkingSpinnerView(tintColor: .themeFg, style: spinnerStyle)
                         .frame(width: 20, height: 20)
                         .id(spinnerStyle)
+                }
+
+                if UIDevice.current.userInterfaceIdiom == .phone {
+                    Toggle("Compact turns", isOn: $quietModeEnabled)
+                        .onChange(of: quietModeEnabled) { _, newValue in
+                            AppPreferences.ChatDisplay.setCompactTurnsEnabled(newValue)
+                        }
+                        .accessibilityIdentifier("settings.compactTurns")
+
+                    Text("Collapse successful tools and thinking after a turn finishes. Messages, errors, asks, system events, cache misses, and audio stay visible.")
+                        .font(.footnote)
+                        .foregroundStyle(.themeComment)
                 }
             } header: {
                 Text("Chat Display")
@@ -326,11 +339,15 @@ struct SettingsView: View {
                 LabeledContent("Version", value: appVersionLabel)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: AppPreferences.ChatDisplay.didChangeNotification)) { _ in
+            quietModeEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
+        }
         .onAppear {
             // Refresh provider label when returning from AutoTitleSettingsView
             autoTitleProvider = AppPreferences.Session.autoTitleProvider
             selectedCodeTextScale = FontPreferences.codeTextScale
             selectedMessageTextScale = FontPreferences.messageTextScale
+            quietModeEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
         }
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
         .themedListSurface()

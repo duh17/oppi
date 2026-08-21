@@ -95,7 +95,8 @@ enum TimelineViewportRestorationResolver {
     static func resolveRenderedWindow(
         _ restoration: TimelineViewportRestoration,
         availableFullTimelineItemIDs: [String],
-        renderedTimelineItemIDs: [String]
+        renderedTimelineItemIDs: [String],
+        renderedIDForFullTimelineItemID: ((String) -> String?)? = nil
     ) -> TimelineViewportRestoration? {
         let rendered = Set(renderedTimelineItemIDs)
         guard !rendered.isEmpty,
@@ -106,6 +107,13 @@ enum TimelineViewportRestorationResolver {
         if rendered.contains(restoration.itemID) {
             return restoration
         }
+        if let renderedID = renderedIDForFullTimelineItemID?(restoration.itemID),
+           rendered.contains(renderedID) {
+            return TimelineViewportRestoration(
+                itemID: renderedID,
+                relativeY: restoration.relativeY
+            )
+        }
 
         if targetOrdinal + 1 < availableFullTimelineItemIDs.count {
             for index in (targetOrdinal + 1)..<availableFullTimelineItemIDs.count {
@@ -113,6 +121,13 @@ enum TimelineViewportRestorationResolver {
                 if rendered.contains(itemID) {
                     return TimelineViewportRestoration(
                         itemID: itemID,
+                        relativeY: restoration.relativeY
+                    )
+                }
+                if let renderedID = renderedIDForFullTimelineItemID?(itemID),
+                   rendered.contains(renderedID) {
+                    return TimelineViewportRestoration(
+                        itemID: renderedID,
                         relativeY: restoration.relativeY
                     )
                 }
@@ -125,6 +140,13 @@ enum TimelineViewportRestorationResolver {
                 if rendered.contains(itemID) {
                     return TimelineViewportRestoration(
                         itemID: itemID,
+                        relativeY: restoration.relativeY
+                    )
+                }
+                if let renderedID = renderedIDForFullTimelineItemID?(itemID),
+                   rendered.contains(renderedID) {
+                    return TimelineViewportRestoration(
+                        itemID: renderedID,
                         relativeY: restoration.relativeY
                     )
                 }

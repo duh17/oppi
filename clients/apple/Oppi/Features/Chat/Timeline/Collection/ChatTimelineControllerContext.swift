@@ -10,6 +10,7 @@ final class ChatTimelineControllerContext {
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
     var onShowEarlier: (() -> Void)?
+    var onQuietWorkLineToggle: ((String) -> Void)?
     weak var scrollController: ChatScrollController?
     var reducer: TimelineReducer?
     var toolOutputStore: ToolOutputStore?
@@ -45,6 +46,7 @@ final class ChatTimelineControllerContext {
         routeScope = configuration.routeScope
         onFork = configuration.onFork
         onShowEarlier = configuration.onShowEarlier
+        onQuietWorkLineToggle = configuration.onQuietWorkLineToggle
         scrollController = configuration.scrollController
         reducer = configuration.reducer
         toolOutputStore = configuration.toolOutputStore

@@ -976,6 +976,119 @@ struct ScrollStabilityTests {
                 "Tool row header shifted \(shift)pt when expanding near bottom")
     }
 
+    @MainActor
+    @Test func detachedCollapsedStripKeepsViewportWhenOlderPageExtendsItsFoldedGroup() throws {
+        let window = makeScrollTestWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 400))
+        let collectionView = AnchoredCollectionView(
+            frame: window.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        window.addSubview(collectionView)
+        window.makeKeyAndVisible()
+
+        let coordinator = ChatTimelineCollectionHost.Controller()
+        coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.delegate = coordinator
+
+        let reducer = TimelineReducer()
+        let scrollController = ChatScrollController()
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let toolOutputStore = ToolOutputStore()
+        let toolArgsStore = ToolArgsStore()
+        let timestamp = Date(timeIntervalSince1970: 0)
+        let currentPage: [ChatItem] = [
+            .toolCall(id: "tool-5", tool: "bash", argsSummary: "five", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            .thinking(id: "think-6", preview: "six", hasMore: false, isDone: true),
+            .assistantMessage(id: "a1", text: "Current result", timestamp: timestamp),
+        ] + (0..<12).map { index in
+            .assistantMessage(
+                id: "later-\(index)",
+                text: String(repeating: "Later result \(index). ", count: 12),
+                timestamp: timestamp
+            )
+        }
+
+        func apply(_ projection: QuietTimelineProjection) {
+            let workLines = projection.rows.compactMap { row -> QuietTimelineWorkLine? in
+                guard case .quietWork(let line) = row else { return nil }
+                return line
+            }
+            let configuration = makeTimelineConfiguration(
+                items: projection.rows.compactMap { row in
+                    guard case .item(let item) = row else { return nil }
+                    return item
+                },
+                fullTimelineItemIDs: projection.fullTimelineItemIDs,
+                displayRows: projection.rows,
+                workLineByID: Dictionary(uniqueKeysWithValues: workLines.map { ($0.id, $0) }),
+                sessionId: "s-quiet-page-prepend",
+                reducer: reducer,
+                toolOutputStore: toolOutputStore,
+                toolArgsStore: toolArgsStore,
+                connection: connection,
+                scrollController: scrollController,
+                audioPlayer: audioPlayer
+            )
+            coordinator.apply(configuration: configuration, to: collectionView)
+            collectionView.layoutIfNeeded()
+        }
+
+        let before = QuietTimelineProjection.make(
+            items: currentPage,
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: []
+        )
+        apply(before)
+        let oldStripID = try #require(before.rows.first?.id)
+        #expect(oldStripID == "quiet-work-line:tool-5")
+        let oldIndex = try #require(coordinator.currentIDs.firstIndex(of: oldStripID))
+        let oldIndexPath = IndexPath(item: oldIndex, section: 0)
+        scrollController.detachFromBottomForUserScroll()
+        collectionView.isDetachedFromBottom = true
+        collectionView.clearDetachedAnchor()
+        collectionView.applyOffsetCorrection(
+            -collectionView.adjustedContentInset.top,
+            freezeUntilCapture: true
+        )
+        collectionView.layoutIfNeeded()
+        collectionView.captureDetachedAnchor()
+        let oldAttributes = try #require(
+            collectionView.layoutAttributesForItem(at: oldIndexPath)
+        )
+        let oldScreenY = oldAttributes.frame.minY - collectionView.contentOffset.y
+
+        let after = QuietTimelineProjection.make(
+            items: [
+                .assistantMessage(id: "a0", text: "Earlier result", timestamp: timestamp),
+                .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
+                .toolCall(id: "tool-2", tool: "read", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            ] + currentPage,
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: []
+        )
+        apply(after)
+        drainRunLoop()
+
+        let newStripID = "quiet-work-line:think-1"
+        #expect(oldStripID != newStripID, "Collapsed strips may still derive presentation identity from the loaded page")
+        #expect(coordinator.renderedID(forFullTimelineItemID: oldStripID) == newStripID)
+        #expect(collectionView.detachedAnchorIsActive)
+        #expect(collectionView.isDetachedFromBottom)
+        let newIndex = try #require(coordinator.currentIDs.firstIndex(of: newStripID))
+        let newAttributes = try #require(
+            collectionView.layoutAttributesForItem(at: IndexPath(item: newIndex, section: 0))
+        )
+        let newScreenY = newAttributes.frame.minY - collectionView.contentOffset.y
+        #expect(
+            abs(newScreenY - oldScreenY) < 2,
+            "Mid-group page prepend moved the detached strip from y=\(oldScreenY) to y=\(newScreenY)"
+        )
+        #expect(!scrollController.isCurrentlyNearBottom)
+    }
+
     // MARK: - Detached Scroll Stability with New Items
 
     @MainActor

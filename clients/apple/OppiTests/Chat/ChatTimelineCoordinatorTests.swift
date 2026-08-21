@@ -21,6 +21,28 @@ struct ChatTimelineCoordinatorTests {
     }
 
     @MainActor
+    @Test func syntheticWorkLineMapsToAndFromItsSourceChatItemIDs() {
+        let controller = ChatTimelineCollectionHost.Controller()
+        controller.currentIDs = ["u1", "quiet-work-line:u1", "assistant-1"]
+        let workLine = QuietTimelineWorkLine(
+            id: "quiet-work-line:u1",
+            turnID: "u1",
+            sourceItemIDs: ["think-1", "tool-1"],
+            toolCount: 1,
+            thinkingCount: 1,
+            activityCounts: [:],
+            activities: [],            isExpanded: false,
+            isLive: false,
+            liveStartedAt: nil
+        )
+        controller.currentWorkLineByID = [workLine.id: workLine]
+
+        #expect(controller.fullTimelineItemID(forRenderedID: workLine.id) == "think-1")
+        #expect(controller.renderedID(forFullTimelineItemID: "tool-1") == workLine.id)
+        #expect(controller.renderedID(forFullTimelineItemID: workLine.id) == workLine.id)
+    }
+
+    @MainActor
     @Test func applyConfigurationWiresBackSwipeCallbackOntoCollectionController() {
         let harness = makeTimelineHarness(sessionId: "session-back")
         let controller = ChatTimelineCollectionHost.Controller()
@@ -576,6 +598,85 @@ struct ChatTimelineCoordinatorTests {
         )
         #expect(callbackCount == 0)
         #expect(harness.collectionView.indexPathsForSelectedItems?.isEmpty ?? true)
+    }
+
+    @MainActor
+    @Test func quietWorkLineSelectionIsNotASecondActionOwner() throws {
+        var callbackCount = 0
+        let workLine = QuietTimelineWorkLine(
+            id: "quiet-work-line:turn-1",
+            turnID: "turn-1",
+            sourceItemIDs: ["thinking-1", "tool-1"],
+            toolCount: 1,
+            thinkingCount: 1,
+            activityCounts: [:],
+            activities: [],            isExpanded: false,
+            isLive: false,
+            liveStartedAt: nil
+        )
+        let harness = makeTimelineHarness(sessionId: "session-quiet-work-selection")
+        let config = makeTimelineConfiguration(
+            items: [],
+            fullTimelineItemIDs: nil,
+            displayRows: [.quietWork(workLine)],
+            workLineByID: [workLine.id: workLine],
+            hiddenCount: 0,
+            renderWindowStep: 50,
+            isBusy: false,
+            streamingAssistantID: nil,
+            onShowEarlier: {},
+            scrollCommand: nil,
+            sessionId: "session-quiet-work-selection",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            toolSegmentStore: harness.toolSegmentStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer,
+            onBackSwipe: {},
+            onQuietWorkLineToggle: { _ in callbackCount += 1 },
+            topOverlap: 0,
+            bottomOverlap: 0,
+            reviewCommentSelectionRouter: nil,
+            workspaceId: "ws-test"
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        harness.collectionView.layoutIfNeeded()
+
+        let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
+        let row = try #require(
+            timelineFirstView(ofType: QuietWorkLineTimelineRowContentView.self, in: cell.contentView)
+        )
+        let button = try #require(timelineFirstView(ofType: UIButton.self, in: row))
+        #expect(
+            cell.bounds.height >= 44,
+            "quiet work row self-sized to \(cell.bounds.height)pt, below the 44pt minimum touch target"
+        )
+
+        let indexPath = IndexPath(item: 0, section: 0)
+        #expect(
+            harness.coordinator.collectionView(
+                harness.collectionView,
+                shouldSelectItemAt: indexPath
+            ) == false
+        )
+
+        // Force a selected state the production shouldSelect path would refuse,
+        // then prove didSelect is a no-op that clears sticky selection.
+        harness.collectionView.selectItem(at: indexPath, animated: false, scrollPosition: [])
+        #expect(harness.collectionView.indexPathsForSelectedItems == [indexPath])
+
+        harness.coordinator.collectionView(
+            harness.collectionView,
+            didSelectItemAt: indexPath
+        )
+        #expect(callbackCount == 0)
+        #expect(harness.collectionView.indexPathsForSelectedItems?.isEmpty ?? true)
+
+        // The button remains the sole action owner.
+        button.sendActions(for: .touchUpInside)
+        #expect(callbackCount == 1)
     }
 
     @MainActor

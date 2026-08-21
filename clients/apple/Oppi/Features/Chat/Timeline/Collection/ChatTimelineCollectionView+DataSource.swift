@@ -328,6 +328,35 @@ extension ChatTimelineCollectionHost.Controller {
             )
         }
 
+        let quietWorkRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+            let configureStartNs = ChatTimelinePerf.timestampNs()
+            guard let self,
+                  let workLine = self.currentWorkLineByID[itemID] else {
+                self?.applyNativeFrictionRow(
+                    to: cell,
+                    title: "Work row unavailable",
+                    detail: "Synthetic quiet-mode row missing from snapshot.",
+                    rowType: "quiet_work_placeholder",
+                    startNs: configureStartNs
+                )
+                return
+            }
+
+            cell.contentConfiguration = QuietWorkLineTimelineRowConfiguration(
+                workLine: workLine,
+                onTap: { [weak self, weak collectionView] in
+                    guard let self, let collectionView else { return }
+                    self.toggleQuietWorkLine(workLine, in: collectionView)
+                }
+            )
+            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            cell.contentView.clipsToBounds = true
+            ChatTimelinePerf.recordCellConfigure(
+                rowType: "quiet_work",
+                durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
+            )
+        }
+
         let workingRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
             let configureStartNs = ChatTimelinePerf.timestampNs()
             guard let self else {
@@ -425,6 +454,13 @@ extension ChatTimelineCollectionHost.Controller {
             working: { collectionView, indexPath, itemID in
                 collectionView.dequeueConfiguredReusableCell(
                     using: workingRegistration,
+                    for: indexPath,
+                    item: itemID
+                )
+            },
+            quietWork: { collectionView, indexPath, itemID in
+                collectionView.dequeueConfiguredReusableCell(
+                    using: quietWorkRegistration,
                     for: indexPath,
                     item: itemID
                 )

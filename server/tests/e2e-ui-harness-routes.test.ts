@@ -22,6 +22,24 @@ describe("E2E UI harness routes", () => {
     }
   });
 
+  it("keeps simulator preference reset unavailable outside the E2E harness", async () => {
+    delete process.env.OPPI_E2E_UI_HARNESS;
+    const dispatch = createE2EUIHarnessRoutes(makeContext("/tmp"), createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method: "POST",
+      path: "/e2e/ui/reset-quiet-mode",
+      url: new URL("http://localhost/e2e/ui/reset-quiet-mode"),
+      req: makeRequest({ simulatorUDID: "00000000-0000-0000-0000-000000000000", enabled: true }),
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Not found" });
+  });
+
   it("writes workspace file fixtures under the server data dir", async () => {
     process.env.OPPI_E2E_UI_HARNESS = "1";
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-e2e-fixture-route-"));

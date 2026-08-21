@@ -450,6 +450,8 @@ func makeTimelineConfiguration(
         ),
     ],
     fullTimelineItemIDs: [String]? = nil,
+    displayRows: [TimelineDisplayRow]? = nil,
+    workLineByID: [String: QuietTimelineWorkLine] = [:],
     hiddenCount: Int = 0,
     renderWindowStep: Int = 50,
     isBusy: Bool = false,
@@ -465,6 +467,7 @@ func makeTimelineConfiguration(
     scrollController: ChatScrollController,
     audioPlayer: AudioPlayerService,
     onBackSwipe: @escaping () -> Void = {},
+    onQuietWorkLineToggle: @escaping (String) -> Void = { _ in },
     topOverlap: CGFloat = 0,
     bottomOverlap: CGFloat = 0,
     reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
@@ -472,6 +475,8 @@ func makeTimelineConfiguration(
 ) -> ChatTimelineCollectionHost.Configuration {
     ChatTimelineCollectionHost.Configuration(
         items: items,
+        displayRows: displayRows,
+        workLineByID: workLineByID,
         fullTimelineItemIDs: fullTimelineItemIDs,
         hiddenCount: hiddenCount,
         renderWindowStep: renderWindowStep,
@@ -481,6 +486,7 @@ func makeTimelineConfiguration(
         workspaceId: workspaceId,
         onFork: { _ in },
         onBackSwipe: onBackSwipe,
+        onQuietWorkLineToggle: onQuietWorkLineToggle,
         onShowEarlier: onShowEarlier,
         scrollCommand: scrollCommand,
         scrollController: scrollController,

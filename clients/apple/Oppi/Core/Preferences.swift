@@ -493,6 +493,25 @@ enum AppPreferences {
 
     }
 
+    // MARK: - Chat Display
+
+    /// Device-local Compact turns preference. It never changes session or
+    /// Agent data sent over the wire.
+    enum ChatDisplay {
+        static let compactTurnsKey = "\(AppIdentifiers.subsystem).chatDisplay.compactTurns"
+        static let didChangeNotification = Notification.Name("oppi.chatDisplay.compactTurnsDidChange")
+
+        static var isCompactTurnsEnabled: Bool {
+            UserDefaults.standard.object(forKey: compactTurnsKey) as? Bool ?? false
+        }
+
+        static func setCompactTurnsEnabled(_ enabled: Bool) {
+            guard enabled != isCompactTurnsEnabled else { return }
+            UserDefaults.standard.set(enabled, forKey: compactTurnsKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+    }
+
     // MARK: - Appearance
 
     /// Spinner animation style preference.

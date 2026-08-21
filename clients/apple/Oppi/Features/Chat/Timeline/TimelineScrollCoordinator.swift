@@ -77,7 +77,8 @@ enum TimelineScrollCoordinator {
                   let restoration = TimelineViewportRestorationResolver.resolveRenderedWindow(
                     fullOrderRestoration,
                     availableFullTimelineItemIDs: controller.currentFullTimelineItemIDs,
-                    renderedTimelineItemIDs: controller.currentIDs
+                    renderedTimelineItemIDs: controller.currentIDs,
+                    renderedIDForFullTimelineItemID: { controller.renderedID(forFullTimelineItemID: $0) }
                   ),
                   let itemIndex = controller.currentIDs.firstIndex(of: restoration.itemID),
                   let attributes = collectionView.layoutAttributesForItem(
@@ -355,7 +356,8 @@ enum TimelineScrollCoordinator {
         currentIDs: [String],
         nearBottomEnterThreshold: CGFloat,
         nearBottomExitThreshold: CGFloat,
-        preserveDetachedState: Bool = false
+        preserveDetachedState: Bool = false,
+        fullTimelineIDForRenderedID: ((String) -> String?)? = nil
     ) -> CGFloat? {
         guard let scrollController else { return nil }
 
@@ -400,9 +402,10 @@ enum TimelineScrollCoordinator {
             return distanceFromBottom
         }
 
-        let id = currentIDs[firstVisible.indexPath.item]
+        let renderedID = currentIDs[firstVisible.indexPath.item]
         let relativeY = firstVisible.attributes.frame.minY - collectionView.contentOffset.y
-        scrollController.updateViewportAnchor(itemID: id, relativeY: relativeY)
+        let fullTimelineID = fullTimelineIDForRenderedID?(renderedID) ?? renderedID
+        scrollController.updateViewportAnchor(itemID: fullTimelineID, relativeY: relativeY)
 
         return distanceFromBottom
     }

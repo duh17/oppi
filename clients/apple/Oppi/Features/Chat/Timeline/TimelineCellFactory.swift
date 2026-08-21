@@ -16,6 +16,7 @@ enum TimelineCellFactory {
         let missingItem: CellDequeuer
         let loadMore: CellDequeuer
         let working: CellDequeuer
+        let quietWork: CellDequeuer
     }
 
     static func dequeueCell(
@@ -32,6 +33,10 @@ enum TimelineCellFactory {
 
         if itemID == ChatTimelineCollectionHost.workingIndicatorID {
             return registrations.working(collectionView, indexPath, itemID)
+        }
+
+        if itemID.hasPrefix("quiet-work-line:") {
+            return registrations.quietWork(collectionView, indexPath, itemID)
         }
 
         guard let item = itemByID[itemID] else {

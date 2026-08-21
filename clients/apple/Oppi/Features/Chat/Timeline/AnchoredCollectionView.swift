@@ -153,6 +153,45 @@ final class AnchoredCollectionView: UICollectionView {
         detachedSavedOffsetY = contentOffset.y
     }
 
+    /// Transfer a captured derived-row identity before a snapshot replaces
+    /// it. The saved screen Y stays unchanged, so the replacement row takes
+    /// over the detached viewport anchor without becoming timeline state.
+    func remapDetachedAnchorItemID(using replacements: [String: String]) {
+        guard let detachedAnchorItemID,
+              let replacementID = replacements[detachedAnchorItemID] else {
+            return
+        }
+        self.detachedAnchorItemID = replacementID
+    }
+
+    /// Compositional layout can expose the replacement's final frame only
+    /// after the snapshot's first layout pass. Reapply the captured screen Y
+    /// once that geometry exists so a page prepend cannot leave one-frame or
+    /// settled drift behind.
+    func restoreRemappedDetachedAnchorPosition() {
+        guard isDetachedFromBottom,
+              let indexPath = currentDetachedAnchorIndexPath(),
+              let attributes = layoutAttributesForItem(at: indexPath) else {
+            return
+        }
+
+        let minOffsetY = -adjustedContentInset.top
+        let maxOffsetY = max(
+            minOffsetY,
+            contentSize.height - bounds.height + adjustedContentInset.bottom
+        )
+        let targetOffsetY = min(
+            max(attributes.frame.minY - detachedAnchorScreenY, minOffsetY),
+            maxOffsetY
+        )
+        guard targetOffsetY.isFinite,
+              abs(targetOffsetY - contentOffset.y) > 0.5 else {
+            return
+        }
+        applyOffsetCorrection(targetOffsetY)
+        detachedSavedOffsetY = contentOffset.y
+    }
+
     // periphery:ignore - used by TimelineLifecycleBench via @testable import
     /// Clear the detached anchor after layout has settled.
     func clearDetachedAnchor() {
@@ -389,8 +428,16 @@ final class AnchoredCollectionView: UICollectionView {
 
     private func currentDetachedAnchorIndexPath() -> IndexPath? {
         if let detachedAnchorItemID {
-            guard let index = timelineItemIDs().firstIndex(of: detachedAnchorItemID) else {
+            let controller = delegate as? ChatTimelineCollectionHost.Controller
+            guard let renderedID = controller?.renderedID(forFullTimelineItemID: detachedAnchorItemID),
+                  let index = timelineItemIDs().firstIndex(of: renderedID) else {
                 return nil
+            }
+            // Once a derived Quiet row is replaced, continue anchoring its
+            // current presentation identity rather than retaining a one-apply
+            // bridge to the prior synthetic ID.
+            if renderedID != detachedAnchorItemID {
+                self.detachedAnchorItemID = renderedID
             }
             return IndexPath(item: index, section: 0)
         }

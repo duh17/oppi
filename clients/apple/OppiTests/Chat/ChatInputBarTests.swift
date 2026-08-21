@@ -44,6 +44,26 @@ struct ChatInputBarTests {
         ))
     }
 
+    @Test("Unfocused composer keeps action row available while busy")
+    func unfocusedComposerKeepsActionRowVisibleWhenBusy() {
+        #expect(!ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+            alwaysShowActionRow: false,
+            isBusy: false,
+            isInputFocused: false,
+            isKeyboardSuppressed: false,
+            hasAttachments: false,
+            hasRepoPointers: false
+        ))
+        #expect(ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+            alwaysShowActionRow: false,
+            isBusy: true,
+            isInputFocused: false,
+            isKeyboardSuppressed: false,
+            hasAttachments: false,
+            hasRepoPointers: false
+        ))
+    }
+
     @Test("Send while recording keeps keyboard suppressed")
     func sendWhileRecordingKeepsSuppressed() {
         let suppressed = ChatInputBar<EmptyView>.suppressKeyboardAfterSend(

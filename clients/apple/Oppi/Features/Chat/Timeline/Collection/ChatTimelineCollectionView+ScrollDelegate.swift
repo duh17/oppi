@@ -218,7 +218,10 @@ extension ChatTimelineCollectionHost.Controller {
             currentIDs: currentIDs,
             nearBottomEnterThreshold: nearBottomEnterThreshold,
             nearBottomExitThreshold: nearBottomExitThreshold,
-            preserveDetachedState: preserveDetachedState
+            preserveDetachedState: preserveDetachedState,
+            fullTimelineIDForRenderedID: { [weak self] id in
+                self?.fullTimelineItemID(forRenderedID: id)
+            }
         ) {
             lastDistanceFromBottom = distanceFromBottom
         }

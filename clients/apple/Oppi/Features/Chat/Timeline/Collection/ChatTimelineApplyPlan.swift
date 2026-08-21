@@ -4,6 +4,7 @@ import Foundation
 struct ChatTimelineApplyPlan {
     let nextIDs: [String]
     let nextItemByID: [String: ChatItem]
+    let nextWorkLineByID: [String: QuietTimelineWorkLine]
     let removedIDs: Set<String>
 
     static func build(
@@ -12,10 +13,28 @@ struct ChatTimelineApplyPlan {
         hasOlderServerPage: Bool = false,
         isBusy: Bool,
         showsWorkingIndicator: Bool? = nil,
+        streamingAssistantID: String?
+    ) -> Self {
+        build(
+            rows: items.map(TimelineDisplayRow.item),
+            hiddenCount: hiddenCount,
+            hasOlderServerPage: hasOlderServerPage,
+            isBusy: isBusy,
+            showsWorkingIndicator: showsWorkingIndicator,
+            streamingAssistantID: streamingAssistantID
+        )
+    }
+
+    static func build(
+        rows: [TimelineDisplayRow],
+        hiddenCount: Int,
+        hasOlderServerPage: Bool = false,
+        isBusy: Bool,
+        showsWorkingIndicator: Bool? = nil,
         streamingAssistantID _: String?
     ) -> Self {
         var nextIDs: [String] = []
-        nextIDs.reserveCapacity(items.count + 2)
+        nextIDs.reserveCapacity(rows.count + 2)
 
         if TimelineRenderWindowPolicy.showsShowEarlierControl(
             hiddenCount: hiddenCount,
@@ -24,8 +43,26 @@ struct ChatTimelineApplyPlan {
             nextIDs.append(ChatTimelineCollectionHost.loadMoreID)
         }
 
-        let dedupedItems = ChatTimelineCollectionHost.Controller.uniqueItemsKeepingLast(items)
-        nextIDs.append(contentsOf: dedupedItems.orderedIDs)
+        var lastIndexByItemID: [String: Int] = [:]
+        for (index, row) in rows.enumerated() {
+            if case .item(let item) = row {
+                lastIndexByItemID[item.id] = index
+            }
+        }
+
+        var itemByID: [String: ChatItem] = [:]
+        var workLineByID: [String: QuietTimelineWorkLine] = [:]
+        for (index, row) in rows.enumerated() {
+            switch row {
+            case .item(let item):
+                guard lastIndexByItemID[item.id] == index else { continue }
+                itemByID[item.id] = item
+                nextIDs.append(item.id)
+            case .quietWork(let workLine):
+                workLineByID[workLine.id] = workLine
+                nextIDs.append(workLine.id)
+            }
+        }
 
         if showsWorkingIndicator ?? isBusy {
             nextIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
@@ -33,7 +70,8 @@ struct ChatTimelineApplyPlan {
 
         return Self(
             nextIDs: nextIDs,
-            nextItemByID: dedupedItems.itemByID,
+            nextItemByID: itemByID,
+            nextWorkLineByID: workLineByID,
             removedIDs: []
         )
     }
@@ -42,7 +80,21 @@ struct ChatTimelineApplyPlan {
         Self(
             nextIDs: nextIDs,
             nextItemByID: nextItemByID,
+            nextWorkLineByID: nextWorkLineByID,
             removedIDs: Set(currentIDs).subtracting(nextIDs)
         )
+    }
+
+    /// Same synthetic ID, new counts/live state. Diffable snapshots ignore payload
+    /// changes unless these IDs are force-reconfigured.
+    static func workLineReconfigureIDs(
+        previous: [String: QuietTimelineWorkLine],
+        next: [String: QuietTimelineWorkLine]
+    ) -> [String] {
+        next.compactMap { id, line in
+            guard let old = previous[id], old != line else { return nil }
+            return id
+        }
+        .sorted()
     }
 }

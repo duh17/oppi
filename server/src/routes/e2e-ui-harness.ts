@@ -41,6 +41,16 @@ export function createE2EUIHarnessRoutes(
       return true;
     }
 
+    const quietModeResetMatch = path.match(/^\/e2e\/ui\/reset-quiet-mode$/);
+    if (quietModeResetMatch) {
+      if (method !== "POST") {
+        helpers.error(res, 405, "Method not allowed");
+        return true;
+      }
+      await handleQuietModeReset(helpers, req, res);
+      return true;
+    }
+
     const fixtureMatch = path.match(/^\/e2e\/ui\/fixtures\/workspace-file$/);
     if (fixtureMatch) {
       if (method !== "POST") {
@@ -118,6 +128,99 @@ export function createE2EUIHarnessRoutes(
     await handleHarnessMessage(ctx, helpers, decodeURIComponent(messageMatch[1]), req, res);
     return true;
   };
+}
+
+async function handleQuietModeReset(
+  helpers: RouteHelpers,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await helpers.parseBody<Record<string, unknown>>(req, {
+    maxBytes: MAX_E2E_UI_MESSAGE_BYTES,
+  });
+  const simulatorUDID = stringField(body.simulatorUDID)?.trim();
+  if (!simulatorUDID || !/^[0-9A-Fa-f-]{36}$/.test(simulatorUDID)) {
+    helpers.error(res, 400, "Compact turns reset requires a simulator UDID");
+    return;
+  }
+  const enabled = booleanField(body.enabled) === true;
+  const defaultsArgs = enabled
+    ? ([
+        "write",
+        "dev.chenda.Oppi",
+        "dev.chenda.Oppi.chatDisplay.compactTurns",
+        "-bool",
+        "true",
+      ] as const)
+    : (["delete", "dev.chenda.Oppi", "dev.chenda.Oppi.chatDisplay.compactTurns"] as const);
+  const plistCommand = enabled
+    ? "Set :dev.chenda.Oppi.chatDisplay.compactTurns true"
+    : "Delete :dev.chenda.Oppi.chatDisplay.compactTurns";
+
+  let simctlError: unknown;
+  try {
+    execFileSync("xcrun", ["simctl", "spawn", simulatorUDID, "defaults", ...defaultsArgs], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+    });
+  } catch (error) {
+    simctlError = error;
+    const output =
+      error instanceof Error && "stderr" in error
+        ? String(error.stderr)
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    const normalizedOutput = output.toLowerCase();
+    if (
+      enabled ||
+      (!normalizedOutput.includes("does not exist") &&
+        !normalizedOutput.includes("not found") &&
+        !normalizedOutput.includes("found nothing"))
+    ) {
+      helpers.error(res, 500, "Compact turns simctl reset failed");
+      return;
+    }
+  }
+
+  // iOS XCTest cannot spawn simctl. The host harness writes the exact
+  // persisted key; some Xcode runtimes also need the app-container plist.
+  try {
+    const containerPath = execFileSync(
+      "xcrun",
+      ["simctl", "get_app_container", simulatorUDID, "dev.chenda.Oppi", "data"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
+    ).trim();
+    execFileSync(
+      "/usr/libexec/PlistBuddy",
+      ["-c", plistCommand, join(containerPath, "Library", "Preferences", "dev.chenda.Oppi.plist")],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
+    );
+  } catch {
+    if (enabled) {
+      try {
+        const containerPath = execFileSync(
+          "xcrun",
+          ["simctl", "get_app_container", simulatorUDID, "dev.chenda.Oppi", "data"],
+          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
+        ).trim();
+        execFileSync(
+          "/usr/libexec/PlistBuddy",
+          [
+            "-c",
+            "Add :dev.chenda.Oppi.chatDisplay.compactTurns bool true",
+            join(containerPath, "Library", "Preferences", "dev.chenda.Oppi.plist"),
+          ],
+          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
+        );
+      } catch {
+        // The app assertion remains the final guard.
+      }
+    }
+  }
+
+  helpers.json(res, { ok: true, alreadyReset: simctlError !== undefined, enabled });
 }
 
 async function handleWorkspaceFileFixture(
@@ -544,6 +647,8 @@ function normalizeHarnessMessage(
       return { type: "agent_start" };
     case "agent_end":
       return { type: "agent_end" };
+    case "agent_settled":
+      return { type: "agent_settled" };
     case "text_delta":
       return normalizeTextDelta(body);
     case "message_end":

@@ -21,6 +21,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
     struct Configuration {
         let items: [ChatItem]
+        let displayRows: [TimelineDisplayRow]
+        let workLineByID: [String: QuietTimelineWorkLine]
         /// Full timeline order used for absolute navigation ordinals. This is
         /// separate from `items`, which may only contain the rendered suffix.
         let fullTimelineItemIDs: [String]
@@ -38,6 +40,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let routeScope: SessionRouteScope?
         let onFork: (String) -> Void
         let onBackSwipe: () -> Void
+        let onQuietWorkLineToggle: (String) -> Void
         let onShowEarlier: () -> Void
         let scrollCommand: ChatTimelineScrollCommand?
         let scrollController: ChatScrollController
@@ -58,6 +61,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         init(
             items: [ChatItem],
+            displayRows: [TimelineDisplayRow]? = nil,
+            workLineByID: [String: QuietTimelineWorkLine] = [:],
             fullTimelineItemIDs: [String]? = nil,
             hiddenCount: Int,
             hasOlderServerPage: Bool = false,
@@ -73,6 +78,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             routeScope: SessionRouteScope? = nil,
             onFork: @escaping (String) -> Void,
             onBackSwipe: @escaping () -> Void,
+            onQuietWorkLineToggle: @escaping (String) -> Void = { _ in },
             onShowEarlier: @escaping () -> Void,
             scrollCommand: ChatTimelineScrollCommand? = nil,
             scrollController: ChatScrollController,
@@ -92,6 +98,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             bottomOverlap: CGFloat = 0
         ) {
             self.items = items
+            self.displayRows = displayRows ?? items.map(TimelineDisplayRow.item)
+            self.workLineByID = workLineByID
             self.fullTimelineItemIDs = fullTimelineItemIDs ?? items.map(\.id)
             self.hiddenCount = hiddenCount
             self.hasOlderServerPage = hasOlderServerPage
@@ -108,6 +116,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ?? workspaceId.map(SessionRouteScope.workspace)
             self.onFork = onFork
             self.onBackSwipe = onBackSwipe
+            self.onQuietWorkLineToggle = onQuietWorkLineToggle
             self.onShowEarlier = onShowEarlier
             self.scrollCommand = scrollCommand
             self.scrollController = scrollController
@@ -192,6 +201,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         var hiddenCount = 0
         var hasOlderServerPage = false
+        var workLineByID: [String: QuietTimelineWorkLine] = [:]
         var renderWindowStep = 0
         var streamingAssistantID: String?
         var audioPlayer: AudioPlayerService?
@@ -244,6 +254,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var onShowEarlier: (() -> Void)? {
             get { context.onShowEarlier }
             set { context.onShowEarlier = newValue }
+        }
+
+        var onQuietWorkLineToggle: ((String) -> Void)? {
+            get { context.onQuietWorkLineToggle }
+            set { context.onQuietWorkLineToggle = newValue }
         }
 
         var scrollController: ChatScrollController? {
@@ -308,10 +323,64 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let detachedProgrammaticCorrectionMaxDelta: CGFloat = 100
 
         var currentIDs: [String] = []
+
+        func fullTimelineItemID(forRenderedID id: String) -> String? {
+            if currentFullTimelineItemIDs.contains(id) {
+                return id
+            }
+            return currentWorkLineByID[id]?.sourceItemIDs.first
+        }
+
+        /// Resolve a full ChatItem identity into the currently rendered row.
+        /// A collapsed source item is represented by its synthetic work line;
+        /// expanded items retain their own identity.
+        func renderedID(forFullTimelineItemID id: String) -> String? {
+            if currentIDs.contains(id) {
+                return id
+            }
+            if let workLine = currentWorkLineByID[id], currentIDs.contains(workLine.id) {
+                return workLine.id
+            }
+            if let renderedWorkLine = currentWorkLineByID.values.first(where: {
+                $0.sourceItemIDs.contains(id) && currentIDs.contains($0.id)
+            }) {
+                return renderedWorkLine.id
+            }
+            // A Quiet toggle or older-page prepend can replace a synthetic
+            // row while the detached capture still holds its prior ID. Bridge
+            // overlapping source membership to the replacement presentation
+            // row first; synthetic rows remain derived from ChatItem identity.
+            if let replacementID = workLineReplacementIDByPreviousID[id],
+               currentIDs.contains(replacementID) {
+                return replacementID
+            }
+            if let previousWorkLine = previousWorkLineByID[id],
+               let sourceID = previousWorkLine.sourceItemIDs.first(where: currentIDs.contains) {
+                return sourceID
+            }
+            return nil
+        }
+
+        func resolvedScrollCommand(_ command: ChatTimelineScrollCommand) -> ChatTimelineScrollCommand? {
+            guard let renderedID = renderedID(forFullTimelineItemID: command.id) else {
+                return nil
+            }
+            guard renderedID != command.id else { return command }
+            return ChatTimelineScrollCommand(
+                id: renderedID,
+                anchor: command.anchor,
+                animated: command.animated,
+                nonce: command.nonce
+            )
+        }
+
         /// Complete stable timeline order, including rows outside the rendered
         /// suffix window. Viewport fallback ordinals must use this coordinate space.
         private(set) var currentFullTimelineItemIDs: [String] = []
         var currentItemByID: [String: ChatItem] = [:]
+        var currentWorkLineByID: [String: QuietTimelineWorkLine] = [:]
+        private var previousWorkLineByID: [String: QuietTimelineWorkLine] = [:]
+        private var workLineReplacementIDByPreviousID: [String: String] = [:]
         private var previousItemByID: [String: ChatItem] = [:]
         private var previousStreamingAssistantID: String?
         private var previousHiddenCount = 0
@@ -570,6 +639,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             hiddenCount = configuration.hiddenCount
             hasOlderServerPage = configuration.hasOlderServerPage
+            workLineReplacementIDByPreviousID = Dictionary(uniqueKeysWithValues:
+                previousWorkLineByID.compactMap { previousID, previousLine in
+                    guard configuration.workLineByID[previousID] == nil else { return nil }
+                    let previousSourceIDs = Set(previousLine.sourceItemIDs)
+                    guard let replacement = configuration.workLineByID.values.first(where: {
+                        $0.sourceItemIDs.contains(where: previousSourceIDs.contains)
+                    }) else {
+                        return nil
+                    }
+                    return (previousID, replacement.id)
+                }
+            )
+            workLineByID = configuration.workLineByID
+            currentWorkLineByID = configuration.workLineByID
             renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
             let timelineBusyChanged = configuration.isBusy != isTimelineBusy
@@ -645,6 +728,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 && configuration.showsWorkingIndicator == previousShowsWorkingIndicator
                 && configuration.hiddenCount == previousHiddenCount
                 && configuration.hasOlderServerPage == previousHasOlderServerPage
+                && configuration.workLineByID == previousWorkLineByID
                 && !appearanceChanged
                 && configuration.extensionWorkingState == previousExtensionWorkingState
                 && configuration.extensionHiddenThinkingLabel == previousHiddenThinkingLabel
@@ -701,6 +785,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ChatTimelinePerf.endCollectionApply(applyToken)
 
                 previousStreamingAssistantID = configuration.streamingAssistantID
+                previousWorkLineByID = configuration.workLineByID
                 previousHiddenCount = configuration.hiddenCount
                 previousHasOlderServerPage = configuration.hasOlderServerPage
                 previousItemCount = configuration.items.count
@@ -804,6 +889,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     ChatTimelinePerf.endCollectionApply(applyToken)
                 }
                 previousStreamingAssistantID = configuration.streamingAssistantID
+                previousWorkLineByID = configuration.workLineByID
                 previousHiddenCount = configuration.hiddenCount
                 previousHasOlderServerPage = configuration.hasOlderServerPage
                 previousItemCount = configuration.items.count
@@ -834,7 +920,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
 
             let applyPlan = ChatTimelineApplyPlan.build(
-                items: configuration.items,
+                rows: configuration.displayRows,
                 hiddenCount: configuration.hiddenCount,
                 hasOlderServerPage: configuration.hasOlderServerPage,
                 isBusy: configuration.isBusy,
@@ -863,6 +949,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     anchoredCV.clearDetachedAnchor()
                 } else if detached {
                     anchoredCV.captureDetachedAnchor()
+                    anchoredCV.remapDetachedAnchorItemID(
+                        using: workLineReplacementIDByPreviousID
+                    )
                 }
             }
 
@@ -891,6 +980,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                configuration.extensionWorkingState != previousExtensionWorkingState {
                 forceReconfigureIDs.append(ChatTimelineCollectionHost.workingIndicatorID)
             }
+            forceReconfigureIDs.append(
+                contentsOf: ChatTimelineApplyPlan.workLineReconfigureIDs(
+                    previous: previousWorkLineByID,
+                    next: configuration.workLineByID
+                )
+            )
             if configuration.extensionHiddenThinkingLabel != previousHiddenThinkingLabel {
                 forceReconfigureIDs.append(contentsOf: applyPlan.nextIDs.filter { id in
                     if case .thinking = applyPlan.nextItemByID[id] {
@@ -917,6 +1012,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
 
             previousItemByID = applyPlan.nextItemByID
+            previousWorkLineByID = applyPlan.nextWorkLineByID
             previousStreamingAssistantID = configuration.streamingAssistantID
             previousHiddenCount = configuration.hiddenCount
                 previousHasOlderServerPage = configuration.hasOlderServerPage
@@ -947,6 +1043,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             if detached {
                 let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count, sessionId: configuration.sessionId)
                 collectionView.layoutIfNeeded()
+                if !workLineReplacementIDByPreviousID.isEmpty,
+                   let anchoredCollectionView = collectionView as? AnchoredCollectionView {
+                    anchoredCollectionView.restoreRemappedDetachedAnchorPosition()
+                    DispatchQueue.main.async { [weak anchoredCollectionView] in
+                        anchoredCollectionView?.layoutIfNeeded()
+                        anchoredCollectionView?.restoreRemappedDetachedAnchorPosition()
+                    }
+                }
                 ChatTimelinePerf.endLayoutPass(layoutToken)
             }
             let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
@@ -1016,15 +1120,50 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             shouldSelectItemAt indexPath: IndexPath
         ) -> Bool {
             guard indexPath.section == 0, indexPath.item < currentIDs.count else { return false }
-            // The load-more UIButton owns the reveal action. Collection
-            // selection must not become a second owner or a sticky highlight.
-            return currentIDs[indexPath.item] != ChatTimelineCollectionHost.loadMoreID
+            // Full-row UIButtons own their actions. Collection selection must
+            // not become a second owner or a sticky highlight.
+            let itemID = currentIDs[indexPath.item]
+            return itemID != ChatTimelineCollectionHost.loadMoreID
+                && currentWorkLineByID[itemID] == nil
+        }
+
+        func toggleQuietWorkLine(
+            _ workLine: QuietTimelineWorkLine,
+            in collectionView: UICollectionView,
+            indexPath: IndexPath? = nil
+        ) {
+            guard let indexPath = indexPath
+                ?? currentIDs.firstIndex(of: workLine.id).map({ IndexPath(item: $0, section: 0) }) else {
+                return
+            }
+
+            AppHaptics.toolbarExpansion()
+            let anchoredCollectionView = collectionView as? AnchoredCollectionView
+            anchoredCollectionView?.setExpandCollapseAnchor(indexPath: indexPath)
+            onQuietWorkLineToggle?(workLine.turnID)
+            DispatchQueue.main.async { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                self.reconfigureItems(
+                    [workLine.id] + workLine.sourceItemIDs,
+                    in: collectionView
+                )
+                // Keep the identity anchor through the snapshot apply and the
+                // following layout pass. The second hop covers deferred
+                // self-sizing invalidations without allowing idle tail settle
+                // to reclaim the viewport in between.
+                DispatchQueue.main.async {
+                    DispatchQueue.main.async { [weak anchoredCollectionView] in
+                        anchoredCollectionView?.clearExpandCollapseAnchor()
+                    }
+                }
+            }
         }
 
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
             guard indexPath.section == 0, indexPath.item < currentIDs.count else { return }
             let itemID = currentIDs[indexPath.item]
-            if itemID == ChatTimelineCollectionHost.loadMoreID {
+            if itemID == ChatTimelineCollectionHost.loadMoreID
+                || currentWorkLineByID[itemID] != nil {
                 collectionView.deselectItem(at: indexPath, animated: false)
                 return
             }
@@ -1363,11 +1502,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             in collectionView: UICollectionView
         ) -> Bool {
             guard let scrollCommand,
-                  scrollCommand.nonce != lastHandledScrollCommandNonce else {
+                  scrollCommand.nonce != lastHandledScrollCommandNonce,
+                  let resolvedCommand = resolvedScrollCommand(scrollCommand) else {
                 return false
             }
             if let anchoredCV = collectionView as? AnchoredCollectionView {
-                switch scrollCommand.anchor {
+                switch resolvedCommand.anchor {
                 case .bottom:
                     anchoredCV.isDetachedFromBottom = false
                     anchoredCV.clearDetachedAnchor()
@@ -1376,7 +1516,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     anchoredCV.clearDetachedAnchor()
                 }
             }
-            guard performScroll(scrollCommand, in: collectionView) else {
+            guard performScroll(resolvedCommand, in: collectionView) else {
                 return false
             }
             lastHandledScrollCommandNonce = scrollCommand.nonce
@@ -1397,6 +1537,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 return
             }
             if #available(iOS 17.4, *), collectionView.isScrollAnimating {
+                return
+            }
+            if (collectionView as? AnchoredCollectionView)?.expandCollapseAnchorIP != nil {
+                // The tapped work header owns the viewport until its structural
+                // apply and deferred self-sizing passes settle. An idle bottom
+                // correction here would yank an older turn back to the tail.
                 return
             }
 

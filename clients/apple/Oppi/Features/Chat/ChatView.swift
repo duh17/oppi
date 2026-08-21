@@ -122,6 +122,7 @@ struct ChatView: View {
     @State private var activeReviewCommentRequest: ReviewCommentSelectionRequest?
     @State private var showReviewCommentStash = false
     @State private var focusedReviewCommentId: String?
+    @State private var chatDisplayRefresh = 0
 
     init(
         sessionId: String,
@@ -383,6 +384,11 @@ struct ChatView: View {
         session?.status == .stopped
     }
 
+    private var compactTurnsEnabled: Bool {
+        _ = chatDisplayRefresh
+        return AppPreferences.ChatDisplay.isCompactTurnsEnabled
+    }
+
     private var messageQueueState: MessageQueueState {
         messageQueueStore.queue(for: sessionId)
     }
@@ -473,6 +479,7 @@ struct ChatView: View {
             scrollController: scrollController,
             sessionManager: sessionManager,
             audioLifecycleCoordinator: audioLifecycleCoordinator,
+            quietModeEnabled: compactTurnsEnabled,
             onFork: forkFromMessage,
             onBackSwipe: navigateBackFromChat,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
@@ -627,6 +634,9 @@ struct ChatView: View {
 
                 // Auto-send through the normal WebSocket flow
                 sendPrompt()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: AppPreferences.ChatDisplay.didChangeNotification)) { _ in
+                chatDisplayRefresh += 1
             }
             .onAppear {
                 handleAppear()
@@ -784,21 +794,19 @@ struct ChatView: View {
     @ViewBuilder
     private var footerArea: some View {
         if isStopped {
-            VStack(spacing: 8) {
-                SessionEndedFooter(
-                    session: session,
-                    isResuming: actionHandler.isResuming,
-                    onResume: {
-                        actionHandler.resumeSession(
-                            connection: connection,
-                            reducer: reducer,
-                            sessionStore: sessionStore,
-                            sessionManager: sessionManager,
-                            sessionId: sessionId
-                        )
-                    }
-                )
-            }
+            SessionEndedFooter(
+                session: session,
+                isResuming: actionHandler.isResuming,
+                onResume: {
+                    actionHandler.resumeSession(
+                        connection: connection,
+                        reducer: reducer,
+                        sessionStore: sessionStore,
+                        sessionManager: sessionManager,
+                        sessionId: sessionId
+                    )
+                }
+            )
         } else {
             VStack(spacing: 8) {
                 if !hasBlockingExtensionInput {
