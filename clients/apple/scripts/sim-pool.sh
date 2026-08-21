@@ -22,10 +22,12 @@
 #   OPPI_SIM_POOL_WAIT               Max seconds to wait for a free slot (default: 60)
 #   OPPI_SIM_POOL_BOOT_TIMEOUT       Seconds per simulator boot-readiness wait (default: 120)
 #   OPPI_SIM_POOL_BOOT_RETRIES       Additional readiness waits before failing (default: 1)
-#   OPPI_SIM_POOL_SILENCE_TIMEOUT    Max seconds with no log growth before declaring a hang (default: 180)
+#   OPPI_SIM_POOL_SILENCE_TIMEOUT    Max seconds with no log/DerivedData growth before declaring a hang (default: 180)
 #   OPPI_SIM_POOL_HEARTBEAT_INTERVAL Seconds between progress heartbeats (default: 60)
 #   OPPI_SIM_POOL_HANG_RETRIES       Retry count after a silent hang with simulator reset (default: 1)
-#   OPPI_SIM_POOL_KEEP_BOOTED        Keep pool simulator booted after run (default: 0)
+#   OPPI_SIM_POOL_KEEP_BOOTED        Keep pool simulator booted after run (default: 1)
+#   OPPI_SIM_POOL_FORCE_CLEAN_BOOT   Recycle the simulator even if it is already booted (default: 0)
+#   OPPI_SIM_POOL_INDEX_STORE        Set 1 to keep compiler index store enabled (default: 0, injects COMPILER_INDEX_STORE_ENABLE=NO)
 #   OPPI_SIM_POOL_LOCK_DIR           Lock directory (default: /tmp/oppi-sim-pool)
 #   OPPI_SIM_POOL_VIDEO_POLICY       Simulator video policy: off, on-failure, or always (default: off)
 #   OPPI_SIM_POOL_RECORD_VIDEO       Legacy alias: 1/true means always, 0/false means off
@@ -114,6 +116,66 @@ file_mtime() {
 file_size_bytes() {
   local path="$1"
   stat -f %z "$path" 2>/dev/null || echo 0
+}
+
+max_mtime() {
+  local latest=0 mtime path
+  for path in "$@"; do
+    [[ -e "$path" ]] || continue
+    mtime=$(file_mtime "$path")
+    if (( mtime > latest )); then
+      latest="$mtime"
+    fi
+  done
+  echo "$latest"
+}
+
+progress_mtime() {
+  local log_file="$1"
+  local derived_data="${2:-}"
+  if [[ -n "$derived_data" ]]; then
+    max_mtime "$log_file" "$derived_data/Build" "$derived_data/Index.noindex" "$derived_data/ModuleCache.noindex"
+  else
+    file_mtime "$log_file"
+  fi
+}
+
+command_has_build_setting() {
+  local key="$1"
+  shift
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      "${key}="*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Fills APPLY_POOL_SETTINGS with extra xcodebuild settings for pool runs.
+apply_pool_build_settings() {
+  APPLY_POOL_SETTINGS=()
+  if [[ "${OPPI_SIM_POOL_INDEX_STORE:-0}" == "1" ]]; then
+    return 0
+  fi
+  if command_has_build_setting COMPILER_INDEX_STORE_ENABLE "$@"; then
+    return 0
+  fi
+  APPLY_POOL_SETTINGS+=(COMPILER_INDEX_STORE_ENABLE=NO)
+}
+
+simulator_state() {
+  local udid="$1"
+  xcrun simctl list devices -j | python3 -c "
+import json, sys
+udid = sys.argv[1]
+data = json.load(sys.stdin)
+for devices in data.get('devices', {}).values():
+    for device in devices:
+        if device.get('udid') == udid:
+            print(device.get('state', ''))
+            raise SystemExit(0)
+" "$udid"
 }
 
 normalize_video_policy() {
@@ -295,6 +357,65 @@ EOF
       || die "self-test: exhausted simulator readiness used $boot_wait_attempts attempts instead of 2"
   )
 
+  local progress_dir log_file derived_dir
+  progress_dir="$(mktemp -d -t oppi-sim-pool-progress.XXXXXX)"
+  log_file="$progress_dir/build.log"
+  derived_dir="$progress_dir/derived"
+  mkdir -p "$derived_dir/Build"
+  : > "$log_file"
+  sleep 1
+  : > "$derived_dir/Build/stamp"
+  [[ "$(progress_mtime "$log_file" "$derived_dir")" -ge "$(file_mtime "$derived_dir/Build")" ]] \
+    || die "self-test: hang progress did not observe DerivedData mtime"
+  rm -rf "$progress_dir"
+
+  (
+    local boot_calls=0 shutdown_calls=0
+    simulator_state() { echo Booted; }
+    wait_for_boot_ready_with_retries() { return 0; }
+    xcrun() {
+      case "$1 $2" in
+        "simctl shutdown") shutdown_calls=$((shutdown_calls + 1)) ;;
+        "simctl boot") boot_calls=$((boot_calls + 1)) ;;
+      esac
+    }
+    prepare_simulator "self-test-udid" normal
+    [[ "$boot_calls" -eq 0 && "$shutdown_calls" -eq 0 ]] \
+      || die "self-test: already-booted simulator was recycled (boot=$boot_calls shutdown=$shutdown_calls)"
+  )
+
+  (
+    local boot_calls=0 shutdown_calls=0
+    OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1
+    simulator_state() { echo Booted; }
+    wait_for_boot_ready_with_retries() { return 0; }
+    xcrun() {
+      case "$1 $2" in
+        "simctl shutdown") shutdown_calls=$((shutdown_calls + 1)) ;;
+        "simctl boot") boot_calls=$((boot_calls + 1)) ;;
+      esac
+    }
+    prepare_simulator "self-test-udid" normal
+    [[ "$boot_calls" -eq 1 && "$shutdown_calls" -eq 1 ]] \
+      || die "self-test: FORCE_CLEAN_BOOT did not recycle (boot=$boot_calls shutdown=$shutdown_calls)"
+  )
+
+  (
+    unset OPPI_SIM_POOL_INDEX_STORE || true
+    apply_pool_build_settings xcodebuild test
+    [[ "${APPLY_POOL_SETTINGS[*]}" == "COMPILER_INDEX_STORE_ENABLE=NO" ]] \
+      || die "self-test: default pool settings did not disable index store"
+
+    apply_pool_build_settings xcodebuild test COMPILER_INDEX_STORE_ENABLE=YES
+    [[ "${#APPLY_POOL_SETTINGS[@]}" -eq 0 ]] \
+      || die "self-test: explicit COMPILER_INDEX_STORE_ENABLE was overridden"
+
+    OPPI_SIM_POOL_INDEX_STORE=1
+    apply_pool_build_settings xcodebuild test
+    [[ "${#APPLY_POOL_SETTINGS[@]}" -eq 0 ]] \
+      || die "self-test: OPPI_SIM_POOL_INDEX_STORE=1 still injected index-store disable"
+  )
+
   echo "sim-pool self-test passed."
 }
 
@@ -420,8 +541,18 @@ prepare_simulator() {
     echo "[sim-pool] Recovery: shutting down + erasing simulator $udid" >&2
     xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
     xcrun simctl erase "$udid" >/dev/null 2>&1 || true
-  else
+  elif [[ "${OPPI_SIM_POOL_FORCE_CLEAN_BOOT:-0}" == "1" ]]; then
     echo "[sim-pool] Preparing clean simulator boot for $udid" >&2
+    xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+  elif [[ "$(simulator_state "$udid")" == "Booted" ]]; then
+    echo "[sim-pool] Reusing already-booted simulator $udid" >&2
+    if wait_for_boot_ready_with_retries "$udid"; then
+      return 0
+    fi
+    echo "[sim-pool] Booted simulator was not ready; recycling $udid" >&2
+    xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+  else
+    echo "[sim-pool] Preparing simulator boot for $udid" >&2
     xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
   fi
 
@@ -510,7 +641,7 @@ release_slot() {
 
 cleanup_run() {
   stop_video_recording
-  if [[ -n "${SIM_UDID:-}" && "${OPPI_SIM_POOL_KEEP_BOOTED:-0}" != "1" ]]; then
+  if [[ -n "${SIM_UDID:-}" && "${OPPI_SIM_POOL_KEEP_BOOTED:-1}" != "1" ]]; then
     echo "[sim-pool] Shutting down pool simulator $SIM_UDID" >&2
     xcrun simctl shutdown "$SIM_UDID" >/dev/null 2>&1 || true
   fi
@@ -596,7 +727,7 @@ print_summary() {
   fi
 
   if [[ "$hang_detected" == "1" ]]; then
-    echo "Hang detection: triggered (no log growth for ${SILENCE_TIMEOUT}s)"
+    echo "Hang detection: triggered (no log or DerivedData growth for ${SILENCE_TIMEOUT}s)"
   fi
 
   echo ""
@@ -924,11 +1055,21 @@ run_xcodebuild_attempt() {
   local last_mtime=0
   local hung=0
 
+  apply_pool_build_settings "$@"
+
   set +e
-  "$@" \
-    -destination "platform=iOS Simulator,id=$SIM_UDID" \
-    -derivedDataPath "$DERIVED_DATA" \
-    > "$log_file" 2>&1 &
+  if [[ "${#APPLY_POOL_SETTINGS[@]}" -gt 0 ]]; then
+    "$@" \
+      "${APPLY_POOL_SETTINGS[@]}" \
+      -destination "platform=iOS Simulator,id=$SIM_UDID" \
+      -derivedDataPath "$DERIVED_DATA" \
+      > "$log_file" 2>&1 &
+  else
+    "$@" \
+      -destination "platform=iOS Simulator,id=$SIM_UDID" \
+      -derivedDataPath "$DERIVED_DATA" \
+      > "$log_file" 2>&1 &
+  fi
   local xcode_pid=$!
   set -e
 
@@ -938,7 +1079,7 @@ run_xcodebuild_attempt() {
     local now
     now=$(now_epoch)
     local current_mtime
-    current_mtime=$(file_mtime "$log_file")
+    current_mtime=$(progress_mtime "$log_file" "${DERIVED_DATA:-}")
     if (( current_mtime > last_mtime )); then
       last_mtime="$current_mtime"
       last_progress_epoch="$now"
@@ -954,7 +1095,7 @@ run_xcodebuild_attempt() {
     fi
 
     if (( SILENCE_TIMEOUT > 0 && now - last_progress_epoch >= SILENCE_TIMEOUT )); then
-      echo "[sim-pool] hang detected: no log growth for ${SILENCE_TIMEOUT}s (pid $xcode_pid)" >&2
+      echo "[sim-pool] hang detected: no log or DerivedData growth for ${SILENCE_TIMEOUT}s (pid $xcode_pid)" >&2
       hung=1
       break
     fi
@@ -996,7 +1137,11 @@ Usage:
   sim-pool.sh shutdown-idle
 
 run acquires a simulator pool slot, injects -destination and -derivedDataPath,
-runs xcodebuild, and releases the slot on exit.
+runs xcodebuild, and releases the slot on exit. An already-booted pool
+simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1. Pool simulators
+stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0. Compiler index
+store is disabled unless OPPI_SIM_POOL_INDEX_STORE=1 or the command already
+sets COMPILER_INDEX_STORE_ENABLE.
 
 status prints pool locks, pool devices, build-cache sizes, and recent run timing.
 shutdown-idle shuts down Oppi-Pool simulators that do not have a live lock.
