@@ -57,6 +57,7 @@ struct ExpandedComposerView: View {
     var autoFocusOnAppear = false
     var dismissesOnCancel = true
     var dismissesOnSubmit = true
+    var preservesVoiceInputOnDismiss = false
     var editorAccessibilityIdentifier: String? = nil
     var cancelAccessibilityIdentifier: String? = nil
     var submitAccessibilityIdentifier: String? = nil
@@ -267,6 +268,14 @@ struct ExpandedComposerView: View {
             }
         }
         .preferredColorScheme(ThemeRuntimeState.currentThemeID().preferredColorScheme)
+        .onAppear {
+            guard ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(
+                voiceInputManager,
+                owner: .expandedComposer
+            ) else { return }
+            suppressKeyboard = true
+            focusRequestID &+= 1
+        }
         .onChange(of: text) { _, newText in
             ComposerShared.notifyFileSuggestionContext(
                 for: newText,
@@ -495,12 +504,14 @@ struct ExpandedComposerView: View {
         guard !isSubmitInFlight, !isHandlingVoiceLifecycle else { return }
         isHandlingVoiceLifecycle = true
         Task { @MainActor in
-            await ComposerShared.cancelOwnedVoiceInput(
-                manager: voiceInputManager,
-                owner: .expandedComposer,
-                textBeforeRecording: $textBeforeRecording,
-                suppressKeyboard: $suppressKeyboard
-            )
+            if !preservesVoiceInputOnDismiss {
+                await ComposerShared.cancelOwnedVoiceInput(
+                    manager: voiceInputManager,
+                    owner: .expandedComposer,
+                    textBeforeRecording: $textBeforeRecording,
+                    suppressKeyboard: $suppressKeyboard
+                )
+            }
             isHandlingVoiceLifecycle = false
             onCancel?()
             if dismissesOnCancel {

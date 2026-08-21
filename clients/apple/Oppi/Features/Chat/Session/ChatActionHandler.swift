@@ -511,14 +511,22 @@ final class ChatActionHandler {
         }
     }
 
-    func compact(connection: ServerConnection, reducer: TimelineReducer, sessionId: String) {
+    func compact(
+        connection: ServerConnection,
+        reducer: TimelineReducer,
+        sessionId: String,
+        onSendSucceeded: (() -> Void)? = nil,
+        onAsyncFailure: (() -> Void)? = nil
+    ) {
         Task { @MainActor in
             // Show immediate "Compacting context..." indicator before the server responds.
             reducer.process(.compactionStart(sessionId: sessionId, reason: "manual"))
             do {
                 try await connection.compact()
+                onSendSucceeded?()
                 try? await connection.requestState()
             } catch {
+                onAsyncFailure?()
                 reducer.process(.error(sessionId: sessionId, message: "Compact failed: \(error.localizedDescription)"))
             }
         }
@@ -528,17 +536,21 @@ final class ChatActionHandler {
         connection: ServerConnection,
         reducer: TimelineReducer,
         sessionStore: SessionStore,
-        sessionId: String
+        sessionId: String,
+        onSendSucceeded: (() -> Void)? = nil,
+        onAsyncFailure: (() -> Void)? = nil
     ) {
         Task { @MainActor in
             do {
                 try await connection.reloadResources()
+                onSendSucceeded?()
                 try? await connection.requestState()
                 if let session = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                     await connection.refreshSlashCommands(for: session, force: true)
                 }
                 connection.extensionToast = "Reloaded tools, extensions, skills, and prompts."
             } catch {
+                onAsyncFailure?()
                 reducer.process(.error(sessionId: sessionId, message: "Reload failed: \(error.localizedDescription)"))
             }
         }

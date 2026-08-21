@@ -22,6 +22,10 @@ enum ComposerShared {
         case expandedComposer = "expanded_mic_tap"
         case askCard = "ask_card_mic_tap"
         case reviewCommentInline = "review_comment_inline_mic_tap"
+
+        var isMessageComposer: Bool {
+            self == .inlineComposer || self == .expandedComposer
+        }
     }
 
     struct MicButtonPresentation: Equatable {
@@ -64,7 +68,13 @@ enum ComposerShared {
     }
 
     static func ownsVoiceInput(_ manager: VoiceInputManager?, owner: VoiceInputOwner) -> Bool {
-        manager?.isActiveRecordingSource(owner.rawValue) ?? false
+        guard let manager, let activeSource = manager.activeRecordingSource else { return false }
+        if activeSource == owner.rawValue { return true }
+
+        // Inline and expanded are two presentations of the same message composer.
+        // Keep the original source for telemetry, but let either surface render and
+        // control the one shared recording session during presentation handoff.
+        return owner.isMessageComposer && VoiceInputOwner(rawValue: activeSource)?.isMessageComposer == true
     }
 
     static func canControlVoiceInput(_ manager: VoiceInputManager, owner: VoiceInputOwner) -> Bool {
@@ -512,6 +522,14 @@ enum ComposerShared {
         return true
     }
 
+    static func shouldSuppressKeyboardForActiveVoiceInput(
+        _ manager: VoiceInputManager?,
+        owner: VoiceInputOwner
+    ) -> Bool {
+        guard let manager, ownsVoiceInput(manager, owner: owner) else { return false }
+        return manager.isRecording || manager.isPreparing
+    }
+
     static func handleKeyboardRestore(
         suppressKeyboard: Binding<Bool>,
         textBeforeRecording: Binding<String?>,
@@ -521,7 +539,7 @@ enum ComposerShared {
         suppressKeyboard.wrappedValue = false
         textBeforeRecording.wrappedValue = nil
         if let manager = voiceInputManager,
-           expectedOwner.map({ manager.isActiveRecordingSource($0.rawValue) }) ?? true,
+           expectedOwner.map({ ownsVoiceInput(manager, owner: $0) }) ?? true,
            manager.isRecording || manager.isPreparing {
             Task {
                 if manager.isRecording {

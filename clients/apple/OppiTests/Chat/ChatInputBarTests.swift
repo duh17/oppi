@@ -192,6 +192,31 @@ struct ChatInputBarTests {
         #expect(session.cancelCallCount == 1)
     }
 
+    @Test("Expanded tap-to-type stops inline-started dictation")
+    func expandedTapToTypeStopsInlineStartedDictation() async throws {
+        AppPreferences.Voice.setEngineMode(.onDevice)
+        defer { AppPreferences.Voice.setEngineMode(.remote) }
+
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .inlineComposer)
+        session.stopHandler = { @MainActor [weak session] in
+            session?.finishEvents()
+        }
+        var textBeforeRecording: String? = "typed "
+        var suppressKeyboard = true
+
+        ComposerShared.handleKeyboardRestore(
+            suppressKeyboard: Binding(get: { suppressKeyboard }, set: { suppressKeyboard = $0 }),
+            textBeforeRecording: Binding(get: { textBeforeRecording }, set: { textBeforeRecording = $0 }),
+            voiceInputManager: manager,
+            expectedOwner: .expandedComposer
+        )
+
+        #expect(!suppressKeyboard)
+        #expect(textBeforeRecording == nil)
+        #expect(await waitForMainActorCondition { manager._testState == .idle })
+        #expect(session.stopCallCount == 1)
+    }
+
     @Test("Feature UI code routes voice lifecycle through ComposerShared")
     func featureUICodeRoutesVoiceLifecycleThroughComposerShared() throws {
         let appleRoot = URL(fileURLWithPath: #filePath)
@@ -259,6 +284,92 @@ struct ChatInputBarTests {
         )
 
         #expect(displayText == "Already typed. When I expand to full screen, it should stay blue only at the end.")
+    }
+
+    @Test("Inline dictation remains owned and controllable after expanding")
+    func inlineDictationRemainsOwnedByExpandedComposer() {
+        let manager = VoiceInputManager()
+        manager._testState = .recording
+        manager._testActiveRecordingSource = ComposerShared.VoiceInputOwner.inlineComposer.rawValue
+
+        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .expandedComposer)
+
+        #expect(ComposerShared.ownsVoiceInput(manager, owner: .expandedComposer))
+        #expect(ComposerShared.canControlVoiceInput(manager, owner: .expandedComposer))
+        #expect(ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(manager, owner: .expandedComposer))
+        #expect(presentation.isRecording)
+        #expect(presentation.isEnabled)
+        #expect(!presentation.isBlockedByOtherOwner)
+    }
+
+    @Test("Expanded dictation remains owned and controllable after collapsing")
+    func expandedDictationRemainsOwnedByInlineComposer() {
+        let manager = VoiceInputManager()
+        manager._testState = .recording
+        manager._testActiveRecordingSource = ComposerShared.VoiceInputOwner.expandedComposer.rawValue
+
+        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
+
+        #expect(ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer))
+        #expect(ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer))
+        #expect(presentation.isRecording)
+        #expect(presentation.isEnabled)
+        #expect(!presentation.isBlockedByOtherOwner)
+    }
+
+    @Test("Review comment dictation remains isolated from message composers")
+    func reviewCommentDictationStillBlocksMessageComposers() {
+        let manager = VoiceInputManager()
+        manager._testState = .recording
+        manager._testActiveRecordingSource = ComposerShared.VoiceInputOwner.reviewCommentInline.rawValue
+
+        #expect(!ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer))
+        #expect(!ComposerShared.ownsVoiceInput(manager, owner: .expandedComposer))
+        #expect(!ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer))
+        #expect(!ComposerShared.canControlVoiceInput(manager, owner: .expandedComposer))
+    }
+
+    @Test("Expanded composer mirrors live and settled inline transcript presentation")
+    func expandedComposerMirrorsInlineTranscriptPresentation() async throws {
+        AppPreferences.Voice.setEngineMode(.onDevice)
+        defer { AppPreferences.Voice.setEngineMode(.remote) }
+
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .inlineComposer)
+        session.yieldEvent(.replaceFinalTranscript(
+            "live words",
+            committedText: "",
+            activeText: "live words"
+        ))
+        #expect(await waitForMainActorCondition { manager.finalizedTranscript == "live words" })
+        manager.typewriterAnimator.commitCurrentAnimation()
+
+        #expect(ComposerShared.currentComposerText(
+            storedText: "stale",
+            textBeforeRecording: "Typed ",
+            manager: manager,
+            owner: .expandedComposer
+        ) == "Typed live words")
+        #expect(ComposerShared.volatileSuffixLength(
+            manager: manager,
+            owner: .expandedComposer
+        ) == "live words".count)
+
+        let liveRevision = manager.transcriptPresentationRevision
+        session.yieldEvent(.replaceFinalTranscript(
+            "live words",
+            snap: true,
+            committedText: "live words",
+            activeText: ""
+        ))
+        #expect(await waitForMainActorCondition {
+            manager.transcriptPresentationRevision == liveRevision + 1
+        })
+        #expect(ComposerShared.volatileSuffixLength(
+            manager: manager,
+            owner: .expandedComposer
+        ) == 0)
+
+        await manager.cancelRecording()
     }
 
     @Test("ComposerShared falls back to stored text when not dictating")

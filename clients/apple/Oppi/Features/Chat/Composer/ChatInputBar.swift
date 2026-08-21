@@ -352,6 +352,14 @@ struct ChatInputBar<ActionRow: View>: View {
             suppressKeyboard = false
             focusRequestID += 1
         }
+        .onChange(of: voiceInputManager?.state) { _, _ in
+            if ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(
+                voiceInputManager,
+                owner: .inlineComposer
+            ) {
+                suppressKeyboard = true
+            }
+        }
         .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
             guard let prefix = textBeforeRecording, let manager = voiceInputManager else { return }
             guard ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer) else { return }

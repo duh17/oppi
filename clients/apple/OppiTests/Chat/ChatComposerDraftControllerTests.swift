@@ -267,7 +267,7 @@ struct ChatComposerDraftControllerTests {
         )
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        _ = controller.beginSubmission()
+        _ = controller.beginSubmission(draftClearance: .immediately)
         controller.setPendingAttachments([]) // ChatView's dispatch cleanup
 
         #expect(store.record(for: key)?.payload.text == "send this")
@@ -310,12 +310,125 @@ struct ChatComposerDraftControllerTests {
         let controller = ChatComposerDraftController(initialText: "send this")
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        let submission = controller.beginSubmission()
-        #expect(controller.text.isEmpty)
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        #expect(controller.text == "send this")
         #expect(store.record(for: key)?.payload.text == "send this")
 
         controller.completeSubmission(submission)
+        #expect(controller.text.isEmpty)
         #expect(store.record(for: key) == nil)
+    }
+
+    @Test func retainedSubmissionFailureKeepsSharedDraftWithoutDuplication() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "retry me")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        #expect(controller.text == "retry me")
+
+        controller.text = "edited while dispatching"
+        controller.failSubmission(submission)
+
+        #expect(controller.text == "edited while dispatching")
+        #expect(store.record(for: key)?.payload.text == "edited while dispatching")
+    }
+
+    @Test func acknowledgedSubmissionDoesNotClearNewerAttachments() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let sentAttachment = PendingAttachment.localFile(
+            name: "sent.txt",
+            data: Data("sent".utf8),
+            mimeType: "text/plain"
+        )
+        let newerAttachment = PendingAttachment.localFile(
+            name: "next.txt",
+            data: Data("next".utf8),
+            mimeType: "text/plain"
+        )
+        let controller = ChatComposerDraftController(
+            initialText: "send this",
+            initialPendingAttachments: [sentAttachment]
+        )
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.setPendingAttachments([newerAttachment])
+        let didClearSubmittedDraft = controller.completeSubmission(submission)
+
+        #expect(!didClearSubmittedDraft)
+        #expect(controller.text == "send this")
+        #expect(controller.pendingAttachments.map(\.displayName) == ["next.txt"])
+        #expect(store.record(for: key)?.payload.attachments.map(\.id) == [newerAttachment.id])
+    }
+
+    @Test func retainedSubmissionCannotBeOverwrittenBySynchronousResubmit() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "send once")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        #expect(!ChatView.composerSendIsInFlight(
+            isPreparingAttachments: false,
+            actionIsSending: false,
+            draftSubmissionIsInFlight: controller.isSubmissionInFlight
+        ))
+
+        let firstSubmission = try #require(ChatView.beginComposerSubmission(
+            draftController: controller,
+            draftClearance: .afterSuccess,
+            isPreparingAttachments: false,
+            actionIsSending: false
+        ))
+        #expect(ChatView.composerSendIsInFlight(
+            isPreparingAttachments: false,
+            actionIsSending: false,
+            draftSubmissionIsInFlight: controller.isSubmissionInFlight
+        ))
+        let secondSubmission = ChatView.beginComposerSubmission(
+            draftController: controller,
+            draftClearance: .afterSuccess,
+            isPreparingAttachments: false,
+            actionIsSending: false
+        )
+        let didClearFirstSubmission = controller.completeSubmission(firstSubmission)
+
+        #expect(secondSubmission.map { _ in true } == nil)
+        #expect(didClearFirstSubmission)
+        #expect(controller.text.isEmpty)
+        #expect(store.record(for: key) == nil)
+    }
+
+    @Test func acknowledgedSubmissionTombstonesDetachedSessionDraft() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+        let key = try fixture.key()
+        let controller = ChatComposerDraftController(initialText: "sent before navigation")
+        controller.attach(store: store, key: key, isEphemeral: false)
+
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
+        controller.detachForSessionChange()
+        let didClearVisibleDraft = controller.completeSubmission(submission)
+
+        #expect(!didClearVisibleDraft)
+        #expect(store.record(for: key) == nil)
+
+        let returningController = ChatComposerDraftController()
+        returningController.attach(store: store, key: key, isEphemeral: false)
+        #expect(returningController.text.isEmpty)
     }
 
     @Test func acknowledgedSubmissionDoesNotClearNewerTyping() async throws {
@@ -327,7 +440,7 @@ struct ChatComposerDraftControllerTests {
         let controller = ChatComposerDraftController(initialText: "send this")
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        let submission = controller.beginSubmission()
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
         controller.text = "next message"
         controller.completeSubmission(submission)
 
@@ -344,7 +457,7 @@ struct ChatComposerDraftControllerTests {
         let controller = ChatComposerDraftController(initialText: "retry me")
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        let submission = controller.beginSubmission()
+        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
         store.clearDraft(for: key)
         controller.failSubmission(submission)
 
@@ -366,7 +479,7 @@ struct ChatComposerDraftControllerTests {
         )
         controller.attach(store: store, key: key, isEphemeral: false)
 
-        let submission = controller.beginSubmission()
+        let submission = try #require(controller.beginSubmission(draftClearance: .immediately))
         controller.text = "new typing"
         controller.repoPointers = [
             PendingFileReference(path: "Sources/New.swift", isDirectory: false),

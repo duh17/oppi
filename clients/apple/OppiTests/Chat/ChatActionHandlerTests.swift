@@ -104,6 +104,52 @@ struct ChatActionHandlerTests {
         #expect(!handler.isForceStopInFlight)
     }
 
+    // MARK: - Composer Commands
+
+    @Test func compactReportsSuccessfulDispatchBeforeComposerClearance() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._sendMessageForTesting = { _ in }
+        var succeeded = false
+        var failed = false
+
+        handler.compact(
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1",
+            onSendSucceeded: { succeeded = true },
+            onAsyncFailure: { failed = true }
+        )
+
+        #expect(await waitForTestCondition { await MainActor.run { succeeded } })
+        #expect(!failed)
+    }
+
+    @Test func compactReportsDispatchFailureForDraftRestoration() async {
+        enum ExpectedError: Error {
+            case failed
+        }
+
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._sendMessageForTesting = { _ in throw ExpectedError.failed }
+        var succeeded = false
+        var failed = false
+
+        handler.compact(
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1",
+            onSendSucceeded: { succeeded = true },
+            onAsyncFailure: { failed = true }
+        )
+
+        #expect(await waitForTestCondition { await MainActor.run { failed } })
+        #expect(!succeeded)
+    }
+
     // MARK: - Send Prompt Logic
 
     @Test func sendPromptReturnsEmptyOnWhitespaceOnly() {

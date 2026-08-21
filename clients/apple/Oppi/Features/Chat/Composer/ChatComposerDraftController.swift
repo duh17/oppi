@@ -9,11 +9,19 @@ final class ChatComposerDraftController {
         case reviewComment
     }
 
-    struct SubmissionSnapshot: Equatable {
+    enum SubmissionDraftClearance: Equatable {
+        case immediately
+        case afterSuccess
+    }
+
+    struct SubmissionSnapshot {
+        let id: UUID
+        let store: ComposerDraftStore?
         let key: ComposerDraftKey?
         let payload: ComposerDraftPayload
         let revision: UInt64?
         let wasEphemeral: Bool
+        let draftClearance: SubmissionDraftClearance
     }
 
     var text: String {
@@ -53,7 +61,8 @@ final class ChatComposerDraftController {
     @ObservationIgnored private var isApplyingVisiblePayload = false
     @ObservationIgnored private var lastAskVisibleText = ""
     @ObservationIgnored private var discardedAskSubmissionText: String?
-    @ObservationIgnored private var isSubmissionInFlight = false
+    private(set) var isSubmissionInFlight = false
+    @ObservationIgnored private var activeSubmissionID: UUID?
 
     init(
         initialText: String = "",
@@ -156,6 +165,7 @@ final class ChatComposerDraftController {
         lastAskVisibleText = ""
         discardedAskSubmissionText = nil
         isSubmissionInFlight = false
+        activeSubmissionID = nil
         mode = .message
         applyVisiblePayload(.empty)
     }
@@ -247,74 +257,110 @@ final class ChatComposerDraftController {
         }
     }
 
-    func beginSubmission() -> SubmissionSnapshot {
+    func beginSubmission(
+        draftClearance: SubmissionDraftClearance
+    ) -> SubmissionSnapshot? {
+        guard activeSubmissionID == nil else { return nil }
+
+        let submissionID = UUID()
         let revision = key.flatMap { store?.record(for: $0)?.revision }
         let snapshot = SubmissionSnapshot(
+            id: submissionID,
+            store: store,
             key: key,
             payload: messagePayload,
             revision: revision,
-            wasEphemeral: isEphemeral
+            wasEphemeral: isEphemeral,
+            draftClearance: draftClearance
         )
+        activeSubmissionID = submissionID
         isSubmissionInFlight = true
-        messagePayload = .empty
-        isApplyingVisiblePayload = true
-        pendingAttachments = []
-        isApplyingVisiblePayload = false
-        if mode == .message {
-            applyVisiblePayload(.empty)
+
+        if draftClearance == .immediately {
+            messagePayload = .empty
+            isApplyingVisiblePayload = true
+            pendingAttachments = []
+            isApplyingVisiblePayload = false
+            if mode == .message {
+                applyVisiblePayload(.empty)
+            }
         }
         return snapshot
     }
 
-    func completeSubmission(_ snapshot: SubmissionSnapshot) {
-        isSubmissionInFlight = false
-        guard !snapshot.wasEphemeral,
-              let snapshotKey = snapshot.key,
-              let revision = snapshot.revision else {
-            return
+    @discardableResult
+    func completeSubmission(_ snapshot: SubmissionSnapshot) -> Bool {
+        let ownsActiveSubmission = activeSubmissionID == snapshot.id
+        let didClearSubmittedDraft: Bool
+
+        if ownsActiveSubmission {
+            activeSubmissionID = nil
+            isSubmissionInFlight = false
+
+            if snapshot.draftClearance == .afterSuccess {
+                if messagePayload == snapshot.payload {
+                    messagePayload = .empty
+                    pendingAttachments = []
+                    if mode == .message {
+                        applyVisiblePayload(.empty)
+                    }
+                    didClearSubmittedDraft = true
+                } else {
+                    didClearSubmittedDraft = false
+                }
+            } else {
+                didClearSubmittedDraft = true
+            }
+        } else {
+            didClearSubmittedDraft = false
         }
-        store?.clearDraft(for: snapshotKey, ifRevision: revision)
+
+        // A successful acknowledgement must tombstone the scope captured at
+        // dispatch even if navigation detached this controller in the meantime.
+        if !snapshot.wasEphemeral,
+           let snapshotKey = snapshot.key,
+           let revision = snapshot.revision {
+            snapshot.store?.clearDraft(for: snapshotKey, ifRevision: revision)
+        }
+        return didClearSubmittedDraft
     }
 
     func failSubmission(_ snapshot: SubmissionSnapshot) {
-        guard key == snapshot.key else { return }
+        guard activeSubmissionID == snapshot.id, key == snapshot.key else { return }
+        activeSubmissionID = nil
         isSubmissionInFlight = false
 
-        if messagePayload.isEmpty {
-            messagePayload = snapshot.payload
-            pendingAttachments = snapshot.payload.attachments.compactMap { attachment in
-                guard let key else { return nil }
-                return PendingAttachment(
-                    composerDraftAttachment: attachment,
-                    data: store?.attachmentData(for: key, attachmentID: attachment.id)
-                )
+        if snapshot.draftClearance == .afterSuccess {
+            if messagePayload.isEmpty {
+                messagePayload = snapshot.payload
+                pendingAttachments = restoredAttachments(for: snapshot.payload)
             }
             if !isEphemeral,
                let key,
+               store?.record(for: key)?.payload != messagePayload {
+                persistMessagePayload()
+            }
+            if mode == .message {
+                applyVisiblePayload(messagePayload)
+            }
+            return
+        }
+
+        if messagePayload.isEmpty {
+            messagePayload = snapshot.payload
+            pendingAttachments = restoredAttachments(for: snapshot.payload)
+            if !isEphemeral,
+               let key,
                store?.record(for: key)?.payload != snapshot.payload {
-                store?.setDraft(
-                    snapshot.payload,
-                    attachmentData: Dictionary(uniqueKeysWithValues: pendingAttachments.compactMap { attachment -> (String, Data)? in
-                        guard let data = attachment.composerDraftData else { return nil }
-                        return (attachment.id, data)
-                    }),
-                    for: key
-                )
+                persistMessagePayload()
             }
         } else if messagePayload != snapshot.payload {
             messagePayload = Self.combinedPayload(
                 failed: snapshot.payload,
                 current: messagePayload
             )
-            let failedAttachments = snapshot.payload.attachments.compactMap { attachment -> PendingAttachment? in
-                guard let key else { return nil }
-                return PendingAttachment(
-                    composerDraftAttachment: attachment,
-                    data: store?.attachmentData(for: key, attachmentID: attachment.id)
-                )
-            }
             pendingAttachments = Self.combinedAttachments(
-                failed: failedAttachments,
+                failed: restoredAttachments(for: snapshot.payload),
                 current: pendingAttachments
             )
             persistMessagePayload()
@@ -322,6 +368,16 @@ final class ChatComposerDraftController {
 
         if mode == .message {
             applyVisiblePayload(messagePayload)
+        }
+    }
+
+    private func restoredAttachments(for payload: ComposerDraftPayload) -> [PendingAttachment] {
+        payload.attachments.compactMap { attachment in
+            guard let key else { return nil }
+            return PendingAttachment(
+                composerDraftAttachment: attachment,
+                data: store?.attachmentData(for: key, attachmentID: attachment.id)
+            )
         }
     }
 

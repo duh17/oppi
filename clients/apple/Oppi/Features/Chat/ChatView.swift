@@ -853,7 +853,7 @@ struct ChatView: View {
 
                     isBusy: isBusy,
                     busyStreamingBehavior: $busyStreamingBehavior,
-                    isSending: isPreparingAttachments || actionHandler.isSending,
+                    isSending: composerIsSending,
                     pendingReviewCommentCount: activeReviewCommentRequest == nil ? reviewComments.stagedCount : 0,
                     onReviewCommentsTap: { showReviewCommentStash = true },
                     placeholderOverride: activeReviewCommentRequest == nil ? nil : "Comment…",
@@ -871,7 +871,7 @@ struct ChatView: View {
                     onFileSuggestionQuery: { query in
                         updateFileSuggestions(query: query)
                     },
-                    onSend: sendComposerAction,
+                    onSend: { sendComposerAction() },
                     onStop: stopTurn,
                     onForceStop: {
                         actionHandler.forceStop(
@@ -1183,11 +1183,13 @@ struct ChatView: View {
         composerTextBeforeRecording = nil
     }
 
-    private func sendComposerAction() {
+    private func sendComposerAction(
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .immediately
+    ) {
         if activeReviewCommentRequest != nil {
             sendActiveReviewComment()
         } else {
-            sendPrompt()
+            sendPrompt(draftClearance: draftClearance)
         }
     }
 
@@ -1560,7 +1562,33 @@ struct ChatView: View {
     }
 
     private var composerIsSending: Bool {
-        isPreparingAttachments || actionHandler.isSending
+        Self.composerSendIsInFlight(
+            isPreparingAttachments: isPreparingAttachments,
+            actionIsSending: actionHandler.isSending,
+            draftSubmissionIsInFlight: composerDraftController.isSubmissionInFlight
+        )
+    }
+
+    static func composerSendIsInFlight(
+        isPreparingAttachments: Bool,
+        actionIsSending: Bool,
+        draftSubmissionIsInFlight: Bool
+    ) -> Bool {
+        isPreparingAttachments || actionIsSending || draftSubmissionIsInFlight
+    }
+
+    static func beginComposerSubmission(
+        draftController: ChatComposerDraftController,
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance,
+        isPreparingAttachments: Bool,
+        actionIsSending: Bool
+    ) -> ChatComposerDraftController.SubmissionSnapshot? {
+        guard !composerSendIsInFlight(
+            isPreparingAttachments: isPreparingAttachments,
+            actionIsSending: actionIsSending,
+            draftSubmissionIsInFlight: draftController.isSubmissionInFlight
+        ) else { return nil }
+        return draftController.beginSubmission(draftClearance: draftClearance)
     }
 
     private var composerSendProgressText: String? {
@@ -1675,46 +1703,120 @@ struct ChatView: View {
         }
     }
 
-    private func sendPrompt() {
+    private func beginComposerSubmission(
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance
+    ) -> ChatComposerDraftController.SubmissionSnapshot? {
+        Self.beginComposerSubmission(
+            draftController: composerDraftController,
+            draftClearance: draftClearance,
+            isPreparingAttachments: isPreparingAttachments,
+            actionIsSending: actionHandler.isSending
+        )
+    }
+
+    private func completeComposerSubmission(
+        _ submission: ChatComposerDraftController.SubmissionSnapshot,
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance
+    ) {
+        let didClearSubmittedDraft = composerDraftController.completeSubmission(submission)
+        if draftClearance == .afterSuccess {
+            pendingAttachments = didClearSubmittedDraft
+                ? []
+                : composerDraftController.pendingAttachments
+        }
+    }
+
+    private func failComposerSubmission(
+        _ submission: ChatComposerDraftController.SubmissionSnapshot,
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance,
+        originalPendingAttachments: [PendingAttachment]
+    ) {
+        composerDraftController.failSubmission(submission)
+        pendingAttachments = draftClearance == .afterSuccess
+            ? composerDraftController.pendingAttachments
+            : originalPendingAttachments
+    }
+
+    private func sendPrompt(
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance = .immediately
+    ) {
+        guard !composerIsSending else { return }
+
         let rawTrimmedInput = composerDraftController.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if Self.localSlashCommand(for: rawTrimmedInput) == .compact {
-            composerDraftController.clearMessage()
-            pendingAttachments = []
+            let originalPendingAttachments = pendingAttachments
+            composerDraftController.setPendingAttachments(originalPendingAttachments)
+            guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
+            if draftClearance == .immediately {
+                pendingAttachments = []
+            }
             composerTextBeforeRecording = nil
-            actionHandler.compact(connection: connection, reducer: reducer, sessionId: sessionId)
-            dismissKeyboard()
+            actionHandler.compact(
+                connection: connection,
+                reducer: reducer,
+                sessionId: sessionId,
+                onSendSucceeded: {
+                    completeComposerSubmission(submission, draftClearance: draftClearance)
+                    dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
+                },
+                onAsyncFailure: {
+                    failComposerSubmission(
+                        submission,
+                        draftClearance: draftClearance,
+                        originalPendingAttachments: originalPendingAttachments
+                    )
+                }
+            )
             return
         }
 
         if rawTrimmedInput.caseInsensitiveCompare("/reload") == .orderedSame {
-            composerDraftController.clearMessage()
+            let originalPendingAttachments = pendingAttachments
+            composerDraftController.setPendingAttachments(originalPendingAttachments)
+            guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
+            if draftClearance == .immediately {
+                pendingAttachments = []
+            }
+            composerTextBeforeRecording = nil
             actionHandler.reloadResources(
                 connection: connection,
                 reducer: reducer,
                 sessionStore: sessionStore,
-                sessionId: sessionId
+                sessionId: sessionId,
+                onSendSucceeded: {
+                    completeComposerSubmission(submission, draftClearance: draftClearance)
+                    dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
+                },
+                onAsyncFailure: {
+                    failComposerSubmission(
+                        submission,
+                        draftClearance: draftClearance,
+                        originalPendingAttachments: originalPendingAttachments
+                    )
+                }
             )
             return
         }
 
         if rawTrimmedInput.caseInsensitiveCompare("/share") == .orderedSame {
-            sendShareSlashCommand(clearComposer: true)
+            sendShareSlashCommand(clearComposer: true, draftClearance: draftClearance)
             return
         }
 
         if rawTrimmedInput.caseInsensitiveCompare("/review-comments") == .orderedSame {
             composerDraftController.clearMessage()
+            pendingAttachments = []
+            composerTextBeforeRecording = nil
             connection.extensionToast = "Review comments use compact inline selection now."
+            dismissKeyboard()
             return
         }
-
-        guard !isPreparingAttachments, !actionHandler.isSending else { return }
 
         let originalInputText = composerDraftController.text
         let originalPendingAttachments = pendingAttachments
         let originalPendingRepoPointers = composerDraftController.repoPointers
         composerDraftController.setPendingAttachments(originalPendingAttachments)
-        let submission = composerDraftController.beginSubmission()
+        guard let submission = beginComposerSubmission(draftClearance: draftClearance) else { return }
         let reviewText = reviewComments.appendReviewBlock(
             to: originalInputText,
             pathFormatting: reviewCommentPathFormatting
@@ -1764,32 +1866,44 @@ struct ChatView: View {
                     sessionStore: sessionStore,
                     sessionManager: sessionManager,
                     onDispatchStarted: {
-                        pendingAttachments = []
+                        if draftClearance == .immediately {
+                            pendingAttachments = []
+                        }
 
                         // Scroll to bottom after sending
                         scrollRef.requestScrollToBottom()
                     },
                     onSendSucceeded: {
-                        composerDraftController.completeSubmission(submission)
+                        completeComposerSubmission(submission, draftClearance: draftClearance)
                         clearSentReviewComments(ids: stagedReviewCommentIds)
                         dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                     },
                     onAsyncFailure: { _, _ in
-                        composerDraftController.failSubmission(submission)
-                        pendingAttachments = originalPendingAttachments
+                        failComposerSubmission(
+                            submission,
+                            draftClearance: draftClearance,
+                            originalPendingAttachments: originalPendingAttachments
+                        )
                     },
                     onNeedsReconnect: {
                         sessionManagerRef.reconnect()
                     }
                 )
                 if !restored.isEmpty {
-                    composerDraftController.failSubmission(submission)
+                    failComposerSubmission(
+                        submission,
+                        draftClearance: draftClearance,
+                        originalPendingAttachments: originalPendingAttachments
+                    )
                 }
             } catch {
                 isPreparingAttachments = false
                 attachmentPreparationText = nil
-                composerDraftController.failSubmission(submission)
-                pendingAttachments = originalPendingAttachments
+                failComposerSubmission(
+                    submission,
+                    draftClearance: draftClearance,
+                    originalPendingAttachments: originalPendingAttachments
+                )
                 reducer.process(.error(sessionId: sessionId, message: self.uploadPreparationErrorMessage(error)))
             }
         }
@@ -1837,7 +1951,10 @@ struct ChatView: View {
         showShareRedactionSheet = true
     }
 
-    private func sendShareSlashCommand(clearComposer: Bool) {
+    private func sendShareSlashCommand(
+        clearComposer: Bool,
+        draftClearance: ChatComposerDraftController.SubmissionDraftClearance
+    ) {
         guard hasShareSlashCommand else {
             reducer.process(
                 .error(sessionId: sessionId, message: "Share command is not enabled for this workspace.")
@@ -1847,7 +1964,17 @@ struct ChatView: View {
 
         let sessionManagerRef = sessionManager
         let policy = AppPreferences.Share.redactionPolicy
-        let submission = clearComposer ? composerDraftController.beginSubmission() : nil
+        let originalPendingAttachments = pendingAttachments
+        let submission: ChatComposerDraftController.SubmissionSnapshot?
+        if clearComposer {
+            composerDraftController.setPendingAttachments(originalPendingAttachments)
+            guard let startedSubmission = beginComposerSubmission(
+                draftClearance: draftClearance
+            ) else { return }
+            submission = startedSubmission
+        } else {
+            submission = nil
+        }
 
         actionHandler.shareSession(
             connection: connection,
@@ -1855,18 +1982,22 @@ struct ChatView: View {
             sessionId: sessionId,
             redactionPolicy: policy,
             onDispatchStarted: {
-                guard clearComposer else { return }
+                guard clearComposer, draftClearance == .immediately else { return }
                 pendingAttachments = []
             },
             onSendSucceeded: {
                 if let submission {
-                    composerDraftController.completeSubmission(submission)
+                    completeComposerSubmission(submission, draftClearance: draftClearance)
                     dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                 }
             },
             onAsyncFailure: {
                 if let submission {
-                    composerDraftController.failSubmission(submission)
+                    failComposerSubmission(
+                        submission,
+                        draftClearance: draftClearance,
+                        originalPendingAttachments: originalPendingAttachments
+                    )
                 }
             },
             onNeedsReconnect: {
@@ -2176,7 +2307,7 @@ struct ChatView: View {
             session: session,
             thinkingLevel: chatState.thinkingLevel,
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-            onSend: sendComposerAction,
+            onSend: { sendComposerAction(draftClearance: .afterSuccess) },
             onModelTap: { showModelPicker = true },
             onThinkingSelect: { level in
                 actionHandler.setThinking(
@@ -2185,7 +2316,9 @@ struct ChatView: View {
                     reducer: reducer,
                     sessionId: sessionId
                 )
-            }
+            },
+            isSubmitInFlight: composerIsSending,
+            preservesVoiceInputOnDismiss: true
         )
     }
 
