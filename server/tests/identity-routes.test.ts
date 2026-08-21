@@ -29,6 +29,63 @@ describe("identity module", () => {
     expect(JSON.parse(res.body)).toEqual({ user: "owner", name: "Bob" });
   });
 
+  it("projects server-derived provider pacing through GET /server/provider-quotas", async () => {
+    const status = {
+      providers: [
+        {
+          providerId: "example",
+          displayName: "Example",
+          authenticated: true,
+          planType: null,
+          windows: [
+            {
+              key: "hourly",
+              shortLabel: "1h",
+              title: "Hourly",
+              usedPercent: 46,
+              remainingPercent: 54,
+              limitWindowSeconds: 3600,
+              resetAt: 203_309,
+              includeWeekdayInReset: false,
+              pacing: {
+                source: "snapshot",
+                status: "conserve",
+                timeRemainingSeconds: 202_309,
+                supplyRatio: 0.958,
+                targetBurnPercentPerHour: 0.96,
+                recentBurnPercentPerHour: null,
+                paceRatio: null,
+                projectedExhaustionAt: null,
+                projectedRemainingPercent: null,
+              },
+            },
+          ],
+          credits: null,
+          prepaidBalanceCents: null,
+          fetchedAt: 1_000_000,
+        },
+      ],
+      fetchedAt: 1_000_000,
+    } as const;
+    const ctx = {
+      getProviderQuotasStatus: vi.fn(async () => status),
+    } as unknown as RouteContext;
+
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "GET",
+      path: "/server/provider-quotas",
+      url: new URL("http://localhost/server/provider-quotas"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual(status);
+  });
+
   it("validates POST /pair body", async () => {
     const ctx = {
       storage: {

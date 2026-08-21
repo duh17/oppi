@@ -3,7 +3,7 @@ import * as c from "../../ansi.js";
 import type { ProviderQuota, ProviderQuotasStatus } from "../../provider-quota.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import type { LocalApiConnection } from "../local-api-client.js";
-import { formatQuotaRemaining } from "../quota.js";
+import { formatQuotaPacing, formatQuotaRemaining, isProviderQuotaPacing } from "../quota.js";
 import { setCapturedCliExitCode, writeHumanLine, writeJsonEnvelope } from "../output.js";
 import { apiStatus } from "../resources.js";
 
@@ -166,6 +166,7 @@ function renderProviderStatus(quota: ProviderQuota | null, local: boolean): void
     writeHumanLine(
       `    ${window.title.padEnd(width)}  ${formatQuotaRemaining(window.remainingPercent)} ${c.dim(`· ${used}`)}`,
     );
+    writeHumanLine(`      ${c.dim(formatQuotaPacing(window))}`);
   }
 }
 
@@ -233,8 +234,28 @@ function isProviderQuota(value: unknown): value is ProviderQuota {
     typeof value.authenticated === "boolean" &&
     (value.planType === null || typeof value.planType === "string") &&
     Array.isArray(value.windows) &&
+    value.windows.every(isProviderQuotaWindow) &&
     isFiniteNumber(value.fetchedAt)
   );
+}
+
+function isProviderQuotaWindow(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.key === "string" &&
+    typeof value.shortLabel === "string" &&
+    typeof value.title === "string" &&
+    isFiniteNumber(value.usedPercent) &&
+    isFiniteNumber(value.remainingPercent) &&
+    isNullableFiniteNumber(value.limitWindowSeconds) &&
+    isNullableFiniteNumber(value.resetAt) &&
+    typeof value.includeWeekdayInReset === "boolean" &&
+    (value.pacing === undefined || isProviderQuotaPacing(value.pacing))
+  );
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
 }
 
 function isFiniteNumber(value: unknown): value is number {

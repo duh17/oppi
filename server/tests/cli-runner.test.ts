@@ -123,6 +123,17 @@ describe("canonical CLI runner", () => {
               limitWindowSeconds: 604_800,
               resetAt: 1_787_196_783,
               includeWeekdayInReset: true,
+              pacing: {
+                source: "snapshot",
+                status: "conserve",
+                timeRemainingSeconds: 12_345,
+                supplyRatio: 0.42,
+                targetBurnPercentPerHour: 7.87,
+                recentBurnPercentPerHour: null,
+                paceRatio: null,
+                projectedExhaustionAt: null,
+                projectedRemainingPercent: null,
+              },
             },
           ],
           credits: { hasCredits: false, unlimited: false, balance: "0" },
@@ -157,7 +168,7 @@ describe("canonical CLI runner", () => {
           {
             providerId: "openai-codex",
             planType: "prolite",
-            windows: [{ key: "weekly", remainingPercent: 27 }],
+            windows: [{ key: "weekly", remainingPercent: 27, pacing: { supplyRatio: 0.42 } }],
           },
           { providerId: "unconfigured", authenticated: false },
         ],
@@ -166,6 +177,9 @@ describe("canonical CLI runner", () => {
     expect(result.humanOutput).toContain("Provider quotas");
     expect(result.humanOutput).toContain("Codex");
     expect(result.humanOutput).toContain("27% left");
+    expect(result.humanOutput).toContain("Conserve");
+    expect(result.humanOutput).toContain("supply 0.42x");
+    expect(result.humanOutput).toContain("resets in 3h 25m");
     expect(result.humanOutput).toContain("Unconfigured");
     expect(result.humanOutput).toContain("Not configured");
     expect(request).toHaveBeenCalledWith(expect.anything(), "/server/provider-quotas", undefined);
@@ -231,6 +245,17 @@ describe("canonical CLI runner", () => {
                   limitWindowSeconds: 604_800,
                   resetAt: null,
                   includeWeekdayInReset: true,
+                  pacing: {
+                    source: "snapshot",
+                    status: "on_pace",
+                    timeRemainingSeconds: 3_600,
+                    supplyRatio: 1,
+                    targetBurnPercentPerHour: 27,
+                    recentBurnPercentPerHour: null,
+                    paceRatio: null,
+                    projectedExhaustionAt: null,
+                    projectedRemainingPercent: null,
+                  },
                 },
               ],
               credits: { hasCredits: false, unlimited: false, balance: "0" },
@@ -259,6 +284,7 @@ describe("canonical CLI runner", () => {
           {
             provider: "openai-codex",
             display_name: "Codex",
+            quota: { windows: [{ key: "weekly", pacing: { supplyRatio: 1 } }] },
             models: [{ id: "openai-codex/gpt-5.6-sol", name: "gpt-5.6-sol" }],
           },
         ],
@@ -266,6 +292,9 @@ describe("canonical CLI runner", () => {
     });
     expect(result.humanOutput).toContain("Codex");
     expect(result.humanOutput).toContain("27% left");
+    expect(result.humanOutput).toContain("On pace");
+    expect(result.humanOutput).toContain("supply 1x");
+    expect(result.humanOutput).toContain("resets in 1h");
     expect(result.humanOutput).toContain("openai-codex/gpt-5.6-sol");
     expect(result.humanOutput).toContain("272K");
     expect(result.humanOutput).not.toContain("Qwen3.8-27B-8bit");
@@ -358,6 +387,8 @@ describe("canonical CLI runner", () => {
       },
     });
     const human = result.humanOutput.replace(/\u001b\[[0-9;]*m/g, "");
+    expect(human).toContain("Pace unknown");
+    expect(human).not.toContain("Pace: Pace unknown");
     expect(human).toMatch(/ds4\n\s+Local/);
     expect(human).toMatch(/omlx\n\s+Local/);
     expect(human).toMatch(/qwen-token-plan\n\s+No quota reported/);

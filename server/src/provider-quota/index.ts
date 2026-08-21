@@ -13,6 +13,9 @@ export type {
   FetchProviderQuotasOptions,
   ProviderQuota,
   ProviderQuotaAdapter,
+  ProviderQuotaPacing,
+  ProviderQuotaPacingSource,
+  ProviderQuotaPacingStatus,
   ProviderQuotaCredits,
   ProviderQuotasStatus,
   ProviderQuotaWindow,
@@ -22,6 +25,7 @@ export type {
 
 export {
   clampPercent,
+  deriveProviderQuotaPacing,
   emptyProviderQuota,
   finalizeProviderQuota,
   makeProviderQuotaWindow,

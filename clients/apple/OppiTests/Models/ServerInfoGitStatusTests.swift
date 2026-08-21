@@ -209,6 +209,89 @@ struct ServerInfoTests {
         #expect(ProviderQuota.badgeTone(for: 20) == .red)
     }
 
+    @Test func providerQuotaPacingLineIncludesSnapshotRatio() {
+        let window = makeQuotaWindow(
+            remainingPercent: 54,
+            pacing: .init(
+                source: "snapshot",
+                status: "conserve",
+                timeRemainingSeconds: 202_309,
+                supplyRatio: 0.54,
+                targetBurnPercentPerHour: 0.96,
+                recentBurnPercentPerHour: nil,
+                paceRatio: nil,
+                projectedExhaustionAt: nil,
+                projectedRemainingPercent: nil
+            )
+        )
+
+        #expect(window.pacing?.statusLabel == "Conserve")
+        #expect(window.pacing?.compactLabel == "Conserve · 0.54× supply")
+        #expect(window.pacing?.accessibilityLabel == "Conserve, supply ratio 0.54")
+    }
+
+    @Test func providerQuotaPacingDecodesSnapshotFields() throws {
+        let json = Data("""
+        {
+          "providerId": "example",
+          "displayName": "Example",
+          "authenticated": true,
+          "planType": null,
+          "windows": [{
+            "key": "hourly",
+            "shortLabel": "1h",
+            "title": "Hourly",
+            "usedPercent": 46,
+            "remainingPercent": 54,
+            "limitWindowSeconds": 3600,
+            "resetAt": 203309,
+            "includeWeekdayInReset": false,
+            "pacing": {
+              "source": "snapshot",
+              "status": "conserve",
+              "timeRemainingSeconds": 202309,
+              "supplyRatio": 0.54,
+              "targetBurnPercentPerHour": 0.96,
+              "recentBurnPercentPerHour": null,
+              "paceRatio": null,
+              "projectedExhaustionAt": null,
+              "projectedRemainingPercent": null
+            }
+          }],
+          "credits": null,
+          "prepaidBalanceCents": null,
+          "fetchedAt": 1000000,
+          "error": null
+        }
+        """.utf8)
+
+        let quota = try JSONDecoder().decode(ProviderQuota.self, from: json)
+        #expect(quota.windows.first?.pacing?.source == "snapshot")
+        #expect(quota.windows.first?.pacing?.supplyRatio == 0.54)
+        #expect(quota.windows.first?.pacing?.statusLabel == "Conserve")
+    }
+
+    @Test func providerQuotaPacingMissingOrUnknownUsesUnknownLabel() {
+        let missing = makeQuotaWindow(remainingPercent: 54)
+        let unknown = makeQuotaWindow(
+            remainingPercent: 54,
+            pacing: .init(
+                source: "unknown",
+                status: "unknown",
+                timeRemainingSeconds: nil,
+                supplyRatio: nil,
+                targetBurnPercentPerHour: nil,
+                recentBurnPercentPerHour: nil,
+                paceRatio: nil,
+                projectedExhaustionAt: nil,
+                projectedRemainingPercent: nil
+            )
+        )
+
+        #expect(missing.pacing?.compactLabel == nil)
+        #expect(unknown.pacing?.compactLabel == "Pace unknown")
+    }
+
     @Test func providerQuotaWindowsSortShortestFirstAndCompactTakesOne() {
         let quota = makeProviderQuota(
             authenticated: true,
@@ -363,7 +446,8 @@ struct ServerInfoTests {
         limitWindowSeconds: Int? = 5 * 60 * 60,
         remainingPercent: Double,
         includeWeekdayInReset: Bool = false,
-        resetAt: Int? = 1_700_000_000
+        resetAt: Int? = 1_700_000_000,
+        pacing: ProviderQuota.Window.Pacing? = nil
     ) -> ProviderQuota.Window {
         ProviderQuota.Window(
             key: key,
@@ -373,7 +457,8 @@ struct ServerInfoTests {
             remainingPercent: remainingPercent,
             limitWindowSeconds: limitWindowSeconds,
             resetAt: resetAt,
-            includeWeekdayInReset: includeWeekdayInReset
+            includeWeekdayInReset: includeWeekdayInReset,
+            pacing: pacing
         )
     }
 }

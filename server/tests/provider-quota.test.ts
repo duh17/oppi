@@ -5,6 +5,7 @@ import {
   fetchOpenCodeGoProviderQuota,
   fetchProviderQuotas,
   fetchXaiProviderQuota,
+  deriveProviderQuotaPacing,
   normalizeProviderQuotaWindows,
   type ProviderQuotaAdapter,
   type ProviderQuotaWindow,
@@ -632,6 +633,88 @@ describe("fetchOpenCodeGoProviderQuota", () => {
   });
 });
 
+describe("deriveProviderQuotaPacing", () => {
+  const baseWindow: ProviderQuotaWindow = {
+    key: "hourly",
+    shortLabel: "1h",
+    title: "Hourly",
+    usedPercent: 35,
+    remainingPercent: 65,
+    limitWindowSeconds: 3600,
+    resetAt: 3_601,
+    includeWeekdayInReset: false,
+  };
+
+  it.each([
+    [1.301, "plenty"],
+    [1.201, "plenty"],
+    [1.2, "on_pace"],
+    [0.801, "on_pace"],
+    [0.8, "on_pace"],
+    [0.799, "conserve"],
+  ] as const)("classifies a supply ratio at the %s boundary", (ratio, status) => {
+    const resetAt = 1_000 + (0.65 / ratio) * 3_600;
+    const pacing = deriveProviderQuotaPacing({ ...baseWindow, resetAt }, 1_000_000);
+
+    expect(pacing.status).toBe(status);
+    expect(pacing.source).toBe("snapshot");
+    expect(pacing.supplyRatio).toBeCloseTo(ratio);
+  });
+
+  it("derives exact snapshot values and leaves observation fields null", () => {
+    const pacing = deriveProviderQuotaPacing(
+      { ...baseWindow, remainingPercent: 54, resetAt: 203_309 },
+      1_000_000,
+    );
+
+    expect(pacing).toEqual({
+      source: "snapshot",
+      status: "conserve",
+      timeRemainingSeconds: 202_309,
+      supplyRatio: 0.54 / (202_309 / 3_600),
+      targetBurnPercentPerHour: 54 / (202_309 / 3_600),
+      recentBurnPercentPerHour: null,
+      paceRatio: null,
+      projectedExhaustionAt: null,
+      projectedRemainingPercent: null,
+    });
+  });
+
+  it.each([
+    { resetAt: null, limitWindowSeconds: 3600, remainingPercent: 50 },
+    { resetAt: 999, limitWindowSeconds: 3600, remainingPercent: 50 },
+    { resetAt: 3_601, limitWindowSeconds: 0, remainingPercent: 50 },
+    { resetAt: 3_601, limitWindowSeconds: Number.NaN, remainingPercent: 50 },
+    { resetAt: 3_601, limitWindowSeconds: 3600, remainingPercent: Number.NaN },
+  ])("returns unknown for missing, elapsed, invalid, or non-finite inputs", (input) => {
+    const pacing = deriveProviderQuotaPacing({ ...baseWindow, ...input }, 1_000_000);
+
+    expect(pacing).toEqual({
+      source: "unknown",
+      status: "unknown",
+      timeRemainingSeconds:
+        input.resetAt !== null && input.resetAt > 1_000 ? input.resetAt - 1_000 : null,
+      supplyRatio: null,
+      targetBurnPercentPerHour: null,
+      recentBurnPercentPerHour: null,
+      paceRatio: null,
+      projectedExhaustionAt: null,
+      projectedRemainingPercent: null,
+    });
+  });
+
+  it("clamps remaining percent before deriving without producing non-finite values", () => {
+    const pacing = deriveProviderQuotaPacing(
+      { ...baseWindow, remainingPercent: 250, resetAt: 2_800 },
+      1_000_000,
+    );
+
+    expect(pacing.status).toBe("plenty");
+    expect(pacing.supplyRatio).toBe(2);
+    expect(Number.isFinite(pacing.targetBurnPercentPerHour)).toBe(true);
+  });
+});
+
 describe("normalizeProviderQuotaWindows", () => {
   it("dedupes by key and sorts shortest period first", () => {
     const windows: ProviderQuotaWindow[] = [
@@ -726,7 +809,7 @@ describe("fetchProviderQuotas", () => {
               usedPercent: 25,
               remainingPercent: 75,
               limitWindowSeconds: 3600,
-              resetAt: null,
+              resetAt: 3_601,
               includeWeekdayInReset: false,
             },
           ],
@@ -746,6 +829,8 @@ describe("fetchProviderQuotas", () => {
     expect(result.providers).toHaveLength(1);
     expect(result.providers[0]?.providerId).toBe("example");
     expect(result.providers[0]?.windows.map((window) => window.key)).toEqual(["hourly", "monthly"]);
+    expect(result.providers[0]?.windows[0]?.pacing?.status).toBe("conserve");
+    expect(result.providers[0]?.windows[0]?.pacing?.supplyRatio).toBeCloseTo(0.75, 3);
   });
 
   it("isolates a throwing adapter and stamps registry identity", async () => {

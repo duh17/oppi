@@ -117,6 +117,41 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
     struct Window: Codable, Sendable, Equatable, Identifiable {
         var id: String { key }
 
+        struct Pacing: Codable, Sendable, Equatable {
+            let source: String
+            let status: String
+            let timeRemainingSeconds: Double?
+            let supplyRatio: Double?
+            let targetBurnPercentPerHour: Double?
+            let recentBurnPercentPerHour: Double?
+            let paceRatio: Double?
+            let projectedExhaustionAt: Double?
+            let projectedRemainingPercent: Double?
+
+            var statusLabel: String {
+                switch status {
+                case "plenty": return "Plenty"
+                case "on_pace": return "On pace"
+                case "conserve": return "Conserve"
+                default: return "Pace unknown"
+                }
+            }
+
+            var compactLabel: String {
+                guard let supplyRatio, supplyRatio.isFinite else {
+                    return statusLabel
+                }
+                return "\(statusLabel) · \(String(format: "%.2f", supplyRatio))× supply"
+            }
+
+            var accessibilityLabel: String {
+                guard let supplyRatio, supplyRatio.isFinite else {
+                    return statusLabel
+                }
+                return "\(statusLabel), supply ratio \(String(format: "%.2f", supplyRatio))"
+            }
+        }
+
         let key: String
         let shortLabel: String
         let title: String
@@ -125,6 +160,29 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
         let limitWindowSeconds: Int?
         let resetAt: Int?
         let includeWeekdayInReset: Bool
+        let pacing: Pacing?
+
+        init(
+            key: String,
+            shortLabel: String,
+            title: String,
+            usedPercent: Double,
+            remainingPercent: Double,
+            limitWindowSeconds: Int?,
+            resetAt: Int?,
+            includeWeekdayInReset: Bool,
+            pacing: Pacing? = nil
+        ) {
+            self.key = key
+            self.shortLabel = shortLabel
+            self.title = title
+            self.usedPercent = usedPercent
+            self.remainingPercent = remainingPercent
+            self.limitWindowSeconds = limitWindowSeconds
+            self.resetAt = resetAt
+            self.includeWeekdayInReset = includeWeekdayInReset
+            self.pacing = pacing
+        }
 
         var resetDate: Date? {
             guard let resetAt else { return nil }

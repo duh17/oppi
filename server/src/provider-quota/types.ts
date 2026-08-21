@@ -2,6 +2,20 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Credential } from "@earendil-works/pi-ai";
 
 export type ProviderQuotaWindowKey = "five_hour" | "weekly" | "monthly" | string;
+export type ProviderQuotaPacingSource = "snapshot" | "observed" | "unknown";
+export type ProviderQuotaPacingStatus = "plenty" | "on_pace" | "conserve" | "unknown";
+
+export interface ProviderQuotaPacing {
+  source: ProviderQuotaPacingSource;
+  status: ProviderQuotaPacingStatus;
+  timeRemainingSeconds: number | null;
+  supplyRatio: number | null;
+  targetBurnPercentPerHour: number | null;
+  recentBurnPercentPerHour: number | null;
+  paceRatio: number | null;
+  projectedExhaustionAt: number | null;
+  projectedRemainingPercent: number | null;
+}
 
 export interface ProviderQuotaWindow {
   key: ProviderQuotaWindowKey;
@@ -16,6 +30,8 @@ export interface ProviderQuotaWindow {
   resetAt: number | null;
   /** Prefer weekday in reset copy (weekly/monthly windows). */
   includeWeekdayInReset: boolean;
+  /** Server-derived snapshot pacing; absent only on pre-pacing inputs. */
+  pacing?: ProviderQuotaPacing;
 }
 
 export interface ProviderQuotaCredits {

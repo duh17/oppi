@@ -1041,6 +1041,10 @@ fileprivate struct ProviderQuotaDetails: View {
             }
             .frame(height: 6)
 
+            Text(window.pacing?.compactLabel ?? "Pace unknown")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.themeComment)
+
             if let resetDate = window.resetDate {
                 Text(resetLabel(for: resetDate, window: window))
                     .font(.caption2.monospacedDigit())
@@ -1055,8 +1059,9 @@ fileprivate struct ProviderQuotaDetails: View {
 
     private func accessibilityValue(for window: ProviderQuota.Window) -> String {
         let remaining = "\(Int(window.remainingPercent.rounded()))% left"
-        guard let resetDate = window.resetDate else { return remaining }
-        return "\(remaining), \(resetLabel(for: resetDate, window: window))"
+        let pacing = window.pacing?.accessibilityLabel ?? "Pace unknown"
+        guard let resetDate = window.resetDate else { return "\(remaining), \(pacing)" }
+        return "\(remaining), \(pacing), \(resetLabel(for: resetDate, window: window))"
     }
 
     private func remainingStyle(_ remainingPercent: Double) -> ThemeShapeStyle {
@@ -1104,7 +1109,18 @@ struct ModelProvidersQuotaPreview: View {
                 remainingPercent: 72,
                 limitWindowSeconds: 18_000,
                 resetAt: Int(sampleNow.addingTimeInterval(2 * 60 * 60).timeIntervalSince1970),
-                includeWeekdayInReset: false
+                includeWeekdayInReset: false,
+                pacing: .init(
+                    source: "snapshot",
+                    status: "on_pace",
+                    timeRemainingSeconds: 7_200,
+                    supplyRatio: 1.02,
+                    targetBurnPercentPerHour: 36,
+                    recentBurnPercentPerHour: nil,
+                    paceRatio: nil,
+                    projectedExhaustionAt: nil,
+                    projectedRemainingPercent: nil
+                )
             ),
             ProviderQuota.Window(
                 key: "weekly",
@@ -1114,7 +1130,18 @@ struct ModelProvidersQuotaPreview: View {
                 remainingPercent: 56,
                 limitWindowSeconds: 604_800,
                 resetAt: Int(sampleNow.addingTimeInterval(5 * 24 * 60 * 60).timeIntervalSince1970),
-                includeWeekdayInReset: true
+                includeWeekdayInReset: true,
+                pacing: .init(
+                    source: "snapshot",
+                    status: "plenty",
+                    timeRemainingSeconds: 432_000,
+                    supplyRatio: 1.35,
+                    targetBurnPercentPerHour: 4.67,
+                    recentBurnPercentPerHour: nil,
+                    paceRatio: nil,
+                    projectedExhaustionAt: nil,
+                    projectedRemainingPercent: nil
+                )
             ),
         ],
         credits: nil,
@@ -1137,7 +1164,18 @@ struct ModelProvidersQuotaPreview: View {
                 remainingPercent: 39,
                 limitWindowSeconds: 2_592_000,
                 resetAt: Int(sampleNow.addingTimeInterval(7 * 24 * 60 * 60).timeIntervalSince1970),
-                includeWeekdayInReset: false
+                includeWeekdayInReset: false,
+                pacing: .init(
+                    source: "snapshot",
+                    status: "conserve",
+                    timeRemainingSeconds: 604_800,
+                    supplyRatio: 0.58,
+                    targetBurnPercentPerHour: 1.93,
+                    recentBurnPercentPerHour: nil,
+                    paceRatio: nil,
+                    projectedExhaustionAt: nil,
+                    projectedRemainingPercent: nil
+                )
             ),
         ],
         credits: nil,

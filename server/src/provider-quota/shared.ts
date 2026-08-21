@@ -4,6 +4,7 @@ import { safeErrorMessage } from "../log-utils.js";
 import type {
   FetchProviderQuotasOptions,
   ProviderQuota,
+  ProviderQuotaPacing,
   ProviderQuotaWindow,
   ProviderQuotaWindowKey,
   QuotaModelRuntime,
@@ -107,6 +108,80 @@ export function makeProviderQuotaWindow(input: {
   };
 }
 
+/** Derive snapshot pacing without using provider identity or quota history. */
+export function deriveProviderQuotaPacing(
+  window: ProviderQuotaWindow,
+  fetchedAt: number,
+): ProviderQuotaPacing {
+  const resetAt = window.resetAt;
+  const timeRemainingSeconds =
+    resetAt !== null && Number.isFinite(resetAt) && Number.isFinite(fetchedAt)
+      ? resetAt - fetchedAt / 1000
+      : null;
+  const validTimeRemaining =
+    timeRemainingSeconds !== null &&
+    Number.isFinite(timeRemainingSeconds) &&
+    timeRemainingSeconds > 0;
+  const validRemaining = Number.isFinite(window.remainingPercent);
+  const validWindow =
+    window.limitWindowSeconds !== null &&
+    Number.isFinite(window.limitWindowSeconds) &&
+    window.limitWindowSeconds > 0;
+
+  if (!validTimeRemaining || !validRemaining || !validWindow) {
+    return {
+      source: "unknown",
+      status: "unknown",
+      timeRemainingSeconds: validTimeRemaining ? timeRemainingSeconds : null,
+      supplyRatio: null,
+      targetBurnPercentPerHour: null,
+      recentBurnPercentPerHour: null,
+      paceRatio: null,
+      projectedExhaustionAt: null,
+      projectedRemainingPercent: null,
+    };
+  }
+
+  const validTime = timeRemainingSeconds as number;
+  const validWindowSeconds = window.limitWindowSeconds as number;
+  const remainingRatio = Math.max(0, Math.min(1, window.remainingPercent / 100));
+  const remainingPercent = remainingRatio * 100;
+  const supplyRatio = remainingRatio / (validTime / validWindowSeconds);
+  const targetBurnPercentPerHour = remainingPercent / (validTime / 3600);
+  if (!Number.isFinite(supplyRatio) || !Number.isFinite(targetBurnPercentPerHour)) {
+    return {
+      source: "unknown",
+      status: "unknown",
+      timeRemainingSeconds,
+      supplyRatio: null,
+      targetBurnPercentPerHour: null,
+      recentBurnPercentPerHour: null,
+      paceRatio: null,
+      projectedExhaustionAt: null,
+      projectedRemainingPercent: null,
+    };
+  }
+
+  const thresholdEpsilon = 1e-9;
+  const status =
+    supplyRatio > 1.2 + thresholdEpsilon
+      ? "plenty"
+      : supplyRatio >= 0.8 - thresholdEpsilon
+        ? "on_pace"
+        : "conserve";
+  return {
+    source: "snapshot",
+    status,
+    timeRemainingSeconds,
+    supplyRatio,
+    targetBurnPercentPerHour,
+    recentBurnPercentPerHour: null,
+    paceRatio: null,
+    projectedExhaustionAt: null,
+    projectedRemainingPercent: null,
+  };
+}
+
 /**
  * Provider-agnostic window cleanup: first window wins per key, then shortest
  * period first (null durations last). Detail UIs show the full list; compact
@@ -138,9 +213,13 @@ export function normalizeProviderQuotaWindows(
 }
 
 export function finalizeProviderQuota(quota: ProviderQuota): ProviderQuota {
+  const windows = normalizeProviderQuotaWindows(quota.windows);
   return {
     ...quota,
-    windows: normalizeProviderQuotaWindows(quota.windows),
+    windows: windows.map((window) => ({
+      ...window,
+      pacing: deriveProviderQuotaPacing(window, quota.fetchedAt),
+    })),
   };
 }
 
