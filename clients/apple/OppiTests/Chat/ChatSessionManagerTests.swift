@@ -888,6 +888,70 @@ struct ChatSessionManagerTests {
                 makeTestSession(
                     id: sessionId,
                     workspaceId: workspaceId,
+                    status: .ready,
+                    messageCount: 1,
+                    firstMessage: firstMessage
+                ),
+                []
+            )
+        }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(
+            id: sessionId,
+            workspaceId: workspaceId,
+            status: .ready,
+            messageCount: 1,
+            firstMessage: firstMessage
+        ))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(
+            id: sessionId,
+            workspaceId: workspaceId,
+            status: .ready,
+            messageCount: 1,
+            firstMessage: firstMessage
+        )))
+
+        let showedFirstMessage = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run {
+                manager.reducer.items.contains { item in
+                    if case .userMessage(_, let text, _, _) = item {
+                        return text == firstMessage
+                    }
+                    return false
+                }
+            }
+        }
+        #expect(showedFirstMessage, "Non-live sessions with an empty fresh trace should still show the recorded first user message")
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
+    @Test func liveEmptyFreshTracePreservesFullStreamUserMessage() async {
+        let sessionId = "live-empty-trace-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let firstMessage = String(repeating: "partial ", count: 25)
+        let fullMessage = firstMessage + "authoritative stream suffix"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            try await Task.sleep(for: .milliseconds(120))
+            return (
+                makeTestSession(
+                    id: sessionId,
+                    workspaceId: workspaceId,
                     status: .busy,
                     messageCount: 1,
                     firstMessage: firstMessage
@@ -920,18 +984,24 @@ struct ChatSessionManagerTests {
             messageCount: 1,
             firstMessage: firstMessage
         )))
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: fullMessage))
 
-        let showedFirstMessage = await waitForTestCondition(timeoutMs: 500) {
-            await MainActor.run {
-                manager.reducer.items.contains { item in
-                    if case .userMessage(_, let text, _, _) = item {
-                        return text == firstMessage
-                    }
-                    return false
-                }
+        #expect(await waitForMainActorCondition {
+            manager.reducer.items.contains { item in
+                if case .userMessage(_, let text, _, _) = item { return text == fullMessage }
+                return false
             }
+        })
+        #expect(await waitForMainActorCondition {
+            manager.needsInitialScroll
+        }, "Empty live history should finish without rebuilding the live timeline")
+
+        let userMessages = manager.reducer.items.compactMap { item -> String? in
+            guard case .userMessage(_, let text, _, _) = item else { return nil }
+            return text
         }
-        #expect(showedFirstMessage, "Busy sessions with an empty fresh trace should still show the recorded first user message")
+        #expect(userMessages == [fullMessage])
+        #expect(!userMessages.contains(firstMessage), "Live sessions must not synthesize the partial firstMessage fallback")
 
         streams.finish(index: 0)
         await connectTask.value

@@ -1433,10 +1433,13 @@ final class ChatSessionManager {
             tracePage = page
             markSyncSucceeded()
 
+            let sessionIsLive = session.status == .starting
+                || session.status == .busy
+                || session.status == .stopping
             let timelineTrace = Self.timelineTrace(
                 from: trace,
                 session: session,
-                allowFirstMessageFallback: allowFirstMessageFallback
+                allowFirstMessageFallback: allowFirstMessageFallback && !sessionIsLive
             )
             let freshSignature = Self.traceSignature(for: timelineTrace)
             let usedFirstMessageFallback = trace.isEmpty && !timelineTrace.isEmpty
@@ -1451,6 +1454,9 @@ final class ChatSessionManager {
                 }
                 needsInitialScroll = true
                 freshnessReason = "history_applied_empty"
+            } else if timelineTrace.isEmpty, allowFirstMessageFallback, sessionIsLive {
+                needsInitialScroll = true
+                freshnessReason = "history_deferred_to_live"
             }
 
             if !timelineTrace.isEmpty {
