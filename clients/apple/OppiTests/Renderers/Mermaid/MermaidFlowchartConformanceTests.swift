@@ -957,9 +957,12 @@ struct MermaidFlowchartConformanceTests {
                         width: frame.width,
                         height: min(titleHeight, frame.height)
                     )
+                    if edgeEntersOrLeaves(path, subgraph: frame, positions: layout.graphResult.nodePositions) {
+                        continue
+                    }
                     #expect(
                         !segmentIntersectsInterior(first, second, rect: titleBand),
-                        "Edge \(path.from)->\(path.to) crosses subgraph title \(subgraphId)"
+                        "Edge \(path.from)->\(path.to) crosses unrelated subgraph title \(subgraphId)"
                     )
                 }
             }
@@ -993,6 +996,17 @@ struct MermaidFlowchartConformanceTests {
             }
             labelRects.append(rect)
         }
+    }
+
+    private func edgeEntersOrLeaves(
+        _ path: GraphLayoutEdgePath,
+        subgraph: CGRect,
+        positions: [String: CGRect]
+    ) -> Bool {
+        guard let from = positions[path.from], let to = positions[path.to] else { return false }
+        let fromInside = subgraph.insetBy(dx: 1, dy: 1).contains(CGPoint(x: from.midX, y: from.midY))
+        let toInside = subgraph.insetBy(dx: 1, dy: 1).contains(CGPoint(x: to.midX, y: to.midY))
+        return fromInside != toInside
     }
 
     private func isOrthogonalStairFromBottomTip(_ path: GraphLayoutEdgePath, diamond: CGRect) -> Bool {

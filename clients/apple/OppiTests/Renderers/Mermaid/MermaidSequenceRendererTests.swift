@@ -80,7 +80,12 @@ struct MermaidSequenceRendererTests {
 
         let twoSize = renderer.boundingBox(twoParticipants)
         let threeSize = renderer.boundingBox(threeParticipants)
-        #expect(threeSize.width > twoSize.width)
+        // Both diagrams consume the 600pt viewport; more columns stay readable
+        // because each head keeps its intrinsic width and the minimum gap.
+        #expect(twoSize.width > 0)
+        #expect(threeSize.width > 0)
+        #expect(abs(twoSize.width - 600) < 1 || twoSize.width <= 600 + 0.5)
+        #expect(abs(threeSize.width - 600) < 1 || threeSize.width >= twoSize.width - 0.5)
     }
 
     @Test func moreMessagesProduceTallerLayout() {
@@ -573,8 +578,21 @@ struct MermaidSequenceRendererTests {
         )
     }
 
+    static let sequenceStressCase = """
+        sequenceDiagram
+            Alice->>+John: Hello John, how are you?
+            Note over Alice,John: A typical interaction
+            alt is sick
+                John->>Alice: Not so good
+                Note right of John: Needs rest
+            else is well
+                John-->>-Alice: Feeling fresh like a daisy
+                Note left of Alice: All good
+            end
+        """
+
     @Test(arguments: [5, 6])
-    func scaledParticipantHeadsStayDisjointAndInsideBounds(count: Int) {
+    func narrowParticipantHeadsStayDisjointWithoutCompressingBelowGap(count: Int) {
         let names = ["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"]
         let declared = names.prefix(count).map { "    participant \($0)" }.joined(separator: "\n")
         let source = """
@@ -593,26 +611,82 @@ struct MermaidSequenceRendererTests {
             displayMode: .inline
         )
         let facts = MermaidSequenceRenderer.layoutFacts(diagram, configuration: narrow)
+        let minGap = config.fontSize * 2.2
         #expect(facts.participants.count == count)
-        #expect(facts.size.width <= 360 + 0.5, "Scaled layout must fit the 360pt bubble")
-        for (index, participant) in facts.participants.enumerated() {
-            #expect(
-                abs(participant.centerX - participant.rect.midX) < 0.5,
-                "Lifeline must stay centered under \(participant.id)"
-            )
-            #expect(participant.rect.minX >= -0.5, "\(participant.id) clips the left edge")
-            #expect(
-                participant.rect.maxX <= facts.size.width + 0.5,
-                "\(participant.id) clips customSize (maxX=\(participant.rect.maxX) width=\(facts.size.width))"
-            )
-            if index > 0 {
-                let previous = facts.participants[index - 1]
-                #expect(
-                    previous.rect.maxX <= participant.rect.minX + 0.5,
-                    "Heads overlap: \(previous.id) maxX=\(previous.rect.maxX) \(participant.id) minX=\(participant.rect.minX)"
-                )
-            }
+        assertParticipantsReadable(facts, minGap: minGap)
+    }
+
+    @Test func sequenceUsesAvailableWidthWithoutShrinkingBoxes() {
+        guard case .sequence(let diagram) = parser.parse(Self.sequenceStressCase) else {
+            Issue.record("Expected sequence")
+            return
         }
+        let minGap = config.fontSize * 2.2
+        let narrow = RenderConfiguration(
+            fontSize: config.fontSize,
+            maxWidth: 360,
+            theme: config.theme,
+            displayMode: .inline
+        )
+        let wide = RenderConfiguration(
+            fontSize: config.fontSize,
+            maxWidth: 800,
+            theme: config.theme,
+            displayMode: .document
+        )
+        let narrowFacts = MermaidSequenceRenderer.layoutFacts(diagram, configuration: narrow)
+        let wideFacts = MermaidSequenceRenderer.layoutFacts(diagram, configuration: wide)
+
+        #expect(narrowFacts.participants.count == 2)
+        #expect(wideFacts.participants.count == 2)
+        assertParticipantsReadable(narrowFacts, minGap: minGap)
+        assertParticipantsReadable(wideFacts, minGap: minGap)
+
+        for (narrowHead, wideHead) in zip(narrowFacts.participants, wideFacts.participants) {
+            #expect(
+                abs(narrowHead.rect.width - wideHead.rect.width) < 0.5,
+                "\(narrowHead.id) box width changed from \(narrowHead.rect.width) to \(wideHead.rect.width)"
+            )
+        }
+
+        let narrowGap = narrowFacts.participants[1].rect.minX - narrowFacts.participants[0].rect.maxX
+        let wideGap = wideFacts.participants[1].rect.minX - wideFacts.participants[0].rect.maxX
+        #expect(wideFacts.size.width >= 800 - 0.5, "Wide layout should consume the 800pt viewport, got \(wideFacts.size.width)")
+        #expect(wideGap > narrowGap + 20, "Wide layout must spread participants, narrowGap=\(narrowGap) wideGap=\(wideGap)")
+        #expect(
+            wideFacts.participants.last!.rect.maxX > 800 * 0.8,
+            "Last participant should sit near the trailing edge, maxX=\(wideFacts.participants.last!.rect.maxX)"
+        )
+    }
+
+    @Test func narrowSequenceMayExceedViewportInsteadOfOverlapping() {
+        let source = """
+            sequenceDiagram
+                participant Alice
+                participant Bob
+                participant Carol
+                participant Dave
+                participant Erin
+                participant Frank
+                Alice->>Frank: Hello
+            """
+        guard case .sequence(let diagram) = parser.parse(source) else {
+            Issue.record("Expected sequence")
+            return
+        }
+        let minGap = config.fontSize * 2.2
+        let narrow = RenderConfiguration(
+            fontSize: config.fontSize,
+            maxWidth: 200,
+            theme: config.theme,
+            displayMode: .inline
+        )
+        let facts = MermaidSequenceRenderer.layoutFacts(diagram, configuration: narrow)
+        assertParticipantsReadable(facts, minGap: minGap)
+        #expect(
+            facts.size.width > 200 + 0.5,
+            "Too-narrow viewport must keep a wider natural canvas, got \(facts.size.width)"
+        )
     }
 
     @Test func keywordActivationAnchorsToAssociatedMessageRow() {
@@ -781,5 +855,27 @@ struct MermaidSequenceRendererTests {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!
         result.draw(ctx, .zero)
+    }
+
+    private func assertParticipantsReadable(_ facts: SequenceLayoutFacts, minGap: CGFloat) {
+        for (index, participant) in facts.participants.enumerated() {
+            #expect(
+                abs(participant.centerX - participant.rect.midX) < 0.5,
+                "Lifeline must stay centered under \(participant.id)"
+            )
+            #expect(participant.rect.minX >= -0.5, "\(participant.id) clips the left edge")
+            #expect(
+                participant.rect.maxX <= facts.size.width + 0.5,
+                "\(participant.id) clips customSize (maxX=\(participant.rect.maxX) width=\(facts.size.width))"
+            )
+            if index > 0 {
+                let previous = facts.participants[index - 1]
+                let gap = participant.rect.minX - previous.rect.maxX
+                #expect(
+                    gap >= minGap - 0.5,
+                    "Gap below minimum: \(previous.id) to \(participant.id) gap=\(gap) min=\(minGap)"
+                )
+            }
+        }
     }
 }

@@ -887,6 +887,43 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
     }
 
+    func testMermaidResponsiveRoutingPreview() throws {
+        let diagrams: [(heading: String, kind: String)] = [
+            ("Dense flowchart", "dense-flowchart"),
+            ("Subgraph entry", "subgraph-entry"),
+            ("Sequence", "sequence"),
+        ]
+
+        for colorScheme in ["dark", "light"] {
+            launchPreview(
+                screen: "mermaid-responsive-routing",
+                environment: ["SCREENSHOT_COLOR_SCHEME": colorScheme]
+            )
+
+            let content = app.descendants(matching: .any)["mermaid.routing.preview.content"]
+            XCTAssertTrue(
+                content.waitForExistence(timeout: 5),
+                "Responsive routing preview did not render in \(colorScheme) mode"
+            )
+
+            waitForMermaidDiagramImages(in: content, expectedCount: 3, colorScheme: colorScheme)
+
+            let unsupported = app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "Unsupported diagram type")
+            ).firstMatch
+            XCTAssertFalse(
+                unsupported.exists,
+                "Routing preview showed an unsupported placeholder in \(colorScheme) mode"
+            )
+
+            for diagram in diagrams {
+                scrollMermaidHeadingIntoView(diagram.heading)
+                saveScreenshot(name: "mermaid-responsive-routing-\(diagram.kind)-\(colorScheme)")
+            }
+            app.terminate()
+        }
+    }
+
     func testWideLatexFormulaFullScreenHorizontalPanAndDismiss() throws {
         launchPreview(
             screen: "latex-rendering",

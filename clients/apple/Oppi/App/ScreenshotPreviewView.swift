@@ -79,6 +79,8 @@ struct ScreenshotPreviewView: View {
             LatexRenderingPreview()
         case "mermaid-rendering":
             MermaidRenderingPreview()
+        case "mermaid-responsive-routing":
+            MermaidResponsiveRoutingPreview()
         case "ask-card":
             AskCardPreview()
         case "ask-card-multiselect-long":
@@ -366,6 +368,141 @@ private struct MermaidRenderingPreview: View {
             .padding(20)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("mermaid.preview.content")
+        }
+        .background(Color.themeBg.ignoresSafeArea())
+        .preferredColorScheme(themeID == .light ? .light : .dark)
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+// MARK: - Mermaid Responsive Routing Preview
+
+private struct MermaidResponsiveRoutingPreview: View {
+    private struct Diagram: Identifiable {
+        let id: String
+        let heading: String
+        let markdown: String
+    }
+
+    private static let diagrams: [Diagram] = [
+        Diagram(
+            id: "dense-flowchart",
+            heading: "Dense flowchart",
+            markdown: #"""
+            ```mermaid
+            flowchart TD
+                Root[Session event stream] --> Decode[Decode protocol envelope]
+                Decode --> Type{Event type}
+
+                Type --> Message[Message delta]
+                Type --> Tool[Tool lifecycle]
+                Type --> Ask[Ask request]
+                Type --> Goal[Goal update]
+                Type --> Metrics[Usage metrics]
+                Type --> Files[Changed files]
+                Type --> Status[Session status]
+                Type --> Error[Recoverable error]
+
+                Message --> Reduce[Timeline reducer]
+                Tool --> Reduce
+                Ask --> Reduce
+                Goal --> Reduce
+                Metrics --> Reduce
+                Files --> Reduce
+                Status --> Reduce
+                Error --> Reduce
+
+                Reduce --> Snapshot[Observable session snapshot]
+                Snapshot --> Chat[Chat timeline]
+                Snapshot --> Dock[Extension dock]
+                Snapshot --> Sidebar[Workspace sidebar]
+                Snapshot --> Activity[Live Activity]
+            ```
+            """#
+        ),
+        Diagram(
+            id: "subgraph-entry",
+            heading: "Subgraph entry",
+            markdown: #"""
+            ```mermaid
+            flowchart TD
+                Start([Incoming request]) --> Validate{Payload valid?}
+
+                subgraph Gateway [API Gateway]
+                    Validate -->|yes| Authenticate[Authenticate token]
+                    Validate -->|no| Reject[Return 400 with validation details]
+                    Authenticate --> Authorized{Authorized?}
+                    Authorized -->|no| Deny[Return 403]
+                end
+
+                subgraph Processing [Background processing]
+                    Authorized -->|yes| Queue[Enqueue durable job]
+                    Queue --> WorkerA[Worker A]
+                    Queue --> WorkerB[Worker B]
+                    WorkerA --> Merge[Combine partial results]
+                    WorkerB --> Merge
+                    Merge --> Success{Persisted successfully?}
+                    Success -->|no — retry with exponential backoff| Queue
+                end
+
+                Success -->|yes| Notify[Send notification 🔔]
+                Notify --> Done([Complete])
+                Reject --> Done
+                Deny --> Done
+            ```
+            """#
+        ),
+        Diagram(
+            id: "sequence-stress",
+            heading: "Sequence",
+            markdown: #"""
+            ```mermaid
+            sequenceDiagram
+                Alice->>+John: Hello John, how are you?
+                Note over Alice,John: A typical interaction
+                alt is sick
+                    John->>Alice: Not so good
+                    Note right of John: Needs rest
+                else is well
+                    John-->>-Alice: Feeling fresh like a daisy
+                    Note left of Alice: All good
+                end
+            ```
+            """#
+        ),
+    ]
+
+    private let themeID: ThemeID
+
+    init() {
+        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light"
+            ? .light
+            : .dark
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Mermaid shared trunks and responsive sequence")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+
+                Text("Dense fan-out/fan-in, direct subgraph entry, and two-participant sequence stress")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+
+                ForEach(Self.diagrams) { diagram in
+                    Text(diagram.heading)
+                        .font(.headline)
+                        .foregroundStyle(.themeFg)
+                    MarkdownContentViewWrapper(content: diagram.markdown, renderingMode: .export)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(20)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("mermaid.routing.preview.content")
         }
         .background(Color.themeBg.ignoresSafeArea())
         .preferredColorScheme(themeID == .light ? .light : .dark)

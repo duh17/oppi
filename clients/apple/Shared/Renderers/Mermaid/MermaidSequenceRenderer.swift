@@ -235,13 +235,10 @@ enum MermaidSequenceRenderer {
             participantIndex[p.id] = i
         }
 
-        let count = max(diagram.participants.count, 1)
-        let available = max(maxWidth - c.sideMargin * 2, c.fontSize * 8)
-        let minGap = c.fontSize * 2.2
-        let maxBoxWidth = max(
-            c.fontSize * 5,
-            min(c.fontSize * 11, available / CGFloat(count) - minGap)
-        )
+        let minGap = c.participantGap
+        // Wrap to a comfortable intrinsic width. Never squeeze box widths to
+        // fit a narrow viewport — keep a wider canvas instead.
+        let maxBoxWidth = c.fontSize * 11
 
         var wrappedLabels: [String: String] = [:]
         var boxWidths: [String: CGFloat] = [:]
@@ -299,28 +296,33 @@ enum MermaidSequenceRenderer {
         let lastCenter = participants.last?.centerX ?? c.sideMargin
         let lastHalf = (participants.last?.boxRect.width ?? 0) / 2
         var totalWidth = lastCenter + lastHalf + c.sideMargin
-        if totalWidth > maxWidth, participants.count > 1 {
-            let scale = (maxWidth - c.sideMargin * 2) / max(totalWidth - c.sideMargin * 2, 1)
-            if scale > 0.55 {
-                // Scale the complete head rect so the lifeline stays centered,
-                // neighboring heads stay disjoint, and the last box stays inside maxWidth.
+        if totalWidth < maxWidth, participants.count > 1 {
+            // Spread intrinsic boxes across useful available width without
+            // shrinking heads or violating the minimum gap.
+            let first = participants[0]
+            let last = participants[participants.count - 1]
+            let newFirstCenter = c.sideMargin + first.boxRect.width / 2
+            let newLastCenter = maxWidth - c.sideMargin - last.boxRect.width / 2
+            let oldSpan = last.centerX - first.centerX
+            let newSpan = newLastCenter - newFirstCenter
+            if newSpan > oldSpan, oldSpan > 0 {
+                let origin = first.centerX
                 participants = participants.map { p in
-                    let scaledMinX = c.sideMargin + (p.boxRect.minX - c.sideMargin) * scale
-                    let scaledWidth = p.boxRect.width * scale
-                    let scaledRect = CGRect(
-                        x: scaledMinX,
-                        y: p.boxRect.minY,
-                        width: scaledWidth,
-                        height: p.boxRect.height
-                    )
+                    let t = (p.centerX - origin) / oldSpan
+                    let centerX = newFirstCenter + t * newSpan
                     return ParticipantLayout(
                         id: p.id,
                         label: p.label,
                         wrappedLabel: p.wrappedLabel,
                         isActor: p.isActor,
                         kind: p.kind,
-                        centerX: scaledRect.midX,
-                        boxRect: scaledRect
+                        centerX: centerX,
+                        boxRect: CGRect(
+                            x: centerX - p.boxRect.width / 2,
+                            y: p.boxRect.minY,
+                            width: p.boxRect.width,
+                            height: p.boxRect.height
+                        )
                     )
                 }
                 totalWidth = maxWidth

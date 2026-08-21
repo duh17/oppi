@@ -703,56 +703,149 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let clearance = max(5, fontSize * 0.45)
         let titleHeight = subgraphTitleHeight(fontSize: fontSize) + 4
         let nodeShapes = Dictionary(uniqueKeysWithValues: flowchart.nodes.map { ($0.id, $0.shape) })
-        let titleObstacles = subgraphFrames.values.map { frame in
-            CGRect(
-                x: frame.minX,
-                y: frame.minY,
-                width: frame.width,
-                height: min(titleHeight, frame.height)
-            ).insetBy(dx: -clearance, dy: 0)
-        }
+        let nodeSubgraphs = nodeSubgraphMembership(flowchart.subgraphs)
         var occupiedSegments = RouteSegmentUsage()
         var routedPairCounts: [String: Int] = [:]
+        var routed: [GraphLayoutEdgePath?] = Array(repeating: nil, count: edges.count)
+        var acceptedLabelRects: [CGRect] = []
+        var acceptedArrowRects: [CGRect] = []
 
-        return edges.enumerated().map { index, edge in
-            guard positions[edge.from] != nil, positions[edge.to] != nil else {
-                return GraphLayoutEdgePath(from: edge.from, to: edge.to, points: [])
+        func titleObstacles(for edge: GraphLayoutEdge) -> [CGRect] {
+            let skip = (nodeSubgraphs[edge.from] ?? []).symmetricDifference(nodeSubgraphs[edge.to] ?? [])
+            return subgraphFrames.compactMap { id, frame in
+                // Entry/exit edges may cross their own subgraph title instead of
+                // taking a perimeter detour around the cluster chrome.
+                if skip.contains(id) { return nil }
+                return CGRect(
+                    x: frame.minX,
+                    y: frame.minY,
+                    width: frame.width,
+                    height: min(titleHeight, frame.height)
+                ).insetBy(dx: -clearance, dy: 0)
             }
-            let direction = contexts.first {
-                $0.memberIds.contains(edge.from) && $0.memberIds.contains(edge.to)
-            }?.direction ?? rootDirection
-            guard let fallback = routeEdges(
-                [edge],
-                positions: positions,
-                direction: direction,
-                laneSeed: index,
-                nodeShapes: nodeShapes,
-                allEdges: edges
-            ).first else {
-                return GraphLayoutEdgePath(from: edge.from, to: edge.to, points: [])
-            }
+        }
 
-            let nodeObstacles = positions.map { id, rect in
+        func nodeObstacles(for edge: GraphLayoutEdge) -> [CGRect] {
+            positions.map { id, rect in
                 if id == edge.from || id == edge.to {
                     return rect
                 }
                 return rect.insetBy(dx: -clearance, dy: -clearance)
             }
-            let obstacles = nodeObstacles + titleObstacles
+        }
+
+        func decorationObstacles() -> [CGRect] {
+            acceptedLabelRects
+        }
+
+        func labelPeers() -> [GraphLayoutEdgePath] {
+            var peers: [GraphLayoutEdgePath] = []
+            for (index, points) in sharedTrunks {
+                peers.append(GraphLayoutEdgePath(
+                    from: edges[index].from,
+                    to: edges[index].to,
+                    points: points
+                ))
+            }
+            for path in routed.compactMap({ $0 }) where path.points.count >= 2 {
+                if !peers.contains(where: {
+                    $0.from == path.from && $0.to == path.to && $0.points == path.points
+                }) {
+                    peers.append(path)
+                }
+            }
+            return peers
+        }
+
+        func rememberDecorations(path: GraphLayoutEdgePath, label: String?) {
+            acceptedArrowRects.append(edgeArrowheadRect(path, fontSize: fontSize))
+            if let label, let labelLayout = edgeLabelLayout(
+                label,
+                path: path,
+                fontSize: fontSize,
+                among: labelPeers()
+            ) {
+                acceptedLabelRects.append(labelLayout.rect)
+            }
+        }
+
+        func direction(for edge: GraphLayoutEdge) -> GraphLayoutDirection {
+            contexts.first {
+                $0.memberIds.contains(edge.from) && $0.memberIds.contains(edge.to)
+            }?.direction ?? rootDirection
+        }
+
+        let edgeDirections = edges.map(direction(for:))
+        let edgeLabels = flowchart.edges.map(\.label)
+        let sharedTrunks = makeSharedTrunkPaths(
+            edges: edges,
+            positions: positions,
+            edgeDirections: edgeDirections,
+            nodeShapes: nodeShapes,
+            clearance: clearance,
+            fontSize: fontSize
+        )
+
+        for (index, edge) in edges.enumerated() {
+            guard let trunk = sharedTrunks[index],
+                  positions[edge.from] != nil, positions[edge.to] != nil,
+                  !pathIntersectsObstacles(
+                    trunk,
+                    obstacles: nodeObstacles(for: edge) + titleObstacles(for: edge)
+                  )
+            else { continue }
+            let path = GraphLayoutEdgePath(from: edge.from, to: edge.to, points: trunk)
+            let label = index < edgeLabels.count ? edgeLabels[index] : nil
+            if sharedTrunkObscuresLabelOrArrowhead(
+                path,
+                label: label,
+                fontSize: fontSize,
+                nodeObstacles: nodeObstacles(for: edge),
+                acceptedLabelRects: acceptedLabelRects,
+                acceptedArrowRects: acceptedArrowRects,
+                among: labelPeers()
+            ) {
+                continue
+            }
+            rememberDecorations(path: path, label: label)
+            occupiedSegments.register(trunk)
+            routed[index] = path
+        }
+
+        for (index, edge) in edges.enumerated() where routed[index] == nil {
+            guard positions[edge.from] != nil, positions[edge.to] != nil else {
+                routed[index] = GraphLayoutEdgePath(from: edge.from, to: edge.to, points: [])
+                continue
+            }
+            let edgeDirection = direction(for: edge)
+            guard let fallback = routeEdges(
+                [edge],
+                positions: positions,
+                direction: edgeDirection,
+                laneSeed: index,
+                nodeShapes: nodeShapes,
+                allEdges: edges
+            ).first else {
+                routed[index] = GraphLayoutEdgePath(from: edge.from, to: edge.to, points: [])
+                continue
+            }
+
+            let label = index < edgeLabels.count ? edgeLabels[index] : nil
+            let obstacles = nodeObstacles(for: edge) + titleObstacles(for: edge) + decorationObstacles()
             let pairKey = "\(edge.from)->\(edge.to)"
             let parallelOrdinal = routedPairCounts[pairKey, default: 0]
             routedPairCounts[pairKey] = parallelOrdinal + 1
-            let needsParallelLane = parallelOrdinal > 0
-                && pathUsesOccupiedSegment(fallback.points, usage: occupiedSegments)
+            let usesOccupied = pathUsesOccupiedSegment(fallback.points, usage: occupiedSegments)
+            let needsParallelLane = (parallelOrdinal > 0 && usesOccupied) || usesOccupied
             let needsReroute = pathIntersectsObstacles(fallback.points, obstacles: obstacles)
                 || needsParallelLane
             let sharedPenaltyMultiplier: CGFloat = needsParallelLane ? 6 : 0.5
             let points: [CGPoint]
             if needsReroute {
-                var routed = obstacleAwareRoute(
+                var routedPoints = obstacleAwareRoute(
                     from: fallback.points[0],
                     to: fallback.points[fallback.points.count - 1],
-                    direction: direction,
+                    direction: edgeDirection,
                     obstacles: obstacles,
                     occupiedSegments: occupiedSegments,
                     clearance: clearance,
@@ -760,12 +853,12 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     sharedPenaltyMultiplier: sharedPenaltyMultiplier,
                     avoidOccupiedSegments: needsParallelLane
                 )
-                if let candidate = routed,
+                if let candidate = routedPoints,
                    pathIntersectsObstacles(candidate, obstacles: obstacles) {
-                    routed = obstacleAwareRoute(
+                    routedPoints = obstacleAwareRoute(
                         from: fallback.points[0],
                         to: fallback.points[fallback.points.count - 1],
-                        direction: direction,
+                        direction: edgeDirection,
                         obstacles: obstacles,
                         occupiedSegments: occupiedSegments,
                         clearance: clearance,
@@ -775,13 +868,13 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                         considerAllObstacles: true
                     )
                 }
-                if let routed,
-                   !pathIntersectsObstacles(routed, obstacles: obstacles) {
-                    points = routed
+                if let routedPoints,
+                   !pathIntersectsObstacles(routedPoints, obstacles: obstacles) {
+                    points = routedPoints
                 } else if let perimeter = safePerimeterRoute(
                     from: fallback.points[0],
                     to: fallback.points[fallback.points.count - 1],
-                    direction: direction,
+                    direction: edgeDirection,
                     obstacles: obstacles,
                     clearance: clearance,
                     laneOrdinal: parallelOrdinal
@@ -797,9 +890,308 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             }
 
             if !points.isEmpty {
+                rememberDecorations(
+                    path: GraphLayoutEdgePath(from: edge.from, to: edge.to, points: points),
+                    label: label
+                )
                 occupiedSegments.register(points)
             }
-            return GraphLayoutEdgePath(from: edge.from, to: edge.to, points: points)
+            routed[index] = GraphLayoutEdgePath(from: edge.from, to: edge.to, points: points)
+        }
+
+        return routed.enumerated().map { index, path in
+            path ?? GraphLayoutEdgePath(from: edges[index].from, to: edges[index].to, points: [])
+        }
+    }
+
+    private func nodeSubgraphMembership(_ subgraphs: [FlowSubgraph]) -> [String: Set<String>] {
+        var membership: [String: Set<String>] = [:]
+        func collect(_ subgraph: FlowSubgraph, ancestors: Set<String>) {
+            let ids = ancestors.union([subgraph.id])
+            for nodeId in allNodeIds(in: subgraph) {
+                membership[nodeId, default: []].formUnion(ids)
+            }
+            for child in subgraph.subgraphs {
+                collect(child, ancestors: ids)
+            }
+        }
+        for subgraph in subgraphs {
+            collect(subgraph, ancestors: [])
+        }
+        return membership
+    }
+
+    private func makeSharedTrunkPaths(
+        edges: [GraphLayoutEdge],
+        positions: [String: CGRect],
+        edgeDirections: [GraphLayoutDirection],
+        nodeShapes: [String: FlowNodeShape],
+        clearance: CGFloat,
+        fontSize: CGFloat
+    ) -> [Int: [CGPoint]] {
+        var assigned: [Int: [CGPoint]] = [:]
+        let sharedStub = max(10, clearance * 2)
+        // Unique stubs must fit label height plus arrowhead without reaching the bus.
+        let uniqueStub = max(sharedStub, fontSize * 2.8, 38)
+        let corridorThreshold = max(36, clearance * 6)
+
+        func isHorizontal(_ direction: GraphLayoutDirection) -> Bool {
+            direction == .leftToRight || direction == .rightToLeft
+        }
+
+        func directionKey(_ direction: GraphLayoutDirection) -> Int {
+            switch direction {
+            case .topToBottom: return 0
+            case .bottomToTop: return 1
+            case .leftToRight: return 2
+            case .rightToLeft: return 3
+            }
+        }
+
+        func sign(from: CGRect, to: CGRect, direction: GraphLayoutDirection) -> Int {
+            if isHorizontal(direction) {
+                return to.midX >= from.midX ? 1 : -1
+            }
+            return to.midY >= from.midY ? 1 : -1
+        }
+
+        func port(on rect: CGRect, asSource: Bool, sign: Int, direction: GraphLayoutDirection) -> CGPoint {
+            if isHorizontal(direction) {
+                let useMax = asSource ? sign > 0 : sign < 0
+                return CGPoint(x: useMax ? rect.maxX : rect.minX, y: rect.midY)
+            }
+            let useMax = asSource ? sign > 0 : sign < 0
+            return CGPoint(x: rect.midX, y: useMax ? rect.maxY : rect.minY)
+        }
+
+        func qualifies(_ count: Int, shape: FlowNodeShape?) -> Bool {
+            if shape == .diamond { return count >= 3 }
+            return count >= 2
+        }
+
+        func corridorCoord(_ rect: CGRect, direction: GraphLayoutDirection) -> CGFloat {
+            isHorizontal(direction) ? rect.midX : rect.midY
+        }
+
+        func clusterByCorridor(_ indexes: [Int], coord: (Int) -> CGFloat) -> [[Int]] {
+            let sorted = indexes.sorted { coord($0) < coord($1) }
+            var groups: [[Int]] = []
+            var current: [Int] = []
+            var last: CGFloat?
+            for index in sorted {
+                let value = coord(index)
+                if let last, value - last > corridorThreshold, !current.isEmpty {
+                    groups.append(current)
+                    current = [index]
+                } else {
+                    current.append(index)
+                }
+                last = value
+            }
+            if !current.isEmpty {
+                groups.append(current)
+            }
+            return groups
+        }
+
+        func emit(
+            indexes: [Int],
+            direction: GraphLayoutDirection,
+            groupSign: Int,
+            startRect: CGRect,
+            endRects: [CGRect],
+            fanOut: Bool
+        ) {
+            let horizontal = isHorizontal(direction)
+            let start = fanOut
+                ? port(on: startRect, asSource: true, sign: groupSign, direction: direction)
+                : port(on: startRect, asSource: true, sign: groupSign, direction: direction)
+            let endSample = fanOut
+                ? port(on: endRects[0], asSource: false, sign: groupSign, direction: direction)
+                : port(on: startRect, asSource: false, sign: groupSign, direction: direction)
+            let bus: CGFloat
+            if horizontal {
+                if fanOut {
+                    let edgeX = groupSign > 0
+                        ? (endRects.map(\.minX).min() ?? start.x) - uniqueStub
+                        : (endRects.map(\.maxX).max() ?? start.x) + uniqueStub
+                    let limit = groupSign > 0 ? start.x + sharedStub : start.x - sharedStub
+                    bus = groupSign > 0 ? max(edgeX, limit) : min(edgeX, limit)
+                } else {
+                    bus = groupSign > 0 ? endSample.x - sharedStub : endSample.x + sharedStub
+                }
+            } else if fanOut {
+                let edgeY = groupSign > 0
+                    ? (endRects.map(\.minY).min() ?? start.y) - uniqueStub
+                    : (endRects.map(\.maxY).max() ?? start.y) + uniqueStub
+                let limit = groupSign > 0 ? start.y + sharedStub : start.y - sharedStub
+                bus = groupSign > 0 ? max(edgeY, limit) : min(edgeY, limit)
+            } else {
+                bus = groupSign > 0 ? endSample.y - sharedStub : endSample.y + sharedStub
+            }
+            for index in indexes {
+                guard assigned[index] == nil else { continue }
+                let fromRect = positions[edges[index].from]
+                let toRect = positions[edges[index].to]
+                guard let fromRect, let toRect else { continue }
+                let fromPort = port(on: fromRect, asSource: true, sign: groupSign, direction: direction)
+                let toPort = port(on: toRect, asSource: false, sign: groupSign, direction: direction)
+                if horizontal {
+                    assigned[index] = simplifiedOrthogonalPath([
+                        fromPort,
+                        CGPoint(x: bus, y: fromPort.y),
+                        CGPoint(x: bus, y: toPort.y),
+                        toPort,
+                    ])
+                } else {
+                    assigned[index] = simplifiedOrthogonalPath([
+                        fromPort,
+                        CGPoint(x: fromPort.x, y: bus),
+                        CGPoint(x: toPort.x, y: bus),
+                        toPort,
+                    ])
+                }
+            }
+        }
+
+        func assignFanOut(from id: String, indexes: [Int]) {
+            guard let fromRect = positions[id] else { return }
+            var buckets: [String: [Int]] = [:]
+            for index in indexes {
+                guard index < edgeDirections.count, let toRect = positions[edges[index].to] else { continue }
+                let direction = edgeDirections[index]
+                let groupSign = sign(from: fromRect, to: toRect, direction: direction)
+                buckets["\(directionKey(direction)):\(groupSign)", default: []].append(index)
+            }
+            for (_, group) in buckets {
+                guard let first = group.first else { continue }
+                let direction = edgeDirections[first]
+                let groupSign = sign(
+                    from: fromRect,
+                    to: positions[edges[first].to] ?? fromRect,
+                    direction: direction
+                )
+                for cluster in clusterByCorridor(group, coord: { corridorCoord(positions[edges[$0].to] ?? .zero, direction: direction) }) {
+                    let distinctTo = Set(cluster.map { edges[$0].to })
+                    guard qualifies(distinctTo.count, shape: nodeShapes[id]) else { continue }
+                    let targets = distinctTo.compactMap { positions[$0] }
+                    guard !targets.isEmpty else { continue }
+                    emit(
+                        indexes: cluster,
+                        direction: direction,
+                        groupSign: groupSign,
+                        startRect: fromRect,
+                        endRects: targets,
+                        fanOut: true
+                    )
+                }
+            }
+        }
+
+        func assignFanIn(to id: String, indexes: [Int]) {
+            guard let toRect = positions[id] else { return }
+            var buckets: [String: [Int]] = [:]
+            for index in indexes {
+                guard index < edgeDirections.count, let fromRect = positions[edges[index].from] else { continue }
+                let direction = edgeDirections[index]
+                let groupSign = sign(from: fromRect, to: toRect, direction: direction)
+                buckets["\(directionKey(direction)):\(groupSign)", default: []].append(index)
+            }
+            for (_, group) in buckets {
+                guard let first = group.first else { continue }
+                let direction = edgeDirections[first]
+                let groupSign = sign(
+                    from: positions[edges[first].from] ?? toRect,
+                    to: toRect,
+                    direction: direction
+                )
+                for cluster in clusterByCorridor(group, coord: { corridorCoord(positions[edges[$0].from] ?? .zero, direction: direction) }) {
+                    let distinctFrom = Set(cluster.map { edges[$0].from })
+                    guard qualifies(distinctFrom.count, shape: nodeShapes[id]) else { continue }
+                    let sources = distinctFrom.compactMap { positions[$0] }
+                    guard !sources.isEmpty else { continue }
+                    emit(
+                        indexes: cluster,
+                        direction: direction,
+                        groupSign: groupSign,
+                        startRect: toRect,
+                        endRects: sources,
+                        fanOut: false
+                    )
+                }
+            }
+        }
+
+        var outgoing: [String: [Int]] = [:]
+        var incoming: [String: [Int]] = [:]
+        for (index, edge) in edges.enumerated() {
+            outgoing[edge.from, default: []].append(index)
+            incoming[edge.to, default: []].append(index)
+        }
+        for (id, indexes) in outgoing {
+            assignFanOut(from: id, indexes: indexes)
+        }
+        for (id, indexes) in incoming {
+            assignFanIn(to: id, indexes: indexes)
+        }
+        return assigned
+    }
+
+    private func edgeArrowheadRect(_ path: GraphLayoutEdgePath, fontSize: CGFloat) -> CGRect {
+        let size = fontSize * 0.6
+        let tip = path.points.last ?? .zero
+        return CGRect(
+            x: tip.x - size,
+            y: tip.y - size,
+            width: size * 2,
+            height: size * 2
+        )
+    }
+
+    private func sharedTrunkObscuresLabelOrArrowhead(
+        _ path: GraphLayoutEdgePath,
+        label: String?,
+        fontSize: CGFloat,
+        nodeObstacles: [CGRect],
+        acceptedLabelRects: [CGRect],
+        acceptedArrowRects: [CGRect],
+        among others: [GraphLayoutEdgePath]
+    ) -> Bool {
+        // Later unlabeled routes still have to miss earlier labels and other
+        // arrowhead envelopes; returning early let shared trunks paint through both.
+        if pathIntersectsObstacles(path.points, obstacles: acceptedLabelRects) {
+            return true
+        }
+        let tip = path.points.last ?? .zero
+        let foreignArrows = acceptedArrowRects.filter {
+            abs($0.midX - tip.x) > 0.6 || abs($0.midY - tip.y) > 0.6
+        }
+        if pathIntersectsObstacles(path.points, obstacles: foreignArrows) {
+            return true
+        }
+        guard let label, let labelLayout = edgeLabelLayout(
+            label,
+            path: path,
+            fontSize: fontSize,
+            among: others
+        ) else {
+            return false
+        }
+        let arrowRect = edgeArrowheadRect(path, fontSize: fontSize)
+        if labelLayout.rect.intersects(arrowRect.insetBy(dx: -1, dy: -1)) {
+            return true
+        }
+        if acceptedLabelRects.contains(where: { $0.intersects(labelLayout.rect.insetBy(dx: 1, dy: 1)) }) {
+            return true
+        }
+        if acceptedArrowRects.contains(where: { $0.intersects(labelLayout.rect.insetBy(dx: 1, dy: 1)) }) {
+            return true
+        }
+        let padded = labelLayout.rect.insetBy(dx: 2, dy: 2)
+        let start = path.points.first ?? .zero
+        return nodeObstacles.contains { obstacle in
+            if obstacle.contains(start) || obstacle.contains(tip) { return false }
+            return obstacle.intersects(padded)
         }
     }
 
@@ -1713,16 +2105,43 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             drawSubgraph(subgraph, layout: layout, in: ctx, offset: offset)
         }
 
-        // Draw edges first (behind nodes).
+        // Strokes, then arrowheads, then labels. Interleaving let later shared
+        // trunks paint across earlier labels and other arrowhead envelopes.
         for (index, edgePath) in layout.graphResult.edgePaths.enumerated() {
             let key = index < layout.edgeKeys.count
                 ? layout.edgeKeys[index]
                 : "\(edgePath.from)->\(edgePath.to)"
             let style = layout.edgeStyles[key] ?? .arrow
             let styleProperties = layout.edgeStyleDirectives[key] ?? [:]
-            drawEdge(edgePath, style: style, styleProperties: styleProperties, layout: layout, in: ctx, offset: offset)
-
-            // Edge label at midpoint.
+            drawEdge(
+                edgePath,
+                style: style,
+                styleProperties: styleProperties,
+                layout: layout,
+                in: ctx,
+                offset: offset,
+                includeArrowhead: false
+            )
+        }
+        for (index, edgePath) in layout.graphResult.edgePaths.enumerated() {
+            let key = index < layout.edgeKeys.count
+                ? layout.edgeKeys[index]
+                : "\(edgePath.from)->\(edgePath.to)"
+            let style = layout.edgeStyles[key] ?? .arrow
+            let styleProperties = layout.edgeStyleDirectives[key] ?? [:]
+            drawEdgeArrowhead(
+                edgePath,
+                style: style,
+                styleProperties: styleProperties,
+                layout: layout,
+                in: ctx,
+                offset: offset
+            )
+        }
+        for (index, edgePath) in layout.graphResult.edgePaths.enumerated() {
+            let key = index < layout.edgeKeys.count
+                ? layout.edgeKeys[index]
+                : "\(edgePath.from)->\(edgePath.to)"
             if let label = layout.edgeLabels[key] {
                 drawEdgeLabel(label, path: edgePath, layout: layout, in: ctx, offset: offset)
             }
@@ -1844,7 +2263,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                   let labelLayout = edgeLabelLayout(
                       label,
                       path: path,
-                      fontSize: layout.fontSize
+                      fontSize: layout.fontSize,
+                      among: layout.graphResult.edgePaths
                   ) else { continue }
             bounds = bounds.union(labelLayout.rect)
         }
@@ -2406,9 +2826,11 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         styleProperties: [String: String],
         layout: FlowchartLayout,
         in ctx: CGContext,
-        offset: CGPoint
+        offset: CGPoint,
+        includeArrowhead: Bool = true
     ) {
         guard edgePath.points.count >= 2 else { return }
+        if style == .invisible { return }
 
         let points = edgePath.points.map {
             CGPoint(x: $0.x + offset.x, y: $0.y + offset.y)
@@ -2446,19 +2868,45 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             }
         }
         ctx.strokePath()
-
-        // Draw arrowhead for arrow, dotted, thick, and directional styles.
-        if style == .arrow || style == .dotted || style == .thick
-            || style == .biArrow || style == .cross || style == .biCross
-            || style == .circle || style == .biCircle {
-            drawArrowhead(at: points[points.count - 1],
-                          from: points[points.count - 2],
-                          size: layout.fontSize * 0.6,
-                          in: ctx,
-                          color: strokeColor)
-        }
-
         ctx.restoreGState()
+
+        if includeArrowhead {
+            drawEdgeArrowhead(
+                edgePath,
+                style: style,
+                styleProperties: styleProperties,
+                layout: layout,
+                in: ctx,
+                offset: offset
+            )
+        }
+    }
+
+    private func drawEdgeArrowhead(
+        _ edgePath: GraphLayoutEdgePath,
+        style: FlowEdgeStyle,
+        styleProperties: [String: String],
+        layout: FlowchartLayout,
+        in ctx: CGContext,
+        offset: CGPoint
+    ) {
+        guard edgePath.points.count >= 2 else { return }
+        guard style == .arrow || style == .dotted || style == .thick
+            || style == .biArrow || style == .cross || style == .biCross
+            || style == .circle || style == .biCircle else { return }
+
+        let points = edgePath.points.map {
+            CGPoint(x: $0.x + offset.x, y: $0.y + offset.y)
+        }
+        let strokeColor = parseStyleColor(styleProperties["stroke"], theme: layout.theme)
+            ?? layout.theme.foreground
+        drawArrowhead(
+            at: points[points.count - 1],
+            from: points[points.count - 2],
+            size: layout.fontSize * 0.6,
+            in: ctx,
+            color: strokeColor
+        )
     }
 
     private func drawArrowhead(
@@ -2502,29 +2950,18 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     private func edgeLabelLayout(
         _ text: String,
         path: GraphLayoutEdgePath,
-        fontSize: CGFloat
+        fontSize: CGFloat,
+        among others: [GraphLayoutEdgePath]
     ) -> EdgeLabelLayout? {
         guard path.points.count >= 2 else { return nil }
-        let midIndex = path.points.count / 2
-        let midpoint: CGPoint
-        if path.points.count.isMultiple(of: 2) {
-            let first = path.points[midIndex - 1]
-            let second = path.points[midIndex]
-            midpoint = CGPoint(
-                x: (first.x + second.x) / 2,
-                y: (first.y + second.y) / 2
-            )
-        } else {
-            midpoint = path.points[midIndex]
-        }
-
+        let anchor = edgeLabelAnchor(on: path, fontSize: fontSize, among: others)
         let labelFontSize = fontSize * 0.85
         let font = CTFontCreateWithName("Helvetica" as CFString, labelFontSize, nil)
         let textSize = MermaidTextUtils.measureText(text, font: font, fontSize: labelFontSize)
         return EdgeLabelLayout(
             rect: CGRect(
-                x: midpoint.x - textSize.width / 2 - 3,
-                y: midpoint.y - textSize.height / 2 - 2,
+                x: anchor.x - textSize.width / 2 - 3,
+                y: anchor.y - textSize.height / 2 - 2,
                 width: textSize.width + 6,
                 height: textSize.height + 4
             ),
@@ -2532,6 +2969,84 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             font: font,
             fontSize: labelFontSize
         )
+    }
+
+    /// Prefer the unique first or last stub so shared trunks do not run through
+    /// sibling labels. Fan-out uses the destination stub; fan-in uses the source stub.
+    private func edgeLabelAnchor(
+        on path: GraphLayoutEdgePath,
+        fontSize: CGFloat,
+        among others: [GraphLayoutEdgePath]
+    ) -> CGPoint {
+        let points = path.points
+        let tip = points[points.count - 1]
+        let prev = points[points.count - 2]
+        let lastDX = tip.x - prev.x
+        let lastDY = tip.y - prev.y
+        let lastLen = hypot(lastDX, lastDY)
+        let inset = max(fontSize * 1.7, 22)
+        let peers = others.filter {
+            $0.from != path.from || $0.to != path.to || $0.points != path.points
+        }
+        if points.count >= 3 {
+            let firstLen = hypot(points[1].x - points[0].x, points[1].y - points[0].y)
+            let firstShared = peers.filter {
+                pathSharesSegment($0, from: points[0], to: points[1])
+            }.count
+            let lastShared = peers.filter {
+                pathSharesSegment($0, from: prev, to: tip)
+            }.count
+            if lastLen > 8, firstShared > lastShared {
+                if lastLen > inset + 4 {
+                    let t = 1 - inset / lastLen
+                    return CGPoint(x: prev.x + lastDX * t, y: prev.y + lastDY * t)
+                }
+                return CGPoint(x: (prev.x + tip.x) / 2, y: (prev.y + tip.y) / 2)
+            }
+            if firstLen > 8, lastShared > firstShared {
+                return CGPoint(
+                    x: (points[0].x + points[1].x) / 2,
+                    y: (points[0].y + points[1].y) / 2
+                )
+            }
+            let candidates = zip(points, points.dropFirst()).dropLast()
+            if let best = candidates.max(by: {
+                hypot($0.1.x - $0.0.x, $0.1.y - $0.0.y) < hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y)
+            }) {
+                let length = hypot(best.1.x - best.0.x, best.1.y - best.0.y)
+                if length > 8 {
+                    return CGPoint(x: (best.0.x + best.1.x) / 2, y: (best.0.y + best.1.y) / 2)
+                }
+            }
+        }
+        if lastLen > inset + 4 {
+            let t = 1 - inset / lastLen
+            return CGPoint(x: prev.x + lastDX * t, y: prev.y + lastDY * t)
+        }
+        return CGPoint(x: (prev.x + tip.x) / 2, y: (prev.y + tip.y) / 2)
+    }
+
+    private func pathSharesSegment(
+        _ path: GraphLayoutEdgePath,
+        from first: CGPoint,
+        to second: CGPoint
+    ) -> Bool {
+        let epsilon: CGFloat = 0.6
+        return zip(path.points, path.points.dropFirst()).contains { start, end in
+            if abs(first.y - second.y) < epsilon,
+               abs(start.y - end.y) < epsilon,
+               abs(first.y - start.y) < epsilon {
+                return max(first.x, second.x) > min(start.x, end.x) + 1
+                    && min(first.x, second.x) < max(start.x, end.x) - 1
+            }
+            if abs(first.x - second.x) < epsilon,
+               abs(start.x - end.x) < epsilon,
+               abs(first.x - start.x) < epsilon {
+                return max(first.y, second.y) > min(start.y, end.y) + 1
+                    && min(first.y, second.y) < max(start.y, end.y) - 1
+            }
+            return false
+        }
     }
 
     private func drawEdgeLabel(
@@ -2544,7 +3059,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         guard let labelLayout = edgeLabelLayout(
             text,
             path: path,
-            fontSize: layout.fontSize
+            fontSize: layout.fontSize,
+            among: layout.graphResult.edgePaths
         ) else { return }
         let labelRect = labelLayout.rect.offsetBy(dx: offset.x, dy: offset.y)
 
