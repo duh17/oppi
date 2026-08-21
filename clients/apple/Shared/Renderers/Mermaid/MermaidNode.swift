@@ -9,6 +9,10 @@ enum MermaidDiagram: Equatable, Sendable {
     case gantt(GanttDiagram)
     case mindmap(MindmapDiagram)
     case state(StateDiagram)
+    case pie(PieDiagram)
+    case timeline(TimelineDiagram)
+    case classDiagram(ClassDiagram)
+    case erDiagram(ERDiagram)
     case unsupported(type: String)
 }
 
@@ -472,16 +476,198 @@ struct FlowStyleDirective: Equatable, Sendable {
 
 // MARK: - Sequence diagram types (Phase 2)
 
+/// Chronological sequence of parsed sequence-diagram events.
+///
+/// `participants` / `messages` / `notes` / `blocks` stay as derived views so
+/// existing tests can keep reading those arrays. The renderer walks `events`
+/// so notes, frames, activations, and create/destroy stay in source order.
+enum SequenceEvent: Equatable, Sendable {
+    case message(SequenceMessage)
+    case note(SequenceNote)
+    case activate(actorId: String)
+    case deactivate(actorId: String)
+    case create(SequenceParticipant)
+    case destroy(actorId: String)
+    case blockOpen(kind: SequenceBlockKind, label: String)
+    case blockDivider(kind: SequenceBlockDividerKind, label: String)
+    case blockClose
+}
+
+/// Branch divider inside `alt` / `par` / `critical`.
+enum SequenceBlockDividerKind: Equatable, Sendable {
+    /// `else` inside `alt`.
+    case `else`
+    /// `and` inside `par`.
+    case and
+    /// `option` inside `critical`.
+    case option
+}
+
 struct SequenceDiagram: Equatable, Sendable {
+    let events: [SequenceEvent]
     let participants: [SequenceParticipant]
-    let messages: [SequenceMessage]
-    let notes: [SequenceNote]
-    let blocks: [SequenceBlock]
     let boxes: [SequenceBox]
     let links: [SequenceLink]
     let autonumber: Bool
     let autonumberStart: Double
     let autonumberIncrement: Double
+
+    init(
+        events: [SequenceEvent] = [],
+        participants: [SequenceParticipant],
+        messages: [SequenceMessage]? = nil,
+        notes: [SequenceNote]? = nil,
+        blocks: [SequenceBlock]? = nil,
+        boxes: [SequenceBox],
+        links: [SequenceLink],
+        autonumber: Bool,
+        autonumberStart: Double,
+        autonumberIncrement: Double
+    ) {
+        // Prefer an explicit event stream. Older call sites that only pass
+        // parallel arrays still reconstruct a chronological approximation.
+        if events.isEmpty, let messages, let notes {
+            self.events = Self.events(
+                fromMessages: messages,
+                notes: notes,
+                blocks: blocks ?? []
+            )
+        } else {
+            self.events = events
+        }
+        self.participants = participants
+        self.boxes = boxes
+        self.links = links
+        self.autonumber = autonumber
+        self.autonumberStart = autonumberStart
+        self.autonumberIncrement = autonumberIncrement
+    }
+
+    /// Messages in source order, derived from `events`.
+    var messages: [SequenceMessage] {
+        events.compactMap { event in
+            if case .message(let message) = event { return message }
+            return nil
+        }
+    }
+
+    /// Notes in source order, derived from `events`.
+    var notes: [SequenceNote] {
+        events.compactMap { event in
+            if case .note(let note) = event { return note }
+            return nil
+        }
+    }
+
+    /// Structural blocks derived from open/divider/close events.
+    var blocks: [SequenceBlock] {
+        struct OpenBlock {
+            var kind: SequenceBlockKind
+            var label: String
+            var start: Int
+            var elses: [SequenceElseBlock]
+        }
+
+        var result: [SequenceBlock] = []
+        var stack: [OpenBlock] = []
+        var messageCount = 0
+
+        func closeTop() {
+            guard let top = stack.popLast() else { return }
+            guard top.kind != .rect || !top.label.isEmpty else { return }
+            result.append(SequenceBlock(
+                kind: top.kind,
+                label: top.label,
+                elseBlocks: top.elses.isEmpty ? nil : top.elses,
+                startMessageIndex: top.start,
+                endMessageIndex: max(top.start, messageCount - 1)
+            ))
+        }
+
+        for event in events {
+            switch event {
+            case .message:
+                messageCount += 1
+            case .blockOpen(let kind, let label):
+                stack.append(OpenBlock(kind: kind, label: label, start: messageCount, elses: []))
+            case .blockDivider(_, let label):
+                guard !stack.isEmpty else { continue }
+                stack[stack.count - 1].elses.append(SequenceElseBlock(label: label))
+            case .blockClose:
+                closeTop()
+            default:
+                break
+            }
+        }
+        while !stack.isEmpty {
+            closeTop()
+        }
+        return result
+    }
+
+    private static func events(
+        fromMessages messages: [SequenceMessage],
+        notes: [SequenceNote],
+        blocks: [SequenceBlock]
+    ) -> [SequenceEvent] {
+        var events: [SequenceEvent] = []
+        for message in messages {
+            events.append(.message(message))
+        }
+        for note in notes {
+            events.append(.note(note))
+        }
+        // Block ranges are reconstructed from message indices when the caller
+        // only supplied derived arrays. Nested/overlapping ranges stay nested.
+        let sortedBlocks = blocks.enumerated().sorted { lhs, rhs in
+            let leftStart = lhs.element.startMessageIndex ?? 0
+            let rightStart = rhs.element.startMessageIndex ?? 0
+            if leftStart != rightStart { return leftStart < rightStart }
+            let leftEnd = lhs.element.endMessageIndex ?? leftStart
+            let rightEnd = rhs.element.endMessageIndex ?? rightStart
+            if leftEnd != rightEnd { return leftEnd > rightEnd }
+            return lhs.offset < rhs.offset
+        }
+        if !sortedBlocks.isEmpty {
+            var wrapped: [SequenceEvent] = []
+            var openAt: [Int: [SequenceBlock]] = [:]
+            var closeAt: [Int: [SequenceBlock]] = [:]
+            for item in sortedBlocks {
+                let start = item.element.startMessageIndex ?? 0
+                let end = item.element.endMessageIndex ?? start
+                openAt[start, default: []].append(item.element)
+                closeAt[end, default: []].insert(item.element, at: 0)
+            }
+            var messageIndex = 0
+            for event in events {
+                if case .message = event {
+                    for block in openAt[messageIndex] ?? [] {
+                        wrapped.append(.blockOpen(kind: block.kind, label: block.label))
+                    }
+                    wrapped.append(event)
+                    for block in closeAt[messageIndex] ?? [] {
+                        for elseBlock in block.elseBlocks ?? [] {
+                            wrapped.append(.blockDivider(kind: dividerKind(for: block.kind), label: elseBlock.label))
+                        }
+                        wrapped.append(.blockClose)
+                    }
+                    messageIndex += 1
+                } else {
+                    wrapped.append(event)
+                }
+            }
+            return wrapped
+        }
+        return events
+    }
+
+    private static func dividerKind(for kind: SequenceBlockKind) -> SequenceBlockDividerKind {
+        switch kind {
+        case .par: return .and
+        case .critical: return .option
+        default: return .else
+        }
+    }
 }
 
 struct SequenceBox: Equatable, Sendable {

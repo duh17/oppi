@@ -10,6 +10,7 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
     var workspaceID: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    var renderingMode: ContentRenderingMode = .live
 
     @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
 
@@ -31,7 +32,8 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
             workspaceID: workspaceID,
-            serverBaseURL: serverBaseURL
+            serverBaseURL: serverBaseURL,
+            renderingMode: renderingMode
         ))
     }
 

@@ -847,6 +847,46 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
     }
 
+    func testMermaidRenderingPreview() throws {
+        let diagrams: [(heading: String, kind: String)] = [
+            ("Flowchart", "flowchart"),
+            ("Sequence", "sequence"),
+            ("Timeline", "timeline"),
+            ("Pie", "pie"),
+            ("Class", "class"),
+            ("ER", "er"),
+        ]
+
+        for colorScheme in ["dark", "light"] {
+            launchPreview(
+                screen: "mermaid-rendering",
+                environment: ["SCREENSHOT_COLOR_SCHEME": colorScheme]
+            )
+
+            let content = app.descendants(matching: .any)["mermaid.preview.content"]
+            XCTAssertTrue(
+                content.waitForExistence(timeout: 5),
+                "Production Markdown/Mermaid preview did not render in \(colorScheme) mode"
+            )
+
+            waitForMermaidDiagramImages(in: content, expectedCount: 6, colorScheme: colorScheme)
+
+            let unsupported = app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "Unsupported diagram type")
+            ).firstMatch
+            XCTAssertFalse(
+                unsupported.exists,
+                "Mermaid preview showed an unsupported placeholder in \(colorScheme) mode"
+            )
+
+            for diagram in diagrams {
+                scrollMermaidHeadingIntoView(diagram.heading)
+                saveScreenshot(name: "mermaid-rendering-\(diagram.kind)-\(colorScheme)")
+            }
+            app.terminate()
+        }
+    }
+
     func testWideLatexFormulaFullScreenHorizontalPanAndDismiss() throws {
         launchPreview(
             screen: "latex-rendering",
@@ -1158,6 +1198,54 @@ final class ScreenshotPreviewUITests: XCTestCase {
         // Wait for the preview to signal readiness.
         let ready = app.descendants(matching: .any)[readyIdentifier]
         XCTAssertTrue(ready.waitForExistence(timeout: 8), "Screenshot preview did not become ready")
+    }
+
+    /// Scroll until the unique mermaid gallery heading sits near the top so the
+    /// diagram below it is the screenshot subject.
+    private func scrollMermaidHeadingIntoView(_ heading: String) {
+        let label = app.staticTexts.containing(
+            NSPredicate(format: "label BEGINSWITH %@", heading)
+        ).firstMatch
+        XCTAssertTrue(label.waitForExistence(timeout: 5), "Mermaid heading \(heading) not found")
+
+        let top = app.frame.minY + 64
+
+        for _ in 0..<24 {
+            let frame = label.frame
+            if label.isHittable, frame.minY >= top, frame.minY <= top + 160 {
+                return
+            }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+            let end = app.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.5, dy: frame.minY > top + 160 ? 0.22 : 0.78)
+            )
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+
+        XCTAssertTrue(label.isHittable, "Could not scroll mermaid heading \(heading) into view")
+    }
+
+    /// NativeMermaidBlockView rasterizes asynchronously. Wait for the diagram
+    /// images themselves so we never snapshot empty placeholders.
+    private func waitForMermaidDiagramImages(
+        in content: XCUIElement,
+        expectedCount: Int,
+        colorScheme: String
+    ) {
+        let nested = content.descendants(matching: .image)
+        let global = app.images
+        let rendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                let visible = global.allElementsBoundByIndex.filter { $0.frame.height > 40 }
+                return max(nested.count, visible.count) >= expectedCount
+            },
+            object: app
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [rendered], timeout: 15),
+            .completed,
+            "Expected \(expectedCount) mermaid diagram images in \(colorScheme) mode, found nested=\(nested.count) global=\(global.count)"
+        )
     }
 
     private func assertWhatsNewBuild46Content() {

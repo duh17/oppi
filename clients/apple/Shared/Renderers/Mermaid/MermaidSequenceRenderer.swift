@@ -2,6 +2,53 @@ import CoreGraphics
 import CoreText
 import Foundation
 
+/// Inspectable sequence layout for unit tests. Not a pixel oracle.
+struct SequenceLayoutFacts: Equatable, Sendable {
+    struct PlacedItem: Equatable, Sendable {
+        let text: String
+        let y: CGFloat
+        let rect: CGRect
+    }
+
+    struct FrameFact: Equatable, Sendable {
+        let kind: SequenceBlockKind
+        let label: String
+        let rect: CGRect
+        let depth: Int
+    }
+
+    struct DividerFact: Equatable, Sendable {
+        let kind: SequenceBlockDividerKind
+        let label: String
+        let y: CGFloat
+        let parentLabel: String
+    }
+
+    struct ActivationFact: Equatable, Sendable {
+        let participantId: String
+        let rect: CGRect
+    }
+
+    struct ParticipantFact: Equatable, Sendable {
+        let id: String
+        let centerX: CGFloat
+        let rect: CGRect
+    }
+
+    let size: CGSize
+    let participants: [ParticipantFact]
+    let messages: [PlacedItem]
+    let notes: [PlacedItem]
+    let frames: [FrameFact]
+    let dividers: [DividerFact]
+    let activations: [ActivationFact]
+    let bottomParticipantCopyCount: Int
+    let createdParticipantIds: [String]
+    let destroyedParticipantIds: [String]
+    let createYByParticipant: [String: CGFloat]
+    let destroyYByParticipant: [String: CGFloat]
+}
+
 /// Renderer for Mermaid sequence diagrams.
 ///
 /// Draws participants across the top, vertical lifelines, and horizontal
@@ -22,8 +69,20 @@ enum MermaidSequenceRenderer {
         var boxPadV: CGFloat { fontSize * 0.6 }
         /// Minimum horizontal gap between participant boxes.
         var participantGap: CGFloat { fontSize * 4 }
-        /// Vertical spacing between consecutive messages.
-        var messageSpacing: CGFloat { fontSize * 3 }
+        /// Vertical spacing between consecutive messages. Extra room so arrows do not cluster.
+        var messageSpacing: CGFloat { fontSize * 4.2 }
+        /// Title band inside an alt/loop/par frame.
+        var frameHeaderHeight: CGFloat { fontSize * 1.7 }
+        /// Padding below the last item in a frame.
+        var frameFooterPad: CGFloat { fontSize * 0.75 }
+        /// Nested frames inset from their parent.
+        var frameInset: CGFloat { fontSize * 0.9 }
+        /// Extra space for an else/and/option divider.
+        var dividerGap: CGFloat { fontSize * 1.65 }
+        /// Activation bar width on the lifeline.
+        var activationWidth: CGFloat { fontSize * 0.75 }
+        /// Gap after a note before the next event.
+        var noteGap: CGFloat { fontSize * 1.15 }
         /// Top margin above participant boxes.
         var topMargin: CGFloat { fontSize }
         /// Space below participant boxes before first message.
@@ -58,188 +117,89 @@ enum MermaidSequenceRenderer {
     private struct ParticipantLayout: Sendable {
         let id: String
         let label: String
+        let wrappedLabel: String
         let isActor: Bool
         let kind: SequenceParticipantKind
-        /// Center-X of this participant's lifeline.
         let centerX: CGFloat
-        /// Bounding rect of the participant box at the top.
         let boxRect: CGRect
     }
 
-    /// Pre-computed position for a single message row.
     private struct MessageLayout: Sendable {
         let message: SequenceMessage
         let sequenceNumber: String?
-        /// Y coordinate of this message's arrow.
+        let wrappedText: String
+        let labelSize: CGSize
         let y: CGFloat
     }
 
-    /// Pre-computed position for a single note row.
     private struct NoteLayout: Sendable {
         let note: SequenceNote
-        /// Y coordinate of the top of this note box.
+        let wrappedText: String
         let y: CGFloat
         let size: CGSize
     }
 
+    private struct FrameLayout: Sendable {
+        let kind: SequenceBlockKind
+        let label: String
+        let rect: CGRect
+        let depth: Int
+    }
+
+    private struct DividerLayout: Sendable {
+        let kind: SequenceBlockDividerKind
+        let label: String
+        let y: CGFloat
+        let x: CGFloat
+        let width: CGFloat
+        let parentLabel: String
+    }
+
+    private struct ActivationLayout: Sendable {
+        let participantId: String
+        let rect: CGRect
+    }
+
+    private struct PreparedSequenceLayout: Sendable {
+        let facts: SequenceLayoutFacts
+        let participants: [ParticipantLayout]
+        let messages: [MessageLayout]
+        let notes: [NoteLayout]
+        let frames: [FrameLayout]
+        let dividers: [DividerLayout]
+        let activations: [ActivationLayout]
+        let boxes: [SequenceBox]
+        let participantIndex: [String: Int]
+        let constants: Constants
+        let createY: [String: CGFloat]
+        let destroyY: [String: CGFloat]
+        let createdIds: Set<String>
+        let showBottomCopies: Bool
+        let bottomCopyY: CGFloat
+        let totalWidth: CGFloat
+        let totalHeight: CGFloat
+        let fontSize: CGFloat
+        let theme: RenderTheme
+    }
+
     // MARK: - Public entry point
+
+    nonisolated static func layoutFacts(
+        _ diagram: SequenceDiagram,
+        configuration: RenderConfiguration
+    ) -> SequenceLayoutFacts {
+        prepare(diagram, configuration: configuration).facts
+    }
 
     nonisolated static func layout(
         _ diagram: SequenceDiagram,
         configuration: RenderConfiguration
     ) -> MermaidFlowchartRenderer.FlowchartLayout {
-        guard !diagram.participants.isEmpty else {
+        if diagram.participants.isEmpty {
             return emptyLayout(configuration: configuration)
         }
-
-        let c = Constants(fontSize: configuration.fontSize)
-        let font = CTFontCreateWithName("Helvetica" as CFString, c.fontSize, nil)
-
-        // Measure all participant labels to determine box widths.
-        var labelSizes: [String: CGSize] = [:]
-        for p in diagram.participants {
-            labelSizes[p.id] = measureText(p.label, font: font, fontSize: c.fontSize)
-        }
-
-        let sequenceNumbers = sequenceNumberLabels(for: diagram)
-
-        // Measure all message labels.
-        var messageSizes: [CGSize] = []
-        for (index, msg) in diagram.messages.enumerated() {
-            let text = messageDisplayText(msg.text, sequenceNumber: sequenceNumbers[index])
-            messageSizes.append(measureText(text, font: font, fontSize: c.fontSize))
-        }
-
-        // Compute box widths.
-        var boxWidths: [String: CGFloat] = [:]
-        for p in diagram.participants {
-            let textW = labelSizes[p.id]?.width ?? 0
-            boxWidths[p.id] = textW + c.boxPadH * 2
-        }
-
-        // Build index for participant ordering.
-        var participantIndex: [String: Int] = [:]
-        for (i, p) in diagram.participants.enumerated() {
-            participantIndex[p.id] = i
-        }
-
-        // Ensure neighboring participants have enough gap for message labels.
-        // For each message, the distance between from/to must fit the label.
-        var minSpan: [Int: CGFloat] = [:] // min span index → minimum distance between centers
-        for (i, msg) in diagram.messages.enumerated() {
-            guard let fromIdx = participantIndex[msg.from],
-                  let toIdx = participantIndex[msg.to] else { continue }
-            if fromIdx == toIdx { continue } // self-message
-            let lo = min(fromIdx, toIdx)
-            let hi = max(fromIdx, toIdx)
-            let labelW = messageSizes[i].width + c.labelGap * 2
-            let neededPerSpan = labelW / CGFloat(hi - lo)
-            for span in lo ..< hi {
-                minSpan[span] = max(minSpan[span] ?? 0, neededPerSpan)
-            }
-        }
-
-        // Position participants left-to-right.
-        var participants: [ParticipantLayout] = []
-        var currentX = c.sideMargin
-
-        for (i, p) in diagram.participants.enumerated() {
-            let boxW = boxWidths[p.id] ?? 0
-            let halfW = boxW / 2
-
-            if i == 0 {
-                currentX += halfW
-            } else {
-                let prevHalfW = (boxWidths[diagram.participants[i - 1].id] ?? 0) / 2
-                let gap = max(c.participantGap, minSpan[i - 1] ?? 0)
-                currentX += prevHalfW + gap + halfW
-            }
-
-            let textSize = labelSizes[p.id] ?? .zero
-            let boxH = textSize.height + c.boxPadV * 2
-            let boxRect = CGRect(
-                x: currentX - halfW,
-                y: c.topMargin,
-                width: boxW,
-                height: boxH
-            )
-
-            participants.append(ParticipantLayout(
-                id: p.id,
-                label: p.label,
-                isActor: p.isActor,
-                kind: p.kind,
-                centerX: currentX,
-                boxRect: boxRect
-            ))
-        }
-
-        // Max box height (all boxes same height for alignment).
-        let maxBoxH = participants.map(\.boxRect.height).max() ?? 0
-
-        // Normalize box heights.
-        var normalizedParticipants: [ParticipantLayout] = []
-        for p in participants {
-            let newRect = CGRect(
-                x: p.boxRect.origin.x,
-                y: p.boxRect.origin.y,
-                width: p.boxRect.width,
-                height: maxBoxH
-            )
-            normalizedParticipants.append(ParticipantLayout(
-                id: p.id, label: p.label, isActor: p.isActor, kind: p.kind,
-                centerX: p.centerX, boxRect: newRect
-            ))
-        }
-        participants = normalizedParticipants
-
-        // Position messages and notes vertically.
-        var messageLayouts: [MessageLayout] = []
-        var noteLayouts: [NoteLayout] = []
-        var currentY = c.topMargin + maxBoxH + c.headerGap
-
-        for (index, msg) in diagram.messages.enumerated() {
-            let isSelf = msg.from == msg.to
-            messageLayouts.append(MessageLayout(
-                message: msg,
-                sequenceNumber: sequenceNumbers[index],
-                y: currentY
-            ))
-            currentY += isSelf ? c.selfMessageHeight : c.messageSpacing
-        }
-
-        let noteFontSize = c.fontSize * 0.85
-        let noteFont = CTFontCreateWithName("Helvetica" as CFString, noteFontSize, nil)
-        for note in diagram.notes {
-            let textSize = measureText(note.text, font: noteFont, fontSize: noteFontSize)
-            let noteSize = CGSize(
-                width: textSize.width + c.notePadH * 2,
-                height: textSize.height + c.notePadV * 2
-            )
-            noteLayouts.append(NoteLayout(note: note, y: currentY, size: noteSize))
-            currentY += max(noteSize.height + c.messageSpacing * 0.35, c.messageSpacing)
-        }
-
-        // Compute total size.
-        guard let lastParticipant = participants.last else {
-            return emptyLayout(configuration: configuration)
-        }
-        let totalWidth = lastParticipant.centerX + (lastParticipant.boxRect.width / 2) + c.sideMargin
-        let totalHeight = currentY + c.bottomMargin
-
-        let size = CGSize(width: totalWidth, height: totalHeight)
-        let theme = configuration.theme
-        let fontSize = configuration.fontSize
-
-        // Capture everything the draw closure needs as value types.
-        let capturedParticipants = participants
-        let capturedMessages = messageLayouts
-        let capturedNotes = noteLayouts
-        let capturedBlocks = diagram.blocks
-        let capturedBoxes = diagram.boxes
-        let capturedIndex = participantIndex
-        let capturedConstants = c
-
+        let prepared = prepare(diagram, configuration: configuration)
+        let captured = prepared
         return MermaidFlowchartRenderer.FlowchartLayout(
             graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
             flowchart: .empty,
@@ -247,26 +207,401 @@ enum MermaidSequenceRenderer {
             nodeLabels: [:], nodeShapes: [:], edgeLabels: [:], edgeStyles: [:],
             edgeIds: [:], edgeKeys: [], edgeStyleDirectives: [:], edgeEndpointSubgraphs: [:],
             classDefs: [:], styleDirectives: [:],
-            fontSize: fontSize,
-            theme: theme,
+            fontSize: prepared.fontSize,
+            theme: prepared.theme,
             isPlaceholder: false, placeholderText: nil,
             customDraw: { ctx, origin in
-                drawDiagram(
-                    ctx: ctx, origin: origin,
-                    participants: capturedParticipants,
-                    messages: capturedMessages,
-                    notes: capturedNotes,
-                    blocks: capturedBlocks,
-                    boxes: capturedBoxes,
-                    participantIndex: capturedIndex,
-                    constants: capturedConstants,
-                    fontSize: fontSize,
-                    theme: theme,
-                    totalWidth: totalWidth,
-                    totalHeight: totalHeight
+                drawDiagram(ctx: ctx, origin: origin, prepared: captured)
+            },
+            customSize: prepared.facts.size
+        )
+    }
+
+    private static func prepare(
+        _ diagram: SequenceDiagram,
+        configuration: RenderConfiguration
+    ) -> PreparedSequenceLayout {
+        let c = Constants(fontSize: configuration.fontSize)
+        let font = CTFontCreateWithName("Helvetica" as CFString, c.fontSize, nil)
+        let msgFontSize = c.fontSize * 0.85
+        let msgFont = CTFontCreateWithName("Helvetica" as CFString, msgFontSize, nil)
+        let noteFontSize = c.fontSize * 0.85
+        let noteFont = CTFontCreateWithName("Helvetica" as CFString, noteFontSize, nil)
+        let maxWidth = max(configuration.maxWidth, c.fontSize * 12)
+        let showBottomCopies = configuration.displayMode != .inline
+
+        var participantIndex: [String: Int] = [:]
+        for (i, p) in diagram.participants.enumerated() {
+            participantIndex[p.id] = i
+        }
+
+        let count = max(diagram.participants.count, 1)
+        let available = max(maxWidth - c.sideMargin * 2, c.fontSize * 8)
+        let minGap = c.fontSize * 2.2
+        let maxBoxWidth = max(
+            c.fontSize * 5,
+            min(c.fontSize * 11, available / CGFloat(count) - minGap)
+        )
+
+        var wrappedLabels: [String: String] = [:]
+        var boxWidths: [String: CGFloat] = [:]
+        var labelSizes: [String: CGSize] = [:]
+        for p in diagram.participants {
+            let wrapped = MermaidTextUtils.wrapText(
+                p.label,
+                maxWidth: max(maxBoxWidth - c.boxPadH * 2, c.fontSize * 4),
+                font: font,
+                fontSize: c.fontSize
+            )
+            wrappedLabels[p.id] = wrapped
+            let size = measureText(wrapped, font: font, fontSize: c.fontSize)
+            labelSizes[p.id] = size
+            boxWidths[p.id] = min(max(size.width + c.boxPadH * 2, c.fontSize * 4), maxBoxWidth + c.boxPadH)
+        }
+
+        var participants: [ParticipantLayout] = []
+        var currentX = c.sideMargin
+        for (i, p) in diagram.participants.enumerated() {
+            let boxW = boxWidths[p.id] ?? c.fontSize * 4
+            let halfW = boxW / 2
+            if i == 0 {
+                currentX += halfW
+            } else {
+                let prevHalfW = (boxWidths[diagram.participants[i - 1].id] ?? 0) / 2
+                currentX += prevHalfW + minGap + halfW
+            }
+            let textSize = labelSizes[p.id] ?? .zero
+            let boxH = textSize.height + c.boxPadV * 2
+            participants.append(ParticipantLayout(
+                id: p.id,
+                label: p.label,
+                wrappedLabel: wrappedLabels[p.id] ?? p.label,
+                isActor: p.isActor,
+                kind: p.kind,
+                centerX: currentX,
+                boxRect: CGRect(x: currentX - halfW, y: c.topMargin, width: boxW, height: boxH)
+            ))
+        }
+
+        let maxBoxH = participants.map(\.boxRect.height).max() ?? (c.fontSize * 2)
+        participants = participants.map { p in
+            ParticipantLayout(
+                id: p.id,
+                label: p.label,
+                wrappedLabel: p.wrappedLabel,
+                isActor: p.isActor,
+                kind: p.kind,
+                centerX: p.centerX,
+                boxRect: CGRect(x: p.boxRect.minX, y: p.boxRect.minY, width: p.boxRect.width, height: maxBoxH)
+            )
+        }
+
+        let lastCenter = participants.last?.centerX ?? c.sideMargin
+        let lastHalf = (participants.last?.boxRect.width ?? 0) / 2
+        var totalWidth = lastCenter + lastHalf + c.sideMargin
+        if totalWidth > maxWidth, participants.count > 1 {
+            let scale = (maxWidth - c.sideMargin * 2) / max(totalWidth - c.sideMargin * 2, 1)
+            if scale > 0.55 {
+                // Scale the complete head rect so the lifeline stays centered,
+                // neighboring heads stay disjoint, and the last box stays inside maxWidth.
+                participants = participants.map { p in
+                    let scaledMinX = c.sideMargin + (p.boxRect.minX - c.sideMargin) * scale
+                    let scaledWidth = p.boxRect.width * scale
+                    let scaledRect = CGRect(
+                        x: scaledMinX,
+                        y: p.boxRect.minY,
+                        width: scaledWidth,
+                        height: p.boxRect.height
+                    )
+                    return ParticipantLayout(
+                        id: p.id,
+                        label: p.label,
+                        wrappedLabel: p.wrappedLabel,
+                        isActor: p.isActor,
+                        kind: p.kind,
+                        centerX: scaledRect.midX,
+                        boxRect: scaledRect
+                    )
+                }
+                totalWidth = maxWidth
+            }
+        }
+
+        func wrapWidth(from: String, to: String) -> CGFloat {
+            guard let fromIdx = participantIndex[from], let toIdx = participantIndex[to] else {
+                return max(c.fontSize * 8, maxWidth * 0.4)
+            }
+            if fromIdx == toIdx {
+                return min(max(c.fontSize * 8, maxWidth * 0.35), 180)
+            }
+            let span = abs(participants[fromIdx].centerX - participants[toIdx].centerX)
+            return max(span - c.labelGap * 4, c.fontSize * 5)
+        }
+
+        let sequenceNumbers = sequenceNumberLabels(for: diagram)
+        var messageNumberIndex = 0
+
+        struct OpenFrame {
+            let kind: SequenceBlockKind
+            let label: String
+            let startY: CGFloat
+            let depth: Int
+            var dividers: [DividerLayout]
+        }
+
+        var currentY = c.topMargin + maxBoxH + c.headerGap
+        var openFrames: [OpenFrame] = []
+        var frames: [FrameLayout] = []
+        var dividers: [DividerLayout] = []
+        var messageLayouts: [MessageLayout] = []
+        var noteLayouts: [NoteLayout] = []
+        var activationStacks: [String: [CGFloat]] = [:]
+        var activations: [ActivationLayout] = []
+        var createY: [String: CGFloat] = [:]
+        var destroyY: [String: CGFloat] = [:]
+        var createdIds: Set<String> = []
+        var destroyedIds: Set<String> = []
+        var pendingDestroy: [String] = []
+        // Keyword activate/deactivate attach to the last message arrow, matching +/-.
+        var lastMessageY: CGFloat?
+
+        func frameX(depth: Int) -> (x: CGFloat, width: CGFloat) {
+            let inset = c.frameInset * CGFloat(depth)
+            let x = c.sideMargin * 0.35 + inset
+            let width = max(1, totalWidth - c.sideMargin * 0.7 - inset * 2)
+            return (x, width)
+        }
+
+        func closeActivation(participantId: String, at y: CGFloat) {
+            guard var stack = activationStacks[participantId], let start = stack.popLast() else { return }
+            activationStacks[participantId] = stack
+            guard let index = participantIndex[participantId] else { return }
+            let height = max(y - start, c.fontSize * 0.9)
+            let width = c.activationWidth
+            let x = participants[index].centerX - width / 2
+            activations.append(ActivationLayout(
+                participantId: participantId,
+                rect: CGRect(x: x, y: start, width: width, height: height)
+            ))
+        }
+
+        func closeRemainingActivations(participantId: String, at y: CGFloat) {
+            while activationStacks[participantId]?.isEmpty == false {
+                closeActivation(participantId: participantId, at: y)
+            }
+        }
+
+        func closeFrame(at y: CGFloat) {
+            guard let open = openFrames.popLast() else { return }
+            if open.kind == .rect, open.label.isEmpty { return }
+            let pair = frameX(depth: open.depth)
+            let rect = CGRect(
+                x: pair.x,
+                y: open.startY,
+                width: pair.width,
+                height: max(c.fontSize, y - open.startY)
+            )
+            frames.append(FrameLayout(kind: open.kind, label: open.label, rect: rect, depth: open.depth))
+            dividers.append(contentsOf: open.dividers)
+        }
+
+        for event in diagram.events {
+            switch event {
+            case .blockOpen(let kind, let label):
+                let depth = openFrames.count
+                openFrames.append(OpenFrame(
+                    kind: kind,
+                    label: label,
+                    startY: currentY,
+                    depth: depth,
+                    dividers: []
+                ))
+                currentY += c.frameHeaderHeight
+
+            case .blockDivider(let kind, let label):
+                currentY += c.dividerGap * 0.35
+                let depth = max(openFrames.count - 1, 0)
+                let pair = frameX(depth: depth)
+                let divider = DividerLayout(
+                    kind: kind,
+                    label: label,
+                    y: currentY,
+                    x: pair.x,
+                    width: pair.width,
+                    parentLabel: openFrames.last?.label ?? ""
+                )
+                if !openFrames.isEmpty {
+                    openFrames[openFrames.count - 1].dividers.append(divider)
+                }
+                currentY += c.dividerGap * 0.65
+
+            case .blockClose:
+                currentY += c.frameFooterPad
+                closeFrame(at: currentY)
+
+            case .note(let note):
+                let wrap = min(max(maxWidth * 0.55, c.fontSize * 10), 240)
+                let wrapped = MermaidTextUtils.wrapText(
+                    note.text, maxWidth: wrap - c.notePadH * 2, font: noteFont, fontSize: noteFontSize
+                )
+                let textSize = measureText(wrapped, font: noteFont, fontSize: noteFontSize)
+                let size = CGSize(
+                    width: textSize.width + c.notePadH * 2,
+                    height: textSize.height + c.notePadV * 2
+                )
+                noteLayouts.append(NoteLayout(note: note, wrappedText: wrapped, y: currentY, size: size))
+                currentY += size.height + c.noteGap
+
+            case .message(let message):
+                let number = messageNumberIndex < sequenceNumbers.count
+                    ? sequenceNumbers[messageNumberIndex]
+                    : nil
+                messageNumberIndex += 1
+                let display = messageDisplayText(message.text, sequenceNumber: number)
+                let wrapped = MermaidTextUtils.wrapText(
+                    display,
+                    maxWidth: wrapWidth(from: message.from, to: message.to),
+                    font: msgFont,
+                    fontSize: msgFontSize
+                )
+                let labelSize = measureText(wrapped, font: msgFont, fontSize: msgFontSize)
+                currentY += labelSize.height + c.labelGap
+                let isSelf = message.from == message.to
+                messageLayouts.append(MessageLayout(
+                    message: message,
+                    sequenceNumber: number,
+                    wrappedText: wrapped,
+                    labelSize: labelSize,
+                    y: currentY
+                ))
+                lastMessageY = currentY
+                // destroy associates with the following message; X and lifeline end sit on that arrow.
+                // Clip that participant's activation bars at the killing-arrow Y so they do not run past the X.
+                for id in pendingDestroy {
+                    destroyedIds.insert(id)
+                    destroyY[id] = currentY
+                    closeRemainingActivations(participantId: id, at: currentY)
+                }
+                pendingDestroy.removeAll()
+                if message.activationModifier == .activate {
+                    activationStacks[message.to, default: []].append(currentY)
+                } else if message.activationModifier == .deactivate {
+                    closeActivation(participantId: message.from, at: currentY)
+                }
+                currentY += isSelf ? c.selfMessageHeight : c.messageSpacing * 0.55
+
+            case .activate(let actorId):
+                activationStacks[actorId, default: []].append(lastMessageY ?? currentY)
+
+            case .deactivate(let actorId):
+                closeActivation(participantId: actorId, at: lastMessageY ?? currentY)
+
+            case .create(let participant):
+                createdIds.insert(participant.id)
+                createY[participant.id] = currentY
+                currentY += maxBoxH + c.headerGap * 0.45
+
+            case .destroy(let actorId):
+                pendingDestroy.append(actorId)
+            }
+        }
+
+        for id in pendingDestroy {
+            destroyedIds.insert(id)
+            destroyY[id] = currentY
+            // No killing arrow: clip leftover bars at the last message, not after post-message spacing.
+            closeRemainingActivations(participantId: id, at: lastMessageY ?? currentY)
+            currentY += c.crossSize * 3
+        }
+
+        let contentEndY = currentY
+        // Unmatched +/- or activate must end on the last arrow, not after messageSpacing*0.55.
+        let leftoverCloseY = lastMessageY ?? contentEndY
+        let leftoverActivations = activationStacks
+        for (id, stack) in leftoverActivations {
+            for _ in stack {
+                closeActivation(participantId: id, at: leftoverCloseY)
+            }
+        }
+        while !openFrames.isEmpty {
+            currentY += c.frameFooterPad
+            closeFrame(at: currentY)
+        }
+
+        var bottomCopyY = currentY
+        var bottomCopyCount = 0
+        if showBottomCopies {
+            let survivingCount = participants.filter { !destroyedIds.contains($0.id) }.count
+            if survivingCount > 0 {
+                currentY += c.headerGap
+                bottomCopyY = currentY
+                currentY += maxBoxH
+                bottomCopyCount = survivingCount
+            }
+        }
+
+        let totalHeight = currentY + c.bottomMargin
+        let size = CGSize(width: max(totalWidth, 40), height: max(totalHeight, 40))
+
+        let facts = SequenceLayoutFacts(
+            size: size,
+            participants: participants.map {
+                SequenceLayoutFacts.ParticipantFact(
+                    id: $0.id,
+                    centerX: $0.centerX,
+                    rect: $0.boxRect
                 )
             },
-            customSize: size
+            messages: messageLayouts.map {
+                SequenceLayoutFacts.PlacedItem(
+                    text: $0.message.text,
+                    y: $0.y,
+                    rect: CGRect(x: 0, y: $0.y, width: $0.labelSize.width, height: $0.labelSize.height)
+                )
+            },
+            notes: noteLayouts.map {
+                SequenceLayoutFacts.PlacedItem(
+                    text: $0.note.text,
+                    y: $0.y,
+                    rect: CGRect(x: 0, y: $0.y, width: $0.size.width, height: $0.size.height)
+                )
+            },
+            frames: frames.map {
+                SequenceLayoutFacts.FrameFact(kind: $0.kind, label: $0.label, rect: $0.rect, depth: $0.depth)
+            },
+            dividers: dividers.map {
+                SequenceLayoutFacts.DividerFact(kind: $0.kind, label: $0.label, y: $0.y, parentLabel: $0.parentLabel)
+            },
+            activations: activations.map {
+                SequenceLayoutFacts.ActivationFact(participantId: $0.participantId, rect: $0.rect)
+            },
+            bottomParticipantCopyCount: bottomCopyCount,
+            createdParticipantIds: createdIds.sorted(),
+            destroyedParticipantIds: destroyedIds.sorted(),
+            createYByParticipant: createY,
+            destroyYByParticipant: destroyY
+        )
+
+        return PreparedSequenceLayout(
+            facts: facts,
+            participants: participants,
+            messages: messageLayouts,
+            notes: noteLayouts,
+            frames: frames,
+            dividers: dividers,
+            activations: activations,
+            boxes: diagram.boxes,
+            participantIndex: participantIndex,
+            constants: c,
+            createY: createY,
+            destroyY: destroyY,
+            createdIds: createdIds,
+            showBottomCopies: showBottomCopies,
+            bottomCopyY: bottomCopyY,
+            totalWidth: size.width,
+            totalHeight: size.height,
+            fontSize: configuration.fontSize,
+            theme: configuration.theme
         )
     }
 
@@ -308,23 +643,21 @@ enum MermaidSequenceRenderer {
     private static func drawDiagram(
         ctx: CGContext,
         origin: CGPoint,
-        participants: [ParticipantLayout],
-        messages: [MessageLayout],
-        notes: [NoteLayout],
-        blocks: [SequenceBlock],
-        boxes: [SequenceBox],
-        participantIndex: [String: Int],
-        constants c: Constants,
-        fontSize: CGFloat,
-        theme: RenderTheme,
-        totalWidth: CGFloat,
-        totalHeight: CGFloat
+        prepared: PreparedSequenceLayout
     ) {
         let ox = origin.x
         let oy = origin.y
+        let participants = prepared.participants
+        let messages = prepared.messages
+        let notes = prepared.notes
+        let participantIndex = prepared.participantIndex
+        let c = prepared.constants
+        let fontSize = prepared.fontSize
+        let theme = prepared.theme
+        let totalWidth = prepared.totalWidth
+        let totalHeight = prepared.totalHeight
 
-        // Draw participant grouping boxes behind everything else.
-        for box in boxes {
+        for box in prepared.boxes {
             drawSequenceBox(
                 ctx: ctx,
                 ox: ox,
@@ -339,48 +672,81 @@ enum MermaidSequenceRenderer {
             )
         }
 
-        // Draw lifelines first (behind foreground diagram content).
-        drawLifelines(
-            ctx: ctx, ox: ox, oy: oy,
-            participants: participants,
-            constants: c,
-            theme: theme,
-            totalHeight: totalHeight
-        )
-
-        // Draw sequence blocks/background rects behind participant boxes and messages.
-        for block in blocks {
-            drawSequenceBlock(
-                ctx: ctx,
-                ox: ox,
-                oy: oy,
-                block: block,
-                messages: messages,
-                constants: c,
-                fontSize: fontSize,
-                theme: theme,
-                totalWidth: totalWidth
-            )
-        }
-
-        // Draw participant boxes.
-        for p in participants {
-            drawParticipantBox(
+        for frame in prepared.frames.sorted(by: { $0.depth < $1.depth }) {
+            drawFrame(
                 ctx: ctx, ox: ox, oy: oy,
-                participant: p,
+                frame: frame,
                 constants: c,
                 fontSize: fontSize,
                 theme: theme
             )
         }
 
-        // Draw messages.
+        drawLifelines(
+            ctx: ctx, ox: ox, oy: oy,
+            prepared: prepared
+        )
+
+        drawActivationBars(ctx: ctx, ox: ox, oy: oy, prepared: prepared)
+
+        for p in participants where !prepared.createdIds.contains(p.id) {
+            drawParticipantBox(
+                ctx: ctx, ox: ox, oy: oy,
+                participant: p,
+                yOffset: 0,
+                constants: c,
+                fontSize: fontSize,
+                theme: theme
+            )
+        }
+
+        for p in participants {
+            if let createY = prepared.createY[p.id] {
+                drawParticipantBox(
+                    ctx: ctx, ox: ox, oy: oy,
+                    participant: p,
+                    yOffset: createY - p.boxRect.minY,
+                    constants: c,
+                    fontSize: fontSize,
+                    theme: theme
+                )
+            }
+        }
+
+        if prepared.showBottomCopies {
+            for p in participants where prepared.destroyY[p.id] == nil {
+                drawParticipantBox(
+                    ctx: ctx, ox: ox, oy: oy,
+                    participant: p,
+                    yOffset: prepared.bottomCopyY - p.boxRect.minY,
+                    constants: c,
+                    fontSize: fontSize,
+                    theme: theme
+                )
+            }
+        }
+
+        for divider in prepared.dividers {
+            drawDivider(ctx: ctx, ox: ox, oy: oy, divider: divider, fontSize: fontSize, theme: theme, constants: c)
+        }
+
+        for (id, y) in prepared.destroyY {
+            guard let index = participantIndex[id] else { continue }
+            drawCrossMarker(
+                ctx: ctx,
+                at: CGPoint(x: ox + participants[index].centerX, y: oy + y),
+                size: c.crossSize * 1.4,
+                theme: theme
+            )
+        }
+
         for ml in messages {
             drawMessage(
                 ctx: ctx, ox: ox, oy: oy,
                 message: ml,
                 participants: participants,
                 participantIndex: participantIndex,
+                activations: prepared.activations,
                 constants: c,
                 fontSize: fontSize,
                 theme: theme
@@ -464,25 +830,125 @@ enum MermaidSequenceRenderer {
     private static func drawLifelines(
         ctx: CGContext,
         ox: CGFloat, oy: CGFloat,
-        participants: [ParticipantLayout],
-        constants c: Constants,
-        theme: RenderTheme,
-        totalHeight: CGFloat
+        prepared: PreparedSequenceLayout
     ) {
+        let c = prepared.constants
         ctx.saveGState()
-        ctx.setStrokeColor(theme.foregroundDim)
+        ctx.setStrokeColor(prepared.theme.foregroundDim)
         ctx.setLineWidth(1.0)
         ctx.setLineDash(phase: 0, lengths: c.lifelineDash)
 
-        for p in participants {
+        for p in prepared.participants {
             let x = ox + p.centerX
-            let startY = oy + p.boxRect.maxY
-            let endY = oy + totalHeight - c.bottomMargin
+            let startY: CGFloat
+            if let createY = prepared.createY[p.id] {
+                startY = oy + createY + p.boxRect.height
+            } else {
+                startY = oy + p.boxRect.maxY
+            }
+            let endY: CGFloat
+            if let destroyY = prepared.destroyY[p.id] {
+                endY = oy + destroyY
+            } else if prepared.showBottomCopies {
+                endY = oy + prepared.bottomCopyY
+            } else {
+                endY = oy + prepared.totalHeight - c.bottomMargin
+            }
             ctx.move(to: CGPoint(x: x, y: startY))
-            ctx.addLine(to: CGPoint(x: x, y: endY))
+            ctx.addLine(to: CGPoint(x: x, y: max(endY, startY)))
         }
         ctx.strokePath()
         ctx.restoreGState()
+    }
+
+    private static func drawActivationBars(
+        ctx: CGContext,
+        ox: CGFloat,
+        oy: CGFloat,
+        prepared: PreparedSequenceLayout
+    ) {
+        ctx.saveGState()
+        ctx.setFillColor(prepared.theme.background)
+        ctx.setStrokeColor(prepared.theme.foreground)
+        ctx.setLineWidth(1.2)
+        for bar in prepared.activations {
+            let rect = bar.rect.offsetBy(dx: ox, dy: oy)
+            ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 2, cornerHeight: 2, transform: nil))
+            ctx.drawPath(using: .fillStroke)
+        }
+        ctx.restoreGState()
+    }
+
+    private static func drawFrame(
+        ctx: CGContext,
+        ox: CGFloat,
+        oy: CGFloat,
+        frame: FrameLayout,
+        constants c: Constants,
+        fontSize: CGFloat,
+        theme: RenderTheme
+    ) {
+        let rect = frame.rect.offsetBy(dx: ox, dy: oy)
+        let fakeBlock = SequenceBlock(kind: frame.kind, label: frame.label, elseBlocks: nil)
+        ctx.saveGState()
+        ctx.setLineWidth(1.1)
+        ctx.setStrokeColor(sequenceBlockStrokeColor(frame.kind, theme: theme))
+        ctx.setFillColor(sequenceBlockFillColor(fakeBlock, theme: theme))
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 7, cornerHeight: 7, transform: nil))
+        ctx.drawPath(using: .fillStroke)
+        ctx.restoreGState()
+
+        let title = sequenceBlockTitle(fakeBlock)
+        guard !title.isEmpty else { return }
+        let titleFontSize = fontSize * 0.78
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, titleFontSize, nil)
+        MermaidTextUtils.drawText(
+            title,
+            at: CGPoint(x: rect.minX + 8, y: rect.minY + 4),
+            font: font,
+            fontSize: titleFontSize,
+            foregroundColor: theme.foreground,
+            in: ctx
+        )
+    }
+
+    private static func drawDivider(
+        ctx: CGContext,
+        ox: CGFloat,
+        oy: CGFloat,
+        divider: DividerLayout,
+        fontSize: CGFloat,
+        theme: RenderTheme,
+        constants c: Constants
+    ) {
+        let y = oy + divider.y
+        let x = ox + divider.x
+        ctx.saveGState()
+        ctx.setStrokeColor(theme.foregroundDim.copy(alpha: 0.55) ?? theme.foregroundDim)
+        ctx.setLineWidth(1.0)
+        ctx.setLineDash(phase: 0, lengths: c.dashLengths)
+        ctx.move(to: CGPoint(x: x + 4, y: y))
+        ctx.addLine(to: CGPoint(x: x + divider.width - 4, y: y))
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        let keyword: String
+        switch divider.kind {
+        case .else: keyword = "else"
+        case .and: keyword = "and"
+        case .option: keyword = "option"
+        }
+        let title = divider.label.isEmpty ? keyword : "\(keyword) \(divider.label)"
+        let titleFontSize = fontSize * 0.72
+        let font = CTFontCreateWithName("Helvetica" as CFString, titleFontSize, nil)
+        MermaidTextUtils.drawText(
+            title,
+            at: CGPoint(x: x + 8, y: y - titleFontSize - 2),
+            font: font,
+            fontSize: titleFontSize,
+            foregroundColor: theme.foreground,
+            in: ctx
+        )
     }
 
     // MARK: - Participant boxes
@@ -491,11 +957,13 @@ enum MermaidSequenceRenderer {
         ctx: CGContext,
         ox: CGFloat, oy: CGFloat,
         participant p: ParticipantLayout,
+        yOffset: CGFloat,
         constants c: Constants,
         fontSize: CGFloat,
         theme: RenderTheme
     ) {
-        let rect = p.boxRect.offsetBy(dx: ox, dy: oy)
+        let rect = p.boxRect.offsetBy(dx: ox, dy: oy + yOffset)
+        let label = p.wrappedLabel.isEmpty ? p.label : p.wrappedLabel
 
         if p.isActor || p.kind == .actor {
             drawActorStickFigure(
@@ -505,7 +973,7 @@ enum MermaidSequenceRenderer {
                 constants: c,
                 fontSize: fontSize,
                 theme: theme,
-                label: p.label
+                label: label
             )
         } else {
             drawParticipantSymbol(
@@ -516,10 +984,9 @@ enum MermaidSequenceRenderer {
                 in: ctx
             )
 
-            // Label centered in box.
             let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
             MermaidTextUtils.drawText(
-                p.label,
+                label,
                 centeredIn: rect.insetBy(dx: c.boxPadH * 0.25, dy: 0),
                 font: font,
                 fontSize: fontSize,
@@ -984,7 +1451,7 @@ enum MermaidSequenceRenderer {
         let noteFontSize = fontSize * 0.85
         let font = CTFontCreateWithName("Helvetica" as CFString, noteFontSize, nil)
         MermaidTextUtils.drawText(
-            noteLayout.note.text,
+            noteLayout.wrappedText,
             centeredIn: rect.insetBy(dx: c.notePadH * 0.5, dy: c.notePadV * 0.35),
             font: font,
             fontSize: noteFontSize,
@@ -1045,6 +1512,7 @@ enum MermaidSequenceRenderer {
         message ml: MessageLayout,
         participants: [ParticipantLayout],
         participantIndex: [String: Int],
+        activations: [ActivationLayout],
         constants c: Constants,
         fontSize: CGFloat,
         theme: RenderTheme
@@ -1052,18 +1520,32 @@ enum MermaidSequenceRenderer {
         guard let fromIdx = participantIndex[ml.message.from],
               let toIdx = participantIndex[ml.message.to] else { return }
 
-        let fromX = ox + participants[fromIdx].centerX
-        let toX = ox + participants[toIdx].centerX
-        let y = oy + ml.y
+        func inset(for participantId: String) -> CGFloat {
+            let y = ml.y
+            if activations.contains(where: {
+                $0.participantId == participantId && $0.rect.minY - 0.5 <= y && y <= $0.rect.maxY + 0.5
+            }) {
+                return c.activationWidth / 2 + 1
+            }
+            return 0
+        }
 
+        var fromX = ox + participants[fromIdx].centerX
+        var toX = ox + participants[toIdx].centerX
+        let y = oy + ml.y
         let isSelf = fromIdx == toIdx
+        if !isSelf {
+            let goingRight = toX > fromX
+            fromX += goingRight ? inset(for: ml.message.from) : -inset(for: ml.message.from)
+            toX += goingRight ? -inset(for: ml.message.to) : inset(for: ml.message.to)
+        }
 
         if isSelf {
             drawSelfMessage(
                 ctx: ctx,
                 x: fromX, y: y,
                 message: ml.message,
-                sequenceNumber: ml.sequenceNumber,
+                wrappedText: ml.wrappedText,
                 constants: c,
                 fontSize: fontSize,
                 theme: theme
@@ -1073,7 +1555,8 @@ enum MermaidSequenceRenderer {
                 ctx: ctx,
                 fromX: fromX, toX: toX, y: y,
                 message: ml.message,
-                sequenceNumber: ml.sequenceNumber,
+                wrappedText: ml.wrappedText,
+                labelSize: ml.labelSize,
                 constants: c,
                 fontSize: fontSize,
                 theme: theme
@@ -1085,7 +1568,8 @@ enum MermaidSequenceRenderer {
         ctx: CGContext,
         fromX: CGFloat, toX: CGFloat, y: CGFloat,
         message: SequenceMessage,
-        sequenceNumber: String?,
+        wrappedText: String,
+        labelSize: CGSize,
         constants c: Constants,
         fontSize: CGFloat,
         theme: RenderTheme
@@ -1131,19 +1615,17 @@ enum MermaidSequenceRenderer {
             theme: theme
         )
 
-        // Draw the label above the arrow.
-        let labelText = messageDisplayText(message.text, sequenceNumber: sequenceNumber)
-        if !labelText.isEmpty {
+        // Draw the (possibly wrapped) label above the arrow.
+        if !wrappedText.isEmpty {
             let msgFontSize = fontSize * 0.85
             let font = CTFontCreateWithName("Helvetica" as CFString, msgFontSize, nil)
-            let textSize = MermaidTextUtils.measureText(labelText, font: font, fontSize: msgFontSize)
             let midX = (fromX + toX) / 2
-            let textX = midX - textSize.width / 2
-            let textY = y - textSize.height - c.labelGap
+            let textX = midX - labelSize.width / 2
+            let textY = y - labelSize.height - c.labelGap
             MermaidTextUtils.drawText(
-                labelText,
+                wrappedText,
                 at: CGPoint(x: textX, y: textY),
-                width: textSize.width,
+                width: labelSize.width,
                 font: font,
                 fontSize: msgFontSize,
                 foregroundColor: theme.foreground,
@@ -1157,7 +1639,7 @@ enum MermaidSequenceRenderer {
         ctx: CGContext,
         x: CGFloat, y: CGFloat,
         message: SequenceMessage,
-        sequenceNumber: String?,
+        wrappedText: String,
         constants c: Constants,
         fontSize: CGFloat,
         theme: RenderTheme
@@ -1212,15 +1694,13 @@ enum MermaidSequenceRenderer {
             theme: theme
         )
 
-        // Label to the right of the loopback.
-        let labelText = messageDisplayText(message.text, sequenceNumber: sequenceNumber)
-        if !labelText.isEmpty {
+        if !wrappedText.isEmpty {
             let msgFontSize = fontSize * 0.85
             let font = CTFontCreateWithName("Helvetica" as CFString, msgFontSize, nil)
             let textX = x + loopW + c.labelGap
             let textY = y + loopH * 0.3 - fontSize * 0.4
             MermaidTextUtils.drawText(
-                labelText,
+                wrappedText,
                 at: CGPoint(x: textX, y: textY),
                 font: font,
                 fontSize: msgFontSize,

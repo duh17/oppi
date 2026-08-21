@@ -114,6 +114,86 @@ enum MermaidTextUtils {
         "quot": "\"",
     ]
 
+    // MARK: - Text wrapping
+
+    /// Word-wrap `text` so each line fits `maxWidth`. Existing newlines are kept.
+    static func wrapText(
+        _ text: String,
+        maxWidth: CGFloat,
+        font: CTFont,
+        fontSize: CGFloat
+    ) -> String {
+        let width = max(maxWidth, fontSize * 2)
+        let paragraphs = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var wrapped: [String] = []
+        for paragraph in paragraphs {
+            wrapped.append(contentsOf: wrapParagraph(paragraph, maxWidth: width, font: font, fontSize: fontSize))
+        }
+        return wrapped.joined(separator: "\n")
+    }
+
+    private static func wrapParagraph(
+        _ paragraph: String,
+        maxWidth: CGFloat,
+        font: CTFont,
+        fontSize: CGFloat
+    ) -> [String] {
+        if paragraph.isEmpty { return [""] }
+        if measureSingleLine(paragraph, font: font, fontSize: fontSize).width <= maxWidth {
+            return [paragraph]
+        }
+
+        let words = paragraph.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !words.isEmpty else { return [paragraph] }
+
+        var lines: [String] = []
+        var current = ""
+        for word in words {
+            let candidate = current.isEmpty ? word : current + " " + word
+            if measureSingleLine(candidate, font: font, fontSize: fontSize).width <= maxWidth {
+                current = candidate
+                continue
+            }
+            if !current.isEmpty {
+                lines.append(current)
+            }
+            if measureSingleLine(word, font: font, fontSize: fontSize).width <= maxWidth {
+                current = word
+            } else {
+                lines.append(contentsOf: wrapLongToken(word, maxWidth: maxWidth, font: font, fontSize: fontSize))
+                current = ""
+            }
+        }
+        if !current.isEmpty {
+            lines.append(current)
+        }
+        return lines.isEmpty ? [paragraph] : lines
+    }
+
+    private static func wrapLongToken(
+        _ token: String,
+        maxWidth: CGFloat,
+        font: CTFont,
+        fontSize: CGFloat
+    ) -> [String] {
+        var lines: [String] = []
+        var current = ""
+        for character in token {
+            let candidate = current + String(character)
+            if !current.isEmpty,
+               measureSingleLine(candidate, font: font, fontSize: fontSize).width > maxWidth {
+                lines.append(current)
+                current = String(character)
+            } else {
+                current = candidate
+            }
+        }
+        if !current.isEmpty {
+            lines.append(current)
+        }
+        return lines.isEmpty ? [token] : lines
+    }
+
     // MARK: - Text measurement
 
     /// Measure text size, supporting multi-line text (split on `\n`).

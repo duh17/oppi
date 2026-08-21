@@ -372,7 +372,7 @@ struct MermaidMindmapRendererTests {
 
     @Test func tidyTreeLayoutUsesDistinctTopDownGeometry() {
         let parser = MermaidParser()
-        let renderer = MermaidFlowchartRenderer()
+        let renderer = MermaidRenderer()
         let horizontal = parser.parse("""
             mindmap
             root((mindmap is a long thing))
@@ -405,7 +405,7 @@ struct MermaidMindmapRendererTests {
 
     @Test func tidyTreeDrawDoesNotCrash() {
         let parser = MermaidParser()
-        let renderer = MermaidFlowchartRenderer()
+        let renderer = MermaidRenderer()
         let diagram = parser.parse("""
             ---
             config:

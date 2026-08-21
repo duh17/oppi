@@ -77,6 +77,8 @@ struct ScreenshotPreviewView: View {
             StreamingFlickerPreviewView()
         case "latex-rendering":
             LatexRenderingPreview()
+        case "mermaid-rendering":
+            MermaidRenderingPreview()
         case "ask-card":
             AskCardPreview()
         case "ask-card-multiselect-long":
@@ -223,6 +225,147 @@ private struct LatexRenderingPreview: View {
                     .accessibilityIdentifier("latex.preview.content")
             }
             .padding(20)
+        }
+        .background(Color.themeBg.ignoresSafeArea())
+        .preferredColorScheme(themeID == .light ? .light : .dark)
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+// MARK: - Mermaid Rendering Preview
+
+private struct MermaidRenderingPreview: View {
+    private struct Diagram: Identifiable {
+        let id: String
+        let heading: String
+        let markdown: String
+    }
+
+    private static let diagrams: [Diagram] = [
+        Diagram(
+            id: "flowchart",
+            heading: "Flowchart",
+            markdown: #"""
+            ```mermaid
+            flowchart TD
+                subgraph Review [Code review]
+                    PR[Open PR] --> Decision{Approved?}
+                    Decision -->|no| Fix[Fix comments]
+                    Fix --> PR
+                    Decision -->|yes| Checks
+                end
+                subgraph Pipeline [CI]
+                    Checks[Run CI] --> Lint[Lint]
+                    Checks --> Tests[Tests]
+                    Lint --> Merge[Merge]
+                    Tests --> Merge
+                end
+            ```
+            """#
+        ),
+        Diagram(
+            id: "sequence",
+            heading: "Sequence",
+            markdown: #"""
+            ```mermaid
+            sequenceDiagram
+                Alice->>+John: Hello John, how are you?
+                Note over Alice,John: A typical interaction
+                alt is sick
+                    John->>Alice: Not so good
+                    Note right of John: Needs rest
+                else is well
+                    John-->>-Alice: Feeling fresh like a daisy
+                    Note left of Alice: All good
+                end
+            ```
+            """#
+        ),
+        Diagram(
+            id: "timeline",
+            heading: "Timeline",
+            markdown: #"""
+            ```mermaid
+            timeline
+                title History of Social Media Platform
+                2002 : LinkedIn
+                2004 : Facebook
+                     : Google
+                2005 : YouTube
+                2006 : Twitter
+            ```
+            """#
+        ),
+        Diagram(
+            id: "pie",
+            heading: "Pie",
+            markdown: #"""
+            ```mermaid
+            pie showData title Pets adopted by volunteers
+                "Dogs" : 386
+                "Cats" : 85
+                "Rats" : 15
+            ```
+            """#
+        ),
+        Diagram(
+            id: "class",
+            heading: "Class",
+            markdown: #"""
+            ```mermaid
+            classDiagram
+                class BankAccount
+                BankAccount : +String owner
+                BankAccount : +BigDecimal balance
+                BankAccount : +deposit(amount)
+                BankAccount : +withdrawal(amount)
+            ```
+            """#
+        ),
+        Diagram(
+            id: "er",
+            heading: "ER",
+            markdown: #"""
+            ```mermaid
+            erDiagram
+                CUSTOMER ||--o{ ORDER : places
+                ORDER ||--|{ LINE-ITEM : contains
+            ```
+            """#
+        ),
+    ]
+
+    private let themeID: ThemeID
+
+    init() {
+        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light"
+            ? .light
+            : .dark
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Production chat Mermaid rendering")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+
+                Text("Native fenced mermaid blocks on the production markdown path")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+
+                ForEach(Self.diagrams) { diagram in
+                    Text(diagram.heading)
+                        .font(.headline)
+                        .foregroundStyle(.themeFg)
+                    MarkdownContentViewWrapper(content: diagram.markdown, renderingMode: .export)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(20)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("mermaid.preview.content")
         }
         .background(Color.themeBg.ignoresSafeArea())
         .preferredColorScheme(themeID == .light ? .light : .dark)

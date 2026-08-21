@@ -464,7 +464,7 @@ struct MermaidGanttRendererTests {
 
     @Test func rendererUsedThroughFlowchartRenderer() {
         let parser = MermaidParser()
-        let renderer = MermaidFlowchartRenderer()
+        let renderer = MermaidRenderer()
         let diagram = parser.parse("""
             gantt
                 section Work
@@ -480,7 +480,7 @@ struct MermaidGanttRendererTests {
 
     @Test func compactModePacksTasksIntoFewerRows() {
         let parser = MermaidParser()
-        let renderer = MermaidFlowchartRenderer()
+        let renderer = MermaidRenderer()
         let normal = parser.parse("""
             gantt
                 section Section
@@ -507,7 +507,7 @@ struct MermaidGanttRendererTests {
 
     @Test func topAxisAddsExtraAxisHeight() {
         let parser = MermaidParser()
-        let renderer = MermaidFlowchartRenderer()
+        let renderer = MermaidRenderer()
         let normal = parser.parse("""
             gantt
                 section Section
@@ -530,7 +530,7 @@ struct MermaidGanttRendererTests {
 
     @Test func verticalMarkersRenderWithoutConsumingRows() {
         let parser = MermaidParser()
-        let renderer = MermaidFlowchartRenderer()
+        let renderer = MermaidRenderer()
         let withMarker = parser.parse("""
             gantt
                 section Section
@@ -552,7 +552,7 @@ struct MermaidGanttRendererTests {
 
     @Test func verticalMarkersDoNotShiftTimelineCursor() {
         let parser = MermaidParser()
-        let renderer = MermaidFlowchartRenderer()
+        let renderer = MermaidRenderer()
         let withMarker = parser.parse("""
             gantt
                 section Section

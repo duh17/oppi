@@ -2764,7 +2764,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         case .mermaid(let text):
             // ZoomableGraphicalView has its own scroll + zoom — embed directly
             let zoomable = makeZoomableGraphicalView(
-                parser: MermaidParser(), renderer: MermaidFlowchartRenderer(),
+                parser: MermaidParser(), renderer: MermaidRenderer(),
                 text: text, fontSize: 14 * readerPreferences.textScale
             )
             zoomable.translatesAutoresizingMaskIntoConstraints = false

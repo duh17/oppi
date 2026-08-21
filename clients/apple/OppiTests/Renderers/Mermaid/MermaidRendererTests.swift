@@ -8,7 +8,7 @@ import Testing
 @Suite("Mermaid Renderer")
 struct MermaidRendererTests {
     let parser = MermaidParser()
-    let renderer = MermaidFlowchartRenderer()
+    let renderer = MermaidRenderer()
     let config = RenderConfiguration.default(maxWidth: 600)
 
     // MARK: - Layout integration
@@ -576,6 +576,86 @@ struct MermaidRendererTests {
         let layout = renderer.layout(diagram, configuration: config)
         #expect(layout.isPlaceholder)
         #expect(layout.placeholderText?.contains("journey") == true)
+    }
+
+    // MARK: - Pie / timeline / class / ER dispatch
+
+    @Test func pieDiagramRendersThroughSharedDispatcher() {
+        let source = """
+            pie title Pets adopted by volunteers
+                "Dogs" : 386
+                "Cats" : 85
+                "Rats" : 15
+            """
+        let diagram = parser.parse(source)
+        guard case .pie = diagram else {
+            Issue.record("Expected pie diagram, got \(diagram)")
+            return
+        }
+        let layout = renderer.layout(diagram, configuration: config)
+        #expect(!layout.isPlaceholder)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
+    }
+
+    @Test func timelineDiagramRendersThroughSharedDispatcher() {
+        let source = """
+            timeline
+            title History of Social Media Platform
+            2002 : LinkedIn
+            2004 : Facebook
+                 : Google
+            2005 : YouTube
+            2006 : Twitter
+            """
+        let diagram = parser.parse(source)
+        guard case .timeline = diagram else {
+            Issue.record("Expected timeline diagram, got \(diagram)")
+            return
+        }
+        let layout = renderer.layout(diagram, configuration: config)
+        #expect(!layout.isPlaceholder)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
+    }
+
+    @Test func classDiagramRendersThroughSharedDispatcher() {
+        let source = """
+            classDiagram
+                class Animal
+                Vehicle <|-- Car
+            """
+        let diagram = parser.parse(source)
+        guard case .classDiagram = diagram else {
+            Issue.record("Expected classDiagram, got \(diagram)")
+            return
+        }
+        let layout = renderer.layout(diagram, configuration: config)
+        #expect(!layout.isPlaceholder)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
+    }
+
+    @Test func erDiagramRendersThroughSharedDispatcher() {
+        let source = """
+            erDiagram
+                CUSTOMER ||--o{ ORDER : places
+                ORDER ||--|{ LINE-ITEM : contains
+                CUSTOMER }|..|{ DELIVERY-ADDRESS : uses
+            """
+        let diagram = parser.parse(source)
+        guard case .erDiagram = diagram else {
+            Issue.record("Expected erDiagram, got \(diagram)")
+            return
+        }
+        let layout = renderer.layout(diagram, configuration: config)
+        #expect(!layout.isPlaceholder)
+        let size = renderer.boundingBox(layout)
+        #expect(size.width > 0)
+        #expect(size.height > 0)
     }
 
     // MARK: - Render with complex diagram

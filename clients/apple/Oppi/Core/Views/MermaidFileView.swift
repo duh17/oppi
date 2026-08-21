@@ -18,7 +18,7 @@ struct MermaidFileView: View {
             renderedViewFactory: { [content] in
                 let layout = DocumentRenderPipeline.layoutGraphical(
                     parser: MermaidParser(),
-                    renderer: MermaidFlowchartRenderer(),
+                    renderer: MermaidRenderer(),
                     text: content,
                     config: RenderConfiguration(
                         fontSize: 14,

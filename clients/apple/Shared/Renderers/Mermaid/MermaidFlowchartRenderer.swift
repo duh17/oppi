@@ -66,6 +66,14 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             return MermaidMindmapRenderer.layout(diagram, configuration: configuration)
         case .state(let diagram):
             return layoutFlowchart(flowchart(from: diagram), configuration: configuration)
+        case .pie(let diagram):
+            return MermaidPieRenderer.layout(diagram, configuration: configuration)
+        case .timeline(let diagram):
+            return MermaidTimelineRenderer.layout(diagram, configuration: configuration)
+        case .classDiagram(let diagram):
+            return MermaidClassRenderer.layout(diagram, configuration: configuration)
+        case .erDiagram(let diagram):
+            return MermaidERRenderer.layout(diagram, configuration: configuration)
         case .unsupported(let type):
             return placeholderLayout(
                 text: "Unsupported diagram type: \(type)",
@@ -694,6 +702,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
         let clearance = max(5, fontSize * 0.45)
         let titleHeight = subgraphTitleHeight(fontSize: fontSize) + 4
+        let nodeShapes = Dictionary(uniqueKeysWithValues: flowchart.nodes.map { ($0.id, $0.shape) })
         let titleObstacles = subgraphFrames.values.map { frame in
             CGRect(
                 x: frame.minX,
@@ -716,7 +725,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 [edge],
                 positions: positions,
                 direction: direction,
-                laneSeed: index
+                laneSeed: index,
+                nodeShapes: nodeShapes,
+                allEdges: edges
             ).first else {
                 return GraphLayoutEdgePath(from: edge.from, to: edge.to, points: [])
             }
@@ -1175,13 +1186,29 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     && maxY > $0.minY + epsilon && minY < $0.maxY - epsilon
             }
         }
-        return true
+        let dx = second.x - first.x
+        let dy = second.y - first.y
+        let steps = max(4, Int(hypot(dx, dy) / 2))
+        return obstacles.contains { obstacle in
+            for step in 1..<steps {
+                let t = CGFloat(step) / CGFloat(steps)
+                let point = CGPoint(x: first.x + dx * t, y: first.y + dy * t)
+                if obstacleContainsInteriorPoint(obstacle, point: point) {
+                    return true
+                }
+            }
+            return false
+        }
     }
 
     private func pathIntersectsObstacles(_ points: [CGPoint], obstacles: [CGRect]) -> Bool {
         zip(points, points.dropFirst()).contains {
             segmentIntersectsObstacles($0.0, $0.1, obstacles: obstacles)
         }
+    }
+
+    private func isAxisAligned(_ first: CGPoint, _ second: CGPoint) -> Bool {
+        abs(first.x - second.x) < 0.1 || abs(first.y - second.y) < 0.1
     }
 
     private func pathUsesOccupiedSegment(
@@ -1395,64 +1422,183 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         return true
     }
 
+    private enum DiamondVertex {
+        case top, right, bottom, left
+
+        func point(in rect: CGRect) -> CGPoint {
+            switch self {
+            case .top: return CGPoint(x: rect.midX, y: rect.minY)
+            case .right: return CGPoint(x: rect.maxX, y: rect.midY)
+            case .bottom: return CGPoint(x: rect.midX, y: rect.maxY)
+            case .left: return CGPoint(x: rect.minX, y: rect.midY)
+            }
+        }
+    }
+
     private func routeEdges(
         _ edges: [GraphLayoutEdge],
         positions: [String: CGRect],
         direction: GraphLayoutDirection,
-        laneSeed: Int = 0
+        laneSeed: Int = 0,
+        nodeShapes: [String: FlowNodeShape] = [:],
+        allEdges: [GraphLayoutEdge]? = nil
     ) -> [GraphLayoutEdgePath] {
         let isHorizontal = direction == .leftToRight || direction == .rightToLeft
+        let contextEdges = allEdges ?? edges
+        var outgoingTargets: [String: [String]] = [:]
+        for edge in contextEdges {
+            outgoingTargets[edge.from, default: []].append(edge.to)
+        }
+
         return edges.enumerated().compactMap { index, edge in
             guard let fromRect = positions[edge.from], let toRect = positions[edge.to] else { return nil }
             let fromCenter = CGPoint(x: fromRect.midX, y: fromRect.midY)
             let toCenter = CGPoint(x: toRect.midX, y: toRect.midY)
+            let fromIsDiamond = nodeShapes[edge.from] == .diamond
+            let toIsDiamond = nodeShapes[edge.to] == .diamond
 
             let fromPoint: CGPoint
             let toPoint: CGPoint
-            if isHorizontal {
-                if fromCenter.x < toCenter.x {
-                    fromPoint = CGPoint(x: fromRect.maxX, y: fromRect.midY)
-                    toPoint = CGPoint(x: toRect.minX, y: toRect.midY)
-                } else {
-                    fromPoint = CGPoint(x: fromRect.minX, y: fromRect.midY)
-                    toPoint = CGPoint(x: toRect.maxX, y: toRect.midY)
-                }
+            var fromVertex: DiamondVertex?
+            if fromIsDiamond {
+                let vertex = diamondVertex(
+                    from: fromRect,
+                    to: toRect,
+                    toward: edge.to,
+                    siblingIds: outgoingTargets[edge.from] ?? [],
+                    positions: positions
+                )
+                fromVertex = vertex
+                fromPoint = vertex.point(in: fromRect)
+            } else if isHorizontal {
+                fromPoint = fromCenter.x < toCenter.x
+                    ? CGPoint(x: fromRect.maxX, y: fromRect.midY)
+                    : CGPoint(x: fromRect.minX, y: fromRect.midY)
             } else if fromCenter.y < toCenter.y {
                 fromPoint = CGPoint(x: fromRect.midX, y: fromRect.maxY)
-                toPoint = CGPoint(x: toRect.midX, y: toRect.minY)
             } else {
                 fromPoint = CGPoint(x: fromRect.midX, y: fromRect.minY)
+            }
+
+            if toIsDiamond {
+                toPoint = diamondVertex(
+                    from: toRect,
+                    to: fromRect,
+                    toward: edge.from,
+                    siblingIds: [],
+                    positions: positions
+                ).point(in: toRect)
+            } else if fromIsDiamond {
+                toPoint = facingPort(on: toRect, from: fromPoint)
+            } else if isHorizontal {
+                toPoint = fromCenter.x < toCenter.x
+                    ? CGPoint(x: toRect.minX, y: toRect.midY)
+                    : CGPoint(x: toRect.maxX, y: toRect.midY)
+            } else if fromCenter.y < toCenter.y {
+                toPoint = CGPoint(x: toRect.midX, y: toRect.minY)
+            } else {
                 toPoint = CGPoint(x: toRect.midX, y: toRect.maxY)
             }
 
+            if abs(fromPoint.x - toPoint.x) <= 1 || abs(fromPoint.y - toPoint.y) <= 1 {
+                return GraphLayoutEdgePath(from: edge.from, to: edge.to, points: [fromPoint, toPoint])
+            }
+
+            if fromIsDiamond || toIsDiamond {
+                let vertex = fromVertex ?? diamondVertex(
+                    from: toRect,
+                    to: fromRect,
+                    toward: edge.from,
+                    siblingIds: [],
+                    positions: positions
+                )
+                return GraphLayoutEdgePath(
+                    from: edge.from,
+                    to: edge.to,
+                    points: curvedConnector(from: fromPoint, to: toPoint, leaving: vertex)
+                )
+            }
+
             var points = [fromPoint]
-            let needsBend = isHorizontal
-                ? abs(fromPoint.y - toPoint.y) > 1
-                : abs(fromPoint.x - toPoint.x) > 1
-            if needsBend {
-                // Spread adjacent routes across stable lanes instead of drawing
-                // every orthogonal dogleg on the same trunk. Keep the offset
-                // bounded so endpoints still travel through the rank gap.
-                let laneStep: CGFloat = 4
-                let lanePattern = [0, -1, 1, -2, 2]
-                let laneIndex = CGFloat(lanePattern[(index + laneSeed) % lanePattern.count])
-                if isHorizontal {
-                    let midpoint = (fromPoint.x + toPoint.x) / 2
-                    let maxOffset = abs(toPoint.x - fromPoint.x) * 0.2
-                    let midRank = midpoint + min(max(laneIndex * laneStep, -maxOffset), maxOffset)
-                    points.append(CGPoint(x: midRank, y: fromPoint.y))
-                    points.append(CGPoint(x: midRank, y: toPoint.y))
-                } else {
-                    let midpoint = (fromPoint.y + toPoint.y) / 2
-                    let maxOffset = abs(toPoint.y - fromPoint.y) * 0.2
-                    let midRank = midpoint + min(max(laneIndex * laneStep, -maxOffset), maxOffset)
-                    points.append(CGPoint(x: fromPoint.x, y: midRank))
-                    points.append(CGPoint(x: toPoint.x, y: midRank))
-                }
+            let laneStep: CGFloat = 4
+            let lanePattern = [0, -1, 1, -2, 2]
+            let laneIndex = CGFloat(lanePattern[(index + laneSeed) % lanePattern.count])
+            if isHorizontal {
+                let midpoint = (fromPoint.x + toPoint.x) / 2
+                let maxOffset = abs(toPoint.x - fromPoint.x) * 0.2
+                let midRank = midpoint + min(max(laneIndex * laneStep, -maxOffset), maxOffset)
+                points.append(CGPoint(x: midRank, y: fromPoint.y))
+                points.append(CGPoint(x: midRank, y: toPoint.y))
+            } else {
+                let midpoint = (fromPoint.y + toPoint.y) / 2
+                let maxOffset = abs(toPoint.y - fromPoint.y) * 0.2
+                let midRank = midpoint + min(max(laneIndex * laneStep, -maxOffset), maxOffset)
+                points.append(CGPoint(x: fromPoint.x, y: midRank))
+                points.append(CGPoint(x: toPoint.x, y: midRank))
             }
             points.append(toPoint)
             return GraphLayoutEdgePath(from: edge.from, to: edge.to, points: points)
         }
+    }
+
+    private func diamondVertex(
+        from rect: CGRect,
+        to other: CGRect,
+        toward targetId: String,
+        siblingIds: [String],
+        positions: [String: CGRect]
+    ) -> DiamondVertex {
+        // Two or more branches always leave the side vertices so they cannot
+        // share the bottom tip and then stair-step horizontally.
+        if siblingIds.count >= 2 {
+            let ranked = siblingIds.sorted { a, b in
+                let ax = positions[a]?.midX ?? 0
+                let bx = positions[b]?.midX ?? 0
+                if abs(ax - bx) > 1 { return ax < bx }
+                return a < b
+            }
+            if targetId == ranked.first { return .left }
+            if targetId == ranked.last { return .right }
+        }
+        let dx = other.midX - rect.midX
+        let dy = other.midY - rect.midY
+        let heightAlign = max(8, min(rect.height, other.height) * 0.35)
+        let widthAlign = max(8, min(rect.width, other.width) * 0.35)
+        if abs(dy) <= heightAlign {
+            return dx < 0 ? .left : .right
+        }
+        if abs(dx) <= widthAlign {
+            return dy < 0 ? .top : .bottom
+        }
+        if abs(dx) >= abs(dy) * 0.35 {
+            return dx < 0 ? .left : .right
+        }
+        return dy < 0 ? .top : .bottom
+    }
+
+    private func facingPort(on rect: CGRect, from point: CGPoint) -> CGPoint {
+        let dx = point.x - rect.midX
+        let dy = point.y - rect.midY
+        if abs(dx) > abs(dy) {
+            return CGPoint(x: point.x < rect.midX ? rect.minX : rect.maxX, y: rect.midY)
+        }
+        return CGPoint(x: rect.midX, y: point.y < rect.midY ? rect.minY : rect.maxY)
+    }
+
+    private func curvedConnector(from: CGPoint, to: CGPoint, leaving vertex: DiamondVertex) -> [CGPoint] {
+        let stub = max(16, hypot(to.x - from.x, to.y - from.y) * 0.25)
+        let control: CGPoint
+        switch vertex {
+        case .left:
+            control = CGPoint(x: from.x - stub, y: (from.y + to.y) / 2)
+        case .right:
+            control = CGPoint(x: from.x + stub, y: (from.y + to.y) / 2)
+        case .top:
+            control = CGPoint(x: (from.x + to.x) / 2, y: from.y - stub)
+        case .bottom:
+            control = CGPoint(x: (from.x + to.x) / 2, y: from.y + stub)
+        }
+        return [from, control, to]
     }
 
     private func totalSize(for positions: [String: CGRect]) -> CGSize {
@@ -2291,10 +2437,13 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             ctx.setLineDash(phase: 0, lengths: dashArray)
         }
 
-        // Draw the polyline.
         ctx.move(to: points[0])
-        for i in 1 ..< points.count {
-            ctx.addLine(to: points[i])
+        if points.count == 3, !isAxisAligned(points[0], points[1]) || !isAxisAligned(points[1], points[2]) {
+            ctx.addQuadCurve(to: points[2], control: points[1])
+        } else {
+            for i in 1 ..< points.count {
+                ctx.addLine(to: points[i])
+            }
         }
         ctx.strokePath()
 

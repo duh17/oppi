@@ -364,7 +364,7 @@ enum FileShareService {
     private static func renderMermaidToImage(_ source: String) -> UIImage {
         let layout = DocumentRenderPipeline.layoutGraphical(
             parser: MermaidParser(),
-            renderer: MermaidFlowchartRenderer(),
+            renderer: MermaidRenderer(),
             text: source,
             config: exportConfig
         )
@@ -807,7 +807,7 @@ enum FileShareService {
     private static func renderMermaidToPDF(_ source: String) -> Data {
         let layout = DocumentRenderPipeline.layoutGraphical(
             parser: MermaidParser(),
-            renderer: MermaidFlowchartRenderer(),
+            renderer: MermaidRenderer(),
             text: source,
             config: exportConfig
         )

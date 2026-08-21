@@ -28,7 +28,7 @@ struct MermaidParser: DocumentParser, Sendable {
             return .flowchart(diagram)
         case .sequence:
             let body = Array(stripped[(firstIndex + 1)...])
-            let diagram = parseSequence(lines: body)
+            let diagram = MermaidSequenceParser.parse(lines: body)
             return .sequence(diagram)
         case .gantt:
             let body = Array(stripped[(firstIndex + 1)...])
@@ -42,6 +42,23 @@ struct MermaidParser: DocumentParser, Sendable {
             let body = Array(stripped[(firstIndex + 1)...])
             let diagram = MermaidStateParser.parse(lines: body)
             return .state(diagram)
+        case .pie:
+            // Pie title/showData live on the `pie` header line, so keep it.
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidPieParser.parse(lines: body)
+            return .pie(diagram)
+        case .timeline:
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidTimelineParser.parse(lines: body)
+            return .timeline(diagram)
+        case .classDiagram:
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidClassParser.parse(lines: body)
+            return .classDiagram(diagram)
+        case .erDiagram:
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidERParser.parse(lines: body)
+            return .erDiagram(diagram)
         case .unknown(let name):
             return .unsupported(type: name)
         }
@@ -97,6 +114,10 @@ struct MermaidParser: DocumentParser, Sendable {
         case gantt
         case mindmap
         case state
+        case pie
+        case timeline
+        case classDiagram
+        case erDiagram
         case unknown(String)
     }
 
@@ -126,6 +147,14 @@ struct MermaidParser: DocumentParser, Sendable {
             return Header(type: .mindmap, direction: nil)
         case "statediagram", "statediagram-v2":
             return Header(type: .state, direction: nil)
+        case "pie":
+            return Header(type: .pie, direction: nil)
+        case "timeline":
+            return Header(type: .timeline, direction: nil)
+        case "classdiagram", "classdiagram-v2":
+            return Header(type: .classDiagram, direction: nil)
+        case "erdiagram":
+            return Header(type: .erDiagram, direction: nil)
         default:
             return Header(type: .unknown(tokens.first ?? keyword), direction: nil)
         }
@@ -178,6 +207,10 @@ struct MermaidParser: DocumentParser, Sendable {
 
         // Parse subgraphs with a stack-based approach.
         var subgraphStack: [SubgraphBuilder] = []
+        // Exclusive membership: an implicit edge endpoint must not join the
+        // enclosing cluster when another subgraph later declares that node.
+        var lastExplicitSubgraphId: [String: String] = [:]
+        var implicitSubgraphIds: [String: [String]] = [:]
 
         for stmt in statements {
             let trimmed = stmt.trimmingCharacters(in: .whitespaces)
@@ -243,6 +276,7 @@ struct MermaidParser: DocumentParser, Sendable {
 
             // Node declarations and edges (the main parsing path).
             let parsed = parseNodeEdgeStatement(trimmed)
+            let statementDeclaresNodes = parsed.edges.isEmpty
             for node in parsed.nodes {
                 // Keep the first explicit declaration. An implicit reference
                 // (shape == .default) never overwrites an explicit one.
@@ -258,6 +292,15 @@ struct MermaidParser: DocumentParser, Sendable {
                 }
                 if let current = subgraphStack.last {
                     current.nodeIds.insert(node.id)
+                    if node.shape != .default || statementDeclaresNodes {
+                        lastExplicitSubgraphId[node.id] = current.id
+                    } else if lastExplicitSubgraphId[node.id] == nil {
+                        var ids = implicitSubgraphIds[node.id] ?? []
+                        if ids.last != current.id {
+                            ids.append(current.id)
+                        }
+                        implicitSubgraphIds[node.id] = ids
+                    }
                 }
             }
             edges.append(contentsOf: parsed.edges)
@@ -267,6 +310,12 @@ struct MermaidParser: DocumentParser, Sendable {
         while let builder = subgraphStack.popLast() {
             subgraphs.append(builder.build())
         }
+
+        subgraphs = exclusiveSubgraphMembership(
+            subgraphs,
+            lastExplicitSubgraphId: lastExplicitSubgraphId,
+            implicitSubgraphIds: implicitSubgraphIds
+        )
 
         // Build ordered node list. When edges target subgraph IDs, Mermaid
         // treats those IDs as cluster endpoints, not implicit standalone nodes.
@@ -288,6 +337,35 @@ struct MermaidParser: DocumentParser, Sendable {
 
     private func allSubgraphIds(in subgraph: FlowSubgraph) -> [String] {
         [subgraph.id] + subgraph.subgraphs.flatMap(allSubgraphIds(in:))
+    }
+
+    /// A node belongs to at most one subgraph. Explicit declarations win over
+    /// implicit edge endpoints, so `Decision -->|yes| Checks` inside Review does
+    /// not keep Checks there once Pipeline declares `Checks[Run CI]`.
+    private func exclusiveSubgraphMembership(
+        _ subgraphs: [FlowSubgraph],
+        lastExplicitSubgraphId: [String: String],
+        implicitSubgraphIds: [String: [String]]
+    ) -> [FlowSubgraph] {
+        func homeSubgraphId(for nodeId: String) -> String? {
+            if let explicit = lastExplicitSubgraphId[nodeId] {
+                return explicit
+            }
+            return implicitSubgraphIds[nodeId]?.first
+        }
+
+        func filter(_ subgraph: FlowSubgraph) -> FlowSubgraph {
+            FlowSubgraph(
+                id: subgraph.id,
+                title: subgraph.title,
+                direction: subgraph.direction,
+                nodeIds: subgraph.nodeIds.filter { homeSubgraphId(for: $0) == subgraph.id },
+                regionCount: subgraph.regionCount,
+                subgraphs: subgraph.subgraphs.map(filter)
+            )
+        }
+
+        return subgraphs.map(filter)
     }
 
     // MARK: - Statement expansion
@@ -1283,516 +1361,4 @@ struct MermaidParser: DocumentParser, Sendable {
         return nil
     }
 
-    // MARK: - Sequence diagram parsing (Phase 2, basic)
-
-    // Keywords that should not become participants when seen as standalone lines.
-    private static let sequenceKeywords: Set<String> = [
-        "autonumber", "activate", "deactivate",
-        "loop", "alt", "else", "opt", "par", "and",
-        "critical", "option", "break", "end",
-        "rect", "box",
-    ]
-
-    private struct SequenceBlockBuilder {
-        let kind: SequenceBlockKind
-        let label: String
-        let startMessageIndex: Int
-        var elseBlocks: [SequenceElseBlock] = []
-    }
-
-    private struct SequenceParticipantDeclaration {
-        let id: String
-        let alias: String?
-        let kind: SequenceParticipantKind?
-    }
-
-    private final class SequenceBoxBuilder {
-        let label: String?
-        let color: String?
-        var participantIds: [String] = []
-
-        init(label: String?, color: String?) {
-            self.label = label
-            self.color = color
-        }
-
-        func addParticipant(_ id: String) {
-            guard !participantIds.contains(id) else { return }
-            participantIds.append(id)
-        }
-
-        func build() -> SequenceBox {
-            SequenceBox(label: label, color: color, participantIds: participantIds)
-        }
-    }
-
-    private func parseSequence(lines: [String]) -> SequenceDiagram {
-        var participants: [SequenceParticipant] = []
-        var messages: [SequenceMessage] = []
-        var notes: [SequenceNote] = []
-        var blocks: [SequenceBlock] = []
-        var boxes: [SequenceBox] = []
-        var links: [SequenceLink] = []
-        var knownIds: Set<String> = []
-        var autonumber = false
-        var autonumberStart = 1.0
-        var autonumberIncrement = 1.0
-
-        var blockStack: [SequenceBlockBuilder] = []
-        var boxStack: [SequenceBoxBuilder] = []
-
-        func closeBlock(_ builder: SequenceBlockBuilder) {
-            guard builder.kind != .rect || !builder.label.isEmpty else { return }
-            blocks.append(SequenceBlock(
-                kind: builder.kind,
-                label: builder.label,
-                elseBlocks: builder.elseBlocks.isEmpty ? nil : builder.elseBlocks,
-                startMessageIndex: builder.startMessageIndex,
-                endMessageIndex: max(builder.startMessageIndex, messages.count - 1)
-            ))
-        }
-
-        func addParticipant(_ participant: SequenceParticipant) {
-            boxStack.last?.addParticipant(participant.id)
-            guard !knownIds.contains(participant.id) else { return }
-            participants.append(participant)
-            knownIds.insert(participant.id)
-        }
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty { continue }
-            let lower = trimmed.lowercased()
-
-            // autonumber [start] [increment]
-            if lower == "autonumber" || lower.hasPrefix("autonumber ") {
-                autonumber = true
-                let parts = trimmed.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-                if parts.count >= 2, let start = Double(parts[1]) {
-                    autonumberStart = start
-                }
-                if parts.count >= 3, let increment = Double(parts[2]) {
-                    autonumberIncrement = increment
-                }
-                continue
-            }
-
-            // activate / deactivate keywords
-            if lower.hasPrefix("activate ") || lower.hasPrefix("deactivate ") {
-                continue
-            }
-
-            // create/destroy actor or participant directives.
-            if lower.hasPrefix("create ") {
-                let declaration = String(trimmed.dropFirst("create ".count)).trimmingCharacters(in: .whitespaces)
-                if let participant = parseParticipant(declaration) {
-                    addParticipant(participant)
-                }
-                continue
-            }
-            if lower.hasPrefix("destroy ") {
-                continue
-            }
-
-            // Actor menus: `link Actor: Label @ URL` and JSON `links Actor: {...}`.
-            if let parsedLinks = parseSequenceLinks(trimmed) {
-                for link in parsedLinks {
-                    addParticipant(SequenceParticipant(id: link.actorId, label: link.actorId, isActor: false))
-                }
-                links.append(contentsOf: parsedLinks)
-                continue
-            }
-
-            // box ... end groups participants in a vertical background band.
-            if lower == "box" || lower.hasPrefix("box ") {
-                let header = lower == "box"
-                    ? ""
-                    : String(trimmed.dropFirst("box ".count)).trimmingCharacters(in: .whitespaces)
-                let box = parseSequenceBoxHeader(header)
-                boxStack.append(SequenceBoxBuilder(label: box.label, color: box.color))
-                continue
-            }
-
-            // rect rgb(...) ... end
-            if lower.hasPrefix("rect ") || lower == "rect" {
-                let color = lower == "rect"
-                    ? ""
-                    : String(trimmed.dropFirst("rect ".count)).trimmingCharacters(in: .whitespaces)
-                blockStack.append(SequenceBlockBuilder(
-                    kind: .rect,
-                    label: color,
-                    startMessageIndex: messages.count
-                ))
-                continue
-            }
-
-            // Block openers: loop, alt, opt, par, critical, break
-            if let blockInfo = parseBlockOpener(lower, raw: trimmed) {
-                blockStack.append(SequenceBlockBuilder(
-                    kind: blockInfo.kind,
-                    label: blockInfo.label,
-                    startMessageIndex: messages.count
-                ))
-                continue
-            }
-
-            // else / and / option (adds to current block)
-            if lower.hasPrefix("else") || lower.hasPrefix("and ") || lower.hasPrefix("option ") {
-                if !blockStack.isEmpty {
-                    let label: String
-                    if lower.hasPrefix("else") {
-                        label = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
-                    } else if lower.hasPrefix("and ") {
-                        label = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
-                    } else {
-                        label = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces)
-                    }
-                    blockStack[blockStack.count - 1].elseBlocks.append(SequenceElseBlock(label: label))
-                }
-                continue
-            }
-
-            // end (closes message block first, otherwise a participant box)
-            if lower == "end" {
-                if let top = blockStack.popLast() {
-                    closeBlock(top)
-                } else if let box = boxStack.popLast() {
-                    boxes.append(box.build())
-                }
-                continue
-            }
-
-            // Note
-            if let note = parseSequenceNote(trimmed) {
-                // Auto-add actors from notes.
-                for actor in note.actors {
-                    addParticipant(SequenceParticipant(id: actor, label: actor, isActor: false))
-                }
-                notes.append(note)
-                continue
-            }
-
-            // participant / actor
-            if let p = parseParticipant(trimmed) {
-                addParticipant(p)
-                continue
-            }
-
-            // message
-            if let msg = parseSequenceMessage(trimmed) {
-                // Auto-add participants if not declared.
-                for pid in [msg.from, msg.to] {
-                    addParticipant(SequenceParticipant(id: pid, label: pid, isActor: false))
-                }
-                messages.append(msg)
-            }
-        }
-
-        // Close unclosed blocks (error recovery).
-        while let top = blockStack.popLast() {
-            closeBlock(top)
-        }
-        while let box = boxStack.popLast() {
-            boxes.append(box.build())
-        }
-
-        return SequenceDiagram(
-            participants: participants,
-            messages: messages,
-            notes: notes,
-            blocks: blocks,
-            boxes: boxes,
-            links: links,
-            autonumber: autonumber,
-            autonumberStart: autonumberStart,
-            autonumberIncrement: autonumberIncrement
-        )
-    }
-
-    /// Parse a block-opening keyword (loop, alt, opt, par, critical, break).
-    private func parseBlockOpener(_ lower: String, raw: String) -> (kind: SequenceBlockKind, label: String)? {
-        let patterns: [(prefix: String, kind: SequenceBlockKind)] = [
-            ("loop ", .loop),
-            ("alt ", .alt),
-            ("opt ", .opt),
-            ("par ", .par),
-            ("critical ", .critical),
-            ("break ", .break),
-        ]
-        if let match = patterns.first(where: { lower.hasPrefix($0.prefix) }) {
-            let label = String(raw.dropFirst(match.prefix.count)).trimmingCharacters(in: .whitespaces)
-            return (match.kind, label)
-        }
-
-        // Handle keyword without label: "loop" with no text after it.
-        let keywordOnly: [(keyword: String, kind: SequenceBlockKind)] = [
-            ("loop", .loop), ("alt", .alt), ("opt", .opt),
-            ("par", .par), ("critical", .critical),
-        ]
-        if let match = keywordOnly.first(where: { lower == $0.keyword }) {
-            return (match.kind, "")
-        }
-        return nil
-    }
-
-    private func parseSequenceBoxHeader(_ header: String) -> (label: String?, color: String?) {
-        let trimmed = header.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return (nil, nil) }
-        let lower = trimmed.lowercased()
-
-        for prefix in ["rgb(", "rgba(", "hsl(", "hsla("] where lower.hasPrefix(prefix) {
-            guard let close = trimmed.firstIndex(of: ")") else { return (trimmed, nil) }
-            let color = String(trimmed[...close])
-            let afterColor = trimmed.index(after: close)
-            let label = String(trimmed[afterColor...]).trimmingCharacters(in: .whitespaces)
-            return (label.isEmpty ? nil : normalize(label), color)
-        }
-
-        let parts = trimmed.split(separator: " ", maxSplits: 1).map(String.init)
-        guard let first = parts.first else { return (nil, nil) }
-        if Self.sequenceBoxColorNames.contains(first.lowercased()) {
-            let label = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
-            return (label.isEmpty ? nil : normalize(label), first)
-        }
-
-        return (normalize(trimmed), nil)
-    }
-
-    private static let sequenceBoxColorNames: Set<String> = [
-        "aqua", "black", "blue", "brown", "cyan", "gray", "green", "grey",
-        "lime", "magenta", "orange", "pink", "purple", "red", "transparent",
-        "violet", "white", "yellow",
-    ]
-
-    private func parseSequenceLinks(_ line: String) -> [SequenceLink]? {
-        let lower = line.lowercased()
-        if lower.hasPrefix("link ") {
-            return parseSingleSequenceLink(String(line.dropFirst("link ".count)))
-        }
-        if lower.hasPrefix("links ") {
-            return parseJSONSequenceLinks(String(line.dropFirst("links ".count)))
-        }
-        return nil
-    }
-
-    private func parseSingleSequenceLink(_ rest: String) -> [SequenceLink]? {
-        guard let colon = rest.firstIndex(of: ":") else { return nil }
-        let actorId = String(rest[..<colon]).trimmingCharacters(in: .whitespaces)
-        let payloadStart = rest.index(after: colon)
-        let payload = String(rest[payloadStart...]).trimmingCharacters(in: .whitespaces)
-        guard let separator = payload.range(of: " @ ") ?? payload.range(of: "@") else { return nil }
-        let label = String(payload[..<separator.lowerBound]).trimmingCharacters(in: .whitespaces)
-        let url = String(payload[separator.upperBound...]).trimmingCharacters(in: .whitespaces)
-        guard !actorId.isEmpty, !label.isEmpty, !url.isEmpty else { return nil }
-        return [SequenceLink(actorId: actorId, label: normalize(label), url: url)]
-    }
-
-    private func parseJSONSequenceLinks(_ rest: String) -> [SequenceLink]? {
-        guard let colon = rest.firstIndex(of: ":") else { return nil }
-        let actorId = String(rest[..<colon]).trimmingCharacters(in: .whitespaces)
-        let payloadStart = rest.index(after: colon)
-        let jsonText = String(rest[payloadStart...]).trimmingCharacters(in: .whitespaces)
-        guard !actorId.isEmpty,
-              let data = jsonText.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data),
-              let linksByLabel = object as? [String: String]
-        else { return nil }
-
-        return linksByLabel.keys.sorted().compactMap { label in
-            guard let url = linksByLabel[label], !label.isEmpty, !url.isEmpty else { return nil }
-            return SequenceLink(actorId: actorId, label: normalize(label), url: url)
-        }
-    }
-
-    /// Parse a Note line: `Note [right of | left of | over] Actor[,Actor]: text`
-    private func parseSequenceNote(_ line: String) -> SequenceNote? {
-        let lower = line.lowercased()
-        guard lower.hasPrefix("note ") else { return nil }
-        let rest = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-        let restLower = rest.lowercased()
-
-        let position: NotePosition
-        let afterPosition: String
-
-        if restLower.hasPrefix("right of ") {
-            position = .rightOf
-            afterPosition = String(rest.dropFirst(9)).trimmingCharacters(in: .whitespaces)
-        } else if restLower.hasPrefix("left of ") {
-            position = .leftOf
-            afterPosition = String(rest.dropFirst(8)).trimmingCharacters(in: .whitespaces)
-        } else if restLower.hasPrefix("over ") {
-            position = .over
-            afterPosition = String(rest.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-        } else {
-            return nil
-        }
-
-        // Split on `:` — actors : text
-        let parts = afterPosition.split(separator: ":", maxSplits: 1).map(String.init)
-        guard let actorPart = parts.first else { return nil }
-        let text = parts.count > 1 ? normalize(parts[1].trimmingCharacters(in: .whitespaces)) : ""
-        let actors = actorPart.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-
-        return SequenceNote(text: text, position: position, actors: actors)
-    }
-
-    private func parseParticipant(_ line: String) -> SequenceParticipant? {
-        let isActor: Bool
-        let rest: String
-        let baseKind: SequenceParticipantKind
-
-        if line.hasPrefix("participant ") {
-            isActor = false
-            baseKind = .participant
-            rest = String(line.dropFirst("participant ".count)).trimmingCharacters(in: .whitespaces)
-        } else if line.hasPrefix("actor ") {
-            isActor = true
-            baseKind = .actor
-            rest = String(line.dropFirst("actor ".count)).trimmingCharacters(in: .whitespaces)
-        } else {
-            return nil
-        }
-
-        let (declaration, externalAlias) = splitParticipantAlias(rest)
-        let parsed = parseParticipantDeclaration(declaration)
-        guard !parsed.id.isEmpty else { return nil }
-
-        let label = externalAlias.map(normalize)
-            ?? parsed.alias.map(normalize)
-            ?? normalize(parsed.id)
-        return SequenceParticipant(
-            id: parsed.id,
-            label: label,
-            isActor: isActor,
-            kind: parsed.kind ?? baseKind
-        )
-    }
-
-    private func splitParticipantAlias(_ rest: String) -> (declaration: String, alias: String?) {
-        var inDoubleQuote = false
-        var braceDepth = 0
-        var index = rest.startIndex
-
-        while index < rest.endIndex {
-            let char = rest[index]
-            if char == "\"" {
-                inDoubleQuote.toggle()
-            } else if !inDoubleQuote {
-                if char == "{" {
-                    braceDepth += 1
-                } else if char == "}" {
-                    braceDepth = max(0, braceDepth - 1)
-                } else if braceDepth == 0,
-                          rest[index...].hasPrefix(" as ") {
-                    let declaration = String(rest[..<index]).trimmingCharacters(in: .whitespaces)
-                    let aliasStart = rest.index(index, offsetBy: 4)
-                    let alias = String(rest[aliasStart...]).trimmingCharacters(in: .whitespaces)
-                    return (declaration, alias.isEmpty ? nil : alias)
-                }
-            }
-            index = rest.index(after: index)
-        }
-
-        return (rest.trimmingCharacters(in: .whitespaces), nil)
-    }
-
-    private func parseParticipantDeclaration(_ declaration: String) -> SequenceParticipantDeclaration {
-        guard let marker = declaration.range(of: "@{") else {
-            return SequenceParticipantDeclaration(
-                id: declaration.trimmingCharacters(in: .whitespaces),
-                alias: nil,
-                kind: nil
-            )
-        }
-
-        let id = String(declaration[..<marker.lowerBound]).trimmingCharacters(in: .whitespaces)
-        let bodyStart = marker.upperBound
-        guard let end = declaration[bodyStart...].lastIndex(of: "}") else {
-            return SequenceParticipantDeclaration(id: id, alias: nil, kind: nil)
-        }
-
-        let body = String(declaration[bodyStart..<end])
-        let properties = parseMetadataProperties(body)
-        let alias = properties["alias"]
-        let kind = properties["type"]
-            .map(normalizeMetadataValue)
-            .flatMap { SequenceParticipantKind(rawValue: $0.lowercased()) }
-        return SequenceParticipantDeclaration(id: id, alias: alias, kind: kind)
-    }
-
-    /// Parse sequence message: `A->>B: text`, `A-->>B: text`, etc.
-    private func parseSequenceMessage(_ line: String) -> SequenceMessage? {
-        // Find the arrow pattern.
-        // Order matters: longer patterns first.
-        let arrowPatterns: [(String, SequenceArrowStyle)] = [
-            ("<<-->>", .dashedBidirectional),
-            ("<<->>", .solidBidirectional),
-            ("--\\|\\", .dashedTopHalfArrow),
-            ("-\\|\\", .solidTopHalfArrow),
-            ("--\\|/", .dashedBottomHalfArrow),
-            ("-\\|/", .solidBottomHalfArrow),
-            ("/\\|--", .dashedReverseTopHalfArrow),
-            ("/\\|-", .solidReverseTopHalfArrow),
-            ("\\\\--", .dashedReverseBottomHalfArrow),
-            ("\\\\-", .solidReverseBottomHalfArrow),
-            ("--\\\\", .dashedTopStickHalfArrow),
-            ("-\\\\", .solidTopStickHalfArrow),
-            ("--//", .dashedBottomStickHalfArrow),
-            ("-//", .solidBottomStickHalfArrow),
-            ("//--", .dashedReverseTopStickHalfArrow),
-            ("//-", .solidReverseTopStickHalfArrow),
-            ("-->>", .dashed),
-            ("->>", .solid),
-            ("--)", .dashedAsync),
-            ("-)", .solidAsync),
-            ("--x", .dashedCross),
-            ("-x", .solidCross),
-            ("-->", .dashedOpen),
-            ("->", .solidOpen),
-        ]
-
-        for (pattern, style) in arrowPatterns {
-            if let range = line.range(of: pattern) {
-                var from = String(line[line.startIndex ..< range.lowerBound]).trimmingCharacters(in: .whitespaces)
-                var remaining = String(line[range.upperBound...])
-
-                let fromCentral = from.hasSuffix("()")
-                if fromCentral {
-                    from = String(from.dropLast(2)).trimmingCharacters(in: .whitespaces)
-                }
-
-                // Activation shorthand: +/- immediately after arrow.
-                var activationModifier: ActivationModifier?
-                if remaining.hasPrefix("+") {
-                    activationModifier = .activate
-                    remaining = String(remaining.dropFirst())
-                } else if remaining.hasPrefix("-") {
-                    activationModifier = .deactivate
-                    remaining = String(remaining.dropFirst())
-                }
-
-                // Split on `:` for target and message text.
-                let parts = remaining.split(separator: ":", maxSplits: 1).map(String.init)
-                guard let firstPart = parts.first else { continue }
-                var to = firstPart.trimmingCharacters(in: .whitespaces)
-                let toCentral = to.hasPrefix("()")
-                if toCentral {
-                    to = String(to.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                }
-                let text = parts.count > 1 ? normalize(parts[1].trimmingCharacters(in: .whitespaces)) : ""
-
-                if !from.isEmpty, !to.isEmpty {
-                    return SequenceMessage(
-                        from: from, to: to, text: text,
-                        arrowStyle: style,
-                        activationModifier: activationModifier,
-                        fromCentral: fromCentral,
-                        toCentral: toCentral
-                    )
-                }
-            }
-        }
-
-        return nil
-    }
 }

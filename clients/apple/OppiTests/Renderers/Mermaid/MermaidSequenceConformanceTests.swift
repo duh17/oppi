@@ -99,6 +99,41 @@ struct MermaidSequenceConformanceTests {
 
     // MARK: - Notes
 
+    /// Event stream keeps notes in chronological order with messages.
+    @Test func eventsPreserveNoteAndMessageOrder() {
+        let result = parser.parse("""
+        sequenceDiagram
+            Alice->>Bob: Hello
+            Note over Alice,Bob: in between
+            Bob-->>Alice: Hi
+        """)
+        guard case .sequence(let d) = result else {
+            Issue.record("Expected sequence")
+            return
+        }
+        guard d.events.count >= 3 else {
+            Issue.record("Expected at least 3 events, got \(d.events.count)")
+            return
+        }
+        guard case .message(let first) = d.events[0] else {
+            Issue.record("Expected first event to be a message")
+            return
+        }
+        guard case .note(let note) = d.events[1] else {
+            Issue.record("Expected second event to be a note")
+            return
+        }
+        guard case .message(let second) = d.events[2] else {
+            Issue.record("Expected third event to be a message")
+            return
+        }
+        #expect(first.text == "Hello")
+        #expect(note.text == "in between")
+        #expect(second.text == "Hi")
+        #expect(d.messages.map(\.text) == ["Hello", "Hi"])
+        #expect(d.notes.map(\.text) == ["in between"])
+    }
+
     /// SPEC: ## Notes — `Note right of John: Text in note`
     @Test func noteRightOf() {
         let result = parser.parse("""

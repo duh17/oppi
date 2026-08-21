@@ -778,4 +778,232 @@ struct MermaidFlowchartConformanceTests {
             #expect(node?.shape == expectedShape, "Node \(id) should be \(expectedShape), got \(String(describing: node?.shape))")
         }
     }
+
+    // MARK: - Exclusive subgraph membership and diamond routing
+
+    /// Gallery fixture from the native mermaid preview: a yes-edge written inside
+    /// Review must not pull Pipeline's Checks node into the Review cluster.
+    static let galleryReviewPipeline = """
+        flowchart TD
+            subgraph Review [Code review]
+                PR[Open PR] --> Decision{Approved?}
+                Decision -->|no| Fix[Fix comments]
+                Fix --> PR
+                Decision -->|yes| Checks
+            end
+            subgraph Pipeline [CI]
+                Checks[Run CI] --> Lint[Lint]
+                Checks --> Tests[Tests]
+                Lint --> Merge[Merge]
+                Tests --> Merge
+            end
+        """
+
+    @Test func crossSubgraphEdgeDoesNotPullFarNodeIntoSourceCluster() {
+        let result = parser.parse(Self.galleryReviewPipeline)
+        guard case .flowchart(let d) = result else {
+            Issue.record("Expected flowchart")
+            return
+        }
+        let review = d.subgraphs.first { $0.id == "Review" }
+        let pipeline = d.subgraphs.first { $0.id == "Pipeline" }
+        #expect(review?.nodeIds.sorted() == ["Decision", "Fix", "PR"])
+        #expect(pipeline?.nodeIds.sorted() == ["Checks", "Lint", "Merge", "Tests"])
+        #expect(!(review?.nodeIds.contains("Checks") ?? true))
+    }
+
+    @Test func implicitEndpointsStayInSubgraphWhenNotClaimedElsewhere() {
+        let result = parser.parse("""
+            flowchart TD
+                subgraph sg1 [My Subgraph]
+                    A --> B
+                end
+            """)
+        guard case .flowchart(let d) = result else {
+            Issue.record("Expected flowchart")
+            return
+        }
+        #expect(d.subgraphs.first?.nodeIds.sorted() == ["A", "B"])
+    }
+
+    @Test func galleryReviewAndPipelineClustersDoNotOverlap() {
+        let result = parser.parse(Self.galleryReviewPipeline)
+        let renderer = MermaidFlowchartRenderer()
+        let layout = renderer.layout(result, configuration: .default(maxWidth: 700))
+        guard let review = layout.subgraphFrames["Review"],
+              let pipeline = layout.subgraphFrames["Pipeline"],
+              let checks = layout.graphResult.nodePositions["Checks"],
+              let decision = layout.graphResult.nodePositions["Decision"],
+              let fix = layout.graphResult.nodePositions["Fix"]
+        else {
+            Issue.record("Expected Review/Pipeline frames and node positions")
+            return
+        }
+        #expect(!review.intersects(pipeline), "Review \(review) overlaps Pipeline \(pipeline)")
+        #expect(pipeline.contains(CGPoint(x: checks.midX, y: checks.midY)))
+        #expect(!review.contains(CGPoint(x: checks.midX, y: checks.midY)))
+        #expect(review.contains(CGPoint(x: decision.midX, y: decision.midY)))
+        #expect(review.contains(CGPoint(x: fix.midX, y: fix.midY)))
+    }
+
+    @Test func diamondSideBranchesLeaveLeftAndRightVertices() {
+        let result = parser.parse("""
+            flowchart TD
+                D{History fetch vs WS events}
+                D -->|fetch| L[History fetch]
+                D -->|live| R[WS events]
+            """)
+        let renderer = MermaidFlowchartRenderer()
+        let layout = renderer.layout(result, configuration: .default(maxWidth: 700))
+        guard let diamond = layout.graphResult.nodePositions["D"] else {
+            Issue.record("Expected diamond position")
+            return
+        }
+        let outgoing = layout.graphResult.edgePaths.filter { $0.from == "D" }
+        #expect(outgoing.count == 2)
+        #expect(outgoing.allSatisfy { $0.points.count >= 2 })
+
+        func isVertex(_ point: CGPoint, x: CGFloat, y: CGFloat) -> Bool {
+            abs(point.x - x) < 0.6 && abs(point.y - y) < 0.6
+        }
+        let startsLeft = outgoing.contains { isVertex($0.points[0], x: diamond.minX, y: diamond.midY) }
+        let startsRight = outgoing.contains { isVertex($0.points[0], x: diamond.maxX, y: diamond.midY) }
+        #expect(startsLeft, "left branch should leave the left vertex: \(outgoing.map(\.points))")
+        #expect(startsRight, "right branch should leave the right vertex: \(outgoing.map(\.points))")
+        #expect(
+            outgoing.allSatisfy { !isVertex($0.points[0], x: diamond.midX, y: diamond.maxY) },
+            "side branches must not leave the bottom tip"
+        )
+    }
+
+    @Test func alignedDiamondBranchUsesStraightConnector() {
+        let result = parser.parse("""
+            flowchart LR
+                D{Decision} -->|yes| A[Accept]
+            """)
+        let renderer = MermaidFlowchartRenderer()
+        let layout = renderer.layout(result, configuration: .default(maxWidth: 700))
+        guard let diamond = layout.graphResult.nodePositions["D"],
+              let accept = layout.graphResult.nodePositions["A"],
+              let path = layout.graphResult.edgePaths.first(where: { $0.from == "D" && $0.to == "A" })
+        else {
+            Issue.record("Expected LR diamond edge")
+            return
+        }
+        #expect(path.points.count == 2, "aligned ports should be one straight segment, got \(path.points)")
+        #expect(abs(path.points[0].y - path.points[1].y) < 0.6)
+        #expect(abs(path.points[0].x - diamond.maxX) < 0.6)
+        #expect(abs(path.points[0].y - diamond.midY) < 0.6)
+        #expect(abs(path.points[1].x - accept.minX) < 0.6)
+        #expect(abs(path.points[1].y - accept.midY) < 0.6)
+        #expect(!isOrthogonalStairFromBottomTip(path, diamond: diamond))
+    }
+
+    @Test func diamondDoesNotStairStepFromBottomTipThenHorizontal() {
+        let result = parser.parse(Self.galleryReviewPipeline)
+        let renderer = MermaidFlowchartRenderer()
+        let layout = renderer.layout(result, configuration: .default(maxWidth: 700))
+        guard let diamond = layout.graphResult.nodePositions["Decision"] else {
+            Issue.record("Expected Decision diamond")
+            return
+        }
+        let outgoing = layout.graphResult.edgePaths.filter { $0.from == "Decision" }
+        #expect(outgoing.count == 2)
+        for path in outgoing {
+            #expect(
+                !isOrthogonalStairFromBottomTip(path, diamond: diamond),
+                "\(path.from)->\(path.to) stairs from the bottom tip: \(path.points)"
+            )
+        }
+    }
+
+    @Test func galleryEdgesDoNotOverlapLabelsOrSubgraphChrome() {
+        let result = parser.parse(Self.galleryReviewPipeline)
+        let renderer = MermaidFlowchartRenderer()
+        let config = RenderConfiguration.default(maxWidth: 700)
+        let layout = renderer.layout(result, configuration: config)
+        let titleHeight = max(22, config.fontSize * 1.7) + 4
+
+        func segmentIntersectsInterior(_ first: CGPoint, _ second: CGPoint, rect: CGRect) -> Bool {
+            let epsilon: CGFloat = 0.1
+            let samples = max(4, Int(hypot(second.x - first.x, second.y - first.y) / 2))
+            for step in 1..<samples {
+                let t = CGFloat(step) / CGFloat(samples)
+                let point = CGPoint(
+                    x: first.x + (second.x - first.x) * t,
+                    y: first.y + (second.y - first.y) * t
+                )
+                if point.x > rect.minX + epsilon && point.x < rect.maxX - epsilon
+                    && point.y > rect.minY + epsilon && point.y < rect.maxY - epsilon {
+                    return true
+                }
+            }
+            return false
+        }
+
+        for path in layout.graphResult.edgePaths {
+            #expect(path.points.count >= 2, "\(path.from)->\(path.to) must remain visible")
+            for (first, second) in zip(path.points, path.points.dropFirst()) {
+                for (nodeId, rect) in layout.graphResult.nodePositions where nodeId != path.from && nodeId != path.to {
+                    #expect(
+                        !segmentIntersectsInterior(first, second, rect: rect),
+                        "Edge \(path.from)->\(path.to) crosses node \(nodeId)"
+                    )
+                }
+                for (subgraphId, frame) in layout.subgraphFrames {
+                    let titleBand = CGRect(
+                        x: frame.minX,
+                        y: frame.minY,
+                        width: frame.width,
+                        height: min(titleHeight, frame.height)
+                    )
+                    #expect(
+                        !segmentIntersectsInterior(first, second, rect: titleBand),
+                        "Edge \(path.from)->\(path.to) crosses subgraph title \(subgraphId)"
+                    )
+                }
+            }
+        }
+
+        var labelRects: [CGRect] = []
+        for (index, path) in layout.graphResult.edgePaths.enumerated() {
+            let key = index < layout.edgeKeys.count ? layout.edgeKeys[index] : "\(path.from)->\(path.to)"
+            guard layout.edgeLabels[key] != nil, path.points.count >= 2 else { continue }
+            let midIndex = path.points.count / 2
+            let midpoint: CGPoint
+            if path.points.count.isMultiple(of: 2) {
+                let first = path.points[midIndex - 1]
+                let second = path.points[midIndex]
+                midpoint = CGPoint(x: (first.x + second.x) / 2, y: (first.y + second.y) / 2)
+            } else {
+                midpoint = path.points[midIndex]
+            }
+            let rect = CGRect(x: midpoint.x - 8, y: midpoint.y - 6, width: 16, height: 12)
+            for frame in layout.subgraphFrames.values {
+                let titleBand = CGRect(
+                    x: frame.minX,
+                    y: frame.minY,
+                    width: frame.width,
+                    height: min(titleHeight, frame.height)
+                )
+                #expect(!rect.intersects(titleBand.insetBy(dx: 2, dy: 2)))
+            }
+            for existing in labelRects {
+                #expect(!existing.intersects(rect), "edge labels overlap at \(rect)")
+            }
+            labelRects.append(rect)
+        }
+    }
+
+    private func isOrthogonalStairFromBottomTip(_ path: GraphLayoutEdgePath, diamond: CGRect) -> Bool {
+        guard path.points.count >= 3 else { return false }
+        let first = path.points[0]
+        let second = path.points[1]
+        let third = path.points[2]
+        let fromBottom = abs(first.x - diamond.midX) < 0.6 && abs(first.y - diamond.maxY) < 0.6
+        let verticalThenHorizontal = abs(first.x - second.x) < 0.6
+            && abs(second.y - third.y) < 0.6
+            && abs(second.x - third.x) > 1
+        return fromBottom && verticalThenHorizontal
+    }
 }

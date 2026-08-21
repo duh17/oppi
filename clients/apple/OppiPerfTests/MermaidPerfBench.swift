@@ -16,7 +16,7 @@ import Testing
 struct MermaidPerfBench {
 
     private let parser = MermaidParser()
-    private let renderer = MermaidFlowchartRenderer()
+    private let renderer = MermaidRenderer()
     private let config = RenderConfiguration.default()
 
     // MARK: - Fixtures

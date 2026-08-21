@@ -5,7 +5,7 @@ import UIKit
 /// Shows a rendered diagram when the code fence is closed, or falls back
 /// to a syntax-highlighted code block while the fence is still open during
 /// streaming. Parses and rasterizes via `DocumentRenderPipeline` +
-/// `MermaidFlowchartRenderer` on a background thread, then displays the
+/// `MermaidRenderer` on a background thread, then displays the
 /// resulting image.
 ///
 /// Tap opens `FullScreenCodeViewController` with pinch-to-zoom and full
@@ -145,7 +145,7 @@ final class NativeMermaidBlockView: UIView {
 
         guard let result = DocumentRenderPipeline.renderInlineGraphicalImage(
             parser: MermaidParser(),
-            renderer: MermaidFlowchartRenderer(),
+            renderer: MermaidRenderer(),
             text: code,
             config: RenderConfiguration(
                 fontSize: 13,
@@ -179,7 +179,7 @@ final class NativeMermaidBlockView: UIView {
             let result: (image: UIImage, size: CGSize)? = await Task.detached(priority: .userInitiated) {
                 DocumentRenderPipeline.renderInlineGraphicalImage(
                     parser: MermaidParser(),
-                    renderer: MermaidFlowchartRenderer(),
+                    renderer: MermaidRenderer(),
                     text: code,
                     config: RenderConfiguration(
                         fontSize: 13,
@@ -274,7 +274,11 @@ final class NativeMermaidBlockView: UIView {
     }
 
     private func invalidateTimelineLayout() {
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
+        // Diagram rasterization commonly completes after the first SwiftUI
+        // sizeThatFits / collection-view self-sizing pass. Soft invalidation
+        // is skipped while detached from bottom and no-ops with no collection
+        // view. Force-invalidate so both surfaces adopt the rendered height.
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     @objc private func handleTap() {

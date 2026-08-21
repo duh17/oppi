@@ -6,6 +6,8 @@ enum ToolTimelineRowPresentationHelpers {
     // periphery:ignore - test seam for distinguishing content updates from
     // outer timeline geometry invalidations.
     static var enclosingLayoutInvalidationHookForTesting: (() -> Void)?
+    // periphery:ignore - test seam for SwiftUI-hosted markdown remeasure.
+    static var swiftUIMarkdownRootInvalidationHookForTesting: ((AssistantMarkdownContentView) -> Void)?
 #endif
 
     @MainActor
@@ -259,13 +261,8 @@ enum ToolTimelineRowPresentationHelpers {
 #endif
         invalidateEnclosingStreamingHeightCache(startingAt: sourceView)
 
-        var view: UIView? = sourceView.superview
-        while let current = view {
-            guard let collectionView = current as? UICollectionView else {
-                view = current.superview
-                continue
-            }
-
+        let target = enclosingLayoutTarget(startingAt: sourceView)
+        if let collectionView = target.collectionView {
             if isUserInteracting(with: collectionView) {
                 scheduleInvalidationWhenInteractionEnds(for: collectionView)
                 return
@@ -274,6 +271,8 @@ enum ToolTimelineRowPresentationHelpers {
             scheduleCoalescedInvalidation(for: collectionView)
             return
         }
+
+        invalidateSwiftUIHostedMarkdownIfNeeded(target.markdownRoot)
     }
 
     /// Force a self-sizing pass for controls that synchronously change their
@@ -283,13 +282,8 @@ enum ToolTimelineRowPresentationHelpers {
     static func forceInvalidateEnclosingCollectionViewLayout(startingAt sourceView: UIView) {
         invalidateEnclosingStreamingHeightCache(startingAt: sourceView)
 
-        var view: UIView? = sourceView.superview
-        while let current = view {
-            guard let collectionView = current as? UICollectionView else {
-                view = current.superview
-                continue
-            }
-
+        let target = enclosingLayoutTarget(startingAt: sourceView)
+        if let collectionView = target.collectionView {
             if isUserInteracting(with: collectionView) {
                 scheduleForcedInvalidationWhenInteractionEnds(for: collectionView)
                 return
@@ -302,6 +296,40 @@ enum ToolTimelineRowPresentationHelpers {
             )
             return
         }
+
+        invalidateSwiftUIHostedMarkdownIfNeeded(target.markdownRoot)
+    }
+
+    /// Walk toward the window, remembering the outermost markdown root.
+    /// Collection-view hosts keep the existing self-sizing path; SwiftUI
+    /// representables have no `UICollectionView`, so the walk would otherwise
+    /// no-op after async mermaid/LaTeX/image growth and freeze `sizeThatFits`.
+    private static func enclosingLayoutTarget(
+        startingAt sourceView: UIView
+    ) -> (collectionView: UICollectionView?, markdownRoot: AssistantMarkdownContentView?) {
+        var view: UIView? = sourceView.superview
+        var markdownRoot: AssistantMarkdownContentView?
+        while let current = view {
+            if let markdown = current as? AssistantMarkdownContentView {
+                markdownRoot = markdown
+            }
+            if let collectionView = current as? UICollectionView {
+                return (collectionView, markdownRoot)
+            }
+            view = current.superview
+        }
+        return (nil, markdownRoot)
+    }
+
+    private static func invalidateSwiftUIHostedMarkdownIfNeeded(
+        _ markdownRoot: AssistantMarkdownContentView?
+    ) {
+        guard let markdownRoot else { return }
+#if DEBUG
+        swiftUIMarkdownRootInvalidationHookForTesting?(markdownRoot)
+#endif
+        markdownRoot.invalidateIntrinsicContentSize()
+        markdownRoot.setNeedsLayout()
     }
 
     // MARK: - Coalesced invalidation

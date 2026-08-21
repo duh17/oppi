@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -1716,6 +1717,154 @@ struct ToolTimelineRowModeDispatchTests {
 
         let autoFollow = try #require(privateBool(named: "expandedShouldAutoFollow", in: view))
         #expect(!autoFollow, "Done diff should disable auto-follow")
+    }
+
+    @Test func layoutInvalidationWithoutCollectionViewBustsOutermostMarkdownIntrinsicSize() {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        let outerMarkdown = AssistantMarkdownContentView()
+        let innerMarkdown = AssistantMarkdownContentView()
+        let source = UIView(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
+        host.addSubview(outerMarkdown)
+        outerMarkdown.addSubview(innerMarkdown)
+        innerMarkdown.addSubview(source)
+
+        var invalidatedRoots: [ObjectIdentifier] = []
+        ToolTimelineRowPresentationHelpers.swiftUIMarkdownRootInvalidationHookForTesting = { root in
+            invalidatedRoots.append(ObjectIdentifier(root))
+        }
+        defer {
+            ToolTimelineRowPresentationHelpers.swiftUIMarkdownRootInvalidationHookForTesting = nil
+        }
+
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(
+            startingAt: source
+        )
+        #expect(invalidatedRoots == [ObjectIdentifier(outerMarkdown)])
+
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(
+            startingAt: source
+        )
+        #expect(invalidatedRoots == [
+            ObjectIdentifier(outerMarkdown),
+            ObjectIdentifier(outerMarkdown),
+        ])
+    }
+
+    @Test func layoutInvalidationWithCollectionViewStillInvalidatesCollectionLayout() {
+        let layout = ModeDispatchInvalidationCountingLayout()
+        let collectionView = UICollectionView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 700),
+            collectionViewLayout: layout
+        )
+        let markdown = AssistantMarkdownContentView()
+        let source = UIView(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
+        markdown.frame = CGRect(x: 0, y: 0, width: 390, height: 80)
+        collectionView.addSubview(markdown)
+        markdown.addSubview(source)
+        collectionView.layoutIfNeeded()
+        markdown.layoutIfNeeded()
+
+        var markdownFallbackCount = 0
+        ToolTimelineRowPresentationHelpers.swiftUIMarkdownRootInvalidationHookForTesting = { _ in
+            markdownFallbackCount += 1
+        }
+        defer {
+            ToolTimelineRowPresentationHelpers.swiftUIMarkdownRootInvalidationHookForTesting = nil
+        }
+
+        let baseline = layout.invalidationCount
+        ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(
+            startingAt: source
+        )
+        #expect(
+            layout.invalidationCount > baseline,
+            "Forced invalidation must still re-measure the enclosing collection view"
+        )
+
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(
+            startingAt: source
+        )
+        drainMainQueue(passes: 3)
+        #expect(
+            markdownFallbackCount == 0,
+            "Collection-view hosts must not take the SwiftUI markdown fallback"
+        )
+    }
+
+    @Test func swiftUIHostedMarkdownRemeasuresAfterAsyncMermaidGrowth() async throws {
+        let content = """
+        Intro prose above the diagram.
+
+        ```mermaid
+        flowchart TD
+            A[Capture] --> B[Normalize]
+            B --> C[Enrich]
+            C --> D[Index]
+            D --> E[Retrieve]
+            E --> F[Summarize]
+            F --> G[Share]
+            B --> H[Deduplicate]
+            H --> I[Merge]
+            I --> J[Score]
+            J --> K[Rank]
+            K --> L[Answer]
+            L --> M[Audit]
+            M --> N[Feedback]
+        ```
+
+        Tail prose under the diagram.
+        """
+
+        let host = UIHostingController(
+            rootView: MarkdownContentViewWrapper(content: content)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        host.view.layoutIfNeeded()
+
+        let markdownView = try #require(
+            timelineFirstView(ofType: AssistantMarkdownContentView.self, in: host.view)
+        )
+        let mermaidView = try #require(
+            timelineFirstView(ofType: NativeMermaidBlockView.self, in: markdownView)
+        )
+
+        let initialMarkdownHeight = markdownView.bounds.height
+
+        let diagramRendered = await waitForTimelineCondition(timeoutMs: 1_400) {
+            await MainActor.run {
+                timelineAllImageViews(in: mermaidView).contains { !$0.isHidden && $0.image != nil }
+            }
+        }
+        #expect(diagramRendered, "Mermaid fixture did not render image in time")
+
+        let remeasured = await waitForTimelineCondition(timeoutMs: 1_400) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                return markdownView.bounds.height > initialMarkdownHeight + 20
+            }
+        }
+
+        #expect(
+            remeasured,
+            "SwiftUI-hosted markdown stayed frozen after async mermaid growth (markdown \(markdownView.bounds.height) from \(initialMarkdownHeight), mermaid \(mermaidView.bounds.height))"
+        )
+    }
+}
+
+@MainActor
+private final class ModeDispatchInvalidationCountingLayout: UICollectionViewFlowLayout {
+    private(set) var invalidationCount = 0
+
+    override func invalidateLayout() {
+        invalidationCount += 1
+        super.invalidateLayout()
     }
 }
 
