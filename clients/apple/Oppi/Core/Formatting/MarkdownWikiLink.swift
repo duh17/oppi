@@ -646,17 +646,24 @@ enum ResourceReferenceURL {
     }
 }
 
-/// Rewrites the supported wiki-link subset into normal markdown link inlines.
+/// Rewrites wiki links and GitHub-style Markdown file links onto the shared
+/// `ResourceReference` pipeline.
 ///
-/// Supported syntax:
+/// Supported wiki syntax:
 /// - `[[target]]`
 /// - `[[target|label]]`
 ///
 /// The raw target stays unresolved. A workspace-relative file candidate travels
 /// beside it so tap-time resolution can compare that candidate with exact Oppi
-/// session matches. Extension and relative-path rules apply only to the file
-/// candidate: extensionless paths gain `.md`, and `./` or `../` resolve against
-/// the source markdown file's directory.
+/// session matches. Extension and relative-path rules apply only to the wiki
+/// file candidate: extensionless paths gain `.md`, and `./` or `../` resolve
+/// against the source markdown file's directory.
+///
+/// Standard Markdown `[label](path)` destinations reuse the same unresolved
+/// resource-reference URLs. Those paths do not gain `.md`. When a source
+/// directory is known they join against it; otherwise they stay workspace-root
+/// relative. `http`, `https`, `mailto`, `oppi`, `oppi-session-file`, and already
+/// rewritten resource-reference destinations stay unchanged.
 enum MarkdownWikiLinkRewriter {
     struct ParserInput {
         let source: String
@@ -1005,7 +1012,13 @@ enum MarkdownWikiLinkRewriter {
                 result.append(.strong(rewrite(inlines: children, context: context)))
             case .strikethrough(let children):
                 result.append(.strikethrough(rewrite(inlines: children, context: context)))
-            case .link, .code, .image, .videoEmbed, .softBreak, .hardBreak, .html:
+            case .link(let children, let destination):
+                result.append(contentsOf: rewriteMarkdownLink(
+                    children: rewrite(inlines: children, context: context),
+                    destination: destination,
+                    context: context
+                ))
+            case .code, .image, .videoEmbed, .softBreak, .hardBreak, .html:
                 result.append(inline)
             }
         }
@@ -1146,6 +1159,144 @@ enum MarkdownWikiLinkRewriter {
             lineAnchor: classified.parsed.lineAnchor,
             visibleLabel: display
         )
+    }
+
+    private static let passThroughMarkdownLinkSchemes: Set<String> = [
+        "http",
+        "https",
+        "mailto",
+        "oppi",
+        "oppi-session-file",
+        ResourceReferenceURL.scheme,
+    ]
+
+    /// GitHub-style file links share the wiki-link tap pipeline. Unknown and
+    /// unsafe schemes fail closed by dropping the destination instead of
+    /// leaving a tappable URL.
+    private static func rewriteMarkdownLink(
+        children: [MarkdownInline],
+        destination: String?,
+        context: RewriteContext
+    ) -> [MarkdownInline] {
+        let passthrough: [MarkdownInline] = [.link(children: children, destination: destination)]
+        guard let rawDestination = destination?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawDestination.isEmpty else {
+            return passthrough
+        }
+
+        if let scheme = rfc3986Scheme(of: rawDestination) {
+            if passThroughMarkdownLinkSchemes.contains(scheme) {
+                return passthrough
+            }
+            if scheme != "file" {
+                return children
+            }
+        } else if rawDestination.hasPrefix("#") {
+            return passthrough
+        }
+
+        guard let classified = classifyMarkdownLinkTarget(
+            rawDestination,
+            sourceDirectory: context.sourceDirectory
+        ) else {
+            return rfc3986Scheme(of: rawDestination) == nil ? passthrough : children
+        }
+
+        let workspaceID = context.workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasWorkspaceScope = workspaceID?.isEmpty == false
+        let fileCandidatePath: String?
+        switch classified.kind {
+        case .hostFile:
+            fileCandidatePath = classified.path
+        case .workspaceFile:
+            fileCandidatePath = hasWorkspaceScope ? classified.path : nil
+        }
+
+        let label = plainText(from: children).trimmingCharacters(in: .whitespacesAndNewlines)
+        let display = label.isEmpty ? rawDestination : label
+        guard let url = ResourceReferenceURL.make(ResourceReference(
+            target: rawDestination,
+            sourceServerID: context.serverID,
+            workspaceID: hasWorkspaceScope ? workspaceID : nil,
+            sourceSessionID: context.sessionID,
+            fileCandidatePath: fileCandidatePath,
+            kind: classified.kind,
+            lineAnchor: classified.parsed.lineAnchor,
+            visibleLabel: display
+        )) else {
+            return children
+        }
+
+        return [.link(children: children, destination: url.absoluteString)]
+    }
+
+    /// Markdown file links always join against the source directory when it is
+    /// known. Wiki links stay workspace-root-relative unless they start with
+    /// `./` or `../`. Neither query strings nor `.md` suffixing apply here.
+    private static func classifyMarkdownLinkTarget(
+        _ destination: String,
+        sourceDirectory: String?
+    ) -> ClassifiedWikiTarget? {
+        guard !destination.contains("?"),
+              let parsed = parseMarkdownLinkTarget(destination) else {
+            return nil
+        }
+
+        var path = parsed.path.replacingOccurrences(of: "\\", with: "/")
+        let trimmedSource = sourceDirectory?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasSourceDirectory = trimmedSource?.isEmpty == false
+        let isExplicitHostForm = path.hasPrefix("/")
+            || path.hasPrefix("~")
+            || path.lowercased().hasPrefix("file:")
+
+        if hasSourceDirectory, !isExplicitHostForm, let trimmedSource {
+            path = trimmedSource + "/" + path
+        }
+
+        if let hostPath = resolvedHostPath(path) {
+            return ClassifiedWikiTarget(parsed: parsed, kind: .hostFile, path: hostPath)
+        }
+
+        guard !path.hasPrefix("/"), !path.hasPrefix("~") else { return nil }
+        guard !path.contains("?"), !path.contains(":") else { return nil }
+        guard let normalized = normalizeWorkspacePath(path) else { return nil }
+        return ClassifiedWikiTarget(parsed: parsed, kind: .workspaceFile, path: normalized)
+    }
+
+    private static func parseMarkdownLinkTarget(_ rawTarget: String) -> ParsedWikiTarget? {
+        let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return nil }
+
+        guard let hash = target.firstIndex(of: "#") else {
+            return ParsedWikiTarget(path: target, lineAnchor: nil)
+        }
+
+        let path = String(target[..<hash]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+
+        let fragment = String(target[hash...])
+        if let lineAnchor = SourceLineAnchor.parse(fragment) {
+            return ParsedWikiTarget(path: path, lineAnchor: lineAnchor)
+        }
+        // Heading fragments are not anchors. Open the file and ignore the heading.
+        return ParsedWikiTarget(path: path, lineAnchor: nil)
+    }
+
+    private static func rfc3986Scheme(of destination: String) -> String? {
+        guard let colon = destination.firstIndex(of: ":") else { return nil }
+        let scheme = destination[..<colon]
+        guard let first = scheme.first, first.isASCII, first.isLetter else { return nil }
+        let isSchemeCharacter = { (character: Character) -> Bool in
+            character.isASCII && (
+                character.isLetter
+                    || character.isNumber
+                    || character == "+"
+                    || character == "-"
+                    || character == "."
+            )
+        }
+        guard scheme.allSatisfy(isSchemeCharacter) else { return nil }
+        return scheme.lowercased()
     }
 
     private static func parseWikiTarget(_ rawTarget: String) -> ParsedWikiTarget? {

@@ -111,6 +111,22 @@ Inline Markdown video uses wiki-embed syntax:
 - Reuse a real existing path; never fabricate a path or expose secrets. Sandbox sessions should keep using sandbox-visible paths.
 ````
 
+## Standard Markdown file links
+
+The native Markdown reader also treats GitHub-style file links as the same tappable resource references as wiki links:
+
+```text
+[Contributing](CONTRIBUTING.md)
+[Onboarding](docs/onboarding.md)
+[App](Sources/App.swift#L12)
+```
+
+Relative destinations join against the source Markdown file's directory when that directory is known. Root files such as `README.md` have no source directory, so `CONTRIBUTING.md` and `docs/onboarding.md` resolve from the workspace root. Wiki `[[path]]` targets stay workspace-root-relative unless they start with `./` or `../`.
+
+Oppi does not add `.md` to these destinations. `#L12` and `#L12-L18` stay as source line anchors. A heading fragment on a file path opens the file and ignores the heading. A same-file `#heading` destination stays visible but is not tappable.
+
+`http`, `https`, `mailto`, `oppi`, `oppi-session-file`, and already-rewritten `oppi-resource-reference` destinations are unchanged. `javascript:`, `data:`, query strings, and unsupported host forms fail closed with the same host-path rules as wiki links.
+
 ## Viewing Options
 
 Full-screen document viewers show a **Viewing Options** button near the bottom-right corner of the screen. The panel adapts to the content type.

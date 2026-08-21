@@ -1471,6 +1471,286 @@ struct WorkspaceWikiLinkRenderingTests {
 
 private struct WikiLinkTestFailure: Error {}
 
+// MARK: - Standard Markdown file links
+
+@Suite("Standard Markdown file links")
+struct StandardMarkdownFileLinkTests {
+    private func textSegment(from segments: [FlatSegment]) throws -> AttributedString {
+        #expect(segments.count == 1)
+        guard segments.count == 1, case .text(let attributed) = segments[0] else {
+            Issue.record("Expected one .text segment, got \(segments)")
+            throw WikiLinkTestFailure()
+        }
+        return attributed
+    }
+
+    private func firstLink(in attributed: AttributedString) throws -> URL {
+        try #require(attributed.runs.compactMap(\.link).first)
+    }
+
+    private func resourceLinks(in attributed: AttributedString) -> [ResourceReference] {
+        attributed.runs.compactMap(\.link).compactMap(ResourceReferenceURL.parse)
+    }
+
+    @Test func givenReadmeStyleMarkdownFileLinkThenItRendersAsTappableResourceReference() throws {
+        let blocks = parseCommonMark("See [Contributing](CONTRIBUTING.md) next")
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-source"
+        )
+        let attributed = try textSegment(from: segments)
+
+        #expect(String(attributed.characters) == "See Contributing next")
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.target == "CONTRIBUTING.md")
+        #expect(parsed.sourceServerID == "server-1")
+        #expect(parsed.workspaceID == "workspace-1")
+        #expect(parsed.sourceSessionID == "session-source")
+        #expect(parsed.kind == .workspaceFile)
+        #expect(parsed.fileCandidatePath == "CONTRIBUTING.md")
+        #expect(parsed.visibleLabel == "Contributing")
+        #expect(parsed.lineAnchor == nil)
+    }
+
+    @Test(arguments: [
+        ("[Contributing](CONTRIBUTING.md)", "CONTRIBUTING.md"),
+        ("[Onboarding](docs/onboarding.md)", "docs/onboarding.md"),
+    ])
+    func givenRootReadmeWhenSourceDirectoryIsNilThenRelativeFilesResolveFromWorkspaceRoot(
+        source: String,
+        expectedPath: String
+    ) throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Open \(source)"),
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sourceDirectory: nil
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.kind == .workspaceFile)
+        #expect(parsed.fileCandidatePath == expectedPath)
+    }
+
+    @Test func givenRelativeMarkdownFileLinkThenItJoinsSourceDirectory() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [topic](topic.md)"),
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sourceDirectory: "notes/sessions"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.target == "topic.md")
+        #expect(parsed.fileCandidatePath == "notes/sessions/topic.md")
+    }
+
+    @Test func givenParentRelativeMarkdownFileLinkThenItResolvesAgainstSourceDirectory() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [Contributing](../CONTRIBUTING.md)"),
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sourceDirectory: "docs"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.fileCandidatePath == "CONTRIBUTING.md")
+    }
+
+    @Test func givenMarkdownFileLinkThenItDoesNotAppendMarkdownExtension() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [policy](server/src/file-serving-policy.ts) and [guide](CONTRIBUTING)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        let paths = resourceLinks(in: attributed).compactMap(\.fileCandidatePath)
+        #expect(paths == ["server/src/file-serving-policy.ts", "CONTRIBUTING"])
+    }
+
+    @Test func givenGitHubLineAnchorOnMarkdownFileLinkThenFileCandidateDropsFragment() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Open [App](Sources/App.swift#L12-L18)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.fileCandidatePath == "Sources/App.swift")
+        #expect(parsed.lineAnchor?.range == 12...18)
+    }
+
+    @Test func givenHeadingFragmentOnMarkdownFileLinkThenFileOpensAndHeadingIsIgnored() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [License](CONTRIBUTING.md#License)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.fileCandidatePath == "CONTRIBUTING.md")
+        #expect(parsed.lineAnchor == nil)
+    }
+
+    @Test func givenSameFileHeadingMarkdownLinkThenItStaysNonTappable() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Jump to [License](#license)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        #expect(String(attributed.characters) == "Jump to License")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+        #expect(resourceLinks(in: attributed).isEmpty)
+    }
+
+    @Test func givenHttpAndHttpsMarkdownLinksThenDestinationsStayUnchanged() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [docs](https://example.com/a) and [secure](https://example.com/b) and [Contributing](CONTRIBUTING.md)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        let links = attributed.runs.compactMap(\.link)
+        #expect(links.map(\.absoluteString) == [
+            "https://example.com/a",
+            "https://example.com/b",
+            try firstResourceReferenceAbsoluteString(
+                in: attributed,
+                fileCandidatePath: "CONTRIBUTING.md"
+            ),
+        ])
+    }
+
+    @Test func givenMailtoMarkdownLinkThenDestinationStaysUnchanged() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Email [support](mailto:support@example.com)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        #expect(try firstLink(in: attributed).absoluteString == "mailto:support@example.com")
+        #expect(resourceLinks(in: attributed).isEmpty)
+    }
+
+    @Test func givenWikiLinkThenGrammarStaysWorkspaceRootRelativeUnlessDotSlash() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [[topic]] and [topic](topic.md)"),
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sourceDirectory: "notes/sessions"
+        ))
+        let paths = resourceLinks(in: attributed).compactMap(\.fileCandidatePath)
+        #expect(paths == ["topic.md", "notes/sessions/topic.md"])
+    }
+
+    @Test(arguments: [
+        "javascript:alert(1)",
+        "data:text/html,hello",
+    ])
+    func givenJavascriptOrDataMarkdownLinkThenItIsNotTappable(destination: String) throws {
+        let segments = FlatSegment.build(
+            from: [.paragraph([.link(children: [.text("Click")], destination: destination)])],
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        )
+        let attributed = try textSegment(from: segments)
+        #expect(String(attributed.characters) == "Click")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+        #expect(resourceLinks(in: attributed).isEmpty)
+    }
+
+    @Test func givenQueryStringMarkdownFileLinkThenItIsNotAResourceReference() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Open [leaky](CONTRIBUTING.md?leak=1)"),
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        #expect(resourceLinks(in: attributed).isEmpty)
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+
+    @Test(arguments: [
+        "~other/secrets.md",
+        "file://hostname/tmp/foo.md",
+        "file:/tmp/foo.md",
+    ])
+    func givenUnsupportedHostMarkdownLinkThenItIsNotAResourceReference(destination: String) throws {
+        let segments = FlatSegment.build(
+            from: [.paragraph([.link(children: [.text("Open")], destination: destination)])],
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        )
+        let attributed = try textSegment(from: segments)
+        #expect(resourceLinks(in: attributed).isEmpty)
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+
+    @Test func givenAbsoluteHostMarkdownFileLinkThenItStoresAHostFileCandidate() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Open [debug](/tmp/oppi-debug.log)"),
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.kind == .hostFile)
+        #expect(parsed.fileCandidatePath == "/tmp/oppi-debug.log")
+        #expect(parsed.sourceServerID == "server-1")
+    }
+
+    @Test func givenRelativeMarkdownFileLinkInsideHostMarkdownThenItStaysAHostFileCandidate() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Open [topic](topic.md)"),
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sourceDirectory: "/tmp"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.kind == .hostFile)
+        #expect(parsed.fileCandidatePath == "/tmp/topic.md")
+    }
+
+    @Test func givenWorkspaceContextMissingThenMarkdownFileLinkRemainsTappableGenericResourceReference() throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [Contributing](CONTRIBUTING.md)"),
+            themeID: .dark,
+            serverID: "server-1",
+            sessionID: "session-source"
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.target == "CONTRIBUTING.md")
+        #expect(parsed.sourceServerID == "server-1")
+        #expect(parsed.sourceSessionID == "session-source")
+        #expect(parsed.fileCandidatePath == nil)
+    }
+
+    @Test func givenAlreadyRewrittenResourceReferenceThenItStaysUnchanged() throws {
+        let original = try #require(ResourceReferenceURL.make(ResourceReference(
+            target: "CONTRIBUTING.md",
+            sourceServerID: "server-1",
+            workspaceID: "workspace-1",
+            sourceSessionID: "session-source",
+            fileCandidatePath: "CONTRIBUTING.md",
+            visibleLabel: "Contributing"
+        )))
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: [.paragraph([.link(children: [.text("Contributing")], destination: original.absoluteString)])],
+            themeID: .dark,
+            serverID: "other-server",
+            workspaceID: "other-workspace"
+        ))
+        #expect(try firstLink(in: attributed).absoluteString == original.absoluteString)
+    }
+
+    private func firstResourceReferenceAbsoluteString(
+        in attributed: AttributedString,
+        fileCandidatePath: String
+    ) throws -> String {
+        let url = try #require(
+            attributed.runs.compactMap(\.link).first { url in
+                ResourceReferenceURL.parse(url)?.fileCandidatePath == fileCandidatePath
+            }
+        )
+        return url.absoluteString
+    }
+}
+
 // MARK: - Non-text wiki link file icons
 
 @Suite("Non-text wiki link file icons")
