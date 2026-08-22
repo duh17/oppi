@@ -363,6 +363,65 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func themeChangeNotificationRepaintsInlineCodeBackground() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+
+        ThemeRuntimeState.setThemeID(.light)
+        let collectionView = UICollectionView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        let controller = ChatTimelineCollectionHost.Controller()
+        controller.configureDataSource(collectionView: collectionView)
+        let harness = makeTimelineHarness(sessionId: "session-theme")
+        let config = makeTimelineConfiguration(
+            items: [
+                .assistantMessage(
+                    id: "assistant-theme",
+                    text: "Use `layoutIfNeeded` here",
+                    timestamp: Date(timeIntervalSince1970: 0)
+                ),
+            ],
+            sessionId: "session-theme",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        controller.apply(configuration: config, to: collectionView)
+
+        let cell = try configuredTimelineCell(in: collectionView, item: 0)
+        let textView = try #require(timelineFirstTextView(in: cell))
+        let codeRange = (textView.attributedText.string as NSString).range(of: "layoutIfNeeded")
+        #expect(codeRange.location != NSNotFound)
+
+        let lightBackground = textView.attributedText.attribute(
+            .backgroundColor,
+            at: codeRange.location,
+            effectiveRange: nil
+        ) as? UIColor
+        #expect(assistantRowColor(lightBackground, approximatelyEquals: UIColor(ThemePalettes.light.bgHighlight)))
+
+        ThemeRuntimeState.setThemeID(.dark)
+        NotificationCenter.default.post(name: .oppiThemeDidChange, object: nil)
+
+        let updatedCell = try configuredTimelineCell(in: collectionView, item: 0)
+        let updatedTextView = try #require(timelineFirstTextView(in: updatedCell))
+        let updatedCodeRange = (updatedTextView.attributedText.string as NSString).range(of: "layoutIfNeeded")
+        #expect(updatedCodeRange.location != NSNotFound)
+        let darkBackground = updatedTextView.attributedText.attribute(
+            .backgroundColor,
+            at: updatedCodeRange.location,
+            effectiveRange: nil
+        ) as? UIColor
+        #expect(assistantRowColor(darkBackground, approximatelyEquals: UIColor(ThemePalettes.dark.bgHighlight)))
+        #expect(assistantRowColor(darkBackground, approximatelyEquals: UIColor(ThemePalettes.light.bgHighlight)) == false)
+    }
+
+    @MainActor
     @Test func rendersCodeBlockInSeparateView() throws {
         let text = "Here is code:\n\n```swift\nlet x = 1\n```\n\nDone."
         let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
@@ -1693,6 +1752,30 @@ struct NativeTableNestedScrollOwnershipTests {
             makeWrapTable(linkURL: "https://example.com/docs")
         )
     }
+}
+
+@MainActor
+private func assistantRowColor(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance: CGFloat = 0.01) -> Bool {
+    guard let lhs else { return false }
+
+    var lr: CGFloat = 0
+    var lg: CGFloat = 0
+    var lb: CGFloat = 0
+    var la: CGFloat = 0
+    var rr: CGFloat = 0
+    var rg: CGFloat = 0
+    var rb: CGFloat = 0
+    var ra: CGFloat = 0
+
+    guard lhs.getRed(&lr, green: &lg, blue: &lb, alpha: &la),
+          rhs.getRed(&rr, green: &rg, blue: &rb, alpha: &ra) else {
+        return lhs.cgColor == rhs.cgColor
+    }
+
+    return abs(lr - rr) <= tolerance &&
+        abs(lg - rg) <= tolerance &&
+        abs(lb - rb) <= tolerance &&
+        abs(la - ra) <= tolerance
 }
 
 @MainActor

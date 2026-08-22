@@ -213,6 +213,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var backSwipeGestureInstaller: HorizontalBackSwipeGestureInstaller?
         var onBackSwipe: (() -> Void)?
 
+        override init() {
+            super.init()
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleThemeDidChange),
+                name: .oppiThemeDidChange,
+                object: nil
+            )
+        }
+
         var sessionId: String {
             get { context.sessionId }
             set { context.sessionId = newValue }
@@ -469,6 +479,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     name: AudioPlayerService.stateDidChangeNotification,
                     object: observedAudioPlayer
                 )
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: .oppiThemeDidChange,
+                    object: nil
+                )
             }
         }
 
@@ -559,6 +574,17 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 name: AudioPlayerService.stateDidChangeNotification,
                 object: audioPlayer
             )
+        }
+
+        @objc
+        private func handleThemeDidChange() {
+            guard let collectionView else { return }
+            let currentThemeID = ThemeRuntimeState.currentThemeID()
+            guard previousThemeID != currentThemeID else { return }
+            previousThemeID = currentThemeID
+            collectionView.backgroundColor = UIColor(Color.themeBg)
+            guard !currentIDs.isEmpty else { return }
+            reconfigureItems(currentIDs, in: collectionView)
         }
 
         @objc
