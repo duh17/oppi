@@ -830,23 +830,6 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "ask-card-multiselect-long")
     }
 
-    func testLatexRenderingPreview() throws {
-        for colorScheme in ["dark", "light"] {
-            launchPreview(
-                screen: "latex-rendering",
-                environment: ["SCREENSHOT_COLOR_SCHEME": colorScheme]
-            )
-
-            let content = app.descendants(matching: .any)["latex.preview.content"]
-            XCTAssertTrue(
-                content.waitForExistence(timeout: 5),
-                "Production Markdown/LaTeX preview did not render in \(colorScheme) mode"
-            )
-            saveScreenshot(name: "latex-rendering-\(colorScheme)")
-            app.terminate()
-        }
-    }
-
     func testMermaidRenderingPreview() throws {
         let diagrams: [(heading: String, kind: String)] = [
             ("Flowchart", "flowchart"),
@@ -1118,34 +1101,6 @@ final class ScreenshotPreviewUITests: XCTestCase {
         let sharedFile = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "WorkspaceContextBar.swift")).firstMatch
         XCTAssertTrue(sharedFile.waitForExistence(timeout: 3), "Expanded file list not visible")
         saveScreenshot(name: "context-bar-overlap-expanded")
-    }
-
-    func testVoiceMessageExpandedPreview() throws {
-        launchPreview(screen: "voice-message-expanded")
-
-        let title = app.staticTexts["Expanded voice message"]
-        XCTAssertTrue(title.waitForExistence(timeout: 5), "Voice message preview title not found")
-
-        saveScreenshot(name: "voice-message-expanded")
-    }
-
-    func testGlobalAudioPlaybackBannerPreview() throws {
-        launchPreview(screen: "global-audio-banner")
-
-        let title = app.staticTexts["Voice reply playing"]
-        XCTAssertTrue(title.waitForExistence(timeout: 5), "Global audio playback banner title not found")
-
-        sleep(1)
-        saveScreenshot(name: "global-audio-banner")
-    }
-
-    func testShareRedactionReportPreview() throws {
-        launchPreview(screen: "share-redaction-report")
-
-        let title = app.staticTexts["Redaction report"]
-        XCTAssertTrue(title.waitForExistence(timeout: 5), "Redaction report title not found")
-
-        saveScreenshot(name: "share-redaction-report")
     }
 
     func testShareRedactionSettingsPreview() throws {

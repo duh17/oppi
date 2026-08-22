@@ -343,6 +343,16 @@ To add a scenario:
 
 Mock screenshot-preview tests live in `clients/apple/OppiUITests/ScreenshotPreviewUITests.swift` and launch the app with `--screenshot-preview`. They are useful for isolated visual surfaces, not for paired-server workspace behavior.
 
+Post-run UI checks belong here or on a `sim-lab` scenario, not in a new XCUITest. Agent procedure lives in `.pi/skills/oppi-dev/references/local-build.md`. This file owns the launch command and artifact paths.
+
+```bash
+# Isolated surface dump: accessibility tree + audit + one PNG
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh ui-validate \
+  --screen mermaid-rendering
+```
+
+Artifacts: `.pi/ui-validate/<timestamp>-<screen>/{tree.md,audit.md,screen.png,manifest.json}` from `XCUIElement.snapshot()` and `performAccessibilityAudit`. Review those files. Do not add another preview test method just to look at a screen; add a fixture to an existing named preview instead.
+
 ### Duplication and Apple guardrail check
 
 Run after Apple UI or rendering changes. From the repo root:
