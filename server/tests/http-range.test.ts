@@ -30,6 +30,10 @@ describe("HTTP byte range edge cases", () => {
     expect(parseByteRangeHeader("bytes=-0", 10)).toEqual({ kind: "unsatisfiable" });
     expect(parseByteRangeHeader("bytes=0-0", 0)).toEqual({ kind: "unsatisfiable" });
     expect(parseByteRangeHeader("bytes=9007199254740992-", 10)).toEqual({ kind: "invalid" });
+    // AVPlayer Int.max closed ranges are not JS-safe and must stay invalid.
+    expect(parseByteRangeHeader("bytes=0-9223372036854775806", 21_123_557)).toEqual({
+      kind: "invalid",
+    });
     expect(parseByteRangeHeader("bytes=0-1", Number.NaN)).toEqual({ kind: "invalid" });
     expect(parseByteRangeHeader("bytes=0-1", -1)).toEqual({ kind: "invalid" });
   });

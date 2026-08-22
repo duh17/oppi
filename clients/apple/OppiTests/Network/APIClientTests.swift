@@ -1390,6 +1390,22 @@ struct APIClientTests {
         #expect(source.sourceFileExtension == "mov")
     }
 
+    @Test func hostFileMediaSourceRefreshesBearerPerRequest() async throws {
+        let client = makeClient()
+        let source = try await client.makeHostFileMediaSource(
+            path: "/tmp/clip.mp4",
+            contentTypeHint: "video/mp4",
+            sourceFileExtension: "mp4"
+        )
+
+        let components = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
+        #expect(components?.percentEncodedPath == "/files/raw")
+        #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "/tmp/clip.mp4")
+        #expect(source.url.absoluteString.contains("sk_test") == false)
+        #expect(try await source.authorizationProvider() == "Bearer sk_test")
+        #expect(source.contentTypeHint == "video/mp4")
+    }
+
     @Test func sessionFileMediaSourceUsesSessionRawRouteForExternalPath() async throws {
         let client = makeClient()
         let source = try await client.makeSessionFileMediaSource(
@@ -1606,6 +1622,105 @@ struct APIClientTests {
             statusCode: 206,
             requestedRange: range,
             contentRange: "bytes 1024-2047/not-a-size"
+        )
+        #expect(error != nil)
+    }
+
+    @Test func authenticatedMediaRangeKeepsClosedHeaderForBoundedRequest() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 1_024,
+            requestedLength: 1_024,
+            requestsAllDataToEndOfResource: false
+        )
+        #expect(range.headerValue == "bytes=1024-2047")
+        #expect(range.start == 1_024)
+        #expect(range.end == 2_047)
+    }
+
+    @Test func authenticatedMediaRangeCapsRestOfFileRequestToOneMegabyteChunk() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 4_096,
+            requestedLength: Int.max,
+            requestsAllDataToEndOfResource: true
+        )
+        #expect(range.headerValue == "bytes=4096-1052671")
+        #expect(range.start == 4_096)
+        #expect(range.end == 1_052_671)
+        #expect(range.continuesToEnd)
+    }
+
+    @Test func authenticatedMediaRangeCapsHugeLengthWithoutAllDataFlag() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 0,
+            requestedLength: Int.max,
+            requestsAllDataToEndOfResource: false
+        )
+        #expect(range.headerValue == "bytes=0-1048575")
+        #expect(range.end == 1_048_575)
+        #expect(range.continuesToEnd)
+    }
+
+    @Test func authenticatedMediaRangeCapsOverflowingOffsetPlusLength() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 1_048_576,
+            requestedLength: Int.max,
+            requestsAllDataToEndOfResource: false
+        )
+        #expect(range.headerValue == "bytes=1048576-2097151")
+        #expect(range.end == 2_097_151)
+        #expect(range.continuesToEnd)
+    }
+
+    @Test func authenticatedMediaRangeDoesNotStreamBoundedRequestPastRequestedLength() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 0,
+            requestedLength: 2_097_152,
+            requestsAllDataToEndOfResource: false
+        )
+        #expect(range.headerValue == "bytes=0-1048575")
+        #expect(range.end == 1_048_575)
+        #expect(range.continuesToEnd == false)
+    }
+
+    @Test func authenticatedMediaRangeContinuationStopsAtKnownTotal() {
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 1_048_575,
+                totalLength: 1_048_576
+            ) == nil
+        )
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 1_048_575,
+                totalLength: 2_097_152
+            ) == 1_048_576
+        )
+    }
+
+    @Test func authenticatedMediaResponseValidatorAcceptsOpenEndedPartialContent() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 1_024,
+            requestedLength: Int.max,
+            requestsAllDataToEndOfResource: true
+        )
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 206,
+            requestedRange: range,
+            contentRange: "bytes 1024-4999/5000"
+        )
+        #expect(error == nil)
+    }
+
+    @Test func authenticatedMediaResponseValidatorRejectsOpenEndedRequestWithFullResponse() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 1_024,
+            requestedLength: Int.max,
+            requestsAllDataToEndOfResource: true
+        )
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 200,
+            requestedRange: range,
+            contentRange: nil
         )
         #expect(error != nil)
     }

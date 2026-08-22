@@ -972,18 +972,26 @@ struct DataImagePreviewView: View {
 
 struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     let player: AVPlayer
+    var onFullScreenChange: ((Bool) -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onFullScreenChange: onFullScreenChange)
+    }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
+        controller.delegate = context.coordinator
         configure(controller)
         controller.player = player
         return controller
     }
 
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
+        context.coordinator.onFullScreenChange = onFullScreenChange
         if uiViewController.player !== player {
             uiViewController.player = player
         }
+        uiViewController.delegate = context.coordinator
         configure(uiViewController)
     }
 
@@ -994,6 +1002,39 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
         controller.view.accessibilityIdentifier = "videoPlayer.native"
+    }
+
+    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
+        var onFullScreenChange: ((Bool) -> Void)?
+        private var wasPlayingBeforeFullScreen = false
+
+        init(onFullScreenChange: ((Bool) -> Void)?) {
+            self.onFullScreenChange = onFullScreenChange
+        }
+
+        func playerViewController(
+            _ playerViewController: AVPlayerViewController,
+            willBeginFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
+        ) {
+            wasPlayingBeforeFullScreen = playerViewController.player?.timeControlStatus == .playing
+                || playerViewController.player?.rate ?? 0 > 0
+            onFullScreenChange?(true)
+            if wasPlayingBeforeFullScreen {
+                playerViewController.player?.play()
+            }
+        }
+
+        func playerViewController(
+            _ playerViewController: AVPlayerViewController,
+            willEndFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
+        ) {
+            let isPlayingNow = playerViewController.player?.timeControlStatus == .playing
+                || playerViewController.player?.rate ?? 0 > 0
+            onFullScreenChange?(false)
+            if isPlayingNow {
+                playerViewController.player?.play()
+            }
+        }
     }
 }
 

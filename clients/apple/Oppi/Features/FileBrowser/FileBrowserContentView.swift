@@ -40,6 +40,28 @@ enum FileBrowserContentRenderingPolicy {
     }
 }
 
+enum FileBrowserMediaLoadPolicy {
+    enum Existing: Equatable {
+        case none
+        case video(path: String)
+        case audio(path: String)
+    }
+
+    static func shouldReload(
+        existing: Existing,
+        requestedPath: String,
+        force: Bool
+    ) -> Bool {
+        if force { return true }
+        switch existing {
+        case .video(let path), .audio(let path):
+            return path != requestedPath
+        case .none:
+            return true
+        }
+    }
+}
+
 /// Displays the content of a workspace file in browse mode.
 ///
 /// Delegates to `FileContentView` for type-aware rendering:
@@ -83,6 +105,7 @@ struct FileBrowserContentView: View {
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
+    @State private var loadedMediaPath: String?
     @State private var isExpensiveNetwork = false
 
     /// Captured API client reference from when the file was loaded.
@@ -362,6 +385,21 @@ struct FileBrowserContentView: View {
         let requestedPath = requestedSelection.path
         let requestedExtension = (requestedPath as NSString).pathExtension.lowercased()
         let requestedCategory = FileType.detect(from: requestedPath).previewCategory
+        let existingMedia: FileBrowserMediaLoadPolicy.Existing = {
+            guard let loadedMediaPath else { return .none }
+            switch content {
+            case .video: return .video(path: loadedMediaPath)
+            case .audio: return .audio(path: loadedMediaPath)
+            default: return .none
+            }
+        }()
+        if !FileBrowserMediaLoadPolicy.shouldReload(
+            existing: existingMedia,
+            requestedPath: requestedPath,
+            force: force
+        ) {
+            return
+        }
 
         // Capture the API client while we know it's non-nil.
         // See loadedApiClient comment for why this is needed.
@@ -375,6 +413,7 @@ struct FileBrowserContentView: View {
             return
         }
 
+        loadedMediaPath = nil
         content = .loading
 
         do {
@@ -387,6 +426,7 @@ struct FileBrowserContentView: View {
                     sourceFileExtension: requestedExtension
                 )
                 guard isCurrentFile(requestedPath) else { return }
+                loadedMediaPath = requestedPath
                 content = .video(source)
             case .audio:
                 let source = try await mediaSource(
@@ -396,6 +436,7 @@ struct FileBrowserContentView: View {
                     sourceFileExtension: requestedExtension
                 )
                 guard isCurrentFile(requestedPath) else { return }
+                loadedMediaPath = requestedPath
                 content = .audio(source)
             case .image, .pdf, .text, .binary:
                 let data = try await browseFile(api: api, path: requestedPath)

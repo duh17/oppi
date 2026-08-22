@@ -334,6 +334,37 @@ struct FileBrowserReviewCommentSelectionTests {
         ) == "/Users/me/secret")
     }
 
+    @Test func fileBrowserKeepsExistingMediaInsteadOfReloadingSamePath() {
+        #expect(
+            FileBrowserMediaLoadPolicy.shouldReload(
+                existing: .video(path: "clips/demo.mp4"),
+                requestedPath: "clips/demo.mp4",
+                force: false
+            ) == false
+        )
+        #expect(
+            FileBrowserMediaLoadPolicy.shouldReload(
+                existing: .video(path: "clips/demo.mp4"),
+                requestedPath: "clips/other.mp4",
+                force: false
+            ) == true
+        )
+        #expect(
+            FileBrowserMediaLoadPolicy.shouldReload(
+                existing: .video(path: "clips/demo.mp4"),
+                requestedPath: "clips/demo.mp4",
+                force: true
+            ) == true
+        )
+        #expect(
+            FileBrowserMediaLoadPolicy.shouldReload(
+                existing: .none,
+                requestedPath: "clips/demo.mp4",
+                force: false
+            ) == true
+        )
+    }
+
     @Test func fileBrowserBackSwipePolicyYieldsOwnershipToModalHost() {
         #expect(
             FileBrowserContentView.shouldInstallHorizontalBackSwipe(

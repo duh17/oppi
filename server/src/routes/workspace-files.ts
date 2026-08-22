@@ -14,7 +14,7 @@ import {
   SEARCH_IGNORE_DIRS,
   SEARCH_ROOT_IGNORE_DIRS,
 } from "../file-serving-policy.js";
-import { parseByteRangeHeader } from "../http-range.js";
+import { logRejectedByteRange, parseByteRangeHeader } from "../http-range.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type {
   DirectoryListingResponse,
@@ -428,6 +428,7 @@ export function createWorkspaceFileRoutes(
     const isHeadRequest = method.toUpperCase() === "HEAD";
 
     if (range.kind === "invalid" || range.kind === "unsatisfiable") {
+      logRejectedByteRange("workspace-raw", req.headers?.range, range.kind, fileStat.size);
       res.writeHead(416, {
         ...commonHeaders,
         "Content-Range": `bytes */${fileStat.size}`,

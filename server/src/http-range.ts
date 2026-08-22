@@ -1,3 +1,7 @@
+import { createLogger } from "./logger.js";
+
+const rangeLog = createLogger({ base: { component: "http_range" } });
+
 export type ByteRangeParseResult =
   | { kind: "none" }
   | { kind: "valid"; start: number; end: number }
@@ -55,4 +59,18 @@ export function parseByteRangeHeader(
   if (requestedEnd < start) return { kind: "unsatisfiable" };
 
   return { kind: "valid", start, end: Math.min(requestedEnd, fileSize - 1) };
+}
+
+export function logRejectedByteRange(
+  route: string,
+  header: string | string[] | undefined,
+  kind: "invalid" | "unsatisfiable",
+  fileSize: number,
+): void {
+  rangeLog.warn("media.range_rejected", {
+    route,
+    kind,
+    fileSize,
+    range: Array.isArray(header) ? header.join(",") : (header ?? ""),
+  });
 }

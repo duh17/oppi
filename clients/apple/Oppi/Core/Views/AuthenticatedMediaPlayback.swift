@@ -6,12 +6,62 @@ import UniformTypeIdentifiers
 
 private enum AuthenticatedMediaPlaybackConstants {
     static let scheme = "oppi-media"
-    static let defaultRangeLength = 1_048_576
 }
 
 struct AuthenticatedMediaRequestedRange: Equatable, Sendable {
+    static let maxChunkLength: Int64 = 1_048_576
+
+    /// Inclusive start byte. `end` is nil for an open-ended `bytes=N-` request.
     let start: Int64
-    let end: Int64
+    let end: Int64?
+    /// True when this HTTP range is only the next chunk of a larger AVPlayer request.
+    let continuesToEnd: Bool
+
+    init(start: Int64, end: Int64?, continuesToEnd: Bool = false) {
+        self.start = start
+        self.end = end
+        self.continuesToEnd = continuesToEnd
+    }
+
+    /// AVPlayer often asks for the rest of the resource with `requestedLength ==
+    /// Int.max`. A closed `bytes=N-9223372036854775806` header is not a JS safe
+    /// integer, so the Oppi server rejects it as HTTP 416 and playback stalls.
+    /// Cap each HTTP GET to 1 MB and continue the same loading request in chunks.
+    static func make(
+        offset: Int64,
+        requestedLength: Int,
+        requestsAllDataToEndOfResource: Bool
+    ) -> AuthenticatedMediaRequestedRange {
+        let start = max(offset, 0)
+        let wantsRest = requestsAllDataToEndOfResource
+            || requestedLength <= 0
+            || requestedLength == Int.max
+        let requested = wantsRest ? Self.maxChunkLength : Int64(requestedLength)
+        let length = min(max(requested, 1), Self.maxChunkLength)
+        if start > Int64.max - length {
+            return AuthenticatedMediaRequestedRange(start: start, end: nil, continuesToEnd: wantsRest)
+        }
+        return AuthenticatedMediaRequestedRange(
+            start: start,
+            end: start + length - 1,
+            continuesToEnd: wantsRest
+        )
+    }
+
+    var headerValue: String {
+        if let end {
+            return "bytes=\(start)-\(end)"
+        }
+        return "bytes=\(start)-"
+    }
+}
+
+enum AuthenticatedMediaRangeContinuation {
+    static func nextOffset(afterEnd: Int64, totalLength: Int64?) -> Int64? {
+        guard let totalLength else { return nil }
+        let next = afterEnd + 1
+        return next < totalLength ? next : nil
+    }
 }
 
 enum AuthenticatedMediaResponseValidator {
@@ -32,8 +82,11 @@ enum AuthenticatedMediaResponseValidator {
             return "Ranged media response is missing a valid Content-Range header"
         }
         guard parsedRange.start == requestedRange.start,
-              parsedRange.end >= requestedRange.start,
-              parsedRange.end <= requestedRange.end else {
+              let parsedEnd = parsedRange.end,
+              parsedEnd >= requestedRange.start else {
+            return "Ranged media response Content-Range does not match the requested byte range"
+        }
+        if let requestedEnd = requestedRange.end, parsedEnd > requestedEnd {
             return "Ranged media response Content-Range does not match the requested byte range"
         }
         return nil
@@ -69,7 +122,10 @@ enum AuthenticatedMediaResponseValidator {
 private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVAssetResourceLoaderDelegate, URLSessionDataDelegate {
     private final class LoadingContext {
         let loadingRequest: AVAssetResourceLoadingRequest
-        let requestedRange: AuthenticatedMediaRequestedRange?
+        var requestedRange: AuthenticatedMediaRequestedRange?
+        var continueToEnd = false
+        var totalLength: Int64?
+        var deliveredEnd: Int64?
         var cancelled = false
         var responseError: Error?
 
@@ -79,6 +135,7 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         ) {
             self.loadingRequest = loadingRequest
             self.requestedRange = requestedRange
+            self.continueToEnd = requestedRange?.continuesToEnd ?? false
         }
     }
 
@@ -87,6 +144,7 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
     private let lock = NSLock()
     private var contextsByTaskId: [Int: LoadingContext] = [:]
     private var tasksByRequestId: [ObjectIdentifier: URLSessionDataTask] = [:]
+    private var isInvalidated = false
 
     let delegateQueue = DispatchQueue(label: "dev.chenda.oppi.authenticated-media.resource-loader")
     private lazy var session: URLSession = {
@@ -119,6 +177,10 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
 
     func cancelAll() {
         lock.lock()
+        isInvalidated = true
+        for context in contextsByTaskId.values {
+            context.cancelled = true
+        }
         let tasks = Array(tasksByRequestId.values)
         contextsByTaskId.removeAll()
         tasksByRequestId.removeAll()
@@ -139,12 +201,12 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         let rangeHeader: String?
         if let dataRequest = loadingRequest.dataRequest {
             let offset = max(dataRequest.currentOffset, dataRequest.requestedOffset)
-            let requestedLength = dataRequest.requestedLength > 0
-                ? dataRequest.requestedLength
-                : AuthenticatedMediaPlaybackConstants.defaultRangeLength
-            let end = offset + Int64(requestedLength) - 1
-            requestedRange = AuthenticatedMediaRequestedRange(start: offset, end: end)
-            rangeHeader = "bytes=\(offset)-\(end)"
+            requestedRange = AuthenticatedMediaRequestedRange.make(
+                offset: offset,
+                requestedLength: dataRequest.requestedLength,
+                requestsAllDataToEndOfResource: dataRequest.requestsAllDataToEndOfResource
+            )
+            rangeHeader = requestedRange?.headerValue
         } else {
             requestedRange = nil
             rangeHeader = nil
@@ -155,7 +217,6 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         let authorizationProvider = source.authorizationProvider
         Task { [weak self] in
             guard let self else {
-                loadingRequest.finishLoading(with: URLError(.cancelled))
                 return
             }
             // Resolve the bearer before building the request. A failure here
@@ -165,11 +226,14 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
             do {
                 authorization = try await authorizationProvider()
             } catch {
-                loadingRequest.finishLoading(with: error)
+                self.finishLoadingIfActive(loadingRequest, error: error)
                 return
             }
             guard !authorization.isEmpty else {
-                loadingRequest.finishLoading(with: mediaError("No bearer available"))
+                self.finishLoadingIfActive(loadingRequest, error: mediaError("No bearer available"))
+                return
+            }
+            if self.isAbandoned(loadingRequest) {
                 return
             }
             var request = URLRequest(url: url)
@@ -182,11 +246,19 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
 
             let task = self.session.dataTask(with: request)
             let context = LoadingContext(loadingRequest: loadingRequest, requestedRange: requestedRange)
-            self.lock.withLock {
+            let shouldStart = self.lock.withLock { () -> Bool in
+                if self.isInvalidated {
+                    return false
+                }
                 self.contextsByTaskId[task.taskIdentifier] = context
                 self.tasksByRequestId[requestId] = task
+                return true
             }
-            task.resume()
+            if shouldStart {
+                task.resume()
+            } else {
+                task.cancel()
+            }
         }
         return true
     }
@@ -250,16 +322,43 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
             return
         }
 
+        let contentRange = http.value(forHTTPHeaderField: "Content-Range")
         if let errorMessage = AuthenticatedMediaResponseValidator.errorMessage(
             statusCode: http.statusCode,
             requestedRange: context.requestedRange,
-            contentRange: http.value(forHTTPHeaderField: "Content-Range")
+            contentRange: contentRange
         ) {
+            MediaPlaybackTelemetry.logError(
+                kind: MediaPlaybackTelemetry.mediaKind(
+                    mimeType: source.contentTypeHint,
+                    sourceFileExtension: source.sourceFileExtension
+                ),
+                source: "authenticated_media",
+                mode: "range",
+                phase: "range_response",
+                error: mediaError(errorMessage),
+                message: errorMessage
+            )
+            ClientLog.warning(
+                "MediaPlayback",
+                errorMessage,
+                metadata: [
+                    "status": String(http.statusCode),
+                    "range": context.requestedRange?.headerValue ?? "none",
+                    "content_range": contentRange ?? "",
+                ]
+            )
             context.responseError = mediaError(errorMessage)
             completionHandler(.cancel)
             return
         }
 
+        if let totalLength = totalLengthFromContentRange(contentRange) {
+            context.totalLength = totalLength
+        }
+        if let deliveredEnd = endFromContentRange(contentRange) {
+            context.deliveredEnd = deliveredEnd
+        }
         fillContentInformation(
             context.loadingRequest.contentInformationRequest,
             response: http
@@ -286,9 +385,87 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
 
         if let error = context.responseError ?? error {
             context.loadingRequest.finishLoading(with: error)
-        } else {
-            context.loadingRequest.finishLoading()
+            return
         }
+
+        if context.continueToEnd,
+           let deliveredEnd = context.deliveredEnd,
+           let nextOffset = AuthenticatedMediaRangeContinuation.nextOffset(
+            afterEnd: deliveredEnd,
+            totalLength: context.totalLength
+           ) {
+            startNextChunk(context: context, offset: nextOffset)
+            return
+        }
+
+        context.loadingRequest.finishLoading()
+    }
+
+    private func startNextChunk(context: LoadingContext, offset: Int64) {
+        let nextRange = AuthenticatedMediaRequestedRange.make(
+            offset: offset,
+            requestedLength: Int(AuthenticatedMediaRequestedRange.maxChunkLength),
+            requestsAllDataToEndOfResource: true
+        )
+        let loadingRequest = context.loadingRequest
+        let continueToEnd = context.continueToEnd
+        let totalLength = context.totalLength
+        let requestId = ObjectIdentifier(loadingRequest)
+        let authorizationProvider = source.authorizationProvider
+        Task { [weak self] in
+            guard let self else { return }
+            let authorization: String
+            do {
+                authorization = try await authorizationProvider()
+            } catch {
+                self.finishLoadingIfActive(loadingRequest, error: error)
+                return
+            }
+            guard !authorization.isEmpty else {
+                self.finishLoadingIfActive(loadingRequest, error: self.mediaError("No bearer available"))
+                return
+            }
+            var request = URLRequest(url: self.source.url)
+            request.httpMethod = "GET"
+            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            request.setValue(nextRange.headerValue, forHTTPHeaderField: "Range")
+            if loadingRequest.isCancelled || loadingRequest.isFinished {
+                return
+            }
+            let nextContext = LoadingContext(
+                loadingRequest: loadingRequest,
+                requestedRange: nextRange
+            )
+            nextContext.continueToEnd = continueToEnd
+            nextContext.totalLength = totalLength
+            let task = self.session.dataTask(with: request)
+            let shouldStart = self.lock.withLock { () -> Bool in
+                if self.isInvalidated {
+                    return false
+                }
+                self.contextsByTaskId[task.taskIdentifier] = nextContext
+                self.tasksByRequestId[requestId] = task
+                return true
+            }
+            if shouldStart {
+                task.resume()
+            } else {
+                task.cancel()
+            }
+        }
+    }
+
+    private func isAbandoned(_ loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
+        if loadingRequest.isCancelled || loadingRequest.isFinished {
+            return true
+        }
+        return lock.withLock { isInvalidated }
+    }
+
+    private func finishLoadingIfActive(_ loadingRequest: AVAssetResourceLoadingRequest, error: Error) {
+        guard !isAbandoned(loadingRequest) else { return }
+        loadingRequest.finishLoading(with: error)
     }
 
     private func context(for task: URLSessionTask) -> LoadingContext? {
@@ -348,6 +525,17 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         let suffix = header[header.index(after: slashIndex)...]
         guard suffix != "*" else { return nil }
         return Int64(suffix)
+    }
+
+    private func endFromContentRange(_ header: String?) -> Int64? {
+        guard let header else { return nil }
+        let parts = header.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ", maxSplits: 1)
+        guard parts.count == 2 else { return nil }
+        let rangeAndLength = parts[1].split(separator: "/", maxSplits: 1)
+        guard !rangeAndLength.isEmpty else { return nil }
+        let bounds = rangeAndLength[0].split(separator: "-", maxSplits: 1)
+        guard bounds.count == 2 else { return nil }
+        return Int64(bounds[1])
     }
 
     private func mediaError(_ message: String) -> NSError {
@@ -494,6 +682,10 @@ final class AuthenticatedMediaPlaybackSession {
 
     private let loader: AuthenticatedMediaResourceLoader
     private let asset: AVURLAsset
+    private var timeControlObservation: NSKeyValueObservation?
+    private var bufferEmptyObservation: NSKeyValueObservation?
+    private var hasStartedPlaying = false
+    private var lastStallLogAt: TimeInterval = 0
 
     init(source: AuthenticatedMediaSource) {
         loader = AuthenticatedMediaResourceLoader(source: source)
@@ -510,7 +702,62 @@ final class AuthenticatedMediaPlaybackSession {
             ]
         )
         player = AVPlayer(playerItem: item)
-        player.automaticallyWaitsToMinimizeStalling = true
+        // Custom resource-loader assets should not wait to minimize stalling;
+        // AVPlayer cannot see the real network buffer behind oppi-media://.
+        player.automaticallyWaitsToMinimizeStalling = false
+        observeStalls(kind: MediaPlaybackTelemetry.mediaKind(
+            mimeType: source.contentTypeHint,
+            sourceFileExtension: source.sourceFileExtension
+        ))
+    }
+
+    private func observeStalls(kind: String) {
+        timeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            Task { @MainActor in
+                self?.handleTimeControlChange(player.timeControlStatus, kind: kind)
+            }
+        }
+        bufferEmptyObservation = player.currentItem?.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] item, _ in
+            Task { @MainActor in
+                self?.handleBufferEmpty(item.isPlaybackBufferEmpty, kind: kind)
+            }
+        }
+    }
+
+    private func handleTimeControlChange(_ status: AVPlayer.TimeControlStatus, kind: String) {
+        if status == .playing {
+            hasStartedPlaying = true
+            return
+        }
+        guard hasStartedPlaying, status == .waitingToPlayAtSpecifiedRate else { return }
+        logStall(kind: kind, reason: player.reasonForWaitingToPlay?.rawValue ?? "waiting")
+    }
+
+    private func handleBufferEmpty(_ isEmpty: Bool, kind: String) {
+        guard hasStartedPlaying, isEmpty else { return }
+        logStall(kind: kind, reason: "playback_buffer_empty")
+    }
+
+    private func logStall(kind: String, reason: String) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastStallLogAt >= 2 else { return }
+        lastStallLogAt = now
+        ClientLog.warning(
+            "MediaPlayback",
+            "Media playback stalled",
+            metadata: [
+                "kind": kind,
+                "reason": reason,
+                "time_control": String(describing: player.timeControlStatus),
+            ]
+        )
+        MediaPlaybackTelemetry.recordError(
+            kind: kind,
+            source: "authenticated_media",
+            phase: "stall",
+            error: nil,
+            sessionId: nil
+        )
     }
 
     private static func makeAssetURL() -> URL {
@@ -522,6 +769,10 @@ final class AuthenticatedMediaPlaybackSession {
     }
 
     func teardown() {
+        timeControlObservation?.invalidate()
+        timeControlObservation = nil
+        bufferEmptyObservation?.invalidate()
+        bufferEmptyObservation = nil
         player.pause()
         asset.resourceLoader.setDelegate(nil, queue: nil)
         loader.cancelAll()
@@ -539,6 +790,7 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
     private var preparedIdentity: String?
     private var recordedStartIdentity: String?
     private var recordedErrorIdentity: String?
+    private var isFullScreen = false
 
     func prepare(
         source: AuthenticatedMediaSource,
@@ -638,6 +890,19 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
         }
     }
 
+    func setFullScreen(_ fullScreen: Bool) {
+        isFullScreen = fullScreen
+    }
+
+    func handleDisappear() {
+        // Fullscreen presentation makes the inline SwiftUI view disappear.
+        // Keep the same player; teardown only when leaving the screen.
+        if isFullScreen {
+            return
+        }
+        teardown()
+    }
+
     func teardown(resetPreparedIdentity: Bool = true) {
         statusObservation?.invalidate()
         statusObservation = nil
@@ -645,6 +910,7 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
         playbackSession = nil
         player = nil
         isLoading = false
+        isFullScreen = false
 
         if resetPreparedIdentity {
             preparedIdentity = nil
@@ -670,7 +936,10 @@ struct AuthenticatedMediaPlayerView: View {
     var body: some View {
         Group {
             if let player = model.player {
-                AVPlayerViewControllerContainer(player: player)
+                AVPlayerViewControllerContainer(
+                    player: player,
+                    onFullScreenChange: { model.setFullScreen($0) }
+                )
                     .frame(maxWidth: .infinity)
                     .frame(height: height)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
@@ -714,7 +983,7 @@ struct AuthenticatedMediaPlayerView: View {
             )
         }
         .onDisappear {
-            model.teardown()
+            model.handleDisappear()
         }
     }
 }

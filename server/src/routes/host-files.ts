@@ -11,7 +11,7 @@ import {
   MAX_BROWSE_TEXT_FILE_SIZE,
 } from "../file-serving-policy.js";
 import { encodeHostResolvedPathHeader, expandExactHostPath } from "../host-file-path.js";
-import { parseByteRangeHeader } from "../http-range.js";
+import { logRejectedByteRange, parseByteRangeHeader } from "../http-range.js";
 import { createLogger, type Logger } from "../logger.js";
 import type { RouteDispatcher, RouteHelpers } from "./types.js";
 
@@ -149,6 +149,7 @@ async function handleHostRawFile(
     const isHeadRequest = method === "HEAD";
 
     if (range.kind === "invalid" || range.kind === "unsatisfiable") {
+      logRejectedByteRange("host-raw", req.headers?.range, range.kind, fileStat.size);
       res.writeHead(416, {
         ...commonHeaders,
         "Content-Range": `bytes */${fileStat.size}`,

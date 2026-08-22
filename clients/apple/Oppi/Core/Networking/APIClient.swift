@@ -1723,7 +1723,7 @@ actor APIClient: ClientLogUploading {
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
             url: try makeHostRawURL(path: path),
-            authorizationHeaderValue: ServerAuthorization.headerValue(token: token),
+            authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,

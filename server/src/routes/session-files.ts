@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createReadStream } from "node:fs";
 
-import { parseByteRangeHeader } from "../http-range.js";
+import { logRejectedByteRange, parseByteRangeHeader } from "../http-range.js";
 import { SessionTraceService } from "../session-trace-service.js";
 import type { Session, Workspace } from "../types.js";
 import type { RouteContext, RouteHelpers } from "./types.js";
@@ -119,6 +119,7 @@ export function createSessionFileHandlers(
         const isHeadRequest = method.toUpperCase() === "HEAD";
 
         if (range.kind === "invalid" || range.kind === "unsatisfiable") {
+          logRejectedByteRange("session-raw", req?.headers.range, range.kind, result.size);
           res.writeHead(416, {
             ...commonHeaders,
             "Content-Range": `bytes */${result.size}`,

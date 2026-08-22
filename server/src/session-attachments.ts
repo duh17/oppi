@@ -13,7 +13,7 @@ import { stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { parseByteRangeHeader } from "./http-range.js";
+import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
 import { generateId } from "./id.js";
 
 const MANIFEST_VERSION = 1;
@@ -1062,6 +1062,7 @@ export function streamSessionAttachment(
   const isHeadRequest = method.toUpperCase() === "HEAD";
 
   if (range.kind === "invalid" || range.kind === "unsatisfiable") {
+    logRejectedByteRange("session-attachment", req.headers?.range, range.kind, attachment.size);
     res.writeHead(416, {
       ...commonHeaders,
       "Content-Range": `bytes */${attachment.size}`,
