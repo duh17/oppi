@@ -6,7 +6,9 @@
  * with no busy session, or on workspace teardown / server shutdown.
  */
 
-import { posix } from "node:path";
+import { chmodSync, lstatSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, posix } from "node:path";
 import {
   createShadowPathPredicate,
   type CreateHttpHooksOptions,
@@ -87,6 +89,66 @@ const DEFAULT_SHADOW_DIR_NAMES = new Set([".aws", ".azure", ".gnupg", ".ssh", ".
 // hide the same names anywhere under the mount. Case is folded first so
 // `/.CONFIG/gcloud/...` and `/.SSH` match the path list, not only exact case.
 const matchesShadowedPath = createShadowPathPredicate(DEFAULT_SHADOW_PATHS);
+
+/** Guest path where Pi discovers selected skills. Must stay under workspace `.pi/skills`. */
+function sandboxPiOverlayGuestPath(guestWorkspacePath: string): string {
+  return posix.join(guestWorkspacePath, ".pi");
+}
+
+/** `$TMPDIR/oppi-sandbox-pi-overlay` is well-known; refuse planted symlinks or foreign owners. */
+function ensureOwnerOnlyRealDirectory(path: string, errorMessage: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(errorMessage);
+  }
+  const uid = process.getuid?.();
+  if (uid !== undefined && stat.uid !== uid) {
+    throw new Error(`${errorMessage}: owned by uid ${stat.uid}`);
+  }
+  chmodSync(path, 0o700);
+}
+
+/** Empty host `.pi/skills` tree so Gondolin can traverse to per-skill mounts. */
+function sandboxPiOverlayHostDir(): string {
+  const dir = join(tmpdir(), "oppi-sandbox-pi-overlay");
+  ensureOwnerOnlyRealDirectory(
+    dir,
+    `Sandbox .pi overlay must be a real owner-only directory: ${dir}`,
+  );
+  ensureOwnerOnlyRealDirectory(
+    join(dir, "skills"),
+    `Sandbox .pi overlay skills dir must be a real owner-only directory: ${join(dir, "skills")}`,
+  );
+  return dir;
+}
+
+/**
+ * Workspace ShadowProvider hides every `.pi` path. Skill mounts live under
+ * `/workspace/<slug>/.pi/skills/<name>`, so guest bind-setup cannot traverse
+ * `.pi` unless that exact prefix is a separate mount.
+ */
+export function withSandboxPiOverlayMounts(
+  guestWorkspacePath: string,
+  readonlyMounts: ReadonlyMountSpec[] | undefined,
+): ReadonlyMountSpec[] {
+  if (!readonlyMounts?.length) return readonlyMounts ?? [];
+
+  const piGuestPath = sandboxPiOverlayGuestPath(guestWorkspacePath);
+  const needsOverlay = readonlyMounts.some((mount) => {
+    const guestPath = typeof mount === "string" ? mount : mount.guestPath;
+    return guestPath === piGuestPath || guestPath.startsWith(`${piGuestPath}/`);
+  });
+  if (!needsOverlay) return readonlyMounts;
+
+  const hasOverlay = readonlyMounts.some((mount) => {
+    const guestPath = typeof mount === "string" ? mount : mount.guestPath;
+    return guestPath === piGuestPath;
+  });
+  if (hasOverlay) return readonlyMounts;
+
+  return [{ hostPath: sandboxPiOverlayHostDir(), guestPath: piGuestPath }, ...readonlyMounts];
+}
 
 export function shouldShadowSandboxWorkspacePath(ctx: { op: string; path: string }): boolean {
   const normalized = posix
@@ -235,12 +297,14 @@ export async function defaultVmFactory(
   > = {
     [workspaceGuestPath]: workspaceProvider,
   };
-  if (options.readonlyMounts) {
-    for (const mount of options.readonlyMounts) {
-      const hostPath = typeof mount === "string" ? mount : mount.hostPath;
-      const guestPath = typeof mount === "string" ? mount : mount.guestPath;
-      mounts[guestPath] = new ReadonlyProvider(new RealFSProvider(hostPath));
-    }
+  const readonlyMounts = withSandboxPiOverlayMounts(
+    workspaceGuestPath,
+    options.readonlyMounts,
+  );
+  for (const mount of readonlyMounts) {
+    const hostPath = typeof mount === "string" ? mount : mount.hostPath;
+    const guestPath = typeof mount === "string" ? mount : mount.guestPath;
+    mounts[guestPath] = new ReadonlyProvider(new RealFSProvider(hostPath));
   }
 
   // Merge httpHooks env (secret placeholders) with workspace-level extra env.

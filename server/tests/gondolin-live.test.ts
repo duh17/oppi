@@ -332,3 +332,63 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
     expect(vm2).toBe(vm);
   });
 });
+
+describe("Gondolin live skill overlay", { timeout: 120_000 }, () => {
+  let hostDir: string;
+  let skillDir: string;
+  let manager: GondolinManager;
+  let vm: GondolinVm;
+
+  beforeAll(async () => {
+    if (!qemuAvailable) return;
+
+    hostDir = mkdtempSync(join(tmpdir(), "gondolin-live-skills-ws-"));
+    skillDir = mkdtempSync(join(tmpdir(), "gondolin-live-skills-"));
+    mkdirSync(join(hostDir, ".pi"), { recursive: true });
+    writeFileSync(join(hostDir, ".pi", "settings.json"), '{"secret":true}');
+    writeFileSync(join(skillDir, "SKILL.md"), "# live skill");
+
+    manager = new GondolinManager();
+    vm = await manager.ensureWorkspaceVm(
+      {
+        id: "live-skills",
+        name: "Live Skills",
+        runtime: "sandbox",
+        sandboxConfig: { allowedHosts: [] },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      hostDir,
+      undefined,
+      [
+        {
+          hostPath: skillDir,
+          guestPath: "/workspace/live-skills/.pi/skills/review",
+        },
+      ],
+      undefined,
+      "/workspace/live-skills",
+    );
+  }, 90_000);
+
+  afterAll(async () => {
+    if (manager) await manager.stopAll();
+    if (hostDir) rmSync(hostDir, { recursive: true, force: true });
+    if (skillDir) rmSync(skillDir, { recursive: true, force: true });
+  }, 30_000);
+
+  it("boots with skills under workspace .pi even though .pi is shadowed", async () => {
+    if (!qemuAvailable) return;
+
+    const skill = await vm.exec("cat /workspace/live-skills/.pi/skills/review/SKILL.md");
+    expect(skill.ok).toBe(true);
+    expect(skill.stdout.trim()).toBe("# live skill");
+  });
+
+  it("does not expose host workspace .pi settings through the overlay", async () => {
+    if (!qemuAvailable) return;
+
+    const settings = await vm.exec("cat /workspace/live-skills/.pi/settings.json 2>&1 || true");
+    expect(settings.stdout).not.toContain('"secret":true');
+  });
+});

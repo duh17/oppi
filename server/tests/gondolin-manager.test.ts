@@ -1,11 +1,15 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { createHttpHooks, VM } from "@earendil-works/gondolin";
+import { lstatSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHttpHooks, ReadonlyProvider, VM } from "@earendil-works/gondolin";
 import {
   buildVmHttpHooks,
   defaultVmFactory,
   GondolinManager,
   isQemuAvailable,
   shouldShadowSandboxWorkspacePath,
+  withSandboxPiOverlayMounts,
   WORKSPACE_VM_IDLE_TEARDOWN_MS,
   type IdleTeardownScheduler,
   type VmFactory,
@@ -13,6 +17,8 @@ import {
 } from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import type { Workspace } from "../src/types.js";
+
+const SANDBOX_PI_OVERLAY_HOST_DIR = join(tmpdir(), "oppi-sandbox-pi-overlay");
 
 vi.mock("@earendil-works/gondolin", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@earendil-works/gondolin")>();
@@ -82,6 +88,57 @@ function makeFactory(): {
   return { factory, calls, vms };
 }
 
+describe("withSandboxPiOverlayMounts", () => {
+  it("prepends a .pi overlay when skill mounts sit under workspace .pi", () => {
+    const guestWorkspacePath = "/workspace/slug";
+    const workspaceHostPi = join("/tmp/oppi-sandbox-ws", ".pi");
+    const mounts = withSandboxPiOverlayMounts(guestWorkspacePath, [
+      {
+        hostPath: "/host/skills/review",
+        guestPath: "/workspace/slug/.pi/skills/review",
+      },
+    ]);
+
+    expect(mounts[0]).toEqual({
+      hostPath: SANDBOX_PI_OVERLAY_HOST_DIR,
+      guestPath: `${guestWorkspacePath}/.pi`,
+    });
+    expect(mounts[0]).not.toEqual(expect.objectContaining({ hostPath: workspaceHostPi }));
+    expect(mounts).toEqual([
+      {
+        hostPath: SANDBOX_PI_OVERLAY_HOST_DIR,
+        guestPath: `${guestWorkspacePath}/.pi`,
+      },
+      {
+        hostPath: "/host/skills/review",
+        guestPath: "/workspace/slug/.pi/skills/review",
+      },
+    ]);
+
+    const overlay = lstatSync(SANDBOX_PI_OVERLAY_HOST_DIR);
+    expect(overlay.isSymbolicLink()).toBe(false);
+    expect(overlay.isDirectory()).toBe(true);
+    expect(overlay.mode & 0o777).toBe(0o700);
+    const uid = process.getuid?.();
+    if (uid !== undefined) expect(overlay.uid).toBe(uid);
+  });
+
+  it("leaves mounts unchanged when no skill mounts live under workspace .pi", () => {
+    const mounts = [
+      { hostPath: "/host/extensions", guestPath: "/tmp/oppi-agent-extensions" },
+    ];
+    expect(withSandboxPiOverlayMounts("/workspace/slug", mounts)).toEqual(mounts);
+  });
+
+  it("leaves mounts unchanged when a .pi overlay is already present", () => {
+    const existing = [
+      { hostPath: "/host/pi", guestPath: "/workspace/slug/.pi" },
+      { hostPath: "/host/skills/review", guestPath: "/workspace/slug/.pi/skills/review" },
+    ];
+    expect(withSandboxPiOverlayMounts("/workspace/slug", existing)).toEqual(existing);
+  });
+});
+
 // ─── defaultVmFactory ───
 
 describe("defaultVmFactory", () => {
@@ -100,6 +157,57 @@ describe("defaultVmFactory", () => {
         maxHttpResponseBodyBytes: 64 * 1024 * 1024,
       }),
     );
+  });
+
+  it("overlays guest .pi so shadowed workspace .pi still exposes skill mounts", async () => {
+    const vm = {
+      exec: vi.fn(async () => ({ stdout: "/bin/bash\n" })),
+    };
+    vi.mocked(VM.create).mockResolvedValue(vm as never);
+
+    const guestWorkspacePath = "/workspace/deep-research";
+    const overlayGuestPath = `${guestWorkspacePath}/.pi`;
+    const skillMount = {
+      hostPath: "/tmp/oppi-skill-deep-research",
+      guestPath: `${overlayGuestPath}/skills/deep-research`,
+    };
+
+    await defaultVmFactory({
+      hostCwd: "/tmp/oppi-sandbox-ws",
+      guestWorkspacePath,
+      readonlyMounts: [skillMount],
+    });
+
+    const mounts = vi.mocked(VM.create).mock.calls.at(-1)?.[0]?.vfs?.mounts ?? {};
+    expect(Object.keys(mounts)).toEqual(
+      expect.arrayContaining([
+        guestWorkspacePath,
+        overlayGuestPath,
+        skillMount.guestPath,
+      ]),
+    );
+    expect(overlayGuestPath).toBe("/workspace/deep-research/.pi");
+    const overlay = mounts[overlayGuestPath] as InstanceType<typeof ReadonlyProvider>;
+    expect(overlay).toBeInstanceOf(ReadonlyProvider);
+    expect(overlay.readonly).toBe(true);
+  });
+
+  it("does not invent a .pi overlay when no skill mounts live under it", async () => {
+    const vm = {
+      exec: vi.fn(async () => ({ stdout: "/bin/bash\n" })),
+    };
+    vi.mocked(VM.create).mockResolvedValue(vm as never);
+
+    const guestWorkspacePath = "/workspace/deep-research";
+    await defaultVmFactory({
+      hostCwd: "/tmp/oppi-sandbox-ws",
+      guestWorkspacePath,
+      readonlyMounts: ["/tmp/oppi-agent-extensions"],
+    });
+
+    const mounts = vi.mocked(VM.create).mock.calls.at(-1)?.[0]?.vfs?.mounts ?? {};
+    expect(Object.keys(mounts)).toEqual([guestWorkspacePath, "/tmp/oppi-agent-extensions"]);
+    expect(mounts[`${guestWorkspacePath}/.pi`]).toBeUndefined();
   });
 });
 
