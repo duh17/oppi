@@ -166,6 +166,33 @@ struct FullScreenMarkdownAsyncRenderTests {
             abs(collectionView.contentOffset.y - offsetBefore) < 1,
             "scroll offset jumped after Mermaid settlement"
         )
+
+        // Shared park/reuse guard: scroll the diagram off screen and back.
+        // The segment views must survive leave-and-return whether the cell was
+        // recycled (park host reinstall) or kept alive by UIKit (no dequeue).
+        collectionView.contentOffset.y = max(
+            -collectionView.adjustedContentInset.top,
+            collectionView.contentSize.height
+                - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        collectionView.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        collectionView.contentOffset.y = -collectionView.adjustedContentInset.top
+        collectionView.layoutIfNeeded()
+
+        let reusedMermaidView = try #require(
+            timelineFirstView(ofType: NativeMermaidBlockView.self, in: collectionView),
+            "diagram view did not survive scrolling away and back"
+        )
+        let reusedDiagramImage = try #require(
+            timelineAllImageViews(in: reusedMermaidView).first(where: { !$0.isHidden }),
+            "reused diagram image view was not visible after scrolling back"
+        )
+        #expect(
+            reusedDiagramImage.image != nil,
+            "reused Mermaid diagram did not stay rendered after scrolling back"
+        )
     }
 
     @MainActor

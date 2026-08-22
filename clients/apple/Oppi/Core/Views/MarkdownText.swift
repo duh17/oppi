@@ -523,6 +523,49 @@ enum FlatSegment: Sendable {
                         appendSegment(.thematicBreak, lineRange: lineRange)
                         emittedAnyRenderable = true
 
+                    case .unorderedList(let nestedItems):
+                        flushListTextLines()
+                        flushPendingText()
+                        appendListBlock(
+                            items: nestedItems,
+                            lineRange: lineRange,
+                            markerForItem: { _ in
+                                var marker = AttributedString("    • ")
+                                marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                                return marker
+                            },
+                            continuationForItem: { _ in AttributedString("      ") }
+                        )
+                        emittedAnyRenderable = true
+
+                    case .orderedList(let start, let nestedItems):
+                        let nestedListFont = Self.listBodyFont()
+                        flushListTextLines()
+                        flushPendingText()
+                        appendListBlock(
+                            items: nestedItems,
+                            lineRange: lineRange,
+                            markerForItem: { nestedIndex in
+                                let markerText = "    \(start + nestedIndex). "
+                                var marker = AttributedString(markerText)
+                                marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                                marker.uiKit.font = nestedListFont
+                                return marker
+                            },
+                            continuationForItem: { nestedIndex in
+                                let markerText = "    \(start + nestedIndex). "
+                                var continuation = AttributedString(
+                                    String(repeating: " ", count: markerText.count)
+                                )
+                                continuation.uiKit.font = nestedListFont
+                                return continuation
+                            },
+                            transformItemContent: { content, _ in
+                                Self.applyListFont(to: &content, listFont: nestedListFont)
+                            }
+                        )
+                        emittedAnyRenderable = true
+
                     default:
                         appendItemText(Self.attributedString(for: itemBlock, palette: palette))
                     }

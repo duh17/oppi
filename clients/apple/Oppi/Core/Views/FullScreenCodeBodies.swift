@@ -1467,6 +1467,10 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
 
     private weak var textViewDelegate: (any UITextViewDelegate)?
     private var doubleTapActivation: (() -> Void)?
+    /// Index last configured on this cell so reuse can park its segment views
+    /// onto the reader host instead of destroying them.
+    fileprivate var appliedItemIndex: Int?
+    fileprivate var parkHandler: ((FullScreenMarkdownSegmentCell) -> Void)?
     /// Guards against re-entrant self-sizing. UICollectionView calls
     /// `preferredLayoutAttributesFitting` inside its own layout pass; when the
     /// cell held a large streaming markdown segment, forcing a synchronous
@@ -1508,10 +1512,53 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
     }
 
     override func prepareForReuse() {
+        parkHandler?(self)
         super.prepareForReuse()
+        appliedItemIndex = nil
+        parkHandler = nil
         textViewDelegate = nil
         doubleTapActivation = nil
         segmentApplier.clear()
+    }
+
+    fileprivate func yieldArrangedSegmentViews() -> [UIView] {
+        let views = stackView.arrangedSubviews
+        for view in views {
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        return views
+    }
+
+    fileprivate func resetApplierAfterYield() {
+        segmentApplier.clear()
+    }
+
+    fileprivate func installArrangedSegmentViews(_ views: [UIView]) {
+        for existing in stackView.arrangedSubviews {
+            stackView.removeArrangedSubview(existing)
+            existing.removeFromSuperview()
+        }
+        for view in views {
+            stackView.addArrangedSubview(view)
+        }
+        stackView.invalidateIntrinsicContentSize()
+        contentView.invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
+    fileprivate func bindReaderChrome(
+        lineAnchorModeEnabled: Bool,
+        textViewDelegate: any UITextViewDelegate,
+        doubleTapActivation: (() -> Void)?,
+        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+    ) {
+        stackLeadingConstraint?.constant = lineAnchorModeEnabled ? 28 : 0
+        self.textViewDelegate = textViewDelegate
+        self.doubleTapActivation = doubleTapActivation
+        segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
+        segmentApplier.fetchSessionFile = fetchSessionFile
     }
 
     func apply(
@@ -1646,7 +1693,7 @@ func withCancellableDetachedTask<Value: Sendable>(
     }
 }
 
-final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UICollectionViewDelegate {
+final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
     private static let deferredInitialRenderByteThreshold = 200 * 1024
     // Give UIKit/XCUITest and real users a visible reader shell before the large
     // CommonMark pass starts for huge completed documents.
@@ -1654,6 +1701,20 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     private let collectionView: UICollectionView
     private let lineAnchorHighlightView = FullScreenLineAnchorHighlightOverlayView()
+    /// Holds configured segment views after their cells are recycled so the
+    /// document stays inspectable (and find-in-page complete) after a tail scroll.
+    private let parkedSegmentHost: UIView = {
+        let view = UIView()
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+        return view
+    }()
+    private var parkedSegmentViews: [Int: [UIView]] = [:]
+    private var itemHeights: [CGFloat] = []
+    #if DEBUG
+    private var debugAppliedItems: Set<Int> = []
+    #endif
     private let segmentSource = AssistantMarkdownSegmentSource()
     private let stream: ThinkingTraceStream?
     private let themeID: ThemeID
@@ -1747,7 +1808,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         collectionView = UICollectionView(
             frame: .zero,
             collectionViewLayout: Self.makeCollectionLayout(
-                spacing: readerPreferences.spacing.markdownStackSpacing
+                spacing: readerPreferences.spacing.markdownStackSpacing,
+                itemHeights: []
             )
         )
 
@@ -1765,6 +1827,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         collectionView.keyboardDismissMode = .interactive
         collectionView.dataSource = self
         collectionView.delegate = self
+        collectionView.prefetchDataSource = self
         collectionView.register(
             FullScreenMarkdownSegmentCell.self,
             forCellWithReuseIdentifier: FullScreenMarkdownSegmentCell.reuseIdentifier
@@ -1775,6 +1838,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
 
         addSubview(collectionView)
+        addSubview(parkedSegmentHost)
 
         lineAnchorHighlightView.translatesAutoresizingMaskIntoConstraints = false
         lineAnchorHighlightView.isUserInteractionEnabled = false
@@ -1845,22 +1909,41 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             && snapshot.text.utf8.count >= deferredInitialRenderByteThreshold
     }
 
-    private static func makeCollectionLayout(spacing: CGFloat) -> UICollectionViewLayout {
-        UICollectionViewCompositionalLayout { _, _ in
-            let itemSize = NSCollectionLayoutSize(
-                widthDimension: .fractionalWidth(1.0),
-                heightDimension: .estimated(44)
+    private static func makeCollectionLayout(
+        spacing: CGFloat,
+        itemHeights: [CGFloat]
+    ) -> UICollectionViewLayout {
+        var cachedSection: NSCollectionLayoutSection?
+        return UICollectionViewCompositionalLayout { _, _ in
+            // Heights are fixed absolute values, so the section is identical
+            // on every layout pass. Build the item group once.
+            if let cachedSection { return cachedSection }
+            let heights = itemHeights.isEmpty ? [CGFloat(44)] : itemHeights
+            let items = heights.map { height in
+                NSCollectionLayoutItem(
+                    layoutSize: NSCollectionLayoutSize(
+                        widthDimension: .fractionalWidth(1.0),
+                        heightDimension: .absolute(max(1, height))
+                    )
+                )
+            }
+            let totalHeight = heights.reduce(0, +) + spacing * CGFloat(max(0, heights.count - 1))
+            let group = NSCollectionLayoutGroup.vertical(
+                layoutSize: NSCollectionLayoutSize(
+                    widthDimension: .fractionalWidth(1.0),
+                    heightDimension: .absolute(max(1, totalHeight))
+                ),
+                subitems: items
             )
-            let item = NSCollectionLayoutItem(layoutSize: itemSize)
-            let group = NSCollectionLayoutGroup.vertical(layoutSize: itemSize, subitems: [item])
+            group.interItemSpacing = .fixed(spacing)
             let section = NSCollectionLayoutSection(group: group)
-            section.interGroupSpacing = spacing
             section.contentInsets = NSDirectionalEdgeInsets(
                 top: 10,
                 leading: 12,
                 bottom: 10,
                 trailing: 12
             )
+            cachedSection = section
             return section
         }
     }
@@ -1982,8 +2065,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             renderedSegments = segmentSource.buildSegments(config)
             renderedSegmentLineRanges = []
         }
-        collectionView.reloadData()
-        collectionView.collectionViewLayout.invalidateLayout()
+        prepareLazyDocumentLayout()
 
         if let surface = config.perfSurface {
             let elapsed = MarkdownStreamingPerf.timestampNs() - cycleStart
@@ -2015,6 +2097,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         installDeferredRenderPlaceholder(palette: themeID.palette)
         renderedSegments = []
         renderedSegmentLineRanges = []
+        resetParkedSegmentViews()
         collectionView.reloadData()
         collectionView.collectionViewLayout.invalidateLayout()
 
@@ -2060,8 +2143,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             self.collectionView.backgroundView = nil
             self.renderedSegments = segments
             self.renderedSegmentLineRanges = []
-            self.collectionView.reloadData()
-            self.collectionView.collectionViewLayout.invalidateLayout()
+            self.prepareLazyDocumentLayout()
 
             MarkdownStreamingPerf.record(
                 parseDurationNs: build.parseDurationNs,
@@ -2216,18 +2298,252 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
               renderedSegments.indices.contains(indexPath.item) else {
             return cell
         }
-        cell.apply(
-            segment: renderedSegments[indexPath.item],
-            config: config,
-            sourceLineRange: renderedSegmentLineRanges.indices.contains(indexPath.item) ? renderedSegmentLineRanges[indexPath.item] : nil,
+        cell.bindReaderChrome(
             lineAnchorModeEnabled: lineAnchor != nil,
-            palette: themeID.palette,
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile
         )
+        cell.appliedItemIndex = indexPath.item
+        cell.parkHandler = { [weak self] cell in
+            self?.parkSegmentViews(from: cell)
+        }
+        if let parked = takeParkedSegmentViews(at: indexPath.item) {
+            cell.installArrangedSegmentViews(parked)
+        } else {
+            #if DEBUG
+            debugAppliedItems.insert(indexPath.item)
+            #endif
+            cell.apply(
+                segment: renderedSegments[indexPath.item],
+                config: config,
+                sourceLineRange: renderedSegmentLineRanges.indices.contains(indexPath.item) ? renderedSegmentLineRanges[indexPath.item] : nil,
+                lineAnchorModeEnabled: lineAnchor != nil,
+                palette: themeID.palette,
+                textViewDelegate: self,
+                doubleTapActivation: viewportDoubleTapActivation,
+                fetchWorkspaceFile: fetchWorkspaceFile,
+                fetchSessionFile: fetchSessionFile
+            )
+        }
         return cell
+    }
+
+    // Segment views are parked on real reuse only, never in
+    // `didEndDisplaying`. UIKit can take a cell offscreen and later re-display
+    // it for the same index path WITHOUT calling `cellForItemAt` again; a cell
+    // stripped there would come back empty because nothing reinstalls its
+    // segment views. `prepareForReuse` runs exactly when the dequeue path will
+    // reinstall (from the park host) or rebuild (fresh apply).
+
+    private func parkSegmentViews(from cell: FullScreenMarkdownSegmentCell) {
+        guard let index = cell.appliedItemIndex else { return }
+        let views = cell.yieldArrangedSegmentViews()
+        guard !views.isEmpty else { return }
+        parkedSegmentViews[index] = views
+        for view in views {
+            parkedSegmentHost.addSubview(view)
+        }
+        cell.appliedItemIndex = nil
+    }
+
+    private func takeParkedSegmentViews(at index: Int) -> [UIView]? {
+        guard let views = parkedSegmentViews.removeValue(forKey: index) else { return nil }
+        views.forEach { $0.removeFromSuperview() }
+        return views
+    }
+
+    private func resetParkedSegmentViews() {
+        parkedSegmentHost.subviews.forEach { $0.removeFromSuperview() }
+        parkedSegmentViews.removeAll()
+    }
+
+    /// Size every item without building views, then let the collection view
+    /// apply only the visible window. Graphical rasters prefetch in the
+    /// background so mermaid/latex are ready when scrolled into view.
+    private func prepareLazyDocumentLayout() {
+        resetParkedSegmentViews()
+        #if DEBUG
+        debugAppliedItems.removeAll()
+        #endif
+        let width = max(bounds.width, 390)
+        itemHeights = renderedSegments.map { Self.estimatedHeight(for: $0, containerWidth: width) }
+        UIView.performWithoutAnimation {
+            collectionView.setCollectionViewLayout(
+                Self.makeCollectionLayout(
+                    spacing: readerPreferences.spacing.markdownStackSpacing,
+                    itemHeights: itemHeights
+                ),
+                animated: false
+            )
+            collectionView.reloadData()
+        }
+        scheduleGraphicalPrefetch(width: width)
+    }
+
+    private static func estimatedHeight(for segment: FlatSegment, containerWidth: CGFloat) -> CGFloat {
+        let contentWidth = max(1, containerWidth - 24)
+        switch segment {
+        case .text(let attributed):
+            // First paint must not typeset every paragraph. Estimate wrapped
+            // line count from character counts; the estimate only positions
+            // items until the user scrolls to them.
+            return ceil(estimatedTextHeight(String(attributed.characters), contentWidth: contentWidth, lineSpacing: 8))
+        case .codeBlock(_, let code):
+            // Monospace glyphs are wider than proportional text.
+            return ceil(estimatedTextHeight(code, contentWidth: contentWidth, charWidth: 9.6, lineHeight: 16, lineSpacing: 56))
+        case .table(let headers, let rows):
+            let metrics = NativeTableBlockView.measureNaturalColumns(headers: headers, rows: rows)
+            if MarkdownTableColumnLayout.needsGridMode(naturalWidths: metrics.columnWidths) {
+                return CGFloat(max(headers.isEmpty ? 1 : 1, rows.count + 1)) * 56 + 16
+            }
+            let lineCount = CGFloat(1 + rows.count)
+            return lineCount * 22 + 16
+        case .thematicBreak:
+            return 8
+        case .image:
+            return 180
+        case .mermaidDiagram(let code):
+            // Mermaid parsing is too expensive for first paint. Estimate
+            // from diagram source lines; the background prefetch renders
+            // the real raster before the user reaches the item.
+            let lineCount = CGFloat(code.split(separator: "\n").count)
+            return min(400, max(120, lineCount * 24 + 44))
+        case .latexBlock(let code):
+            // TeX parsing plus CoreGraphics layout is too expensive for
+            // first paint. Estimate from source lines; real rasters are
+            // prefetched in the background before the user scrolls here.
+            let lineCount = CGFloat(code.split(separator: "\n").count)
+            return min(400, max(44, lineCount * 28 + 24))
+        }
+    }
+
+    /// Cheap wrapped-line estimate for first-paint sizing. Avoids full
+    /// NSAttributedString typesetting per segment; ~9pt average glyph width
+    /// overestimates slightly so cells never collapse to clipped heights.
+    private static func estimatedTextHeight(
+        _ text: String,
+        contentWidth: CGFloat,
+        charWidth: CGFloat = 9.0,
+        lineHeight: CGFloat = 20,
+        lineSpacing: CGFloat = 0
+    ) -> CGFloat {
+        guard !text.isEmpty else { return max(22, lineHeight + lineSpacing) }
+        var lines: CGFloat = 0
+        for paragraph in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let width = CGFloat(paragraph.unicodeScalars.count) * charWidth
+            lines += max(1, (width / max(1, contentWidth)).rounded(.up))
+        }
+        return max(22, lines * lineHeight + lineSpacing)
+    }
+
+    private static func graphicalHeight<P: DocumentParser, R: GraphicalDocumentRenderer>(
+        parser: P,
+        renderer: R,
+        text: String,
+        fontSize: CGFloat,
+        width: CGFloat,
+        displayMode: RenderDisplayMode,
+        cap: CGFloat
+    ) -> CGFloat where P.Document == R.Document {
+        let layout = DocumentRenderPipeline.layoutGraphical(
+            parser: parser,
+            renderer: renderer,
+            text: text,
+            config: RenderConfiguration(
+                fontSize: fontSize,
+                maxWidth: width,
+                theme: ThemeRuntimeState.currentRenderTheme(),
+                displayMode: displayMode
+            )
+        )
+        let size = layout.size
+        guard size.width > 0, size.height > 0 else { return 120 }
+        let scale = min(1, width / size.width)
+        return min(cap, max(44, ceil(size.height * scale)))
+    }
+
+    private func scheduleGraphicalPrefetch(width: CGFloat) {
+        let mermaid = renderedSegments.compactMap { segment -> String? in
+            if case .mermaidDiagram(let code) = segment { return code }
+            return nil
+        }
+        let latex = renderedSegments.compactMap { segment -> String? in
+            if case .latexBlock(let code) = segment { return code }
+            return nil
+        }
+        guard !mermaid.isEmpty || !latex.isEmpty else { return }
+        let theme = ThemeRuntimeState.currentRenderTheme()
+        let latexSize = NativeLatexBlockView.displayFormulaFontSize(compatibleWith: traitCollection)
+        Task.detached(priority: .utility) {
+            for code in mermaid {
+                _ = DocumentRenderPipeline.renderInlineGraphicalImage(
+                    parser: MermaidParser(),
+                    renderer: MermaidRenderer(),
+                    text: code,
+                    config: RenderConfiguration(
+                        fontSize: 13,
+                        maxWidth: width,
+                        theme: theme,
+                        displayMode: .inline
+                    )
+                )
+            }
+            for code in latex {
+                _ = DocumentRenderPipeline.renderLatexGraphicalImage(
+                    text: code,
+                    config: RenderConfiguration(
+                        fontSize: latexSize,
+                        maxWidth: width,
+                        theme: theme,
+                        displayMode: .document
+                    )
+                )
+            }
+        }
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        prefetchItemsAt indexPaths: [IndexPath]
+    ) {
+        let width = max(bounds.width, 390)
+        let theme = ThemeRuntimeState.currentRenderTheme()
+        let latexSize = NativeLatexBlockView.displayFormulaFontSize(compatibleWith: traitCollection)
+        for indexPath in indexPaths {
+            guard renderedSegments.indices.contains(indexPath.item) else { continue }
+            switch renderedSegments[indexPath.item] {
+            case .mermaidDiagram(let code):
+                Task.detached(priority: .utility) {
+                    _ = DocumentRenderPipeline.renderInlineGraphicalImage(
+                        parser: MermaidParser(),
+                        renderer: MermaidRenderer(),
+                        text: code,
+                        config: RenderConfiguration(
+                            fontSize: 13,
+                            maxWidth: width,
+                            theme: theme,
+                            displayMode: .inline
+                        )
+                    )
+                }
+            case .latexBlock(let code):
+                Task.detached(priority: .utility) {
+                    _ = DocumentRenderPipeline.renderLatexGraphicalImage(
+                        text: code,
+                        config: RenderConfiguration(
+                            fontSize: latexSize,
+                            maxWidth: width,
+                            theme: theme,
+                            displayMode: .document
+                        )
+                    )
+                }
+            default:
+                break
+            }
+        }
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -2259,7 +2575,10 @@ extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
         guard preferences != readerPreferences else { return }
         readerPreferences = preferences
         collectionView.setCollectionViewLayout(
-            Self.makeCollectionLayout(spacing: preferences.spacing.markdownStackSpacing),
+            Self.makeCollectionLayout(
+                spacing: preferences.spacing.markdownStackSpacing,
+                itemHeights: itemHeights
+            ),
             animated: false
         )
         renderedSnapshot = nil
@@ -2271,7 +2590,20 @@ extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
 #if DEBUG
 extension NativeFullScreenMarkdownBody {
     var debugRenderedSegmentCountForTesting: Int { renderedSegments.count }
+    var debugAppliedItemCountForTesting: Int { debugAppliedItems.count }
+    var debugRenderedSegmentsForTesting: [FlatSegment] { renderedSegments }
     var debugVisibleCellCountForTesting: Int { collectionView.visibleCells.count }
+    var debugParkedHostForTesting: UIView { parkedSegmentHost }
+
+    func debugScrollItemIntoViewForTesting(_ item: Int) {
+        guard renderedSegments.indices.contains(item) else { return }
+        collectionView.scrollToItem(
+            at: IndexPath(item: item, section: 0),
+            at: .centeredVertically,
+            animated: false
+        )
+        collectionView.layoutIfNeeded()
+    }
     var debugSourceTextForTesting: String { latestSnapshot.text }
     var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {
         lineAnchorResolution?.requestedRange

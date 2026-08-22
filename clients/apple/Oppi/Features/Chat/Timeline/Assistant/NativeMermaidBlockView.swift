@@ -112,7 +112,11 @@ final class NativeMermaidBlockView: UIView {
         if let naturalSize = renderedDiagramNaturalSize,
            naturalSize.width > 0,
            naturalSize.height > 0 {
-            updateDiagramHeight(naturalSize: naturalSize, availableWidth: bounds.width)
+            updateDiagramHeight(
+                naturalSize: naturalSize,
+                availableWidth: bounds.width,
+                invalidateHostLayout: false
+            )
         }
 
         if rasterWidthMismatch(bounds.width), let code = currentCode {
@@ -153,6 +157,9 @@ final class NativeMermaidBlockView: UIView {
     /// snapshot the view immediately after layout — async rendering would
     /// complete after the snapshot, producing blank boxes.
     func applyAsDiagramSync(code: String, palette: ThemePalette) {
+        // Re-entrant collection-view measurement reuses this cell. Rendering
+        // again would rasterize a new image and force another layout pass.
+        if code == currentCode && isShowingDiagram { return }
         currentCode = code
         currentPalette = palette
 
@@ -182,7 +189,8 @@ final class NativeMermaidBlockView: UIView {
             image: result.image,
             naturalSize: result.size,
             palette: palette,
-            rasterWidth: availableWidth
+            rasterWidth: availableWidth,
+            invalidateHostLayout: false
         )
     }
 
@@ -228,7 +236,8 @@ final class NativeMermaidBlockView: UIView {
                 image: result.image,
                 naturalSize: result.size,
                 palette: palette,
-                rasterWidth: availableWidth
+                rasterWidth: availableWidth,
+                invalidateHostLayout: true
             )
         }
     }
@@ -273,14 +282,19 @@ final class NativeMermaidBlockView: UIView {
         image: UIImage,
         naturalSize: CGSize,
         palette: ThemePalette,
-        rasterWidth: CGFloat
+        rasterWidth: CGFloat,
+        invalidateHostLayout: Bool
     ) {
         renderedDiagramNaturalSize = naturalSize
         lastRasterWidth = rasterWidth
         inFlightRasterWidth = nil
 
         let availableWidth = bounds.width > 0 ? bounds.width : rasterWidth
-        updateDiagramHeight(naturalSize: naturalSize, availableWidth: availableWidth)
+        updateDiagramHeight(
+            naturalSize: naturalSize,
+            availableWidth: availableWidth,
+            invalidateHostLayout: invalidateHostLayout
+        )
 
         diagramHeightConstraint?.isActive = true
         diagramImageView.backgroundColor = UIColor(palette.bgHighlight)
@@ -293,11 +307,18 @@ final class NativeMermaidBlockView: UIView {
         invalidateIntrinsicContentSize()
         setNeedsLayout()
         superview?.setNeedsLayout()
-        superview?.layoutIfNeeded()
-        invalidateTimelineLayout()
+        // Sync reader apply already runs inside a collection-view layout pass.
+        // Nested `layoutIfNeeded` re-enters `cellForItem` and overflows.
+        if invalidateHostLayout {
+            invalidateTimelineLayout()
+        }
     }
 
-    private func updateDiagramHeight(naturalSize: CGSize, availableWidth: CGFloat) {
+    private func updateDiagramHeight(
+        naturalSize: CGSize,
+        availableWidth: CGFloat,
+        invalidateHostLayout: Bool
+    ) {
         guard availableWidth > 0, naturalSize.width > 0, naturalSize.height > 0 else { return }
 
         let scale = min(1.0, availableWidth / naturalSize.width)
@@ -308,7 +329,9 @@ final class NativeMermaidBlockView: UIView {
             diagramHeightConstraint?.constant = clampedHeight
             invalidateIntrinsicContentSize()
             superview?.setNeedsLayout()
-            invalidateTimelineLayout()
+            if invalidateHostLayout {
+                invalidateTimelineLayout()
+            }
         }
     }
 
@@ -353,3 +376,9 @@ final class NativeMermaidBlockView: UIView {
         )
     }
 }
+
+#if DEBUG
+extension NativeMermaidBlockView {
+    var debugIsShowingDiagramForTesting: Bool { isShowingDiagram }
+}
+#endif

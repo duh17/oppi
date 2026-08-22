@@ -497,6 +497,11 @@ final class NativeTableBlockView: UIView {
     /// Whether any cell contains a link (enables text view selectability for taps).
     private var hasLinks = false
     private var isWrapMode = false
+    /// `systemLayoutSizeFitting` and `intrinsicContentSize` both measure the
+    /// wrap grid. Re-entering that solve from a nested text-view layout pass
+    /// overflows the main-thread stack on wide document-reader tables.
+    private var isMeasuringLayout = false
+    private var lastMeasuredHeight: CGFloat = 1
     /// Identity of the last rendered table content/mode so streaming ticks can
     /// skip full wrap-grid reconstruction when nothing meaningful changed.
     private var renderedContentSignature: String = ""
@@ -596,7 +601,7 @@ final class NativeTableBlockView: UIView {
     /// UIScrollView has no useful intrinsic height. Measure the active table
     /// body so chat self-sizing cannot clip the last wrapped row.
     override var intrinsicContentSize: CGSize {
-        CGSize(width: UIView.noIntrinsicMetric, height: measuredTableHeight())
+        CGSize(width: UIView.noIntrinsicMetric, height: cachedOrMeasureTableHeight())
     }
 
     override func systemLayoutSizeFitting(
@@ -607,7 +612,18 @@ final class NativeTableBlockView: UIView {
         let width = targetSize.width.isFinite && targetSize.width > 0
             ? targetSize.width
             : max(1, bounds.width)
-        return CGSize(width: width, height: measuredTableHeight())
+        return CGSize(width: width, height: cachedOrMeasureTableHeight())
+    }
+
+    private func cachedOrMeasureTableHeight() -> CGFloat {
+        if isMeasuringLayout {
+            return lastMeasuredHeight
+        }
+        isMeasuringLayout = true
+        defer { isMeasuringLayout = false }
+        let height = measuredTableHeight()
+        lastMeasuredHeight = height
+        return height
     }
 
     private func measuredTableHeight() -> CGFloat {
@@ -725,7 +741,9 @@ final class NativeTableBlockView: UIView {
         }
         updateCardWidth()
         setNeedsLayout()
-        layoutIfNeeded()
+        // Do not `layoutIfNeeded()` here. The document reader measures this
+        // view inside a collection-view layout pass; a nested layout re-enters
+        // `cellForItem`, reuses table cells, and overflows the main thread.
     }
 
     private func notifyHeightMayHaveChanged() {

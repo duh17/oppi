@@ -61,6 +61,10 @@ final class NativeLatexBlockView: UIView {
     /// Applying the configured message-body ratio keeps Dynamic Type and the
     /// chat text-size preference aligned with the surrounding typography.
     private var displayFormulaFontSize: CGFloat {
+        Self.displayFormulaFontSize(compatibleWith: traitCollection)
+    }
+
+    static func displayFormulaFontSize(compatibleWith traitCollection: UITraitCollection) -> CGFloat {
         let displayFont = UIFont.preferredFont(
             forTextStyle: .title1,
             compatibleWith: traitCollection
@@ -182,6 +186,9 @@ final class NativeLatexBlockView: UIView {
     /// Render synchronously on the current thread. Used by export paths that
     /// snapshot the view immediately after layout.
     func applyAsFormulaSync(code: String, palette: ThemePalette) {
+        // Re-entrant collection-view measurement reuses this cell. Rendering
+        // again would rasterize a new image and force another layout pass.
+        if code == currentCode && isShowingFormula { return }
         renderTask?.cancel()
         renderTask = nil
         currentCode = code
@@ -302,10 +309,9 @@ final class NativeLatexBlockView: UIView {
 
         invalidateIntrinsicContentSize()
         setNeedsLayout()
-        layoutIfNeeded()
         superview?.setNeedsLayout()
-        superview?.layoutIfNeeded()
-        invalidateTimelineLayout()
+        // Sync reader apply already runs inside a collection-view layout pass.
+        // Nested `layoutIfNeeded` re-enters `cellForItem` and overflows.
     }
 
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
@@ -369,3 +375,10 @@ final class NativeLatexBlockView: UIView {
         )
     }
 }
+
+#if DEBUG
+extension NativeLatexBlockView {
+    var debugIsShowingFormulaForTesting: Bool { isShowingFormula }
+    var debugFormulaImageForTesting: UIImage? { formulaImageView.image }
+}
+#endif

@@ -8,6 +8,11 @@ enum ToolTimelineRowPresentationHelpers {
     static var enclosingLayoutInvalidationHookForTesting: (() -> Void)?
     // periphery:ignore - test seam for SwiftUI-hosted markdown remeasure.
     static var swiftUIMarkdownRootInvalidationHookForTesting: ((AssistantMarkdownContentView) -> Void)?
+    // periphery:ignore - counting oracle for apply-time re-entrancy.
+    static var debugNestedLayoutInvalidationCountForTesting = 0
+    static func debugResetNestedLayoutInvalidationCountForTesting() {
+        debugNestedLayoutInvalidationCountForTesting = 0
+    }
 #endif
 
     @MainActor
@@ -466,12 +471,23 @@ enum ToolTimelineRowPresentationHelpers {
             || collectionView.isDecelerating
     }
 
+    private static var isPerformingSynchronousLayoutInvalidation = false
+
     private static func invalidateCollectionViewLayout(
         _ collectionView: UICollectionView,
         allowDetachedAnchorInvalidation: Bool = false,
         preservingViewportAround sourceView: UIView? = nil,
         preserveCurrentViewport: Bool = false
     ) {
+        // Block views call this from `apply` / `layoutSubviews`. A nested
+        // `invalidateLayout + layoutIfNeeded` re-enters `cellForItem` and
+        // overflows the document-reader main-thread stack.
+        if isPerformingSynchronousLayoutInvalidation {
+            #if DEBUG
+            debugNestedLayoutInvalidationCountForTesting += 1
+            #endif
+            return
+        }
         // Passive snapshot updates skip full invalidation while an anchor is
         // active because the snapshot path already measured the changed cell.
         // A full layout invalidation clears cached off-screen heights and can
@@ -496,6 +512,8 @@ enum ToolTimelineRowPresentationHelpers {
         let attachedTail = shouldPreserveViewport
             ? captureAttachedLayoutTail(in: collectionView)
             : nil
+        isPerformingSynchronousLayoutInvalidation = true
+        defer { isPerformingSynchronousLayoutInvalidation = false }
         UIView.performWithoutAnimation {
             collectionView.collectionViewLayout.invalidateLayout()
             collectionView.layoutIfNeeded()
