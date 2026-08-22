@@ -28,7 +28,9 @@ enum MermaidXYChartRenderer {
     private static let swatchTextGap: CGFloat = 6
     private static let legendItemGap: CGFloat = 12
     private static let legendRowSpacing: CGFloat = 6
-    private static let plotHeight: CGFloat = 168
+    /// Plot height at the 360pt chat-bubble design width.
+    private static let inlinePlotHeight: CGFloat = 168
+    private static let inlineMaxWidth: CGFloat = 360
     private static let barCornerRadius: CGFloat = 3
     private static let barSlotFraction: CGFloat = 0.56
     private static let lineWidth: CGFloat = 2
@@ -109,6 +111,7 @@ enum MermaidXYChartRenderer {
         }
         let plotLeft = outerMargin + yLabelWidth + yLabelGap
         let plotWidth = max(maxWidth - plotLeft - outerMargin, 40)
+        let plotHeight = Self.plotHeight(forMaxWidth: maxWidth)
         let plotTop = y
         let plotRect = CGRect(x: plotLeft, y: plotTop, width: plotWidth, height: plotHeight)
         nodePositions["plot"] = plotRect
@@ -718,6 +721,13 @@ enum MermaidXYChartRenderer {
     }
 
     // MARK: - Geometry
+
+    /// Keep the inline 360pt plot ratio when the canvas is wider (fullscreen).
+    /// Chat bubbles stay at 168pt; an 800pt document canvas grows with width.
+    nonisolated static func plotHeight(forMaxWidth maxWidth: CGFloat) -> CGFloat {
+        let width = max(maxWidth, 1)
+        return max(inlinePlotHeight, inlinePlotHeight * width / inlineMaxWidth)
+    }
 
     nonisolated static func clipY(_ value: Double, min: Double, max: Double) -> Double {
         Swift.min(Swift.max(value, min), max)

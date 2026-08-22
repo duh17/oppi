@@ -447,6 +447,29 @@ struct MermaidXYChartConformanceTests {
         #expect(draw(layout) != nil)
     }
 
+    @Test func documentWidthKeepsInlinePlotRatio() {
+        let diagram = MermaidParser().parse(Self.issuesRemaining)
+        guard case .xyChart(let chart) = diagram else {
+            Issue.record("Expected xyChart")
+            return
+        }
+        let inline = layoutXY(chart, maxWidth: 360)
+        let document = layoutXY(chart, maxWidth: 800)
+        guard let inlinePlot = inline.graphResult.nodePositions["plot"],
+              let documentPlot = document.graphResult.nodePositions["plot"]
+        else {
+            Issue.record("Expected plot frames")
+            return
+        }
+        #expect(abs(inlinePlot.height - 168) < 0.5)
+        #expect(abs(documentPlot.height - 168 * 800 / 360) < 0.5)
+        #expect(documentPlot.height > inlinePlot.height + 80)
+        let inlineRatio = inlinePlot.height / 360
+        let documentRatio = documentPlot.height / 800
+        #expect(abs(inlineRatio - documentRatio) < 0.01)
+        #expect(draw(document) != nil)
+    }
+
     @Test func dispatcherRendersXYChartWithoutPlaceholder() {
         let diagram = MermaidParser().parse(Self.issuesRemaining)
         let layout = MermaidRenderer().layout(diagram, configuration: .default(maxWidth: 360))
