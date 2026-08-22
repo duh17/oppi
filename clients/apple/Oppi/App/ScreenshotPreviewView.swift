@@ -313,6 +313,20 @@ private struct MermaidRenderingPreview: View {
             """#
         ),
         Diagram(
+            id: "xy",
+            heading: "XY",
+            markdown: #"""
+            ```mermaid
+            xychart-beta
+                title Oracle issues remaining (crash counted as 10)
+                x-axis [B, 1, 2, 3, 4, 5, 6, 7, 8]
+                y-axis "issues" 0 --> 10
+                bar [10, 9, 9, 9, 6, 1, 0, 0, 0]
+                line [10, 9, 9, 9, 6, 1, 0, 0, 0]
+            ```
+            """#
+        ),
+        Diagram(
             id: "class",
             heading: "Class",
             markdown: #"""

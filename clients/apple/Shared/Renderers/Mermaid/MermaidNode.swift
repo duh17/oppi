@@ -13,7 +13,84 @@ enum MermaidDiagram: Equatable, Sendable {
     case timeline(TimelineDiagram)
     case classDiagram(ClassDiagram)
     case erDiagram(ERDiagram)
+    case xyChart(XYChartDiagram)
     case unsupported(type: String)
+}
+
+// MARK: - XY chart types
+
+/// AST for a Mermaid `xychart` / `xychart-beta` diagram.
+///
+/// Spec: https://mermaid.js.org/syntax/xyChart.html
+///
+/// Phone-first subset: title, categorical x-axis, numeric y-axis
+/// (optional title + `min --> max`), `bar` / `line` series, and a
+/// legend only for named series. Horizontal orientation, YAML theme
+/// config, and bar data labels are not modeled.
+struct XYChartDiagram: Equatable, Sendable {
+    let title: String?
+    let xAxis: XYChartXAxis
+    let yAxis: XYChartYAxis
+    /// Series in declaration order. Bars draw behind lines.
+    let series: [XYChartSeries]
+
+    init(
+        title: String?,
+        xAxis: XYChartXAxis,
+        yAxis: XYChartYAxis,
+        series: [XYChartSeries]
+    ) {
+        self.title = title
+        self.xAxis = xAxis
+        self.yAxis = yAxis
+        self.series = series
+    }
+
+    static let empty = Self(
+        title: nil,
+        xAxis: .categorical(title: nil, categories: []),
+        yAxis: XYChartYAxis(title: nil, min: nil, max: nil),
+        series: []
+    )
+}
+
+enum XYChartXAxis: Equatable, Sendable {
+    /// `x-axis [cat1, "cat2 with space"]` — optional title.
+    case categorical(title: String?, categories: [String])
+    /// `x-axis title min --> max` — numeric range.
+    case numeric(title: String?, min: Double, max: Double)
+}
+
+struct XYChartYAxis: Equatable, Sendable {
+    let title: String?
+    /// Declared lower bound. `nil` means auto from data.
+    let min: Double?
+    /// Declared upper bound. `nil` means auto from data.
+    let max: Double?
+
+    init(title: String?, min: Double?, max: Double?) {
+        self.title = title
+        self.min = min
+        self.max = max
+    }
+}
+
+struct XYChartSeries: Equatable, Sendable {
+    let kind: XYChartSeriesKind
+    /// Named series appear in the legend. Unnamed series do not.
+    let name: String?
+    let values: [Double]
+
+    init(kind: XYChartSeriesKind, name: String?, values: [Double]) {
+        self.kind = kind
+        self.name = name
+        self.values = values
+    }
+}
+
+enum XYChartSeriesKind: Equatable, Sendable {
+    case bar
+    case line
 }
 
 // MARK: - State diagram types

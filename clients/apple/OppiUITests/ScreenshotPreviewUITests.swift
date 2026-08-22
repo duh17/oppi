@@ -853,6 +853,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
             ("Sequence", "sequence"),
             ("Timeline", "timeline"),
             ("Pie", "pie"),
+            ("XY", "xy"),
             ("Class", "class"),
             ("ER", "er"),
         ]
@@ -869,7 +870,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
                 "Production Markdown/Mermaid preview did not render in \(colorScheme) mode"
             )
 
-            waitForMermaidDiagramImages(in: content, expectedCount: 6, colorScheme: colorScheme)
+            waitForMermaidDiagramImages(in: content, expectedCount: 7, colorScheme: colorScheme)
 
             let unsupported = app.staticTexts.containing(
                 NSPredicate(format: "label CONTAINS %@", "Unsupported diagram type")

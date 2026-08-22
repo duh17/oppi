@@ -4,7 +4,7 @@ import Foundation
 /// Thin dispatcher for native Mermaid diagrams.
 ///
 /// Flowchart (+ state-as-flowchart) stays on `MermaidFlowchartRenderer`.
-/// Sequence, gantt, mindmap, pie, timeline, class, and ER have dedicated
+/// Sequence, gantt, mindmap, pie, timeline, class, ER, and XY have dedicated
 /// renderers. New diagram types hook in with one `MermaidDiagram` case
 /// plus one switch arm here.
 struct MermaidRenderer: GraphicalDocumentRenderer, Sendable {
@@ -34,6 +34,8 @@ struct MermaidRenderer: GraphicalDocumentRenderer, Sendable {
             return MermaidClassRenderer.layout(diagram, configuration: configuration)
         case .erDiagram(let diagram):
             return MermaidERRenderer.layout(diagram, configuration: configuration)
+        case .xyChart(let diagram):
+            return MermaidXYChartRenderer.layout(diagram, configuration: configuration)
         case .unsupported(let type):
             return flowchartRenderer.placeholderLayout(
                 text: "Unsupported diagram type: \(type)",

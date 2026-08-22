@@ -74,6 +74,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             return MermaidClassRenderer.layout(diagram, configuration: configuration)
         case .erDiagram(let diagram):
             return MermaidERRenderer.layout(diagram, configuration: configuration)
+        case .xyChart(let diagram):
+            return MermaidXYChartRenderer.layout(diagram, configuration: configuration)
         case .unsupported(let type):
             return placeholderLayout(
                 text: "Unsupported diagram type: \(type)",

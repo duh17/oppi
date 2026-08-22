@@ -59,6 +59,11 @@ struct MermaidParser: DocumentParser, Sendable {
             let body = Array(stripped[firstIndex...])
             let diagram = MermaidERParser.parse(lines: body)
             return .erDiagram(diagram)
+        case .xyChart:
+            // Title / orientation can sit on the header line, so keep it.
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidXYChartParser.parse(lines: body)
+            return .xyChart(diagram)
         case .unknown(let name):
             return .unsupported(type: name)
         }
@@ -118,6 +123,7 @@ struct MermaidParser: DocumentParser, Sendable {
         case timeline
         case classDiagram
         case erDiagram
+        case xyChart
         case unknown(String)
     }
 
@@ -155,6 +161,8 @@ struct MermaidParser: DocumentParser, Sendable {
             return Header(type: .classDiagram, direction: nil)
         case "erdiagram":
             return Header(type: .erDiagram, direction: nil)
+        case "xychart", "xychart-beta":
+            return Header(type: .xyChart, direction: nil)
         default:
             return Header(type: .unknown(tokens.first ?? keyword), direction: nil)
         }
