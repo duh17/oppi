@@ -57,23 +57,6 @@ final class ChatSessionManager {
 
     let sessionId: String
 
-    /// Quiet-mode live-strip timing. Records when the current fold group's
-    /// anchor item first appeared so each collapsed strip counts only its own
-    /// work. The session-level `currentTurnStartedAt` spans every steered
-    /// message and retry in the turn, which made strip durations misleading.
-    private var quietWorkAnchorID: String?
-    private(set) var quietWorkStartedAt: Date?
-
-    /// Re-derive the quiet-work stamp from the reducer's trailing fold group.
-    /// Call after any reducer mutation that can open, flush, or replace the
-    /// group; reads elsewhere are pure.
-    func refreshQuietWorkStamp(now: Date = Date()) {
-        let anchor = QuietTimelineProjection.trailingFoldGroupAnchorID(in: reducer.items)
-        guard anchor != quietWorkAnchorID else { return }
-        quietWorkAnchorID = anchor
-        quietWorkStartedAt = anchor == nil ? nil : now
-    }
-
     /// Per-session timeline pipeline — each ChatSessionManager owns its own
     /// reducer, coalescer, and correlator so sessions maintain independent
     /// timeline state across NavigationStack back-navigation.
@@ -178,9 +161,7 @@ final class ChatSessionManager {
 
         // Wire per-session coalescer → reducer pipeline.
         coalescer.onFlush = { [weak self] events in
-            guard let self else { return }
-            self.reducer.processBatch(events)
-            self.refreshQuietWorkStamp()
+            self?.reducer.processBatch(events)
         }
     }
 
@@ -534,7 +515,6 @@ final class ChatSessionManager {
         cancelAutoReconnect()
         cancelStateSync()
         reducer.reset()
-        refreshQuietWorkStamp()
         coalescer.sessionId = sessionId
         toolCallCorrelator.reset()
 
@@ -722,7 +702,6 @@ final class ChatSessionManager {
             if reducer.items.isEmpty {
                 let reducerLoadStartMs = ChatSessionTelemetry.nowMs()
                 reducer.loadSession(cached.events)
-                refreshQuietWorkStamp()
                 if sessionStore.session(id: sessionId)?.status.isRunning == false {
                     reducer.finalizeTerminalArtifactsAsInterrupted()
                 }
@@ -1152,7 +1131,6 @@ final class ChatSessionManager {
                !suppressTimelineMutationWhilePaused(),
                !reducer.hasUserMessage(matching: content) {
                 reducer.appendUserMessage(content)
-                refreshQuietWorkStamp()
             }
 
         case .error(_, _, let fatal):
@@ -1188,7 +1166,6 @@ final class ChatSessionManager {
                 uploadedAttachments: item.attachments ?? []
             )
             reducer.appendUserMessage(displayText, images: item.optimisticImages ?? [])
-            refreshQuietWorkStamp()
 
         case .stopRequested(_, let reason):
             guard !suppressTimelineMutationWhilePaused() else { break }
@@ -1474,7 +1451,6 @@ final class ChatSessionManager {
                 } else {
                     reducer.loadSession([], preserveOrphans: false)
                 }
-                refreshQuietWorkStamp()
                 needsInitialScroll = true
                 freshnessReason = "history_applied_empty"
             } else if timelineTrace.isEmpty, allowFirstMessageFallback, sessionIsLive {
@@ -1517,7 +1493,6 @@ final class ChatSessionManager {
                         )
                     }
                     let reducerDurationMs = max(0, ChatSessionTelemetry.nowMs() - reducerStartMs)
-                    refreshQuietWorkStamp()
 
                     ChatSessionTelemetry.recordReducerLoad(
                         durationMs: reducerDurationMs,
@@ -1681,7 +1656,6 @@ final class ChatSessionManager {
         sessionStore.upsert(response.session)
         let didPrepend = reducer.prependTracePage(response.trace)
         guard didPrepend else { return false }
-        refreshQuietWorkStamp()
         if !response.session.status.isRunning {
             reducer.finalizeTerminalArtifactsAsInterrupted()
         }

@@ -61,6 +61,7 @@ struct ChatTimelineView: View {
     let sessionManager: ChatSessionManager
     let audioLifecycleCoordinator: AudioLifecycleCoordinator?
     var quietModeEnabled: Bool = false
+    var workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons
     let onFork: (String) -> Void
     let onBackSwipe: () -> Void
     let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -74,6 +75,7 @@ struct ChatTimelineView: View {
     @State private var scrollCommandNonce = 0
     @State private var pendingScrollCommand: ChatTimelineScrollCommand?
     @State private var expandedQuietTurnIDs: Set<String> = []
+    @State private var quietSettledEnds: [String: Date] = [:]
 
     private var showsWorkingIndicator: Bool {
         isBusy && (extensionWorkingState?.visible ?? true)
@@ -85,16 +87,10 @@ struct ChatTimelineView: View {
             isQuiet: quietModeEnabled,
             isBusy: isBusy,
             expandedTurnIDs: expandedQuietTurnIDs,
-            liveStartedAt: liveWorkStartedAt
+            displayStyle: workStripStyle,
+            toolArgs: { reducer.toolArgsStore.args(for: $0) },
+            settledEnds: quietSettledEnds
         )
-    }
-
-    /// Per-strip elapsed time. The manager stamps when the trailing fold
-    /// group opened, so each live strip counts only its own work instead of
-    /// the whole server turn.
-    private var liveWorkStartedAt: Date? {
-        guard quietModeEnabled, isBusy else { return nil }
-        return sessionManager.quietWorkStartedAt
     }
 
     private var renderedItems: ArraySlice<ChatItem> {
@@ -262,6 +258,13 @@ struct ChatTimelineView: View {
         }
         .onChange(of: sessionId) { _, _ in
             expandedQuietTurnIDs.removeAll()
+            quietSettledEnds.removeAll()
+        }
+        .onChange(of: projection) { _, newValue in
+            let next = newValue.settledEnds
+            if next != quietSettledEnds {
+                quietSettledEnds = next
+            }
         }
         // Jump-to-bottom button lives in ChatView (above the footer overlay) to avoid
         // the footer's z-order blocking taps on this overlay.

@@ -109,8 +109,8 @@ final class ChatTimelineE2ETests: E2ETestCase {
             "delta": thinkingPlan,
             "contentIndex": 0,
         ])
-        XCTAssertTrue(waitForWorkLine(workLine, label: "1 thinking block", timeout: 10), "Live work line did not count thinking")
-        XCTAssertFalse(timelineContains(thinkingPlan), "Live thinking should stay behind the work line")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "Thinking…", timeout: 10), "Live thinking status did not appear")
+        XCTAssertFalse(timelineContains(thinkingPlan), "Live thinking should stay folded")
 
         try sendFinishedTool(
             sessionId: sessionId,
@@ -119,7 +119,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
             args: ["command": "printf bash-quiet"],
             output: bashOutput
         )
-        XCTAssertTrue(waitForWorkLine(workLine, label: "1 tool, 1 thinking block", timeout: 10), "Live work line did not count bash")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "run 1 tool", timeout: 10), "Live work line did not count the command")
         XCTAssertFalse(timelineContains(bashOutput), "Live bash output should stay behind the work line")
 
         try sendE2EHarnessMessage(sessionId: sessionId, [
@@ -127,7 +127,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
             "delta": thinkingNext,
             "contentIndex": 2,
         ])
-        XCTAssertTrue(waitForWorkLine(workLine, label: "1 tool, 2 thinking blocks", timeout: 10), "Live work line did not count follow-up thinking")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "run 1 tool", timeout: 10), "Thinking changed the visible work summary")
         XCTAssertFalse(timelineContains(thinkingNext), "Live follow-up thinking should stay behind the work line")
 
         try sendFinishedTool(
@@ -137,7 +137,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
             args: ["path": "README.md"],
             output: readOutput
         )
-        XCTAssertTrue(waitForWorkLine(workLine, label: "2 tools, 2 thinking blocks", timeout: 10), "Live work line did not count read")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "read 1 file  run 1 tool", timeout: 10), "Live work line did not separate read and command work")
         XCTAssertFalse(timelineContains(readOutput), "Live read output should stay behind the work line")
 
         try sendFinishedTool(
@@ -147,7 +147,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
             args: ["pattern": "quiet-mode"],
             output: grepOutput
         )
-        XCTAssertTrue(waitForWorkLine(workLine, label: "3 tools, 2 thinking blocks", timeout: 10), "Live work line did not count grep")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "read 1 file  run 2 tools", timeout: 10), "Live work line did not count the other tool bucket")
         XCTAssertFalse(timelineContains(grepOutput), "Live grep output should stay behind the work line")
 
         try sendE2EHarnessMessage(sessionId: sessionId, [
@@ -174,7 +174,12 @@ final class ChatTimelineE2ETests: E2ETestCase {
         XCTAssertTrue(timelineContains(userPrompt), "Quiet Mode must keep the user prompt visible")
 
         XCTAssertTrue(waitForElementToExist(workLine, timeout: 10), "Quiet work line did not replace finished work")
-        XCTAssertEqual(workLine.label, "3 tools, 2 thinking blocks", "Quiet work line lost finished-turn counts")
+        let finishedWorkLabel = workLine.label
+        XCTAssertTrue(
+            finishedWorkLabel == "read 1 file  run 2 tools"
+                || finishedWorkLabel.hasPrefix("read 1 file  run 2 tools · "),
+            "Quiet work line lost finished-turn buckets: \(finishedWorkLabel)"
+        )
         XCTAssertEqual(workLine.value as? String, "Collapsed")
         for text in hiddenAfterFold {
             XCTAssertFalse(

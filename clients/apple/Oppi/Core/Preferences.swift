@@ -498,16 +498,45 @@ enum AppPreferences {
     /// Device-local Compact turns preference. It never changes session or
     /// Agent data sent over the wire.
     enum ChatDisplay {
+        enum WorkStripStyle: String, CaseIterable, Identifiable {
+            case icons
+            case words
+
+            var id: String { rawValue }
+
+            var label: String {
+                switch self {
+                case .icons: return "Icons"
+                case .words: return "Words"
+                }
+            }
+        }
+
         static let compactTurnsKey = "\(AppIdentifiers.subsystem).chatDisplay.compactTurns"
+        static let workStripStyleKey = "\(AppIdentifiers.subsystem).chatDisplay.workStripStyle"
         static let didChangeNotification = Notification.Name("oppi.chatDisplay.compactTurnsDidChange")
 
         static var isCompactTurnsEnabled: Bool {
             UserDefaults.standard.object(forKey: compactTurnsKey) as? Bool ?? false
         }
 
+        static var workStripStyle: WorkStripStyle {
+            guard let raw = UserDefaults.standard.string(forKey: workStripStyleKey),
+                  let style = WorkStripStyle(rawValue: raw) else {
+                return .icons
+            }
+            return style
+        }
+
         static func setCompactTurnsEnabled(_ enabled: Bool) {
             guard enabled != isCompactTurnsEnabled else { return }
             UserDefaults.standard.set(enabled, forKey: compactTurnsKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+
+        static func setWorkStripStyle(_ style: WorkStripStyle) {
+            guard style != workStripStyle else { return }
+            UserDefaults.standard.set(style.rawValue, forKey: workStripStyleKey)
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
         }
     }

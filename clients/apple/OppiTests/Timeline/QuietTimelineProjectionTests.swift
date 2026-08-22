@@ -6,13 +6,14 @@ import Testing
 struct QuietTimelineProjectionTests {
     private let timestamp = Date(timeIntervalSince1970: 0)
 
-    @Test func finishedTurnCollapsesOnlySuccessfulToolsAndThinking() {
+    @Test func finishedTurnFoldsSuccessfulWorkAndKeepsActionableRows() throws {
         let items: [ChatItem] = [
             .userMessage(id: "u1", text: "Inspect", timestamp: timestamp),
             .thinking(id: "think-1", preview: "private reasoning", hasMore: false, isDone: true),
             .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "ok", outputByteCount: 2, isError: false, isDone: true),
             .toolCall(id: "tool-error", tool: "bash", argsSummary: "bad", outputPreview: "failed", outputByteCount: 6, isError: true, isDone: true),
             .toolCall(id: "ask-1", tool: "ask", argsSummary: "question", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            .error(id: "error-1", message: "Session error"),
             .cacheMiss(id: "cache-1", message: "Cached output unavailable"),
             .systemEvent(id: "system-1", message: "Model changed"),
             .audioClip(id: "audio-1", title: "Reply", fileURL: URL(fileURLWithPath: "/tmp/reply.m4a"), timestamp: timestamp),
@@ -27,159 +28,226 @@ struct QuietTimelineProjectionTests {
         )
 
         #expect(projection.fullTimelineItemIDs == items.map(\.id))
-        #expect(projection.rows.map(\.id) == ["u1", QuietTimelineProjection.syntheticWorkLineID(for: "think-1"), "tool-error", "ask-1", "cache-1", "system-1", "audio-1", "a1"])
-        guard case .quietWork(let workLine) = projection.rows[1] else {
-            Issue.record("Expected a synthetic work line")
-            return
-        }
-        #expect(workLine.toolCount == 1)
-        #expect(workLine.thinkingCount == 1)
-        #expect(workLine.sourceItemIDs == ["think-1", "tool-1"])
-        #expect(workLine.activityCounts == ["bash": 1, "thinking": 1])
-        #expect(workLine.turnID == "think-1")
+        #expect(projection.rows.map(\.id) == [
+            "u1", "quiet-work-line:think-1", "ask-1", "error-1",
+            "cache-1", "system-1", "audio-1", "a1",
+        ])
+        let workLine = try #require(workLines(in: projection).first)
+        #expect(workLine.sourceItemIDs == ["think-1", "tool-1", "tool-error"])
+        #expect(workLine.buckets == [.init(kind: .tooling, count: 2)])
+        #expect(workLine.wordsSummary(now: timestamp) == "run 2 tools")
     }
 
-    @Test func liveTurnUpdatesWorkLineInsteadOfShowingToolRows() {
+    @Test func failedToolStaysInOneStripBetweenAssistantMessages() throws {
         let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "thinking", hasMore: false, isDone: false),
-            .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
-            .assistantMessage(id: "a1", text: "Working", timestamp: timestamp),
+            .assistantMessage(id: "a0", text: "Starting", timestamp: timestamp),
+            .toolCall(id: "bash-ok", tool: "bash", argsSummary: "true", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            .toolCall(id: "bash-failed", tool: "bash", argsSummary: "false", outputPreview: "exit 1", outputByteCount: 6, isError: true, isDone: true),
+            .toolCall(id: "grep-1", tool: "grep", argsSummary: "needle", outputPreview: "match", outputByteCount: 5, isError: false, isDone: true),
+            .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
 
-        let projection = QuietTimelineProjection.make(
+        let collapsed = QuietTimelineProjection.make(
             items: items,
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: []
+        )
+        let expanded = QuietTimelineProjection.make(
+            items: items,
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: ["bash-ok"]
+        )
+
+        #expect(collapsed.rows.map(\.id) == ["a0", "quiet-work-line:bash-ok", "a1"])
+        let workLine = try #require(workLines(in: collapsed).first)
+        #expect(workLine.sourceItemIDs == ["bash-ok", "bash-failed", "grep-1"])
+        #expect(workLine.buckets == [
+            .init(kind: .tooling, count: 3),
+        ])
+        #expect(!collapsed.rows.contains { $0.id == "bash-failed" })
+        #expect(collapsed.renderedRowID(forSourceItemID: "bash-failed") == "quiet-work-line:bash-ok")
+        #expect(expanded.rows.map(\.id) == [
+            "a0", "quiet-work-line:bash-ok", "bash-ok", "bash-failed", "grep-1", "a1",
+        ])
+    }
+
+    @Test func liveThinkingOnlyGroupShowsThinkingStatus() throws {
+        let projection = QuietTimelineProjection.make(
+            items: [
+                .assistantMessage(id: "a0", text: "Earlier", timestamp: Date(timeIntervalSince1970: 1_000)),
+                .thinking(id: "think-live", preview: "hidden", hasMore: true, isDone: false),
+            ],
             isQuiet: true,
             isBusy: true,
             expandedTurnIDs: []
         )
 
-        #expect(projection.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "a1"])
-        #expect(projection.rows.contains { $0.id == "think-1" } == false)
-        #expect(projection.rows.contains { $0.id == "tool-1" } == false)
-        guard case .quietWork(let workLine) = projection.rows[1] else {
-            Issue.record("Expected a live work line above the assistant message")
-            return
-        }
-        #expect(workLine.toolCount == 1)
-        #expect(workLine.thinkingCount == 1)
-        #expect(workLine.isExpanded == false)
-        #expect(workLine.isLive == false)
-        #expect(workLine.turnID == "think-1")
+        #expect(projection.rows.map(\.id) == ["a0", "quiet-work-line:think-live"])
+        let line = try #require(workLines(in: projection).last)
+        #expect(line.isThinkingOnly)
+        #expect(line.isLive)
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 1_007)) == "Thinking… · 7s")
     }
 
-    @Test func eachAssistantMessageGetsItsOwnWorkStrip() {
+    @Test func historicalThinkingOnlyGroupsKeepAFinishedThought() throws {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let end = Date(timeIntervalSince1970: 1_012)
+        let projection = QuietTimelineProjection.make(
+            items: [
+                .userMessage(id: "u1", text: "Think", timestamp: start),
+                .thinking(id: "think-1", preview: "hidden", hasMore: false, isDone: true),
+                .assistantMessage(id: "a1", text: "Done", timestamp: end),
+            ],
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: []
+        )
+
+        #expect(projection.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "a1"])
+        let line = try #require(workLines(in: projection).first)
+        #expect(line.isThinkingOnly)
+        #expect(!line.isLive)
+        #expect(line.liveStartedAt == start)
+        #expect(line.intervalEndedAt == end)
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 9_999)) == "Thought · 12s")
+    }
+
+    @Test func bucketSummaryGroupsBashAndOtherTools() throws {
+        let projection = QuietTimelineProjection.make(
+            items: [
+                .toolCall(id: "read-1", tool: "functions.read", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+                .toolCall(id: "read-2", tool: "read", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+                .toolCall(id: "bash-1", tool: "bash", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+                .toolCall(id: "grep-1", tool: "grep", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+                .toolCall(id: "mermaid-1", tool: "extensions/mermaid", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            ],
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: []
+        )
+
+        let line = try #require(workLines(in: projection).first)
+        #expect(line.buckets == [
+            .init(kind: .read, count: 2),
+            .init(kind: .tooling, count: 3),
+        ])
+        #expect(line.wordsSummary(now: timestamp) == "read 2 files  run 3 tools")
+    }
+
+    @Test func editSummaryUsesStoredStatsWhenEveryEditHasArgs() throws {
+        let argsByID: [String: [String: JSONValue]] = [
+            "edit-1": editArgs(old: "old\nline", new: "new\nline\nextra"),
+            "edit-2": editArgs(old: "remove", new: "replace"),
+        ]
+        let projection = QuietTimelineProjection.make(
+            items: [
+                .toolCall(id: "edit-1", tool: "edit", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+                .toolCall(id: "edit-2", tool: "edit", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            ],
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: [],
+            toolArgs: { argsByID[$0] }
+        )
+
+        let line = try #require(workLines(in: projection).first)
+        #expect(line.buckets == [
+            .init(kind: .edit, count: 2, editStats: .init(added: 3, removed: 2)),
+        ])
+        #expect(line.wordsSummary(now: timestamp) == "edit +3 −2")
+    }
+
+    @Test func editSummaryFallsBackToFileCountWhenAnyStatsAreMissing() throws {
+        let projection = QuietTimelineProjection.make(
+            items: [
+                .toolCall(id: "edit-1", tool: "edit", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+                .toolCall(id: "edit-2", tool: "edit", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+            ],
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: [],
+            toolArgs: { id in id == "edit-1" ? editArgs(old: "a", new: "b") : nil }
+        )
+
+        let line = try #require(workLines(in: projection).first)
+        #expect(line.buckets == [.init(kind: .edit, count: 2)])
+        #expect(line.wordsSummary(now: timestamp) == "edit 2")
+    }
+
+    @Test func eachAssistantBoundaryKeepsHistoricalStripsBetweenReplies() {
         let items: [ChatItem] = [
             .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
             .toolCall(id: "tool-1", tool: "bash", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .assistantMessage(id: "a1", text: "First", timestamp: timestamp),
             .thinking(id: "think-2", preview: "two", hasMore: false, isDone: true),
             .toolCall(id: "tool-2", tool: "read", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .assistantMessage(id: "a2", text: "Second", timestamp: timestamp),
         ]
+
         let projection = QuietTimelineProjection.make(
             items: items,
             isQuiet: true,
             isBusy: false,
             expandedTurnIDs: []
         )
+
         #expect(projection.rows.map(\.id) == [
-            "u1", "quiet-work-line:think-1", "a1", "quiet-work-line:think-2", "a2"
+            "u1", "quiet-work-line:tool-1", "a1", "quiet-work-line:think-2", "a2",
         ])
-        guard case .quietWork(let first) = projection.rows[1],
-              case .quietWork(let second) = projection.rows[3] else {
-            Issue.record("Expected a work strip above each assistant message")
-            return
-        }
-        #expect(first.sourceItemIDs == ["think-1", "tool-1"])
-        #expect(second.sourceItemIDs == ["think-2", "tool-2"])
-        #expect(first.isLive == false)
-        #expect(second.isLive == false)
+        #expect(workLines(in: projection).allSatisfy { !$0.isLive })
     }
 
-    @Test func visibleInterruptionsSplitFoldedGroupsWithoutReorderingChronology() {
+    @Test func visibleInterruptionsSplitGroupsAndKeepThinkingOnlySide() throws {
+        let projection = QuietTimelineProjection.make(
+            items: [
+                .userMessage(id: "u1", text: "Run", timestamp: timestamp),
+                .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
+                .systemEvent(id: "system-1", message: "Model changed"),
+                .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "ok", outputByteCount: 2, isError: false, isDone: true),
+                .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
+            ],
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: []
+        )
+
+        #expect(projection.rows.map(\.id) == [
+            "u1", "quiet-work-line:think-1", "system-1", "quiet-work-line:tool-1", "a1",
+        ])
+        #expect(try #require(workLines(in: projection).first).sourceItemIDs == ["think-1"])
+        #expect(try #require(workLines(in: projection).last).sourceItemIDs == ["tool-1"])
+    }
+
+    @Test func expansionRestoresThinkingAndToolsForTheSelectedStrip() {
         let items: [ChatItem] = [
             .userMessage(id: "u1", text: "Run", timestamp: timestamp),
             .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
-            .systemEvent(id: "system-1", message: "Model changed"),
-            .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "ok", outputByteCount: 2, isError: false, isDone: true),
+            .toolCall(id: "tool-1", tool: "bash", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
-        let projection = QuietTimelineProjection.make(
-            items: items,
-            isQuiet: true,
-            isBusy: false,
-            expandedTurnIDs: []
-        )
-        #expect(projection.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "system-1", "quiet-work-line:tool-1", "a1"])
-        guard case .quietWork(let firstWorkLine) = projection.rows[1],
-              case .quietWork(let secondWorkLine) = projection.rows[3] else {
-            Issue.record("Expected separate work strips around the visible interruption")
-            return
-        }
-        #expect(firstWorkLine.sourceItemIDs == ["think-1"])
-        #expect(secondWorkLine.sourceItemIDs == ["tool-1"])
-        #expect(firstWorkLine.turnID == "think-1")
-        #expect(secondWorkLine.turnID == "tool-1")
+
+        let collapsed = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
+        let expanded = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: ["think-1"])
+
+        #expect(collapsed.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "a1"])
+        #expect(expanded.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "think-1", "tool-1", "a1"])
     }
 
-    @Test func errorCacheAndAudioBoundariesAlsoSplitFoldedGroups() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
-            .error(id: "error-1", message: "Tool failed"),
-            .toolCall(id: "tool-2", tool: "bash", argsSummary: "two", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
-            .cacheMiss(id: "cache-1", message: "Cache unavailable"),
-            .thinking(id: "think-3", preview: "three", hasMore: false, isDone: true),
-            .audioClip(id: "audio-1", title: "Reply", fileURL: URL(fileURLWithPath: "/tmp/reply.m4a"), timestamp: timestamp),
-            .toolCall(id: "tool-4", tool: "read", argsSummary: "four", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
-            .systemEvent(id: "system-1", message: "Model changed"),
-            .thinking(id: "think-5", preview: "five", hasMore: false, isDone: true),
-        ]
-
-        let projection = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
-
-        #expect(projection.rows.map(\.id) == [
-            "u1", "quiet-work-line:think-1", "error-1",
-            "quiet-work-line:tool-2", "cache-1", "quiet-work-line:think-3",
-            "audio-1", "quiet-work-line:tool-4", "system-1", "quiet-work-line:think-5",
-        ])
-    }
-
-    @Test func expandingOneAssistantStripDoesNotRevealEarlierAssistantWork() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
-            .assistantMessage(id: "a1", text: "First", timestamp: timestamp),
-            .thinking(id: "think-2", preview: "two", hasMore: false, isDone: true),
-            .assistantMessage(id: "a2", text: "Second", timestamp: timestamp),
-        ]
-        let projection = QuietTimelineProjection.make(
-            items: items,
-            isQuiet: true,
-            isBusy: false,
-            expandedTurnIDs: ["think-2"]
-        )
-        #expect(projection.rows.map(\.id) == [
-            "u1", "quiet-work-line:think-1", "a1", "quiet-work-line:think-2", "think-2", "a2"
-        ])
-        #expect(projection.rows.contains { $0.id == "think-1" } == false)
-    }
-
-    @Test func expandedStripRetainsIdentityWhenOlderPageStartsInsideItsFoldedGroup() throws {
+    @Test func expandedStripRetainsIdentityWhenOlderPageStartsInsideItsGroup() throws {
         let currentPage: [ChatItem] = [
             .toolCall(id: "tool-5", tool: "bash", argsSummary: "five", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .thinking(id: "think-6", preview: "six", hasMore: false, isDone: true),
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
-        let beforePrepend = QuietTimelineProjection.make(
+        let before = QuietTimelineProjection.make(
             items: currentPage,
             isQuiet: true,
             isBusy: false,
             expandedTurnIDs: ["tool-5"]
         )
-        let afterPrepend = QuietTimelineProjection.make(
+        let after = QuietTimelineProjection.make(
             items: [
                 .assistantMessage(id: "a0", text: "Earlier", timestamp: timestamp),
                 .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
@@ -190,326 +258,191 @@ struct QuietTimelineProjectionTests {
             expandedTurnIDs: ["tool-5"]
         )
 
-        let beforeLine = try #require(beforePrepend.rows.compactMap { row -> QuietTimelineWorkLine? in
-            guard case .quietWork(let line) = row else { return nil }
-            return line
-        }.first)
-        let afterLine = try #require(afterPrepend.rows.compactMap { row -> QuietTimelineWorkLine? in
-            guard case .quietWork(let line) = row else { return nil }
-            return line
-        }.first)
-
-        #expect(beforeLine.id == "quiet-work-line:tool-5")
+        let beforeLine = try #require(workLines(in: before).first)
+        let afterLine = try #require(workLines(in: after).first)
         #expect(afterLine.id == beforeLine.id)
         #expect(afterLine.turnID == "tool-5")
-        #expect(afterLine.isExpanded)
         #expect(afterLine.sourceItemIDs == ["think-1", "tool-2", "tool-5", "think-6"])
-        #expect(afterPrepend.rows.map(\.id) == [
-            "a0", "quiet-work-line:tool-5", "think-1", "tool-2", "tool-5", "think-6", "a1",
-        ])
     }
 
-    @Test func liveWorkLineSummaryIncludesDuration() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "thinking", hasMore: false, isDone: false),
-            .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
-        ]
-        let startedAt = Date(timeIntervalSince1970: 1_000)
+    @Test func liveClockUsesPrecedingAssistantTimestamp() throws {
         let projection = QuietTimelineProjection.make(
-            items: items,
+            items: [
+                .assistantMessage(id: "a0", text: "Earlier", timestamp: Date(timeIntervalSince1970: 1_000)),
+                .thinking(id: "think-1", preview: "hidden", hasMore: false, isDone: false),
+                .toolCall(id: "bash-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
+            ],
             isQuiet: true,
             isBusy: true,
-            expandedTurnIDs: [],
-            liveStartedAt: startedAt
+            expandedTurnIDs: []
         )
-        guard case .quietWork(let workLine) = projection.rows[1] else {
-            Issue.record("Expected a live work line")
-            return
-        }
-        #expect(workLine.liveStartedAt == startedAt)
-        #expect(workLine.displaySummary(now: Date(timeIntervalSince1970: 1_012)) == "1 tool, 1 thinking block · 12s")
-        #expect(workLine.displaySummary(now: Date(timeIntervalSince1970: 1_075)) == "1 tool, 1 thinking block · 1m 15s")
-        #expect(workLine.displaySummary(now: Date(timeIntervalSince1970: 4_723)) == "1 tool, 1 thinking block · 1h 2m 3s")
+
+        let line = try #require(workLines(in: projection).last)
+        #expect(line.isLive)
+        #expect(line.liveStartedAt == Date(timeIntervalSince1970: 1_000))
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 1_007)) == "run 1 tool · 7s")
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 1_075)) == "run 1 tool · 1m 15s")
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 4_723)) == "run 1 tool · 1h 2m 3s")
     }
 
-    @Test func finishedWorkLineSummaryOmitsDuration() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "thinking", hasMore: false, isDone: true),
-        ]
+    @Test func historicalStripFreezesDurationBetweenAssistantTimestamps() throws {
         let projection = QuietTimelineProjection.make(
-            items: items,
-            isQuiet: true,
-            isBusy: false,
-            expandedTurnIDs: [],
-            liveStartedAt: Date(timeIntervalSince1970: 1_000)
-        )
-        guard case .quietWork(let workLine) = projection.rows[1] else {
-            Issue.record("Expected a finished work line")
-            return
-        }
-        #expect(workLine.liveStartedAt == nil)
-        #expect(workLine.displaySummary(now: Date(timeIntervalSince1970: 1_012)) == "1 thinking block")
-    }
-
-    @Test func expansionIsScopedToOneTurnAndSyntheticIDIsStable() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "One", timestamp: timestamp),
-            .toolCall(id: "tool-1", tool: "bash", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
-            .userMessage(id: "u2", text: "Two", timestamp: timestamp),
-            .thinking(id: "think-2", preview: "two", hasMore: false, isDone: true),
-        ]
-
-        let collapsed = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
-        let expanded = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: ["tool-1"])
-
-        #expect(collapsed.rows.map(\.id) == ["u1", "quiet-work-line:tool-1", "u2", "quiet-work-line:think-2"])
-        #expect(expanded.rows.map(\.id) == ["u1", "quiet-work-line:tool-1", "tool-1", "u2", "quiet-work-line:think-2"])
-        #expect(collapsed.fullTimelineItemIDs == expanded.fullTimelineItemIDs)
-        #expect(collapsed.rows.contains { $0.id == "tool-1" } == false)
-        #expect(expanded.rows.contains { $0.id == "tool-1" })
-        guard case .quietWork(let collapsedWorkLine) = collapsed.rows[1],
-              case .quietWork(let expandedWorkLine) = expanded.rows[1] else {
-            Issue.record("Expected stable work-line headers in both states")
-            return
-        }
-        #expect(collapsedWorkLine.isExpanded == false)
-        #expect(expandedWorkLine.isExpanded)
-        #expect(collapsed.rows.contains { $0.id == "quiet-work-line:tool-1" })
-    }
-
-    @Test func idleInterruptedToolsFoldWhileAskRowsStayVisible() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Ask", timestamp: timestamp),
-            .toolCall(id: "ask-1", tool: "ask", argsSummary: "question", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
-            .userMessage(id: "ask-answer-1", text: "Answer", timestamp: timestamp),
-            .thinking(id: "thinking-1", preview: "done", hasMore: false, isDone: true),
-            .toolCall(id: "interrupted-1", tool: "bash", argsSummary: "run", outputPreview: "stopped", outputByteCount: 7, isError: true, isDone: true),
-        ]
-
-        let projection = QuietTimelineProjection.make(
-            items: items,
+            items: [
+                .assistantMessage(id: "a0", text: "Earlier", timestamp: Date(timeIntervalSince1970: 1_000)),
+                .toolCall(id: "bash-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+                .assistantMessage(id: "a1", text: "Later", timestamp: Date(timeIntervalSince1970: 1_037)),
+            ],
             isQuiet: true,
             isBusy: false,
             expandedTurnIDs: []
         )
 
-        #expect(projection.rows.map(\.id) == [
-            "u1", "ask-1", "ask-answer-1", "quiet-work-line:thinking-1", "interrupted-1"
-        ])
-        #expect(projection.rows.contains { $0.id == "quiet-work-line:thinking-1" })
-        #expect(projection.rows.contains { $0.id == "interrupted-1" })
-        guard case .quietWork(let workLine) = projection.rows[3] else {
-            Issue.record("Expected thinking to fold before the failed tool")
-            return
-        }
-        #expect(workLine.toolCount == 0)
-        #expect(workLine.thinkingCount == 1)
+        let line = try #require(workLines(in: projection).first)
+        #expect(!line.isLive)
+        #expect(line.liveStartedAt == Date(timeIntervalSince1970: 1_000))
+        #expect(line.intervalEndedAt == Date(timeIntervalSince1970: 1_037))
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 9_999)) == "run 1 tool · 37s")
     }
 
-    @Test func idleHistoricalToolsCollapseEvenWhenTraceDidNotMarkThemDone() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Inspect", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "old reasoning", hasMore: false, isDone: false),
-            .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "ok", outputByteCount: 2, isError: false, isDone: false),
-            .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
-        ]
-
+    @Test func trailingSettledStripFreezesDurationWithoutFollowingRow() throws {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let settledAt = Date(timeIntervalSince1970: 1_012)
         let projection = QuietTimelineProjection.make(
+            items: [
+                .userMessage(id: "u1", text: "Run", timestamp: start),
+                .thinking(id: "think-1", preview: "hidden", hasMore: false, isDone: true),
+            ],
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: [],
+            now: settledAt
+        )
+
+        let line = try #require(workLines(in: projection).first)
+        #expect(line.isThinkingOnly)
+        #expect(!line.isLive)
+        #expect(line.liveStartedAt == start)
+        #expect(line.intervalEndedAt == settledAt)
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 9_999)) == "Thought · 12s")
+    }
+
+    @Test func trailingSettledStripKeepsFrozenEndAcrossRemakes() throws {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let items: [ChatItem] = [
+            .userMessage(id: "u1", text: "Run", timestamp: start),
+            .thinking(id: "think-1", preview: "hidden", hasMore: false, isDone: true),
+        ]
+        let first = QuietTimelineProjection.make(
             items: items,
             isQuiet: true,
             isBusy: false,
+            expandedTurnIDs: [],
+            now: Date(timeIntervalSince1970: 1_012)
+        )
+        let firstLine = try #require(workLines(in: first).first)
+        let firstEnd = try #require(firstLine.intervalEndedAt)
+
+        let remade = QuietTimelineProjection.make(
+            items: items,
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: [],
+            now: Date(timeIntervalSince1970: 9_999),
+            settledEnds: first.settledEnds
+        )
+        let remadeLine = try #require(workLines(in: remade).first)
+        #expect(remadeLine.intervalEndedAt == firstEnd)
+        #expect(remadeLine.wordsSummary(now: Date(timeIntervalSince1970: 9_999)) == "Thought · 12s")
+    }
+
+    @Test func liveClockUsesPrecedingUserTimestampWhenNoAssistant() throws {
+        let projection = QuietTimelineProjection.make(
+            items: [
+                .userMessage(id: "u1", text: "First", timestamp: Date(timeIntervalSince1970: 2_003)),
+                .toolCall(id: "bash-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
+            ],
+            isQuiet: true,
+            isBusy: true,
             expandedTurnIDs: []
         )
 
-        #expect(projection.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "a1"])
-        guard case .quietWork(let workLine) = projection.rows[1] else {
-            Issue.record("Expected a synthetic work line for historical tools")
-            return
-        }
-        #expect(workLine.toolCount == 1)
-        #expect(workLine.thinkingCount == 1)
+        let line = try #require(workLines(in: projection).last)
+        #expect(line.isLive)
+        #expect(line.liveStartedAt == Date(timeIntervalSince1970: 2_003))
+        #expect(line.wordsSummary(now: Date(timeIntervalSince1970: 2_007)) == "run 1 tool · 4s")
     }
 
-    @Test func fullRenderWindowCoordinatesRemainChatItemIDs() {
+    @Test func busyVisibleInterruptionDoesNotRelightPreviousStrip() throws {
+        let projection = QuietTimelineProjection.make(
+            items: [
+                .userMessage(id: "u1", text: "One", timestamp: timestamp),
+                .toolCall(id: "tool-1", tool: "bash", argsSummary: "one", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+                .assistantMessage(id: "a1", text: "First", timestamp: timestamp),
+                .userMessage(id: "u2", text: "Two", timestamp: timestamp),
+            ],
+            isQuiet: true,
+            isBusy: true,
+            expandedTurnIDs: []
+        )
+
+        let line = try #require(workLines(in: projection).first)
+        #expect(!line.isLive)
+        #expect(line.liveStartedAt == timestamp)
+    }
+
+    @Test func styleIsPartOfWorkLinePresentationPayload() throws {
+        let items: [ChatItem] = [
+            .toolCall(id: "tool-1", tool: "bash", argsSummary: "run", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
+        ]
+        let icons = QuietTimelineProjection.make(
+            items: items,
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: [],
+            displayStyle: .icons
+        )
+        let words = QuietTimelineProjection.make(
+            items: items,
+            isQuiet: true,
+            isBusy: false,
+            expandedTurnIDs: [],
+            displayStyle: .words
+        )
+
+        #expect(try #require(workLines(in: icons).first).displayStyle == .icons)
+        #expect(try #require(workLines(in: words).first).displayStyle == .words)
+        #expect(icons != words)
+    }
+
+    @Test func renderWindowCoordinatesRemainSourceItemIDs() {
         let items: [ChatItem] = [
             .userMessage(id: "u1", text: "One", timestamp: timestamp),
             .thinking(id: "think-1", preview: "thinking", hasMore: false, isDone: true),
+            .toolCall(id: "tool-1", tool: "read", argsSummary: "file", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
         ]
         let projection = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
 
-        let rows = projection.rows(forRenderedItemIDs: ["think-1"])
-        #expect(rows.map(\.id) == ["quiet-work-line:think-1"])
-        #expect(projection.fullTimelineItemIDs == ["u1", "think-1", "a1"])
-        #expect(projection.renderedRowID(forSourceItemID: "think-1") == "quiet-work-line:think-1")
+        #expect(projection.rows(forRenderedItemIDs: ["think-1"]).map(\.id) == ["quiet-work-line:think-1"])
+        #expect(projection.fullTimelineItemIDs == ["u1", "think-1", "tool-1", "a1"])
+        #expect(projection.renderedRowID(forSourceItemID: "tool-1") == "quiet-work-line:think-1")
     }
 
-    @Test func busyTextOnlyFollowUpDoesNotRelightPreviousWorkStrip() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "One", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
-            .assistantMessage(id: "a1", text: "First", timestamp: timestamp),
-            .userMessage(id: "u2", text: "Two", timestamp: timestamp),
+    private func workLines(in projection: QuietTimelineProjection) -> [QuietTimelineWorkLine] {
+        projection.rows.compactMap { row in
+            guard case .quietWork(let line) = row else { return nil }
+            return line
+        }
+    }
+
+    private func editArgs(old: String, new: String) -> [String: JSONValue] {
+        [
+            "edits": .array([
+                .object([
+                    "oldText": .string(old),
+                    "newText": .string(new),
+                ]),
+            ]),
         ]
-        let projection = QuietTimelineProjection.make(
-            items: items,
-            isQuiet: true,
-            isBusy: true,
-            expandedTurnIDs: [],
-            liveStartedAt: Date(timeIntervalSince1970: 1_000)
-        )
-        guard case .quietWork(let workLine) = projection.rows[1] else {
-            Issue.record("Expected the finished first-turn strip")
-            return
-        }
-        #expect(workLine.isLive == false)
-        #expect(workLine.liveStartedAt == nil)
-        #expect(projection.rows.map(\.id) == ["u1", "quiet-work-line:think-1", "a1", "u2"])
-    }
-
-    @Test func expandedLiveStripKeepsIdentityWhenAssistantArrives() {
-        let liveItems: [ChatItem] = [
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "thinking", hasMore: false, isDone: false),
-            .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
-        ]
-        let live = QuietTimelineProjection.make(
-            items: liveItems,
-            isQuiet: true,
-            isBusy: true,
-            expandedTurnIDs: ["think-1"]
-        )
-        let withAssistant = QuietTimelineProjection.make(
-            items: liveItems + [.assistantMessage(id: "a1", text: "Done", timestamp: timestamp)],
-            isQuiet: true,
-            isBusy: true,
-            expandedTurnIDs: ["think-1"]
-        )
-        guard case .quietWork(let liveLine) = live.rows[1],
-              case .quietWork(let finishedLine) = withAssistant.rows[1] else {
-            Issue.record("Expected a stable work strip before and after the assistant message")
-            return
-        }
-        #expect(liveLine.id == finishedLine.id)
-        #expect(liveLine.turnID == "think-1")
-        #expect(finishedLine.turnID == "think-1")
-        #expect(liveLine.isExpanded)
-        #expect(finishedLine.isExpanded)
-        #expect(withAssistant.rows.contains { $0.id == "tool-1" })
-        #expect(finishedLine.isLive == false)
-    }
-
-    @Test func workLineCapturesOrderedActivityKindsCappedToMostRecentSample() {
-        var items: [ChatItem] = [.userMessage(id: "u1", text: "Run", timestamp: timestamp)]
-        for index in 0..<14 {
-            items.append(.toolCall(id: "tool-\(index)", tool: "bash", argsSummary: "ls", outputPreview: "", outputByteCount: 0, isError: false, isDone: true))
-        }
-        items.append(.thinking(id: "think-late", preview: "late", hasMore: false, isDone: true))
-        items.append(.toolCall(id: "tool-ext", tool: "plugins/mermaid", argsSummary: "render", outputPreview: "", outputByteCount: 0, isError: false, isDone: true))
-        items.append(.assistantMessage(id: "a1", text: "Done", timestamp: timestamp))
-
-        let projection = QuietTimelineProjection.make(items: items, isQuiet: true, isBusy: false, expandedTurnIDs: [])
-
-        guard case .quietWork(let workLine) = projection.rows[1] else {
-            Issue.record("Expected a synthetic work line")
-            return
-        }
-        #expect(workLine.activities.count == QuietTimelineWorkLine.activitySampleLimit)
-        #expect(workLine.activities == Array(repeating: "bash", count: 10) + ["thinking", "mermaid"])
-        #expect(workLine.activityCounts == ["bash": 14, "thinking": 1, "mermaid": 1])
-    }
-
-    @Test func liveReplacementCarriesActivityKindsForward() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "thinking", hasMore: false, isDone: false),
-            .toolCall(id: "tool-1", tool: "read", argsSummary: "x", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
-        ]
-
-        let projection = QuietTimelineProjection.make(
-            items: items,
-            isQuiet: true,
-            isBusy: true,
-            expandedTurnIDs: [],
-            liveStartedAt: Date(timeIntervalSince1970: 1_000)
-        )
-
-        guard case .quietWork(let workLine) = projection.rows.last else {
-            Issue.record("Expected a live work line")
-            return
-        }
-        #expect(workLine.isLive)
-        #expect(workLine.activities == ["thinking", "read"])
-    }
-
-    @Test func trailingFoldGroupAnchorMatchesLiveStripSelection() {
-        func anchor(_ items: [ChatItem]) -> String? {
-            QuietTimelineProjection.trailingFoldGroupAnchorID(in: items)
-        }
-
-        // Trailing collapsible run anchors on its first item.
-        #expect(anchor([
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "t", hasMore: false, isDone: false),
-            .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
-        ]) == "think-1")
-
-        // Assistant messages flush the group.
-        #expect(anchor([
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "t", hasMore: false, isDone: true),
-            .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
-        ]) == nil)
-
-        // Visible interruptions close the preceding group.
-        #expect(anchor([
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "t", hasMore: false, isDone: true),
-            .systemEvent(id: "system-1", message: "Model changed"),
-            .toolCall(id: "ask-1", tool: "ask", argsSummary: "q", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
-        ]) == nil)
-
-        // Ask → wait → answer → resume gets a new trailing anchor.
-        #expect(anchor([
-            .userMessage(id: "u1", text: "Ask", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "t", hasMore: false, isDone: true),
-            .toolCall(id: "ask-1", tool: "ask", argsSummary: "q", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
-            .userMessage(id: "ask-answer-1", text: "Answer", timestamp: timestamp),
-            .thinking(id: "think-2", preview: "t2", hasMore: false, isDone: true),
-        ]) == "think-2")
-
-        // Nothing collapsible → no anchor.
-        #expect(anchor([.userMessage(id: "u1", text: "Hi", timestamp: timestamp)]) == nil)
-        #expect(anchor([]) == nil)
-    }
-
-    @Test func onlyTrailingWorkAfterLastAssistantStaysLive() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "Run", timestamp: timestamp),
-            .thinking(id: "think-1", preview: "one", hasMore: false, isDone: true),
-            .assistantMessage(id: "a1", text: "First", timestamp: timestamp),
-            .toolCall(id: "tool-1", tool: "bash", argsSummary: "ls", outputPreview: "", outputByteCount: 0, isError: false, isDone: false),
-        ]
-        let projection = QuietTimelineProjection.make(
-            items: items,
-            isQuiet: true,
-            isBusy: true,
-            expandedTurnIDs: [],
-            liveStartedAt: Date(timeIntervalSince1970: 1_000)
-        )
-        #expect(projection.rows.map(\.id) == [
-            "u1", "quiet-work-line:think-1", "a1", "quiet-work-line:tool-1"
-        ])
-        guard case .quietWork(let settled) = projection.rows[1],
-              case .quietWork(let live) = projection.rows[3] else {
-            Issue.record("Expected a settled strip and a live trailing strip")
-            return
-        }
-        #expect(settled.isLive == false)
-        #expect(settled.liveStartedAt == nil)
-        #expect(live.isLive)
-        #expect(live.liveStartedAt == Date(timeIntervalSince1970: 1_000))
     }
 }

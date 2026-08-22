@@ -2,17 +2,20 @@ import UIKit
 
 struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
     let workLine: QuietTimelineWorkLine
+    let style: AppPreferences.ChatDisplay.WorkStripStyle
     let onTap: () -> Void
     let isHighlighted: Bool
     let isSelected: Bool
 
     init(
         workLine: QuietTimelineWorkLine,
+        style: AppPreferences.ChatDisplay.WorkStripStyle? = nil,
         onTap: @escaping () -> Void = {},
         isHighlighted: Bool = false,
         isSelected: Bool = false
     ) {
         self.workLine = workLine
+        self.style = style ?? workLine.displayStyle
         self.onTap = onTap
         self.isHighlighted = isHighlighted
         self.isSelected = isSelected
@@ -26,6 +29,7 @@ struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
         guard let cellState = state as? UICellConfigurationState else { return self }
         return Self(
             workLine: workLine,
+            style: style,
             onTap: onTap,
             isHighlighted: cellState.isHighlighted,
             isSelected: cellState.isSelected
@@ -34,33 +38,20 @@ struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
 }
 
 /// Full-width compact-work strip. The whole row is the control; expanded vs
-/// collapsed is fill, not a chevron. A leading icon mirrors the strip's most
-/// recent activity (thinking sparkles, bash dollarsign, read magnifier, …)
-/// so the strip reads as live agent work rather than a second user bubble.
+/// collapsed is fill, not a chevron. The configured density shows either
+/// bucket icons with counts or a stable words summary.
 final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
+    private static let thinkingBlinkAnimationKey = "oppi.quietWork.thinkingBlink"
+
     private let chipView = UIView()
     private let button = UIButton(type: .system)
-    private let iconView = UIImageView()
     private let summaryLabel = UILabel()
-    private let iconTrailingToLabelLeading: NSLayoutConstraint
-    /// Lower-priority fallback so the label pins to the chip edge whenever
-    /// the icon chain is deactivated (strips with no sampled activities).
-    private let labelFallbackLeadingConstraint: NSLayoutConstraint
+    private let durationLabel = UILabel()
     private var currentConfiguration: QuietWorkLineTimelineRowConfiguration
-    private var appliedSymbolName: String?
     nonisolated(unsafe) private var durationTimer: Timer?
     private var durationStartedAt: Date?
 
     init(configuration: QuietWorkLineTimelineRowConfiguration) {
-        // Icon hidden by default; the label-leading constraint flips to the
-        // chip edge when the strip has no sampled activities.
-        iconTrailingToLabelLeading = summaryLabel.leadingAnchor.constraint(
-            equalTo: iconView.trailingAnchor, constant: 7
-        )
-        labelFallbackLeadingConstraint = summaryLabel.leadingAnchor.constraint(
-            equalTo: chipView.leadingAnchor, constant: 14
-        )
-        labelFallbackLeadingConstraint.priority = UILayoutPriority(999)
         currentConfiguration = configuration
         super.init(frame: .zero)
         setupViews()
@@ -78,6 +69,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         updateDurationTimer()
+        updateThinkingAnimation()
     }
 
     var configuration: UIContentConfiguration {
@@ -92,8 +84,8 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         backgroundColor = .clear
         chipView.translatesAutoresizingMaskIntoConstraints = false
         button.translatesAutoresizingMaskIntoConstraints = false
-        iconView.translatesAutoresizingMaskIntoConstraints = false
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        durationLabel.translatesAutoresizingMaskIntoConstraints = false
 
         chipView.isUserInteractionEnabled = false
         chipView.layer.cornerRadius = 10
@@ -102,16 +94,26 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         summaryLabel.numberOfLines = 1
         summaryLabel.textAlignment = .left
         summaryLabel.adjustsFontForContentSizeCategory = true
+        summaryLabel.adjustsFontSizeToFitWidth = true
+        summaryLabel.minimumScaleFactor = 0.75
         let baseSize = UIFont.preferredFont(forTextStyle: .subheadline).pointSize
         summaryLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
             for: .monospacedDigitSystemFont(ofSize: baseSize, weight: .semibold)
         )
         summaryLabel.lineBreakMode = .byTruncatingTail
+        durationLabel.isUserInteractionEnabled = false
+        durationLabel.numberOfLines = 1
+        durationLabel.textAlignment = .right
+        durationLabel.adjustsFontForContentSizeCategory = true
+        durationLabel.font = summaryLabel.font
+        durationLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        durationLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        iconView.isUserInteractionEnabled = false
-        iconView.contentMode = .center
-        iconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
-            pointSize: 13, weight: .semibold
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(reduceMotionStatusDidChange),
+            name: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil
         )
 
         button.addAction(UIAction { [weak self] _ in
@@ -120,8 +122,8 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
 
         addSubview(chipView)
         addSubview(button)
-        addSubview(iconView)
         addSubview(summaryLabel)
+        addSubview(durationLabel)
         NSLayoutConstraint.activate([
             chipView.leadingAnchor.constraint(equalTo: leadingAnchor),
             chipView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -132,13 +134,11 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
             button.topAnchor.constraint(equalTo: chipView.topAnchor),
             button.bottomAnchor.constraint(equalTo: chipView.bottomAnchor),
             button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            iconView.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: 14),
-            iconView.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconTrailingToLabelLeading,
-            labelFallbackLeadingConstraint,
-            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipView.trailingAnchor, constant: -14),
+            summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: 14),
             summaryLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
+            durationLabel.leadingAnchor.constraint(greaterThanOrEqualTo: summaryLabel.trailingAnchor, constant: 8),
+            durationLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -14),
+            durationLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
         ])
     }
 
@@ -157,8 +157,9 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         chipView.layer.borderWidth = 1 / max(1, traitCollection.displayScale)
         chipView.layer.borderColor = colors.border.cgColor
         summaryLabel.textColor = colors.foreground
+        durationLabel.textColor = colors.foreground
+        durationLabel.font = summaryLabel.font
         refreshDurationText()
-        applyActivityIcon(workLine: configuration.workLine, foreground: colors.foreground)
         button.accessibilityValue = configuration.workLine.isLive
             ? "Working, \(configuration.workLine.accessibilityValue)"
             : configuration.workLine.accessibilityValue
@@ -168,6 +169,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         button.isAccessibilityElement = true
         isAccessibilityElement = false
         updateDurationTimer()
+        updateThinkingAnimation()
     }
 
     /// Translucent accent fills keep the strip in the tool-row family;
@@ -179,7 +181,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         palette: ThemePalette
     ) -> (fill: UIColor, foreground: UIColor, border: UIColor) {
         let accent = UIColor(palette.blue)
-        let foreground = workLine.isLive ? accent : UIColor(palette.fg)
+        let foreground = workLine.isLive ? accent : UIColor(palette.fgDim)
         let fillAlpha: CGFloat
         if isHighlighted {
             fillAlpha = 0.30
@@ -197,70 +199,160 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         )
     }
 
-    /// SF Symbol for one activity kind. Thinking gets its own glyph; known
-    /// tools reuse the canonical expanded-row symbols; unknown/extension
-    /// tools fall back to the generic code symbol.
     static func symbolName(forActivityKind kind: String) -> String {
-        if kind == "thinking" { return "sparkles" }
-        return ToolCallFormatting.sfSymbolName(for: kind)
-            ?? "chevron.left.forwardslash.chevron.right"
+        switch ToolCallFormatting.normalized(kind) {
+        case "read": return QuietWorkBucketKind.read.symbolName
+        case "write": return QuietWorkBucketKind.write.symbolName
+        case "edit": return QuietWorkBucketKind.edit.symbolName
+        default: return QuietWorkBucketKind.tooling.symbolName
+        }
     }
 
-    private func applyActivityIcon(workLine: QuietTimelineWorkLine, foreground: UIColor) {
-        guard let latestKind = workLine.activities.last else {
-            iconView.isHidden = true
-            iconTrailingToLabelLeading.isActive = false
-            appliedSymbolName = nil
-            return
-        }
-        iconView.isHidden = false
-        if !iconTrailingToLabelLeading.isActive {
-            iconTrailingToLabelLeading.isActive = true
-        }
-        iconView.tintColor = foreground
+    static func accessibilitySummary(for workLine: QuietTimelineWorkLine, now: Date = Date()) -> String {
+        workLine.wordsSummary(now: now)
+    }
 
-        let symbolName = Self.symbolName(forActivityKind: latestKind)
-        guard symbolName != appliedSymbolName else { return }
-        let image = UIImage(systemName: symbolName)
-        let reduceMotion = UIAccessibility.isReduceMotionEnabled
-        if appliedSymbolName != nil, window != nil, !reduceMotion, let image {
-            // Follow-the-active-tool crossfade; skipped for first population.
-            UIView.transition(
-                with: iconView,
-                duration: 0.2,
-                options: [.transitionCrossDissolve, .allowUserInteraction]
-            ) {
-                self.iconView.image = image
+    private func refreshDurationText(now: Date = Date()) {
+        let workLine = currentConfiguration.workLine
+        let work = workLine.workSummary
+        if workLine.isThinkingOnly {
+            if summaryLabel.attributedText != nil || summaryLabel.text != work {
+                summaryLabel.attributedText = nil
+                summaryLabel.text = work
             }
         } else {
-            iconView.image = image
+            switch currentConfiguration.style {
+            case .icons:
+                summaryLabel.attributedText = Self.iconSummary(
+                    for: workLine,
+                    foreground: summaryLabel.textColor,
+                    font: summaryLabel.font
+                )
+            case .words:
+                summaryLabel.text = nil
+                summaryLabel.attributedText = Self.wordsSummary(
+                    for: workLine,
+                    foreground: summaryLabel.textColor,
+                    font: summaryLabel.font
+                )
+            }
         }
-        appliedSymbolName = symbolName
+        durationLabel.text = workLine.durationString(now: now)
+        durationLabel.isHidden = durationLabel.text == nil
+        button.accessibilityLabel = Self.accessibilitySummary(for: workLine, now: now)
     }
 
-    /// Spoken label adds the activity breakdown so counts alone don't hide
-    /// which tools ran.
-    static func accessibilitySummary(for workLine: QuietTimelineWorkLine) -> String {
-        var order: [String] = []
-        for kind in workLine.activities where !order.contains(kind) {
-            order.append(kind)
-        }
-        for kind in workLine.activityCounts.keys.sorted() where !order.contains(kind) {
-            order.append(kind)
-        }
-        let base = workLine.summary
-        guard !order.isEmpty else { return base }
-        let breakdown = order.compactMap { kind -> String? in
-            guard let count = workLine.activityCounts[kind] else { return nil }
-            return count == 1 ? kind : "\(kind) \(count)"
-        }.joined(separator: ", ")
-        return "\(base). Used \(breakdown)"
+    static func thinkingBlinkAnimation(reduceMotion: Bool) -> CAAnimation? {
+        guard !reduceMotion else { return nil }
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 1
+        animation.toValue = 0.35
+        animation.duration = 0.7
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        return animation
     }
 
-    private func refreshDurationText() {
-        let text = currentConfiguration.workLine.displaySummary(now: Date())
-        summaryLabel.text = text
-        button.accessibilityLabel = Self.accessibilitySummary(for: currentConfiguration.workLine)
+    @objc private func reduceMotionStatusDidChange() {
+        updateThinkingAnimation()
+    }
+
+    private func updateThinkingAnimation() {
+        let shouldBlink = window != nil
+            && currentConfiguration.workLine.isLive
+            && currentConfiguration.workLine.isThinkingOnly
+            && !UIAccessibility.isReduceMotionEnabled
+        if shouldBlink {
+            // Keep a running blink. Rewriting the label or removing this
+            // animation every duration tick is what made Thinking… go still.
+            if summaryLabel.layer.animation(forKey: Self.thinkingBlinkAnimationKey) == nil,
+               let animation = Self.thinkingBlinkAnimation(reduceMotion: false) {
+                summaryLabel.layer.add(animation, forKey: Self.thinkingBlinkAnimationKey)
+            }
+            return
+        }
+        summaryLabel.layer.removeAnimation(forKey: Self.thinkingBlinkAnimationKey)
+        summaryLabel.layer.opacity = 1
+    }
+
+    private static func iconSummary(
+        for workLine: QuietTimelineWorkLine,
+        foreground: UIColor,
+        font: UIFont
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for (index, bucket) in workLine.buckets.enumerated() {
+            if index > 0 {
+                result.append(NSAttributedString(string: "   ", attributes: [.font: font]))
+            }
+            let attachment = NSTextAttachment()
+            attachment.image = UIImage(
+                systemName: bucket.kind.symbolName,
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            )?.withTintColor(foreground, renderingMode: .alwaysOriginal)
+            attachment.bounds = CGRect(x: 0, y: -2, width: 15, height: 15)
+            result.append(NSAttributedString(attachment: attachment))
+            result.append(NSAttributedString(
+                string: " ",
+                attributes: [.font: font, .foregroundColor: foreground]
+            ))
+
+            if bucket.kind == .edit, let stats = bucket.editStats {
+                Self.appendEditStats(stats, to: result, font: font)
+            } else {
+                result.append(NSAttributedString(
+                    string: "\(bucket.count)",
+                    attributes: [.font: font, .foregroundColor: foreground]
+                ))
+            }
+        }
+        return result
+    }
+
+    static func wordsSummary(
+        for workLine: QuietTimelineWorkLine,
+        foreground: UIColor,
+        font: UIFont
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for (index, bucket) in workLine.buckets.enumerated() {
+            if index > 0 {
+                result.append(NSAttributedString(
+                    string: "  ",
+                    attributes: [.font: font, .foregroundColor: foreground]
+                ))
+            }
+            if bucket.kind == .edit, let stats = bucket.editStats {
+                result.append(NSAttributedString(
+                    string: "edit ",
+                    attributes: [.font: font, .foregroundColor: foreground]
+                ))
+                Self.appendEditStats(stats, to: result, font: font)
+            } else {
+                result.append(NSAttributedString(
+                    string: bucket.words,
+                    attributes: [.font: font, .foregroundColor: foreground]
+                ))
+            }
+        }
+        return result
+    }
+
+    private static func appendEditStats(
+        _ stats: QuietWorkBucket.EditStats,
+        to result: NSMutableAttributedString,
+        font: UIFont
+    ) {
+        let palette = ThemeRuntimeState.currentPalette()
+        result.append(NSAttributedString(
+            string: "+\(stats.added)",
+            attributes: [.font: font, .foregroundColor: UIColor(palette.green)]
+        ))
+        result.append(NSAttributedString(
+            string: " −\(stats.removed)",
+            attributes: [.font: font, .foregroundColor: UIColor(palette.red)]
+        ))
     }
 
     private func updateDurationTimer() {

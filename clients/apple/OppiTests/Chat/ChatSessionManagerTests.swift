@@ -67,94 +67,39 @@ struct ChatSessionManagerTests {
         #expect(!manager.needsInitialScroll)
     }
 
-    @Test func quietWorkStampFollowsTrailingFoldGroupAnchor() {
-        let manager = ChatSessionManager(sessionId: "quiet-clock-")
-        let openAt = Date(timeIntervalSince1970: 5_000)
-
-        // No pending group → no stamp.
-        manager.refreshQuietWorkStamp(now: openAt)
-        #expect(manager.quietWorkStartedAt == nil)
-
-        // Group opens with the first collapsible item; the stamp freezes at
-        // open time and survives later items in the same group.
+    @Test func quietWorkClockRemainsDerivedFromAssistantTimestampAcrossReentry() throws {
+        let manager = ChatSessionManager(sessionId: "quiet-clock")
         manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "Run"),
-            makeTraceEvent(id: "think-1", type: .thinking, text: "t"),
-        ])
-        manager.refreshQuietWorkStamp(now: openAt)
-        #expect(manager.quietWorkStartedAt == openAt)
-
-        // Same anchor after more items arrive in the group → stamp unchanged.
-        manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "Run"),
-            makeTraceEvent(id: "think-1", type: .thinking, text: "t"),
+            makeTraceEvent(
+                id: "a1",
+                type: .assistant,
+                text: "Earlier",
+                timestamp: "1970-01-01T01:23:20Z"
+            ),
             makeTraceEvent(id: "tool-1", type: .toolCall, text: "", tool: "bash"),
         ])
-        manager.refreshQuietWorkStamp(now: Date(timeIntervalSince1970: 5_200))
-        #expect(manager.quietWorkStartedAt == openAt)
 
-        // Assistant message flushes the group → stamp clears.
-        manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "Run"),
-            makeTraceEvent(id: "think-1", type: .thinking, text: "t"),
-            makeTraceEvent(id: "a1", type: .assistant, text: "Done"),
-        ])
-        manager.refreshQuietWorkStamp(now: Date(timeIntervalSince1970: 5_300))
-        #expect(manager.quietWorkStartedAt == nil)
+        func liveClock() throws -> Date? {
+            let projection = QuietTimelineProjection.make(
+                items: manager.reducer.items,
+                isQuiet: true,
+                isBusy: true,
+                expandedTurnIDs: []
+            )
+            let workLine = try #require(projection.rows.compactMap { row -> QuietTimelineWorkLine? in
+                guard case .quietWork(let line) = row else { return nil }
+                return line
+            }.last)
+            return workLine.liveStartedAt
+        }
 
-        // An ask is a visible interruption. Its wait interval must not be
-        // charged to the earlier group, and the answer/resume opens a new
-        // clock only when fresh collapsible work appears.
-        manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "Ask"),
-            makeTraceEvent(id: "think-1", type: .thinking, text: "t"),
-            makeTraceEvent(id: "ask-1", type: .toolCall, text: "", tool: "ask"),
-        ])
-        manager.refreshQuietWorkStamp(now: Date(timeIntervalSince1970: 5_350))
-        #expect(manager.quietWorkStartedAt == nil)
+        let beforeReentry = try liveClock()
+        manager.markAppeared()
+        manager.markAppeared()
+        let afterReentry = try liveClock()
 
-        manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "Ask"),
-            makeTraceEvent(id: "think-1", type: .thinking, text: "t"),
-            makeTraceEvent(id: "ask-1", type: .toolCall, text: "", tool: "ask"),
-            makeTraceEvent(id: "ask-answer-1", type: .user, text: "Answer"),
-            makeTraceEvent(id: "think-2", type: .thinking, text: "resume"),
-        ])
-        let resumedAt = Date(timeIntervalSince1970: 5_360)
-        manager.refreshQuietWorkStamp(now: resumedAt)
-        #expect(manager.quietWorkStartedAt == resumedAt)
-
-        // A steered follow-up opens a new fold group. The stamp is the new
-        // group's open time, not the original turn clock.
-        manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "Run"),
-            makeTraceEvent(id: "think-1", type: .thinking, text: "t"),
-            makeTraceEvent(id: "a1", type: .assistant, text: "Done"),
-            makeTraceEvent(id: "u2", type: .user, text: "Steer"),
-            makeTraceEvent(id: "steer-think-2", type: .thinking, text: "t2"),
-        ])
-        let steeredAt = Date(timeIntervalSince1970: 5_400)
-        manager.refreshQuietWorkStamp(now: steeredAt)
-        #expect(manager.quietWorkStartedAt == steeredAt)
-
-        // User-message flush mid-work also starts a new clock for the next strip.
-        manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "Run"),
-            makeTraceEvent(id: "think-1", type: .thinking, text: "t"),
-            makeTraceEvent(id: "u2", type: .user, text: "Steer"),
-        ])
-        manager.refreshQuietWorkStamp(now: Date(timeIntervalSince1970: 5_500))
-        #expect(manager.quietWorkStartedAt == nil)
-
-        manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "Run"),
-            makeTraceEvent(id: "think-1", type: .thinking, text: "t"),
-            makeTraceEvent(id: "u2", type: .user, text: "Steer"),
-            makeTraceEvent(id: "think-2", type: .thinking, text: "t2"),
-        ])
-        let nextStripAt = Date(timeIntervalSince1970: 5_600)
-        manager.refreshQuietWorkStamp(now: nextStripAt)
-        #expect(manager.quietWorkStartedAt == nextStripAt)
+        #expect(beforeReentry == Date(timeIntervalSince1970: 5_000))
+        #expect(afterReentry == beforeReentry)
     }
 
     @Test func firstAppearDoesNotBumpGeneration() {

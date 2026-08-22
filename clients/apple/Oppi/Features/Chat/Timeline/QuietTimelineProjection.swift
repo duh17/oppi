@@ -22,46 +22,117 @@ enum TimelineDisplayRow: Equatable, Identifiable {
     }
 }
 
-struct QuietTimelineWorkLine: Equatable, Identifiable {
-    /// Keep the icon sample bounded so very long turns don't bloat the
-    /// Equatable diff; the strip only ever shows the most recent activity.
-    static let activitySampleLimit = 12
+enum QuietWorkBucketKind: String, CaseIterable, Equatable {
+    case read
+    case tooling
+    case write
+    case edit
 
+    var symbolName: String {
+        switch self {
+        case .read: return "magnifyingglass"
+        case .write: return "pencil"
+        case .edit: return "arrow.left.arrow.right"
+        case .tooling: return "wrench.fill"
+        }
+    }
+}
+
+struct QuietWorkBucket: Equatable {
+    struct EditStats: Equatable {
+        let added: Int
+        let removed: Int
+    }
+
+    let kind: QuietWorkBucketKind
+    let count: Int
+    let editStats: EditStats?
+
+    init(kind: QuietWorkBucketKind, count: Int, editStats: EditStats? = nil) {
+        self.kind = kind
+        self.count = count
+        self.editStats = editStats
+    }
+
+    var words: String {
+        switch kind {
+        case .read:
+            return "read \(count) \(count == 1 ? "file" : "files")"
+        case .write:
+            return "write \(count) \(count == 1 ? "file" : "files")"
+        case .edit:
+            if let editStats {
+                return "edit +\(editStats.added) −\(editStats.removed)"
+            }
+            return "edit \(count)"
+        case .tooling:
+            return "run \(count) \(count == 1 ? "tool" : "tools")"
+        }
+    }
+}
+
+struct QuietTimelineWorkLine: Equatable, Identifiable {
     let id: String
     /// First folded source item ID. Stable when the following assistant message arrives.
     let turnID: String
     let sourceItemIDs: [String]
-    let toolCount: Int
-    let thinkingCount: Int
-    /// Aggregate activity counts for VoiceOver. Unlike the bounded sample,
-    /// these totals cover every folded item in the strip.
-    let activityCounts: [String: Int]
-    /// Ordered activity kinds folded into this strip — "thinking" or the
-    /// normalized tool name per source item, capped to the most recent
-    /// `activitySampleLimit`. Drives the leading tool icon and VoiceOver.
-    let activities: [String]
-
+    let buckets: [QuietWorkBucket]
+    let displayStyle: AppPreferences.ChatDisplay.WorkStripStyle
     let isExpanded: Bool
     let isLive: Bool
+    /// Interval start: preceding assistant or user timestamp.
     let liveStartedAt: Date?
+    /// Interval end. Nil while live; settled strips freeze here.
+    let intervalEndedAt: Date?
 
-    var summary: String {
-        displaySummary(now: Date())
+    init(
+        id: String,
+        turnID: String,
+        sourceItemIDs: [String],
+        buckets: [QuietWorkBucket],
+        displayStyle: AppPreferences.ChatDisplay.WorkStripStyle,
+        isExpanded: Bool,
+        isLive: Bool,
+        liveStartedAt: Date?,
+        intervalEndedAt: Date? = nil
+    ) {
+        self.id = id
+        self.turnID = turnID
+        self.sourceItemIDs = sourceItemIDs
+        self.buckets = buckets
+        self.displayStyle = displayStyle
+        self.isExpanded = isExpanded
+        self.isLive = isLive
+        self.liveStartedAt = liveStartedAt
+        self.intervalEndedAt = intervalEndedAt
     }
 
-    func displaySummary(now: Date) -> String {
-        var parts: [String] = []
-        if toolCount > 0 {
-            parts.append("\(toolCount) \(toolCount == 1 ? "tool" : "tools")")
+    var isThinkingOnly: Bool { buckets.isEmpty }
+
+    var workSummary: String {
+        if isThinkingOnly {
+            return isLive ? "Thinking…" : "Thought"
         }
-        if thinkingCount > 0 {
-            parts.append("\(thinkingCount) thinking \(thinkingCount == 1 ? "block" : "blocks")")
+        return buckets.map(\.words).joined(separator: "  ")
+    }
+
+    func durationString(now: Date) -> String? {
+        guard let liveStartedAt else { return nil }
+        let end: Date
+        if isLive {
+            end = now
+        } else if let intervalEndedAt {
+            end = intervalEndedAt
+        } else {
+            return nil
         }
-        let counts = parts.joined(separator: ", ")
-        guard isLive, let liveStartedAt else { return counts }
-        let duration = Self.liveDurationString(since: liveStartedAt, now: now)
-        if counts.isEmpty { return duration }
-        return "\(counts) · \(duration)"
+        return Self.liveDurationString(since: liveStartedAt, now: end)
+    }
+
+    func wordsSummary(now: Date) -> String {
+        let work = workSummary
+        guard let duration = durationString(now: now) else { return work }
+        return work.isEmpty ? duration : "\(work) · \(duration)"
     }
 
     /// Keep seconds visible; Compact turns has room and SessionRow's compact
@@ -77,24 +148,38 @@ struct QuietTimelineWorkLine: Equatable, Identifiable {
         return "\(hours)h \(remainingMinutes)m \(seconds)s"
     }
 
-    var accessibilityLabel: String { summary }
     var accessibilityValue: String { isExpanded ? "Expanded" : "Collapsed" }
 }
 
 /// Projects the complete reducer timeline for Compact turns without deleting
-/// or rewriting reducer rows. Tools and thinking fold into one counted strip
-/// per assistant message, sitting immediately above that reply. The Working
-/// row stays a separate extension-owned status. Actionable content stays verbatim.
+/// or rewriting reducer rows. Tools and thinking fold together, including a
+/// finished thinking-only strip so the thought does not vanish after settle.
+/// Each strip keeps a durable interval clock. The Working row stays separate.
+/// Ask cards and non-tool errors stay visible.
 struct QuietTimelineProjection: Equatable {
     let rows: [TimelineDisplayRow]
     let fullTimelineItemIDs: [String]
+
+    /// Frozen interval ends for settled (not live) work lines, keyed by strip ID.
+    /// Remakes reuse these so a later `now` cannot restamp the muted clock.
+    var settledEnds: [String: Date] {
+        Dictionary(uniqueKeysWithValues: rows.compactMap { row in
+            guard case .quietWork(let line) = row, !line.isLive, let end = line.intervalEndedAt else {
+                return nil
+            }
+            return (line.id, end)
+        })
+    }
 
     static func make(
         items: [ChatItem],
         isQuiet: Bool,
         isBusy: Bool,
         expandedTurnIDs: Set<String>,
-        liveStartedAt: Date? = nil
+        displayStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
+        toolArgs: (String) -> [String: JSONValue]? = { _ in nil },
+        now: Date = Date(),
+        settledEnds: [String: Date] = [:]
     ) -> Self {
         let fullTimelineItemIDs = items.map(\.id)
         guard isQuiet, !items.isEmpty else {
@@ -108,45 +193,41 @@ struct QuietTimelineProjection: Equatable {
         rows.reserveCapacity(items.count)
         var pending: [ChatItem] = []
 
-        func appendWorkLine() {
+        func appendWorkLine(endedAt: Date?) {
             guard let firstSourceID = pending.first?.id else { return }
+            defer { pending.removeAll(keepingCapacity: true) }
+
+            let buckets = Self.buckets(for: pending, toolArgs: toolArgs)
+            let hasThinking = pending.contains {
+                if case .thinking = $0 { return true }
+                return false
+            }
+            guard !buckets.isEmpty || hasThinking else { return }
+
             let sourceItemIDs = pending.map(\.id)
             // A trace-page prepend can reveal earlier rows in the same folded
             // group. While expanded, retain the already-selected source key so
             // the synthetic header and its toggle state do not change identity.
             let turnID = sourceItemIDs.first(where: expandedTurnIDs.contains) ?? firstSourceID
             let isExpanded = sourceItemIDs.contains(where: expandedTurnIDs.contains)
-            let allActivities = pending.compactMap(Self.activityKind(for:))
-            var activities = allActivities
-            if activities.count > QuietTimelineWorkLine.activitySampleLimit {
-                activities = Array(activities.suffix(QuietTimelineWorkLine.activitySampleLimit))
-            }
-            let activityCounts = allActivities.reduce(into: [String: Int]()) { counts, kind in
-                counts[kind, default: 0] += 1
-            }
             let workLine = QuietTimelineWorkLine(
                 id: syntheticWorkLineID(for: turnID),
                 turnID: turnID,
                 sourceItemIDs: sourceItemIDs,
-                toolCount: pending.reduce(into: 0) { count, item in
-                    if case .toolCall = item { count += 1 }
-                },
-                thinkingCount: pending.reduce(into: 0) { count, item in
-                    if case .thinking = item { count += 1 }
-                },
-                activityCounts: activityCounts,
-                activities: activities,
+                buckets: buckets,
+                displayStyle: displayStyle,
                 isExpanded: isExpanded,
                 isLive: false,
-                liveStartedAt: nil
+                liveStartedAt: precedingTimestamp,
+                intervalEndedAt: endedAt
             )
             rows.append(.quietWork(workLine))
             if isExpanded {
                 rows.append(contentsOf: pending.map(TimelineDisplayRow.item))
             }
-            pending.removeAll(keepingCapacity: true)
         }
 
+        var precedingTimestamp: Date?
         for item in items {
             if isQuietlyCollapsible(item) {
                 pending.append(item)
@@ -155,10 +236,26 @@ struct QuietTimelineProjection: Equatable {
             // Every visible row is a chronology boundary. Flushing before it
             // keeps an ask/system/error/cache/audio row in place when a user
             // expands either adjacent folded group.
-            appendWorkLine()
+            appendWorkLine(endedAt: item.timestamp)
             rows.append(.item(item))
+            if let timestamp = item.timestamp {
+                precedingTimestamp = timestamp
+            }
         }
-        appendWorkLine()
+        // A trailing settled group has no following user/assistant row to
+        // close the interval. Reuse a previous freeze for this strip ID so a
+        // later remake cannot restamp · Xs. Live trailing strips stay unfrozen.
+        let trailingEndedAt: Date?
+        if isBusy {
+            trailingEndedAt = nil
+        } else if let firstSourceID = pending.first?.id {
+            let sourceItemIDs = pending.map(\.id)
+            let turnID = sourceItemIDs.first(where: expandedTurnIDs.contains) ?? firstSourceID
+            trailingEndedAt = settledEnds[syntheticWorkLineID(for: turnID)] ?? now
+        } else {
+            trailingEndedAt = nil
+        }
+        appendWorkLine(endedAt: trailingEndedAt)
 
         if isBusy,
            let workIndex = rows.lastIndex(where: {
@@ -174,13 +271,12 @@ struct QuietTimelineProjection: Equatable {
                         id: workLine.id,
                         turnID: workLine.turnID,
                         sourceItemIDs: workLine.sourceItemIDs,
-                        toolCount: workLine.toolCount,
-                        thinkingCount: workLine.thinkingCount,
-                        activityCounts: workLine.activityCounts,
-                        activities: workLine.activities,
+                        buckets: workLine.buckets,
+                        displayStyle: workLine.displayStyle,
                         isExpanded: workLine.isExpanded,
                         isLive: true,
-                        liveStartedAt: liveStartedAt
+                        liveStartedAt: workLine.liveStartedAt,
+                        intervalEndedAt: nil
                     )
                 )
             }
@@ -214,42 +310,54 @@ struct QuietTimelineProjection: Equatable {
         "quiet-work-line:\(turnID)"
     }
 
-    /// Normalized activity kind for one collapsible source item.
-    static func activityKind(for item: ChatItem) -> String? {
-        switch item {
-        case .thinking:
-            return "thinking"
-        case .toolCall(_, let tool, _, _, _, _, _):
-            return ToolCallFormatting.normalized(tool)
-        case .userMessage, .assistantMessage, .audioClip, .systemEvent,
-             .cacheMiss, .customEvent, .error:
-            return nil
-        }
-    }
+    private static func buckets(
+        for items: [ChatItem],
+        toolArgs: (String) -> [String: JSONValue]?
+    ) -> [QuietWorkBucket] {
+        var counts: [QuietWorkBucketKind: Int] = [:]
+        var editAdded = 0
+        var editRemoved = 0
+        var hasCompleteEditStats = true
 
-    /// First collapsible item ID of the trailing fold group — the anchor the
-    /// live strip would use. Nil when a visible row closes the last group,
-    /// matching the chronology boundaries in `make`.
-    static func trailingFoldGroupAnchorID(in items: [ChatItem]) -> String? {
-        var anchor: String?
         for item in items {
-            if isQuietlyCollapsible(item) {
-                anchor = anchor ?? item.id
-            } else {
-                // This mirrors `make`: every visible interruption closes the
-                // preceding folded group before it is rendered.
-                anchor = nil
+            guard case .toolCall(let id, let tool, _, _, _, _, _) = item else { continue }
+            let kind: QuietWorkBucketKind
+            switch ToolCallFormatting.normalized(tool) {
+            case "read": kind = .read
+            case "write": kind = .write
+            case "edit": kind = .edit
+            default: kind = .tooling
+            }
+            counts[kind, default: 0] += 1
+
+            if kind == .edit {
+                if let stats = ToolCallFormatting.editDiffStats(from: toolArgs(id)) {
+                    editAdded += stats.added
+                    editRemoved += stats.removed
+                } else {
+                    hasCompleteEditStats = false
+                }
             }
         }
-        return anchor
+
+        return QuietWorkBucketKind.allCases.compactMap { kind in
+            guard let count = counts[kind], count > 0 else { return nil }
+            let editStats: QuietWorkBucket.EditStats?
+            if kind == .edit, hasCompleteEditStats {
+                editStats = .init(added: editAdded, removed: editRemoved)
+            } else {
+                editStats = nil
+            }
+            return QuietWorkBucket(kind: kind, count: count, editStats: editStats)
+        }
     }
 
     private static func isQuietlyCollapsible(_ item: ChatItem) -> Bool {
         switch item {
-        case .toolCall(_, let tool, _, _, _, let isError, _):
-            // Ask cards and failed tools stay actionable and visible. Successful
-            // tools and thinking remain eligible for the presentation fold.
-            return !isError && ToolCallFormatting.normalized(tool) != "ask"
+        case .toolCall(_, let tool, _, _, _, _, _):
+            // Ask cards remain visible, while every other tool stays
+            // inspectable inside the strip regardless of success or failure.
+            return ToolCallFormatting.normalized(tool) != "ask"
         case .thinking:
             return true
         case .userMessage, .assistantMessage, .audioClip, .systemEvent,

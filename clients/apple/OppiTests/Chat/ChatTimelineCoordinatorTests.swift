@@ -28,10 +28,9 @@ struct ChatTimelineCoordinatorTests {
             id: "quiet-work-line:u1",
             turnID: "u1",
             sourceItemIDs: ["think-1", "tool-1"],
-            toolCount: 1,
-            thinkingCount: 1,
-            activityCounts: [:],
-            activities: [],            isExpanded: false,
+            buckets: [.init(kind: .tooling, count: 1)],
+            displayStyle: .icons,
+            isExpanded: false,
             isLive: false,
             liveStartedAt: nil
         )
@@ -607,10 +606,9 @@ struct ChatTimelineCoordinatorTests {
             id: "quiet-work-line:turn-1",
             turnID: "turn-1",
             sourceItemIDs: ["thinking-1", "tool-1"],
-            toolCount: 1,
-            thinkingCount: 1,
-            activityCounts: [:],
-            activities: [],            isExpanded: false,
+            buckets: [.init(kind: .tooling, count: 1)],
+            displayStyle: .icons,
+            isExpanded: false,
             isLive: false,
             liveStartedAt: nil
         )

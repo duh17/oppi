@@ -386,7 +386,13 @@ struct ChatView: View {
 
     private var compactTurnsEnabled: Bool {
         _ = chatDisplayRefresh
-        return AppPreferences.ChatDisplay.isCompactTurnsEnabled
+        return UIDevice.current.userInterfaceIdiom == .phone
+            && AppPreferences.ChatDisplay.isCompactTurnsEnabled
+    }
+
+    private var workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle {
+        _ = chatDisplayRefresh
+        return AppPreferences.ChatDisplay.workStripStyle
     }
 
     private var messageQueueState: MessageQueueState {
@@ -480,6 +486,7 @@ struct ChatView: View {
             sessionManager: sessionManager,
             audioLifecycleCoordinator: audioLifecycleCoordinator,
             quietModeEnabled: compactTurnsEnabled,
+            workStripStyle: workStripStyle,
             onFork: forkFromMessage,
             onBackSwipe: navigateBackFromChat,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,

@@ -818,6 +818,7 @@
 		A2C7C87CA73A71A39E35FB76 /* WorkspaceContextBarReviewCommentRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 755FA5822F7F3EAABF01D1F7 /* WorkspaceContextBarReviewCommentRoutingTests.swift */; };
 		A2C835693140067BA6C12318 /* SessionListPerfBench.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC2199EAE0D4B77383AC97C /* SessionListPerfBench.swift */; };
 		A2F8CE6F839BAC2EE1FA5800 /* SlashCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F377714437609AE551467E /* SlashCommand.swift */; };
+		A35E82EEB7BE7FC17395AC76 /* QuietTimelineScrollTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB33DBDBC1E76DAB5B2C0021 /* QuietTimelineScrollTests.swift */; };
 		A3A5678EEF89A7E4155BB18B /* NativeVoiceMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41503318FB3B576E91C16838 /* NativeVoiceMessageView.swift */; };
 		A3F4207D7233E6A8EFDFE019 /* AgentIconValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5ABFDA3CD1FC51FB66CE0A5 /* AgentIconValue.swift */; };
 		A3F7F1DC96DEABAB4AAAD89A /* ProviderAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DD7CE28D49A32D14C4791F2 /* ProviderAuth.swift */; };
@@ -2199,6 +2200,7 @@
 		CA29EB015CA1A879D937108C /* VoiceInputRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputRoutingTests.swift; sourceTree = "<group>"; };
 		CA33700ABC0A008153E7BF86 /* SessionRowPresentationBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRowPresentationBuilderTests.swift; sourceTree = "<group>"; };
 		CB04978CA088461EDC313B63 /* WebSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketClient.swift; sourceTree = "<group>"; };
+		CB33DBDBC1E76DAB5B2C0021 /* QuietTimelineScrollTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuietTimelineScrollTests.swift; sourceTree = "<group>"; };
 		CB36685F1E6207044407718C /* SessionGridBadgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionGridBadgeView.swift; sourceTree = "<group>"; };
 		CB889E7394C5E91E88377DA1 /* ToolFontConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolFontConstants.swift; sourceTree = "<group>"; };
 		CBC4234F762BE12C7FA5D50A /* ChatSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionManager.swift; sourceTree = "<group>"; };
@@ -3299,6 +3301,7 @@
 				0819880F1B11944637823460 /* FullScreenMarkdownAsyncRenderTests.swift */,
 				38285AC654972BFA4C7EF983 /* FullScreenReviewCommentSelectionTests.swift */,
 				AAEDF9E5A9DD4497BCBCB503 /* QuietTimelineProjectionTests.swift */,
+				CB33DBDBC1E76DAB5B2C0021 /* QuietTimelineScrollTests.swift */,
 				705FEE9AE99F071732D9F8B3 /* QuietWorkLineRowContentTests.swift */,
 				1889DE98F1487F71CBCE024C /* ScrollFollowBehaviorTests.swift */,
 				490D07E1EB1A8673A161ACC0 /* ScrollInvariantPropertyTests.swift */,
@@ -5474,6 +5477,7 @@
 				9B85EAC132D8856BA9FDA24E /* QuickSessionTriggerTests.swift in Sources */,
 				8003B3A716DA54AC996640F7 /* QuietModePreferencesTests.swift in Sources */,
 				42FDBDC0E55B2611F61D7B77 /* QuietTimelineProjectionTests.swift in Sources */,
+				A35E82EEB7BE7FC17395AC76 /* QuietTimelineScrollTests.swift in Sources */,
 				25D661284314C8AFBE1AFA75 /* QuietWorkLineRowContentTests.swift in Sources */,
 				03EAFE1FA63B1CF291D77BC2 /* ReadySessionScrollToBottomTests.swift in Sources */,
 				3B68390C5F9E2A8F7325E3E7 /* RecentModelsTests.swift in Sources */,

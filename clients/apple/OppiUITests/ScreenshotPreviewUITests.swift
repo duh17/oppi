@@ -968,6 +968,25 @@ final class ScreenshotPreviewUITests: XCTestCase {
         )
     }
 
+    func testQuietWorkStripPreview() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "quiet-work-strip")
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["quiet-work-strip.tool-icons"].waitForExistence(timeout: 5),
+            "Tool icon options not visible"
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["quiet-work-strip.icons"].waitForExistence(timeout: 5),
+            "Icons compact-strip fixture not visible"
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["quiet-work-strip.words"].exists,
+            "Words compact-strip fixture not visible"
+        )
+        saveScreenshot(name: "quiet-work-strip")
+    }
+
     func testSessionTimelinePreview() throws {
         launchPreview(screen: "session-timeline")
 
