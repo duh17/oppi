@@ -173,6 +173,7 @@ npm install -g oppi-server@latest
 - [Sandbox workspaces](docs/sandbox.md) - Gondolin VM isolation, network boundaries, tools, and safe defaults
 - [Custom themes](server/docs/themes.md) - creating color themes for the iOS app
 - [Telemetry and diagnostics](docs/telemetry.md) - privacy controls, storage paths, latency, and reliability metrics
+- [Provider quotas](docs/provider-quotas.md) - remaining usage windows and snapshot pace
 - [Security](SECURITY.md) - security model and privacy
 
 ### Development docs

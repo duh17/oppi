@@ -173,7 +173,7 @@ oppi serve [--host <h>]      # start server
 oppi init                    # interactive first-time setup
 oppi pair [--host <h>]       # regenerate pairing QR + invite link
 oppi status                  # server, network, and pairing status
-oppi quota                   # provider plan and remaining quota
+oppi quota                   # provider plan, remaining quota, and pace
 oppi models [query]          # enabled models by provider, with quota
 oppi doctor                  # security and environment diagnostics
 oppi workspace ...           # list/inspect/create/update/delete workspaces
@@ -186,6 +186,8 @@ oppi config ...              # show/get/set/validate config
 oppi token rotate            # rotate owner bearer token
 oppi update                  # update the npm-installed server and CLI
 ```
+
+See [provider-quotas.md](../docs/provider-quotas.md) for remaining usage windows and snapshot pace.
 
 Commands that call the local API use bearer-authenticated HTTP over `$OPPI_DATA_DIR/run/oppi.sock`. They never fall back automatically to a network host or plaintext TCP. Deep custom data-directory paths use a deterministic owner-only socket under the system temporary directory to stay within Unix socket path limits. Local CLI commands continue to work when remote HTTPS/WSS is unavailable. The bearer-free Oppi Mirror bridge also uses this owner-only Unix socket and is not exposed by the network listener.
 
