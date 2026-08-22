@@ -524,24 +524,46 @@ function findUnavailableConfiguredAgentTools(
   return [...new Set(configuredAllowed)].filter((name) => !excluded.has(name) && !active.has(name));
 }
 
-/** VM-backed tools a sandbox session may expose. Host grep/find are not in this set. */
+/**
+ * VM-backed file tools a sandbox session may expose. Host grep/find are not
+ * in this set; customTools overwrite those names with guest implementations.
+ */
 const SANDBOX_TOOL_NAMES = ["read", "bash", "edit", "write", "ls", "find", "grep"] as const;
 const SANDBOX_TOOL_NAME_SET = new Set<string>(SANDBOX_TOOL_NAMES);
 
+/**
+ * Intersect a sandbox allowlist with the VM file-tool set.
+ *
+ * workspace.tools is the fallback when no Agent/launch allowlist is set and
+ * stays intersected with SANDBOX_TOOL_NAMES. Agent/launch allowlists replace
+ * that fallback and keep selected host-side extension tools. File builtins
+ * stay guest-backed via customTools + noTools:builtin. Unknown/stale
+ * Agent/launch names stay listed so Pi can
+ * ignore them and the existing session warning can report them.
+ */
 function intersectSandboxToolAllowlist(
   allowed: readonly string[] | undefined,
   reserved: readonly string[] = [],
+  options: { keepHostExtensionTools?: boolean } = {},
 ): { allowed?: string[]; dropped: string[] } {
   if (!allowed) return { dropped: [] };
   const reservedSet = new Set(reserved);
   const kept: string[] = [];
   const dropped: string[] = [];
+  const keepHostExtensionTools = options.keepHostExtensionTools === true;
   for (const name of allowed) {
     if (SANDBOX_TOOL_NAME_SET.has(name) || reservedSet.has(name)) {
       if (!kept.includes(name)) kept.push(name);
-    } else if (!dropped.includes(name)) {
-      dropped.push(name);
+      continue;
     }
+    if (keepHostExtensionTools) {
+      // Selected host-side extension tools must survive an Agent/launch
+      // allowlist. Stale names stay listed so Pi can ignore them and the
+      // existing session warning can report them.
+      if (!kept.includes(name)) kept.push(name);
+      continue;
+    }
+    if (!dropped.includes(name)) dropped.push(name);
   }
   return { allowed: kept, dropped };
 }
@@ -1270,6 +1292,7 @@ export class SdkBackend {
         ? intersectSandboxToolAllowlist(
             reservedToolPolicy.allowed,
             reservedToolPolicy.allowed?.includes("oppi") ? ["oppi"] : [],
+            { keepHostExtensionTools: Boolean(launchToolPolicy?.allowed) },
           )
         : { allowed: reservedToolPolicy.allowed, dropped: [] };
       const effectiveToolPolicy = {

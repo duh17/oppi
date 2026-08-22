@@ -33,6 +33,7 @@ import { DEFAULT_AGENT_DEFINITION, DEFAULT_AGENT_ID } from "../src/default-agent
 import type { OppiExtensionSettingsSnapshot } from "../src/oppi-extension-settings.js";
 import { OPPI_EXTENSION_READ_ONLY_ERROR } from "../src/oppi-tool-extension.js";
 import { buildMobileOutputGuide } from "../src/oppi-docs.js";
+import { serverResourceId } from "../src/server-resource-id.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
 
 afterEach(() => {
@@ -1038,6 +1039,265 @@ describe("SdkBackend sandbox", () => {
         sdkBackendType._gondolinManager = previousManager;
         qemuSpy.mockRestore();
         rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps a selected host-side extension tool on a sandbox launch allowlist", async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-host-extension-tool-"));
+      const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-host-extension-agent-"));
+      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const extensionDir = join(agentDir, "extensions");
+      const selectedExtension = join(extensionDir, "other-tool.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(join(agentDir, "auth.json"), "{}");
+      writeFileSync(
+        selectedExtension,
+        "export default function (pi) { pi.registerTool({ name: 'other_tool', label: 'Other', description: 'Host-side extension tool', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'host-extension-ok' }] }) }); }",
+      );
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+      const { vm, execCalls } = createGuestSearchVm();
+      const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+      const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+      const previousManager = sdkBackendType._gondolinManager;
+      sdkBackendType._gondolinManager = manager;
+      let backend: SdkBackend | undefined;
+      const session = makeSession({
+        ephemeral: true,
+        launch: {
+          status: "launching",
+          requestedAt: 1,
+          tools: { allowed: ["read", "bash", "grep", "find", "other_tool", "computer"] },
+        },
+      });
+
+      try {
+        backend = await SdkBackend.create({
+          session,
+          workspace: {
+            id: "w1",
+            name: "Sandbox Host Extension Tool",
+            runtime: "sandbox",
+            hostMount: cwd,
+            extensions: [],
+          } as Workspace,
+          agentDefinition: {
+            name: "Sandbox Host Extension",
+            resources: {
+              skillPaths: [],
+              extensionIds: [serverResourceId("extension", selectedExtension)],
+            },
+            sessionDefaults: { tools: ["read", "bash", "grep", "find", "other_tool", "computer"] },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        });
+
+        const active = backend.session.getActiveToolNames();
+        expect(active).toEqual(
+          expect.arrayContaining(["read", "bash", "grep", "find", "other_tool"]),
+        );
+        expect(active).not.toContain("computer");
+        expect(backend.session.getToolDefinition("grep")?.description.toLowerCase()).toContain(
+          "sandbox",
+        );
+        expect(backend.session.getToolDefinition("find")).toBeDefined();
+
+        const hostTool = backend.session.getToolDefinition("other_tool");
+        expect(hostTool).toBeDefined();
+        const hostResult = await hostTool!.execute(
+          "host-extension",
+          {},
+          undefined,
+          undefined,
+          {} as never,
+        );
+        expect(toolText(hostResult)).toContain("host-extension-ok");
+        expect(vm.exec).not.toHaveBeenCalled();
+
+        const guestRoot = "/workspace/sandbox-host-extension-tool";
+        const grep = backend.session.getToolDefinition("grep");
+        const grepResult = await grep!.execute(
+          "grep-guest",
+          { pattern: "guest-workspace-hit", path: guestRoot },
+          undefined,
+          undefined,
+          {} as never,
+        );
+        expect(toolText(grepResult)).toContain("guest-workspace-hit");
+        expect(JSON.stringify(execCalls)).not.toContain("/opt/homebrew/bin/rg");
+        expect(JSON.stringify(execCalls)).not.toContain("/opt/homebrew/bin/fd");
+        expect(session.warnings?.[0]).toContain(
+          "Configured Agent tool is unavailable and was dropped from this session: computer",
+        );
+      } finally {
+        await backend?.dispose();
+        sdkBackendType._gondolinManager = previousManager;
+        qemuSpy.mockRestore();
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(agentDir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps a selected host-side extension tool on a sandbox Agent-only allowlist", async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-agent-host-extension-tool-"));
+      const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-agent-host-extension-agent-"));
+      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const extensionDir = join(agentDir, "extensions");
+      const selectedExtension = join(extensionDir, "other-tool.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(join(agentDir, "auth.json"), "{}");
+      writeFileSync(
+        selectedExtension,
+        "export default function (pi) { pi.registerTool({ name: 'other_tool', label: 'Other', description: 'Host-side extension tool', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'host-extension-ok' }] }) }); }",
+      );
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+      const { vm, execCalls } = createGuestSearchVm();
+      const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+      const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+      const previousManager = sdkBackendType._gondolinManager;
+      sdkBackendType._gondolinManager = manager;
+      let backend: SdkBackend | undefined;
+      const session = makeSession({
+        ephemeral: true,
+        launch: {
+          status: "launching",
+          requestedAt: 1,
+        },
+      });
+
+      try {
+        backend = await SdkBackend.create({
+          session,
+          workspace: {
+            id: "w1",
+            name: "Sandbox Agent Host Extension Tool",
+            runtime: "sandbox",
+            hostMount: cwd,
+            extensions: [],
+          } as Workspace,
+          agentDefinition: {
+            name: "Sandbox Agent Host Extension",
+            resources: {
+              skillPaths: [],
+              extensionIds: [serverResourceId("extension", selectedExtension)],
+            },
+            sessionDefaults: { tools: ["read", "bash", "grep", "find", "other_tool", "computer"] },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        });
+
+        const active = backend.session.getActiveToolNames();
+        expect(active).toEqual(
+          expect.arrayContaining(["read", "bash", "grep", "find", "other_tool"]),
+        );
+        expect(active).not.toContain("computer");
+        expect(backend.session.getToolDefinition("grep")?.description.toLowerCase()).toContain(
+          "sandbox",
+        );
+        expect(backend.session.getToolDefinition("find")).toBeDefined();
+
+        const hostTool = backend.session.getToolDefinition("other_tool");
+        expect(hostTool).toBeDefined();
+        const hostResult = await hostTool!.execute(
+          "host-extension",
+          {},
+          undefined,
+          undefined,
+          {} as never,
+        );
+        expect(toolText(hostResult)).toContain("host-extension-ok");
+        expect(vm.exec).not.toHaveBeenCalled();
+
+        const guestRoot = "/workspace/sandbox-agent-host-extension-tool";
+        const grep = backend.session.getToolDefinition("grep");
+        const grepResult = await grep!.execute(
+          "grep-guest",
+          { pattern: "guest-workspace-hit", path: guestRoot },
+          undefined,
+          undefined,
+          {} as never,
+        );
+        expect(toolText(grepResult)).toContain("guest-workspace-hit");
+        expect(JSON.stringify(execCalls)).not.toContain("/opt/homebrew/bin/rg");
+        expect(JSON.stringify(execCalls)).not.toContain("/opt/homebrew/bin/fd");
+        expect(session.warnings?.[0]).toContain(
+          "Configured Agent tool is unavailable and was dropped from this session: computer",
+        );
+      } finally {
+        await backend?.dispose();
+        sdkBackendType._gondolinManager = previousManager;
+        qemuSpy.mockRestore();
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(agentDir, { recursive: true, force: true });
+      }
+    });
+
+    it("workspace-only tools cannot activate a registered host-side extension tool", async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-workspace-only-tool-"));
+      const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-workspace-only-agent-"));
+      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const extensionDir = join(agentDir, "extensions");
+      const selectedExtension = join(extensionDir, "other-tool.ts");
+      mkdirSync(extensionDir, { recursive: true });
+      writeFileSync(join(agentDir, "auth.json"), "{}");
+      writeFileSync(
+        selectedExtension,
+        "export default function (pi) { pi.registerTool({ name: 'other_tool', label: 'Other', description: 'Host-side extension tool', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'host-extension-ok' }] }) }); }",
+      );
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+      const { vm } = createGuestSearchVm();
+      const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+      const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+      const previousManager = sdkBackendType._gondolinManager;
+      sdkBackendType._gondolinManager = manager;
+      let backend: SdkBackend | undefined;
+
+      try {
+        backend = await SdkBackend.create({
+          session: makeSession({ ephemeral: true }),
+          workspace: {
+            id: "w1",
+            name: "Sandbox Workspace Only Tool",
+            runtime: "sandbox",
+            hostMount: cwd,
+            extensions: [],
+            tools: ["read", "bash", "grep", "find", "other_tool", "computer"],
+          } as Workspace,
+          agentDefinition: {
+            name: "Sandbox Workspace Only",
+            resources: {
+              skillPaths: [],
+              extensionIds: [serverResourceId("extension", selectedExtension)],
+            },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        });
+
+        const active = backend.session.getActiveToolNames();
+        expect(active).toEqual(expect.arrayContaining(["read", "bash", "grep", "find"]));
+        expect(active).not.toContain("other_tool");
+        expect(active).not.toContain("computer");
+        expect(backend.session.getToolDefinition("grep")?.description.toLowerCase()).toContain(
+          "sandbox",
+        );
+        expect(backend.session.getToolDefinition("find")).toBeDefined();
+      } finally {
+        await backend?.dispose();
+        sdkBackendType._gondolinManager = previousManager;
+        qemuSpy.mockRestore();
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(agentDir, { recursive: true, force: true });
       }
     });
   });
