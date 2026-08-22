@@ -86,6 +86,8 @@ enum MermaidPieRenderer {
             y += titleSize.height + titleGap
         }
 
+        // Chat keeps the 120–220 diameter. Do not grow the hero with unused
+        // document canvas the way XY `plotHeight(forMaxWidth:)` does.
         let pieDiameter = min(
             max(minPieDiameter, maxWidth * 0.45),
             maxPieDiameter
@@ -103,11 +105,29 @@ enum MermaidPieRenderer {
             textWidth: legendTextWidth
         )
         let legendHeight = rows.reduce(CGFloat(0)) { $0 + $1.height }
+        let measuredLegendWidth = rows.map { row in
+            swatchSize + swatchTextGap + MermaidTextUtils.measureText(
+                row.displayText, font: legendFont, fontSize: fontSize * 0.9
+            ).width
+        }.max() ?? (swatchSize + swatchTextGap)
+        let usedLegendWidth = min(
+            legendAvailableWidth,
+            max(measuredLegendWidth, swatchSize)
+        )
+
+        // Size the bitmap to pie + legend + margins. maxWidth is a cap, not
+        // a stretch target — padding to 800pt flattens the fullscreen ratio.
+        let pieLegendWidth = stacked
+            ? max(pieDiameter, usedLegendWidth) + outerMargin * 2
+            : outerMargin + pieDiameter + legendGap + usedLegendWidth + outerMargin
+        let titleNeededWidth = wrappedTitle == nil ? 0 : titleSize.width + outerMargin * 2
+        let canvasWidth = min(maxWidth, max(pieLegendWidth, titleNeededWidth, 1))
+        let canvasContentWidth = max(canvasWidth - outerMargin * 2, 40)
 
         let pieCenter: CGPoint
         let legendOrigin: CGPoint
         if stacked {
-            pieCenter = CGPoint(x: maxWidth / 2, y: y + pieRadius)
+            pieCenter = CGPoint(x: canvasWidth / 2, y: y + pieRadius)
             legendOrigin = CGPoint(
                 x: outerMargin,
                 y: pieCenter.y + pieRadius + legendGap
@@ -124,10 +144,10 @@ enum MermaidPieRenderer {
             ? legendOrigin.y + legendHeight
             : max(pieCenter.y + pieRadius, legendOrigin.y + legendHeight)
         let totalHeight = contentBottom + outerMargin
-        let size = CGSize(width: maxWidth, height: totalHeight)
+        let size = CGSize(width: canvasWidth, height: totalHeight)
 
         let titleRect = wrappedTitle.map { _ in
-            CGRect(x: outerMargin, y: outerMargin, width: contentWidth, height: titleSize.height)
+            CGRect(x: outerMargin, y: outerMargin, width: canvasContentWidth, height: titleSize.height)
         }
         let pieRect = CGRect(
             x: pieCenter.x - pieRadius,
@@ -138,7 +158,7 @@ enum MermaidPieRenderer {
         let legendRect = CGRect(
             x: legendOrigin.x,
             y: legendOrigin.y,
-            width: legendAvailableWidth,
+            width: usedLegendWidth,
             height: legendHeight
         )
 
@@ -180,7 +200,7 @@ enum MermaidPieRenderer {
                 MermaidTextUtils.drawText(
                     title,
                     at: CGPoint(x: ox + outerMargin, y: oy + outerMargin),
-                    width: contentWidth,
+                    width: canvasContentWidth,
                     font: font,
                     fontSize: fontSize,
                     foregroundColor: theme.foreground,

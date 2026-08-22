@@ -41,13 +41,22 @@ final class NativeMermaidBlockView: UIView {
     // MARK: - State
 
     private var currentCode: String?
+    private var currentPalette: ThemePalette?
     private var isShowingDiagram = false
     /// Natural (unscaled) diagram size from the latest successful render.
     /// Used to recompute inline height if the view width changes later.
     private var renderedDiagramNaturalSize: CGSize?
+    /// `maxWidth` passed to the last finished raster. Layout may later
+    /// settle wider than the estimated width used at apply time.
+    private var lastRasterWidth: CGFloat?
+    /// Width of an in-flight raster so layout cannot start a loop.
+    private var inFlightRasterWidth: CGFloat?
     private var renderTask: Task<Void, Never>?
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
+
+    /// Ignore sub-point layout jitter; re-raster when the bubble really moved.
+    private static let rasterWidthSlop: CGFloat = 8
 
     // MARK: - Init
 
@@ -96,17 +105,22 @@ final class NativeMermaidBlockView: UIView {
         super.layoutSubviews()
 
         // Async renders can complete before Auto Layout settles the final
-        // message-bubble width. Recompute height on later width changes so
-        // diagrams don't stay clamped until an unrelated snapshot reconfigure.
-        guard isShowingDiagram,
-              let naturalSize = renderedDiagramNaturalSize,
-              naturalSize.width > 0,
-              naturalSize.height > 0,
-              bounds.width > 0 else {
-            return
+        // message-bubble width. Keep the current bitmap's height in sync
+        // immediately, then redraw if this width is not what we rastered.
+        guard isShowingDiagram, bounds.width > 0 else { return }
+
+        if let naturalSize = renderedDiagramNaturalSize,
+           naturalSize.width > 0,
+           naturalSize.height > 0 {
+            updateDiagramHeight(naturalSize: naturalSize, availableWidth: bounds.width)
         }
 
-        updateDiagramHeight(naturalSize: naturalSize, availableWidth: bounds.width)
+        if rasterWidthMismatch(bounds.width), let code = currentCode {
+            applyAsDiagram(
+                code: code,
+                palette: currentPalette ?? ThemeRuntimeState.currentPalette()
+            )
+        }
     }
 
     // MARK: - Public API
@@ -123,6 +137,9 @@ final class NativeMermaidBlockView: UIView {
         diagramHeightConstraint?.isActive = false
         isShowingDiagram = false
         renderedDiagramNaturalSize = nil
+        lastRasterWidth = nil
+        inFlightRasterWidth = nil
+        currentPalette = palette
 
         codeBlockView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
         currentCode = code
@@ -137,11 +154,14 @@ final class NativeMermaidBlockView: UIView {
     /// complete after the snapshot, producing blank boxes.
     func applyAsDiagramSync(code: String, palette: ThemePalette) {
         currentCode = code
+        currentPalette = palette
+
+        renderTask?.cancel()
+        renderTask = nil
 
         let theme = ThemeRuntimeState.currentRenderTheme()
-        let availableWidth = bounds.width > 0
-            ? bounds.width
-            : (window?.windowScene?.screen.bounds.width ?? 360)
+        let availableWidth = resolvedAvailableWidth()
+        inFlightRasterWidth = availableWidth
 
         guard let result = DocumentRenderPipeline.renderInlineGraphicalImage(
             parser: MermaidParser(),
@@ -158,23 +178,30 @@ final class NativeMermaidBlockView: UIView {
             return
         }
 
-        showDiagram(image: result.image, naturalSize: result.size, palette: palette)
+        showDiagram(
+            image: result.image,
+            naturalSize: result.size,
+            palette: palette,
+            rasterWidth: availableWidth
+        )
     }
 
     /// Render as a diagram (fence closed, not streaming).
     func applyAsDiagram(code: String, palette: ThemePalette) {
-        // Skip redundant renders.
-        guard code != currentCode || !isShowingDiagram else { return }
+        currentPalette = palette
+        let availableWidth = resolvedAvailableWidth()
+        // Same source at a new bubble width still needs a new raster.
+        guard code != currentCode || !isShowingDiagram || rasterWidthMismatch(availableWidth) else {
+            return
+        }
         currentCode = code
 
         renderTask?.cancel()
+        inFlightRasterWidth = availableWidth
         renderTask = Task { [weak self] in
             guard let self else { return }
 
             let theme = ThemeRuntimeState.currentRenderTheme()
-            let availableWidth = self.bounds.width > 0
-                ? self.bounds.width
-                : (self.window?.windowScene?.screen.bounds.width ?? 360)
 
             let result: (image: UIImage, size: CGSize)? = await Task.detached(priority: .userInitiated) {
                 DocumentRenderPipeline.renderInlineGraphicalImage(
@@ -197,7 +224,12 @@ final class NativeMermaidBlockView: UIView {
                 return
             }
 
-            self.showDiagram(image: result.image, naturalSize: result.size, palette: palette)
+            self.showDiagram(
+                image: result.image,
+                naturalSize: result.size,
+                palette: palette,
+                rasterWidth: availableWidth
+            )
         }
     }
 
@@ -221,11 +253,33 @@ final class NativeMermaidBlockView: UIView {
 
     // MARK: - Private
 
-    private func showDiagram(image: UIImage, naturalSize: CGSize, palette: ThemePalette) {
-        renderedDiagramNaturalSize = naturalSize
+    private func resolvedAvailableWidth() -> CGFloat {
+        bounds.width > 0
+            ? bounds.width
+            : (window?.windowScene?.screen.bounds.width ?? 360)
+    }
 
-        let fallbackWidth = window?.windowScene?.screen.bounds.width ?? 360
-        let availableWidth = bounds.width > 0 ? bounds.width : fallbackWidth
+    private func rasterWidthMismatch(_ width: CGFloat) -> Bool {
+        if let inFlight = inFlightRasterWidth, abs(width - inFlight) <= Self.rasterWidthSlop {
+            return false
+        }
+        if let last = lastRasterWidth, abs(width - last) <= Self.rasterWidthSlop {
+            return false
+        }
+        return true
+    }
+
+    private func showDiagram(
+        image: UIImage,
+        naturalSize: CGSize,
+        palette: ThemePalette,
+        rasterWidth: CGFloat
+    ) {
+        renderedDiagramNaturalSize = naturalSize
+        lastRasterWidth = rasterWidth
+        inFlightRasterWidth = nil
+
+        let availableWidth = bounds.width > 0 ? bounds.width : rasterWidth
         updateDiagramHeight(naturalSize: naturalSize, availableWidth: availableWidth)
 
         diagramHeightConstraint?.isActive = true
@@ -266,6 +320,8 @@ final class NativeMermaidBlockView: UIView {
         diagramHeightConstraint?.isActive = false
         isShowingDiagram = false
         renderedDiagramNaturalSize = nil
+        lastRasterWidth = nil
+        inFlightRasterWidth = nil
         codeBlockView.apply(language: "mermaid", code: code, palette: palette, isOpen: false)
 
         if wasShowingDiagram {

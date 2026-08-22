@@ -483,6 +483,39 @@ struct MermaidPieConformanceTests {
         #expect(size.width <= 360)
         #expect(draw(layout) != nil)
     }
+
+    /// Fullscreen 800pt must keep the chat pie ratio. Padding the canvas
+    /// to maxWidth produces an 800×~220 strip that aspect-fit flattens.
+    @Test func documentWidthKeepsInlinePieRatio() {
+        let diagram = MermaidPieParser.parse(lines: Self.officialPetsLines)
+        let inline = layoutPie(diagram, maxWidth: 360)
+        let document = layoutPie(diagram, maxWidth: 800)
+        guard let inlineSize = inline.customSize,
+              let documentSize = document.customSize,
+              let inlinePie = inline.graphResult.nodePositions["pie"],
+              let inlineLegend = inline.graphResult.nodePositions["legend"],
+              let documentPie = document.graphResult.nodePositions["pie"],
+              let documentLegend = document.graphResult.nodePositions["legend"]
+        else {
+            Issue.record("Expected pie/legend frames at 360 and 800")
+            return
+        }
+        #expect(inlineLegend.minX >= inlinePie.maxX - 1)
+        #expect(documentLegend.minX >= documentPie.maxX - 1)
+        #expect(inlineSize.width <= 360)
+        #expect(
+            documentSize.width < 800 - 1,
+            "Pie must size to content, not pad to the 800pt document canvas, got \(documentSize)"
+        )
+        #expect(inlineSize.width > 0 && documentSize.width > 0)
+        let inlineRatio = inlineSize.height / inlineSize.width
+        let documentRatio = documentSize.height / documentSize.width
+        #expect(
+            abs(inlineRatio - documentRatio) < 0.06,
+            "360 vs 800 pie ratios diverged: inline=\(inlineRatio) document=\(documentRatio) sizes=\(inlineSize) / \(documentSize)"
+        )
+        #expect(draw(document) != nil)
+    }
 }
 
 // MARK: - Helpers

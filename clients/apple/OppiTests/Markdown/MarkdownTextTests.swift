@@ -3914,4 +3914,65 @@ struct NativeMermaidBlockViewTests {
         }
         return colors.count
     }
+
+    /// A pie first rasterized in a skinny estimated width must re-raster
+    /// when the bubble settles at ~360. Otherwise the stacked bitmap is
+    /// aspect-fit into the wide cell and stays a thin column after scroll.
+    @Test func pieRerasterWhenBoundsWidenAfterNarrowApply() async throws {
+        let pieSource = """
+            pie title Pets adopted by volunteers
+                "Dogs" : 386
+                "Cats" : 85
+                "Rats" : 15
+            """
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 600))
+        let view = NativeMermaidBlockView()
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        ])
+        container.layoutIfNeeded()
+        #expect(abs(view.bounds.width - 100) < 0.5)
+
+        let palette = ThemeRuntimeState.currentPalette()
+        view.applyAsDiagramSync(code: pieSource, palette: palette)
+        container.layoutIfNeeded()
+
+        let narrowImage = try #require(firstTappableImageView(in: view)?.image)
+        #expect(
+            narrowImage.size.width < 160,
+            "Narrow apply should raster a stacked pie, got width \(narrowImage.size.width)"
+        )
+
+        container.frame.size.width = 360
+        container.setNeedsLayout()
+        container.layoutIfNeeded()
+
+        var wideImage: UIImage?
+        for _ in 0..<500 {
+            container.layoutIfNeeded()
+            if let image = firstTappableImageView(in: view)?.image,
+               image.size.width > 200 {
+                wideImage = image
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let image = try #require(wideImage, "Pie must re-raster after the bubble widens")
+        #expect(
+            image.size.width > 200,
+            "Re-rastered pie must leave the stacked skinny column, got \(image.size.width)"
+        )
+        #expect(
+            image.size.width > narrowImage.size.width + 40,
+            "Image width should grow with the bubble (narrow=\(narrowImage.size.width), wide=\(image.size.width))"
+        )
+        #expect(
+            image.size.height / max(image.size.width, 1) < 1.4,
+            "Wide pie should keep a side-legend ratio, not a stacked column (\(image.size))"
+        )
+    }
 }

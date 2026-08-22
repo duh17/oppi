@@ -80,12 +80,13 @@ struct MermaidSequenceRendererTests {
 
         let twoSize = renderer.boundingBox(twoParticipants)
         let threeSize = renderer.boundingBox(threeParticipants)
-        // Both diagrams consume the 600pt viewport; more columns stay readable
-        // because each head keeps its intrinsic width and the minimum gap.
+        // Document canvases stay on content width (capped around a chat
+        // bubble). More columns stay readable because each head keeps its
+        // intrinsic width and the minimum gap.
         #expect(twoSize.width > 0)
         #expect(threeSize.width > 0)
-        #expect(abs(twoSize.width - 600) < 1 || twoSize.width <= 600 + 0.5)
-        #expect(abs(threeSize.width - 600) < 1 || threeSize.width >= twoSize.width - 0.5)
+        #expect(twoSize.width <= 600 + 0.5)
+        #expect(threeSize.width >= twoSize.width - 0.5)
     }
 
     @Test func moreMessagesProduceTallerLayout() {
@@ -651,11 +652,17 @@ struct MermaidSequenceRendererTests {
 
         let narrowGap = narrowFacts.participants[1].rect.minX - narrowFacts.participants[0].rect.maxX
         let wideGap = wideFacts.participants[1].rect.minX - wideFacts.participants[0].rect.maxX
-        #expect(wideFacts.size.width >= 800 - 0.5, "Wide layout should consume the 800pt viewport, got \(wideFacts.size.width)")
-        #expect(wideGap > narrowGap + 20, "Wide layout must spread participants, narrowGap=\(narrowGap) wideGap=\(wideGap)")
         #expect(
-            wideFacts.participants.last!.rect.maxX > 800 * 0.8,
-            "Last participant should sit near the trailing edge, maxX=\(wideFacts.participants.last!.rect.maxX)"
+            wideFacts.size.width < 500,
+            "Document 800pt must keep content width, not stretch to the canvas, got \(wideFacts.size.width)"
+        )
+        #expect(
+            abs(wideFacts.size.width - narrowFacts.size.width) < 8,
+            "360 vs 800 sequence widths should match, narrow=\(narrowFacts.size.width) wide=\(wideFacts.size.width)"
+        )
+        #expect(
+            abs(wideGap - narrowGap) < 8,
+            "Document layout must not stretch participant span past the chat bubble, narrowGap=\(narrowGap) wideGap=\(wideGap)"
         )
     }
 

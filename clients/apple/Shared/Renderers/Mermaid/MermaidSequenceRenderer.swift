@@ -296,13 +296,17 @@ enum MermaidSequenceRenderer {
         let lastCenter = participants.last?.centerX ?? c.sideMargin
         let lastHalf = (participants.last?.boxRect.width ?? 0) / 2
         var totalWidth = lastCenter + lastHalf + c.sideMargin
-        if totalWidth < maxWidth, participants.count > 1 {
+        // Spread to fill a ~360 chat bubble. Do not stretch participant
+        // span across an 800pt document canvas — that flattens the ratio.
+        let chatSpreadCap: CGFloat = 360
+        let spreadTarget = min(maxWidth, chatSpreadCap)
+        if totalWidth < spreadTarget, participants.count > 1 {
             // Spread intrinsic boxes across useful available width without
             // shrinking heads or violating the minimum gap.
             let first = participants[0]
             let last = participants[participants.count - 1]
             let newFirstCenter = c.sideMargin + first.boxRect.width / 2
-            let newLastCenter = maxWidth - c.sideMargin - last.boxRect.width / 2
+            let newLastCenter = spreadTarget - c.sideMargin - last.boxRect.width / 2
             let oldSpan = last.centerX - first.centerX
             let newSpan = newLastCenter - newFirstCenter
             if newSpan > oldSpan, oldSpan > 0 {
@@ -325,7 +329,7 @@ enum MermaidSequenceRenderer {
                         )
                     )
                 }
-                totalWidth = maxWidth
+                totalWidth = spreadTarget
             }
         }
 
