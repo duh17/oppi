@@ -393,9 +393,19 @@ enum FileShareService {
 
     // MARK: - Text View Snapshots (Markdown, Org, Code)
 
-    private static func renderMarkdownToImage(_ source: String) -> UIImage {
+    /// Shared image/PDF markdown export view. Intentionally has no workspace
+    /// or session context: relative `![[video]]` embeds must still become the
+    /// deterministic static card.
+    static var markdownExportContentWidth: CGFloat {
+        textLayoutWidth - exportPadding * 2
+    }
+
+    static func makeMarkdownExportView(_ source: String) -> AssistantMarkdownContentView {
         let view = AssistantMarkdownContentView()
         view.backgroundColor = currentBackgroundColor
+        // Commit video geometry at the snapshot content width so the static
+        // card keeps 16:9 instead of a 320pt fallback stretched page-wide.
+        view.bounds = CGRect(x: 0, y: 0, width: markdownExportContentWidth, height: 1)
         view.apply(configuration: .make(
             content: source,
             isStreaming: false,
@@ -403,7 +413,16 @@ enum FileShareService {
             textSelectionEnabled: false,
             renderingMode: .export
         ))
-        return snapshotView(view, width: textLayoutWidth, padding: exportPadding, backgroundColor: currentBackgroundColor)
+        return view
+    }
+
+    private static func renderMarkdownToImage(_ source: String) -> UIImage {
+        snapshotView(
+            makeMarkdownExportView(source),
+            width: textLayoutWidth,
+            padding: exportPadding,
+            backgroundColor: currentBackgroundColor
+        )
     }
 
     private static func renderOrgModeToImage(_ source: String) -> UIImage {

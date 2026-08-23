@@ -17,6 +17,8 @@ final class AssistantMarkdownSegmentApplier {
     private var tableViews: [Int: NativeTableBlockView] = [:]
     /// References to image views for in-place updates.
     private var imageViews: [Int: NativeMarkdownImageView] = [:]
+    /// References to native inline video views for in-place updates.
+    private var videoViews: [Int: NativeMarkdownVideoView] = [:]
     /// References to mermaid diagram views for in-place updates.
     private var mermaidViews: [Int: NativeMermaidBlockView] = [:]
     /// References to LaTeX block views for in-place updates.
@@ -45,12 +47,28 @@ final class AssistantMarkdownSegmentApplier {
     /// Closure for fetching files from the active session working directory.
     var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
 
+    /// Authenticated file-backed media resolver for `![[video-file]]`.
+    var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
+
+    /// Full-screen runway probes resolve sources but keep playback torn down
+    /// until a real cell owns the segment.
+    var videoPlaybackVisible = true
+
+    func setVideoPlaybackVisible(_ visible: Bool) {
+        videoPlaybackVisible = visible
+        for view in videoViews.values {
+            view.setPlaybackVisible(visible)
+        }
+    }
+
     /// Attached to each image view before `apply` so a cache hit can publish
     /// its reserved height without `forceInvalidate` from inside `cellForItemAt`.
     var onImageDisplayHeightChange: ((CGFloat) -> Void)?
 
     /// Final prepared-image geometry, excluding the loading placeholder.
     var onImagePreparedGeometry: ((CGFloat) -> Void)?
+    /// Prepared video height before reveal. Ignored after the embed is shown.
+    var onVideoPreparedGeometry: ((CGFloat) -> Void)?
 
     /// Full-screen reader runway work supplies its canonical item width before
     /// child views exist. Timeline/export callers leave this nil and retain
@@ -87,6 +105,10 @@ final class AssistantMarkdownSegmentApplier {
         }
         highlightTasks.removeAll()
 
+        for view in videoViews.values {
+            view.prepareForRemoval()
+        }
+
         for view in stackView.arrangedSubviews {
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -96,6 +118,7 @@ final class AssistantMarkdownSegmentApplier {
         codeBlockViews.removeAll()
         tableViews.removeAll()
         imageViews.removeAll()
+        videoViews.removeAll()
         mermaidViews.removeAll()
         latexViews.removeAll()
         renderedSegmentSignatures = []
@@ -332,6 +355,19 @@ final class AssistantMarkdownSegmentApplier {
             stackView.addArrangedSubview(imageView)
             imageViews[index] = imageView
 
+        case .video(let embed):
+            let videoView = NativeMarkdownVideoView()
+            videoView.onPreparedGeometry = onVideoPreparedGeometry
+            videoView.apply(
+                embed: embed,
+                sourceProvider: makeMarkdownVideoSource,
+                renderingMode: config.renderingMode,
+                preferredDisplayWidth: preparationWidth
+            )
+            videoView.setPlaybackVisible(videoPlaybackVisible)
+            stackView.addArrangedSubview(videoView)
+            videoViews[index] = videoView
+
         case .mermaidDiagram(let code):
             let mermaidView = NativeMermaidBlockView()
             let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
@@ -423,6 +459,9 @@ final class AssistantMarkdownSegmentApplier {
         // Remove extra views beyond the common prefix.
         while stackView.arrangedSubviews.count > commonPrefix {
             guard let view = stackView.arrangedSubviews.last else { break }
+            if let video = view as? NativeMarkdownVideoView {
+                video.prepareForRemoval()
+            }
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
@@ -433,6 +472,7 @@ final class AssistantMarkdownSegmentApplier {
             codeBlockViews.removeValue(forKey: index)
             tableViews.removeValue(forKey: index)
             imageViews.removeValue(forKey: index)
+            videoViews.removeValue(forKey: index)
             mermaidViews.removeValue(forKey: index)
             latexViews.removeValue(forKey: index)
             highlightTasks[index]?.cancel()
@@ -570,6 +610,16 @@ final class AssistantMarkdownSegmentApplier {
                         preparesForDisplay: preparesImagesForDisplay
                     )
                 }
+
+            case .video(let embed):
+                videoViews[index]?.onPreparedGeometry = onVideoPreparedGeometry
+                videoViews[index]?.apply(
+                    embed: embed,
+                    sourceProvider: makeMarkdownVideoSource,
+                    renderingMode: config.renderingMode,
+                    preferredDisplayWidth: preparationWidth
+                )
+                videoViews[index]?.setPlaybackVisible(videoPlaybackVisible)
 
             case .mermaidDiagram(let code):
                 if let mermaidView = mermaidViews[index] {
@@ -894,6 +944,7 @@ private enum SegmentSignature: Equatable {
     case table
     case thematicBreak
     case image(url: URL)
+    case video(reference: ResourceReference)
     case mermaidDiagram
     case latexBlock
 
@@ -909,6 +960,8 @@ private enum SegmentSignature: Equatable {
             self = .thematicBreak
         case .image(_, let url):
             self = .image(url: url)
+        case .video(let embed):
+            self = .video(reference: embed.reference)
         case .mermaidDiagram:
             self = .mermaidDiagram
         case .latexBlock:

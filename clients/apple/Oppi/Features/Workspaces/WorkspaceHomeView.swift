@@ -323,6 +323,7 @@ struct WorkspaceLinkedFileDestinationView: View {
                         serverId: target.serverId,
                         filePath: path,
                         fileName: fileName,
+                        workspaceRuntime: connection.workspaceStore.workspaces.first(where: { $0.id == target.workspaceId })?.runtime,
                         navigationContext: target.navigationContext,
                         lineAnchor: target.lineAnchor,
                         onLineAnchorNotice: { connection.extensionToast = $0 }

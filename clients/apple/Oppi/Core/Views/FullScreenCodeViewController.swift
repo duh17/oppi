@@ -732,7 +732,8 @@ final class FullScreenCodeViewController: UIViewController {
                 readerPreferences: readerPreferences(for: content),
                 perfSurface: .fullScreenMarkdown,
                 fetchWorkspaceFile: wsContext?.fetchWorkspaceFile,
-                fetchSessionFile: wsContext?.fetchSessionFile
+                fetchSessionFile: wsContext?.fetchSessionFile,
+                makeMarkdownVideoSource: wsContext?.makeMarkdownVideoSource
             )
             body.accessibilityIdentifier = "full-screen.markdown.body"
             return body
@@ -890,7 +891,8 @@ final class FullScreenCodeViewController: UIViewController {
             readerPreferences: readerPreferences(for: .markdown(content: text, filePath: filePath, workspaceContext: workspaceContext)),
             perfSurface: .fullScreenMarkdown,
             fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
-            fetchSessionFile: workspaceContext?.fetchSessionFile
+            fetchSessionFile: workspaceContext?.fetchSessionFile,
+            makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource
         )
     }
 

@@ -301,6 +301,7 @@ indirect enum FullScreenCodeContent {
         let fetchWorkspaceFile: (_ workspaceID: String, _ path: String) async throws -> Data
         let sessionID: String?
         let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+        let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
 
         init(
             workspaceID: String,
@@ -308,7 +309,8 @@ indirect enum FullScreenCodeContent {
             serverBaseURL: URL,
             fetchWorkspaceFile: @escaping (_ workspaceID: String, _ path: String) async throws -> Data,
             sessionID: String? = nil,
-            fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
+            fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
+            makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
         ) {
             self.workspaceID = workspaceID
             self.serverID = serverID
@@ -316,6 +318,7 @@ indirect enum FullScreenCodeContent {
             self.fetchWorkspaceFile = fetchWorkspaceFile
             self.sessionID = sessionID
             self.fetchSessionFile = fetchSessionFile
+            self.makeMarkdownVideoSource = makeMarkdownVideoSource
         }
     }
 

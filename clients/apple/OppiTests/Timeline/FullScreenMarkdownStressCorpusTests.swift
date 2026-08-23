@@ -74,6 +74,8 @@ struct FullScreenMarkdownStressCorpusTests {
                 tables += 1
             case .image:
                 images += 1
+            case .video:
+                break
             case .codeBlock:
                 code += 1
             case .thematicBreak:
@@ -294,6 +296,11 @@ struct FullScreenMarkdownStressCorpusTests {
                     "image item \(item) not visible as NativeMarkdownImageView"
                 )
                 seenImage += 1
+            case .video:
+                #expect(
+                    visible.contains { timelineFirstView(ofType: NativeMarkdownVideoView.self, in: $0) != nil },
+                    "video item \(item) not visible as NativeMarkdownVideoView"
+                )
             case .mermaidDiagram:
                 let mermaid = visible.compactMap { timelineFirstView(ofType: NativeMermaidBlockView.self, in: $0) }
                 #expect(!mermaid.isEmpty, "mermaid item \(item) not visible")

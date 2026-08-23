@@ -1552,17 +1552,30 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
             if let imageView = view as? NativeMarkdownImageView {
                 imageView.activatePreparedDisplay()
             }
+            if let videoView = view as? NativeMarkdownVideoView {
+                videoView.setPlaybackVisible(true)
+            }
         }
         stackView.invalidateIntrinsicContentSize()
         contentView.invalidateIntrinsicContentSize()
         setNeedsLayout()
     }
 
+    fileprivate func setVideoPlaybackVisible(_ visible: Bool) {
+        for view in stackView.arrangedSubviews {
+            (view as? NativeMarkdownVideoView)?.setPlaybackVisible(visible)
+        }
+    }
+
     fileprivate func observePreparedImageGeometry(_ handler: @escaping (CGFloat) -> Void) {
         segmentApplier.onImagePreparedGeometry = handler
+        segmentApplier.onVideoPreparedGeometry = handler
         for view in stackView.arrangedSubviews {
             if let imageView = view as? NativeMarkdownImageView {
                 imageView.onPreparedGeometry = handler
+            }
+            if let videoView = view as? NativeMarkdownVideoView {
+                videoView.onPreparedGeometry = handler
             }
         }
     }
@@ -1579,7 +1592,8 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         textViewDelegate: any UITextViewDelegate,
         doubleTapActivation: (() -> Void)?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     ) {
         // The source-line enclosure is painted by the reader's overlay. Keep
         // the arranged content at the ledger's canonical width instead of
@@ -1590,6 +1604,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         self.doubleTapActivation = doubleTapActivation
         segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
         segmentApplier.fetchSessionFile = fetchSessionFile
+        segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
     }
 
     func apply(
@@ -1602,6 +1617,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         doubleTapActivation: (() -> Void)?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
         canonicalWidth: CGFloat? = nil,
         preparesImagesForDisplay: Bool = true
     ) {
@@ -1613,8 +1629,10 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         self.doubleTapActivation = doubleTapActivation
         segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
         segmentApplier.fetchSessionFile = fetchSessionFile
+        segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
         segmentApplier.preparationWidth = canonicalWidth
         segmentApplier.preparesImagesForDisplay = preparesImagesForDisplay
+        segmentApplier.videoPlaybackVisible = preparesImagesForDisplay
         if let canonicalWidth {
             bounds.size.width = canonicalWidth
             contentView.bounds.size.width = canonicalWidth
@@ -1845,6 +1863,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     private let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+    private let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     private let maximumViewportHeight: CGFloat?
     private var intrinsicViewportContentHeight: CGFloat = 44
     private var readerPreferences: FullScreenReaderPreferences
@@ -1914,7 +1933,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         allowsVerticalBounce: Bool = true,
         allowsVerticalScrolling: Bool = true,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
     ) {
         self.stream = stream
         self.sourceFormat = sourceFormat
@@ -1935,6 +1955,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.maximumViewportHeight = maximumViewportHeight
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
+        self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         let sourceSnapshot = stream?.snapshot
             ?? ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
@@ -2383,6 +2404,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
         let source = config.content
         let themeID = config.themeID
+        let serverID = config.serverID
         let workspaceID = config.workspaceID
         let sessionID = config.sessionID
         let serverBaseURL = config.serverBaseURL
@@ -2398,6 +2420,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 let build = FlatSegment.buildWithSourceLineRanges(
                     from: blocks,
                     themeID: themeID,
+                    serverID: serverID,
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     serverBaseURL: serverBaseURL,
@@ -2621,6 +2644,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             true
         case let (.image(lhsAlt, lhsURL), .image(rhsAlt, rhsURL)):
             lhsAlt == rhsAlt && lhsURL == rhsURL
+        case let (.video(lhs), .video(rhs)):
+            lhs == rhs
         case let (.mermaidDiagram(lhs), .mermaidDiagram(rhs)):
             lhs == rhs
         case let (.latexBlock(lhs), .latexBlock(rhs)):
@@ -2660,7 +2685,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile
+            fetchSessionFile: fetchSessionFile,
+            makeMarkdownVideoSource: makeMarkdownVideoSource
         )
         cell.appliedItemIndex = indexPath.item
         cell.appliedSegmentID = renderedSegmentIDs.indices.contains(indexPath.item)
@@ -2694,6 +2720,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 doubleTapActivation: viewportDoubleTapActivation,
                 fetchWorkspaceFile: fetchWorkspaceFile,
                 fetchSessionFile: fetchSessionFile,
+                makeMarkdownVideoSource: makeMarkdownVideoSource,
                 canonicalWidth: preparedCanonicalWidth,
                 preparesImagesForDisplay: true
             )
@@ -2752,6 +2779,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             }
             refreshGeometryPresentationForVisibleCells()
         }
+        cell.setVideoPlaybackVisible(true)
         // Reconcile deterministic visible fitting without allowing a visible
         // correction while a touch owns the viewport.
         scheduleHeightFlush()
@@ -2768,6 +2796,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         didEndDisplaying cell: UICollectionViewCell,
         forItemAt indexPath: IndexPath
     ) {
+        if let cell = cell as? FullScreenMarkdownSegmentCell {
+            cell.setVideoPlaybackVisible(false)
+        }
         guard renderedSegments.indices.contains(indexPath.item),
               case .image = renderedSegments[indexPath.item] else { return }
         let targetY = collectionView.collectionViewLayout.layoutAttributesForItem(
@@ -2789,6 +2820,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         parkedSegmentViews[id] = views
         let parkedWidth = preparedCanonicalWidth ?? canonicalContentWidth
         for view in views {
+            (view as? NativeMarkdownVideoView)?.setPlaybackVisible(false)
             // An unconstrained `translatesAutoresizingMaskIntoConstraints=false`
             // view collapses to its intrinsic width when moved off a stack. A
             // graphical child would observe that transient width and reraster
@@ -3128,7 +3160,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile
+            fetchSessionFile: fetchSessionFile,
+            makeMarkdownVideoSource: makeMarkdownVideoSource
         )
         cell.appliedItemIndex = item
         cell.appliedSegmentID = id
@@ -3146,6 +3179,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
+            makeMarkdownVideoSource: makeMarkdownVideoSource,
             canonicalWidth: canonicalWidth,
             preparesImagesForDisplay: false
         )
@@ -3218,6 +3252,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             return 8
         case .image:
             return 180
+        case .video:
+            return MarkdownInlineVideoLayout.reservedHeight(forWidth: contentWidth)
         case .mermaidDiagram(let code):
             // Mermaid parsing is too expensive for first paint. Estimate
             // from diagram source lines; the background prefetch renders
@@ -3812,6 +3848,7 @@ extension NativeFullScreenMarkdownBody {
             case .table: "table"
             case .thematicBreak: "break"
             case .image: "image"
+            case .video: "video"
             case .mermaidDiagram: "mermaid"
             case .latexBlock: "latex"
             }
@@ -3981,7 +4018,8 @@ extension NativeFullScreenMarkdownBody {
             textViewDelegate: self,
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile
+            fetchSessionFile: fetchSessionFile,
+            makeMarkdownVideoSource: makeMarkdownVideoSource
         )
         measuringCell.apply(
             segment: renderedSegments[item],
@@ -3995,6 +4033,7 @@ extension NativeFullScreenMarkdownBody {
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
+            makeMarkdownVideoSource: makeMarkdownVideoSource,
             canonicalWidth: canonicalWidth,
             preparesImagesForDisplay: false
         )

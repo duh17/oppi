@@ -28,6 +28,98 @@ enum ServerListRefreshOrigin: Equatable {
     case appEventReconciliation
 }
 
+enum MarkdownVideoWorkspaceContext {
+    /// Cache-first rows may snapshot a nil runtime before the catalog arrives.
+    /// Fetch-time lookup always prefers the current store value.
+    static func resolvedRuntime(
+        captured: WorkspaceRuntime?,
+        current: WorkspaceRuntime?
+    ) -> WorkspaceRuntime? {
+        current ?? captured
+    }
+
+    static func runtime(
+        workspaceId: String?,
+        serverId: String?,
+        workspacesByServer: [String: [Workspace]],
+        workspaces: [Workspace]
+    ) -> WorkspaceRuntime? {
+        guard let workspaceId, !workspaceId.isEmpty else { return nil }
+        if let serverId,
+           let match = workspacesByServer[serverId]?.first(where: { $0.id == workspaceId }) {
+            return match.runtime
+        }
+        return workspaces.first(where: { $0.id == workspaceId })?.runtime
+    }
+
+    static func firstCheckout(session: Session?, workspaceId: String?) -> String? {
+        let sourceSessionResolved = session?.workspaceId == workspaceId
+        return WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
+            sourceSessionResolved: sourceSessionResolved,
+            sourceSessionWorktreeID: sourceSessionResolved ? session?.worktreeId : nil
+        )
+    }
+}
+
+enum MarkdownVideoMediaSourceRoute: Equatable {
+    case host(path: String)
+    case session(workspaceID: String, sessionID: String, path: String)
+    case workspace(workspaceID: String, path: String, worktreeID: String?)
+
+    var path: String {
+        switch self {
+        case .host(let path), .session(_, _, let path), .workspace(_, let path, _):
+            return path
+        }
+    }
+
+    static func resolve(
+        embed: MarkdownVideoEmbed,
+        workspaceID: String?,
+        sessionID: String?,
+        worktreeID: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) -> Self? {
+        let path = embed.filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        switch embed.reference.kind {
+        case .hostFile:
+            if workspaceRuntime == .sandbox {
+                let workspace = workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let session = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let workspace, !workspace.isEmpty,
+                   let session, !session.isEmpty {
+                    return .session(workspaceID: workspace, sessionID: session, path: path)
+                }
+                if let workspace, !workspace.isEmpty {
+                    // Guest POSIX paths are not owner-host files. Prefer the
+                    // workspace media route over GET /files/raw.
+                    return .workspace(
+                        workspaceID: workspace,
+                        path: path,
+                        worktreeID: worktreeID
+                    )
+                }
+                return nil
+            }
+            return .host(path: path)
+        case .workspaceFile:
+            let workspace = (embed.reference.workspaceID ?? workspaceID)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let workspace, !workspace.isEmpty else { return nil }
+            if let session = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !session.isEmpty {
+                return .session(workspaceID: workspace, sessionID: session, path: path)
+            }
+            return .workspace(
+                workspaceID: workspace,
+                path: path,
+                worktreeID: worktreeID
+            )
+        }
+    }
+}
+
 /// Top-level connection coordinator.
 ///
 /// Owns the APIClient and WebSocketClient and shared stores.
@@ -860,6 +952,67 @@ final class ServerConnection {
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
         )
+    }
+
+    func makeMarkdownVideoMediaSourceWhenReady(
+        embed: MarkdownVideoEmbed,
+        workspaceId: String?,
+        sessionId: String?,
+        worktreeId: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) async throws -> AuthenticatedMediaSource {
+        let apiClient = try await waitForAPIClient()
+        let currentRuntime = MarkdownVideoWorkspaceContext.runtime(
+            workspaceId: workspaceId,
+            serverId: currentServerId,
+            workspacesByServer: workspaceStore.workspacesByServer,
+            workspaces: workspaceStore.workspaces
+        )
+        let resolvedRuntime = MarkdownVideoWorkspaceContext.resolvedRuntime(
+            captured: workspaceRuntime,
+            current: currentRuntime
+        )
+        let session = sessionId.flatMap { sessionStore.session(id: $0) }
+        let resolvedWorktree = worktreeId ?? MarkdownVideoWorkspaceContext.firstCheckout(
+            session: session,
+            workspaceId: workspaceId
+        )
+        guard let route = MarkdownVideoMediaSourceRoute.resolve(
+            embed: embed,
+            workspaceID: workspaceId,
+            sessionID: sessionId,
+            worktreeID: resolvedWorktree,
+            workspaceRuntime: resolvedRuntime
+        ) else {
+            throw APIError.server(status: 404, message: "Video source is unavailable")
+        }
+        let pathExtension = (embed.filePath as NSString).pathExtension
+        let contentType = MediaMimeType.videoMimeType(forPathExtension: pathExtension)
+
+        switch route {
+        case .host(let path):
+            return try await apiClient.makeHostFileMediaSource(
+                path: path,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        case .session(let workspaceID, let sessionID, let path):
+            return try await apiClient.makeSessionFileMediaSource(
+                workspaceId: workspaceID,
+                sessionId: sessionID,
+                path: path,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        case .workspace(let workspaceID, let path, let worktreeID):
+            return try await apiClient.makeWorkspaceMediaSource(
+                workspaceId: workspaceID,
+                path: path,
+                worktreeId: worktreeID,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        }
     }
 
     func fetchSessionFileDataWhenReady(

@@ -20,6 +20,7 @@ struct MarkdownFileView: View {
     var workspaceID: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     var reviewCommentSelectionContext: ReviewCommentSelectionContext?
 
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -49,7 +50,8 @@ struct MarkdownFileView: View {
         return .init(
             workspaceID: workspaceID,
             serverBaseURL: serverBaseURL,
-            fetchWorkspaceFile: fetchWorkspaceFile
+            fetchWorkspaceFile: fetchWorkspaceFile,
+            makeMarkdownVideoSource: makeMarkdownVideoSource
         )
     }
 
@@ -72,7 +74,7 @@ struct MarkdownFileView: View {
                 workspaceContext: fullScreenWorkspaceContext
             ),
             reviewCommentSelectionContext: reviewContext,
-            renderedViewFactory: { [content, filePath, workspaceID, serverBaseURL, fetchWorkspaceFile, presentation, reviewContext, reviewSourceContext] in
+            renderedViewFactory: { [content, filePath, workspaceID, serverBaseURL, fetchWorkspaceFile, makeMarkdownVideoSource, presentation, reviewContext, reviewSourceContext] in
                 let themeID = ThemeRuntimeState.currentThemeID()
                 if presentation == .document {
                     return NativeFullScreenMarkdownBody(
@@ -85,13 +87,15 @@ struct MarkdownFileView: View {
                         workspaceID: workspaceID,
                         serverBaseURL: serverBaseURL,
                         sourceFilePath: filePath,
-                        fetchWorkspaceFile: fetchWorkspaceFile
+                        fetchWorkspaceFile: fetchWorkspaceFile,
+                        makeMarkdownVideoSource: makeMarkdownVideoSource
                     )
                 }
 
                 let view = AssistantMarkdownContentView()
                 view.backgroundColor = .clear
                 view.fetchWorkspaceFile = fetchWorkspaceFile
+                view.makeMarkdownVideoSource = makeMarkdownVideoSource
                 view.apply(configuration: .make(
                     content: content,
                     isStreaming: false,

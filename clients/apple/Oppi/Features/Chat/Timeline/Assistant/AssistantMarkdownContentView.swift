@@ -245,6 +245,16 @@ final class AssistantMarkdownContentView: UIView {
         didSet { segmentApplier.fetchSessionFile = fetchSessionFile }
     }
 
+    /// Resolves policy-checked wiki-file video embeds through existing
+    /// authenticated media endpoints.
+    var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? {
+        didSet { segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource }
+    }
+
+    func setVideoPlaybackVisible(_ visible: Bool) {
+        segmentApplier.setVideoPlaybackVisible(visible)
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
@@ -281,6 +291,9 @@ final class AssistantMarkdownContentView: UIView {
         currentConfig = config
         stackView.spacing = config.readerPreferences?.spacing.markdownStackSpacing ?? 8
 
+        if bounds.width > 0 {
+            segmentApplier.preparationWidth = bounds.width
+        }
         let cycleStart = MarkdownStreamingPerf.timestampNs()
         let shouldResolveFileLines = !config.isStreaming && config.reviewCommentSourceContext?.filePath != nil
         let build: FlatSegment.BuildResult

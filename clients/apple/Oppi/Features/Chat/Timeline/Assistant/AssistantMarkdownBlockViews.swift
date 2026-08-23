@@ -996,7 +996,7 @@ final class NativeTableBlockView: UIView {
                  .strong(let children),
                  .strikethrough(let children):
                 return containsLink(children)
-            case .text, .code, .image, .softBreak, .hardBreak, .html:
+            case .text, .code, .image, .videoEmbed, .softBreak, .hardBreak, .html:
                 return false
             }
         }
@@ -1027,6 +1027,8 @@ final class NativeTableBlockView: UIView {
                 return "link:\(destination ?? ""):[\(children.map(inlineKey).joined(separator: ","))]"
             case .image(let alt, let source):
                 return "image:\(alt):\(source ?? "")"
+            case .videoEmbed(let embed):
+                return "video:\(embed.reference.target)"
             case .softBreak:
                 return "softBreak"
             case .hardBreak:
@@ -1314,6 +1316,20 @@ final class NativeTableBlockView: UIView {
                     .font: font, .foregroundColor: defaultColor, .paragraphStyle: paragraph,
                 ]))
             }
+        case .videoEmbed(let embed):
+            var attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .paragraphStyle: paragraph,
+            ]
+            if let url = ResourceReferenceURL.make(embed.reference) {
+                attrs[.link] = url
+            } else {
+                attrs[.foregroundColor] = defaultColor
+                attrs[.underlineStyle] = nil
+            }
+            result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
         }
     }
 
@@ -1363,6 +1379,8 @@ final class NativeTableBlockView: UIView {
             case .image(let alt, let src):
                 if let src { return "![\(alt)](\(src))" }
                 return alt
+            case .videoEmbed(let embed):
+                return "![[\(embed.reference.target)]]"
             }
         }.joined()
     }

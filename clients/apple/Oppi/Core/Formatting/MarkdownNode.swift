@@ -35,6 +35,9 @@ indirect enum MarkdownInline: Equatable, Sendable {
     case code(String)
     case link(children: [Self], destination: String?)
     case image(alt: String, source: String?)
+    /// Oppi-native `![[video-file]]` embed. Produced only by the wiki-link
+    /// rewriter after source policy and file-type checks succeed.
+    case videoEmbed(MarkdownVideoEmbed)
     case softBreak
     case hardBreak
     case html(String)
@@ -53,6 +56,7 @@ func plainText(from inlines: [MarkdownInline]) -> String {
         case .code(let s): return s
         case .link(let children, _): return plainText(from: children)
         case .image(let alt, _): return alt
+        case .videoEmbed(let embed): return embed.displayLabel
         case .softBreak: return " "
         case .hardBreak: return "\n"
         case .html(let s): return s

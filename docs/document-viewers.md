@@ -92,12 +92,22 @@ When citing a relevant file the owner can open, use a real relative, absolute, o
 
 Inline Markdown images support workspace-relative raster paths, source-relative paths when source context is known, and the existing client SVG path for SVG. See [Markdown image resolution](attachment-rendering.md#markdown-image-resolution).
 
+Inline Markdown video uses wiki-embed syntax:
+
+```text
+![[recordings/demo.mp4]]
+![[/tmp/oppi-demo.mov]]
+```
+
+`![[video-file]]` renders a native, non-autoplaying player in assistant messages and the full-screen Markdown reader. `[[video-file]]` remains an ordinary file link. Eligible files use existing authenticated workspace, worktree, session-file, or exact owner host-file routes. Remote video sites, arbitrary URLs, HTML video, and attachment IDs remain readable fallback text and never start a new network route. Export uses a static video card and does not modify the source. See [Markdown inline video](attachment-rendering.md#markdown-inline-video).
+
 ### Copyable `AGENTS.md` guidance for other projects
 
 ````markdown
 - When pointing the user to a relevant file the owner can open, use a real relative, absolute, or `~` wiki link such as `[[path/to/file.ext|Short label]]` or `[[/tmp/notes.md|Debug log]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
 - When the image or SVG itself should appear inline, use standard Markdown image syntax such as `![Short description](path/to/image.png)` or `![Diagram](path/to/diagram.svg)`.
-- For both formats, reuse a real existing path; never fabricate a path or expose secrets, credentials, or private runtime state. Keep normal human-readable context, and use these formats when actually showing or citing content—not for every casual filename mention. Sandbox sessions should keep using sandbox-visible paths.
+- When a real Oppi-backed video file should play inline, use `![[path/to/video.mp4]]`. Keep `[[path/to/video.mp4|Video]]` for ordinary file navigation.
+- For all formats, reuse a real existing path; never fabricate a path or expose secrets, credentials, or private runtime state. Keep normal human-readable context, and use these formats when actually showing or citing content—not for every casual filename mention. Sandbox sessions should keep using sandbox-visible paths.
 - For a diagram that should render inline, use a fenced Markdown code block labeled `mermaid` with valid Mermaid source:
   ```mermaid
   graph LR

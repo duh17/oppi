@@ -979,12 +979,37 @@ struct DataImagePreviewView: View {
     }
 }
 
+/// AVKit's transition completion is MainActor-isolated; the delegate method is
+/// not. This box lets the completion call back without a sendability error.
+private struct FullScreenEndHandoff: @unchecked Sendable {
+    let onDidEnd: ((Bool) -> Void)?
+
+    func complete(cancelled: Bool, player: AVPlayer?, isPlayingNow: Bool, hostIsAttached: Bool) {
+        if !cancelled {
+            onDidEnd?(hostIsAttached)
+        }
+        if isPlayingNow {
+            player?.play()
+        }
+    }
+}
+
 struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     let player: AVPlayer
     var onFullScreenChange: ((Bool) -> Void)?
+    var onFullScreenWillEnd: (() -> Void)?
+    var onFullScreenDidEnd: ((Bool) -> Void)?
+    var onPictureInPictureChange: ((Bool) -> Void)?
+    var onPictureInPictureDidStop: ((Bool) -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onFullScreenChange: onFullScreenChange)
+        Coordinator(
+            onFullScreenChange: onFullScreenChange,
+            onFullScreenWillEnd: onFullScreenWillEnd,
+            onFullScreenDidEnd: onFullScreenDidEnd,
+            onPictureInPictureChange: onPictureInPictureChange,
+            onPictureInPictureDidStop: onPictureInPictureDidStop
+        )
     }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
@@ -997,6 +1022,10 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
         context.coordinator.onFullScreenChange = onFullScreenChange
+        context.coordinator.onFullScreenWillEnd = onFullScreenWillEnd
+        context.coordinator.onFullScreenDidEnd = onFullScreenDidEnd
+        context.coordinator.onPictureInPictureChange = onPictureInPictureChange
+        context.coordinator.onPictureInPictureDidStop = onPictureInPictureDidStop
         if uiViewController.player !== player {
             uiViewController.player = player
         }
@@ -1015,10 +1044,24 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
         var onFullScreenChange: ((Bool) -> Void)?
+        var onFullScreenWillEnd: (() -> Void)?
+        var onFullScreenDidEnd: ((Bool) -> Void)?
+        var onPictureInPictureChange: ((Bool) -> Void)?
+        var onPictureInPictureDidStop: ((Bool) -> Void)?
         private var wasPlayingBeforeFullScreen = false
 
-        init(onFullScreenChange: ((Bool) -> Void)?) {
+        init(
+            onFullScreenChange: ((Bool) -> Void)?,
+            onFullScreenWillEnd: (() -> Void)?,
+            onFullScreenDidEnd: ((Bool) -> Void)?,
+            onPictureInPictureChange: ((Bool) -> Void)?,
+            onPictureInPictureDidStop: ((Bool) -> Void)?
+        ) {
             self.onFullScreenChange = onFullScreenChange
+            self.onFullScreenWillEnd = onFullScreenWillEnd
+            self.onFullScreenDidEnd = onFullScreenDidEnd
+            self.onPictureInPictureChange = onPictureInPictureChange
+            self.onPictureInPictureDidStop = onPictureInPictureDidStop
         }
 
         func playerViewController(
@@ -1037,12 +1080,49 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             _ playerViewController: AVPlayerViewController,
             willEndFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
         ) {
-            let isPlayingNow = playerViewController.player?.timeControlStatus == .playing
-                || playerViewController.player?.rate ?? 0 > 0
-            onFullScreenChange?(false)
-            if isPlayingNow {
-                playerViewController.player?.play()
+            // Keep ownership through the dismiss animation. AVKit still holds
+            // the player until this coordinator completes.
+            onFullScreenWillEnd?()
+            let handoff = FullScreenEndHandoff(onDidEnd: onFullScreenDidEnd)
+            MainActor.assumeIsolated {
+                let isPlayingNow = playerViewController.player?.timeControlStatus == .playing
+                    || playerViewController.player?.rate ?? 0 > 0
+                let player = playerViewController.player
+                let animated = coordinator.animate(alongsideTransition: nil) { context in
+                    let hostIsAttached = playerViewController.view.window != nil
+                        || playerViewController.view.superview != nil
+                    handoff.complete(
+                        cancelled: context.isCancelled,
+                        player: player,
+                        isPlayingNow: isPlayingNow,
+                        hostIsAttached: hostIsAttached
+                    )
+                }
+                if !animated {
+                    let hostIsAttached = playerViewController.view.window != nil
+                        || playerViewController.view.superview != nil
+                    handoff.complete(
+                        cancelled: false,
+                        player: player,
+                        isPlayingNow: isPlayingNow,
+                        hostIsAttached: hostIsAttached
+                    )
+                }
             }
+        }
+
+        func playerViewControllerWillStartPictureInPicture(
+            _ playerViewController: AVPlayerViewController
+        ) {
+            onPictureInPictureChange?(true)
+        }
+
+        func playerViewControllerDidStopPictureInPicture(
+            _ playerViewController: AVPlayerViewController
+        ) {
+            let hostIsAttached = playerViewController.view.window != nil
+                || playerViewController.view.superview != nil
+            onPictureInPictureDidStop?(hostIsAttached)
         }
     }
 }

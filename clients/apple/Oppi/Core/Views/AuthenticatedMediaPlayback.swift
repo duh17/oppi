@@ -2,6 +2,7 @@
 import AVKit
 import Foundation
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 private enum AuthenticatedMediaPlaybackConstants {
@@ -779,25 +780,84 @@ final class AuthenticatedMediaPlaybackSession {
     }
 }
 
+enum MediaPlaybackTeardownPolicy {
+    struct Ownership: Equatable {
+        var isVisible = true
+        var isFullScreen = false
+        var isPictureInPicture = false
+        var isFullScreenTransitioning = false
+
+        var shouldTeardown: Bool {
+            !isVisible && !isFullScreen && !isPictureInPicture && !isFullScreenTransitioning
+        }
+    }
+
+    enum Event: Equatable {
+        case setVisible(Bool)
+        case willBeginFullScreen
+        case willEndFullScreen
+        case didEndFullScreen
+        case willStartPictureInPicture
+        case didStopPictureInPicture
+    }
+
+    static func apply(_ event: Event, to ownership: inout Ownership) {
+        switch event {
+        case .setVisible(let visible):
+            ownership.isVisible = visible
+        case .willBeginFullScreen:
+            ownership.isFullScreen = true
+            ownership.isFullScreenTransitioning = false
+        case .willEndFullScreen:
+            ownership.isFullScreenTransitioning = true
+        case .didEndFullScreen:
+            ownership.isFullScreen = false
+            ownership.isFullScreenTransitioning = false
+        case .willStartPictureInPicture:
+            ownership.isPictureInPicture = true
+        case .didStopPictureInPicture:
+            ownership.isPictureInPicture = false
+        }
+    }
+
+    static func shouldTeardown(
+        isVisible: Bool,
+        isFullScreen: Bool,
+        isPictureInPicture: Bool
+    ) -> Bool {
+        Ownership(
+            isVisible: isVisible,
+            isFullScreen: isFullScreen,
+            isPictureInPicture: isPictureInPicture
+        ).shouldTeardown
+    }
+}
+
 @MainActor
-private final class AuthenticatedMediaPlayerModel: ObservableObject {
+final class AuthenticatedMediaPlayerModel: ObservableObject {
     @Published var player: AVPlayer?
     @Published var isLoading = false
     @Published var errorMessage: String?
 
     private var playbackSession: AuthenticatedMediaPlaybackSession?
     private var statusObservation: NSKeyValueObservation?
+    private var presentationSizeObservation: NSKeyValueObservation?
     private var preparedIdentity: String?
     private var recordedStartIdentity: String?
     private var recordedErrorIdentity: String?
-    private var isFullScreen = false
+    private var ownership = MediaPlaybackTeardownPolicy.Ownership()
+#if DEBUG
+    var debugDidTeardownForTesting = false
+    var debugIsVisibleForTesting: Bool { ownership.isVisible }
+#endif
 
     func prepare(
         source: AuthenticatedMediaSource,
         autoplay: Bool,
         telemetrySource: String,
         telemetryMode: String,
-        telemetrySessionId: String?
+        telemetrySessionId: String?,
+        onPresentationSize: (@MainActor @Sendable (CGSize) -> Void)?
     ) {
         guard preparedIdentity != source.identity else { return }
 
@@ -818,6 +878,17 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
         self.playbackSession = playbackSession
         self.player = player
 
+        presentationSizeObservation = player.currentItem?.observe(\.presentationSize, options: [.initial, .new]) { [weak self] item, _ in
+            let width = item.presentationSize.width
+            let height = item.presentationSize.height
+            Task { @MainActor [weak self] in
+                self?.handlePresentationSize(
+                    width: width,
+                    height: height,
+                    callback: onPresentationSize
+                )
+            }
+        }
         statusObservation = player.currentItem?.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -890,27 +961,87 @@ private final class AuthenticatedMediaPlayerModel: ObservableObject {
         }
     }
 
+    private func handlePresentationSize(
+        width: CGFloat,
+        height: CGFloat,
+        callback: (@MainActor @Sendable (CGSize) -> Void)?
+    ) {
+        guard width.isFinite, height.isFinite, width > 0, height > 0 else { return }
+        callback?(CGSize(width: width, height: height))
+    }
+
     func setFullScreen(_ fullScreen: Bool) {
-        isFullScreen = fullScreen
+        applyOwnership(fullScreen ? .willBeginFullScreen : .didEndFullScreen)
+    }
+
+    func setPictureInPicture(_ pictureInPicture: Bool) {
+        applyOwnership(pictureInPicture ? .willStartPictureInPicture : .didStopPictureInPicture)
+    }
+
+    func setVisible(_ visible: Bool) {
+        applyOwnership(.setVisible(visible))
     }
 
     func handleDisappear() {
-        // Fullscreen presentation makes the inline SwiftUI view disappear.
-        // Keep the same player; teardown only when leaving the screen.
-        if isFullScreen {
+        // AVKit detaches the inline host while presenting full-screen or PiP.
+        // That is not a real offscreen hide; keep the same player until native
+        // presentation ends or a later unowned hide arrives.
+        if ownership.isFullScreen
+            || ownership.isPictureInPicture
+            || ownership.isFullScreenTransitioning {
             return
         }
+        setVisible(false)
+    }
+
+    func handleWillEndFullScreen() {
+        applyOwnership(.willEndFullScreen)
+    }
+
+    func handleDidEndFullScreen(hostIsAttached: Bool = true) {
+        applyOwnership(.didEndFullScreen)
+        if !hostIsAttached {
+            // Host left the hierarchy during native presentation.
+            applyOwnership(.setVisible(false))
+        }
+    }
+
+    func handleDidStopPictureInPicture(hostIsAttached: Bool = true) {
+        applyOwnership(.didStopPictureInPicture)
+        if !hostIsAttached {
+            applyOwnership(.setVisible(false))
+        }
+    }
+
+    private func applyOwnership(_ event: MediaPlaybackTeardownPolicy.Event) {
+        MediaPlaybackTeardownPolicy.apply(event, to: &ownership)
+        teardownIfHiddenAndUnowned()
+    }
+
+    private func teardownIfHiddenAndUnowned() {
+        // Full-screen and PiP presentation can detach the inline view while
+        // AVKit still owns playback. Ordinary offscreen/reuse transitions tear
+        // the range loader and player down immediately. Full-screen end waits
+        // for the dismiss completion so AVKit is not left holding a nilled player.
+        guard ownership.shouldTeardown else { return }
         teardown()
     }
 
     func teardown(resetPreparedIdentity: Bool = true) {
         statusObservation?.invalidate()
         statusObservation = nil
+        presentationSizeObservation?.invalidate()
+        presentationSizeObservation = nil
         playbackSession?.teardown()
         playbackSession = nil
         player = nil
         isLoading = false
-        isFullScreen = false
+        ownership.isFullScreen = false
+        ownership.isPictureInPicture = false
+        ownership.isFullScreenTransitioning = false
+#if DEBUG
+        debugDidTeardownForTesting = true
+#endif
 
         if resetPreparedIdentity {
             preparedIdentity = nil
@@ -925,20 +1056,112 @@ struct AuthenticatedMediaPlayerView: View {
     var height: CGFloat = 260
     var cornerRadius: CGFloat = 10
     var autoplay = false
+    var isActive = true
     var unavailableTitle = "Media preview unavailable"
     var unavailableSystemImage = "play.slash"
+    var failureActionTitle: String? = nil
+    var onFailureAction: (() -> Void)? = nil
+    var onPresentationSize: (@MainActor @Sendable (CGSize) -> Void)? = nil
     var telemetrySource = "authenticated_media"
     var telemetryMode = "inline"
     var telemetrySessionId: String? = nil
 
-    @StateObject private var model = AuthenticatedMediaPlayerModel()
+    private let injectedModel: AuthenticatedMediaPlayerModel?
+    @StateObject private var ownedModel = AuthenticatedMediaPlayerModel()
+
+    init(
+        source: AuthenticatedMediaSource,
+        height: CGFloat = 260,
+        cornerRadius: CGFloat = 10,
+        autoplay: Bool = false,
+        isActive: Bool = true,
+        unavailableTitle: String = "Media preview unavailable",
+        unavailableSystemImage: String = "play.slash",
+        failureActionTitle: String? = nil,
+        onFailureAction: (() -> Void)? = nil,
+        onPresentationSize: (@MainActor @Sendable (CGSize) -> Void)? = nil,
+        telemetrySource: String = "authenticated_media",
+        telemetryMode: String = "inline",
+        telemetrySessionId: String? = nil,
+        model: AuthenticatedMediaPlayerModel? = nil
+    ) {
+        self.source = source
+        self.height = height
+        self.cornerRadius = cornerRadius
+        self.autoplay = autoplay
+        self.isActive = isActive
+        self.unavailableTitle = unavailableTitle
+        self.unavailableSystemImage = unavailableSystemImage
+        self.failureActionTitle = failureActionTitle
+        self.onFailureAction = onFailureAction
+        self.onPresentationSize = onPresentationSize
+        self.telemetrySource = telemetrySource
+        self.telemetryMode = telemetryMode
+        self.telemetrySessionId = telemetrySessionId
+        injectedModel = model
+    }
 
     var body: some View {
+        AuthenticatedMediaPlayerSurface(
+            source: source,
+            height: height,
+            cornerRadius: cornerRadius,
+            autoplay: autoplay,
+            isActive: isActive,
+            unavailableTitle: unavailableTitle,
+            unavailableSystemImage: unavailableSystemImage,
+            failureActionTitle: failureActionTitle,
+            onFailureAction: onFailureAction,
+            onPresentationSize: onPresentationSize,
+            telemetrySource: telemetrySource,
+            telemetryMode: telemetryMode,
+            telemetrySessionId: telemetrySessionId,
+            model: injectedModel ?? ownedModel
+        )
+    }
+}
+
+private struct AuthenticatedMediaPlayerSurface: View {
+    let source: AuthenticatedMediaSource
+    var height: CGFloat
+    var cornerRadius: CGFloat
+    var autoplay: Bool
+    var isActive: Bool
+    var unavailableTitle: String
+    var unavailableSystemImage: String
+    var failureActionTitle: String?
+    var onFailureAction: (() -> Void)?
+    var onPresentationSize: (@MainActor @Sendable (CGSize) -> Void)?
+    var telemetrySource: String
+    var telemetryMode: String
+    var telemetrySessionId: String?
+    @ObservedObject var model: AuthenticatedMediaPlayerModel
+
+    var body: some View {
+#if DEBUG
+        let _ = AuthenticatedMediaPlayerTesting.record(model)
+#endif
         Group {
             if let player = model.player {
                 AVPlayerViewControllerContainer(
                     player: player,
-                    onFullScreenChange: { model.setFullScreen($0) }
+                    onFullScreenChange: { fullScreen in
+                        if fullScreen {
+                            model.setFullScreen(true)
+                        }
+                    },
+                    onFullScreenWillEnd: { model.handleWillEndFullScreen() },
+                    onFullScreenDidEnd: { attached in
+                        model.handleDidEndFullScreen(hostIsAttached: attached)
+                    },
+                    onPictureInPictureChange: { active in
+                        if active {
+                            model.setPictureInPicture(true)
+                        }
+                    },
+                    onPictureInPictureDidStop: { attached in
+                        model.handleDidStopPictureInPicture(hostIsAttached: attached)
+                    }
                 )
                     .frame(maxWidth: .infinity)
                     .frame(height: height)
@@ -961,6 +1184,12 @@ struct AuthenticatedMediaPlayerView: View {
                                 .multilineTextAlignment(.center)
                                 .lineLimit(3)
                                 .padding(.horizontal, 12)
+                            if let failureActionTitle, let onFailureAction {
+                                AuthenticatedMediaFailureActionButton(
+                                    title: failureActionTitle,
+                                    action: onFailureAction
+                                )
+                            }
                         }
                     }
             } else {
@@ -973,18 +1202,112 @@ struct AuthenticatedMediaPlayerView: View {
                     }
             }
         }
-        .task(id: source.identity) {
+        .task(id: "\(source.identity)|\(isActive)") {
+            model.setVisible(isActive)
+            guard isActive else { return }
             model.prepare(
                 source: source,
                 autoplay: autoplay,
                 telemetrySource: telemetrySource,
                 telemetryMode: telemetryMode,
-                telemetrySessionId: telemetrySessionId
+                telemetrySessionId: telemetrySessionId,
+                onPresentationSize: onPresentationSize
             )
+        }
+        .onChange(of: isActive) { _, active in
+            model.setVisible(active)
         }
         .onDisappear {
             model.handleDisappear()
         }
+    }
+}
+
+struct AuthenticatedMediaFailureActionButton: UIViewRepresentable {
+    let title: String
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> AuthenticatedMediaFailureActionView {
+        let view = AuthenticatedMediaFailureActionView()
+        view.apply(title: title, target: context.coordinator, action: #selector(Coordinator.tap))
+        return view
+    }
+
+    func updateUIView(_ uiView: AuthenticatedMediaFailureActionView, context: Context) {
+        context.coordinator.action = action
+        uiView.apply(title: title, target: context.coordinator, action: #selector(Coordinator.tap))
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: AuthenticatedMediaFailureActionView,
+        context: Context
+    ) -> CGSize {
+        uiView.intrinsicContentSize
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func tap() {
+            action()
+        }
+    }
+}
+
+final class AuthenticatedMediaFailureActionView: UIView {
+    private let button = UIButton(type: .system)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        accessibilityIdentifier = "authenticated-media-failure-action"
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityIdentifier = "authenticated-media-failure-action"
+        button.accessibilityTraits = .button
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.titleLabel?.numberOfLines = 2
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: CGSize {
+        let fitting = button.intrinsicContentSize
+        return CGSize(width: max(44, fitting.width + 16), height: max(44, fitting.height))
+    }
+
+    func apply(title: String, target: Any?, action: Selector) {
+        var configuration = UIButton.Configuration.bordered()
+        configuration.title = title
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = UIFont.preferredFont(forTextStyle: .caption1)
+            return outgoing
+        }
+        button.configuration = configuration
+        button.accessibilityLabel = title
+        button.removeTarget(nil, action: nil, for: .touchUpInside)
+        button.addTarget(target, action: action, for: .touchUpInside)
+        invalidateIntrinsicContentSize()
     }
 }
 
@@ -1095,3 +1418,34 @@ final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
         }
     }
 }
+
+#if DEBUG
+enum AuthenticatedMediaPlayerTesting {
+    @MainActor static var resolvedModels: [ObjectIdentifier] = []
+
+    @MainActor
+    static func reset() {
+        resolvedModels.removeAll()
+    }
+
+    @MainActor
+    static func record(_ model: AuthenticatedMediaPlayerModel) {
+        resolvedModels.append(ObjectIdentifier(model))
+    }
+}
+
+extension AuthenticatedMediaPlayerModel {
+    func debugForceFailureForTesting(_ message: String) {
+        errorMessage = message
+        isLoading = false
+        player = nil
+    }
+
+    func debugInstallStandalonePlayerForTesting() -> AVPlayer {
+        let player = AVPlayer()
+        self.player = player
+        debugDidTeardownForTesting = false
+        return player
+    }
+}
+#endif

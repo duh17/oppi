@@ -18,7 +18,7 @@ Expanded tool rows understand `details.media[]` for stored image and video attac
 
 Attachments combine structured metadata with server-owned bytes. They are not markdown URLs.
 
-Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` keeps its current job: resolving image file paths and remote images. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
+Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` resolves image file paths and remote images. Markdown `![[video-file]]` embeds an existing Oppi-backed file; it does not address stored attachments. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
 
 ## Deployment model and trust boundary
 
@@ -203,7 +203,15 @@ Markdown `![]()` continues to resolve images through the existing image resolver
 
 Image-only paragraphs become standalone image views. Mixed paragraphs split into text/image/text segments. Raster images are downsampled. SVG uses the existing SVG image path on clients that implement it.
 
-Markdown image syntax does not resolve stored tool attachments. A tool that returns a stored video or stored image should put that metadata in `details.image`, `details.audio`, or `details.media[]`.
+Markdown image syntax does not resolve stored tool attachments. A tool that returns a stored video or stored image must put that metadata in `details.image`, `details.audio`, or `details.media[]`.
+
+## Markdown inline video
+
+Use `![[video-file]]` to embed a current workspace, worktree, session-reported, or exact owner host video file in assistant Markdown and the full-screen Markdown reader. Use `[[video-file]]` when the file must remain an ordinary navigable link.
+
+Inline video uses Oppi's authenticated range-streaming player. Playback never starts automatically. The player keeps native controls, full-screen presentation, Picture in Picture, and an open-file fallback when playback fails. Oppi does not embed remote video sites, arbitrary URLs, HTML `<video>`, or stored attachment IDs through this syntax.
+
+The player uses previously prepared AVPlayer dimensions when they are available before layout. Otherwise it reserves final 16:9 fallback geometry because wiki-file syntax has no dimensions. Playback metadata can size a later mount, but never resizes an already revealed embed. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
 
 ## Extension authoring API
 

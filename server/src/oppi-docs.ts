@@ -19,6 +19,7 @@ export const MOBILE_OUTPUT_GUIDE = [
   "- Existing workspace files can be opened from workspace-relative wiki links such as [[path/to/file.ext|Label]]. Uppercase, one-based anchors focus exact source lines: [[path/to/file.ext#L12-L18|Label]].",
   "- Owner wiki links may also cite a real absolute or ~ host path the server process can already read, such as [[/tmp/notes.md|Debug log]] or [[~/workspace/kypu/README.md|kypu README]].",
   "- Workspace images and SVG can appear inline with standard Markdown image syntax: ![Description](path/to/image.svg).",
+  "- Existing workspace, worktree, session, or owner-host videos can appear as native non-autoplaying players with ![[path/to/video.mp4]]. [[path/to/video.mp4]] remains an ordinary file link. Remote URLs, HTML <video>, and attachment IDs are not embeds.",
   "- Fenced Mermaid blocks render as diagrams:",
   "```mermaid",
   "flowchart TD",

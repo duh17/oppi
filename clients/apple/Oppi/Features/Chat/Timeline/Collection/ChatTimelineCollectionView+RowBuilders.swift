@@ -27,6 +27,14 @@ extension ChatTimelineCollectionHost.Controller {
         // text, rich markdown, code blocks, tables) via
         // AssistantMarkdownContentView.
         let sourceSession = connection?.sessionStore.session(id: sessionId)
+        let sourceWorkspaceRuntime: WorkspaceRuntime? = {
+            guard let connection, let workspaceId else { return nil }
+            if let serverId {
+                return connection.workspaceStore.workspacesByServer[serverId]?
+                    .first(where: { $0.id == workspaceId })?.runtime
+            }
+            return connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId })?.runtime
+        }()
         let sourceSessionResolved = sourceSession?.workspaceId == workspaceId
         let firstCheckout = WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
             sourceSessionResolved: sourceSessionResolved,
@@ -67,7 +75,18 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            fetchSessionFile: nil
+            fetchSessionFile: nil,
+            makeMarkdownVideoSource: connection.map { connection in
+                { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
+                    try await connection.makeMarkdownVideoMediaSourceWhenReady(
+                        embed: embed,
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        worktreeId: firstCheckout,
+                        workspaceRuntime: sourceWorkspaceRuntime
+                    )
+                }
+            }
         )
     }
 
@@ -108,6 +127,7 @@ extension ChatTimelineCollectionHost.Controller {
                     filePath: pill.path,
                     fileName: pill.label,
                     source: isHostPath ? .hostFile : .workspaceFile,
+                    sessionId: self.sessionId,
                     fileSize: nil
                 )
                 .environment(\.apiClient, apiClient)

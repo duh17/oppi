@@ -100,6 +100,11 @@ enum MarkdownBlockSerializer {
             return text
         case .image(let alt, let source):
             return "![\(alt)](\(source ?? ""))"
+        case .videoEmbed(let embed):
+            if let label = embed.reference.visibleLabel, label != embed.reference.target {
+                return "![[\(embed.reference.target)|\(label)]]"
+            }
+            return "![[\(embed.reference.target)]]"
         case .softBreak:
             return "\n"
         case .hardBreak:

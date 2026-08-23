@@ -33,6 +33,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     /// Closure for fetching a file from the active session working directory.
     let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+    /// Existing authenticated/range-capable source path for inline wiki videos.
+    let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
 
     init(
         text: String,
@@ -50,7 +52,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         worktreeId: String? = nil,
         serverBaseURL: URL? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
     ) {
         self.text = text
         self.isStreaming = isStreaming
@@ -68,6 +71,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
+        self.makeMarkdownVideoSource = makeMarkdownVideoSource
     }
 
     func makeContentView() -> any UIView & UIContentView {
@@ -299,6 +303,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         // Text appears immediately on each coalescer flush (no reveal animation).
         markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
         markdownView.fetchSessionFile = configuration.fetchSessionFile
+        markdownView.makeMarkdownVideoSource = configuration.makeMarkdownVideoSource
         let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .assistantProse,
             timelineItemId: configuration.itemID
@@ -316,6 +321,10 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             serverBaseURL: configuration.serverBaseURL,
             perfSurface: .inlineAssistant
         ))
+    }
+
+    func setMarkdownVideoPlaybackVisible(_ visible: Bool) {
+        markdownView.setVideoPlaybackVisible(visible)
     }
 }
 

@@ -21,6 +21,7 @@ struct FileContentView: View {
     var workspaceID: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
 
     /// Maximum lines to render inline (performance bound).
     nonisolated static let maxDisplayLines = 300
@@ -33,7 +34,8 @@ struct FileContentView: View {
         presentation: FileContentPresentation = .inline,
         workspaceID: String? = nil,
         serverBaseURL: URL? = nil,
-        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
+        fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
     ) {
         self.content = content
         self.filePath = filePath
@@ -43,6 +45,7 @@ struct FileContentView: View {
         self.workspaceID = workspaceID
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
+        self.makeMarkdownVideoSource = makeMarkdownVideoSource
     }
 
     var body: some View {
@@ -65,7 +68,8 @@ struct FileContentView: View {
                 presentation: presentation,
                 workspaceID: workspaceID,
                 serverBaseURL: serverBaseURL,
-                fetchWorkspaceFile: fetchWorkspaceFile
+                fetchWorkspaceFile: fetchWorkspaceFile,
+                makeMarkdownVideoSource: makeMarkdownVideoSource
             )
         case .html:
             HTMLFileView(content: content, filePath: filePath, presentation: presentation)

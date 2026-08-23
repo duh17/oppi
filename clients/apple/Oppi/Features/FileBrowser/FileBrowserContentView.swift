@@ -90,6 +90,8 @@ struct FileBrowserContentView: View {
     let filePath: String
     let fileName: String
     var source: FileBrowserContentSource = .workspaceFile
+    var sessionId: String? = nil
+    var workspaceRuntime: WorkspaceRuntime? = nil
     /// Known file size from directory listing. Nil when opened from search results.
     var fileSize: Int?
     var chromeMode: FileBrowserContentChromeMode = .pushed
@@ -499,6 +501,43 @@ struct FileBrowserContentView: View {
                         path: filePath,
                         worktreeId: worktreeId
                     )
+                },
+                makeMarkdownVideoSource: { [workspaceId, worktreeId, sessionId, workspaceRuntime] embed in
+                    guard let route = MarkdownVideoMediaSourceRoute.resolve(
+                        embed: embed,
+                        workspaceID: workspaceId,
+                        sessionID: sessionId,
+                        worktreeID: worktreeId,
+                        workspaceRuntime: workspaceRuntime
+                    ) else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                    let pathExtension = (route.path as NSString).pathExtension
+                    let contentType = MediaMimeType.videoMimeType(forPathExtension: pathExtension)
+                    switch route {
+                    case .host(let path):
+                        return try await api.makeHostFileMediaSource(
+                            path: path,
+                            contentTypeHint: contentType,
+                            sourceFileExtension: pathExtension
+                        )
+                    case .session(let workspaceID, let sessionID, let path):
+                        return try await api.makeSessionFileMediaSource(
+                            workspaceId: workspaceID,
+                            sessionId: sessionID,
+                            path: path,
+                            contentTypeHint: contentType,
+                            sourceFileExtension: pathExtension
+                        )
+                    case .workspace(let workspaceID, let path, let worktreeID):
+                        return try await api.makeWorkspaceMediaSource(
+                            workspaceId: workspaceID,
+                            path: path,
+                            worktreeId: worktreeID,
+                            contentTypeHint: contentType,
+                            sourceFileExtension: pathExtension
+                        )
+                    }
                 }
             )
         )

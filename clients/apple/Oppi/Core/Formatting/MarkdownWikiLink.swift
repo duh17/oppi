@@ -216,6 +216,24 @@ struct ResourceReference: Hashable, Sendable {
     }
 }
 
+/// Authenticated file reference carried by a native Markdown video segment.
+///
+/// This type cannot represent a remote URL or stored attachment ID: those
+/// targets fail wiki-link classification before an embed is constructed.
+struct MarkdownVideoEmbed: Hashable, Sendable {
+    let reference: ResourceReference
+
+    var displayLabel: String {
+        let label = reference.visibleLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let label, !label.isEmpty { return label }
+        return reference.target
+    }
+
+    var filePath: String {
+        reference.fileCandidatePath ?? reference.target
+    }
+}
+
 struct SessionResourceReference: Hashable, Sendable {
     let serverID: String
     let sessionID: String
@@ -987,7 +1005,7 @@ enum MarkdownWikiLinkRewriter {
                 result.append(.strong(rewrite(inlines: children, context: context)))
             case .strikethrough(let children):
                 result.append(.strikethrough(rewrite(inlines: children, context: context)))
-            case .link, .code, .image, .softBreak, .hardBreak, .html:
+            case .link, .code, .image, .videoEmbed, .softBreak, .hardBreak, .html:
                 result.append(inline)
             }
         }
@@ -1003,21 +1021,33 @@ enum MarkdownWikiLinkRewriter {
 
         while cursor < text.endIndex,
               let open = text.range(of: "[[", range: cursor ..< text.endIndex) {
-            if open.lowerBound > cursor {
-                result.append(.text(String(text[cursor ..< open.lowerBound])))
+            let bangIndex: String.Index? = {
+                guard open.lowerBound > cursor else { return nil }
+                let candidate = text.index(before: open.lowerBound)
+                return text[candidate] == "!" ? candidate : nil
+            }()
+            let prefixEnd = bangIndex ?? open.lowerBound
+            if prefixEnd > cursor {
+                result.append(.text(String(text[cursor ..< prefixEnd])))
             }
 
             let contentStart = open.upperBound
             guard let close = text.range(of: "]]", range: contentStart ..< text.endIndex) else {
-                result.append(.text(String(text[open.lowerBound ..< text.endIndex])))
+                result.append(.text(String(text[prefixEnd ..< text.endIndex])))
                 return result
             }
 
             let rawContent = String(text[contentStart ..< close.lowerBound])
-            if let rewritten = inline(forWikiLinkContent: rawContent, context: context) {
-                result.append(rewritten)
+            if bangIndex != nil,
+               let embed = videoEmbed(forWikiLinkContent: rawContent, context: context) {
+                result.append(.videoEmbed(embed))
             } else {
-                result.append(.text(String(text[open.lowerBound ..< close.upperBound])))
+                if bangIndex != nil { result.append(.text("!")) }
+                if let rewritten = inline(forWikiLinkContent: rawContent, context: context) {
+                    result.append(rewritten)
+                } else {
+                    result.append(.text(String(text[open.lowerBound ..< close.upperBound])))
+                }
             }
             cursor = close.upperBound
         }
@@ -1033,6 +1063,58 @@ enum MarkdownWikiLinkRewriter {
         forWikiLinkContent rawContent: String,
         context: RewriteContext
     ) -> MarkdownInline? {
+        guard let reference = resourceReference(
+            forWikiLinkContent: rawContent,
+            context: context
+        ) else { return nil }
+        guard let url = ResourceReferenceURL.make(reference) else {
+            return .text(reference.visibleLabel ?? reference.target)
+        }
+        return .link(
+            children: [.text(reference.visibleLabel ?? reference.target)],
+            destination: url.absoluteString
+        )
+    }
+
+    private static func videoEmbed(
+        forWikiLinkContent rawContent: String,
+        context: RewriteContext
+    ) -> MarkdownVideoEmbed? {
+        guard let reference = resourceReference(
+            forWikiLinkContent: rawContent,
+            context: context
+        ), reference.lineAnchor == nil else {
+            return nil
+        }
+
+        // Classification, not workspace scope, decides embed eligibility so
+        // image/PDF export without chat context still gets a static video card.
+        let candidate = reference.fileCandidatePath
+            ?? resolvedWorkspacePath(target: reference.target, sourceDirectory: context.sourceDirectory)
+            ?? resolvedHostPath(reference.target)
+        guard let candidate,
+              FileType.detect(from: candidate).previewCategory == .video else {
+            return nil
+        }
+        if reference.fileCandidatePath == candidate {
+            return MarkdownVideoEmbed(reference: reference)
+        }
+        return MarkdownVideoEmbed(reference: ResourceReference(
+            target: reference.target,
+            sourceServerID: reference.sourceServerID,
+            workspaceID: reference.workspaceID,
+            sourceSessionID: reference.sourceSessionID,
+            fileCandidatePath: candidate,
+            kind: reference.kind,
+            lineAnchor: nil,
+            visibleLabel: reference.visibleLabel
+        ))
+    }
+
+    private static func resourceReference(
+        forWikiLinkContent rawContent: String,
+        context: RewriteContext
+    ) -> ResourceReference? {
         let normalizedContent = rawContent.replacingOccurrences(of: #"\|"#, with: "|")
         let pieces = normalizedContent.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
         guard let rawTarget = pieces.first else { return nil }
@@ -1045,7 +1127,6 @@ enum MarkdownWikiLinkRewriter {
         let rawLabel = pieces.count == 2 ? String(pieces[1]) : target
         let label = rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = label.isEmpty ? target : label
-
         let workspaceID = context.workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasWorkspaceScope = workspaceID?.isEmpty == false
         let fileCandidatePath: String?
@@ -1055,7 +1136,7 @@ enum MarkdownWikiLinkRewriter {
         case .workspaceFile:
             fileCandidatePath = hasWorkspaceScope ? classified.path : nil
         }
-        guard let url = ResourceReferenceURL.make(ResourceReference(
+        return ResourceReference(
             target: target,
             sourceServerID: context.serverID,
             workspaceID: hasWorkspaceScope ? workspaceID : nil,
@@ -1064,11 +1145,7 @@ enum MarkdownWikiLinkRewriter {
             kind: classified.kind,
             lineAnchor: classified.parsed.lineAnchor,
             visibleLabel: display
-        )) else {
-            return .text(display)
-        }
-
-        return .link(children: [.text(display)], destination: url.absoluteString)
+        )
     }
 
     private static func parseWikiTarget(_ rawTarget: String) -> ParsedWikiTarget? {

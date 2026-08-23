@@ -1148,6 +1148,28 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         func collectionView(
             _ collectionView: UICollectionView,
+            willDisplay cell: UICollectionViewCell,
+            forItemAt indexPath: IndexPath
+        ) {
+            Self.firstSubview(
+                ofType: AssistantTimelineRowContentView.self,
+                in: cell.contentView
+            )?.setMarkdownVideoPlaybackVisible(true)
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            didEndDisplaying cell: UICollectionViewCell,
+            forItemAt indexPath: IndexPath
+        ) {
+            Self.firstSubview(
+                ofType: AssistantTimelineRowContentView.self,
+                in: cell.contentView
+            )?.setMarkdownVideoPlaybackVisible(false)
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
             shouldSelectItemAt indexPath: IndexPath
         ) -> Bool {
             guard indexPath.section == 0, indexPath.item < currentIDs.count else { return false }

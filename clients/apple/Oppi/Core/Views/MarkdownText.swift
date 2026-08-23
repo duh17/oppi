@@ -280,6 +280,8 @@ enum FlatSegment: Sendable {
     /// A standalone image paragraph. The URL is fully resolved at build time
     /// using the workspace context. Rendered by `NativeMarkdownImageView`.
     case image(alt: String, url: URL)
+    /// An Oppi-authenticated native video embed from `![[video-file]]`.
+    case video(MarkdownVideoEmbed)
     /// A mermaid diagram code block. The applier decides whether to render
     /// the diagram or show as a code block based on streaming state.
     case mermaidDiagram(code: String)
@@ -590,6 +592,47 @@ enum FlatSegment: Sendable {
                         }
                         emittedAnyRenderable = true
 
+                    case .paragraph(let inlines):
+                        if Self.inlinesContainVideoEmbed(inlines),
+                           let imageSegments = resolveParagraphImageSegments(
+                            inlines: inlines,
+                            palette: palette,
+                            workspaceID: workspaceID,
+                            sessionID: sessionID,
+                            serverBaseURL: serverBaseURL,
+                            sourceDirectory: sourceDirectory,
+                            worktreeId: worktreeId
+                           ) {
+                            for segment in imageSegments {
+                                switch segment {
+                                case .video(let embed):
+                                    if !itemHasPrefix {
+                                        textLines.append(markerForItem(itemIndex))
+                                        itemHasPrefix = true
+                                    }
+                                    flushListTextLines()
+                                    flushPendingText()
+                                    appendSegment(.video(embed), lineRange: lineRange)
+                                    emittedAnyRenderable = true
+                                case .image(let alt, let url):
+                                    if !itemHasPrefix {
+                                        textLines.append(markerForItem(itemIndex))
+                                        itemHasPrefix = true
+                                    }
+                                    flushListTextLines()
+                                    flushPendingText()
+                                    appendSegment(.image(alt: alt, url: url), lineRange: lineRange)
+                                    emittedAnyRenderable = true
+                                case .text(let attributed):
+                                    appendItemText(attributed)
+                                case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .latexBlock:
+                                    break
+                                }
+                            }
+                        } else {
+                            appendItemText(Self.attributedString(for: itemBlock, palette: palette))
+                        }
+
                     default:
                         appendItemText(Self.attributedString(for: itemBlock, palette: palette))
                     }
@@ -644,6 +687,9 @@ enum FlatSegment: Sendable {
                         case .image(let alt, let url):
                             flushPendingText()
                             appendSegment(.image(alt: alt, url: url), lineRange: lineRange)
+                        case .video(let embed):
+                            flushPendingText()
+                            appendSegment(.video(embed), lineRange: lineRange)
                         case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .latexBlock:
                             break
                         }
@@ -688,6 +734,51 @@ enum FlatSegment: Sendable {
                     }
                 )
 
+            case .blockQuote(let children):
+                if children.contains(where: Self.containsStandaloneListBlock) {
+                    for child in children {
+                        if case .paragraph(let inlines) = child,
+                           Self.inlinesContainVideoEmbed(inlines),
+                           let imageSegments = resolveParagraphImageSegments(
+                            inlines: inlines,
+                            palette: palette,
+                            workspaceID: workspaceID,
+                            sessionID: sessionID,
+                            serverBaseURL: serverBaseURL,
+                            sourceDirectory: sourceDirectory,
+                            worktreeId: worktreeId
+                           ) {
+                            for segment in imageSegments {
+                                switch segment {
+                                case .video(let embed):
+                                    flushPendingText()
+                                    appendSegment(.video(embed), lineRange: lineRange)
+                                case .image(let alt, let url):
+                                    flushPendingText()
+                                    appendSegment(.image(alt: alt, url: url), lineRange: lineRange)
+                                case .text(let attributed):
+                                    appendTextBlock(
+                                        Self.applyingQuoteChrome(to: attributed, palette: palette),
+                                        lineRange: lineRange
+                                    )
+                                case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .latexBlock:
+                                    break
+                                }
+                            }
+                        } else {
+                            appendTextBlock(
+                                Self.attributedString(for: .blockQuote([child]), palette: palette),
+                                lineRange: lineRange
+                            )
+                        }
+                    }
+                } else {
+                    appendTextBlock(
+                        Self.attributedString(for: block, palette: palette),
+                        lineRange: lineRange
+                    )
+                }
+
             default:
                 let attributed = Self.attributedString(for: block, palette: palette)
                 appendTextBlock(attributed, lineRange: lineRange)
@@ -705,14 +796,32 @@ enum FlatSegment: Sendable {
         switch block {
         case .codeBlock, .table, .thematicBreak:
             true
+        case .paragraph(let inlines):
+            inlinesContainVideoEmbed(inlines)
         case .unorderedList(let items), .orderedList(_, let items):
             items.flatMap { $0 }.contains(where: containsStandaloneListBlock)
         case .blockQuote(let children):
             children.contains(where: containsStandaloneListBlock)
         case .taskList(let items):
             items.flatMap(\.content).contains(where: containsStandaloneListBlock)
-        case .heading, .paragraph, .htmlBlock:
+        case .heading, .htmlBlock:
             false
+        }
+    }
+
+    private static func inlinesContainVideoEmbed(_ inlines: [MarkdownInline]) -> Bool {
+        inlines.contains { inline in
+            switch inline {
+            case .videoEmbed:
+                return true
+            case .emphasis(let children),
+                 .strong(let children),
+                 .strikethrough(let children),
+                 .link(let children, _):
+                return inlinesContainVideoEmbed(children)
+            case .text, .code, .image, .softBreak, .hardBreak, .html:
+                return false
+            }
         }
     }
 
@@ -743,6 +852,21 @@ enum FlatSegment: Sendable {
             result.append(AttributedString(attributed[segmentStart ..< attributed.endIndex]))
         }
         return result
+    }
+
+    private static func applyingQuoteChrome(
+        to attributed: AttributedString,
+        palette: ThemePalette
+    ) -> AttributedString {
+        if attributed.characters.contains("▎") {
+            return attributed
+        }
+        var quoted = AttributedString("▎ ")
+        quoted.uiKit.foregroundColor = UIColor(palette.mdQuoteBorder)
+        var body = attributed
+        body.uiKit.foregroundColor = UIColor(palette.mdQuote)
+        quoted.append(body)
+        return quoted
     }
 
     // MARK: - Display Math Paragraph Detection
@@ -793,6 +917,8 @@ enum FlatSegment: Sendable {
                 result.append(inlineSourcePreservingBreaks(children))
             case .image(let alt, _):
                 result.append(alt)
+            case .videoEmbed(let embed):
+                result.append(embed.displayLabel)
             case .softBreak, .hardBreak:
                 result.append("\n")
             case .html(let raw):
@@ -989,6 +1115,11 @@ enum FlatSegment: Sendable {
                 var rendered = AttributedString(imageFallbackText(alt: alt))
                 rendered.uiKit.font = bodyFont
                 rendered.uiKit.foregroundColor = UIColor(palette.comment)
+                result.attributed.append(rendered)
+
+            case .videoEmbed(let embed):
+                var rendered = videoFallbackAttributedString(embed, palette: palette)
+                rendered.uiKit.font = bodyFont
                 result.attributed.append(rendered)
 
             case .softBreak, .hardBreak:
@@ -1539,7 +1670,11 @@ enum FlatSegment: Sendable {
         }
 
         for inline in inlines {
-            if case .image(let alt, let source) = inline,
+            if case .videoEmbed(let embed) = inline {
+                flushPendingInlines()
+                segments.append(.video(embed))
+                promotedAnyImage = true
+            } else if case .image(let alt, let source) = inline,
                let imageURL = resolveImageURL(
                    source: source,
                    workspaceID: workspaceID,
@@ -1588,7 +1723,7 @@ enum FlatSegment: Sendable {
                 if !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return true
                 }
-            case .image:
+            case .image, .videoEmbed:
                 return true
             case .emphasis(let children),
                  .strong(let children),
@@ -1864,11 +1999,14 @@ enum FlatSegment: Sendable {
         case .blockQuote(let children):
             var result = AttributedString("▎ ")
             result.uiKit.foregroundColor = UIColor(palette.mdQuoteBorder)
+            let bodyStart = result.endIndex
             for (i, child) in children.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 result.append(attributedString(for: child, palette: palette, defaultTextColor: defaultTextColor))
             }
-            result.uiKit.foregroundColor = UIColor(palette.mdQuote)
+            if bodyStart < result.endIndex {
+                result[bodyStart..<result.endIndex].uiKit.foregroundColor = UIColor(palette.mdQuote)
+            }
             return result
 
         case .unorderedList(let items):
@@ -2034,6 +2172,25 @@ enum FlatSegment: Sendable {
         return trimmed.isEmpty ? "[image]" : "[\(trimmed)]"
     }
 
+    private static func videoFallbackText(_ embed: MarkdownVideoEmbed) -> String {
+        embed.displayLabel
+    }
+
+    private static func videoFallbackAttributedString(
+        _ embed: MarkdownVideoEmbed,
+        palette: ThemePalette
+    ) -> AttributedString {
+        var result = AttributedString(videoFallbackText(embed))
+        if let url = ResourceReferenceURL.make(embed.reference) {
+            result.uiKit.foregroundColor = UIColor(palette.mdLink)
+            result.underlineStyle = .single
+            result.link = url
+        } else {
+            result.uiKit.foregroundColor = UIColor(palette.comment)
+        }
+        return result
+    }
+
     /// Recursively extract plain text from inlines and record attribute ranges.
     private static func collectInlineText(
         _ inlines: [MarkdownInline],
@@ -2097,6 +2254,21 @@ enum FlatSegment: Sendable {
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                     sub.uiKit.foregroundColor = UIColor(palette.comment)
                 })
+            case .videoEmbed(let embed):
+                text += videoFallbackText(embed)
+                let end = text.utf8.count
+                if let url = ResourceReferenceURL.make(embed.reference) {
+                    let linkColor = UIColor(palette.mdLink)
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.uiKit.foregroundColor = linkColor
+                        sub.underlineStyle = .single
+                        sub.link = url
+                    })
+                } else {
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.uiKit.foregroundColor = UIColor(palette.comment)
+                    })
+                }
             case .softBreak, .hardBreak:
                 text += "\n"
             case .html(let raw):
@@ -2150,6 +2322,8 @@ enum FlatSegment: Sendable {
             var result = AttributedString(imageFallbackText(alt: alt))
             result.uiKit.foregroundColor = UIColor(palette.comment)
             return result
+        case .videoEmbed(let embed):
+            return videoFallbackAttributedString(embed, palette: palette)
         case .softBreak, .hardBreak:
             return AttributedString("\n")
         case .html(let raw):
@@ -2236,7 +2410,7 @@ enum FlatSegment: Sendable {
                  .strong(let children),
                  .strikethrough(let children):
                 if containsWikiIconLink(children) { return true }
-            case .text, .code, .image, .softBreak, .hardBreak, .html:
+            case .text, .code, .image, .videoEmbed, .softBreak, .hardBreak, .html:
                 continue
             }
         }
@@ -2307,6 +2481,8 @@ enum FlatSegment: Sendable {
             var result = AttributedString(imageFallbackText(alt: alt))
             result.uiKit.foregroundColor = UIColor(palette.comment)
             return result
+        case .videoEmbed(let embed):
+            return videoFallbackAttributedString(embed, palette: palette)
         case .softBreak, .hardBreak:
             var result = AttributedString("\n")
             if let color = defaultColor {

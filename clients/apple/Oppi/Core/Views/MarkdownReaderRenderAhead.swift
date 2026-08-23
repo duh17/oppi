@@ -17,6 +17,7 @@ struct MarkdownReaderSegmentID: Hashable, Sendable {
         case table
         case thematicBreak
         case image
+        case video
         case mermaid
         case latex
     }
@@ -30,6 +31,7 @@ extension FlatSegment {
         case .table: .table
         case .thematicBreak: .thematicBreak
         case .image: .image
+        case .video: .video
         case .mermaidDiagram: .mermaid
         case .latexBlock: .latex
         }
