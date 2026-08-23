@@ -68,16 +68,14 @@ extension FlatSegment {
 /// ID-keyed geometry state for the full-screen Markdown reader.
 ///
 /// Estimated geometry is replaceable. A final height is valid only for the
-/// exact canonical width and document generation that produced it. Applying an
-/// append-only document retains matching prefix entries; replacements reset the
-/// generation and reject results from prior work.
+/// exact canonical width and immutable document generation that produced it.
+/// Reconfiguration resets the generation and rejects prior asynchronous work.
 struct MarkdownReaderHeightLedger {
     /// Immutable identity captured when asynchronous geometry work starts.
-    /// A stable segment ID is not enough because streaming can reparse the
-    /// same source line into changed content while old work is still running.
+    /// A stable segment ID is not enough because a later document or width
+    /// generation can invalidate work that is still running.
     struct WorkToken: Equatable, Sendable {
         let id: MarkdownReaderSegmentID
-        let contentRevision: Int
         let canonicalWidth: CGFloat
         let generation: Int
     }
@@ -107,41 +105,16 @@ struct MarkdownReaderHeightLedger {
     private(set) var generation = 0
     private(set) var orderedIDs: [MarkdownReaderSegmentID] = []
     private var geometryByID: [MarkdownReaderSegmentID: Geometry] = [:]
-    private var contentRevisionByID: [MarkdownReaderSegmentID: Int] = [:]
 
     mutating func applyDocument(
         ids: [MarkdownReaderSegmentID],
         estimates: [CGFloat],
-        canonicalWidth: CGFloat,
-        appendOnly: Bool,
-        retainingFinalIDs: Set<MarkdownReaderSegmentID>? = nil,
-        contentRevisions: [Int]? = nil
+        canonicalWidth: CGFloat
     ) {
         precondition(ids.count == estimates.count)
-        precondition(contentRevisions == nil || contentRevisions?.count == ids.count)
-        let retainedPrefix = appendOnly && ids.count >= orderedIDs.count
-            && Array(ids.prefix(orderedIDs.count)) == orderedIDs
-
-        if !retainedPrefix {
-            generation &+= 1
-            geometryByID.removeAll(keepingCapacity: true)
-        }
-
-        let validIDs = Set(ids)
-        geometryByID = geometryByID.filter { validIDs.contains($0.key) }
-        contentRevisionByID = contentRevisionByID.filter { validIDs.contains($0.key) }
-        for (index, pair) in zip(ids, estimates).enumerated() {
-            let (id, estimate) = pair
-            let revision = contentRevisions?[index] ?? 0
-            let revisionMatches = contentRevisionByID[id] == revision
-            contentRevisionByID[id] = revision
-            let mayRetainFinal = (retainingFinalIDs?.contains(id) ?? retainedPrefix)
-                && revisionMatches
-            if mayRetainFinal,
-               case .final(_, let width) = geometryByID[id],
-               abs(width - canonicalWidth) <= 0.5 {
-                continue
-            }
+        generation &+= 1
+        geometryByID.removeAll(keepingCapacity: true)
+        for (id, estimate) in zip(ids, estimates) {
             geometryByID[id] = .estimated(ceil(max(1, estimate)))
         }
         orderedIDs = ids
@@ -162,11 +135,9 @@ struct MarkdownReaderHeightLedger {
         for id: MarkdownReaderSegmentID,
         canonicalWidth: CGFloat
     ) -> WorkToken? {
-        guard orderedIDs.contains(id),
-              let contentRevision = contentRevisionByID[id] else { return nil }
+        guard orderedIDs.contains(id) else { return nil }
         return WorkToken(
             id: id,
-            contentRevision: contentRevision,
             canonicalWidth: canonicalWidth,
             generation: generation
         )
@@ -178,7 +149,6 @@ struct MarkdownReaderHeightLedger {
         anchorID: MarkdownReaderSegmentID?
     ) -> Commit {
         guard token.generation == generation,
-              contentRevisionByID[token.id] == token.contentRevision,
               let index = orderedIDs.firstIndex(of: token.id),
               height.isFinite,
               token.canonicalWidth.isFinite,

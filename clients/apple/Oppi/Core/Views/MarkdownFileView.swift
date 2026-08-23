@@ -79,7 +79,6 @@ struct MarkdownFileView: View {
                 if presentation == .document {
                     return NativeFullScreenMarkdownBody(
                         content: content,
-                        stream: nil,
                         themeID: themeID,
                         palette: themeID.palette,
                         reviewCommentSelectionRouter: reviewContext?.dispatcher,

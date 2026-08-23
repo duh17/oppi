@@ -91,7 +91,6 @@ struct NonChatCollectionInvalidationTests {
     ) async throws {
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil

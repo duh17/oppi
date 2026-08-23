@@ -1806,9 +1806,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var heightLedger = MarkdownReaderHeightLedger()
     private var preparedCanonicalWidth: CGFloat?
     private var needsDocumentLayoutPreparation = false
-    private var pendingDocumentAppendOnly = false
     private var pendingDocumentLayoutReason: MarkdownReaderLayoutReplacementReason = .document
-    private var retainedSegmentIDsForNextLayout: Set<MarkdownReaderSegmentID> = []
     private var isConfiguringCell = false
     private var pendingHeightFlush = false
     private var heightFlushGeneration = 0
@@ -1850,7 +1848,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var debugAsyncMarkdownBuildRanOnMainThread: Bool?
     #endif
     private let segmentSource = AssistantMarkdownSegmentSource()
-    private let stream: ThinkingTraceStream?
     private let sourceFormat: MarkdownReaderSourceFormat
     private let themeID: ThemeID
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -1878,7 +1875,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var renderAheadTask: Task<Void, Never>?
     private var scheduledRenderAheadFirstVisibleItem: Int?
     private var latestSnapshot: ThinkingTraceStream.Snapshot
-    private var pendingInteractionSnapshot: ThinkingTraceStream.Snapshot?
     private var pendingReaderPreferences: FullScreenReaderPreferences?
     private var renderedSnapshot: ThinkingTraceStream.Snapshot?
     /// Configuration can change while the source snapshot stays byte-identical.
@@ -1889,13 +1885,11 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var renderedSegments: [FlatSegment] = []
     private var renderedSegmentLineRanges: [ClosedRange<Int>?] = []
     private var renderedSegmentIDs: [MarkdownReaderSegmentID] = []
-    private var renderedSegmentRevisions: [Int] = []
-    private var nextSegmentRevision = 0
     private var currentConfig: AssistantMarkdownContentView.Configuration?
     private var viewportDoubleTapActivation: (() -> Void)?
-    private var streamObserverID: UUID?
     private var lineAnchorFocusTask: Task<Void, Never>?
     private var lineAnchorFocusPending = false
+    private var pendingMutableTransitionViewportIntent: FullScreenMarkdownViewportIntent?
 
     private struct AsyncMarkdownBuild: Sendable {
         let build: FlatSegment.BuildResult
@@ -1915,8 +1909,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     init(
         content: String,
-        stream: ThinkingTraceStream?,
-        isStreaming: Bool = false,
         sourceFormat: MarkdownReaderSourceFormat = .markdown,
         themeID: ThemeID? = nil,
         palette: ThemePalette,
@@ -1939,7 +1931,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
     ) {
-        self.stream = stream
         self.sourceFormat = sourceFormat
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         self.perfSurface = perfSurface
@@ -1952,7 +1943,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
         self.lineAnchor = lineAnchor
-        let initialText = stream?.snapshot.text ?? content
+        let initialText = content
         self.lineAnchorResolution = lineAnchor?.resolution(fileContent: initialText)
         self.readerPreferences = readerPreferences
         self.maximumViewportHeight = maximumViewportHeight
@@ -1960,10 +1951,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.fetchSessionFile = fetchSessionFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
-        let sourceSnapshot = stream?.snapshot
-            ?? ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
         let initialSnapshot = sourceFormat == .markdown
-            ? sourceSnapshot
+            ? ThinkingTraceStream.Snapshot(text: content, isDone: true)
             : ThinkingTraceStream.Snapshot(text: "", isDone: true)
         latestSnapshot = initialSnapshot
         collectionView = UICollectionView(
@@ -2035,17 +2024,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
         if sourceFormat == .orgMode {
             installDeferredRenderPlaceholder(palette: palette)
-            scheduleOrgModeSourcePreparation(source: sourceSnapshot.text)
-        } else if Self.shouldDeferInitialRender(snapshot: initialSnapshot, stream: stream) {
+            scheduleOrgModeSourcePreparation(source: content)
+        } else if Self.shouldDeferInitialRender(snapshot: initialSnapshot) {
             installDeferredRenderPlaceholder(palette: palette)
             scheduleDeferredInitialRender(snapshot: initialSnapshot)
         } else {
             render(snapshot: initialSnapshot)
-        }
-
-        guard let stream else { return }
-        streamObserverID = stream.addObserver { [weak self] snapshot in
-            self?.handleStreamUpdate(snapshot)
         }
     }
 
@@ -2072,12 +2056,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         asyncRenderTask?.cancel()
         renderAheadTask?.cancel()
         lineAnchorFocusTask?.cancel()
-        if let streamObserverID {
-            let stream = stream
-            Task { @MainActor in
-                stream?.removeObserver(streamObserverID)
-            }
-        }
     }
 
     override func layoutSubviews() {
@@ -2085,24 +2063,19 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         suppressParkedReinstall = false
         if needsDocumentLayoutPreparation
             || preparedCanonicalWidth.map({ abs($0 - canonicalContentWidth) > 0.5 }) == true {
-            prepareLazyDocumentLayout(
-                appendOnly: pendingDocumentAppendOnly,
-                layoutReason: pendingDocumentLayoutReason
-            )
+            prepareLazyDocumentLayout(layoutReason: pendingDocumentLayoutReason)
         }
         retryDeferredLayoutReplaceIfInteractionEnded()
         updateLineAnchorHighlight()
         scheduleLineAnchorFocusIfNeeded()
+        applyPendingMutableTransitionViewportIntentIfReady()
         viewportOwner.scheduleFollowTail()
     }
 
     private static func shouldDeferInitialRender(
-        snapshot: ThinkingTraceStream.Snapshot,
-        stream: ThinkingTraceStream?
+        snapshot: ThinkingTraceStream.Snapshot
     ) -> Bool {
-        stream == nil
-            && snapshot.isDone
-            && snapshot.text.utf8.count >= deferredInitialRenderByteThreshold
+        snapshot.text.utf8.count >= deferredInitialRenderByteThreshold
     }
 
     private static func makeCollectionLayout(
@@ -2192,7 +2165,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             self.debugSourcePreparationDurationNs = prepared.durationNs
             #endif
             self.collectionView.backgroundView = nil
-            self.update(content: prepared.markdown, isStreaming: false)
+            self.applyPreparedDocument(prepared.markdown)
         }
     }
 
@@ -2206,55 +2179,16 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
     }
 
-    private func handleStreamUpdate(_ snapshot: ThinkingTraceStream.Snapshot) {
+    private func applyPreparedDocument(_ content: String) {
         deferredInitialRenderTask?.cancel()
         deferredInitialRenderTask = nil
         asyncRenderTask?.cancel()
         asyncRenderTask = nil
         renderAheadTask?.cancel()
         renderAheadTask = nil
+        let snapshot = ThinkingTraceStream.Snapshot(text: content, isDone: true)
         latestSnapshot = snapshot
         render(snapshot: snapshot)
-    }
-
-    func update(
-        content: String,
-        isStreaming: Bool,
-        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
-        reviewCommentSourceContext: ReviewCommentSourceContext?,
-        textSelectionEnabled: Bool
-    ) {
-        sourcePreparationTask?.cancel()
-        sourcePreparationTask = nil
-        deferredInitialRenderTask?.cancel()
-        deferredInitialRenderTask = nil
-        asyncRenderTask?.cancel()
-        asyncRenderTask = nil
-        renderAheadTask?.cancel()
-        renderAheadTask = nil
-        let configurationChanged = self.reviewCommentSelectionRouter !== reviewCommentSelectionRouter
-            || self.reviewCommentSourceContext != reviewCommentSourceContext
-            || self.textSelectionEnabled != textSelectionEnabled
-        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
-        self.reviewCommentSourceContext = reviewCommentSourceContext
-        self.textSelectionEnabled = textSelectionEnabled
-        if configurationChanged {
-            needsSnapshotReconfiguration = true
-            pendingReconfigurationLayoutReason = .document
-        }
-        let snapshot = ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
-        latestSnapshot = snapshot
-        render(snapshot: snapshot)
-    }
-
-    func update(content: String, isStreaming: Bool) {
-        update(
-            content: content,
-            isStreaming: isStreaming,
-            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
-            reviewCommentSourceContext: reviewCommentSourceContext,
-            textSelectionEnabled: textSelectionEnabled
-        )
     }
 
     func installViewportGestureRecognizer(_ gesture: UIGestureRecognizer) {
@@ -2265,35 +2199,60 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         viewportDoubleTapActivation = activation
     }
 
-    private func render(snapshot: ThinkingTraceStream.Snapshot) {
-        // Completion makes this a static document immediately. Cancel the
-        // policy flag before handling an unchanged snapshot so any tail-follow
-        // block queued by the final streaming layout yields when it runs.
-        if snapshot.isDone {
-            viewportOwner.streamCompleted()
+    /// Restore the broad reading intent captured by the mutable one-scroll-view
+    /// host. The immutable reader owns the actual offset write so it can clamp
+    /// against its final render-ahead geometry without animation.
+    func restoreViewportAfterMutableTransition(_ intent: FullScreenMarkdownViewportIntent) {
+        pendingMutableTransitionViewportIntent = intent
+        setNeedsLayout()
+        applyPendingMutableTransitionViewportIntentIfReady()
+    }
+
+    private func applyPendingMutableTransitionViewportIntentIfReady() {
+        guard let intent = pendingMutableTransitionViewportIntent,
+              deferredInitialRenderTask == nil,
+              asyncRenderTask == nil,
+              !needsDocumentLayoutPreparation,
+              latestSnapshot.text.isEmpty || !renderedSegments.isEmpty else { return }
+        pendingMutableTransitionViewportIntent = nil
+        viewportOwner.scheduleExplicitFocus { [weak self] in
+            guard let self else { return nil }
+            self.layoutIfNeeded()
+            self.collectionView.layoutIfNeeded()
+            let minimumY = -self.collectionView.adjustedContentInset.top
+            let maximumY = max(
+                minimumY,
+                self.collectionView.contentSize.height - self.collectionView.bounds.height
+                    + self.collectionView.adjustedContentInset.bottom
+            )
+            switch intent {
+            case .top:
+                return minimumY
+            case .tail:
+                return maximumY
+            case .detached(let progress):
+                return minimumY + (maximumY - minimumY) * min(max(progress, 0), 1)
+            }
         }
+    }
+
+    private func render(snapshot: ThinkingTraceStream.Snapshot) {
         guard snapshot != renderedSnapshot || needsSnapshotReconfiguration else {
             viewportOwner.scheduleFollowTail()
             return
         }
 
         // Keep the complete old snapshot mounted while a touch or momentum owns
-        // the viewport. Parking even one cell before this gate makes a stream
-        // tick blank visible content until interaction ends.
+        // the viewport. Parking even one cell before this gate blanks visible
+        // content until interaction ends.
         if isCollectionUserInteracting, renderedSnapshot != nil {
-            pendingInteractionSnapshot = snapshot
+            needsSnapshotReconfiguration = true
             return
         }
-        pendingInteractionSnapshot = nil
         let layoutReason = pendingReconfigurationLayoutReason ?? .document
         needsSnapshotReconfiguration = false
         pendingReconfigurationLayoutReason = nil
 
-        let previousText = renderedSnapshot?.text
-        let appendOnly = previousText.map { snapshot.text.hasPrefix($0) } ?? false
-        let previousSegments = renderedSegments
-        let previousSegmentIDs = renderedSegmentIDs
-        let previousSegmentRevisions = renderedSegmentRevisions
         let anchorBeforeMutation = !viewportOwner.followsTail
             ? captureViewportAnchor()
             : nil
@@ -2347,26 +2306,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         renderedSegments = build.segments
         renderedSegmentLineRanges = build.sourceLineRanges
         renderedSegmentIDs = build.identities
-        renderedSegmentRevisions = contentRevisions(
-            oldSegments: previousSegments,
-            oldIDs: previousSegmentIDs,
-            oldRevisions: previousSegmentRevisions,
-            newSegments: renderedSegments,
-            newIDs: renderedSegmentIDs
-        )
-        retainedSegmentIDsForNextLayout = appendOnly
-            ? Self.unchangedPrefixIDs(
-                oldSegments: previousSegments,
-                oldIDs: previousSegmentIDs,
-                newSegments: renderedSegments,
-                newIDs: renderedSegmentIDs
-            )
-            : []
         #if DEBUG
         debugSegmentBuildNs = MarkdownStreamingPerf.timestampNs() - segmentBuildStart
         #endif
         prepareLazyDocumentLayout(
-            appendOnly: appendOnly,
             anchorOverride: anchorBeforeMutation,
             layoutReason: layoutReason
         )
@@ -2404,7 +2347,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         renderedSegments = []
         renderedSegmentLineRanges = []
         renderedSegmentIDs = []
-        renderedSegmentRevisions = []
         resetParkedSegmentViews()
         collectionView.reloadData()
         collectionView.collectionViewLayout.invalidateLayout()
@@ -2463,15 +2405,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 segments: segments,
                 sourceLineRanges: build.build.sourceLineRanges
             )
-            self.renderedSegmentRevisions = self.contentRevisions(
-                oldSegments: [],
-                oldIDs: [],
-                oldRevisions: [],
-                newSegments: segments,
-                newIDs: self.renderedSegmentIDs
-            )
             self.prepareLazyDocumentLayout(
-                appendOnly: false,
                 anchorOverride: anchorOverride,
                 layoutReason: layoutReason
             )
@@ -2492,6 +2426,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 )
             }
 
+            self.applyPendingMutableTransitionViewportIntentIfReady()
             self.viewportOwner.scheduleFollowTail()
         }
     }
@@ -2598,67 +2533,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             UIAccessibility.post(notification: .layoutChanged, argument: cell)
         } else {
             UIAccessibility.post(notification: .layoutChanged, argument: collectionView)
-        }
-    }
-
-    private static func unchangedPrefixIDs(
-        oldSegments: [FlatSegment],
-        oldIDs: [MarkdownReaderSegmentID],
-        newSegments: [FlatSegment],
-        newIDs: [MarkdownReaderSegmentID]
-    ) -> Set<MarkdownReaderSegmentID> {
-        var result = Set<MarkdownReaderSegmentID>()
-        let count = [oldSegments.count, oldIDs.count, newSegments.count, newIDs.count].min() ?? 0
-        for index in 0..<count {
-            guard oldIDs[index] == newIDs[index],
-                  segmentsHaveEqualContent(oldSegments[index], newSegments[index]) else { break }
-            result.insert(oldIDs[index])
-        }
-        return result
-    }
-
-    private func contentRevisions(
-        oldSegments: [FlatSegment],
-        oldIDs: [MarkdownReaderSegmentID],
-        oldRevisions: [Int],
-        newSegments: [FlatSegment],
-        newIDs: [MarkdownReaderSegmentID]
-    ) -> [Int] {
-        var oldByID: [MarkdownReaderSegmentID: (segment: FlatSegment, revision: Int)] = [:]
-        for index in oldIDs.indices where oldSegments.indices.contains(index)
-            && oldRevisions.indices.contains(index) {
-            oldByID[oldIDs[index]] = (oldSegments[index], oldRevisions[index])
-        }
-        return zip(newSegments, newIDs).map { segment, id in
-            if let previous = oldByID[id],
-               Self.segmentsHaveEqualContent(previous.segment, segment) {
-                return previous.revision
-            }
-            nextSegmentRevision &+= 1
-            return nextSegmentRevision
-        }
-    }
-
-    private static func segmentsHaveEqualContent(_ lhs: FlatSegment, _ rhs: FlatSegment) -> Bool {
-        switch (lhs, rhs) {
-        case (.text(let lhs), .text(let rhs)):
-            NSAttributedString(lhs).isEqual(to: NSAttributedString(rhs))
-        case let (.codeBlock(lhsLanguage, lhsCode), .codeBlock(rhsLanguage, rhsCode)):
-            lhsLanguage == rhsLanguage && lhsCode == rhsCode
-        case let (.table(lhsHeaders, lhsRows), .table(rhsHeaders, rhsRows)):
-            lhsHeaders == rhsHeaders && lhsRows == rhsRows
-        case (.thematicBreak, .thematicBreak):
-            true
-        case let (.image(lhsAlt, lhsURL), .image(rhsAlt, rhsURL)):
-            lhsAlt == rhsAlt && lhsURL == rhsURL
-        case let (.video(lhs), .video(rhs)):
-            lhs == rhs
-        case let (.mermaidDiagram(lhs), .mermaidDiagram(rhs)):
-            lhs == rhs
-        case let (.latexBlock(lhs), .latexBlock(rhs)):
-            lhs == rhs
-        default:
-            false
         }
     }
 
@@ -2876,33 +2750,25 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// bounded initial runway. Views produced by runway sizing are parked and
     /// reused by the collection view, so preparation is not duplicate work.
     private func prepareLazyDocumentLayout(
-        appendOnly: Bool,
         anchorOverride: ViewportAnchor? = nil,
         layoutReason: MarkdownReaderLayoutReplacementReason = .document
     ) {
         guard collectionView.bounds.width > 0 else {
             needsDocumentLayoutPreparation = true
-            pendingDocumentAppendOnly = appendOnly
             pendingDocumentLayoutReason = layoutReason
             return
         }
         guard !isCollectionUserInteracting || preparedCanonicalWidth == nil else {
             needsDocumentLayoutPreparation = true
-            pendingDocumentAppendOnly = appendOnly
             pendingDocumentLayoutReason = layoutReason
             return
         }
 
         let width = collectionView.bounds.width
         let canonicalWidth = max(1, width - 24)
-        let widthChanged = preparedCanonicalWidth.map { abs($0 - canonicalWidth) > 0.5 } ?? false
-        let canRetainPrefix = appendOnly && !widthChanged
-        let anchor = anchorOverride ?? (canRetainPrefix && !viewportOwner.followsTail
-            ? captureViewportAnchor()
-            : nil)
+        let anchor = anchorOverride ?? (!viewportOwner.followsTail ? captureViewportAnchor() : nil)
 
         needsDocumentLayoutPreparation = false
-        pendingDocumentAppendOnly = false
         pendingDocumentLayoutReason = .document
         preparedCanonicalWidth = canonicalWidth
         heightFlushGeneration &+= 1
@@ -2911,17 +2777,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         needsLayoutReplaceAfterInteraction = false
         needsVisibleHeightRefreshAfterInteraction = false
         suppressParkedReinstall = false
-        if !canRetainPrefix {
-            resetParkedSegmentViews()
-        } else {
-            let validIDs = retainedSegmentIDsForNextLayout
-            let staleIDs = parkedSegmentViews.keys.filter { !validIDs.contains($0) }
-            for id in staleIDs {
-                parkedSegmentViews.removeValue(forKey: id)?.forEach {
-                    $0.removeFromSuperview()
-                }
-            }
-        }
+        resetParkedSegmentViews()
         #if DEBUG
         debugAppliedItems.removeAll()
         debugHeightEstimateNs = 0
@@ -2942,10 +2798,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         heightLedger.applyDocument(
             ids: renderedSegmentIDs,
             estimates: estimates,
-            canonicalWidth: canonicalWidth,
-            appendOnly: canRetainPrefix,
-            retainingFinalIDs: retainedSegmentIDsForNextLayout,
-            contentRevisions: renderedSegmentRevisions
+            canonicalWidth: canonicalWidth
         )
         itemHeights = heightLedger.heights()
         #if DEBUG
@@ -3388,8 +3241,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     ) {
         guard let item = renderedSegmentIDs.firstIndex(of: token.id),
               itemHeights.indices.contains(item),
-              renderedSegmentRevisions.indices.contains(item),
-              renderedSegmentRevisions[item] == token.contentRevision,
               let canonicalWidth = preparedCanonicalWidth,
               abs(canonicalWidth - token.canonicalWidth) <= 0.5 else { return }
         let next: CGFloat
@@ -3598,11 +3449,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             needsSnapshotReconfiguration = true
             pendingReconfigurationLayoutReason = .readerPreferences
         }
-        let snapshot = pendingInteractionSnapshot
-        pendingInteractionSnapshot = nil
-        if let snapshot {
-            render(snapshot: snapshot)
-        } else if needsSnapshotReconfiguration {
+        if needsSnapshotReconfiguration {
             render(snapshot: latestSnapshot)
         }
     }
@@ -3769,13 +3616,11 @@ extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
         guard preferences != (pendingReaderPreferences ?? readerPreferences) else { return }
         if isCollectionUserInteracting {
             pendingReaderPreferences = preferences
-            pendingInteractionSnapshot = latestSnapshot
             return
         }
         // If UIKit released ownership before the queued interaction-end turn,
         // this immediate request supersedes both deferred values.
         pendingReaderPreferences = nil
-        pendingInteractionSnapshot = nil
         readerPreferences = preferences
         needsSnapshotReconfiguration = true
         pendingReconfigurationLayoutReason = .readerPreferences
@@ -3851,11 +3696,7 @@ extension NativeFullScreenMarkdownBody {
     }
     var debugRenderedSegmentsForTesting: [FlatSegment] { renderedSegments }
     var debugRenderedSegmentIDsForTesting: [MarkdownReaderSegmentID] { renderedSegmentIDs }
-    var debugRenderedSegmentRevisionsForTesting: [Int] { renderedSegmentRevisions }
     var debugRenderedSourceTextForTesting: String? { renderedSnapshot?.text }
-    var debugHasPendingInteractionSnapshotForTesting: Bool {
-        pendingInteractionSnapshot != nil
-    }
     var debugCanonicalContentWidthForTesting: CGFloat? { preparedCanonicalWidth }
     var debugGeometryCommitCountForTesting: Int { debugGeometryCommitCount }
     var debugWillDisplayRenderAheadMissCountForTesting: Int { debugWillDisplayRenderAheadMissCount }

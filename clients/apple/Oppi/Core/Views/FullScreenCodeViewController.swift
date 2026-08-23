@@ -46,6 +46,7 @@ final class FullScreenCodeViewController: UIViewController {
         let scrollOffsets: [CGPoint]
         let selections: [NSRange]
         let firstResponderTextViewIndex: Int?
+        let mutableMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
     }
 
     private struct NavigationPresentation: Equatable {
@@ -88,10 +89,11 @@ final class FullScreenCodeViewController: UIViewController {
     private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private var installedBodyView: UIView?
     private var liveSourceBodyView: NativeFullScreenSourceBody?
-    private var liveSourceMarkdownBodyView: NativeFullScreenMarkdownBody?
+    private var liveSourceMarkdownBodyView: NativeMutableFullScreenMarkdownBody?
     private var liveSourceHTMLBodyView: HTMLRenderView?
     private var liveSourceObserverCleanup: LiveSourceObserverCleanup?
     private var liveSourceCurrentSnapshot: SourceTraceStream.Snapshot?
+    private var liveSourceMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
     private var lastNavigationPresentation: NavigationPresentation?
     private var appliedThemeID: ThemeID?
 
@@ -268,11 +270,28 @@ final class FullScreenCodeViewController: UIViewController {
         let interactionState = installedBodyView.map(captureInteractionState)
         clearLiveSourceBodyReferences()
         let presentation = makePresentation()
-        let themedBody = makeBodyView(
-            for: presentation.bodyContent,
-            themeID: themeID,
-            focusLineAnchor: false
-        )
+        let themedBody: UIView
+        if case .liveSource(let initialSnapshot, _) = content {
+            let snapshot = liveSourceCurrentSnapshot ?? initialSnapshot
+            if !snapshot.isDone {
+                themedBody = makeFreshLiveSourceStreamingBody(
+                    snapshot: snapshot,
+                    themeID: themeID
+                )
+            } else {
+                themedBody = makeBodyView(
+                    for: presentation.bodyContent,
+                    themeID: themeID,
+                    focusLineAnchor: false
+                )
+            }
+        } else {
+            themedBody = makeBodyView(
+                for: presentation.bodyContent,
+                themeID: themeID,
+                focusLineAnchor: false
+            )
+        }
         installBodyView(themedBody, on: viewController)
         if let interactionState {
             restoreInteractionState(interactionState, in: themedBody, host: viewController.view)
@@ -290,7 +309,9 @@ final class FullScreenCodeViewController: UIViewController {
         return BodyInteractionState(
             scrollOffsets: scrollViews.map(\.contentOffset),
             selections: textViews.map(\.selectedRange),
-            firstResponderTextViewIndex: textViews.firstIndex(where: \.isFirstResponder)
+            firstResponderTextViewIndex: textViews.firstIndex(where: \.isFirstResponder),
+            mutableMarkdownViewportIntent: (body as? NativeMutableFullScreenMarkdownBody)?
+                .currentViewportIntent()
         )
     }
 
@@ -318,6 +339,10 @@ final class FullScreenCodeViewController: UIViewController {
            textViews.indices.contains(index) {
             textViews[index].becomeFirstResponder()
         }
+        if let intent = state.mutableMarkdownViewportIntent,
+           let mutableMarkdown = body as? NativeMutableFullScreenMarkdownBody {
+            mutableMarkdown.restoreMutableViewport(intent)
+        }
 
         // Some bodies complete TextKit/WebKit layout on the next run-loop turn.
         // Reapply to the same new body without retaining the retired hierarchy.
@@ -327,6 +352,10 @@ final class FullScreenCodeViewController: UIViewController {
             let deferredScrollViews = self.descendantViews(of: UIScrollView.self, in: body)
             for (scrollView, offset) in zip(deferredScrollViews, state.scrollOffsets) {
                 scrollView.setContentOffset(offset, animated: false)
+            }
+            if let intent = state.mutableMarkdownViewportIntent,
+               let mutableMarkdown = body as? NativeMutableFullScreenMarkdownBody {
+                mutableMarkdown.restoreMutableViewport(intent)
             }
         }
     }
@@ -714,7 +743,6 @@ final class FullScreenCodeViewController: UIViewController {
         case .markdown(let text, let filePath, let wsContext):
             let body = NativeFullScreenMarkdownBody(
                 content: text,
-                stream: nil,
                 themeID: themeID,
                 palette: palette,
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
@@ -747,9 +775,27 @@ final class FullScreenCodeViewController: UIViewController {
             view.applyReaderPreferences(readerPreferences(for: content))
             return view
         case .thinking(let text, let stream):
+            let snapshot = stream?.snapshot
+            let displayedText = snapshot?.text ?? text
+            let isStreaming = snapshot.map { !$0.isDone } ?? false
+            if isStreaming {
+                return NativeMutableFullScreenMarkdownBody(
+                    content: displayedText,
+                    stream: stream,
+                    isStreaming: true,
+                    themeID: themeID,
+                    palette: palette,
+                    reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                    reviewCommentSourceContext: makeSourceContext(
+                        surface: .fullScreenThinking,
+                        fallbackSourceLabel: String(localized: "Thinking")
+                    ),
+                    readerPreferences: readerPreferences(for: content),
+                    perfSurface: .fullScreenThinking
+                )
+            }
             return NativeFullScreenMarkdownBody(
-                content: text,
-                stream: stream,
+                content: displayedText,
                 themeID: themeID,
                 palette: palette,
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
@@ -797,7 +843,6 @@ final class FullScreenCodeViewController: UIViewController {
         case .orgMode(let text, let filePath):
             let body = NativeFullScreenMarkdownBody(
                 content: text,
-                stream: nil,
                 sourceFormat: .orgMode,
                 themeID: themeID,
                 palette: palette,
@@ -870,9 +915,9 @@ final class FullScreenCodeViewController: UIViewController {
         workspaceContext: FullScreenCodeContent.WorkspaceContext?,
         isStreaming: Bool,
         themeID: ThemeID
-    ) -> NativeFullScreenMarkdownBody {
+    ) -> NativeMutableFullScreenMarkdownBody {
         let palette = themeID.palette
-        return NativeFullScreenMarkdownBody(
+        return NativeMutableFullScreenMarkdownBody(
             content: text,
             stream: nil,
             isStreaming: isStreaming,
@@ -918,6 +963,30 @@ final class FullScreenCodeViewController: UIViewController {
         liveSourceHTMLBodyView = nil
     }
 
+    private func makeFreshLiveSourceStreamingBody(
+        snapshot: SourceTraceStream.Snapshot,
+        themeID: ThemeID
+    ) -> UIView {
+        switch bodyContent(for: snapshot) {
+        case .markdown(let text, let filePath, let workspaceContext):
+            let body = makeLiveSourceMarkdownBody(
+                text: text,
+                filePath: filePath,
+                workspaceContext: workspaceContext,
+                isStreaming: true,
+                themeID: themeID
+            )
+            liveSourceMarkdownBodyView = body
+            return body
+        case .html(let text, let filePath):
+            let body = makeLiveSourceHTMLBody(text: text, filePath: filePath, themeID: themeID)
+            liveSourceHTMLBodyView = body
+            return body
+        default:
+            return makeLiveSourceBody(snapshot: snapshot, palette: themeID.palette)
+        }
+    }
+
     private func installOrUpdateLiveSourceStreamingBody(
         snapshot: SourceTraceStream.Snapshot,
         on viewController: UIViewController,
@@ -929,7 +998,22 @@ final class FullScreenCodeViewController: UIViewController {
             liveSourceBodyView = nil
             liveSourceHTMLBodyView = nil
             if let body = liveSourceMarkdownBodyView, installedBodyView === body {
-                body.update(content: text, isStreaming: true)
+                body.update(
+                    content: text,
+                    isStreaming: true,
+                    reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                    reviewCommentSourceContext: makeSourceContext(
+                        surface: .fullScreenMarkdown,
+                        filePath: filePath
+                    ),
+                    serverID: workspaceContext?.serverID,
+                    workspaceID: workspaceContext?.workspaceID,
+                    sessionID: workspaceContext?.sessionID,
+                    serverBaseURL: workspaceContext?.serverBaseURL,
+                    sourceFilePath: filePath,
+                    fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
+                    fetchSessionFile: workspaceContext?.fetchSessionFile
+                )
             } else {
                 let body = makeLiveSourceMarkdownBody(
                     text: text,
@@ -940,6 +1024,9 @@ final class FullScreenCodeViewController: UIViewController {
                 )
                 liveSourceMarkdownBodyView = body
                 installBodyView(body, on: viewController)
+                if let intent = liveSourceMarkdownViewportIntent {
+                    body.restoreMutableViewport(intent)
+                }
             }
 
         case .html(let text, let filePath):
@@ -971,9 +1058,36 @@ final class FullScreenCodeViewController: UIViewController {
         let themeID = bodyThemeID
         let palette = themeID.palette
         if snapshot.isDone {
-            clearLiveSourceBodyReferences()
             let presentation = makePresentation()
-            installBodyView(makeBodyView(for: presentation.bodyContent, themeID: themeID), on: viewController)
+            if case .markdown(let text, let filePath, let workspaceContext) = presentation.bodyContent,
+               let body = liveSourceMarkdownBodyView,
+               installedBodyView === body {
+                // Flush final bytes and final source context through the shared
+                // mutable engine, then let its viewport owner perform the
+                // one-way immutable-reader swap.
+                body.update(
+                    content: text,
+                    isStreaming: false,
+                    reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+                    reviewCommentSourceContext: makeSourceContext(
+                        surface: .fullScreenMarkdown,
+                        filePath: filePath
+                    ),
+                    serverID: workspaceContext?.serverID,
+                    workspaceID: workspaceContext?.workspaceID,
+                    sessionID: workspaceContext?.sessionID,
+                    serverBaseURL: workspaceContext?.serverBaseURL,
+                    sourceFilePath: filePath,
+                    fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
+                    fetchSessionFile: workspaceContext?.fetchSessionFile
+                )
+                liveSourceMarkdownBodyView = nil
+                liveSourceBodyView = nil
+                liveSourceHTMLBodyView = nil
+            } else {
+                clearLiveSourceBodyReferences()
+                installBodyView(makeBodyView(for: presentation.bodyContent, themeID: themeID), on: viewController)
+            }
         } else {
             installOrUpdateLiveSourceStreamingBody(snapshot: snapshot, on: viewController, themeID: themeID)
         }
@@ -1337,6 +1451,9 @@ final class FullScreenCodeViewController: UIViewController {
             return
         }
 
+        if let mutableMarkdown = installedBodyView as? NativeMutableFullScreenMarkdownBody {
+            liveSourceMarkdownViewportIntent = mutableMarkdown.currentViewportIntent()
+        }
         showSource.toggle()
         let themeID = bodyThemeID
         let palette = themeID.palette

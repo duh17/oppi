@@ -22,7 +22,6 @@ struct OrgModeFileView: View {
                 let themeID = ThemeRuntimeState.currentThemeID()
                 return NativeFullScreenMarkdownBody(
                     content: content,
-                    stream: nil,
                     sourceFormat: .orgMode,
                     themeID: themeID,
                     palette: themeID.palette,

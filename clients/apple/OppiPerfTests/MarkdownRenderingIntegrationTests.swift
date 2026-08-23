@@ -519,7 +519,6 @@ struct MarkdownRenderingIntegrationTests {
     @Test func workspaceContextFlowsThroughFullScreenMarkdownBody() {
         let body = NativeFullScreenMarkdownBody(
             content: "![Chart](images/chart.png)",
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,

@@ -28,7 +28,6 @@ struct FullScreenMarkdownAsyncRenderTests {
 
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -128,7 +127,6 @@ struct FullScreenMarkdownAsyncRenderTests {
 
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -529,55 +527,6 @@ struct FullScreenMarkdownAsyncRenderTests {
         scrollView.contentOffset.y = bottomY
         coordinator.handleDidEndDragging(willDecelerate: false, isStreaming: true)
         #expect(coordinator.shouldAutoFollowTail)
-    }
-
-    @MainActor
-    @Test("completed Markdown immediately stops following the tail")
-    func completedMarkdownStopsTailFollowImmediately() async throws {
-        let content = (0..<80)
-            .map { "Streaming paragraph \($0) with enough text to make the reader scroll." }
-            .joined(separator: "\n\n")
-        let stream = ThinkingTraceStream(text: content, isDone: false)
-        let body = NativeFullScreenMarkdownBody(
-            content: content,
-            stream: stream,
-            palette: ThemeID.dark.palette,
-            reviewCommentSelectionRouter: nil,
-            reviewCommentSourceContext: nil
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        window.addSubview(body)
-        body.frame = window.bounds
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-
-        body.layoutIfNeeded()
-        let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
-        collectionView.layoutIfNeeded()
-        await drainMarkdownHeightFlush()
-
-        let bottomY = max(
-            -collectionView.adjustedContentInset.top,
-            collectionView.contentSize.height
-                - collectionView.bounds.height
-                + collectionView.adjustedContentInset.bottom
-        )
-        collectionView.contentOffset.y = bottomY
-
-        // Queue a follow while the snapshot is still live, then settle the
-        // document before that queued main-turn work executes.
-        body.setNeedsLayout()
-        body.layoutIfNeeded()
-        stream.update(text: content, isDone: true)
-        let readingY = bottomY - 240
-        collectionView.contentOffset.y = readingY
-
-        await drainMarkdownHeightFlush()
-
-        #expect(
-            abs(collectionView.contentOffset.y - readingY) < 1,
-            "completed Markdown still executed queued tail-follow work"
-        )
     }
 
     @MainActor

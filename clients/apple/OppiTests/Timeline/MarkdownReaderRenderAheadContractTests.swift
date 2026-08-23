@@ -98,7 +98,7 @@ struct MarkdownReaderRenderAheadContractTests {
         #expect(timelineAllViews(in: stack).compactMap { $0 as? NativeCodeBlockView }.count == 2)
     }
 
-    @Test("height ledger retains append prefix and rejects stale or wrong-width results")
+    @Test("height ledger resets immutable generations and rejects stale or wrong-width results")
     func heightLedgerTransitionsAndInvalidation() throws {
         let first = MarkdownReaderSegmentID(kind: .text, sourceStartLine: 1, occurrenceOrdinal: 0)
         let second = MarkdownReaderSegmentID(kind: .image, sourceStartLine: 3, occurrenceOrdinal: 0)
@@ -108,9 +108,7 @@ struct MarkdownReaderRenderAheadContractTests {
         ledger.applyDocument(
             ids: [first, second],
             estimates: [40, 180],
-            canonicalWidth: 351,
-            appendOnly: false,
-            contentRevisions: [1, 1]
+            canonicalWidth: 351
         )
         let generation = ledger.generation
         let firstToken = try #require(ledger.workToken(for: first, canonicalWidth: 351))
@@ -124,12 +122,10 @@ struct MarkdownReaderRenderAheadContractTests {
         ledger.applyDocument(
             ids: [first, second, third],
             estimates: [45, 180, 50],
-            canonicalWidth: 351,
-            appendOnly: true,
-            contentRevisions: [1, 2, 1]
+            canonicalWidth: 351
         )
-        #expect(ledger.generation == generation)
-        #expect(ledger.finalHeight(for: first, canonicalWidth: 351) == 61)
+        #expect(ledger.generation != generation)
+        #expect(ledger.finalHeight(for: first, canonicalWidth: 351) == nil)
 
         ledger.invalidateWidth(369)
         #expect(ledger.generation != generation)
@@ -137,7 +133,6 @@ struct MarkdownReaderRenderAheadContractTests {
         #expect(!ledger.commitFinal(
             token: .init(
                 id: second,
-                contentRevision: 1,
                 canonicalWidth: 351,
                 generation: generation
             ),
@@ -164,151 +159,6 @@ struct MarkdownReaderRenderAheadContractTests {
     }
 
     @MainActor
-    @Test("touch-down cancels queued follow and focus before the main queue drains")
-    func touchDownOwnsViewportBeforeDrag() async throws {
-        let content = (0..<70).map {
-            "Streaming paragraph \($0) with enough prose to keep the reader scrollable."
-        }.joined(separator: "\n\n")
-        let stream = ThinkingTraceStream(text: content, isDone: false)
-        let body = NativeFullScreenMarkdownBody(
-            content: content,
-            stream: stream,
-            palette: ThemeID.dark.palette,
-            reviewCommentSelectionRouter: nil,
-            reviewCommentSourceContext: nil
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
-        window.addSubview(body)
-        body.frame = window.bounds
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-
-        body.layoutIfNeeded()
-        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
-        collection.layoutIfNeeded()
-        collection.contentOffset.y = min(240, max(0, collection.contentSize.height - collection.bounds.height))
-        let ownedOffset = collection.contentOffset.y
-        body.debugResetOffsetWriteReasonsForTesting()
-
-        body.debugQueueAutomaticViewportWritesForTesting(focusY: 0)
-        body.debugHandleTouchDownForTesting()
-        await drainMainQueue()
-        await drainMainQueue()
-
-        #expect(abs(collection.contentOffset.y - ownedOffset) < 1)
-        #expect(body.debugOffsetWriteReasonsForTesting.isEmpty)
-    }
-
-    @MainActor
-    @Test("tail-following append ticks stay pinned and only owner writes follow-tail offsets")
-    func tailFollowingAppendStaysPinned() async throws {
-        let initial = (0..<55).map {
-            "Streaming paragraph \($0) with enough prose to make a tall reader."
-        }.joined(separator: "\n\n")
-        let stream = ThinkingTraceStream(text: initial, isDone: false)
-        let body = NativeFullScreenMarkdownBody(
-            content: initial,
-            stream: stream,
-            palette: ThemeID.dark.palette,
-            reviewCommentSelectionRouter: nil,
-            reviewCommentSourceContext: nil
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
-        window.addSubview(body)
-        body.frame = window.bounds
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-
-        body.layoutIfNeeded()
-        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
-        collection.layoutIfNeeded()
-        await drainMainQueue()
-        body.layoutIfNeeded()
-        collection.layoutIfNeeded()
-
-        let oldSize = collection.contentSize.height
-        let oldOffset = collection.contentOffset.y
-        body.debugResetOffsetWriteReasonsForTesting()
-        stream.update(
-            text: initial + "\n\nA newly emitted tail paragraph that changes document geometry.",
-            isDone: false
-        )
-        await drainMainQueue()
-        body.layoutIfNeeded()
-        collection.layoutIfNeeded()
-        await drainMainQueue()
-
-        let minimumY = -collection.adjustedContentInset.top
-        let bottomY = max(
-            minimumY,
-            collection.contentSize.height
-                - collection.bounds.height
-                + collection.adjustedContentInset.bottom
-        )
-        #expect(abs(collection.contentOffset.y - bottomY) < 1)
-        #expect(abs(
-            (collection.contentOffset.y - oldOffset)
-                - (collection.contentSize.height - oldSize)
-        ) < 1)
-        #expect(!body.debugOffsetWriteReasonsForTesting.isEmpty)
-        #expect(body.debugOffsetWriteReasonsForTesting.allSatisfy { $0 == .followTail })
-    }
-
-    @MainActor
-    @Test("append ticks retain prefix geometry and a detached reading anchor")
-    func appendTicksRetainPrefixAndDetachedAnchor() async throws {
-        let initial = (0..<45).map {
-            "Stable paragraph \($0) with enough prose to make a tall reader."
-        }.joined(separator: "\n\n") + "\n\nMutable tail"
-        let stream = ThinkingTraceStream(text: initial, isDone: false)
-        let body = NativeFullScreenMarkdownBody(
-            content: initial,
-            stream: stream,
-            palette: ThemeID.dark.palette,
-            reviewCommentSelectionRouter: nil,
-            reviewCommentSourceContext: nil
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
-        window.addSubview(body)
-        body.frame = window.bounds
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-
-        body.layoutIfNeeded()
-        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
-        collection.layoutIfNeeded()
-        await drainMainQueue()
-
-        body.scrollViewWillBeginDragging(collection)
-        collection.contentOffset.y = max(0, collection.contentSize.height / 2)
-        body.scrollViewDidEndDragging(collection, willDecelerate: false)
-        collection.layoutIfNeeded()
-        let anchorBefore = try #require(body.debugVisibleAnchorForTesting())
-        let idsBefore = body.debugRenderedSegmentIDsForTesting
-        let prefixHeights = idsBefore.dropLast().indices.map {
-            body.debugReservedHeightForTesting($0)
-        }
-        body.debugResetOffsetWriteReasonsForTesting()
-
-        stream.update(text: initial + " grows without moving the reader.", isDone: false)
-        await drainMainQueue()
-        body.layoutIfNeeded()
-        collection.layoutIfNeeded()
-        await drainMainQueue()
-
-        let idsAfter = body.debugRenderedSegmentIDsForTesting
-        #expect(Array(idsAfter.prefix(idsBefore.count)) == idsBefore)
-        for (index, expected) in prefixHeights.enumerated() {
-            #expect(body.debugReservedHeightForTesting(index) == expected)
-        }
-        let anchorAfter = try #require(body.debugVisibleAnchorForTesting())
-        #expect(anchorAfter.item == anchorBefore.item)
-        #expect(abs(anchorAfter.screenY - anchorBefore.screenY) < 1)
-        #expect(!body.debugOffsetWriteReasonsForTesting.contains(.followTail))
-        #expect(!body.debugOffsetWriteReasonsForTesting.contains(.explicitFocus))
-    }
-
-    @MainActor
     @Test("canonical width and initial visible geometry are final at first display")
     func initialVisibleGeometryUsesCanonicalWidth() throws {
         let content = (0..<30).map {
@@ -318,7 +168,6 @@ struct MarkdownReaderRenderAheadContractTests {
         for width: CGFloat in [375, 393, 430] {
             let body = NativeFullScreenMarkdownBody(
                 content: content,
-                stream: nil,
                 palette: ThemeID.dark.palette,
                 reviewCommentSelectionRouter: nil,
                 reviewCommentSourceContext: nil
@@ -345,143 +194,6 @@ struct MarkdownReaderRenderAheadContractTests {
     }
 
     @MainActor
-    @Test("tracking and decelerating stream ticks keep the mounted snapshot intact")
-    func interactionDefersWholeSnapshotMutation() async throws {
-        for decelerating in [false, true] {
-            let initial = (0..<50).map { "Stable visible paragraph \($0)." }
-                .joined(separator: "\n\n")
-            let stream = ThinkingTraceStream(text: initial, isDone: false)
-            let body = NativeFullScreenMarkdownBody(
-                content: initial,
-                stream: stream,
-                palette: ThemeID.dark.palette,
-                reviewCommentSelectionRouter: nil,
-                reviewCommentSourceContext: nil
-            )
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
-            window.addSubview(body)
-            body.frame = window.bounds
-            window.makeKeyAndVisible()
-            defer {
-                body.debugSetCollectionUserInteractingForTesting(nil)
-                window.isHidden = true
-            }
-
-            body.layoutIfNeeded()
-            let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
-            collection.layoutIfNeeded()
-            body.scrollViewWillBeginDragging(collection)
-            if decelerating {
-                body.scrollViewDidEndDragging(collection, willDecelerate: true)
-            }
-            body.debugSetCollectionUserInteractingForTesting(true)
-            let visibleBefore = collection.visibleCells.count
-            let renderedBefore = body.debugRenderedSourceTextForTesting
-
-            let updated = initial + "\n\nA deferred streaming tail."
-            stream.update(text: updated, isDone: false)
-            await drainMainQueue()
-            collection.layoutIfNeeded()
-
-            #expect(body.debugHasPendingInteractionSnapshotForTesting)
-            #expect(body.debugRenderedSourceTextForTesting == renderedBefore)
-            #expect(collection.visibleCells.count == visibleBefore)
-            #expect(collection.visibleCells.allSatisfy { !$0.contentView.subviews.isEmpty })
-
-            body.debugSetCollectionUserInteractingForTesting(false)
-            if decelerating {
-                body.scrollViewDidEndDecelerating(collection)
-            } else {
-                body.scrollViewDidEndDragging(collection, willDecelerate: false)
-            }
-            let applied = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
-                body.debugRenderedSourceTextForTesting == updated
-            }
-            #expect(applied)
-            #expect(!body.debugHasPendingInteractionSnapshotForTesting)
-        }
-    }
-
-    @MainActor
-    @Test("production update defers interaction and retains append prefix state")
-    func productionUpdateDefersAndRetainsPrefixState() async throws {
-        let initial = (0..<36).map { index in
-            "```text\nstable block \(index) \(String(repeating: "word ", count: 10))\n```"
-        }.joined(separator: "\n\n")
-        let body = NativeFullScreenMarkdownBody(
-            content: initial,
-            stream: nil,
-            isStreaming: true,
-            palette: ThemeID.dark.palette,
-            reviewCommentSelectionRouter: nil,
-            reviewCommentSourceContext: nil
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
-        window.addSubview(body)
-        body.frame = window.bounds
-        window.makeKeyAndVisible()
-        defer {
-            body.debugSetCollectionUserInteractingForTesting(nil)
-            window.isHidden = true
-        }
-
-        body.layoutIfNeeded()
-        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
-        collection.layoutIfNeeded()
-        body.debugScrollItemIntoViewForTesting(28)
-        body.scrollViewWillBeginDragging(collection)
-        body.debugSetCollectionUserInteractingForTesting(true)
-
-        let sourceBefore = try #require(body.debugRenderedSourceTextForTesting)
-        let idsBefore = body.debugRenderedSegmentIDsForTesting
-        let revisionsBefore = body.debugRenderedSegmentRevisionsForTesting
-        let committedHeightsBefore = idsBefore.indices.compactMap { index -> (Int, CGFloat)? in
-            guard body.debugHasFinalGeometryForTesting(index),
-                  let height = body.debugReservedHeightForTesting(index) else { return nil }
-            return (index, height)
-        }
-        #expect(!committedHeightsBefore.isEmpty)
-        let parkedBefore = Dictionary(uniqueKeysWithValues: idsBefore.compactMap { id in
-            let count = body.debugParkedViewCountForTesting(id: id)
-            return count > 0 ? (id, count) : nil
-        })
-        #expect(!parkedBefore.isEmpty)
-        let anchorBefore = try #require(body.debugVisibleAnchorForTesting())
-
-        let updated = initial + "\n\n```text\nappended production update\n```"
-        body.update(content: updated, isStreaming: true)
-        await drainMainQueue()
-        collection.layoutIfNeeded()
-
-        #expect(body.debugHasPendingInteractionSnapshotForTesting)
-        #expect(body.debugRenderedSourceTextForTesting == sourceBefore)
-        #expect(body.debugRenderedSegmentIDsForTesting == idsBefore)
-        #expect(body.debugRenderedSegmentRevisionsForTesting == revisionsBefore)
-        #expect(body.debugVisibleAnchorForTesting()?.item == anchorBefore.item)
-        #expect(abs((body.debugVisibleAnchorForTesting()?.screenY ?? 10_000) - anchorBefore.screenY) < 1)
-
-        body.debugSetCollectionUserInteractingForTesting(false)
-        body.scrollViewDidEndDragging(collection, willDecelerate: false)
-        let applied = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
-            body.debugRenderedSourceTextForTesting == updated
-        }
-        #expect(applied)
-        body.layoutIfNeeded()
-        collection.layoutIfNeeded()
-
-        #expect(Array(body.debugRenderedSegmentIDsForTesting.prefix(idsBefore.count)) == idsBefore)
-        for (index, expectedHeight) in committedHeightsBefore {
-            #expect(body.debugReservedHeightForTesting(index) == expectedHeight)
-        }
-        for (id, count) in parkedBefore {
-            #expect(body.debugParkedViewCountForTesting(id: id) == count)
-        }
-        let anchorAfter = try #require(body.debugVisibleAnchorForTesting())
-        #expect(anchorAfter.item == anchorBefore.item)
-        #expect(abs(anchorAfter.screenY - anchorBefore.screenY) < 1)
-    }
-
-    @MainActor
     @Test("reader preferences defer during interaction and preserve a mid-document anchor")
     func readerPreferencesDeferAndPreserveAnchor() async throws {
         let content = (0..<42).map { index in
@@ -490,7 +202,6 @@ struct MarkdownReaderRenderAheadContractTests {
         }.joined(separator: "\n\n")
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -511,14 +222,12 @@ struct MarkdownReaderRenderAheadContractTests {
         body.scrollViewWillBeginDragging(collection)
         body.debugSetCollectionUserInteractingForTesting(true)
         let anchorBefore = try #require(body.debugVisibleAnchorForTesting())
-        let revisionsBefore = body.debugRenderedSegmentRevisionsForTesting
         let replacementsBefore = body.debugLayoutReplaceCountForTesting
 
         body.applyReaderPreferences(.init(textScale: 1.3, spacing: .relaxed))
         await drainMainQueue()
         collection.layoutIfNeeded()
 
-        #expect(body.debugRenderedSegmentRevisionsForTesting == revisionsBefore)
         #expect(body.debugLayoutReplaceCountForTesting == replacementsBefore)
         let anchorDuring = try #require(body.debugVisibleAnchorForTesting())
         #expect(anchorDuring.item == anchorBefore.item)
@@ -545,7 +254,6 @@ struct MarkdownReaderRenderAheadContractTests {
         }.joined(separator: "\n\n")
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -714,7 +422,6 @@ struct MarkdownReaderRenderAheadContractTests {
             let content = prefix + "\n\n![cold](\(fixture.name))\n\n```text\nanchor after image\n```"
             let body = NativeFullScreenMarkdownBody(
                 content: content,
-                stream: nil,
                 palette: ThemeID.dark.palette,
                 reviewCommentSelectionRouter: nil,
                 reviewCommentSourceContext: nil,
@@ -793,7 +500,6 @@ struct MarkdownReaderRenderAheadContractTests {
         }.joined(separator: "\n\n")
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -821,7 +527,6 @@ struct MarkdownReaderRenderAheadContractTests {
         for width: CGFloat in [375, 393, 430] {
             let body = NativeFullScreenMarkdownBody(
                 content: content,
-                stream: nil,
                 palette: ThemeID.dark.palette,
                 reviewCommentSelectionRouter: nil,
                 reviewCommentSourceContext: nil,
@@ -884,7 +589,6 @@ struct MarkdownReaderRenderAheadContractTests {
         let width: CGFloat = 393
         let body = NativeFullScreenMarkdownBody(
             content: Self.allKindsDocument,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -1017,7 +721,6 @@ struct MarkdownReaderRenderAheadContractTests {
         let content = prefix + "\n\n![vector](diagram.svg)\n\nTrailing text."
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -1097,67 +800,10 @@ struct MarkdownReaderRenderAheadContractTests {
     }
 
     @MainActor
-    @Test("stale same-index image completion cannot commit into reparsed content")
-    func staleImageResultIsRejectedByImmutableToken() async throws {
-        NativeMarkdownImageView.debugResetPreparedArtifactsForTesting()
-        let oldGate = ReaderImageGate(dataBySuffix: [
-            "old.png": try #require(Self.pngData(size: CGSize(width: 100, height: 100)))
-        ])
-        let newGate = ReaderImageGate(dataBySuffix: [
-            "new.png": try #require(Self.pngData(size: CGSize(width: 60, height: 180)))
-        ])
-        let baseURL = try #require(URL(string: "https://server.example.com"))
-        let initial = "![old](old.png)"
-        let body = NativeFullScreenMarkdownBody(
-            content: initial,
-            stream: nil,
-            palette: ThemeID.dark.palette,
-            reviewCommentSelectionRouter: nil,
-            reviewCommentSourceContext: nil,
-            workspaceID: "stale-image",
-            serverBaseURL: baseURL,
-            sourceFilePath: "docs/race.md",
-            fetchWorkspaceFile: { _, path in
-                if path.hasSuffix("old.png") { return try await oldGate.fetch(path: path) }
-                return try await newGate.fetch(path: path)
-            }
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
-        window.addSubview(body)
-        body.frame = window.bounds
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        body.layoutIfNeeded()
-        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
-        collection.layoutIfNeeded()
-        let oldRevision = try #require(body.debugRenderedSegmentRevisionsForTesting.first)
-
-        body.update(content: "![new](new.png)", isStreaming: false)
-        body.layoutIfNeeded()
-        collection.layoutIfNeeded()
-        let newRevision = try #require(body.debugRenderedSegmentRevisionsForTesting.first)
-        #expect(newRevision != oldRevision)
-        let heightBeforeOldCompletion = try #require(body.debugReservedHeightForTesting(0))
-
-        await oldGate.release()
-        await drainMainQueue()
-        await drainMainQueue()
-        #expect(body.debugReservedHeightForTesting(0) == heightBeforeOldCompletion)
-
-        await newGate.release()
-        let newCommitted = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
-            (body.debugReservedHeightForTesting(0) ?? 0) > heightBeforeOldCompletion + 100
-        }
-        #expect(newCommitted)
-        #expect(body.debugHasFinalGeometryForTesting(0))
-    }
-
-    @MainActor
     @Test("graphical eviction keeps committed geometry and anchor on production redisplay")
     func graphicalEvictionRetainsGeometry() async throws {
         let body = NativeFullScreenMarkdownBody(
             content: Self.allKindsDocument,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil

@@ -388,6 +388,14 @@ struct ToolTimelineRowModeDispatchTests {
 
         let installInvalidationCount = invalidationCount
         #expect(installInvalidationCount > 0, "Installing the viewport must invalidate the outer row")
+        #expect(
+            timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view) != nil,
+            "Expanded streaming Markdown must use the shared incremental renderer"
+        )
+        #expect(
+            timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: view) == nil,
+            "The immutable render-ahead reader must not own mutable tool Markdown"
+        )
 
         let viewportConstraint = try #require(
             privateConstraint(named: "expandedViewportHeightConstraint", in: view)

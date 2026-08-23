@@ -3272,7 +3272,6 @@ struct NativeMarkdownImageViewTests {
     @Test func fullScreenMarkdownBodyDoesNotFetchSessionAbsolutePaths() {
         let body = NativeFullScreenMarkdownBody(
             content: "![Generated chart](/tmp/chart.png)",
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,

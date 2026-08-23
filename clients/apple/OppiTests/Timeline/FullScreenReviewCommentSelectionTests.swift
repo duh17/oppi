@@ -149,7 +149,6 @@ struct FullScreenReviewCommentSelectionTests {
         let anchor = try #require(SourceLineAnchor(startLine: 6, endLine: 12))
         let body = NativeFullScreenMarkdownBody(
             content: "# Intro\n\nBefore\n\n## Focus\n\nFirst focused block\n\nSecond focused block\n\nAfter",
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -501,7 +500,6 @@ struct FullScreenReviewCommentSelectionTests {
         )
         let body = NativeFullScreenMarkdownBody(
             content: "Intro\n\n```swift\nlet one = 1\nlet two = 2\n```\n\nDone",
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: router,
             reviewCommentSourceContext: ReviewCommentSourceContext(
@@ -565,7 +563,6 @@ struct FullScreenReviewCommentSelectionTests {
         )
         let body = NativeFullScreenMarkdownBody(
             content: "| Item | Status |\n| --- | --- |\n| Destination | Needs review |",
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: router,
             reviewCommentSourceContext: ReviewCommentSourceContext(
@@ -842,7 +839,6 @@ struct FullScreenReviewCommentSelectionTests {
 
         let body = NativeFullScreenMarkdownBody(
             content: "# OLED heading\n\nBody",
-            stream: nil,
             themeID: .oled,
             palette: ThemeID.oled.palette,
             reviewCommentSelectionRouter: nil,
@@ -920,7 +916,6 @@ struct FullScreenReviewCommentSelectionTests {
     @Test func markdownBodyKeepsAdjacentHeadingAndParagraphInSingleSelectionSurface() throws {
         let body = NativeFullScreenMarkdownBody(
             content: "# Selection heading\n\nParagraph text continues here.",
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -1244,7 +1239,6 @@ struct FullScreenReviewCommentSelectionTests {
 
         let body = NativeFullScreenMarkdownBody(
             content: repeatedSections,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -1286,8 +1280,7 @@ struct FullScreenReviewCommentSelectionTests {
             content: .liveSource(snapshot: stream.snapshot, stream: stream)
         )
 
-        let markdownView = try #require(timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: controller.view))
-        markdownView.debugLayoutVisibleMarkdownCellsForTesting()
+        let markdownView = try #require(timelineFirstView(ofType: NativeMutableFullScreenMarkdownBody.self, in: controller.view))
         let renderedText = timelineAllTextViews(in: markdownView)
             .map { timelineRenderedText(of: $0) }
             .joined(separator: "\n")
@@ -1306,8 +1299,8 @@ struct FullScreenReviewCommentSelectionTests {
             isDone: false,
             finalContent: .markdown(content: nextMarkdown, filePath: nil)
         )
+        markdownView.debugFlushPendingMutableApplyForTesting()
         controller.view.layoutIfNeeded()
-        markdownView.debugLayoutVisibleMarkdownCellsForTesting()
 
         let updatedText = timelineAllTextViews(in: markdownView)
             .map { timelineRenderedText(of: $0) }
@@ -1896,7 +1889,6 @@ struct FullScreenReviewCommentSelectionTests {
     ) -> NativeFullScreenMarkdownBody {
         NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter { captured($0) },
             reviewCommentSourceContext: ReviewCommentSourceContext(

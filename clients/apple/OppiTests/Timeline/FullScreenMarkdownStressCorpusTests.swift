@@ -106,7 +106,6 @@ struct FullScreenMarkdownStressCorpusTests {
 
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -169,7 +168,6 @@ struct FullScreenMarkdownStressCorpusTests {
         let content = try mixedStressFixture()
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -217,7 +215,6 @@ struct FullScreenMarkdownStressCorpusTests {
         let pngData = try #require(Self.tinyPNGData())
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -344,7 +341,6 @@ struct FullScreenMarkdownStressCorpusTests {
         let pngData = try #require(Self.tinyPNGData())
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -457,10 +453,8 @@ struct FullScreenMarkdownStressCorpusTests {
             contentsOf: fixtureURL("mermaid-rendering-gallery.md"),
             encoding: .utf8
         )
-        let stream = ThinkingTraceStream(text: content, isDone: false)
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: stream,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -524,6 +518,16 @@ struct FullScreenMarkdownStressCorpusTests {
         // leave behind immediately before an upward drag starts at the bottom.
         body.setNeedsLayout()
         body.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
+        let settledBottomY = max(
+            -collectionView.adjustedContentInset.top,
+            collectionView.contentSize.height - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        collectionView.setContentOffset(
+            CGPoint(x: collectionView.contentOffset.x, y: settledBottomY),
+            animated: false
+        )
         body.scrollViewWillBeginDragging(collectionView)
 
         body.debugSetCollectionUserInteractingForTesting(true)
@@ -611,7 +615,6 @@ struct FullScreenMarkdownStressCorpusTests {
         let fetchGate = WorkspaceImageFetchGate(data: pngData)
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -697,7 +700,6 @@ struct FullScreenMarkdownStressCorpusTests {
         let fetchGate = WorkspaceImageFetchGate(data: pngData)
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
@@ -870,7 +872,6 @@ struct FullScreenMarkdownStressCorpusTests {
         let content = try String(contentsOf: url, encoding: .utf8)
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,
