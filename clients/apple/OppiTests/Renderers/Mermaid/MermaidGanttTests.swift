@@ -550,6 +550,138 @@ struct MermaidGanttRendererTests {
         #expect(markerLayout.customDraw != nil)
     }
 
+    @Test func compactMilestoneDoesNotShareRowWithSameStartTask() {
+        let parser = MermaidParser()
+        let renderer = MermaidRenderer()
+        let taskOnly = renderer.layout(parser.parse("""
+            ---
+            displayMode: compact
+            ---
+            gantt
+                section Section
+                Task :t1, 2024-01-01, 3d
+            """), configuration: config)
+        // Milestone starts exactly where the task ends; in compact mode it
+        // must get its own row instead of colliding with the task bar.
+        let withMilestone = renderer.layout(parser.parse("""
+            ---
+            displayMode: compact
+            ---
+            gantt
+                section Section
+                Task      :t1, 2024-01-01, 3d
+                Milestone :milestone, after t1, 0d
+            """), configuration: config)
+        let soloHeight = renderer.boundingBox(taskOnly).height
+        let milestoneHeight = renderer.boundingBox(withMilestone).height
+        #expect(milestoneHeight > soloHeight)
+    }
+
+    @Test func compactTaskAfterZeroDayMilestoneGetsOwnRow() {
+        let parser = MermaidParser()
+        let renderer = MermaidRenderer()
+        let releaseOnly = renderer.layout(parser.parse("""
+            ---
+            displayMode: compact
+            ---
+            gantt
+                section Section
+                Release :r1, 2024-01-01, 2d
+            """), configuration: config)
+        // A 0-day milestone followed by a task starting at the same unit:
+        // Release must not join Freeze's zero-length row.
+        let freezeThenRelease = renderer.layout(parser.parse("""
+            ---
+            displayMode: compact
+            ---
+            gantt
+                section Section
+                Freeze  :milestone, f1, 2024-01-01, 0d
+                Release :r1, after f1, 2d
+            """), configuration: config)
+        let soloHeight = renderer.boundingBox(releaseOnly).height
+        let pairHeight = renderer.boundingBox(freezeThenRelease).height
+        #expect(pairHeight > soloHeight)
+    }
+
+    @Test func compactTasksWithDisjointRangesStillShareRow() {
+        let parser = MermaidParser()
+        let renderer = MermaidRenderer()
+        let one = renderer.boundingBox(renderer.layout(parser.parse("""
+            ---
+            displayMode: compact
+            ---
+            gantt
+                section Section
+                Task A :a1, 2024-01-01, 3d
+            """), configuration: config))
+        // Two non-overlapping tasks still pack into a single compact row.
+        let two = renderer.boundingBox(renderer.layout(parser.parse("""
+            ---
+            displayMode: compact
+            ---
+            gantt
+                section Section
+                Task A :a1, 2024-01-01, 3d
+                Task B :a2, after a1, 2d
+            """), configuration: config))
+        #expect(two.height == one.height)
+    }
+
+    @Test func compactLabelCentersWhenItFits() {
+        let placement = MermaidGanttRenderer.compactLabelPlacement(
+            labelWidth: 30,
+            barX: 100,
+            barWidth: 200,
+            chartLeft: 0,
+            chartRight: 400
+        )
+        #expect(placement.alignment == .centerInBar)
+        #expect(placement.x == 100 + (200 - 30) / 2 as CGFloat)
+    }
+
+    @Test func compactLabelMovesRightWhenTooWide() {
+        let placement = MermaidGanttRenderer.compactLabelPlacement(
+            labelWidth: 150,
+            barX: 50,
+            barWidth: 60,
+            chartLeft: 0,
+            chartRight: 400
+        )
+        #expect(placement.alignment == .rightOfBar)
+        #expect(placement.x == 50 + 60 + 4 as CGFloat)
+    }
+
+    @Test func compactLabelMovesLeftWhenRightWouldClip() {
+        let placement = MermaidGanttRenderer.compactLabelPlacement(
+            labelWidth: 150,
+            barX: 320,
+            barWidth: 60,
+            chartLeft: 0,
+            chartRight: 400
+        )
+        #expect(placement.alignment == .leftOfBar)
+        #expect(placement.x == 320 - 4 - 150 as CGFloat)
+    }
+
+    @Test func verticalMarkerLabelsAddHeightBelowChart() {
+        let parser = MermaidParser()
+        let renderer = MermaidRenderer()
+        let withoutMarker = renderer.boundingBox(renderer.layout(parser.parse("""
+            gantt
+                section Section
+                Task :t1, 2024-01-02, 2d
+            """), configuration: config))
+        let withMarker = renderer.boundingBox(renderer.layout(parser.parse("""
+            gantt
+                section Section
+                Deadline :vert, v1, 2024-01-01, 1d
+                Task     :t1, 2024-01-02, 2d
+            """), configuration: config))
+        // Marker names render under the chart, reserving a label band.
+        #expect(withMarker.height > withoutMarker.height)
+    }
+
     @Test func verticalMarkersDoNotShiftTimelineCursor() {
         let parser = MermaidParser()
         let renderer = MermaidRenderer()

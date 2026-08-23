@@ -25,6 +25,43 @@ enum MermaidGanttRenderer {
     private static let rightMargin: CGFloat = 24
     private static let pixelsPerUnit: CGFloat = 30
     private static let milestoneSize: CGFloat = 14
+    /// Reserved band under the bottom axis for vertical marker names.
+    private static let markerLabelBand: CGFloat = 16
+
+    // MARK: - Compact label placement
+
+    /// Where a compact-mode task label sits relative to its bar.
+    enum CompactLabelAlignment: Equatable {
+        /// Label fits inside the bar and is centered in it.
+        case centerInBar
+        /// Label does not fit; drawn just right of the bar end.
+        case rightOfBar
+        /// Right side would clip the chart edge; drawn left of the bar start.
+        case leftOfBar
+    }
+
+    /// Decide where a compact task label is drawn.
+    ///
+    /// Order of preference: centered inside the bar when it fits with
+    /// padding, else to the right of the bar, else to the left when the
+    /// right side would clip past `chartRight`.
+    static func compactLabelPlacement(
+        labelWidth: CGFloat,
+        barX: CGFloat,
+        barWidth: CGFloat,
+        chartLeft: CGFloat,
+        chartRight: CGFloat
+    ) -> (alignment: CompactLabelAlignment, x: CGFloat) {
+        let padding: CGFloat = 8
+        let gap: CGFloat = 4
+        if labelWidth + padding * 2 <= barWidth {
+            return (.centerInBar, barX + (barWidth - labelWidth) / 2)
+        }
+        if barX + barWidth + gap + labelWidth <= chartRight {
+            return (.rightOfBar, barX + barWidth + gap)
+        }
+        return (.leftOfBar, max(chartLeft, barX - gap - labelWidth))
+    }
 
     // MARK: - Public entry point
 
@@ -101,11 +138,20 @@ enum MermaidGanttRenderer {
                         markers.append(RowInfo(task: task, y: y, start: pos.start, length: pos.length))
                         continue
                     }
-                    let rowIndex = firstAvailableCompactRow(start: pos.start, rowEnds: rowEnds)
+                    // A 0-day milestone starting where another task ends would
+                    // visually collide with that bar's label, so it gets its own row.
+                    let rowIndex = task.status == .milestone
+                        ? rowEnds.firstIndex { pos.start > $0 } ?? rowEnds.count
+                        : firstAvailableCompactRow(start: pos.start, rowEnds: rowEnds)
+                    // Reserve at least one unit for a milestone so a following
+                    // same-start task cannot join its zero-length row.
+                    let packEnd = task.status == .milestone
+                        ? pos.start + max(pos.length, 1)
+                        : pos.start + pos.length
                     if rowIndex == rowEnds.count {
-                        rowEnds.append(pos.start + pos.length)
+                        rowEnds.append(packEnd)
                     } else {
-                        rowEnds[rowIndex] = pos.start + pos.length
+                        rowEnds[rowIndex] = packEnd
                     }
                     let rowY = y + CGFloat(rowIndex) * (barHeight + rowSpacing)
                     rows.append(RowInfo(task: task, y: rowY, start: pos.start, length: pos.length))
@@ -127,6 +173,12 @@ enum MermaidGanttRenderer {
 
         let bottomAxisY = y
         y += axisHeight
+        // Vertical marker names draw under the axis instead of overlapping
+        // the chart body, so reserve a band for them when any exist.
+        let hasVerticalMarkers = sectionInfos.contains { !$0.markers.isEmpty }
+        if hasVerticalMarkers {
+            y += markerLabelBand
+        }
         let totalHeight = y + leftMargin
 
         let size = CGSize(width: totalWidth, height: totalHeight)
@@ -199,10 +251,16 @@ enum MermaidGanttRenderer {
                 ctx.strokePath()
                 ctx.restoreGState()
 
+                // Name under the chart, centered on the marker line and
+                // clamped so it stays within the drawing bounds.
                 let markerLine = makeLine(marker.task.name, font: smallFont, color: theme.accentOrange)
+                let nameWidth = CTLineGetBoundsWithOptions(markerLine, []).width
+                let minX = ox + leftMargin
+                let maxX = max(minX, ox + totalWidth - rightMargin - nameWidth)
+                let nameX = min(max(markerX - nameWidth / 2, minX), maxX)
                 drawCTLine(
                     markerLine,
-                    at: CGPoint(x: markerX + 4, y: oy + chartBodyTop + 2),
+                    at: CGPoint(x: nameX, y: oy + bottomAxisY + axisHeight + 2),
                     fontSize: fontSize * 0.85,
                     in: ctx
                 )
@@ -298,13 +356,23 @@ enum MermaidGanttRenderer {
                     }
 
                     if isCompact {
-                        let labelX = task.status == .milestone
-                            ? barX + milestoneSize
-                            : barX + 4
+                        // Diamonds are markers, not bars: measure against the
+                        // diamond size so labels never try to center inside it.
+                        let effectiveBarW = task.status == .milestone
+                            ? milestoneSize
+                            : barW
                         let taskLine = makeLine(task.name, font: smallFont, color: theme.foreground)
+                        let labelWidth = CTLineGetBoundsWithOptions(taskLine, []).width
+                        let placement = MermaidGanttRenderer.compactLabelPlacement(
+                            labelWidth: labelWidth,
+                            barX: barX,
+                            barWidth: effectiveBarW,
+                            chartLeft: ox + chartLeft,
+                            chartRight: ox + chartLeft + timelineWidth
+                        )
                         drawCTLine(
                             taskLine,
-                            at: CGPoint(x: labelX, y: oy + row.y + 3),
+                            at: CGPoint(x: placement.x, y: oy + row.y + 3),
                             fontSize: fontSize * 0.85,
                             in: ctx
                         )
