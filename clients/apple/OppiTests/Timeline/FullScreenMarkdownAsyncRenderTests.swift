@@ -1,5 +1,6 @@
 import Testing
 import UIKit
+import WebKit
 @testable import Oppi
 
 @Suite("Full-screen markdown async rendering")
@@ -201,6 +202,289 @@ struct FullScreenMarkdownAsyncRenderTests {
         )
     }
 
+    /// Regression: embedded rendered visuals must be able to drill down from
+    /// the already-presented Markdown reader without replacing or rebuilding it.
+    @MainActor
+    @Test("reader Mermaid and LaTeX taps open one focused preview and preserve position")
+    func readerVisualTapsOpenFocusedPreviewWithoutStacking() async throws {
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
+
+        let before = (0..<2)
+            .map { "Reader-position filler paragraph \($0), long enough to offset the visual blocks." }
+            .joined(separator: "\n\n")
+        let after = (0..<24)
+            .map { "Trailing filler paragraph \($0), long enough to keep the document scrollable." }
+            .joined(separator: "\n\n")
+        let content = """
+        # Visual previews
+
+        \(before)
+
+        ```mermaid
+        graph TD
+        A-->B
+        ```
+
+        $$
+        \\int_0^1 x^2 \\, dx = \\frac{1}{3}
+        $$
+
+        \(after)
+        """
+        let fixture = makeWindowedReader(content: content)
+        defer { fixture.window.isHidden = true }
+
+        let collectionView = try #require(
+            timelineFirstView(ofType: UICollectionView.self, in: fixture.reader.view)
+        )
+        collectionView.layoutIfNeeded()
+        let readingOffset = min(
+            280,
+            max(
+                -collectionView.adjustedContentInset.top,
+                collectionView.contentSize.height
+                    - collectionView.bounds.height
+                    + collectionView.adjustedContentInset.bottom
+            )
+        )
+        collectionView.setContentOffset(
+            CGPoint(x: collectionView.contentOffset.x, y: readingOffset),
+            animated: false
+        )
+        collectionView.layoutIfNeeded()
+        let preservedReadingOffset = collectionView.contentOffset.y
+
+        let mermaid = try #require(
+            timelineFirstView(ofType: NativeMermaidBlockView.self, in: fixture.reader.view)
+        )
+        #expect(
+            UIApplication.shared.sendAction(
+                NSSelectorFromString("handleTap"),
+                to: mermaid,
+                from: nil,
+                for: nil
+            )
+        )
+        let mermaidPreview = try #require(
+            fixture.reader.presentedViewController as? FullScreenCodeViewController,
+            "Mermaid tap from the full-screen Markdown reader did not open a focused preview"
+        )
+        mermaidPreview.loadViewIfNeeded()
+        let mermaidAppeared = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+            mermaidPreview.view.window != nil && mermaidPreview.transitionCoordinator == nil
+        }
+        #expect(mermaidAppeared)
+
+        // Replaying the source action while the focused viewer is already open
+        // must not grow another modal layer.
+        _ = UIApplication.shared.sendAction(
+            NSSelectorFromString("handleTap"),
+            to: mermaid,
+            from: nil,
+            for: nil
+        )
+        #expect(mermaidPreview.presentedViewController == nil)
+        fixture.reader.dismiss(animated: false)
+        let mermaidDismissed = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+            fixture.reader.presentedViewController == nil
+        }
+        #expect(mermaidDismissed)
+        #expect(abs(collectionView.contentOffset.y - preservedReadingOffset) < 1)
+
+        let latex = try #require(
+            timelineFirstView(ofType: NativeLatexBlockView.self, in: fixture.reader.view)
+        )
+        #expect(
+            UIApplication.shared.sendAction(
+                NSSelectorFromString("handleTap"),
+                to: latex,
+                from: nil,
+                for: nil
+            )
+        )
+        let latexPreview = try #require(
+            fixture.reader.presentedViewController as? FullScreenCodeViewController,
+            "LaTeX tap from the full-screen Markdown reader did not open a focused preview"
+        )
+        #expect(latexPreview !== mermaidPreview)
+        latexPreview.loadViewIfNeeded()
+        let latexAppeared = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+            latexPreview.view.window != nil && latexPreview.transitionCoordinator == nil
+        }
+        #expect(latexAppeared)
+        fixture.reader.dismiss(animated: false)
+        let latexDismissed = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+            fixture.reader.presentedViewController == nil
+        }
+        #expect(latexDismissed)
+        #expect(abs(collectionView.contentOffset.y - preservedReadingOffset) < 1)
+    }
+
+    @MainActor
+    @Test("image inspection derives MIME from bytes without a usable extension")
+    func imageInspectionDerivesMimeTypeFromBytes() throws {
+        let gif = try #require(Data(
+            base64Encoded: "R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCgABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7"
+        ))
+        let webP = try #require(Data(
+            base64Encoded: "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA"
+        ))
+        let png = try #require(makePreviewTestImage().pngData())
+
+        #expect(ImageMediaInspector.inspect(data: gif, mimeType: nil).normalizedMimeType == "image/gif")
+        #expect(ImageMediaInspector.inspect(data: webP, mimeType: nil).normalizedMimeType == "image/webp")
+        #expect(
+            ImageMediaInspector.inspect(data: png, mimeType: "image/gif").normalizedMimeType == "image/png",
+            "PNG/APNG bytes must override a stale extension-derived GIF hint"
+        )
+    }
+
+    @MainActor
+    @Test("reader image taps route raster, animated, and SVG previews")
+    func readerImageTapsRouteToZoomablePreviewFamilies() async throws {
+        let raster = try #require(makePreviewTestImage().pngData())
+        let animated = try #require(Data(
+            base64Encoded: "R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCgABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7"
+        ))
+        let svg = Data("""
+        <svg xmlns="http://www.w3.org/2000/svg" width="320" height="180">
+          <rect width="320" height="180" fill="#111827"/>
+        </svg>
+        """.utf8)
+        let cases: [(path: String, data: Data, expectedMimeType: String?)] = [
+            ("preview.png", raster, nil),
+            ("preview-without-extension", animated, "image/gif"),
+            ("preview.svg", svg, "image/svg+xml"),
+        ]
+
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animationsWereEnabled) }
+
+        for previewCase in cases {
+            let fixture = makeWindowedReader(
+                content: "# Image preview\n\n![Visual](\(previewCase.path))",
+                workspaceFiles: [previewCase.path: previewCase.data]
+            )
+            let imageView = try #require(
+                timelineFirstView(ofType: NativeMarkdownImageView.self, in: fixture.reader.view)
+            )
+            let loaded = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
+                fixture.reader.view.layoutIfNeeded()
+                return previewCase.expectedMimeType == nil
+                    ? imageView.debugHasRasterPreviewForTesting
+                    : imageView.debugWebRendererSettledForTesting
+            }
+            #expect(loaded, "\(previewCase.path) did not settle into its tappable Markdown image renderer")
+
+            if let expectedMimeType = previewCase.expectedMimeType {
+                #expect(imageView.debugDataPreviewMimeTypeForTesting == expectedMimeType)
+                let renderer = try #require(imageView.debugWebRendererForTesting)
+                #expect(
+                    await webImageElementDecoded(renderer),
+                    "\(previewCase.path) finished navigation but WebKit did not decode the image element"
+                )
+                let tapTarget = try #require(imageView.debugDataPreviewTapTargetForTesting)
+                tapTarget.sendActions(for: .touchUpInside)
+            } else {
+                imageView.debugOpenRasterPreviewForTesting()
+            }
+
+            let opened = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+                presentedController(in: fixture.reader) is UINavigationController
+            }
+            #expect(opened, "\(previewCase.path) tap did not open image preview chrome")
+            let navigation = try #require(
+                presentedController(in: fixture.reader) as? UINavigationController
+            )
+            if previewCase.expectedMimeType != nil {
+                #expect(navigation.viewControllers.first is FullScreenImageDataPreviewViewController)
+            } else {
+                #expect(navigation.viewControllers.first is FullScreenImageViewController)
+            }
+
+            navigation.loadViewIfNeeded()
+            _ = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+                navigation.view.window != nil && navigation.transitionCoordinator == nil
+            }
+            navigation.presentingViewController?.dismiss(animated: false)
+            _ = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+                presentedController(in: fixture.reader) == nil
+            }
+            fixture.window.isHidden = true
+        }
+    }
+
+    @MainActor
+    @Test("extensionless session GIF keeps byte-detected MIME on cache hit")
+    func extensionlessSessionAnimatedImageKeepsMimeTypeOnCacheHit() async throws {
+        let animated = try #require(Data(
+            base64Encoded: "R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCgABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7"
+        ))
+        let sessionID = "session-\(UUID().uuidString)"
+        let url = try #require(SessionFileURL.make(
+            workspaceID: "workspace-visual-preview",
+            sessionID: sessionID,
+            filePath: "generated/animation"
+        ))
+        let host = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        var fetchCount = 0
+        let fetch: NativeMarkdownImageView.FetchSessionFile = { _, _, _ in
+            fetchCount += 1
+            return animated
+        }
+
+        let first = makeWindowedMarkdownImageView(in: host.view)
+        first.apply(
+            url: url,
+            alt: "Animated preview",
+            fetchWorkspaceFile: nil,
+            fetchSessionFile: fetch
+        )
+        let firstSettled = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
+            host.view.layoutIfNeeded()
+            return first.debugWebRendererSettledForTesting
+        }
+        #expect(firstSettled)
+        #expect(first.debugDataPreviewMimeTypeForTesting == "image/gif")
+        let firstRenderer = try #require(first.debugWebRendererForTesting)
+        #expect(await webImageElementDecoded(firstRenderer))
+        #expect(fetchCount == 1)
+
+        first.removeFromSuperview()
+        let cached = makeWindowedMarkdownImageView(in: host.view)
+        cached.apply(
+            url: url,
+            alt: "Animated preview",
+            fetchWorkspaceFile: nil,
+            fetchSessionFile: fetch
+        )
+        let cacheHitSettled = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
+            host.view.layoutIfNeeded()
+            return cached.debugWebRendererSettledForTesting
+        }
+        #expect(cacheHitSettled)
+        #expect(fetchCount == 1, "Cache hit unexpectedly fetched the session image again")
+        #expect(cached.debugDataPreviewMimeTypeForTesting == "image/gif")
+        let cachedRenderer = try #require(cached.debugWebRendererForTesting)
+        #expect(await webImageElementDecoded(cachedRenderer))
+
+        let tapTarget = try #require(cached.debugDataPreviewTapTargetForTesting)
+        tapTarget.sendActions(for: .touchUpInside)
+        let opened = await waitForTimelineCondition(timeoutMs: 500) { @MainActor in
+            host.presentedViewController is UINavigationController
+        }
+        #expect(opened, "The real animated-image tap control did not open focused preview chrome")
+        host.dismiss(animated: false)
+    }
+
     /// Regression: entering a Mermaid cell can schedule a layout pass while a
     /// streaming reader is still following the tail. If the user starts an
     /// upward drag at the bottom before that queued follow executes, the queued
@@ -310,6 +594,85 @@ struct FullScreenMarkdownAsyncRenderTests {
             )
             #expect(codeBlock.debugWrapButtonAccessibilityLabelForTesting == "Wrap code lines")
             #expect(codeBlock.debugWrapButtonAccessibilityValueForTesting == "Off")
+        }
+    }
+
+    @MainActor
+    private func makeWindowedReader(
+        content: String,
+        workspaceFiles: [String: Data] = [:]
+    ) -> (window: UIWindow, reader: FullScreenCodeViewController) {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first else {
+            fatalError("Missing UIWindowScene for FullScreenMarkdownAsyncRenderTests")
+        }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let workspaceContext: FullScreenCodeContent.WorkspaceContext? = workspaceFiles.isEmpty ? nil : .init(
+            workspaceID: "workspace-visual-preview",
+            serverBaseURL: URL(string: "https://example.com/api")!,
+            fetchWorkspaceFile: { _, path in
+                guard let data = workspaceFiles[path] else {
+                    throw CocoaError(.fileNoSuchFile)
+                }
+                return data
+            }
+        )
+        let reader = FullScreenCodeViewController(
+            content: .markdown(
+                content: content,
+                filePath: "preview.md",
+                workspaceContext: workspaceContext
+            )
+        )
+        window.rootViewController = reader
+        window.makeKeyAndVisible()
+        reader.loadViewIfNeeded()
+        reader.view.frame = window.bounds
+        reader.view.layoutIfNeeded()
+        return (window, reader)
+    }
+
+    @MainActor
+    private func presentedController(in root: UIViewController) -> UIViewController? {
+        if let presented = root.presentedViewController {
+            return presented
+        }
+        for child in root.children {
+            if let presented = presentedController(in: child) {
+                return presented
+            }
+        }
+        return nil
+    }
+
+    @MainActor
+    private func makeWindowedMarkdownImageView(in host: UIView) -> NativeMarkdownImageView {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 20, y: 100, width: 350, height: 220)
+        host.addSubview(view)
+        host.layoutIfNeeded()
+        return view
+    }
+
+    @MainActor
+    private func webImageElementDecoded(_ webView: WKWebView) async -> Bool {
+        await withCheckedContinuation { continuation in
+            webView.evaluateJavaScript(
+                "document.images.length === 1 && document.images[0].complete && document.images[0].naturalWidth > 0 && document.images[0].naturalHeight > 0"
+            ) { value, error in
+                continuation.resume(returning: error == nil && (value as? Bool) == true)
+            }
+        }
+    }
+
+    @MainActor
+    private func makePreviewTestImage() -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 160, height: 100))
+        return renderer.image { context in
+            UIColor.systemIndigo.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 160, height: 100))
         }
     }
 

@@ -3484,7 +3484,7 @@ extension NativeFullScreenSourceBody {
 /// Fullscreen body for rendered document types. Hosts either a UITextView
 /// (attributed string renderers like Org Mode) or a custom drawing view
 /// (Core Graphics renderers like LaTeX, Mermaid) inside a scroll view.
-final class NativeFullScreenRenderedDocumentBody: UIView {
+final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
 
     enum DocumentContent {
         case orgMode(String)
@@ -3492,9 +3492,15 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         case mermaid(String)
     }
 
+    private struct LatexView {
+        let view: UIView
+        let isGraphical: Bool
+    }
+
     private let scrollView = UIScrollView()
     private let readerPreferences: FullScreenReaderPreferences
     private let themeID: ThemeID
+    private var latexZoomContentView: UIView?
 
     init(
         content: DocumentContent,
@@ -3536,14 +3542,19 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
 
             let contentView: UIView
             let allowsHorizontalOverflow: Bool
+            let enablesGraphicalZoom: Bool
             switch content {
             case .orgMode(let text):
                 contentView = makeOrgView(text: text)
                 allowsHorizontalOverflow = false
+                enablesGraphicalZoom = false
             case .latex(let text):
-                contentView = makeLatexView(text: text)
+                let latex = makeLatexView(text: text)
+                contentView = latex.view
                 allowsHorizontalOverflow = true
+                enablesGraphicalZoom = latex.isGraphical
                 scrollView.accessibilityIdentifier = "fullscreen-latex.scroll"
+                scrollView.accessibilityLabel = "Full-screen formula"
             case .mermaid:
                 fatalError("Handled above")
             }
@@ -3579,13 +3590,58 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
                 // Text-based Org rendering still needs a viewport width reference.
                 viewportWidth.isActive = true
             }
+
+            if enablesGraphicalZoom {
+                latexZoomContentView = contentView
+                scrollView.minimumZoomScale = 1
+                scrollView.maximumZoomScale = 4
+                scrollView.bouncesZoom = true
+                scrollView.delegate = self
+                DoubleTapZoom.install(
+                    on: scrollView,
+                    target: self,
+                    action: #selector(handleLatexDoubleTap(_:))
+                )
+                updateLatexAccessibilityValue()
+            }
         }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    private func makeLatexView(text: String) -> UIView {
+    @objc private func handleLatexDoubleTap(_ gesture: UITapGestureRecognizer) {
+        guard let latexZoomContentView else { return }
+        DoubleTapZoom.toggle(
+            in: scrollView,
+            tapInContent: gesture.location(in: latexZoomContentView),
+            fitScale: scrollView.minimumZoomScale
+        )
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        latexZoomContentView
+    }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        updateLatexAccessibilityValue()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateLatexAccessibilityValue()
+    }
+
+    private func updateLatexAccessibilityValue() {
+        guard latexZoomContentView != nil else { return }
+        let zoomPercent = Int((scrollView.zoomScale * 100).rounded())
+        let horizontalOffset = max(
+            0,
+            scrollView.contentOffset.x + scrollView.adjustedContentInset.left
+        )
+        scrollView.accessibilityValue = "Zoom \(zoomPercent) percent, horizontal offset \(Int(horizontalOffset.rounded())) points"
+    }
+
+    private func makeLatexView(text: String) -> LatexView {
         let config = RenderConfiguration(
             fontSize: UIFont.preferredFont(forTextStyle: .title1).pointSize * readerPreferences.textScale,
             maxWidth: 800,
@@ -3594,9 +3650,12 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         )
         let multiLayout = DocumentRenderPipeline.layoutLatexExpressions(text: text, config: config)
         if let source = multiLayout.exactSourceFallback {
-            return DocumentRenderPipeline.makeLatexSourceFallbackView(
-                source: source,
-                palette: themeID.palette
+            return LatexView(
+                view: DocumentRenderPipeline.makeLatexSourceFallbackView(
+                    source: source,
+                    palette: themeID.palette
+                ),
+                isGraphical: false
             )
         }
 
@@ -3621,7 +3680,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
             stack.addArrangedSubview(drawView)
         }
 
-        return stack
+        return LatexView(view: stack, isGraphical: true)
     }
 
     private func makeOrgView(text: String) -> UIView {
@@ -3654,3 +3713,17 @@ final class NativeFullScreenRenderedDocumentBody: UIView {
         return ZoomableGraphicalView(size: layout.size, draw: layout.draw)
     }
 }
+
+#if DEBUG
+extension NativeFullScreenRenderedDocumentBody {
+    func debugToggleLatexZoomForTesting(at pointInContent: CGPoint) {
+        guard let latexZoomContentView else { return }
+        DoubleTapZoom.toggle(
+            in: scrollView,
+            tapInContent: pointInContent,
+            fitScale: scrollView.minimumZoomScale,
+            animated: false
+        )
+    }
+}
+#endif

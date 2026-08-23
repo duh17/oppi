@@ -3,6 +3,7 @@ import AVKit
 import ImageIO
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import WebKit
 
 // MARK: - Image Viewport Sizing
@@ -421,18 +422,26 @@ enum ImageMediaInspector {
     }
 
     static func inspect(data: Data, mimeType: String?) -> Info {
-        let normalizedMimeType = MediaMimeType.normalized(mimeType)
+        let hintedMimeType = MediaMimeType.normalized(mimeType)
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             // CoreGraphics doesn't understand this format. Check whether it's
             // SVG (which needs a WebKit renderer) or truly undecodable.
             let isSVG = MediaMimeType.isSVGData(data)
             return Info(
-                normalizedMimeType: isSVG ? "image/svg+xml" : normalizedMimeType,
+                normalizedMimeType: isSVG ? "image/svg+xml" : hintedMimeType,
                 isAnimated: false,
                 pixelSize: nil
             )
         }
 
+        // Image URLs are not reliable type evidence: session-file names live
+        // in a query item, caches retain bytes only, and remote URLs may have
+        // no extension. Prefer ImageIO's byte-derived UTI, then normalize its
+        // MIME through UniformTypeIdentifiers before falling back to the hint.
+        let detectedMimeType = CGImageSourceGetType(source).flatMap { sourceType in
+            UTType(sourceType as String)?.preferredMIMEType
+        }
+        let normalizedMimeType = MediaMimeType.normalized(detectedMimeType) ?? hintedMimeType
         let frameCount = CGImageSourceGetCount(source)
         let pixelSize: CGSize?
         if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

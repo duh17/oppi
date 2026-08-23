@@ -922,6 +922,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
         XCTAssertTrue(wideFormula.waitForExistence(timeout: 5), "Wide formula did not render")
         XCTAssertTrue(wideFormula.isHittable, "Wide formula could not be opened")
+        let readerPositionBeforePreview = wideFormula.frame
         wideFormula.tap()
 
         let latexScroll = app.scrollViews["fullscreen-latex.scroll"]
@@ -931,16 +932,38 @@ final class ScreenshotPreviewUITests: XCTestCase {
         sleep(1) // Let the sheet presentation settle before capturing layout evidence.
         saveScreenshot(name: "latex-fullscreen-layout-leading")
 
+        let fitValue = try XCTUnwrap(latexScroll.value as? String)
+        latexScroll.doubleTap()
+        let zoomed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != %@", fitValue),
+            object: latexScroll
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [zoomed], timeout: 3),
+            .completed,
+            "Real double-tap did not change the formula zoom state"
+        )
+        let zoomedValue = try XCTUnwrap(latexScroll.value as? String)
+        XCTAssertTrue(zoomedValue.contains("Zoom"), "Formula zoom state was not exposed to UI automation")
+        XCTAssertNotEqual(zoomedValue, fitValue)
+        saveScreenshot(name: "latex-fullscreen-double-tap-zoom")
+
         latexScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).press(
             forDuration: 0.1,
             thenDragTo: latexScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5))
         )
+        let panned = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != %@", zoomedValue),
+            object: latexScroll
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [panned], timeout: 3),
+            .completed,
+            "Real drag did not pan the zoomed formula"
+        )
         saveScreenshot(name: "latex-fullscreen-horizontal-pan")
 
-        // Return to the leading edge, then prove the modal navigation gesture
-        // remains available after the formula consumed horizontal pans.
-        latexScroll.swipeRight()
-        latexScroll.swipeDown()
+        dismiss.tap()
         let dismissed = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"),
             object: dismiss
@@ -948,7 +971,15 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertEqual(
             XCTWaiter.wait(for: [dismissed], timeout: 5),
             .completed,
-            "Full-screen formula did not dismiss after horizontal panning"
+            "Full-screen formula did not dismiss after zooming and panning"
+        )
+        XCTAssertTrue(wideFormula.waitForExistence(timeout: 3), "Underlying formula did not return after dismissal")
+        XCTAssertTrue(wideFormula.isHittable, "Underlying formula returned at a different reading position")
+        XCTAssertEqual(
+            wideFormula.frame.minY,
+            readerPositionBeforePreview.minY,
+            accuracy: 2,
+            "Dismissing the focused preview changed the reader's visual position"
         )
     }
 

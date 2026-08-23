@@ -36,9 +36,10 @@ final class NativeMarkdownImageView: UIView {
     /// Created lazily on first SVG load to avoid WKWebView overhead for
     /// raster-image-only messages.
     private var svgWebView: ReviewCommentWKWebView?
-    private var svgTapOverlay: UIView?
+    private var svgTapOverlay: UIControl?
     private let svgHTMLTracker = HTMLContentTracker()
     private var svgPreviewData: Data?
+    private var svgPreviewMimeType: String?
 
     private var currentURL: URL?
     private var pendingRemoteLoad: PendingImageLoad?
@@ -201,6 +202,7 @@ final class NativeMarkdownImageView: UIView {
         guard url != currentURL else { return }
         currentURL = url
         svgPreviewData = nil
+        svgPreviewMimeType = nil
         svgHTMLTracker.resetLoadedContent()
         #if DEBUG
         debugPixelReservedHeightForTesting = nil
@@ -214,7 +216,10 @@ final class NativeMarkdownImageView: UIView {
             return
         }
         if let cachedSVGData = Self.svgDataCache.object(forKey: url as NSURL) {
-            showSVGLoadedState(data: cachedSVGData as Data)
+            showSVGLoadedState(
+                data: cachedSVGData as Data,
+                mimeType: MediaMimeType.imageMimeType(forPathExtension: url.pathExtension)
+            )
             return
         }
 
@@ -351,6 +356,17 @@ final class NativeMarkdownImageView: UIView {
 
     private func presentFetchedImageData(_ data: Data, url: URL, filePath: String) async -> Bool {
         reserveHeightIfPixelSizeKnown(in: data)
+        let pathMimeType = MediaMimeType.imageMimeType(forPathExtension: (filePath as NSString).pathExtension)
+        let inspection = ImageMediaInspector.inspect(data: data, mimeType: pathMimeType)
+        if inspection.prefersWebRenderer {
+            let mimeType = MediaMimeType.safeImageMimeType(
+                inspection.normalizedMimeType,
+                fallback: MediaMimeType.isSVGData(data) ? "image/svg+xml" : "image/gif"
+            )
+            Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
+            showSVGLoadedState(data: data, mimeType: mimeType)
+            return true
+        }
         if let image = await Self.decodeRasterImage(data: data) {
             Self.imageCache.setObject(image, forKey: url as NSURL)
             showLoadedState(image: image)
@@ -358,7 +374,7 @@ final class NativeMarkdownImageView: UIView {
         }
         if MediaMimeType.isSVGData(data) || filePath.lowercased().hasSuffix(".svg") {
             Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
-            showSVGLoadedState(data: data)
+            showSVGLoadedState(data: data, mimeType: "image/svg+xml")
             return true
         }
         return false
@@ -511,12 +527,16 @@ final class NativeMarkdownImageView: UIView {
         backgroundColor = .clear
     }
 
-    /// Render SVG data in a WKWebView. Called when `UIImage(data:)` fails
-    /// but the content is detected as SVG.
-    private func showSVGLoadedState(data: Data) {
+    /// Render SVG or animated image data in a WKWebView.
+    private func showSVGLoadedState(data: Data, mimeType: String?) {
         showSVGLoadingWebState()
 
-        let aspectRatio = MediaMimeType.extractSVGViewBoxAspectRatio(data)
+        let inspection = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
+        let normalizedMimeType = MediaMimeType.safeImageMimeType(
+            inspection.normalizedMimeType,
+            fallback: MediaMimeType.isSVGData(data) ? "image/svg+xml" : "image/gif"
+        )
+        let aspectRatio = inspection.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
 
         if let aspectRatio,
            let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(1.0 / aspectRatio) {
@@ -526,16 +546,17 @@ final class NativeMarkdownImageView: UIView {
         }
 
         svgPreviewData = data
+        svgPreviewMimeType = normalizedMimeType
         let webView = ensureSVGWebView()
         webView.isHidden = true
         ensureSVGTapOverlay().isHidden = true
-        queueSVGHTML(makeSVGHTML(data: data), in: webView)
+        queueSVGHTML(makeSVGHTML(data: data, mimeType: normalizedMimeType), in: webView)
     }
 
-    /// Create an HTML document that embeds SVG data for WKWebView rendering.
+    /// Create an HTML document that embeds image data for WKWebView rendering.
     /// Uses a data URI via `<img>` for simplicity and consistency with
     /// `AnimatedImageWebContainerView`.
-    private func makeSVGHTML(data: Data) -> String {
+    private func makeSVGHTML(data: Data, mimeType: String) -> String {
         let base64 = data.base64EncodedString()
         return """
         <!doctype html>
@@ -565,7 +586,7 @@ final class NativeMarkdownImageView: UIView {
           </style>
         </head>
         <body>
-          <img src="data:image/svg+xml;base64,\(base64)" />
+          <img src="data:\(mimeType);base64,\(base64)" />
         </body>
         </html>
         """
@@ -604,20 +625,19 @@ final class NativeMarkdownImageView: UIView {
             && webView.bounds.height > 0
     }
 
-    private func ensureSVGTapOverlay() -> UIView {
+    private func ensureSVGTapOverlay() -> UIControl {
         if let existing = svgTapOverlay {
             return existing
         }
 
-        let overlay = UIView()
+        let overlay = UIControl()
         overlay.translatesAutoresizingMaskIntoConstraints = false
         overlay.backgroundColor = .clear
         overlay.isUserInteractionEnabled = true
         overlay.accessibilityIdentifier = "markdown-image.svg.tap-overlay"
         overlay.accessibilityLabel = "Open image preview"
         overlay.accessibilityTraits = [.image, .button]
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleSVGTap))
-        overlay.addGestureRecognizer(tapGesture)
+        overlay.addTarget(self, action: #selector(handleSVGTap), for: .touchUpInside)
 
         addSubview(overlay)
         NSLayoutConstraint.activate([
@@ -735,21 +755,42 @@ final class NativeMarkdownImageView: UIView {
     }
 
     @objc private func handleTap() {
-        guard let image = imageView.image else { return }
-        FullScreenImageViewController.present(image: image)
+        guard let image = imageView.image,
+              let presenter = nearestViewController() else { return }
+        FullScreenImageViewController.present(image: image, from: presenter)
     }
 
     @objc private func handleSVGTap() {
         guard let data = svgPreviewData,
               let presenter = nearestViewController() else { return }
 
-        FullScreenImageDataPreviewPresenter.present(data: data, mimeType: "image/svg+xml", from: presenter)
+        FullScreenImageDataPreviewPresenter.present(
+            data: data,
+            mimeType: svgPreviewMimeType,
+            from: presenter
+        )
     }
 
     private func nearestViewController() -> UIViewController? {
+        if var active = window?.rootViewController {
+            while let presented = active.presentedViewController {
+                active = presented
+            }
+            if active is FullScreenCodeViewController {
+                return active
+            }
+        }
+
         var responder: UIResponder? = self
         while let current = responder {
             if let viewController = current as? UIViewController {
+                var ancestor: UIViewController? = viewController
+                while let node = ancestor {
+                    if node is FullScreenCodeViewController {
+                        return node
+                    }
+                    ancestor = node.parent
+                }
                 return viewController
             }
             responder = current.next
@@ -757,6 +798,36 @@ final class NativeMarkdownImageView: UIView {
         return nil
     }
 }
+
+#if DEBUG
+extension NativeMarkdownImageView {
+    var debugHasRasterPreviewForTesting: Bool {
+        imageView.image != nil && !imageView.isHidden
+    }
+
+    var debugDataPreviewMimeTypeForTesting: String? {
+        svgPreviewMimeType
+    }
+
+    var debugWebRendererSettledForTesting: Bool {
+        guard svgPreviewData != nil,
+              let svgWebView else { return false }
+        return !svgWebView.isLoading && !svgWebView.isHidden
+    }
+
+    var debugWebRendererForTesting: WKWebView? {
+        svgWebView
+    }
+
+    var debugDataPreviewTapTargetForTesting: UIControl? {
+        svgTapOverlay
+    }
+
+    func debugOpenRasterPreviewForTesting() {
+        handleTap()
+    }
+}
+#endif
 
 extension NativeMarkdownImageView: WKNavigationDelegate {
     func webView(

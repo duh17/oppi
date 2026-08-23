@@ -126,6 +126,34 @@ struct DoubleTapZoomTests {
         #expect(abs(hosted.scrollView.zoomScale - 1.0) < 0.02)
     }
 
+    @Test func focusedLatexSupportsPinchPanAndDoubleTapZoom() throws {
+        let controller = FullScreenCodeViewController.makeHarnessController(
+            content: .latex(
+                content: #"\int_0^1 x^2 \, dx = \frac{1}{3}"#,
+                filePath: nil
+            ),
+            reviewCommentSelectionContext: nil
+        )
+        let hosted = try attachFullscreenViewer(controller)
+        let body = try #require(
+            timelineFirstView(ofType: NativeFullScreenRenderedDocumentBody.self, in: controller.view)
+        )
+        let fit = hosted.scrollView.minimumZoomScale
+
+        #expect(hosted.scrollView.pinchGestureRecognizer?.isEnabled == true)
+        #expect(hosted.scrollView.panGestureRecognizer.isEnabled)
+        #expect(hosted.scrollView.maximumZoomScale > hosted.scrollView.minimumZoomScale)
+        #expect(hosted.scrollView.delegate === body)
+        #expect(body.viewForZooming(in: hosted.scrollView) != nil)
+        #expect(doubleTapRecognizerCount(on: hosted.scrollView) == 1)
+
+        body.debugToggleLatexZoomForTesting(at: CGPoint(x: 80, y: 60))
+        #expect(hosted.scrollView.zoomScale > fit + 0.05)
+
+        body.debugToggleLatexZoomForTesting(at: CGPoint(x: 80, y: 60))
+        #expect(abs(hosted.scrollView.zoomScale - fit) < 0.02)
+    }
+
     // MARK: - Fixtures
 
     private struct HostedDiagram {

@@ -145,9 +145,14 @@ final class FullScreenCodeViewController: UIViewController {
         while let presented = presenter.presentedViewController {
             presenter = presented
         }
-        // Don't stack on top of an existing fullscreen viewer.
-        if presenter is FullScreenCodeViewController
-            || presenter is FullScreenImageViewController { return }
+        // A Markdown reader may open one focused rendered visual above itself.
+        // Every other viewer remains terminal so repeated taps cannot grow an
+        // unbounded modal stack.
+        if let codeViewer = presenter as? FullScreenCodeViewController {
+            guard codeViewer.allowsFocusedVisualPreview else { return }
+        } else if isFocusedViewer(presenter) {
+            return
+        }
 
         let controller = FullScreenCodeViewController(
             content: content,
@@ -165,6 +170,26 @@ final class FullScreenCodeViewController: UIViewController {
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID()
             .preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true)
+    }
+
+    private var allowsFocusedVisualPreview: Bool {
+        if case .markdown = currentSemanticContent() {
+            return true
+        }
+        return false
+    }
+
+    private static func isFocusedViewer(_ controller: UIViewController) -> Bool {
+        if controller is FullScreenImageViewController
+            || controller is FullScreenImageDataPreviewViewController {
+            return true
+        }
+        guard let navigation = controller as? UINavigationController else { return false }
+        return navigation.viewControllers.contains {
+            $0 is FullScreenCodeViewController
+                || $0 is FullScreenImageViewController
+                || $0 is FullScreenImageDataPreviewViewController
+        }
     }
 
     deinit {
