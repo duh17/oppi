@@ -6,6 +6,8 @@ enum ToolTimelineRowPresentationHelpers {
     // periphery:ignore - test seam for distinguishing content updates from
     // outer timeline geometry invalidations.
     static var enclosingLayoutInvalidationHookForTesting: (() -> Void)?
+    // periphery:ignore - test seam for an immediate forced-reflow attempt.
+    static var forcedEnclosingLayoutInvalidationHookForTesting: ((UICollectionView) -> Void)?
     // periphery:ignore - test seam for SwiftUI-hosted markdown remeasure.
     static var swiftUIMarkdownRootInvalidationHookForTesting: ((AssistantMarkdownContentView) -> Void)?
     // periphery:ignore - counting oracle for apply-time re-entrancy.
@@ -299,6 +301,9 @@ enum ToolTimelineRowPresentationHelpers {
                 allowDetachedAnchorInvalidation: true,
                 preservingViewportAround: sourceView
             )
+#if DEBUG
+            forcedEnclosingLayoutInvalidationHookForTesting?(collectionView)
+#endif
             return
         }
 
@@ -530,8 +535,17 @@ enum ToolTimelineRowPresentationHelpers {
     ) -> AttachedLayoutTail? {
         guard collectionView.window != nil else { return nil }
         let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller
-        let isAttached = controller?.scrollController?.isCurrentlyNearBottom
-            ?? !((collectionView as? AnchoredCollectionView)?.isDetachedFromBottom ?? false)
+        let isAttached: Bool
+        if let scrollController = controller?.scrollController {
+            isAttached = scrollController.isCurrentlyNearBottom
+        } else if let anchoredCollectionView = collectionView as? AnchoredCollectionView {
+            isAttached = !anchoredCollectionView.isDetachedFromBottom
+        } else {
+            // Forced invalidation is also used by full-screen document readers.
+            // Unknown collection-view hosts must earn bottom attachment from
+            // geometry instead of inheriting the chat timeline's attached state.
+            isAttached = ToolTimelineRowUIHelpers.isNearBottom(collectionView)
+        }
         guard isAttached,
               !isUserInteracting(
                 with: collectionView,
