@@ -50,7 +50,8 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     }
     """
 
-    private static let diffWrappingLongLine = "it(\"flags concrete key branches inside the server architecture boundary when extensions install UI proxies through runtime hooks\")"
+    private static let diffWrappingRemovedLine = "- If `date +%s` is less than `1787464800` (2026-08-22 23:00:00 PDT) and `opencode-go/x-preview-f-free` (Ox Alpha) is eligible and clears the task floor, use that exact model for the new launch. Once `now >= 1787464800`, the override is expired: refresh `oppi models --json` and resume the durable rules. Do not keep preferring Ox Alpha."
+    private static let diffWrappingAddedLine = "- If `date +%s` is less than `1787554799` (2026-08-23 23:59:59 PDT) and `openai-codex/gpt-5.6-sol` is eligible and clears the task floor, use that exact model for new implementation and review launches. This directive is the review route too; do not pick a second reviewer model just to differ. Once `now >= 1787554799`, the override is expired: refresh `oppi models --json` and resume the durable rules. Do not keep preferring Sol."
 
     private static var embeddedModeEnabled: Bool {
         let processInfo = ProcessInfo.processInfo
@@ -69,7 +70,8 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             DiffLine(kind: .context, text: "}", oldLineNumber: 217, newLineNumber: 217),
             DiffLine(kind: .context, text: "});", oldLineNumber: 218, newLineNumber: 218),
             DiffLine(kind: .context, text: "", oldLineNumber: 219, newLineNumber: 219),
-            DiffLine(kind: .added, text: diffWrappingLongLine, oldLineNumber: nil, newLineNumber: 220),
+            DiffLine(kind: .removed, text: diffWrappingRemovedLine, oldLineNumber: 220, newLineNumber: nil),
+            DiffLine(kind: .added, text: diffWrappingAddedLine, oldLineNumber: nil, newLineNumber: 220),
             DiffLine(kind: .added, text: "    const repoRoot = mkdtempSync(join(tmpdir(), \"oppi-architecture-layer-rules-\"));", oldLineNumber: nil, newLineNumber: 221),
             DiffLine(kind: .added, text: "", oldLineNumber: nil, newLineNumber: 222),
             DiffLine(kind: .added, text: "    try {", oldLineNumber: nil, newLineNumber: 223),

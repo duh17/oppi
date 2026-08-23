@@ -100,26 +100,6 @@ struct RenderStrategyPerfTests {
         return lines.joined(separator: "\n")
     }
 
-    /// Generate diff lines.
-    private static func syntheticDiffLines(count: Int) -> [DiffLine] {
-        var lines: [DiffLine] = []
-        lines.reserveCapacity(count)
-        for i in 0..<count {
-            let kind: DiffLine.Kind
-            let mod = i % 5
-            switch mod {
-            case 0: kind = .removed
-            case 1: kind = .added
-            default: kind = .context
-            }
-            lines.append(DiffLine(
-                kind: kind,
-                text: "    let value\(i) = computeResult(\(i), threshold: \(Double(i) * 0.5))"
-            ))
-        }
-        return lines
-    }
-
     // MARK: - Timing Helper
 
     private static func measureMs(_ block: () -> Void) -> Int {
@@ -208,26 +188,6 @@ struct RenderStrategyPerfTests {
             _ = ToolRowTextRenderer.makeANSIOutputPresentation(text, isError: false)
         }
         #expect(ms < 80, "500-line ANSI output took \(ms)ms (budget: 80ms)")
-    }
-
-    // MARK: - Diff (makeDiffAttributedText)
-
-    @Test("Diff highlight 100 lines Swift")
-    func diffHighlight100() {
-        let lines = Self.syntheticDiffLines(count: 100)
-        let ms = Self.measureMs {
-            _ = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: "test.swift")
-        }
-        #expect(ms < 80, "100-line diff took \(ms)ms (budget: 80ms)")
-    }
-
-    @Test("Diff highlight 300 lines Swift")
-    func diffHighlight300() {
-        let lines = Self.syntheticDiffLines(count: 300)
-        let ms = Self.measureMs {
-            _ = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: "test.swift")
-        }
-        #expect(ms < 200, "300-line diff took \(ms)ms (budget: 200ms)")
     }
 
     // MARK: - Bash Command

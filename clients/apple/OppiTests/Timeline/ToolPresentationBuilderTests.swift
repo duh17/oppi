@@ -1091,9 +1091,12 @@ struct ToolPresentationBuilderTests {
             return
         }
 
-        let rendered = ToolRowTextRenderer.makeDiffAttributedText(lines: lines, filePath: nil).string
-        #expect(rendered.contains("314 var body: some View"))
-        #expect(rendered.contains("316         Image(systemName:"))
+        let firstContext = try #require(lines.first { $0.text == "var body: some View {" })
+        let added = try #require(lines.first { $0.text.contains("Image(systemName:") })
+        #expect(firstContext.oldLineNumber == 314)
+        #expect(firstContext.newLineNumber == 314)
+        #expect(added.oldLineNumber == nil)
+        #expect(added.newLineNumber == 316)
     }
 
     // MARK: - Extension tools

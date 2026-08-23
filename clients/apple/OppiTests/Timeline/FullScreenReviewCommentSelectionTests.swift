@@ -1027,6 +1027,71 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(request.source.lineRange == 21...21)
     }
 
+    @Test func completedDiffBodyUsesStrongerBackgroundForChangedTokens() async throws {
+        let lines = [
+            DiffLine(kind: .removed, text: "let value = oldName", oldLineNumber: 8, newLineNumber: nil),
+            DiffLine(kind: .added, text: "let value = newName", oldLineNumber: nil, newLineNumber: 8),
+        ]
+        let body = NativeFullScreenDiffBody(
+            oldText: "let value = oldName",
+            newText: "let value = newName",
+            filePath: "Value.swift",
+            precomputedLines: lines,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = attachToHost(body)
+        defer { host.removeFromSuperview() }
+        let textView = try #require(timelineAllTextViews(in: body).first)
+
+        let richDiffReady = await waitForMainActorCondition {
+            let text = textView.attributedText?.string ?? ""
+            let changedRange = (text as NSString).range(of: "newName")
+            guard changedRange.location != NSNotFound else { return false }
+            return textView.attributedText?.attribute(
+                reviewLineNumberAttributeKey,
+                at: changedRange.location,
+                effectiveRange: nil
+            ) as? Int == 8
+        }
+        #expect(richDiffReady)
+
+        let attributed = try #require(textView.attributedText)
+        let rendered = attributed.string as NSString
+        let removedChangedRange = rendered.range(of: "oldName")
+        let addedChangedRange = rendered.range(of: "newName")
+        let removedUnchangedRange = rendered.range(of: "let value")
+        try #require(removedChangedRange.location != NSNotFound)
+        try #require(addedChangedRange.location != NSNotFound)
+        try #require(removedUnchangedRange.location != NSNotFound)
+        let addedUnchangedRange = rendered.range(
+            of: "let value",
+            options: [],
+            range: NSRange(
+                location: NSMaxRange(removedUnchangedRange),
+                length: rendered.length - NSMaxRange(removedUnchangedRange)
+            )
+        )
+        try #require(addedUnchangedRange.location != NSNotFound)
+
+        let removedChanged = try #require(
+            attributed.attribute(.backgroundColor, at: removedChangedRange.location, effectiveRange: nil) as? UIColor
+        )
+        let addedChanged = try #require(
+            attributed.attribute(.backgroundColor, at: addedChangedRange.location, effectiveRange: nil) as? UIColor
+        )
+        let removedUnchanged = try #require(
+            attributed.attribute(.backgroundColor, at: removedUnchangedRange.location, effectiveRange: nil) as? UIColor
+        )
+        let addedUnchanged = try #require(
+            attributed.attribute(.backgroundColor, at: addedUnchangedRange.location, effectiveRange: nil) as? UIColor
+        )
+
+        #expect(removedChanged.cgColor.alpha > removedUnchanged.cgColor.alpha + 0.1)
+        #expect(addedChanged.cgColor.alpha > addedUnchanged.cgColor.alpha + 0.1)
+    }
+
     @Test func diffBodyUsesSourceLineAttributesForAddedAndRemovedRows() async throws {
         var captured: [ReviewCommentSelectionRequest] = []
         let lines = [

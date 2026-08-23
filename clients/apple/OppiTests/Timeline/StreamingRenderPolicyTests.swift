@@ -451,10 +451,10 @@ struct StreamingRenderPolicyInconsistencyTests {
         #expect(diffTier == .full,
             """
             INCONSISTENCY: A 2000-line diff is rendered fully on the main \
-            thread (makeDiffAttributedText iterates all lines for coloring), \
-            while 80-line code gets deferred. Diff rendering includes syntax \
-            highlighting per-line via diffLanguage(for:), making it potentially \
-            more expensive than plain code highlighting.
+            thread (DiffAttributedStringBuilder assembles and colors every row), \
+            while 80-line code gets deferred. Structured diff rendering also \
+            applies syntax highlighting, making it potentially more expensive \
+            than plain code highlighting.
             """)
     }
 

@@ -811,7 +811,7 @@ final class NativeFullScreenDiffBody: UIView {
     }
 
     nonisolated private static func buildDiff(lines: [DiffLine], displayPath: String) -> BuiltDiff {
-        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: false)
+        let hunks = WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines, withWordSpans: true)
         let build = DiffAttributedStringBuilder.buildResult(
             hunks: hunks,
             filePath: displayPath,
