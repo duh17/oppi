@@ -13,6 +13,46 @@ import UIKit
 /// simple and avoids UIScrollView gesture conflicts.
 @MainActor
 final class NativeMermaidBlockView: UIView {
+    struct RasterResult: @unchecked Sendable {
+        let image: UIImage
+        let size: CGSize
+    }
+
+    struct Rasterizer: Sendable {
+        let renderSync: @Sendable (String, CGFloat, RenderTheme) -> RasterResult?
+        let renderAsync: @Sendable (String, CGFloat, RenderTheme) async -> RasterResult?
+
+        static let live = Rasterizer(
+            renderSync: { code, availableWidth, theme in
+                DocumentRenderPipeline.renderInlineGraphicalImage(
+                    parser: MermaidParser(),
+                    renderer: MermaidRenderer(),
+                    text: code,
+                    config: RenderConfiguration(
+                        fontSize: 13,
+                        maxWidth: availableWidth,
+                        theme: theme,
+                        displayMode: .inline
+                    )
+                ).map { RasterResult(image: $0.image, size: $0.size) }
+            },
+            renderAsync: { code, availableWidth, theme in
+                await Task.detached(priority: .userInitiated) {
+                    DocumentRenderPipeline.renderInlineGraphicalImage(
+                        parser: MermaidParser(),
+                        renderer: MermaidRenderer(),
+                        text: code,
+                        config: RenderConfiguration(
+                            fontSize: 13,
+                            maxWidth: availableWidth,
+                            theme: theme,
+                            displayMode: .inline
+                        )
+                    ).map { RasterResult(image: $0.image, size: $0.size) }
+                }.value
+            }
+        )
+    }
 
     // MARK: - Subviews
 
@@ -41,6 +81,14 @@ final class NativeMermaidBlockView: UIView {
 
     // MARK: - State
 
+    private struct RasterRequest: Equatable {
+        let code: String
+        let rasterWidth: CGFloat
+        let renderThemeIdentity: String
+        let usesExactWidth: Bool
+    }
+
+    private let rasterizer: Rasterizer
     private var currentCode: String?
     private var currentPalette: ThemePalette?
     private var isShowingDiagram = false
@@ -49,9 +97,11 @@ final class NativeMermaidBlockView: UIView {
     private var renderedDiagramNaturalSize: CGSize?
     /// `maxWidth` passed to the last finished raster. Layout may later
     /// settle wider than the estimated width used at apply time.
-    private var lastRasterWidth: CGFloat?
-    /// Width of an in-flight raster so layout cannot start a loop.
-    private var inFlightRasterWidth: CGFloat?
+    private var desiredRasterRequest: RasterRequest?
+    private var displayedRasterRequest: RasterRequest?
+    /// Exact in-flight request so layout cannot start a duplicate render.
+    private var inFlightRasterRequest: RasterRequest?
+    private var rasterRequestGeneration: UInt = 0
     private var requiresExactRasterWidth = false
     private var renderTask: Task<Void, Never>?
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -69,7 +119,14 @@ final class NativeMermaidBlockView: UIView {
     // MARK: - Init
 
     override init(frame: CGRect) {
+        rasterizer = .live
         super.init(frame: frame)
+        setupViews()
+    }
+
+    init(rasterizer: Rasterizer) {
+        self.rasterizer = rasterizer
+        super.init(frame: .zero)
         setupViews()
     }
 
@@ -143,16 +200,13 @@ final class NativeMermaidBlockView: UIView {
     func applyAsCode(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
         let wasShowingDiagram = isShowingDiagram
 
-        renderTask?.cancel()
-        renderTask = nil
+        invalidateRasterRequest()
 
         codeBlockView.isHidden = false
         diagramImageView.isHidden = true
         diagramHeightConstraint?.isActive = false
         isShowingDiagram = false
         renderedDiagramNaturalSize = nil
-        lastRasterWidth = nil
-        inFlightRasterWidth = nil
         requiresExactRasterWidth = false
         currentPalette = palette
         clearDiagramAccessibility()
@@ -175,44 +229,34 @@ final class NativeMermaidBlockView: UIView {
     ) {
         let usesExactWidth = explicitWidth != nil
         let availableWidth = resolvedAvailableWidth(explicitWidth)
-        // Re-entrant collection-view measurement reuses this cell. Rendering
-        // again would rasterize a new image and force another layout pass.
-        if code == currentCode,
-           isShowingDiagram,
-           !rasterWidthMismatch(availableWidth, usesExactWidth: usesExactWidth) { return }
+        let theme = palette.renderTheme
+        let request = RasterRequest(
+            code: code,
+            rasterWidth: availableWidth,
+            renderThemeIdentity: theme.renderIdentity,
+            usesExactWidth: usesExactWidth
+        )
+        diagramImageView.backgroundColor = UIColor(palette.bgHighlight)
         currentCode = code
         currentPalette = palette
-
-        renderTask?.cancel()
-        renderTask = nil
-
-        let theme = ThemeRuntimeState.currentRenderTheme()
         requiresExactRasterWidth = usesExactWidth
-        inFlightRasterWidth = availableWidth
+        guard let generation = beginRasterRequest(request) else { return }
         #if DEBUG
         debugRenderCount += 1
         #endif
 
-        guard let result = DocumentRenderPipeline.renderInlineGraphicalImage(
-            parser: MermaidParser(),
-            renderer: MermaidRenderer(),
-            text: code,
-            config: RenderConfiguration(
-                fontSize: 13,
-                maxWidth: availableWidth,
-                theme: theme,
-                displayMode: .inline
-            )
-        ) else {
+        guard let result = rasterizer.renderSync(code, availableWidth, theme) else {
+            guard rasterRequestIsCurrent(request, generation: generation) else { return }
             showAsCodeFallback(code: code, palette: palette)
             return
         }
+        guard rasterRequestIsCurrent(request, generation: generation) else { return }
 
         showDiagram(
             image: result.image,
             naturalSize: result.size,
             palette: palette,
-            rasterWidth: availableWidth,
+            request: request,
             invalidateHostLayout: false
         )
     }
@@ -226,40 +270,27 @@ final class NativeMermaidBlockView: UIView {
         currentPalette = palette
         let usesExactWidth = explicitWidth != nil
         let availableWidth = resolvedAvailableWidth(explicitWidth)
-        // Same source at a new bubble width still needs a new raster.
-        guard code != currentCode
-                || !isShowingDiagram
-                || rasterWidthMismatch(availableWidth, usesExactWidth: usesExactWidth) else {
-            return
-        }
+        let theme = palette.renderTheme
+        let request = RasterRequest(
+            code: code,
+            rasterWidth: availableWidth,
+            renderThemeIdentity: theme.renderIdentity,
+            usesExactWidth: usesExactWidth
+        )
+        diagramImageView.backgroundColor = UIColor(palette.bgHighlight)
         currentCode = code
-
-        renderTask?.cancel()
         requiresExactRasterWidth = usesExactWidth
-        inFlightRasterWidth = availableWidth
+        guard let generation = beginRasterRequest(request) else { return }
         #if DEBUG
         debugRenderCount += 1
         #endif
         renderTask = Task { [weak self] in
             guard let self else { return }
 
-            let theme = ThemeRuntimeState.currentRenderTheme()
+            let result = await self.rasterizer.renderAsync(code, availableWidth, theme)
 
-            let result: (image: UIImage, size: CGSize)? = await Task.detached(priority: .userInitiated) {
-                DocumentRenderPipeline.renderInlineGraphicalImage(
-                    parser: MermaidParser(),
-                    renderer: MermaidRenderer(),
-                    text: code,
-                    config: RenderConfiguration(
-                        fontSize: 13,
-                        maxWidth: availableWidth,
-                        theme: theme,
-                        displayMode: .inline
-                    )
-                )
-            }.value
-
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  self.rasterRequestIsCurrent(request, generation: generation) else { return }
 
             guard let result else {
                 self.showAsCodeFallback(code: code, palette: palette)
@@ -270,7 +301,7 @@ final class NativeMermaidBlockView: UIView {
                 image: result.image,
                 naturalSize: result.size,
                 palette: palette,
-                rasterWidth: availableWidth,
+                request: request,
                 invalidateHostLayout: true
             )
         }
@@ -313,27 +344,63 @@ final class NativeMermaidBlockView: UIView {
         let slop = exact
             ? Self.exactReaderRasterWidthSlop
             : Self.timelineRasterWidthSlop
-        if let inFlight = inFlightRasterWidth, abs(width - inFlight) <= slop {
+        if let inFlight = inFlightRasterRequest,
+           abs(width - inFlight.rasterWidth) <= slop {
             return false
         }
-        if let last = lastRasterWidth, abs(width - last) <= slop {
+        if let displayed = displayedRasterRequest,
+           abs(width - displayed.rasterWidth) <= slop {
             return false
         }
         return true
+    }
+
+    private func beginRasterRequest(_ request: RasterRequest) -> UInt? {
+        if desiredRasterRequest != request {
+            rasterRequestGeneration &+= 1
+            renderTask?.cancel()
+            renderTask = nil
+            inFlightRasterRequest = nil
+            desiredRasterRequest = request
+        }
+        if isShowingDiagram, displayedRasterRequest == request {
+            return nil
+        }
+        if inFlightRasterRequest == request {
+            return nil
+        }
+        inFlightRasterRequest = request
+        return rasterRequestGeneration
+    }
+
+    private func rasterRequestIsCurrent(_ request: RasterRequest, generation: UInt) -> Bool {
+        generation == rasterRequestGeneration
+            && desiredRasterRequest == request
+            && inFlightRasterRequest == request
+    }
+
+    private func invalidateRasterRequest() {
+        rasterRequestGeneration &+= 1
+        renderTask?.cancel()
+        renderTask = nil
+        desiredRasterRequest = nil
+        displayedRasterRequest = nil
+        inFlightRasterRequest = nil
     }
 
     private func showDiagram(
         image: UIImage,
         naturalSize: CGSize,
         palette: ThemePalette,
-        rasterWidth: CGFloat,
+        request: RasterRequest,
         invalidateHostLayout: Bool
     ) {
         renderedDiagramNaturalSize = naturalSize
-        lastRasterWidth = rasterWidth
-        inFlightRasterWidth = nil
+        displayedRasterRequest = request
+        inFlightRasterRequest = nil
+        renderTask = nil
 
-        let availableWidth = bounds.width > 0 ? bounds.width : rasterWidth
+        let availableWidth = bounds.width > 0 ? bounds.width : request.rasterWidth
         updateDiagramHeight(
             naturalSize: naturalSize,
             availableWidth: availableWidth,
@@ -388,8 +455,9 @@ final class NativeMermaidBlockView: UIView {
         diagramHeightConstraint?.isActive = false
         isShowingDiagram = false
         renderedDiagramNaturalSize = nil
-        lastRasterWidth = nil
-        inFlightRasterWidth = nil
+        displayedRasterRequest = nil
+        inFlightRasterRequest = nil
+        renderTask = nil
         clearDiagramAccessibility()
         codeBlockView.apply(language: "mermaid", code: code, palette: palette, isOpen: false)
 
@@ -475,7 +543,8 @@ final class NativeMermaidBlockView: UIView {
 #if DEBUG
 extension NativeMermaidBlockView {
     var debugIsShowingDiagramForTesting: Bool { isShowingDiagram }
-    var debugRasterWidthForTesting: CGFloat? { lastRasterWidth }
+    var debugRasterWidthForTesting: CGFloat? { displayedRasterRequest?.rasterWidth }
     var debugRenderCountForTesting: Int { debugRenderCount }
+    var debugRenderedImageForTesting: UIImage? { diagramImageView.image }
 }
 #endif

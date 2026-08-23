@@ -26,6 +26,10 @@ struct RenderableDocumentWrapper: View {
     let filePath: String?
     let presentation: FileContentPresentation
     let fullScreenContent: FullScreenCodeContent
+    let hostIdentity: AnyHashable?
+    let renderIdentity: AnyHashable?
+    let renderPalette: ThemePalette?
+    let renderedViewUpdater: (@MainActor (UIView) -> Bool)?
     let renderedViewFactory: @MainActor () -> UIView
     let reviewCommentSelectionContext: ReviewCommentSelectionContext?
 
@@ -40,6 +44,10 @@ struct RenderableDocumentWrapper: View {
         presentation: FileContentPresentation,
         fullScreenContent: FullScreenCodeContent,
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
+        hostIdentity: AnyHashable? = nil,
+        renderIdentity: AnyHashable? = nil,
+        renderPalette: ThemePalette? = nil,
+        renderedViewUpdater: (@MainActor (UIView) -> Bool)? = nil,
         renderedViewFactory: @escaping @MainActor () -> UIView
     ) {
         self.config = config
@@ -48,6 +56,10 @@ struct RenderableDocumentWrapper: View {
         self.presentation = presentation
         self.fullScreenContent = fullScreenContent
         self.reviewCommentSelectionContext = reviewCommentSelectionContext
+        self.hostIdentity = hostIdentity
+        self.renderIdentity = renderIdentity
+        self.renderPalette = renderPalette
+        self.renderedViewUpdater = renderedViewUpdater
         self.renderedViewFactory = renderedViewFactory
     }
 
@@ -65,11 +77,15 @@ struct RenderableDocumentWrapper: View {
             content: content,
             filePath: filePath,
             presentation: presentation,
+            renderIdentity: renderIdentity,
+            renderPalette: renderPalette,
+            renderedViewUpdater: renderedViewUpdater,
             renderedViewFactory: renderedViewFactory,
             allowsFullScreenExpansion: allowsFullScreenExpansion,
             reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
             onExpandFullScreen: { showFullScreen = true }
         )
+        .id(hostIdentity)
         .fullScreenViewer(
             isPresented: $showFullScreen,
             content: fullScreenContent,
@@ -85,6 +101,9 @@ private struct _RenderableDocumentRepresentable: UIViewRepresentable {
     let content: String
     let filePath: String?
     let presentation: FileContentPresentation
+    let renderIdentity: AnyHashable?
+    let renderPalette: ThemePalette?
+    let renderedViewUpdater: (@MainActor (UIView) -> Bool)?
     let renderedViewFactory: @MainActor () -> UIView
     let allowsFullScreenExpansion: Bool
     let reviewCommentSelectionContext: ReviewCommentSelectionContext?
@@ -98,7 +117,9 @@ private struct _RenderableDocumentRepresentable: UIViewRepresentable {
             presentation: presentation,
             renderedContentView: renderedViewFactory(),
             allowsFullScreenExpansion: allowsFullScreenExpansion,
-            reviewCommentSelectionContext: reviewCommentSelectionContext
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
+            renderIdentity: renderIdentity,
+            renderPalette: renderPalette
         )
         view.onExpandFullScreen = onExpandFullScreen
         return view
@@ -106,5 +127,12 @@ private struct _RenderableDocumentRepresentable: UIViewRepresentable {
 
     func updateUIView(_ uiView: RenderableDocumentView, context: Context) {
         uiView.onExpandFullScreen = onExpandFullScreen
+        uiView.updateRenderedContentIfNeeded(
+            identity: renderIdentity,
+            palette: renderPalette,
+            updateView: renderedViewUpdater
+        ) {
+            renderedViewFactory()
+        }
     }
 }

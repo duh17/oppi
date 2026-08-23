@@ -899,6 +899,7 @@
 		B4B8DD5105B3D1A07311D0A3 /* MacPendingAttachmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C88513D18E6AFDE4E730CA88 /* MacPendingAttachmentTests.swift */; };
 		B4ECC45E1EE5B42C367061C0 /* MermaidSequenceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1E894886D53C5996B0BF12 /* MermaidSequenceRenderer.swift */; };
 		B4EDDEFDDEC20EB36117C751 /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56EDE27997D709AB6CD7939E /* WorkspaceStore.swift */; };
+		B54F968ED6483D4F77F5DE98 /* MermaidThemeContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DEEBA56210523A5AFBB7D5 /* MermaidThemeContractTests.swift */; };
 		B553E432457B50D22F6141D3 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0EF2C9AC1D3E86FC4DFF5831 /* Assets.xcassets */; };
 		B5B7B7B833015814AD3D0CBC /* APIResponseTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8753E8E22FD305260864F567 /* APIResponseTypes.swift */; };
 		B5D5000C20074E1416B4E5CE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F3ED987CC68F402EE744D564 /* Assets.xcassets */; };
@@ -1697,6 +1698,7 @@
 		490D07E1EB1A8673A161ACC0 /* ScrollInvariantPropertyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollInvariantPropertyTests.swift; sourceTree = "<group>"; };
 		49244B435EF93CF9661DC087 /* KeychainDeviceCredentialMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainDeviceCredentialMerger.swift; sourceTree = "<group>"; };
 		49D1C856DB31CB6335C6EB8E /* MermaidGanttConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGanttConformanceTests.swift; sourceTree = "<group>"; };
+		49DEEBA56210523A5AFBB7D5 /* MermaidThemeContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidThemeContractTests.swift; sourceTree = "<group>"; };
 		4AC653105A38C74E2829E0FD /* AppEventStreamClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEventStreamClientTests.swift; sourceTree = "<group>"; };
 		4AF617D452054E49624583D2 /* ChatSessionTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionTelemetry.swift; sourceTree = "<group>"; };
 		4B192B9E99A61FF6141FD5E2 /* ServerSkillBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSkillBrowserView.swift; sourceTree = "<group>"; };
@@ -3412,6 +3414,7 @@
 				771768B2C346D60809635A50 /* MermaidSequenceConformanceTests.swift */,
 				F8BA002B47802CA30233976B /* MermaidSequenceRendererTests.swift */,
 				B0274D4BD1B78CA851FC5269 /* MermaidStateConformanceTests.swift */,
+				49DEEBA56210523A5AFBB7D5 /* MermaidThemeContractTests.swift */,
 				D78558A65FC1311AE52B46FB /* MermaidTimelineConformanceTests.swift */,
 				0FC6A62F3C9F0D463F4E1D51 /* MermaidXYChartConformanceTests.swift */,
 			);
@@ -5497,6 +5500,7 @@
 				7FC7319B54F6F14C711814F2 /* MermaidSequenceConformanceTests.swift in Sources */,
 				A0FE54A5BE09BF3E4EB497E3 /* MermaidSequenceRendererTests.swift in Sources */,
 				BEF12307DE8C44DDE511C913 /* MermaidStateConformanceTests.swift in Sources */,
+				B54F968ED6483D4F77F5DE98 /* MermaidThemeContractTests.swift in Sources */,
 				32D84C25E0C48D8F746F2B01 /* MermaidTimelineConformanceTests.swift in Sources */,
 				F797508A5098BB4CDE916997 /* MermaidXYChartConformanceTests.swift in Sources */,
 				9B2D23639C3597BCE7CB352C /* MessageQueueComposerRestoreTests.swift in Sources */,

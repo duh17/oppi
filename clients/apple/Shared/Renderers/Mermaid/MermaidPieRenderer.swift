@@ -192,9 +192,6 @@ enum MermaidPieRenderer {
             let ox = origin.x
             let oy = origin.y
 
-            ctx.setFillColor(theme.background)
-            ctx.fill(CGRect(origin: origin, size: size))
-
             if let title = capturedTitle {
                 let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
                 MermaidTextUtils.drawText(

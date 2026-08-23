@@ -24,7 +24,7 @@ final class RenderableDocumentView: UIView {
     /// Per-content-type metadata. Fully describes the chrome — no subclassing needed.
     struct Config {
         let iconName: String
-        let iconColor: UIColor
+        let iconColor: @MainActor (ThemePalette) -> UIColor
         let label: String
         let sourceToggleLabels: (rendered: String, source: String)
         let sourceToggleIcon: String
@@ -34,7 +34,7 @@ final class RenderableDocumentView: UIView {
 
         static let markdown = Config(
             iconName: "doc.richtext",
-            iconColor: UIColor(Color.themeCyan),
+            iconColor: { UIColor($0.cyan) },
             label: "Markdown",
             sourceToggleLabels: (rendered: "Reader", source: "Source"),
             sourceToggleIcon: "doc.richtext",
@@ -43,7 +43,7 @@ final class RenderableDocumentView: UIView {
 
         static let latex = Config(
             iconName: "function",
-            iconColor: UIColor(Color.themeGreen),
+            iconColor: { UIColor($0.green) },
             label: "LaTeX",
             sourceToggleLabels: (rendered: "Rendered", source: "Source"),
             sourceToggleIcon: "function",
@@ -52,7 +52,7 @@ final class RenderableDocumentView: UIView {
 
         static let mermaid = Config(
             iconName: "chart.dots.scatter",
-            iconColor: UIColor(Color.themePurple),
+            iconColor: { UIColor($0.purple) },
             label: "Mermaid",
             sourceToggleLabels: (rendered: "Rendered", source: "Source"),
             sourceToggleIcon: "chart.dots.scatter",
@@ -61,7 +61,7 @@ final class RenderableDocumentView: UIView {
 
         static let orgMode = Config(
             iconName: "doc.richtext",
-            iconColor: UIColor(Color.themeCyan),
+            iconColor: { UIColor($0.cyan) },
             label: "Org Mode",
             sourceToggleLabels: (rendered: "Reader", source: "Source"),
             sourceToggleIcon: "doc.richtext",
@@ -70,7 +70,7 @@ final class RenderableDocumentView: UIView {
 
         static let html = Config(
             iconName: "globe",
-            iconColor: UIColor(Color.themeCyan),
+            iconColor: { UIColor($0.cyan) },
             label: "HTML",
             sourceToggleLabels: (rendered: "Preview", source: "Source"),
             sourceToggleIcon: "globe",
@@ -87,10 +87,12 @@ final class RenderableDocumentView: UIView {
     private let maxContentHeight: CGFloat?
     private let showExpand: Bool
     private let reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    private var palette: ThemePalette
     private var showingSource = false
+    private var renderIdentity: AnyHashable?
 
     // Views
-    private let renderedContentView: UIView
+    private var renderedContentView: UIView
     private var sourceView: NativeFullScreenCodeBody?
     private let contentContainer = UIView()
 
@@ -116,7 +118,9 @@ final class RenderableDocumentView: UIView {
         presentation: FileContentPresentation,
         renderedContentView: UIView,
         allowsFullScreenExpansion: Bool,
-        reviewCommentSelectionContext: ReviewCommentSelectionContext?
+        reviewCommentSelectionContext: ReviewCommentSelectionContext?,
+        renderIdentity: AnyHashable? = nil,
+        renderPalette: ThemePalette? = nil
     ) {
         self.config = config
         self.content = content
@@ -126,10 +130,12 @@ final class RenderableDocumentView: UIView {
         self.showExpand = presentation.allowsExpansionAffordance && allowsFullScreenExpansion
         self.renderedContentView = renderedContentView
         self.reviewCommentSelectionContext = reviewCommentSelectionContext
+        self.renderIdentity = renderIdentity
+        self.palette = renderPalette ?? ThemeRuntimeState.currentPalette()
 
         super.init(frame: .zero)
 
-        let palette = ThemeRuntimeState.currentPalette()
+        let palette = self.palette
 
         if isInline {
             setupInlineMode(palette: palette)
@@ -210,6 +216,80 @@ final class RenderableDocumentView: UIView {
 
     // MARK: - Content Swap
 
+    /// Refresh theme-sensitive content while preserving the mounted graphical
+    /// view (and therefore zoom/pan) whenever its renderer supports updates.
+    func updateRenderedContentIfNeeded(
+        identity: AnyHashable?,
+        palette: ThemePalette?,
+        updateView: (@MainActor (UIView) -> Bool)?,
+        makeView: @MainActor () -> UIView
+    ) {
+        guard renderIdentity != identity else { return }
+        renderIdentity = identity
+
+        if let palette {
+            applyTheme(palette)
+        }
+
+        if updateView?(renderedContentView) != true {
+            renderedContentView = makeView()
+            if !showingSource {
+                installContentView(renderedContentView)
+            }
+        }
+    }
+
+    private func applyTheme(_ palette: ThemePalette) {
+        self.palette = palette
+
+        if isInline {
+            backgroundColor = UIColor(palette.bgDark)
+            layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.35).cgColor
+        }
+
+        headerContainer?.backgroundColor = UIColor(palette.bgHighlight)
+        for view in headerContainer?.subviewsRecursive ?? [] {
+            switch view.tag {
+            case ViewTag.icon:
+                (view as? UIImageView)?.tintColor = config.iconColor(palette)
+            case ViewTag.label:
+                (view as? UILabel)?.textColor = UIColor(palette.fgDim)
+            case ViewTag.lineCount:
+                (view as? UILabel)?.textColor = UIColor(palette.comment)
+            case ViewTag.sourceToggle:
+                (view as? UIButton)?.setTitleColor(UIColor(palette.blue), for: .normal)
+            case ViewTag.expand:
+                (view as? UIButton)?.tintColor = UIColor(palette.fgDim)
+            default:
+                break
+            }
+        }
+
+        if let copyButton {
+            var copyConfig = copyButton.configuration ?? .plain()
+            copyConfig.baseForegroundColor = UIColor(palette.fgDim)
+            copyButton.configuration = copyConfig
+        }
+
+        if let floatingCapsule {
+            var capsuleConfig = floatingCapsule.configuration ?? .glass()
+            FullScreenFloatingControlChrome.applyGlassBackground(to: &capsuleConfig, palette: palette)
+            floatingCapsule.configuration = capsuleConfig
+            updateToggleLabels()
+        }
+
+        if let sourceView {
+            let sourceState = SourceViewState(sourceView)
+            let refreshedSource = makeSourceView(palette: palette)
+            self.sourceView = refreshedSource
+            if showingSource {
+                installContentView(refreshedSource)
+                contentContainer.layoutIfNeeded()
+            }
+            sourceState.restore(to: refreshedSource)
+        }
+    }
+
     private func installContentView(_ view: UIView) {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -225,24 +305,9 @@ final class RenderableDocumentView: UIView {
     private func toggleSource() {
         showingSource.toggle()
 
-        let palette = ThemeRuntimeState.currentPalette()
-
         if showingSource {
             if sourceView == nil {
-                sourceView = NativeFullScreenCodeBody(
-                    content: content,
-                    language: config.sourceLanguage,
-                    startLine: 1,
-                    palette: palette,
-                    alwaysBounceVertical: !isInline,
-                    reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                    reviewCommentSourceContext: reviewCommentSelectionContext?.sourceContext(
-                        surface: .fullScreenSource,
-                        sourceLabel: reviewCommentSelectionContext?.sourceLabel ?? config.label,
-                        filePath: filePath,
-                        languageHint: config.sourceLanguage
-                    )
-                )
+                sourceView = makeSourceView(palette: palette)
             }
             if let sv = sourceView {
                 UIView.transition(with: contentContainer, duration: 0.15, options: .transitionCrossDissolve) {
@@ -256,6 +321,23 @@ final class RenderableDocumentView: UIView {
         }
 
         updateToggleLabels()
+    }
+
+    private func makeSourceView(palette: ThemePalette) -> NativeFullScreenCodeBody {
+        NativeFullScreenCodeBody(
+            content: content,
+            language: config.sourceLanguage,
+            startLine: 1,
+            palette: palette,
+            alwaysBounceVertical: !isInline,
+            reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+            reviewCommentSourceContext: reviewCommentSelectionContext?.sourceContext(
+                surface: .fullScreenSource,
+                sourceLabel: reviewCommentSelectionContext?.sourceLabel ?? config.label,
+                filePath: filePath,
+                languageHint: config.sourceLanguage
+            )
+        )
     }
 
     private func updateToggleLabels() {
@@ -299,7 +381,8 @@ final class RenderableDocumentView: UIView {
 
         // Icon
         let icon = UIImageView(image: UIImage(systemName: config.iconName))
-        icon.tintColor = config.iconColor
+        icon.tintColor = config.iconColor(palette)
+        icon.tag = ViewTag.icon
         icon.preferredSymbolConfiguration = .init(textStyle: .caption1)
         icon.setContentHuggingPriority(.required, for: .horizontal)
         stack.addArrangedSubview(icon)
@@ -309,6 +392,7 @@ final class RenderableDocumentView: UIView {
         label.text = config.label
         label.font = .preferredFont(forTextStyle: .caption2).bold()
         label.textColor = UIColor(palette.fgDim)
+        label.tag = ViewTag.label
         label.setContentHuggingPriority(.required, for: .horizontal)
         stack.addArrangedSubview(label)
 
@@ -318,6 +402,7 @@ final class RenderableDocumentView: UIView {
         lineLabel.text = "\(lineCount) lines"
         lineLabel.font = .preferredFont(forTextStyle: .caption2)
         lineLabel.textColor = UIColor(palette.comment)
+        lineLabel.tag = ViewTag.lineCount
         lineLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         stack.addArrangedSubview(lineLabel)
 
@@ -343,6 +428,7 @@ final class RenderableDocumentView: UIView {
             let expandConfig = UIImage.SymbolConfiguration(textStyle: .caption2)
             expand.setImage(UIImage(systemName: "arrow.up.left.and.arrow.down.right", withConfiguration: expandConfig), for: .normal)
             expand.tintColor = UIColor(palette.fgDim)
+            expand.tag = ViewTag.expand
             expand.addAction(UIAction { [weak self] _ in self?.onExpandFullScreen?() }, for: .touchUpInside)
             expand.setContentHuggingPriority(.required, for: .horizontal)
             stack.addArrangedSubview(expand)
@@ -431,6 +517,37 @@ final class RenderableDocumentView: UIView {
 
     private enum ViewTag {
         static let sourceToggle = 1001
+        static let icon = 1002
+        static let label = 1003
+        static let lineCount = 1004
+        static let expand = 1005
+    }
+
+    private struct SourceViewState {
+        let contentOffsets: [CGPoint]
+        let selections: [NSRange]
+
+        init(_ view: UIView) {
+            let descendants = view.subviewsRecursive
+            contentOffsets = descendants.compactMap { ($0 as? UIScrollView)?.contentOffset }
+            selections = descendants.compactMap { ($0 as? UITextView)?.selectedRange }
+        }
+
+        func restore(to view: UIView) {
+            let descendants = view.subviewsRecursive
+            for (scrollView, offset) in zip(
+                descendants.compactMap({ $0 as? UIScrollView }),
+                contentOffsets
+            ) {
+                scrollView.setContentOffset(offset, animated: false)
+            }
+            for (textView, selection) in zip(
+                descendants.compactMap({ $0 as? UITextView }),
+                selections
+            ) {
+                textView.selectedRange = selection
+            }
+        }
     }
 }
 
@@ -468,6 +585,29 @@ extension RenderableDocumentView: UIContextMenuInteractionDelegate {
 }
 
 // MARK: - Helpers
+
+#if DEBUG
+extension RenderableDocumentView {
+    var debugRenderedContentViewForTesting: UIView { renderedContentView }
+    var debugIsShowingSourceForTesting: Bool { showingSource }
+    var debugContentForTesting: String { content }
+    var debugSourceBackgroundColorForTesting: UIColor? { sourceView?.backgroundColor }
+    var debugSourceTextForTesting: String? {
+        sourceView?.subviewsRecursive.compactMap { ($0 as? UITextView)?.text }.first
+    }
+    var debugSourceSelectionForTesting: NSRange? {
+        sourceView?.subviewsRecursive.compactMap { ($0 as? UITextView)?.selectedRange }.first
+    }
+
+    func debugSetSourceSelectionForTesting(_ selection: NSRange) {
+        sourceView?.subviewsRecursive.compactMap { $0 as? UITextView }.first?.selectedRange = selection
+    }
+
+    func debugToggleSourceForTesting() {
+        toggleSource()
+    }
+}
+#endif
 
 private extension UIView {
     var subviewsRecursive: [UIView] {

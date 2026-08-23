@@ -117,6 +117,38 @@ struct RenderTheme: Sendable {
         accentYellow: CGColor(red: 0.78, green: 0.71, blue: 0.47, alpha: 1)
     )
 
+    /// Stable identity for raster caches and reusable renderer views.
+    /// Every color that can affect graphical output participates.
+    var renderIdentity: String {
+        func componentString(_ color: CGColor) -> String {
+            guard
+                let space = CGColorSpace(name: CGColorSpace.sRGB),
+                let converted = color.converted(to: space, intent: .defaultIntent, options: nil),
+                let components = converted.components, components.count >= 3
+            else {
+                return "?"
+            }
+            let alpha = components.count > 3 ? components[3] : 1
+            return String(
+                format: "%.3f,%.3f,%.3f,%.3f",
+                components[0], components[1], components[2], alpha
+            )
+        }
+
+        return [
+            componentString(foreground), componentString(foregroundDim),
+            componentString(background), componentString(backgroundDark),
+            componentString(comment), componentString(keyword),
+            componentString(string), componentString(number),
+            componentString(function), componentString(type),
+            componentString(link), componentString(heading),
+            componentString(accentBlue), componentString(accentCyan),
+            componentString(accentGreen), componentString(accentOrange),
+            componentString(accentPurple), componentString(accentRed),
+            componentString(accentYellow),
+        ].joined(separator: ";")
+    }
+
     /// Built-in light render theme for tests and light-mode exports.
     static let light = RenderTheme(
         foreground: CGColor(gray: 0.1, alpha: 1),

@@ -3,10 +3,10 @@ import Foundation
 
 /// Thin dispatcher for native Mermaid diagrams.
 ///
-/// Flowchart (+ state-as-flowchart) stays on `MermaidFlowchartRenderer`.
-/// Sequence, gantt, mindmap, pie, timeline, class, ER, and XY have dedicated
-/// renderers. New diagram types hook in with one `MermaidDiagram` case
-/// plus one switch arm here.
+/// The renderer owns semantic diagram fills only. Its full canvas stays
+/// transparent so inline, file, focused, and export surfaces each own their
+/// intended background. Flowchart (+ state-as-flowchart) stays on
+/// `MermaidFlowchartRenderer`; the other kinds use dedicated renderers.
 struct MermaidRenderer: GraphicalDocumentRenderer, Sendable {
     typealias Document = MermaidDiagram
     typealias LayoutResult = MermaidFlowchartRenderer.FlowchartLayout

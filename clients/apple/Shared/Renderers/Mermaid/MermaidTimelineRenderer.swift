@@ -397,10 +397,6 @@ enum MermaidTimelineRenderer {
         let ox = origin.x
         let oy = origin.y
 
-        // Background.
-        ctx.setFillColor(theme.background)
-        ctx.fill(CGRect(origin: origin, size: size))
-
         let titleFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 1.1, nil)
         let sectionFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.85, nil)
         let periodFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.9, nil)

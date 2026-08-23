@@ -286,6 +286,50 @@ private struct MermaidRenderingPreview: View {
             """#
         ),
         Diagram(
+            id: "state",
+            heading: "State",
+            markdown: #"""
+            ```mermaid
+            stateDiagram-v2
+                [*] --> Ready
+                Ready --> Working : start
+                Working --> Ready : finish
+                Working --> [*] : cancel
+            ```
+            """#
+        ),
+        Diagram(
+            id: "gantt",
+            heading: "Gantt",
+            markdown: #"""
+            ```mermaid
+            gantt
+                title Shipping schedule
+                section Build
+                    Parser :done, parser, 2026-08-01, 3d
+                    Renderer :active, renderer, after parser, 4d
+                section Ship
+                    Validate :validate, after renderer, 2d
+            ```
+            """#
+        ),
+        Diagram(
+            id: "mindmap",
+            heading: "Mindmap",
+            markdown: #"""
+            ```mermaid
+            mindmap
+                root((Oppi))
+                    Apple
+                        Timeline
+                        Files
+                    Server
+                        Sessions
+                        Tools
+            ```
+            """#
+        ),
+        Diagram(
             id: "timeline",
             heading: "Timeline",
             markdown: #"""
@@ -379,6 +423,7 @@ private struct MermaidRenderingPreview: View {
                         .foregroundStyle(.themeFg)
                     MarkdownContentViewWrapper(content: diagram.markdown, renderingMode: .export)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("mermaid.preview.diagram.\(diagram.id)")
                 }
             }
             .padding(20)

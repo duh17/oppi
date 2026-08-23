@@ -188,10 +188,6 @@ enum MermaidGanttRenderer {
             let ox = origin.x
             let oy = origin.y
 
-            // Background.
-            ctx.setFillColor(theme.background)
-            ctx.fill(CGRect(origin: origin, size: size))
-
             let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
             let smallFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
 

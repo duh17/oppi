@@ -834,6 +834,9 @@ final class ScreenshotPreviewUITests: XCTestCase {
         let diagrams: [(heading: String, kind: String)] = [
             ("Flowchart", "flowchart"),
             ("Sequence", "sequence"),
+            ("State", "state"),
+            ("Gantt", "gantt"),
+            ("Mindmap", "mindmap"),
             ("Timeline", "timeline"),
             ("Pie", "pie"),
             ("XY", "xy"),
@@ -853,7 +856,10 @@ final class ScreenshotPreviewUITests: XCTestCase {
                 "Production Markdown/Mermaid preview did not render in \(colorScheme) mode"
             )
 
-            waitForMermaidDiagramImages(in: content, expectedCount: 7, colorScheme: colorScheme)
+            waitForMermaidDiagramSurfaces(
+                ids: diagrams.map(\.kind),
+                colorScheme: colorScheme
+            )
 
             let unsupported = app.staticTexts.containing(
                 NSPredicate(format: "label CONTAINS %@", "Unsupported diagram type")
@@ -1266,6 +1272,23 @@ final class ScreenshotPreviewUITests: XCTestCase {
         }
 
         XCTAssertTrue(label.isHittable, "Could not scroll mermaid heading \(heading) into view")
+    }
+
+    /// The production preview uses synchronous export rendering. Each fixture
+    /// exposes its rendered surface so the gallery cannot silently omit a kind.
+    private func waitForMermaidDiagramSurfaces(ids: [String], colorScheme: String) {
+        for id in ids {
+            let surface = app.descendants(matching: .any)["mermaid.preview.diagram.\(id)"]
+            XCTAssertTrue(
+                surface.waitForExistence(timeout: 5),
+                "Mermaid \(id) surface did not render in \(colorScheme) mode"
+            )
+            XCTAssertGreaterThan(
+                surface.frame.height,
+                40,
+                "Mermaid \(id) surface has no rendered height in \(colorScheme) mode"
+            )
+        }
     }
 
     /// NativeMermaidBlockView rasterizes asynchronously. Wait for the diagram
