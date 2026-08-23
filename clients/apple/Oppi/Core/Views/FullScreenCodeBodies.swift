@@ -1754,6 +1754,11 @@ func withCancellableDetachedTask<Value: Sendable>(
     }
 }
 
+enum MarkdownReaderSourceFormat: Sendable {
+    case markdown
+    case orgMode
+}
+
 final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
     private static let deferredInitialRenderByteThreshold = 200 * 1024
     private static let maxInitialSynchronousPreparationItems = 8
@@ -1820,9 +1825,13 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var debugSynchronousScrollSettlementCount = 0
     private var debugMaxRenderAheadItemsPerSlice = 0
     private var debugInitialSynchronousPreparationItemCount = 0
+    private var debugSourcePreparationRanOnMainThread: Bool?
+    private var debugSourcePreparationDurationNs: UInt64 = 0
+    private var debugAsyncMarkdownBuildRanOnMainThread: Bool?
     #endif
     private let segmentSource = AssistantMarkdownSegmentSource()
     private let stream: ThinkingTraceStream?
+    private let sourceFormat: MarkdownReaderSourceFormat
     private let themeID: ThemeID
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
@@ -1836,10 +1845,13 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     private let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+    private let maximumViewportHeight: CGFloat?
+    private var intrinsicViewportContentHeight: CGFloat = 44
     private var readerPreferences: FullScreenReaderPreferences
 
     private let perfSurface: MarkdownStreamingPerf.Surface?
 
+    private var sourcePreparationTask: Task<Void, Never>?
     private var deferredInitialRenderTask: Task<Void, Never>?
     private var asyncRenderTask: Task<Void, Never>?
     private var renderAheadTask: Task<Void, Never>?
@@ -1868,6 +1880,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         let parseDurationNs: UInt64
         let buildDurationNs: UInt64
         let lineCount: Int
+        let ranOnMainThread: Bool
     }
 
     private lazy var viewportOwner = MarkdownReaderViewportOwner(
@@ -1882,6 +1895,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         content: String,
         stream: ThinkingTraceStream?,
         isStreaming: Bool = false,
+        sourceFormat: MarkdownReaderSourceFormat = .markdown,
         themeID: ThemeID? = nil,
         palette: ThemePalette,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
@@ -1896,12 +1910,14 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         focusLineAnchor: Bool = true,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
+        maximumViewportHeight: CGFloat? = nil,
         allowsVerticalBounce: Bool = true,
         allowsVerticalScrolling: Bool = true,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
     ) {
         self.stream = stream
+        self.sourceFormat = sourceFormat
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         self.perfSurface = perfSurface
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
@@ -1916,11 +1932,15 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         let initialText = stream?.snapshot.text ?? content
         self.lineAnchorResolution = lineAnchor?.resolution(fileContent: initialText)
         self.readerPreferences = readerPreferences
+        self.maximumViewportHeight = maximumViewportHeight
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
-        let initialSnapshot = stream?.snapshot
+        let sourceSnapshot = stream?.snapshot
             ?? ThinkingTraceStream.Snapshot(text: content, isDone: !isStreaming)
+        let initialSnapshot = sourceFormat == .markdown
+            ? sourceSnapshot
+            : ThinkingTraceStream.Snapshot(text: "", isDone: true)
         latestSnapshot = initialSnapshot
         collectionView = UICollectionView(
             frame: .zero,
@@ -1985,7 +2005,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             lineAnchorHighlightView.bottomAnchor.constraint(equalTo: collectionView.bottomAnchor),
         ])
 
-        if Self.shouldDeferInitialRender(snapshot: initialSnapshot, stream: stream) {
+        if sourceFormat == .orgMode {
+            installDeferredRenderPlaceholder(palette: palette)
+            scheduleOrgModeSourcePreparation(source: sourceSnapshot.text)
+        } else if Self.shouldDeferInitialRender(snapshot: initialSnapshot, stream: stream) {
             installDeferredRenderPlaceholder(palette: palette)
             scheduleDeferredInitialRender(snapshot: initialSnapshot)
         } else {
@@ -2001,6 +2024,14 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    override var intrinsicContentSize: CGSize {
+        guard let maximumViewportHeight else { return super.intrinsicContentSize }
+        return CGSize(
+            width: UIView.noIntrinsicMetric,
+            height: min(maximumViewportHeight, intrinsicViewportContentHeight)
+        )
+    }
+
     override var accessibilityIdentifier: String? {
         didSet {
             collectionView.accessibilityIdentifier = accessibilityIdentifier
@@ -2008,6 +2039,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     deinit {
+        sourcePreparationTask?.cancel()
         deferredInitialRenderTask?.cancel()
         asyncRenderTask?.cancel()
         renderAheadTask?.cancel()
@@ -2094,6 +2126,48 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         collectionView.backgroundView = label
     }
 
+    private struct PreparedOrgModeSource: Sendable {
+        let markdown: String
+        let ranOnMainThread: Bool
+        let durationNs: UInt64
+    }
+
+    nonisolated private static func isMainThreadForDiagnostics() -> Bool {
+        Thread.isMainThread
+    }
+
+    nonisolated private static func prepareOrgModeSource(_ source: String) -> PreparedOrgModeSource? {
+        let started = DispatchTime.now().uptimeNanoseconds
+        let ranOnMainThread = Thread.isMainThread
+        guard let markdown = DocumentRenderPipeline.orgToMarkdown(
+            source,
+            cancellationCheck: { Task<Never, Never>.isCancelled }
+        ) else { return nil }
+        return PreparedOrgModeSource(
+            markdown: markdown,
+            ranOnMainThread: ranOnMainThread,
+            durationNs: DispatchTime.now().uptimeNanoseconds - started
+        )
+    }
+
+    private func scheduleOrgModeSourcePreparation(source: String) {
+        sourcePreparationTask?.cancel()
+        sourcePreparationTask = Task { @MainActor [weak self] in
+            let prepared: PreparedOrgModeSource? = await withCancellableDetachedTask(priority: .userInitiated) {
+                guard !Task.isCancelled else { return nil }
+                return Self.prepareOrgModeSource(source)
+            }
+            guard let self, let prepared, !Task.isCancelled else { return }
+            self.sourcePreparationTask = nil
+            #if DEBUG
+            self.debugSourcePreparationRanOnMainThread = prepared.ranOnMainThread
+            self.debugSourcePreparationDurationNs = prepared.durationNs
+            #endif
+            self.collectionView.backgroundView = nil
+            self.update(content: prepared.markdown, isStreaming: false)
+        }
+    }
+
     private func scheduleDeferredInitialRender(snapshot: ThinkingTraceStream.Snapshot) {
         deferredInitialRenderTask?.cancel()
         deferredInitialRenderTask = Task { @MainActor [weak self] in
@@ -2122,6 +2196,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         textSelectionEnabled: Bool
     ) {
+        sourcePreparationTask?.cancel()
+        sourcePreparationTask = nil
         deferredInitialRenderTask?.cancel()
         deferredInitialRenderTask = nil
         asyncRenderTask?.cancel()
@@ -2285,7 +2361,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         shouldResolveFileLines: Bool
     ) -> Bool {
         !config.isStreaming
-            && !shouldResolveFileLines
+            && (sourceFormat == .orgMode || !shouldResolveFileLines)
             && config.content.utf8.count >= Self.deferredInitialRenderByteThreshold
     }
 
@@ -2314,6 +2390,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         asyncRenderTask = Task { @MainActor [weak self] in
             let build: AsyncMarkdownBuild? = await withCancellableDetachedTask(priority: .userInitiated) {
                 guard !Task.isCancelled else { return nil }
+                let ranOnMainThread = Self.isMainThreadForDiagnostics()
                 let parseStart = DispatchTime.now().uptimeNanoseconds
                 let blocks = parseCommonMarkLocated(source)
                 let parseEnd = DispatchTime.now().uptimeNanoseconds
@@ -2333,7 +2410,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                     build: build,
                     parseDurationNs: parseEnd - parseStart,
                     buildDurationNs: buildEnd - parseEnd,
-                    lineCount: Self.countNewlines(source) + 1
+                    lineCount: Self.countNewlines(source) + 1,
+                    ranOnMainThread: ranOnMainThread
                 )
             }
 
@@ -2345,6 +2423,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 config: config
             )
             self.asyncRenderTask = nil
+            #if DEBUG
+            self.debugAsyncMarkdownBuildRanOnMainThread = build.ranOnMainThread
+            #endif
             self.collectionView.backgroundView = nil
             self.renderedSegments = segments
             self.renderedSegmentLineRanges = build.build.sourceLineRanges
@@ -2865,6 +2946,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             }
         }
         CATransaction.commit()
+        updateIntrinsicViewportContentHeight()
         #if DEBUG
         debugLayoutSetupNs = MarkdownStreamingPerf.timestampNs() - layoutSetupStart
         #endif
@@ -2872,6 +2954,25 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             targetY: collectionView.bounds.height * 3,
             generation: heightFlushGeneration
         )
+    }
+
+    private func updateIntrinsicViewportContentHeight() {
+        guard let maximumViewportHeight else { return }
+
+        let spacing = readerPreferences.spacing.markdownStackSpacing
+        var height = CGFloat(20) // Collection section top and bottom insets.
+        for (index, itemHeight) in itemHeights.enumerated() {
+            if index > 0 { height += spacing }
+            height += itemHeight
+            if height >= maximumViewportHeight {
+                height = maximumViewportHeight
+                break
+            }
+        }
+        let nextHeight = min(maximumViewportHeight, max(1, ceil(height)))
+        guard abs(nextHeight - intrinsicViewportContentHeight) > 0.5 else { return }
+        intrinsicViewportContentHeight = nextHeight
+        invalidateIntrinsicContentSize()
     }
 
     private func scheduleInitialRenderAheadSlices(targetY: CGFloat, generation: Int) {
@@ -3423,6 +3524,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             self.refreshGeometryPresentationForVisibleCells()
         }
         CATransaction.commit()
+        updateIntrinsicViewportContentHeight()
         if viewportOwner.followsTail {
             viewportOwner.scheduleFollowTail()
         }
@@ -3680,6 +3782,22 @@ extension NativeFullScreenMarkdownBody {
     }
 
     var debugRenderedSegmentCountForTesting: Int { renderedSegments.count }
+    var debugIsSourcePreparationPendingForTesting: Bool { sourcePreparationTask != nil }
+    var debugSourcePreparationRanOnMainThreadForTesting: Bool? {
+        debugSourcePreparationRanOnMainThread
+    }
+    var debugSourcePreparationDurationUsForTesting: UInt64 {
+        debugSourcePreparationDurationNs / 1_000
+    }
+    var debugAsyncMarkdownBuildRanOnMainThreadForTesting: Bool? {
+        debugAsyncMarkdownBuildRanOnMainThread
+    }
+
+    func debugWaitForDocumentPreparationForTesting() async {
+        await sourcePreparationTask?.value
+        await asyncRenderTask?.value
+        await renderAheadTask?.value
+    }
     var debugAppliedItemCountForTesting: Int { debugAppliedItems.count }
     var debugLayoutReplaceCountForTesting: Int { debugLayoutReplaceCount }
     var debugLayoutReplacementReasonsForTesting: [MarkdownReaderLayoutReplacementReason] {
@@ -4357,15 +4475,13 @@ extension NativeFullScreenSourceBody {
 }
 #endif
 
-// MARK: - Rendered Document Body (Org, LaTeX, Mermaid)
+// MARK: - Rendered Document Body (LaTeX, Mermaid)
 
-/// Fullscreen body for rendered document types. Hosts either a UITextView
-/// (attributed string renderers like Org Mode) or a custom drawing view
-/// (Core Graphics renderers like LaTeX, Mermaid) inside a scroll view.
+/// Fullscreen body for single-canvas rendered document types. Org documents use
+/// ``NativeFullScreenMarkdownBody`` so their multi-block content is virtualized.
 final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
 
     enum DocumentContent {
-        case orgMode(String)
         case latex(String)
         case mermaid(String)
     }
@@ -4410,7 +4526,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             ])
 
         default:
-            // Org/LaTeX use the outer scroll view
+            // LaTeX uses the outer scroll view.
             scrollView.translatesAutoresizingMaskIntoConstraints = false
             scrollView.alwaysBounceVertical = true
             scrollView.showsVerticalScrollIndicator = true
@@ -4422,10 +4538,6 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             let allowsHorizontalOverflow: Bool
             let enablesGraphicalZoom: Bool
             switch content {
-            case .orgMode(let text):
-                contentView = makeOrgView(text: text)
-                allowsHorizontalOverflow = false
-                enablesGraphicalZoom = false
             case .latex(let text):
                 let latex = makeLatexView(text: text)
                 contentView = latex.view
@@ -4559,21 +4671,6 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
         }
 
         return LatexView(view: stack, isGraphical: true)
-    }
-
-    private func makeOrgView(text: String) -> UIView {
-        let markdownText = DocumentRenderPipeline.orgToMarkdown(text)
-
-        let mdView = AssistantMarkdownContentView()
-        mdView.backgroundColor = .clear
-        mdView.apply(configuration: .make(
-            content: markdownText,
-            isStreaming: false,
-            themeID: themeID,
-            textSelectionEnabled: true,
-            readerPreferences: readerPreferences
-        ))
-        return mdView
     }
 
     private func makeZoomableGraphicalView<P: DocumentParser, R: GraphicalDocumentRenderer>(

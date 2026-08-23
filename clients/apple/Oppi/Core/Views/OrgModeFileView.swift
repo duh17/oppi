@@ -2,9 +2,10 @@ import SwiftUI
 
 /// Rendered org mode with source toggle.
 ///
-/// Uses the markdown rendering pipeline for visual output. Org AST is converted
-/// to markdown via `OrgToMarkdownConverter`, then rendered through
-/// `AssistantMarkdownContentView`. All chrome handled by ``RenderableDocumentView``.
+/// Uses the shared Markdown reader for visual output. Org conversion is
+/// cancellable and off-main, then completed content enters the same virtualized
+/// render-ahead pipeline as Markdown. All chrome is handled by
+/// ``RenderableDocumentView``.
 struct OrgModeFileView: View {
     let content: String
     let filePath: String?
@@ -17,30 +18,21 @@ struct OrgModeFileView: View {
             filePath: filePath,
             presentation: presentation,
             fullScreenContent: .orgMode(content: content, filePath: filePath),
-            renderedViewFactory: { [content, presentation] in
-                let markdownContent = DocumentRenderPipeline.orgToMarkdown(content)
+            renderedViewFactory: { [content, filePath, presentation] in
                 let themeID = ThemeRuntimeState.currentThemeID()
-
-                if presentation == .document {
-                    return NativeFullScreenMarkdownBody(
-                        content: markdownContent,
-                        stream: nil,
-                        themeID: themeID,
-                        palette: themeID.palette,
-                        reviewCommentSelectionRouter: nil,
-                        reviewCommentSourceContext: nil
-                    )
-                }
-
-                let view = AssistantMarkdownContentView()
-                view.backgroundColor = .clear
-                view.apply(configuration: .make(
-                    content: markdownContent,
-                    isStreaming: false,
+                return NativeFullScreenMarkdownBody(
+                    content: content,
+                    stream: nil,
+                    sourceFormat: .orgMode,
                     themeID: themeID,
-                    textSelectionEnabled: true,
-                ))
-                return view
+                    palette: themeID.palette,
+                    reviewCommentSelectionRouter: nil,
+                    reviewCommentSourceContext: nil,
+                    sourceFilePath: filePath,
+                    maximumViewportHeight: presentation.viewportMaxHeight,
+                    allowsVerticalBounce: presentation == .document,
+                    allowsVerticalScrolling: presentation == .document
+                )
             }
         )
     }

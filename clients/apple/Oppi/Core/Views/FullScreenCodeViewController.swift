@@ -794,18 +794,24 @@ final class FullScreenCodeViewController: UIViewController {
                 )
             )
         case .orgMode(let text, let filePath):
-            return NativeFullScreenRenderedDocumentBody(
-                content: .orgMode(text),
+            let body = NativeFullScreenMarkdownBody(
+                content: text,
+                stream: nil,
+                sourceFormat: .orgMode,
                 themeID: themeID,
                 palette: palette,
-                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
-                    surface: .fullScreenCode,
+                    surface: .fullScreenMarkdown,
                     filePath: filePath,
                     languageHint: "org"
-                )
+                ),
+                sourceFilePath: filePath,
+                readerPreferences: readerPreferences(for: content),
+                perfSurface: .fullScreenMarkdown
             )
+            body.accessibilityIdentifier = "full-screen.org-mode.body"
+            return body
         case .mermaid(let text, let filePath):
             return NativeFullScreenRenderedDocumentBody(
                 content: .mermaid(text),
@@ -1081,7 +1087,9 @@ final class FullScreenCodeViewController: UIViewController {
             return .terminal
         case .html:
             return .html
-        case .latex, .orgMode, .mermaid:
+        case .orgMode:
+            return .markdown
+        case .latex, .mermaid:
             return .renderedDocument
         case .liveSource(let snapshot, _):
             return readerFamily(for: bodyContent(for: snapshot))

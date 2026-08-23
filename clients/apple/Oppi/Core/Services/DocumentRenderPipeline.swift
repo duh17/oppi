@@ -380,10 +380,25 @@ enum DocumentRenderPipeline {
     /// Uses the standard OrgParser → OrgToMarkdownConverter → MarkdownBlockSerializer
     /// pipeline shared across all surfaces.
     static func orgToMarkdown(_ source: String) -> String {
-        let parser = OrgParser()
-        let orgBlocks = parser.parse(source)
+        orgToMarkdown(source, cancellationCheck: { false }) ?? ""
+    }
+
+    /// Cancellable Org conversion for interactive readers. Org parsing itself is
+    /// synchronous, so cancellation is checked between each independently
+    /// meaningful stage and prevents conversion/serialization after a cancelled
+    /// parse instead of letting stale work run through the whole pipeline.
+    static func orgToMarkdown(
+        _ source: String,
+        cancellationCheck: @escaping @Sendable () -> Bool
+    ) -> String? {
+        guard !cancellationCheck() else { return nil }
+        let orgBlocks = OrgParser().parse(source)
+        guard !cancellationCheck() else { return nil }
         let mdBlocks = OrgToMarkdownConverter.convert(orgBlocks)
-        return MarkdownBlockSerializer.serialize(mdBlocks)
+        guard !cancellationCheck() else { return nil }
+        let markdown = MarkdownBlockSerializer.serialize(mdBlocks)
+        guard !cancellationCheck() else { return nil }
+        return markdown
     }
 
     // MARK: - Export Helpers
