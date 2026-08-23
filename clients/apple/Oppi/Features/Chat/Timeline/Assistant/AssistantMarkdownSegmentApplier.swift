@@ -45,6 +45,10 @@ final class AssistantMarkdownSegmentApplier {
     /// Closure for fetching files from the active session working directory.
     var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
 
+    /// Attached to each image view before `apply` so a cache hit can publish
+    /// its reserved height without `forceInvalidate` from inside `cellForItemAt`.
+    var onImageDisplayHeightChange: ((CGFloat) -> Void)?
+
     /// Avatar hang geometry from the assistant row. Applied after each rebuild
     /// so the first text segment clears the badge and later content is full width.
     private var leadingHangClearance: CGFloat = 0
@@ -302,6 +306,7 @@ final class AssistantMarkdownSegmentApplier {
 
         case .image(let alt, let url):
             let imageView = NativeMarkdownImageView()
+            imageView.onDisplayHeightChange = onImageDisplayHeightChange
             imageView.apply(
                 url: url,
                 alt: alt,
@@ -534,6 +539,7 @@ final class AssistantMarkdownSegmentApplier {
             case .image(let alt, let url):
                 // Image views manage their own load lifecycle — nothing to diff in-place.
                 if let imageView = imageViews[index] {
+                    imageView.onDisplayHeightChange = onImageDisplayHeightChange
                     imageView.apply(
                         url: url,
                         alt: alt,

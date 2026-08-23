@@ -41,6 +41,9 @@ struct FullScreenMarkdownAsyncRenderTests {
         body.layoutIfNeeded()
         let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
         collectionView.layoutIfNeeded()
+        await drainMarkdownHeightFlush()
+        body.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
 
         // The formula cell sits near the top of the document, so it is on
         // screen from the initial layout pass.
@@ -138,6 +141,9 @@ struct FullScreenMarkdownAsyncRenderTests {
         body.layoutIfNeeded()
         let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
         collectionView.layoutIfNeeded()
+        await drainMarkdownHeightFlush()
+        body.layoutIfNeeded()
+        collectionView.layoutIfNeeded()
 
         let mermaidView = try #require(
             timelineFirstView(ofType: NativeMermaidBlockView.self, in: collectionView),
@@ -196,6 +202,23 @@ struct FullScreenMarkdownAsyncRenderTests {
     }
 
     @MainActor
+    @Test("async graphical placeholders configure code-block accessibility")
+    func asyncGraphicalPlaceholdersConfigureCodeBlockAccessibility() throws {
+        let graphicalViews: [UIView] = [
+            NativeMermaidBlockView(),
+            NativeLatexBlockView(),
+        ]
+
+        for graphicalView in graphicalViews {
+            let codeBlock = try #require(
+                timelineFirstView(ofType: NativeCodeBlockView.self, in: graphicalView)
+            )
+            #expect(codeBlock.debugWrapButtonAccessibilityLabelForTesting == "Wrap code lines")
+            #expect(codeBlock.debugWrapButtonAccessibilityValueForTesting == "Off")
+        }
+    }
+
+    @MainActor
     @Test("cancelling the parent render task cancels the detached build")
     func cancellingParentRenderTaskCancelsDetachedBuild() async {
         let probe = DetachedCancellationProbe()
@@ -218,6 +241,14 @@ struct FullScreenMarkdownAsyncRenderTests {
         _ = await parent.value
 
         #expect(await probe.wasCancelled)
+    }
+}
+
+private func drainMarkdownHeightFlush() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        DispatchQueue.main.async {
+            continuation.resume()
+        }
     }
 }
 

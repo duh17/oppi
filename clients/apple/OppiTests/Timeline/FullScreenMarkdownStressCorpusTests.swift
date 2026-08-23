@@ -193,6 +193,17 @@ struct FullScreenMarkdownStressCorpusTests {
         print("READER_METRIC item_count=\(body.debugRenderedSegmentCountForTesting)")
         print("READER_METRIC visible_count=\(body.debugVisibleCellCountForTesting)")
         print("READER_METRIC content_height=\(Int(collectionView.contentSize.height.rounded()))")
+        print("READER_PHASE applied_kinds=\(body.debugAppliedSegmentKindsForTesting.joined(separator: ","))")
+        let diagnostics = body.debugFirstPaintDiagnosticsForTesting
+        print("READER_METRIC segment_build_us=\(diagnostics.segmentBuildUs)")
+        print("READER_METRIC height_estimate_us=\(diagnostics.heightEstimateUs)")
+        print("READER_METRIC layout_setup_us=\(diagnostics.layoutSetupUs)")
+        print("READER_METRIC visible_apply_us=\(diagnostics.visibleApplyUs)")
+        print("READER_METRIC visible_text_apply_us=\(diagnostics.visibleTextApplyUs)")
+        print("READER_METRIC visible_nontext_apply_us=\(diagnostics.visibleNonTextApplyUs)")
+        print("READER_METRIC visible_text_apply_count=\(diagnostics.visibleTextApplyCount)")
+        print("READER_METRIC visible_nontext_apply_count=\(diagnostics.visibleNonTextApplyCount)")
+        print("READER_METRIC deferred_fit_us=\(diagnostics.deferredFitUs)")
     }
 
     @Test(
@@ -431,6 +442,264 @@ struct FullScreenMarkdownStressCorpusTests {
     }
 
     @Test(
+        "reserved-height layout replace retries after interaction clears",
+        .timeLimit(.minutes(1))
+    )
+    func reservedHeightLayoutReplaceRetriesAfterInteractionClears() async throws {
+        let imagePath = "fixtures/deferred-\(UUID().uuidString).png"
+        let content = "![deferred interaction height](\(imagePath))"
+        let pngData = try #require(Self.tallPNGData())
+        let fetchGate = WorkspaceImageFetchGate(data: pngData)
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            workspaceID: "ws-markdown-interaction",
+            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            sourceFilePath: "docs/deferred-interaction.md",
+            fetchWorkspaceFile: { _, _ in
+                await fetchGate.wait()
+            }
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer {
+            body.debugSetCollectionUserInteractingForTesting(nil)
+            window.isHidden = true
+        }
+
+        body.layoutIfNeeded()
+        let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collectionView.layoutIfNeeded()
+        await settleReservedHeights(body)
+
+        let imageItem = 0
+        let initialAppliedHeight = try #require(
+            collectionView.layoutAttributesForItem(
+                at: IndexPath(item: imageItem, section: 0)
+            )?.frame.height
+        )
+        let initialFittingHeight = try #require(body.debugFittingHeightForTesting(imageItem))
+        #expect(abs(initialAppliedHeight - initialFittingHeight) < 1)
+
+        body.debugSetCollectionUserInteractingForTesting(true)
+        await fetchGate.release()
+        let reservedFromPixels = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
+            pixelReservedImageView(in: body) != nil
+        }
+        #expect(reservedFromPixels, "workspace image never published its pixel-derived height")
+        await settleReservedHeights(body)
+
+        let deferredFittingHeight = try #require(body.debugFittingHeightForTesting(imageItem))
+        let deferredAppliedHeight = try #require(
+            collectionView.layoutAttributesForItem(
+                at: IndexPath(item: imageItem, section: 0)
+            )?.frame.height
+        )
+        #expect(deferredFittingHeight > initialFittingHeight + 1)
+        #expect(
+            abs(deferredAppliedHeight - initialAppliedHeight) < 1,
+            "interaction must defer applied geometry changes"
+        )
+        #expect(body.debugNeedsLayoutReplaceAfterInteractionForTesting)
+
+        body.debugSetCollectionUserInteractingForTesting(false)
+        body.setNeedsLayout()
+        body.layoutIfNeeded()
+        await settleReservedHeights(body)
+
+        let appliedAfterInteraction = try #require(
+            collectionView.layoutAttributesForItem(
+                at: IndexPath(item: imageItem, section: 0)
+            )?.frame.height
+        )
+        let fittingAfterInteraction = try #require(body.debugFittingHeightForTesting(imageItem))
+        #expect(
+            abs(appliedAfterInteraction - fittingAfterInteraction) < 1,
+            "deferred applied height \(appliedAfterInteraction) != fitting height \(fittingAfterInteraction)"
+        )
+        #expect(!body.debugNeedsLayoutReplaceAfterInteractionForTesting)
+    }
+
+    @Test(
+        "reserved heights match fitting heights and the visible anchor stays put",
+        .timeLimit(.minutes(1))
+    )
+    func reservedHeightsMatchFittingAndVisibleAnchorStaysPut() async throws {
+        let content = try mixedStressFixture()
+        let pngData = try #require(Self.tallPNGData())
+        let fetchGate = WorkspaceImageFetchGate(data: pngData)
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            workspaceID: "ws-markdown-stress",
+            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            sourceFilePath: "docs/mixed-markdown-stress-corpus.md",
+            fetchWorkspaceFile: { _, _ in
+                await fetchGate.wait()
+            }
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        body.layoutIfNeeded()
+        let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collectionView.layoutIfNeeded()
+        let provisionalAnchor = try #require(
+            body.debugVisibleAnchorForTesting(),
+            "missing provisional first-paint anchor"
+        )
+        await settleReservedHeights(body)
+        let settledAnchor = try #require(
+            body.debugVisibleAnchorForTesting(),
+            "missing settled first-paint anchor"
+        )
+        let settledDiagnostics = body.debugFirstPaintDiagnosticsForTesting
+        #expect(settledDiagnostics.deferredFitUs > 0)
+        print("READER_DEFERRED_METRIC fit_us=\(settledDiagnostics.deferredFitUs)")
+        #expect(settledAnchor.item == provisionalAnchor.item)
+        #expect(abs(settledAnchor.screenY - provisionalAnchor.screenY) < 1)
+
+        #expect(body.debugAppliedItemCountForTesting > 0)
+        #expect(
+            body.debugAppliedItemCountForTesting < body.debugRenderedSegmentCountForTesting,
+            "first paint applied the whole document (\(body.debugAppliedItemCountForTesting)/\(body.debugRenderedSegmentCountForTesting))"
+        )
+
+        try assertReservedHeightsMatchFitting(
+            in: body,
+            items: collectionView.indexPathsForVisibleItems.map(\.item),
+            stage: "first paint"
+        )
+        let replacementCountAfterSettlement = body.debugLayoutReplaceCountForTesting
+        let settledIndexPath = try #require(collectionView.indexPathsForVisibleItems.sorted().first)
+        let settledCell = try #require(collectionView.cellForItem(at: settledIndexPath))
+        body.collectionView(collectionView, willDisplay: settledCell, forItemAt: settledIndexPath)
+        await settleReservedHeights(body)
+        #expect(
+            body.debugLayoutReplaceCountForTesting == replacementCountAfterSettlement,
+            "an unchanged visible cell must not replace the collection layout again"
+        )
+        var anchor = try #require(body.debugVisibleAnchorForTesting(), "missing first-paint visible anchor")
+        try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "first paint apply")
+
+        let segments = body.debugRenderedSegmentsForTesting
+        let mermaidItem = try #require(segments.firstIndex {
+            if case .mermaidDiagram = $0 { return true }
+            return false
+        })
+        let latexItem = try #require(segments.firstIndex {
+            if case .latexBlock = $0 { return true }
+            return false
+        })
+        let tableItem = try #require(segments.firstIndex {
+            if case .table = $0 { return true }
+            return false
+        })
+        let imageItem = try #require(segments.firstIndex { segment in
+            if case .image(_, let url) = segment {
+                return url.host?.contains("example.invalid") != true
+            }
+            return false
+        })
+
+        for (item, stage) in [
+            (tableItem, "table apply"),
+            (latexItem, "latex apply"),
+            (mermaidItem, "mermaid apply"),
+        ] {
+            body.debugScrollItemIntoViewForTesting(item)
+            await settleReservedHeights(body)
+            try assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
+            anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after \(stage)")
+            try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: stage)
+        }
+
+        body.debugScrollItemIntoViewForTesting(imageItem)
+        await settleReservedHeights(body)
+        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image placeholder")
+        let imageFrame = try #require(
+            collectionView.layoutAttributesForItem(at: IndexPath(item: imageItem, section: 0))?.frame,
+            "missing image frame before growth"
+        )
+        let maximumY = max(
+            -collectionView.adjustedContentInset.top,
+            collectionView.contentSize.height
+                - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        collectionView.setContentOffset(
+            CGPoint(
+                x: collectionView.contentOffset.x,
+                y: min(imageFrame.maxY + 8, maximumY)
+            ),
+            animated: false
+        )
+        collectionView.layoutIfNeeded()
+        let growthAnchor = try #require(
+            body.debugVisibleAnchorForTesting(),
+            "missing visible anchor before image growth"
+        )
+        #expect(
+            growthAnchor.item > imageItem,
+            "growing image must sit above the visible anchor (image \(imageItem), anchor \(growthAnchor.item))"
+        )
+
+        await fetchGate.release()
+        let reservedFromPixels = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
+            pixelReservedImageView(in: body) != nil
+        }
+        #expect(reservedFromPixels, "workspace image never reserved height from pixel size")
+        let imageView = try #require(pixelReservedImageView(in: body))
+        let pixelReserved = try #require(imageView.debugPixelReservedHeightForTesting)
+        let reservedDuringDecode = try #require(body.debugReservedHeightForTesting(imageItem))
+        #expect(
+            abs(reservedDuringDecode - pixelReserved) < 1,
+            "reserved height \(reservedDuringDecode) != pixel reserve \(pixelReserved) before/during decode"
+        )
+        try await assertVisibleAnchorStaysPut(
+            in: body,
+            expected: growthAnchor,
+            stage: "image growth above anchor"
+        )
+
+        let imageLoaded = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
+            timelineAllImageViews(in: body).contains { !$0.isHidden && $0.image != nil }
+        }
+        #expect(imageLoaded, "workspace image never settled after first layout")
+        body.debugScrollItemIntoViewForTesting(imageItem)
+        await settleReservedHeights(body)
+        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image settlement")
+
+        collectionView.contentOffset.y = max(
+            -collectionView.adjustedContentInset.top,
+            collectionView.contentSize.height
+                - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        collectionView.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        body.debugScrollItemIntoViewForTesting(imageItem)
+        await settleReservedHeights(body)
+        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
+        anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after image reuse")
+        try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
+        #expect(
+            body.debugAppliedItemCountForTesting < body.debugRenderedSegmentCountForTesting,
+            "settlement/reuse applied the whole document (\(body.debugAppliedItemCountForTesting)/\(body.debugRenderedSegmentCountForTesting))"
+        )
+    }
+
+    @Test(
         "document reader lays out the crashed host report without hanging",
         .timeLimit(.minutes(1))
     )
@@ -511,6 +780,103 @@ struct FullScreenMarkdownStressCorpusTests {
             context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
         }
         return image.pngData()
+    }
+
+    private static func tallPNGData() -> Data? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 96), format: format)
+        let image = renderer.image { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 32, height: 96))
+        }
+        return image.pngData()
+    }
+
+    private func settleReservedHeights(_ body: NativeFullScreenMarkdownBody) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+    }
+
+    private func pixelReservedImageView(in body: NativeFullScreenMarkdownBody) -> NativeMarkdownImageView? {
+        timelineAllViews(in: body).compactMap { $0 as? NativeMarkdownImageView }.first {
+            $0.debugPixelReservedHeightForTesting != nil
+        }
+    }
+
+    private func assertReservedHeightsMatchFitting(
+        in body: NativeFullScreenMarkdownBody,
+        items: [Int],
+        stage: String
+    ) throws {
+        let uniqueItems = Set(items).sorted()
+        #expect(!uniqueItems.isEmpty, "\(stage) had no items to compare")
+        for item in uniqueItems {
+            let reserved = try #require(
+                body.debugReservedHeightForTesting(item),
+                "\(stage) missing reserved height for item \(item)"
+            )
+            let fitting = try #require(
+                body.debugFittingHeightForTesting(item),
+                "\(stage) missing fitting height for item \(item)"
+            )
+            #expect(
+                abs(reserved - fitting) < 1,
+                "\(stage) reserved height \(reserved) != fitting height \(fitting) for item \(item)"
+            )
+        }
+    }
+
+    private func assertVisibleAnchorStaysPut(
+        in body: NativeFullScreenMarkdownBody,
+        expected: (item: Int, screenY: CGFloat),
+        stage: String
+    ) async throws {
+        try await Task.sleep(for: .milliseconds(120))
+        body.debugLayoutVisibleMarkdownCellsForTesting()
+        let current = try #require(
+            body.debugVisibleAnchorForTesting(),
+            "\(stage) lost the visible anchor"
+        )
+        #expect(
+            current.item == expected.item,
+            "\(stage) visible anchor item moved \(expected.item) -> \(current.item)"
+        )
+        #expect(
+            abs(current.screenY - expected.screenY) < 1,
+            "\(stage) visible anchor screen Y jumped \(expected.screenY) -> \(current.screenY)"
+        )
+    }
+}
+
+private actor WorkspaceImageFetchGate {
+    private let data: Data
+    private var released = false
+    private var waiters: [CheckedContinuation<Data, Never>] = []
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    func wait() async -> Data {
+        if released { return data }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        let pending = waiters
+        waiters.removeAll()
+        for continuation in pending {
+            continuation.resume(returning: data)
+        }
     }
 }
 

@@ -72,6 +72,7 @@ final class NativeMermaidBlockView: UIView {
         translatesAutoresizingMaskIntoConstraints = false
 
         codeBlockView.translatesAutoresizingMaskIntoConstraints = false
+        codeBlockView.prepareForGraphicalPlaceholder()
         addSubview(codeBlockView)
 
         diagramImageView.isHidden = true

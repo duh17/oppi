@@ -111,6 +111,7 @@ final class NativeLatexBlockView: UIView {
         translatesAutoresizingMaskIntoConstraints = false
 
         codeBlockView.translatesAutoresizingMaskIntoConstraints = false
+        codeBlockView.prepareForGraphicalPlaceholder()
         addSubview(codeBlockView)
 
         formulaScrollView.isHidden = true

@@ -1547,6 +1547,15 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         setNeedsLayout()
     }
 
+    fileprivate func observeDisplayHeightChanges(_ handler: @escaping (CGFloat) -> Void) {
+        segmentApplier.onImageDisplayHeightChange = handler
+        for view in stackView.arrangedSubviews {
+            if let imageView = view as? NativeMarkdownImageView {
+                imageView.onDisplayHeightChange = handler
+            }
+        }
+    }
+
     fileprivate func bindReaderChrome(
         lineAnchorModeEnabled: Bool,
         textViewDelegate: any UITextViewDelegate,
@@ -1625,6 +1634,26 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         attributes.size = CGSize(width: width, height: ceil(max(1, size.height)))
         lastMeasuredAttributes = attributes
         return attributes
+    }
+
+    fileprivate func measuredFittingHeight(width: CGFloat) -> CGFloat {
+        let targetWidth = max(1, width)
+        if bounds.size.width != targetWidth {
+            bounds.size.width = targetWidth
+        }
+        if contentView.bounds.size.width != targetWidth {
+            contentView.bounds.size.width = targetWidth
+        }
+        let targetSize = CGSize(
+            width: targetWidth,
+            height: UIView.layoutFittingCompressedSize.height
+        )
+        let size = stackView.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return ceil(max(1, size.height))
     }
 
     @objc private func handleDoubleTap() {
@@ -1712,8 +1741,30 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }()
     private var parkedSegmentViews: [Int: [UIView]] = [:]
     private var itemHeights: [CGFloat] = []
+    private var isConfiguringCell = false
+    private var pendingHeightFlush = false
+    private var heightFlushGeneration = 0
+    private var needsLayoutReplaceAfterInteraction = false
+    private var needsVisibleHeightRefreshAfterInteraction = false
+    private var pendingLayoutReplaceAfterInteractionRetry = false
+    #if DEBUG
+    private var debugIsCollectionUserInteractingOverride: Bool?
+    #endif
+    /// After a snapshot rebuild, `reloadData` can land in a later layout pass.
+    /// Ignore parked views until that pass applies the new segments.
+    private var suppressParkedReinstall = false
     #if DEBUG
     private var debugAppliedItems: Set<Int> = []
+    private var debugSegmentBuildNs: UInt64 = 0
+    private var debugHeightEstimateNs: UInt64 = 0
+    private var debugLayoutSetupNs: UInt64 = 0
+    private var debugVisibleApplyNs: UInt64 = 0
+    private var debugVisibleTextApplyNs: UInt64 = 0
+    private var debugVisibleNonTextApplyNs: UInt64 = 0
+    private var debugVisibleTextApplyCount = 0
+    private var debugVisibleNonTextApplyCount = 0
+    private var debugDeferredFitNs: UInt64 = 0
+    private var debugLayoutReplaceCount = 0
     #endif
     private let segmentSource = AssistantMarkdownSegmentSource()
     private let stream: ThinkingTraceStream?
@@ -1828,6 +1879,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
+        collectionView.panGestureRecognizer.addTarget(
+            self,
+            action: #selector(handleCollectionPanStateChange(_:))
+        )
         collectionView.register(
             FullScreenMarkdownSegmentCell.self,
             forCellWithReuseIdentifier: FullScreenMarkdownSegmentCell.reuseIdentifier
@@ -1895,6 +1950,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        suppressParkedReinstall = false
+        retryDeferredLayoutReplaceIfInteractionEnded()
         updateLineAnchorHighlight()
         scheduleLineAnchorFocusIfNeeded()
         tailFollowCoordinator.onLayoutPass()
@@ -2054,6 +2111,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             renderLargeCompletedSnapshotAsync(snapshot: snapshot, config: config, cycleStart: cycleStart)
             return
         }
+        #if DEBUG
+        let segmentBuildStart = MarkdownStreamingPerf.timestampNs()
+        #endif
         if shouldResolveFileLines {
             let build = segmentSource.buildSegmentsWithSourceLineRanges(
                 config,
@@ -2065,6 +2125,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             renderedSegments = segmentSource.buildSegments(config)
             renderedSegmentLineRanges = []
         }
+        #if DEBUG
+        debugSegmentBuildNs = MarkdownStreamingPerf.timestampNs() - segmentBuildStart
+        #endif
         prepareLazyDocumentLayout()
 
         if let surface = config.perfSurface {
@@ -2309,11 +2372,18 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         cell.parkHandler = { [weak self] cell in
             self?.parkSegmentViews(from: cell)
         }
-        if let parked = takeParkedSegmentViews(at: indexPath.item) {
+        // Attach the height publisher before `apply` so a cached image cannot
+        // `forceInvalidate` + `layoutIfNeeded` from inside `cellForItemAt`.
+        wireDisplayHeightTracking(on: cell, item: indexPath.item)
+        isConfiguringCell = true
+        defer { isConfiguringCell = false }
+        if !suppressParkedReinstall, let parked = takeParkedSegmentViews(at: indexPath.item) {
             cell.installArrangedSegmentViews(parked)
+            wireDisplayHeightTracking(on: cell, item: indexPath.item)
         } else {
             #if DEBUG
             debugAppliedItems.insert(indexPath.item)
+            let visibleApplyStart = MarkdownStreamingPerf.timestampNs()
             #endif
             cell.apply(
                 segment: renderedSegments[indexPath.item],
@@ -2326,8 +2396,32 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 fetchWorkspaceFile: fetchWorkspaceFile,
                 fetchSessionFile: fetchSessionFile
             )
+            #if DEBUG
+            let visibleApplyDuration = MarkdownStreamingPerf.timestampNs() - visibleApplyStart
+            debugVisibleApplyNs += visibleApplyDuration
+            if case .text = renderedSegments[indexPath.item] {
+                debugVisibleTextApplyNs += visibleApplyDuration
+                debugVisibleTextApplyCount += 1
+            } else {
+                debugVisibleNonTextApplyNs += visibleApplyDuration
+                debugVisibleNonTextApplyCount += 1
+            }
+            #endif
         }
         return cell
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        willDisplay cell: UICollectionViewCell,
+        forItemAt indexPath: IndexPath
+    ) {
+        guard cell is FullScreenMarkdownSegmentCell,
+              itemHeights.indices.contains(indexPath.item) else { return }
+        // First paint uses provisional absolute heights. Reconcile the visible
+        // window on the next main-queue turn so TextKit fitting does not block
+        // the initial frame; the anchored layout replacement prevents a jump.
+        scheduleHeightFlush()
     }
 
     // Segment views are parked on real reuse only, never in
@@ -2338,6 +2432,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     // reinstall (from the park host) or rebuild (fresh apply).
 
     private func parkSegmentViews(from cell: FullScreenMarkdownSegmentCell) {
+        guard !suppressParkedReinstall else { return }
         guard let index = cell.appliedItemIndex else { return }
         let views = cell.yieldArrangedSegmentViews()
         guard !views.isEmpty else { return }
@@ -2364,11 +2459,31 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// background so mermaid/latex are ready when scrolled into view.
     private func prepareLazyDocumentLayout() {
         resetParkedSegmentViews()
+        heightFlushGeneration &+= 1
+        pendingHeightFlush = false
+        needsLayoutReplaceAfterInteraction = false
+        needsVisibleHeightRefreshAfterInteraction = false
+        suppressParkedReinstall = true
         #if DEBUG
         debugAppliedItems.removeAll()
+        debugHeightEstimateNs = 0
+        debugLayoutSetupNs = 0
+        debugVisibleApplyNs = 0
+        debugVisibleTextApplyNs = 0
+        debugVisibleNonTextApplyNs = 0
+        debugVisibleTextApplyCount = 0
+        debugVisibleNonTextApplyCount = 0
+        debugDeferredFitNs = 0
         #endif
-        let width = max(bounds.width, 390)
+        let width = max(bounds.width, collectionView.bounds.width, 390)
+        #if DEBUG
+        let heightEstimateStart = MarkdownStreamingPerf.timestampNs()
+        #endif
         itemHeights = renderedSegments.map { Self.estimatedHeight(for: $0, containerWidth: width) }
+        #if DEBUG
+        debugHeightEstimateNs = MarkdownStreamingPerf.timestampNs() - heightEstimateStart
+        let layoutSetupStart = MarkdownStreamingPerf.timestampNs()
+        #endif
         UIView.performWithoutAnimation {
             collectionView.setCollectionViewLayout(
                 Self.makeCollectionLayout(
@@ -2379,6 +2494,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             )
             collectionView.reloadData()
         }
+        #if DEBUG
+        debugLayoutSetupNs = MarkdownStreamingPerf.timestampNs() - layoutSetupStart
+        #endif
         scheduleGraphicalPrefetch(width: width)
     }
 
@@ -2408,13 +2526,13 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             // Mermaid parsing is too expensive for first paint. Estimate
             // from diagram source lines; the background prefetch renders
             // the real raster before the user reaches the item.
-            let lineCount = CGFloat(code.split(separator: "\n").count)
+            let lineCount = CGFloat(countNewlines(code) + 1)
             return min(400, max(120, lineCount * 24 + 44))
         case .latexBlock(let code):
             // TeX parsing plus CoreGraphics layout is too expensive for
             // first paint. Estimate from source lines; real rasters are
             // prefetched in the background before the user scrolls here.
-            let lineCount = CGFloat(code.split(separator: "\n").count)
+            let lineCount = CGFloat(countNewlines(code) + 1)
             return min(400, max(44, lineCount * 28 + 24))
         }
     }
@@ -2430,12 +2548,204 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         lineSpacing: CGFloat = 0
     ) -> CGFloat {
         guard !text.isEmpty else { return max(22, lineHeight + lineSpacing) }
+        let width = max(1, contentWidth)
         var lines: CGFloat = 0
-        for paragraph in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let width = CGFloat(paragraph.unicodeScalars.count) * charWidth
-            lines += max(1, (width / max(1, contentWidth)).rounded(.up))
+        var paragraphScalars: CGFloat = 0
+        for scalar in text.unicodeScalars {
+            if scalar.value == 10 {
+                lines += max(1, (paragraphScalars * charWidth / width).rounded(.up))
+                paragraphScalars = 0
+            } else {
+                paragraphScalars += 1
+            }
         }
+        lines += max(1, (paragraphScalars * charWidth / width).rounded(.up))
         return max(22, lines * lineHeight + lineSpacing)
+    }
+
+    private struct ViewportAnchor {
+        let item: Int
+        let offsetInItem: CGFloat
+    }
+
+    private func contentCellWidth(containerWidth: CGFloat? = nil) -> CGFloat {
+        let width = containerWidth ?? max(bounds.width, collectionView.bounds.width, 390)
+        return max(1, width - 24)
+    }
+
+    private var isCollectionUserInteracting: Bool {
+        #if DEBUG
+        if let debugIsCollectionUserInteractingOverride {
+            return debugIsCollectionUserInteractingOverride
+        }
+        #endif
+        return collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating
+    }
+
+    private func wireDisplayHeightTracking(on cell: FullScreenMarkdownSegmentCell, item: Int) {
+        cell.observeDisplayHeightChanges { [weak self] height in
+            self?.updateReservedHeight(item: item, height: height)
+        }
+    }
+
+    private func updateReservedHeight(item: Int, height: CGFloat) {
+        guard itemHeights.indices.contains(item) else { return }
+        let next: CGFloat
+        if let visibleCell = collectionView.cellForItem(at: IndexPath(item: item, section: 0))
+            as? FullScreenMarkdownSegmentCell {
+            let width = visibleCell.contentView.bounds.width > 0
+                ? visibleCell.contentView.bounds.width
+                : contentCellWidth()
+            next = visibleCell.measuredFittingHeight(width: width)
+        } else {
+            next = ceil(max(1, height))
+        }
+        guard abs(itemHeights[item] - next) > 0.5 else { return }
+        itemHeights[item] = next
+        if isCollectionUserInteracting {
+            needsLayoutReplaceAfterInteraction = true
+            return
+        }
+        if isConfiguringCell {
+            scheduleHeightFlush()
+            return
+        }
+        replaceCollectionLayout(preserveViewport: true)
+    }
+
+    private func scheduleHeightFlush() {
+        guard !pendingHeightFlush else { return }
+        pendingHeightFlush = true
+        let generation = heightFlushGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.heightFlushGeneration == generation else { return }
+            self.pendingHeightFlush = false
+            guard !self.isCollectionUserInteracting else {
+                self.needsVisibleHeightRefreshAfterInteraction = true
+                return
+            }
+            guard self.refreshVisibleReservedHeights() else { return }
+            self.replaceCollectionLayout(preserveViewport: true)
+        }
+    }
+
+    @discardableResult
+    private func refreshVisibleReservedHeights() -> Bool {
+        var changed = false
+        for indexPath in collectionView.indexPathsForVisibleItems {
+            guard let cell = collectionView.cellForItem(at: indexPath) as? FullScreenMarkdownSegmentCell,
+                  itemHeights.indices.contains(indexPath.item) else { continue }
+            let width = cell.contentView.bounds.width > 0
+                ? cell.contentView.bounds.width
+                : contentCellWidth()
+            #if DEBUG
+            let fittingStart = MarkdownStreamingPerf.timestampNs()
+            #endif
+            let fitting = cell.measuredFittingHeight(width: width)
+            #if DEBUG
+            debugDeferredFitNs += MarkdownStreamingPerf.timestampNs() - fittingStart
+            #endif
+            guard abs(itemHeights[indexPath.item] - fitting) > 0.5 else { continue }
+            itemHeights[indexPath.item] = fitting
+            changed = true
+        }
+        return changed
+    }
+
+    private func replaceCollectionLayout(preserveViewport: Bool) {
+        if isCollectionUserInteracting {
+            needsLayoutReplaceAfterInteraction = true
+            return
+        }
+        needsLayoutReplaceAfterInteraction = false
+        #if DEBUG
+        debugLayoutReplaceCount += 1
+        #endif
+        let anchor = preserveViewport ? captureViewportAnchor() : nil
+        UIView.performWithoutAnimation {
+            self.collectionView.setCollectionViewLayout(
+                Self.makeCollectionLayout(
+                    spacing: self.readerPreferences.spacing.markdownStackSpacing,
+                    itemHeights: self.itemHeights
+                ),
+                animated: false
+            )
+            if let anchor {
+                self.restoreViewportAnchor(anchor)
+            }
+        }
+    }
+
+    private func replaceCollectionLayoutIfNeededAfterInteraction() {
+        guard needsLayoutReplaceAfterInteraction || needsVisibleHeightRefreshAfterInteraction,
+              !pendingLayoutReplaceAfterInteractionRetry else { return }
+        pendingLayoutReplaceAfterInteractionRetry = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingLayoutReplaceAfterInteractionRetry = false
+            guard !self.isCollectionUserInteracting else { return }
+            let layoutWasAlreadyDirty = self.needsLayoutReplaceAfterInteraction
+            let needsVisibleRefresh = self.needsVisibleHeightRefreshAfterInteraction
+            self.needsVisibleHeightRefreshAfterInteraction = false
+            let refreshedHeight = needsVisibleRefresh
+                ? self.refreshVisibleReservedHeights()
+                : false
+            guard layoutWasAlreadyDirty || refreshedHeight else { return }
+            self.replaceCollectionLayout(preserveViewport: true)
+        }
+    }
+
+    private func retryDeferredLayoutReplaceIfInteractionEnded() {
+        guard needsLayoutReplaceAfterInteraction || needsVisibleHeightRefreshAfterInteraction,
+              !isCollectionUserInteracting else { return }
+        replaceCollectionLayoutIfNeededAfterInteraction()
+    }
+
+    private func captureViewportAnchor() -> ViewportAnchor? {
+        let visibleRect = CGRect(origin: collectionView.contentOffset, size: collectionView.bounds.size)
+        let first = collectionView.indexPathsForVisibleItems
+            .sorted { $0.item < $1.item }
+            .first { indexPath in
+                guard let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame else {
+                    return false
+                }
+                return frame.intersects(visibleRect)
+            }
+        guard let first,
+              let frame = collectionView.layoutAttributesForItem(at: first)?.frame else {
+            return nil
+        }
+        return ViewportAnchor(
+            item: first.item,
+            offsetInItem: collectionView.contentOffset.y - frame.minY
+        )
+    }
+
+    private func restoreViewportAnchor(_ anchor: ViewportAnchor) {
+        guard itemHeights.indices.contains(anchor.item) else { return }
+        let spacing = readerPreferences.spacing.markdownStackSpacing
+        var itemMinY = CGFloat(10)
+        if anchor.item > 0 {
+            let prior = itemHeights[0..<anchor.item].reduce(0, +)
+            itemMinY += prior + spacing * CGFloat(anchor.item)
+        }
+        let contentHeight = CGFloat(10 + 10)
+            + itemHeights.reduce(0, +)
+            + spacing * CGFloat(max(0, itemHeights.count - 1))
+        let minY = -collectionView.adjustedContentInset.top
+        let maxY = max(
+            minY,
+            contentHeight
+                - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        let y = min(max(itemMinY + anchor.offsetInItem, minY), maxY)
+        guard y.isFinite else { return }
+        collectionView.setContentOffset(
+            CGPoint(x: collectionView.contentOffset.x, y: y),
+            animated: false
+        )
     }
 
     private static func graphicalHeight<P: DocumentParser, R: GraphicalDocumentRenderer>(
@@ -2546,11 +2856,27 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
     }
 
+    @objc private func handleCollectionPanStateChange(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .ended, .cancelled, .failed:
+            // A tap can stop deceleration without either drag-end delegate
+            // callback. The retry itself hops to the next main-queue turn so
+            // UIKit has time to clear `isTracking`.
+            replaceCollectionLayoutIfNeededAfterInteraction()
+        default:
+            break
+        }
+    }
+
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         tailFollowCoordinator.handleWillBeginDragging()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // A tap can stop deceleration without `scrollViewDidEndDecelerating`.
+        // Queue the retry from the final scroll callback so `isTracking` gets
+        // re-checked after the touch has cleared on the next main-queue turn.
+        replaceCollectionLayoutIfNeededAfterInteraction()
         updateLineAnchorHighlight()
         tailFollowCoordinator.handleDidScroll(
             isUserDriven: scrollView.isDragging || scrollView.isDecelerating,
@@ -2563,10 +2889,14 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             willDecelerate: decelerate,
             isStreaming: !latestSnapshot.isDone
         )
+        if !decelerate {
+            replaceCollectionLayoutIfNeededAfterInteraction()
+        }
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         tailFollowCoordinator.handleDidEndDecelerating(isStreaming: !latestSnapshot.isDone)
+        replaceCollectionLayoutIfNeededAfterInteraction()
     }
 }
 
@@ -2589,11 +2919,59 @@ extension NativeFullScreenMarkdownBody: FullScreenReaderConfigurable {
 
 #if DEBUG
 extension NativeFullScreenMarkdownBody {
+    struct FirstPaintDiagnostics: Equatable {
+        let segmentBuildUs: UInt64
+        let heightEstimateUs: UInt64
+        let layoutSetupUs: UInt64
+        let visibleApplyUs: UInt64
+        let visibleTextApplyUs: UInt64
+        let visibleNonTextApplyUs: UInt64
+        let visibleTextApplyCount: Int
+        let visibleNonTextApplyCount: Int
+        let deferredFitUs: UInt64
+    }
+
+    var debugFirstPaintDiagnosticsForTesting: FirstPaintDiagnostics {
+        FirstPaintDiagnostics(
+            segmentBuildUs: debugSegmentBuildNs / 1_000,
+            heightEstimateUs: debugHeightEstimateNs / 1_000,
+            layoutSetupUs: debugLayoutSetupNs / 1_000,
+            visibleApplyUs: debugVisibleApplyNs / 1_000,
+            visibleTextApplyUs: debugVisibleTextApplyNs / 1_000,
+            visibleNonTextApplyUs: debugVisibleNonTextApplyNs / 1_000,
+            visibleTextApplyCount: debugVisibleTextApplyCount,
+            visibleNonTextApplyCount: debugVisibleNonTextApplyCount,
+            deferredFitUs: debugDeferredFitNs / 1_000
+        )
+    }
+
     var debugRenderedSegmentCountForTesting: Int { renderedSegments.count }
     var debugAppliedItemCountForTesting: Int { debugAppliedItems.count }
+    var debugLayoutReplaceCountForTesting: Int { debugLayoutReplaceCount }
+    var debugAppliedSegmentKindsForTesting: [String] {
+        debugAppliedItems.sorted().compactMap { item in
+            guard renderedSegments.indices.contains(item) else { return nil }
+            return switch renderedSegments[item] {
+            case .text: "text"
+            case .codeBlock: "code"
+            case .table: "table"
+            case .thematicBreak: "break"
+            case .image: "image"
+            case .mermaidDiagram: "mermaid"
+            case .latexBlock: "latex"
+            }
+        }
+    }
     var debugRenderedSegmentsForTesting: [FlatSegment] { renderedSegments }
     var debugVisibleCellCountForTesting: Int { collectionView.visibleCells.count }
     var debugParkedHostForTesting: UIView { parkedSegmentHost }
+    var debugNeedsLayoutReplaceAfterInteractionForTesting: Bool {
+        needsLayoutReplaceAfterInteraction
+    }
+
+    func debugSetCollectionUserInteractingForTesting(_ isInteracting: Bool?) {
+        debugIsCollectionUserInteractingOverride = isInteracting
+    }
 
     func debugScrollItemIntoViewForTesting(_ item: Int) {
         guard renderedSegments.indices.contains(item) else { return }
@@ -2603,6 +2981,39 @@ extension NativeFullScreenMarkdownBody {
             animated: false
         )
         collectionView.layoutIfNeeded()
+    }
+
+    func debugReservedHeightForTesting(_ item: Int) -> CGFloat? {
+        guard itemHeights.indices.contains(item) else { return nil }
+        return itemHeights[item]
+    }
+
+    func debugFittingHeightForTesting(_ item: Int) -> CGFloat? {
+        let indexPath = IndexPath(item: item, section: 0)
+        if let cell = collectionView.cellForItem(at: indexPath) as? FullScreenMarkdownSegmentCell {
+            let width = cell.contentView.bounds.width > 0
+                ? cell.contentView.bounds.width
+                : max(1, collectionView.bounds.width - 24)
+            return cell.measuredFittingHeight(width: width)
+        }
+        return nil
+    }
+
+    func debugVisibleAnchorForTesting() -> (item: Int, screenY: CGFloat)? {
+        let visibleRect = CGRect(origin: collectionView.contentOffset, size: collectionView.bounds.size)
+        let first = collectionView.indexPathsForVisibleItems
+            .sorted { $0.item < $1.item }
+            .first { indexPath in
+                guard let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame else {
+                    return false
+                }
+                return frame.intersects(visibleRect)
+            }
+        guard let first,
+              let frame = collectionView.layoutAttributesForItem(at: first)?.frame else {
+            return nil
+        }
+        return (first.item, frame.minY - collectionView.contentOffset.y)
     }
     var debugSourceTextForTesting: String { latestSnapshot.text }
     var debugLineAnchorRequestedRangeForTesting: ClosedRange<Int>? {

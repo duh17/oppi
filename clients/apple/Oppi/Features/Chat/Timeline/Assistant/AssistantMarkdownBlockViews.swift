@@ -153,7 +153,6 @@ final class NativeCodeBlockView: UIView {
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
         codeLabel.delegate = self
         codeScrollView.addGestureRecognizer(longPressCopyGesture)
-        updateWrapButton()
 
         let widthConstraint = codeLabel.widthAnchor.constraint(equalToConstant: 0)
         codeLabelWidthConstraint = widthConstraint
@@ -180,6 +179,12 @@ final class NativeCodeBlockView: UIView {
             codeLabel.heightAnchor.constraint(equalTo: codeScrollView.frameLayoutGuide.heightAnchor, constant: -24),
             widthConstraint,
         ])
+    }
+
+    /// Configure chrome for an embedded async-render placeholder whose code
+    /// path may never call `apply` before the graphical result replaces it.
+    func prepareForGraphicalPlaceholder() {
+        updateWrapButton()
     }
 
     func configureReviewCommentSelection(
@@ -385,6 +390,14 @@ struct NativeCodeBlockLayoutDiagnostics {
 }
 
 extension NativeCodeBlockView {
+    var debugWrapButtonAccessibilityLabelForTesting: String? {
+        wrapButton.accessibilityLabel
+    }
+
+    var debugWrapButtonAccessibilityValueForTesting: String? {
+        wrapButton.accessibilityValue
+    }
+
     func layoutDiagnosticsForTesting() -> NativeCodeBlockLayoutDiagnostics {
         layoutIfNeeded()
         let headerFrame = headerStack.convert(headerStack.bounds, to: self)

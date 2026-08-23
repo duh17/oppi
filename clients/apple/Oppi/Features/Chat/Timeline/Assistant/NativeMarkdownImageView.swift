@@ -1,4 +1,5 @@
 import Darwin
+import ImageIO
 import Network
 import OSLog
 import SwiftUI
@@ -50,6 +51,15 @@ final class NativeMarkdownImageView: UIView {
     var fetchRemoteImage: FetchRemoteImage = { url in
         try await RemoteMarkdownImageFetcher.fetch(url)
     }
+
+    /// Reader hosts use this to reserve the final item height and keep the
+    /// viewport still. When set, async size changes do not invalidate the
+    /// enclosing collection layout themselves.
+    var onDisplayHeightChange: ((CGFloat) -> Void)?
+    #if DEBUG
+    /// Height published from pixel metadata before the bitmap decode finishes.
+    private(set) var debugPixelReservedHeightForTesting: CGFloat?
+    #endif
 
     private struct PendingImageLoad {
         let url: URL
@@ -192,6 +202,9 @@ final class NativeMarkdownImageView: UIView {
         currentURL = url
         svgPreviewData = nil
         svgHTMLTracker.resetLoadedContent()
+        #if DEBUG
+        debugPixelReservedHeightForTesting = nil
+        #endif
 
         loadTask?.cancel()
 
@@ -275,15 +288,7 @@ final class NativeMarkdownImageView: UIView {
                     components.filePath
                 )
                 guard !Task.isCancelled else { return }
-                if let image = await Self.decodeRasterImage(data: data) {
-                    Self.imageCache.setObject(image, forKey: url as NSURL)
-                    showLoadedState(image: image)
-                    return
-                }
-                if MediaMimeType.isSVGData(data)
-                    || components.filePath.lowercased().hasSuffix(".svg") {
-                    Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
-                    showSVGLoadedState(data: data)
+                if await presentFetchedImageData(data, url: url, filePath: components.filePath) {
                     return
                 }
                 logger.error("Session file is not a valid image: \(components.filePath) (\(data.count) bytes)")
@@ -298,16 +303,7 @@ final class NativeMarkdownImageView: UIView {
             do {
                 let data = try await fetchWorkspaceFile(components.workspaceID, components.filePath)
                 guard !Task.isCancelled else { return }
-                if let image = await Self.decodeRasterImage(data: data) {
-                    Self.imageCache.setObject(image, forKey: url as NSURL)
-                    showLoadedState(image: image)
-                    return
-                }
-                // Raster decode failed — try SVG via web view.
-                if MediaMimeType.isSVGData(data)
-                    || components.filePath.lowercased().hasSuffix(".svg") {
-                    Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
-                    showSVGLoadedState(data: data)
+                if await presentFetchedImageData(data, url: url, filePath: components.filePath) {
                     return
                 }
                 logger.error("Workspace file is not a valid image: \(components.filePath) (\(data.count) bytes)")
@@ -335,16 +331,7 @@ final class NativeMarkdownImageView: UIView {
             let data = try await fetchRemoteImage(url)
             guard !Task.isCancelled else { return }
 
-            if let image = await Self.decodeRasterImage(data: data) {
-                Self.imageCache.setObject(image, forKey: url as NSURL)
-                showLoadedState(image: image)
-                return
-            }
-
-            // Raster decode failed — try SVG via web view.
-            if MediaMimeType.isSVGData(data) || url.pathExtension.lowercased() == "svg" {
-                Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
-                showSVGLoadedState(data: data)
+            if await presentFetchedImageData(data, url: url, filePath: url.path) {
                 return
             }
 
@@ -360,6 +347,78 @@ final class NativeMarkdownImageView: UIView {
         await Task.detached(priority: .userInitiated) {
             ImageMediaInspector.downsampledImage(data: data, maxPixelSize: 1_600)
         }.value
+    }
+
+    private func presentFetchedImageData(_ data: Data, url: URL, filePath: String) async -> Bool {
+        reserveHeightIfPixelSizeKnown(in: data)
+        if let image = await Self.decodeRasterImage(data: data) {
+            Self.imageCache.setObject(image, forKey: url as NSURL)
+            showLoadedState(image: image)
+            return true
+        }
+        if MediaMimeType.isSVGData(data) || filePath.lowercased().hasSuffix(".svg") {
+            Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
+            showSVGLoadedState(data: data)
+            return true
+        }
+        return false
+    }
+
+    private static func pixelSize(of data: Data) -> CGSize? {
+        guard let source = CGImageSourceCreateWithData(
+            data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ) else { return nil }
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary?,
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
+            return nil
+        }
+        let size = CGSize(width: width.doubleValue, height: height.doubleValue)
+        guard size.width > 0, size.height > 0 else { return nil }
+        return size
+    }
+
+    private func reserveHeightIfPixelSizeKnown(in data: Data) {
+        guard let pixelSize = Self.pixelSize(of: data) else { return }
+        applyFittedDisplayHeight(width: pixelSize.width, height: pixelSize.height)
+        #if DEBUG
+        debugPixelReservedHeightForTesting = heightConstraint?.constant
+        #endif
+    }
+
+    private func applyFittedDisplayHeight(width: CGFloat, height: CGFloat) {
+        let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(
+            width: width,
+            height: height
+        ) ?? 1
+        let displayWidth = bounds.width > 0
+            ? bounds.width
+            : (window?.windowScene?.screen.bounds.width ?? 360)
+        let displayHeight = ImageViewportSizing.fittedHeight(
+            forWidth: displayWidth,
+            heightToWidthRatio: heightToWidthRatio,
+            surface: .inlineProse,
+            screenHeight: window?.windowScene?.screen.bounds.height
+        )
+        setDisplayHeight(max(displayHeight, Self.loadingPlaceholderHeight))
+    }
+
+    private func setDisplayHeight(_ height: CGFloat) {
+        let next = max(1, height)
+        guard abs((heightConstraint?.constant ?? 0) - next) > 0.5 else { return }
+        heightConstraint?.constant = next
+        invalidateIntrinsicContentSize()
+        superview?.setNeedsLayout()
+        publishDisplayHeightChange()
+    }
+
+    private func publishDisplayHeightChange() {
+        if let onDisplayHeightChange {
+            onDisplayHeightChange(heightConstraint?.constant ?? 0)
+            return
+        }
+        invalidateTimelineLayout()
     }
 
     private func normalizedAltText(_ alt: String) -> String? {
@@ -386,7 +445,7 @@ final class NativeMarkdownImageView: UIView {
         altLabel.textColor = UIColor(palette.comment)
         altLabel.text = placeholderText
 
-        heightConstraint?.constant = placeholderText == "[image]" ? 30 : 40
+        setDisplayHeight(placeholderText == "[image]" ? 30 : 40)
         isHidden = false
 
         spinner.stopAnimating()
@@ -404,7 +463,7 @@ final class NativeMarkdownImageView: UIView {
         backgroundColor = UIColor(palette.bgHighlight)
         remotePromptLabel.textColor = UIColor(palette.comment)
         remotePromptLabel.text = normalizedAlt.map { "Remote image: \($0)" } ?? "Remote image"
-        heightConstraint?.constant = Self.loadingPlaceholderHeight
+        setDisplayHeight(Self.loadingPlaceholderHeight)
         isHidden = false
 
         spinner.stopAnimating()
@@ -414,10 +473,6 @@ final class NativeMarkdownImageView: UIView {
         svgWebView?.isHidden = true
         svgTapOverlay?.isHidden = true
         remotePromptStack.isHidden = false
-
-        invalidateIntrinsicContentSize()
-        superview?.setNeedsLayout()
-        invalidateTimelineLayout()
     }
 
     private func showLoadingState(alt: String) {
@@ -429,7 +484,7 @@ final class NativeMarkdownImageView: UIView {
         altLabel.text = normalizedAlt
 
         // Ensure loading placeholder height is active.
-        heightConstraint?.constant = Self.loadingPlaceholderHeight
+        setDisplayHeight(Self.loadingPlaceholderHeight)
         isHidden = false
 
         spinner.startAnimating()
@@ -449,29 +504,11 @@ final class NativeMarkdownImageView: UIView {
         svgWebView?.isHidden = true
         svgTapOverlay?.isHidden = true
 
-        let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(
-            width: image.size.width,
-            height: image.size.height
-        ) ?? 1
-        let displayWidth = bounds.width > 0
-            ? bounds.width
-            : (window?.windowScene?.screen.bounds.width ?? 360)
-        let displayHeight = ImageViewportSizing.fittedHeight(
-            forWidth: displayWidth,
-            heightToWidthRatio: heightToWidthRatio,
-            surface: .inlineProse,
-            screenHeight: window?.windowScene?.screen.bounds.height
-        )
-
-        heightConstraint?.constant = max(displayHeight, Self.loadingPlaceholderHeight)
+        applyFittedDisplayHeight(width: image.size.width, height: image.size.height)
 
         imageView.image = image
         imageView.isHidden = false
         backgroundColor = .clear
-
-        invalidateIntrinsicContentSize()
-        superview?.setNeedsLayout()
-        invalidateTimelineLayout()
     }
 
     /// Render SVG data in a WKWebView. Called when `UIImage(data:)` fails
@@ -480,21 +517,12 @@ final class NativeMarkdownImageView: UIView {
         showSVGLoadingWebState()
 
         let aspectRatio = MediaMimeType.extractSVGViewBoxAspectRatio(data)
-        let displayWidth = bounds.width > 0
-            ? bounds.width
-            : (window?.windowScene?.screen.bounds.width ?? 360)
 
         if let aspectRatio,
            let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(1.0 / aspectRatio) {
-            let displayHeight = ImageViewportSizing.fittedHeight(
-                forWidth: displayWidth,
-                heightToWidthRatio: heightToWidthRatio,
-                surface: .inlineProse,
-                screenHeight: window?.windowScene?.screen.bounds.height
-            )
-            heightConstraint?.constant = max(displayHeight, Self.loadingPlaceholderHeight)
+            applyFittedDisplayHeight(width: 1, height: heightToWidthRatio)
         } else {
-            heightConstraint?.constant = Self.loadingPlaceholderHeight
+            setDisplayHeight(Self.loadingPlaceholderHeight)
         }
 
         svgPreviewData = data
@@ -502,10 +530,6 @@ final class NativeMarkdownImageView: UIView {
         webView.isHidden = true
         ensureSVGTapOverlay().isHidden = true
         queueSVGHTML(makeSVGHTML(data: data), in: webView)
-
-        invalidateIntrinsicContentSize()
-        superview?.setNeedsLayout()
-        invalidateTimelineLayout()
     }
 
     /// Create an HTML document that embeds SVG data for WKWebView rendering.
@@ -662,10 +686,6 @@ final class NativeMarkdownImageView: UIView {
         svgWebView?.isHidden = false
         svgTapOverlay?.isHidden = false
         backgroundColor = .clear
-
-        invalidateIntrinsicContentSize()
-        superview?.setNeedsLayout()
-        invalidateTimelineLayout()
     }
 
     private func recoverSVGWebLoad() {
@@ -701,13 +721,9 @@ final class NativeMarkdownImageView: UIView {
         errorLabel.textColor = UIColor(palette.comment)
         errorLabel.text = text
         errorLabel.isHidden = false
-        heightConstraint?.constant = Self.loadingPlaceholderHeight
+        setDisplayHeight(Self.loadingPlaceholderHeight)
         backgroundColor = UIColor(palette.bgHighlight)
         isHidden = false
-
-        invalidateIntrinsicContentSize()
-        superview?.setNeedsLayout()
-        invalidateTimelineLayout()
     }
 
     private func invalidateTimelineLayout() {
