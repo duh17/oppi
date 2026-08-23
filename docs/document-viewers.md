@@ -105,15 +105,10 @@ Inline Markdown video uses wiki-embed syntax:
 
 ````markdown
 - When pointing the user to a relevant file the owner can open, use a real relative, absolute, or `~` wiki link such as `[[path/to/file.ext|Short label]]` or `[[/tmp/notes.md|Debug log]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
-- When the image or SVG itself should appear inline, use standard Markdown image syntax such as `![Short description](path/to/image.png)` or `![Diagram](path/to/diagram.svg)`.
-- When a real Oppi-backed video file should play inline, use `![[path/to/video.mp4]]`. Keep `[[path/to/video.mp4|Video]]` for ordinary file navigation.
-- For all formats, reuse a real existing path; never fabricate a path or expose secrets, credentials, or private runtime state. Keep normal human-readable context, and use these formats when actually showing or citing content—not for every casual filename mention. Sandbox sessions should keep using sandbox-visible paths.
-- For a diagram that should render inline, use a fenced Markdown code block labeled `mermaid` with valid Mermaid source:
-  ```mermaid
-  graph LR
-    A[Start] --> B[Done]
-  ```
-- For inline math, use `$x^2$` or `\(x^2\)`; for a displayed formula, use `$$x^2 + y^2 = z^2$$`, `\[...\]`, or a fenced `latex` block.
+- When the image or SVG itself should appear inline, use `![Short description](path/to/image.png)`. When a real Oppi-backed video should play inline, use `![[path/to/video.mp4]]`. Keep `[[path/to/video.mp4|Video]]` for file navigation.
+- Fenced `mermaid` blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, and xyChart. Other Mermaid types stay source.
+- LaTeX renders inline, display, and fenced `latex` blocks.
+- Reuse a real existing path; never fabricate a path or expose secrets. Sandbox sessions should keep using sandbox-visible paths.
 ````
 
 ## Viewing Options

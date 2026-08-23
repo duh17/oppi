@@ -36,15 +36,14 @@ describe("Oppi documentation prompt hint", () => {
     expect(guide).toContain("[[path/to/file.ext#L12-L18|Label]]");
     expect(guide).toContain("![Description](path/to/image.svg)");
     expect(guide).toContain(
-      "```mermaid\nflowchart TD\n  A[Start] --> B[Done]\n```",
+      "flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, and xyChart",
     );
-    expect(guide).not.toContain("\\nflowchart");
-    expect(guide).toContain("$$x^2 + y^2 = z^2$$");
-    expect(guide).toContain("fenced latex block");
-    expect(guide).toContain("images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, and Graphviz");
+    expect(guide).toContain("Other Mermaid types stay source");
+    expect(guide).not.toContain("```mermaid");
+    expect(guide).toContain("fenced latex blocks");
+    expect(guide).toContain("images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, Graphviz");
     expect(guide).toContain("![[path/to/video.mp4]]");
-    expect(guide).toContain("[[path/to/video.mp4]] remains an ordinary file link");
-    expect(guide).toContain("native non-autoplaying players");
+    expect(guide).toContain("[[path/to/video.mp4]] stays a file link");
     expect(guide).toContain("Remote URLs, HTML <video>, and attachment IDs are not embeds");
     expect(guide).toContain("oppi://session/<session-id>");
     expect(guide).toContain("real relative, absolute, or ~ paths");
