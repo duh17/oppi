@@ -1360,6 +1360,50 @@ describe("translatePiEvent", () => {
       );
     });
 
+    it("replaces a wait live card when only elapsed time changes", () => {
+      const ctx = makeCtx();
+      ctx.toolNames.set("tc-wait", "oppi");
+      const first = [
+        "Waiting for either · 0s",
+        "",
+        "child",
+        "[Open session](oppi://session/sess-1)",
+        "status=busy  tools=1",
+      ].join("\n");
+      const second = first.replace("· 0s", "· 2s");
+
+      const firstResult = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-wait",
+          toolName: "oppi",
+          args: {},
+          partialResult: { content: [{ type: "text", text: first }] },
+        } as AgentSessionEvent,
+        ctx,
+      );
+      expect(firstResult).toHaveLength(1);
+      expect((firstResult[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(first);
+
+      const secondResult = translatePiEvent(
+        {
+          type: "tool_execution_update",
+          toolCallId: "tc-wait",
+          toolName: "oppi",
+          args: {},
+          partialResult: { content: [{ type: "text", text: second }] },
+        } as AgentSessionEvent,
+        ctx,
+      );
+      expect(secondResult).toEqual([
+        expect.objectContaining({
+          type: "tool_output",
+          output: second,
+          mode: "replace",
+        }),
+      ]);
+    });
+
     it("handles empty text in partialResult", () => {
       const ctx = makeCtx();
       ctx.toolNames.set("tc-1", "read");

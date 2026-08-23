@@ -143,6 +143,19 @@ function truncateLiveLast(text: string): string {
   return truncateLiveText(text, MAX_LIVE_LAST_CHARS);
 }
 
+// Elapsed time is part of the card so each poll is a distinct replace snapshot.
+// Identical text is dropped by computeToolOutputUpdate, which is why remounted
+// parents never saw the first live card again.
+function formatWaitElapsed(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 export function formatWaitLiveSnapshot(
   condition: SessionWatchCondition,
   snapshot: WaitProgressSnapshot,
@@ -163,7 +176,11 @@ export function formatWaitLiveSnapshot(
     }
     return lines.join("\n");
   });
-  return [`Waiting for ${condition}`, "", blocks.join("\n\n")].join("\n");
+  return [
+    `Waiting for ${condition} · ${formatWaitElapsed(snapshot.elapsedMs)}`,
+    "",
+    blocks.join("\n\n"),
+  ].join("\n");
 }
 
 function waitProgressSnapshot(
@@ -380,7 +397,6 @@ export async function runSessionWatch(
   const startedAt = Date.now();
   const summaryEveryMs = options.summaryEveryMs ?? 0;
   let lastSummaryAt = startedAt;
-  let emittedLiveSnapshot = false;
 
   for (;;) {
     for (const id of ids) {
@@ -452,14 +468,10 @@ export async function runSessionWatch(
       );
     }
     const progress = waitProgressSnapshot(ids, states, startedAt);
-    if (!emittedLiveSnapshot) {
-      emittedLiveSnapshot = true;
-      options.onLiveSnapshot?.(formatWaitLiveSnapshot(options.condition, progress));
-    }
+    options.onLiveSnapshot?.(formatWaitLiveSnapshot(options.condition, progress));
     if (summaryEveryMs > 0 && Date.now() - lastSummaryAt >= summaryEveryMs) {
       lastSummaryAt = Date.now();
       options.onSummary?.(progress);
-      options.onLiveSnapshot?.(formatWaitLiveSnapshot(options.condition, progress));
     }
     await sleepWithSignal(
       Math.min(options.intervalMs, Math.max(0, deadline - Date.now())),

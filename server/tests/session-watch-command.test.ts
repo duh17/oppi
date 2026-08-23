@@ -418,7 +418,7 @@ describe("session wait poller contract", () => {
       }),
     ).toBe(
       [
-        "Waiting for either",
+        "Waiting for either · 2s",
         "",
         "impl\\-detached\\-timeline\\-follow\\-20260819",
         "[Open session](oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370)",
@@ -428,6 +428,23 @@ describe("session wait poller contract", () => {
         "Good, it's busy and already working\\.\\.\\.",
       ].join("\n"),
     );
+  });
+
+  it("formats elapsed wait time in compact units", () => {
+    expect(
+      formatWaitLiveSnapshot("idle", {
+        ts: 1,
+        elapsedMs: 0,
+        sessions: [{ sessionId: "s", status: "busy", toolsThisTurn: 0 }],
+      }),
+    ).toContain("Waiting for idle · 0s");
+    expect(
+      formatWaitLiveSnapshot("idle", {
+        ts: 1,
+        elapsedMs: 61_000,
+        sessions: [{ sessionId: "s", status: "busy", toolsThisTurn: 0 }],
+      }),
+    ).toContain("Waiting for idle · 1m 1s");
   });
 
   it("escapes markdown and bounds untrusted live card text", () => {
@@ -452,6 +469,7 @@ describe("session wait poller contract", () => {
 
   it("emits a live snapshot after the first incomplete poll", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(0);
     const live = vi.fn();
     const summaries = vi.fn();
     const promise = runSessionWatch(
@@ -459,8 +477,8 @@ describe("session wait poller contract", () => {
       {
         condition: "either",
         requireAll: false,
-        intervalMs: 20,
-        timeoutMs: 80,
+        intervalMs: 1_000,
+        timeoutMs: 2_500,
         summaryEveryMs: 60_000,
         onSummary: summaries,
         onLiveSnapshot: live,
@@ -487,7 +505,7 @@ describe("session wait poller contract", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(summaries).not.toHaveBeenCalled();
     expect(live).toHaveBeenCalledTimes(1);
-    expect(live.mock.calls[0]?.[0]).toContain("Waiting for either");
+    expect(live.mock.calls[0]?.[0]).toContain("Waiting for either · 0s");
     expect(live.mock.calls[0]?.[0]).toContain("impl\\-detached\\-timeline\\-follow\\-20260819");
     expect(live.mock.calls[0]?.[0]).toContain(
       "oppi://session/5c6965d2-591a-4f6c-9676-f7fa400cf370",
@@ -495,10 +513,11 @@ describe("session wait poller contract", () => {
     expect(live.mock.calls[0]?.[0]).toContain("status=busy  tools=3");
     expect(live.mock.calls[0]?.[0]).toContain("Good, it's busy and already working\\.\\.\\.");
 
-    await vi.advanceTimersByTimeAsync(80);
+    await vi.advanceTimersByTimeAsync(2_500);
     const result = await settled;
     expect(result.status).toBe("rejected");
-    expect(live).toHaveBeenCalledTimes(1);
+    expect(live.mock.calls.length).toBeGreaterThan(1);
+    expect(live.mock.calls.some((call) => String(call[0]).includes("· 1s"))).toBe(true);
   });
 
   it("does not emit a live snapshot when the baseline is already idle", async () => {
@@ -520,7 +539,7 @@ describe("session wait poller contract", () => {
     expect(live).not.toHaveBeenCalled();
   });
 
-  it("replaces the live snapshot on 60s summaries", async () => {
+  it("keeps human summaries on their own cadence while live snapshots refresh each poll", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const live = vi.fn();
@@ -530,9 +549,9 @@ describe("session wait poller contract", () => {
       {
         condition: "idle",
         requireAll: false,
-        intervalMs: 10,
-        timeoutMs: 80,
-        summaryEveryMs: 25,
+        intervalMs: 1_000,
+        timeoutMs: 2_500,
+        summaryEveryMs: 2_000,
         onSummary: summaries,
         onLiveSnapshot: live,
       },
@@ -548,17 +567,18 @@ describe("session wait poller contract", () => {
     expect(live).toHaveBeenCalledTimes(1);
     expect(summaries).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(30);
-    await vi.advanceTimersByTimeAsync(30);
-    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(2_500);
     const result = await settled;
     expect(result.status).toBe("rejected");
-    expect(summaries.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(live.mock.calls.length).toBe(1 + summaries.mock.calls.length);
+    expect(summaries.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(live.mock.calls.length).toBeGreaterThan(summaries.mock.calls.length);
+    const liveTexts = live.mock.calls.map((call) => String(call[0]));
+    expect(new Set(liveTexts).size).toBe(liveTexts.length);
   });
 
-  it("still emits the initial live snapshot when summaryEveryMs is 0", async () => {
+  it("emits distinct live snapshots every poll when summaryEveryMs is 0", async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(0);
     const live = vi.fn();
     const summaries = vi.fn();
     const promise = runSessionWatch(
@@ -566,8 +586,8 @@ describe("session wait poller contract", () => {
       {
         condition: "idle",
         requireAll: false,
-        intervalMs: 10,
-        timeoutMs: 30,
+        intervalMs: 1_000,
+        timeoutMs: 2_500,
         summaryEveryMs: 0,
         onSummary: summaries,
         onLiveSnapshot: live,
@@ -582,13 +602,16 @@ describe("session wait poller contract", () => {
 
     await vi.advanceTimersByTimeAsync(0);
     expect(live).toHaveBeenCalledTimes(1);
-    expect(live.mock.calls[0]?.[0]).toContain("Waiting for idle");
+    expect(live.mock.calls[0]?.[0]).toContain("Waiting for idle · 0s");
     expect(summaries).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(30);
+    await vi.advanceTimersByTimeAsync(2_500);
     const result = await settled;
     expect(result.status).toBe("rejected");
-    expect(live).toHaveBeenCalledTimes(1);
+    expect(live.mock.calls.length).toBeGreaterThan(1);
     expect(summaries).not.toHaveBeenCalled();
+    const liveTexts = live.mock.calls.map((call) => String(call[0]));
+    expect(new Set(liveTexts).size).toBe(liveTexts.length);
+    expect(liveTexts.some((text) => text.includes("· 1s"))).toBe(true);
   });
 });
