@@ -321,11 +321,7 @@ describe("turn delivery idempotency", () => {
     const { manager, events, sdkBackend } = makeManagerHarness("ready");
     (sdkBackend as { isStreaming: boolean }).isStreaming = true;
 
-    await manager.forwardClientCommand(
-      "s1",
-      { type: "compact" },
-      "req-compact-stale-ready",
-    );
+    await manager.forwardClientCommand("s1", { type: "compact" }, "req-compact-stale-ready");
 
     expect(sdkBackend.session.compact).not.toHaveBeenCalled();
 
@@ -368,11 +364,7 @@ describe("turn delivery idempotency", () => {
   it("fails a queued compact if the session ends before settling", async () => {
     const { manager, events, sdkBackend } = makeManagerHarness("busy");
 
-    await manager.forwardClientCommand(
-      "s1",
-      { type: "compact" },
-      "req-compact-ended",
-    );
+    await manager.forwardClientCommand("s1", { type: "compact" }, "req-compact-ended");
 
     await (
       manager as unknown as {

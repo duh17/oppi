@@ -98,7 +98,10 @@ describe("extractAssistantText", () => {
     const message = {
       role: "assistant",
       content: [
-        { type: "text", text: "**LATEX-END ANCHOR** — rendering should not move the earlier anchor." },
+        {
+          type: "text",
+          text: "**LATEX-END ANCHOR** — rendering should not move the earlier anchor.",
+        },
         { type: "text", text: "### 2. Raster image and SVG" },
       ],
     };
@@ -741,10 +744,7 @@ describe("translatePiEvent", () => {
     });
 
     it("emits agent_settled as the authoritative idle boundary", () => {
-      const result = translatePiEvent(
-        { type: "agent_settled" } as AgentSessionEvent,
-        makeCtx(),
-      );
+      const result = translatePiEvent({ type: "agent_settled" } as AgentSessionEvent, makeCtx());
       expect(result).toEqual([{ type: "agent_settled" }]);
     });
   });
@@ -1379,7 +1379,9 @@ describe("translatePiEvent", () => {
         ctx,
       );
       expect(firstResult).toHaveLength(1);
-      expect((firstResult[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(first);
+      expect((firstResult[0] as Extract<ServerMessage, { type: "tool_output" }>).output).toBe(
+        first,
+      );
 
       const secondResult = translatePiEvent(
         {

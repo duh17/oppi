@@ -1220,9 +1220,9 @@ describe("stop lifecycle", () => {
       expect(backend.isRuntimeLifecycleTransactionExclusive).toBe(false);
       const result = events.find((event) => event.type === "command_result");
       expect(result).toMatchObject({ success: false, command: type });
-      expect(
-        (result as Extract<ServerMessage, { type: "command_result" }>).error,
-      ).toMatch(/Oppi lifecycle|not allowed|distinct canonical/i);
+      expect((result as Extract<ServerMessage, { type: "command_result" }>).error).toMatch(
+        /Oppi lifecycle|not allowed|distinct canonical/i,
+      );
     },
   );
 
