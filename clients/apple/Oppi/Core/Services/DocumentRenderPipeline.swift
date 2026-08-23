@@ -89,6 +89,12 @@ enum DocumentRenderPipeline {
 
     private static let renderCache = GraphicalRenderCacheStore()
 
+    #if DEBUG
+    static func debugRemoveAllCachedRendersForTesting() {
+        renderCache.cache.removeAllObjects()
+    }
+    #endif
+
     private final class CachedGraphicalRender: @unchecked Sendable {
         /// `nil` means the source is deterministically unrenderable — callers
         /// show their source fallback without re-parsing.

@@ -49,6 +49,18 @@ final class AssistantMarkdownSegmentApplier {
     /// its reserved height without `forceInvalidate` from inside `cellForItemAt`.
     var onImageDisplayHeightChange: ((CGFloat) -> Void)?
 
+    /// Final prepared-image geometry, excluding the loading placeholder.
+    var onImagePreparedGeometry: ((CGFloat) -> Void)?
+
+    /// Full-screen reader runway work supplies its canonical item width before
+    /// child views exist. Timeline/export callers leave this nil and retain
+    /// their ordinary bounds/window width resolution.
+    var preparationWidth: CGFloat?
+
+    /// Runway probes prepare image metadata/decode without creating WKWebView.
+    /// A real cell activates SVG display when it installs the prepared view.
+    var preparesImagesForDisplay = true
+
     /// Avatar hang geometry from the assistant row. Applied after each rebuild
     /// so the first text segment clears the badge and later content is full width.
     private var leadingHangClearance: CGFloat = 0
@@ -307,12 +319,15 @@ final class AssistantMarkdownSegmentApplier {
         case .image(let alt, let url):
             let imageView = NativeMarkdownImageView()
             imageView.onDisplayHeightChange = onImageDisplayHeightChange
+            imageView.onPreparedGeometry = onImagePreparedGeometry
             imageView.apply(
                 url: url,
                 alt: alt,
                 fetchWorkspaceFile: fetchWorkspaceFile,
                 fetchSessionFile: fetchSessionFile,
-                renderingMode: config.renderingMode
+                renderingMode: config.renderingMode,
+                preferredDisplayWidth: preparationWidth,
+                preparesForDisplay: preparesImagesForDisplay
             )
             stackView.addArrangedSubview(imageView)
             imageViews[index] = imageView
@@ -331,7 +346,9 @@ final class AssistantMarkdownSegmentApplier {
             if isOpen {
                 mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
             } else {
-                config.renderingMode.rendersHeightChangingBlocksSynchronously ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
+                config.renderingMode.rendersHeightChangingBlocksSynchronously
+                    ? mermaidView.applyAsDiagramSync(code: code, palette: palette, availableWidth: preparationWidth)
+                    : mermaidView.applyAsDiagram(code: code, palette: palette, availableWidth: preparationWidth)
             }
             stackView.addArrangedSubview(mermaidView)
             mermaidViews[index] = mermaidView
@@ -350,7 +367,9 @@ final class AssistantMarkdownSegmentApplier {
             if isOpen {
                 latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
             } else {
-                config.renderingMode.rendersHeightChangingBlocksSynchronously ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
+                config.renderingMode.rendersHeightChangingBlocksSynchronously
+                    ? latexView.applyAsFormulaSync(code: code, palette: palette, availableWidth: preparationWidth)
+                    : latexView.applyAsFormula(code: code, palette: palette, availableWidth: preparationWidth)
             }
             stackView.addArrangedSubview(latexView)
             latexViews[index] = latexView
@@ -540,12 +559,15 @@ final class AssistantMarkdownSegmentApplier {
                 // Image views manage their own load lifecycle — nothing to diff in-place.
                 if let imageView = imageViews[index] {
                     imageView.onDisplayHeightChange = onImageDisplayHeightChange
+                    imageView.onPreparedGeometry = onImagePreparedGeometry
                     imageView.apply(
                         url: url,
                         alt: alt,
                         fetchWorkspaceFile: fetchWorkspaceFile,
                         fetchSessionFile: fetchSessionFile,
-                        renderingMode: config.renderingMode
+                        renderingMode: config.renderingMode,
+                        preferredDisplayWidth: preparationWidth,
+                        preparesForDisplay: preparesImagesForDisplay
                     )
                 }
 
@@ -566,7 +588,9 @@ final class AssistantMarkdownSegmentApplier {
                         mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
                         ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: mermaidView)
                     } else {
-                        config.renderingMode.rendersHeightChangingBlocksSynchronously ? mermaidView.applyAsDiagramSync(code: code, palette: palette) : mermaidView.applyAsDiagram(code: code, palette: palette)
+                        config.renderingMode.rendersHeightChangingBlocksSynchronously
+                            ? mermaidView.applyAsDiagramSync(code: code, palette: palette, availableWidth: preparationWidth)
+                            : mermaidView.applyAsDiagram(code: code, palette: palette, availableWidth: preparationWidth)
                     }
                 }
 
@@ -587,7 +611,9 @@ final class AssistantMarkdownSegmentApplier {
                         latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
                         ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: latexView)
                     } else {
-                        config.renderingMode.rendersHeightChangingBlocksSynchronously ? latexView.applyAsFormulaSync(code: code, palette: palette) : latexView.applyAsFormula(code: code, palette: palette)
+                        config.renderingMode.rendersHeightChangingBlocksSynchronously
+                            ? latexView.applyAsFormulaSync(code: code, palette: palette, availableWidth: preparationWidth)
+                            : latexView.applyAsFormula(code: code, palette: palette, availableWidth: preparationWidth)
                     }
                 }
             }

@@ -303,6 +303,20 @@ enum FlatSegment: Sendable {
     struct BuildResult: Sendable {
         let segments: [FlatSegment]
         let sourceLineRanges: [ClosedRange<Int>?]
+        let identities: [MarkdownReaderSegmentID]
+
+        init(
+            segments: [FlatSegment],
+            sourceLineRanges: [ClosedRange<Int>?],
+            identities: [MarkdownReaderSegmentID]? = nil
+        ) {
+            self.segments = segments
+            self.sourceLineRanges = sourceLineRanges
+            self.identities = identities ?? FlatSegment.readerSegmentIDs(
+                segments: segments,
+                sourceLineRanges: sourceLineRanges
+            )
+        }
     }
 
     static func build(
@@ -524,46 +538,56 @@ enum FlatSegment: Sendable {
                         emittedAnyRenderable = true
 
                     case .unorderedList(let nestedItems):
-                        flushListTextLines()
-                        flushPendingText()
-                        appendListBlock(
-                            items: nestedItems,
-                            lineRange: lineRange,
-                            markerForItem: { _ in
-                                var marker = AttributedString("    • ")
-                                marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
-                                return marker
-                            },
-                            continuationForItem: { _ in AttributedString("      ") }
-                        )
+                        let nestedBlock = MarkdownBlock.unorderedList(nestedItems)
+                        if Self.containsStandaloneListBlock(nestedBlock) {
+                            flushListTextLines()
+                            flushPendingText()
+                            appendListBlock(
+                                items: nestedItems,
+                                lineRange: lineRange,
+                                markerForItem: { _ in
+                                    var marker = AttributedString("    • ")
+                                    marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                                    return marker
+                                },
+                                continuationForItem: { _ in AttributedString("      ") }
+                            )
+                        } else {
+                            appendItemText(Self.attributedString(for: nestedBlock, palette: palette))
+                        }
                         emittedAnyRenderable = true
 
                     case .orderedList(let start, let nestedItems):
-                        let nestedListFont = Self.listBodyFont()
-                        flushListTextLines()
-                        flushPendingText()
-                        appendListBlock(
-                            items: nestedItems,
-                            lineRange: lineRange,
-                            markerForItem: { nestedIndex in
-                                let markerText = "    \(start + nestedIndex). "
-                                var marker = AttributedString(markerText)
-                                marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
-                                marker.uiKit.font = nestedListFont
-                                return marker
-                            },
-                            continuationForItem: { nestedIndex in
-                                let markerText = "    \(start + nestedIndex). "
-                                var continuation = AttributedString(
-                                    String(repeating: " ", count: markerText.count)
-                                )
-                                continuation.uiKit.font = nestedListFont
-                                return continuation
-                            },
-                            transformItemContent: { content, _ in
-                                Self.applyListFont(to: &content, listFont: nestedListFont)
-                            }
-                        )
+                        let nestedBlock = MarkdownBlock.orderedList(start: start, nestedItems)
+                        if Self.containsStandaloneListBlock(nestedBlock) {
+                            let nestedListFont = Self.listBodyFont()
+                            flushListTextLines()
+                            flushPendingText()
+                            appendListBlock(
+                                items: nestedItems,
+                                lineRange: lineRange,
+                                markerForItem: { nestedIndex in
+                                    let markerText = "    \(start + nestedIndex). "
+                                    var marker = AttributedString(markerText)
+                                    marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                                    marker.uiKit.font = nestedListFont
+                                    return marker
+                                },
+                                continuationForItem: { nestedIndex in
+                                    let markerText = "    \(start + nestedIndex). "
+                                    var continuation = AttributedString(
+                                        String(repeating: " ", count: markerText.count)
+                                    )
+                                    continuation.uiKit.font = nestedListFont
+                                    return continuation
+                                },
+                                transformItemContent: { content, _ in
+                                    Self.applyListFont(to: &content, listFont: nestedListFont)
+                                }
+                            )
+                        } else {
+                            appendItemText(Self.attributedString(for: nestedBlock, palette: palette))
+                        }
                         emittedAnyRenderable = true
 
                     default:
@@ -671,7 +695,25 @@ enum FlatSegment: Sendable {
         }
 
         flushPendingText()
-        return BuildResult(segments: result, sourceLineRanges: resultLineRanges)
+        return BuildResult(
+            segments: result,
+            sourceLineRanges: resultLineRanges
+        )
+    }
+
+    private static func containsStandaloneListBlock(_ block: MarkdownBlock) -> Bool {
+        switch block {
+        case .codeBlock, .table, .thematicBreak:
+            true
+        case .unorderedList(let items), .orderedList(_, let items):
+            items.flatMap { $0 }.contains(where: containsStandaloneListBlock)
+        case .blockQuote(let children):
+            children.contains(where: containsStandaloneListBlock)
+        case .taskList(let items):
+            items.flatMap(\.content).contains(where: containsStandaloneListBlock)
+        case .heading, .paragraph, .htmlBlock:
+            false
+        }
     }
 
     private static func prefixLines(

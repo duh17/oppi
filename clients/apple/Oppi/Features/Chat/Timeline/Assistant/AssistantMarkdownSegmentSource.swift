@@ -112,13 +112,9 @@ final class AssistantMarkdownSegmentSource {
         _ config: AssistantMarkdownContentView.Configuration,
         mergeAdjacentTextSegments: Bool = true
     ) -> FlatSegment.BuildResult {
-        guard !config.isStreaming else {
-            return FlatSegment.BuildResult(
-                segments: buildSegments(config, mergeAdjacentTextSegments: mergeAdjacentTextSegments),
-                sourceLineRanges: []
-            )
-        }
-
+        // Reader identity needs located top-level starts on every tick. Keep
+        // this path canonical during streaming: segment splitting/merging must
+        // finish before same-key occurrence ordinals are assigned.
         let content = config.content
         let parseStart = MarkdownStreamingPerf.timestampNs()
         let blocks = parseCommonMarkLocated(content)
@@ -141,12 +137,17 @@ final class AssistantMarkdownSegmentSource {
             buildDurationNs: buildEnd - parseEnd,
             lineCount: Self.countNewlines(content) + 1,
             isTailOnly: false,
-            isStreaming: false
+            isStreaming: config.isStreaming
         )
 
+        let segments = Self.applyReaderPreferences(to: build.segments, config: config)
         return FlatSegment.BuildResult(
-            segments: Self.applyReaderPreferences(to: build.segments, config: config),
-            sourceLineRanges: build.sourceLineRanges
+            segments: segments,
+            sourceLineRanges: build.sourceLineRanges,
+            identities: FlatSegment.readerSegmentIDs(
+                segments: segments,
+                sourceLineRanges: build.sourceLineRanges
+            )
         )
     }
 

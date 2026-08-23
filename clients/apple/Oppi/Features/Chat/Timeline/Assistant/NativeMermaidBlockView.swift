@@ -26,6 +26,7 @@ final class NativeMermaidBlockView: UIView {
         iv.contentMode = .scaleAspectFit
         iv.clipsToBounds = true
         iv.isUserInteractionEnabled = true
+        iv.isAccessibilityElement = false
         iv.layer.cornerRadius = 8
         iv.translatesAutoresizingMaskIntoConstraints = false
         return iv
@@ -51,12 +52,19 @@ final class NativeMermaidBlockView: UIView {
     private var lastRasterWidth: CGFloat?
     /// Width of an in-flight raster so layout cannot start a loop.
     private var inFlightRasterWidth: CGFloat?
+    private var requiresExactRasterWidth = false
     private var renderTask: Task<Void, Never>?
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
 
-    /// Ignore sub-point layout jitter; re-raster when the bubble really moved.
-    private static let rasterWidthSlop: CGFloat = 8
+    /// Timeline bubbles ignore small constraint jitter. Reader calls supply an
+    /// explicit canonical width and use only half-point pixel-rounding slop.
+    private static let timelineRasterWidthSlop: CGFloat = 8
+    private static let exactReaderRasterWidthSlop: CGFloat = 0.5
+
+    #if DEBUG
+    private var debugRenderCount = 0
+    #endif
 
     // MARK: - Init
 
@@ -123,7 +131,8 @@ final class NativeMermaidBlockView: UIView {
         if rasterWidthMismatch(bounds.width), let code = currentCode {
             applyAsDiagram(
                 code: code,
-                palette: currentPalette ?? ThemeRuntimeState.currentPalette()
+                palette: currentPalette ?? ThemeRuntimeState.currentPalette(),
+                availableWidth: requiresExactRasterWidth ? bounds.width : nil
             )
         }
     }
@@ -144,7 +153,9 @@ final class NativeMermaidBlockView: UIView {
         renderedDiagramNaturalSize = nil
         lastRasterWidth = nil
         inFlightRasterWidth = nil
+        requiresExactRasterWidth = false
         currentPalette = palette
+        clearDiagramAccessibility()
 
         codeBlockView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
         currentCode = code
@@ -157,10 +168,18 @@ final class NativeMermaidBlockView: UIView {
     /// Render synchronously on the current thread. Used by export paths that
     /// snapshot the view immediately after layout — async rendering would
     /// complete after the snapshot, producing blank boxes.
-    func applyAsDiagramSync(code: String, palette: ThemePalette) {
+    func applyAsDiagramSync(
+        code: String,
+        palette: ThemePalette,
+        availableWidth explicitWidth: CGFloat? = nil
+    ) {
+        let usesExactWidth = explicitWidth != nil
+        let availableWidth = resolvedAvailableWidth(explicitWidth)
         // Re-entrant collection-view measurement reuses this cell. Rendering
         // again would rasterize a new image and force another layout pass.
-        if code == currentCode && isShowingDiagram { return }
+        if code == currentCode,
+           isShowingDiagram,
+           !rasterWidthMismatch(availableWidth, usesExactWidth: usesExactWidth) { return }
         currentCode = code
         currentPalette = palette
 
@@ -168,8 +187,11 @@ final class NativeMermaidBlockView: UIView {
         renderTask = nil
 
         let theme = ThemeRuntimeState.currentRenderTheme()
-        let availableWidth = resolvedAvailableWidth()
+        requiresExactRasterWidth = usesExactWidth
         inFlightRasterWidth = availableWidth
+        #if DEBUG
+        debugRenderCount += 1
+        #endif
 
         guard let result = DocumentRenderPipeline.renderInlineGraphicalImage(
             parser: MermaidParser(),
@@ -196,17 +218,28 @@ final class NativeMermaidBlockView: UIView {
     }
 
     /// Render as a diagram (fence closed, not streaming).
-    func applyAsDiagram(code: String, palette: ThemePalette) {
+    func applyAsDiagram(
+        code: String,
+        palette: ThemePalette,
+        availableWidth explicitWidth: CGFloat? = nil
+    ) {
         currentPalette = palette
-        let availableWidth = resolvedAvailableWidth()
+        let usesExactWidth = explicitWidth != nil
+        let availableWidth = resolvedAvailableWidth(explicitWidth)
         // Same source at a new bubble width still needs a new raster.
-        guard code != currentCode || !isShowingDiagram || rasterWidthMismatch(availableWidth) else {
+        guard code != currentCode
+                || !isShowingDiagram
+                || rasterWidthMismatch(availableWidth, usesExactWidth: usesExactWidth) else {
             return
         }
         currentCode = code
 
         renderTask?.cancel()
+        requiresExactRasterWidth = usesExactWidth
         inFlightRasterWidth = availableWidth
+        #if DEBUG
+        debugRenderCount += 1
+        #endif
         renderTask = Task { [weak self] in
             guard let self else { return }
 
@@ -263,17 +296,27 @@ final class NativeMermaidBlockView: UIView {
 
     // MARK: - Private
 
-    private func resolvedAvailableWidth() -> CGFloat {
-        bounds.width > 0
+    private func resolvedAvailableWidth(_ explicitWidth: CGFloat? = nil) -> CGFloat {
+        if let explicitWidth, explicitWidth.isFinite, explicitWidth > 0 {
+            return explicitWidth
+        }
+        return bounds.width > 0
             ? bounds.width
             : (window?.windowScene?.screen.bounds.width ?? 360)
     }
 
-    private func rasterWidthMismatch(_ width: CGFloat) -> Bool {
-        if let inFlight = inFlightRasterWidth, abs(width - inFlight) <= Self.rasterWidthSlop {
+    private func rasterWidthMismatch(
+        _ width: CGFloat,
+        usesExactWidth: Bool? = nil
+    ) -> Bool {
+        let exact = usesExactWidth ?? requiresExactRasterWidth
+        let slop = exact
+            ? Self.exactReaderRasterWidthSlop
+            : Self.timelineRasterWidthSlop
+        if let inFlight = inFlightRasterWidth, abs(width - inFlight) <= slop {
             return false
         }
-        if let last = lastRasterWidth, abs(width - last) <= Self.rasterWidthSlop {
+        if let last = lastRasterWidth, abs(width - last) <= slop {
             return false
         }
         return true
@@ -304,6 +347,7 @@ final class NativeMermaidBlockView: UIView {
         codeBlockView.isHidden = true
         diagramImageView.isHidden = false
         isShowingDiagram = true
+        configureDiagramAccessibility()
 
         invalidateIntrinsicContentSize()
         setNeedsLayout()
@@ -346,11 +390,32 @@ final class NativeMermaidBlockView: UIView {
         renderedDiagramNaturalSize = nil
         lastRasterWidth = nil
         inFlightRasterWidth = nil
+        clearDiagramAccessibility()
         codeBlockView.apply(language: "mermaid", code: code, palette: palette, isOpen: false)
 
         if wasShowingDiagram {
             invalidateTimelineLayout()
         }
+    }
+
+    private func configureDiagramAccessibility() {
+        isAccessibilityElement = true
+        accessibilityIdentifier = "mermaid.diagram.open"
+        accessibilityLabel = String(localized: "Mermaid diagram")
+        accessibilityHint = String(localized: "Opens diagram full screen")
+        accessibilityTraits = [.image, .button]
+        // The rendered diagram is one control; its backing UIImageView must
+        // not become a second VoiceOver stop.
+        accessibilityElementsHidden = true
+    }
+
+    private func clearDiagramAccessibility() {
+        isAccessibilityElement = false
+        accessibilityIdentifier = nil
+        accessibilityLabel = nil
+        accessibilityHint = nil
+        accessibilityTraits = []
+        accessibilityElementsHidden = false
     }
 
     private func invalidateTimelineLayout() {
@@ -361,25 +426,56 @@ final class NativeMermaidBlockView: UIView {
         ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
-    @objc private func handleTap() {
-        guard let code = currentCode, isShowingDiagram else { return }
+    override func accessibilityActivate() -> Bool {
+        openDiagramPreview()
+    }
 
-        // Use the same static presentation approach as NativeMarkdownImageView.
-        // Walking the responder chain from `self` via nearestViewController()
-        // can fail silently when the view hierarchy doesn't have a clean
-        // UIViewController chain.
+    @objc private func handleTap() {
+        _ = openDiagramPreview()
+    }
+
+    @discardableResult
+    private func openDiagramPreview() -> Bool {
+        guard let code = currentCode, isShowingDiagram else { return false }
+
         let content = FullScreenCodeContent.mermaid(content: code, filePath: nil)
+        if let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self),
+           !isInsideFullScreenCodeViewer(presenter) {
+            ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+                content,
+                from: self,
+                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+                reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
+                reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel
+            )
+            return true
+        }
+
+        // The global presenter intentionally permits one focused visual above
+        // a full-screen Markdown reader while still preventing deeper stacks.
         FullScreenCodeViewController.present(
             content: content,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
             reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel
         )
+        return true
+    }
+
+    private func isInsideFullScreenCodeViewer(_ presenter: UIViewController) -> Bool {
+        var current: UIViewController? = presenter
+        while let node = current {
+            if node is FullScreenCodeViewController { return true }
+            current = node.parent
+        }
+        return false
     }
 }
 
 #if DEBUG
 extension NativeMermaidBlockView {
     var debugIsShowingDiagramForTesting: Bool { isShowingDiagram }
+    var debugRasterWidthForTesting: CGFloat? { lastRasterWidth }
+    var debugRenderCountForTesting: Int { debugRenderCount }
 }
 #endif

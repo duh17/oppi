@@ -106,13 +106,16 @@ struct NativeMarkdownImageViewSVGTests {
         window.resignKey()
     }
 
-    @Test func loadedRendererIsFocusable() async throws {
+    @Test func loadedRendererIsAnAltLabeledImageButtonAndAccessibilityActivationOpensPreview() async throws {
+        let host = UIViewController()
         let view = NativeMarkdownImageView()
         view.frame = CGRect(x: 0, y: 0, width: 300, height: 180)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        window.addSubview(view)
+        window.rootViewController = host
+        host.view.addSubview(view)
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
+        defer { window.isHidden = true }
 
         let svgData = Data("""
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
@@ -127,24 +130,30 @@ struct NativeMarkdownImageViewSVGTests {
 
         view.apply(
             url: url,
-            alt: "Diagram",
+            alt: "System architecture diagram",
             fetchWorkspaceFile: { _, _ in svgData },
             fetchSessionFile: nil
         )
 
-        var visibleWebRenderer: UIView?
-        for _ in 0..<20 {
-            try await Task.sleep(for: .milliseconds(50))
+        let rendered = await waitForTimelineCondition(timeoutMs: 10_000) { @MainActor in
             window.layoutIfNeeded()
-            visibleWebRenderer = view.subviews.first {
+            return view.subviews.contains {
                 String(describing: type(of: $0)).contains("WKWebView") && !$0.isHidden
             }
-            if visibleWebRenderer != nil { break }
         }
+        #expect(rendered)
+        #expect(view.isAccessibilityElement)
+        #expect(view.accessibilityLabel == "System architecture diagram")
+        #expect(view.accessibilityHint?.localizedCaseInsensitiveContains("full screen") == true)
+        #expect(view.accessibilityTraits.contains(.image))
+        #expect(view.accessibilityTraits.contains(.button))
+        #expect(view.accessibilityElementsHidden, "SVG implementation views must not duplicate the media element")
 
-        let renderer = try #require(visibleWebRenderer)
-        let hasTapGesture = renderer.gestureRecognizers?.contains { $0 is UITapGestureRecognizer } == true
-        #expect(hasTapGesture, "SVG markdown images should be focusable just like raster images")
-        window.resignKey()
+        #expect(view.accessibilityActivate())
+        let previewOpened = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            guard let navigation = host.presentedViewController as? UINavigationController else { return false }
+            return navigation.topViewController is FullScreenImageDataPreviewViewController
+        }
+        #expect(previewOpened, "VoiceOver activation must open the SVG preview used by tap")
     }
 }

@@ -3065,6 +3065,138 @@ struct NativeMarkdownImageViewTests {
         #expect(labels.contains { $0.text?.contains("remote image blocked") == true && !$0.isHidden })
     }
 
+    @Test func loadedRasterIsAnAltLabeledImageButtonAndAccessibilityActivationOpensPreview() async throws {
+        let host = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
+        host.view.addSubview(view)
+        host.view.layoutIfNeeded()
+
+        let imageData = try #require(Self.makeRedGreenImage().pngData())
+        let url = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://example.com/api")!,
+            workspaceID: "workspace-1",
+            filePath: "accessible-raster.png"
+        ))
+        view.apply(
+            url: url,
+            alt: "Quarterly revenue chart",
+            fetchWorkspaceFile: { _, _ in imageData },
+            fetchSessionFile: nil
+        )
+
+        let loaded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            host.view.layoutIfNeeded()
+            return timelineAllImageViews(in: view).contains {
+                !$0.isHidden && $0.isUserInteractionEnabled && $0.image != nil
+            }
+        }
+        #expect(loaded)
+        #expect(view.isAccessibilityElement)
+        #expect(view.accessibilityLabel == "Quarterly revenue chart")
+        #expect(view.accessibilityHint?.localizedCaseInsensitiveContains("full screen") == true)
+        #expect(view.accessibilityTraits.contains(.image))
+        #expect(view.accessibilityTraits.contains(.button))
+        #expect(view.accessibilityElementsHidden, "Loaded media must hide implementation subviews from VoiceOver")
+
+        #expect(view.accessibilityActivate())
+        let previewOpened = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            guard let navigation = host.presentedViewController as? UINavigationController else { return false }
+            return navigation.topViewController is FullScreenImageViewController
+        }
+        #expect(previewOpened, "VoiceOver activation must open the raster preview used by tap")
+    }
+
+    @Test func imageAccessibilityOwnershipTracksLoadingBlockedFallbackRasterAndErrorStates() async throws {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
+        view.layoutIfNeeded()
+
+        let loadingURL = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://example.com/api")!,
+            workspaceID: "workspace-1",
+            filePath: "loading.png"
+        ))
+        view.apply(
+            url: loadingURL,
+            alt: "Loading description",
+            fetchWorkspaceFile: { _, _ in
+                try await Task.sleep(for: .seconds(30))
+                return Data()
+            },
+            fetchSessionFile: nil
+        )
+        #expect(!view.isAccessibilityElement)
+        #expect(!view.accessibilityElementsHidden)
+        #expect(view.accessibilityLabel == nil)
+        #expect(timelineAllViews(in: view).compactMap { $0 as? UILabel }.contains {
+            !$0.isHidden && $0.text == "Loading description"
+        })
+
+        let blockedURL = try #require(URL(string: "http://192.168.1.1/blocked.png"))
+        view.apply(url: blockedURL, alt: "Router", fetchWorkspaceFile: nil, fetchSessionFile: nil)
+        #expect(!view.isAccessibilityElement)
+        #expect(!view.accessibilityElementsHidden)
+        #expect(view.accessibilityLabel == nil)
+        #expect(timelineAllViews(in: view).compactMap { $0 as? UILabel }.contains {
+            !$0.isHidden && $0.text == "[Router — remote image blocked]"
+        })
+
+        let exportURL = try #require(URL(string: "https://example.com/export.png"))
+        view.apply(
+            url: exportURL,
+            alt: "Export description",
+            fetchWorkspaceFile: nil,
+            fetchSessionFile: nil,
+            renderingMode: .export
+        )
+        #expect(!view.isAccessibilityElement)
+        #expect(!view.accessibilityElementsHidden)
+        #expect(timelineAllViews(in: view).compactMap { $0 as? UILabel }.contains {
+            !$0.isHidden && $0.text == "Export description"
+        })
+
+        let imageData = try #require(Self.makeRedGreenImage().pngData())
+        let rasterURL = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://example.com/api")!,
+            workspaceID: "workspace-1",
+            filePath: "state-raster.png"
+        ))
+        view.apply(
+            url: rasterURL,
+            alt: "Raster description",
+            fetchWorkspaceFile: { _, _ in imageData },
+            fetchSessionFile: nil
+        )
+        let rasterLoaded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            view.isAccessibilityElement && view.accessibilityElementsHidden
+        }
+        #expect(rasterLoaded)
+        #expect(view.accessibilityLabel == "Raster description")
+
+        view.apply(
+            url: URL(fileURLWithPath: "/tmp/not-an-image"),
+            alt: "Broken description",
+            fetchWorkspaceFile: nil,
+            fetchSessionFile: nil
+        )
+        let failed = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            timelineAllViews(in: view).compactMap { $0 as? UILabel }.contains {
+                !$0.isHidden && $0.text == "[Broken description]"
+            }
+        }
+        #expect(failed)
+        #expect(!view.isAccessibilityElement)
+        #expect(!view.accessibilityElementsHidden)
+        #expect(view.accessibilityLabel == nil)
+        #expect(!view.accessibilityActivate())
+    }
+
     @Test func showsLoadingPlaceholderHeight() {
         let view = NativeMarkdownImageView()
         // Force layout
@@ -3824,6 +3956,52 @@ struct NativeMermaidBlockViewTests {
         }
 
         window.resignKey()
+    }
+
+    @Test func renderedDiagramIsAnImageButtonAndAccessibilityActivationOpensPreview() async throws {
+        let host = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let view = makeDiagramView()
+        host.view.addSubview(view)
+        host.view.layoutIfNeeded()
+        view.applyAsDiagramSync(
+            code: "graph TD\n    Start[Start] --> Finish[Finish]",
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        host.view.layoutIfNeeded()
+
+        #expect(view.isAccessibilityElement)
+        #expect(view.accessibilityLabel?.localizedCaseInsensitiveContains("mermaid") == true)
+        #expect(view.accessibilityHint?.localizedCaseInsensitiveContains("full screen") == true)
+        #expect(view.accessibilityTraits.contains(.image))
+        #expect(view.accessibilityTraits.contains(.button))
+        #expect(view.accessibilityElementsHidden, "Rendered diagram must own one VoiceOver element")
+
+        #expect(view.accessibilityActivate())
+        let previewOpened = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            host.presentedViewController is FullScreenCodeViewController
+        }
+        #expect(previewOpened, "VoiceOver activation must open the Mermaid preview used by tap")
+    }
+
+    @Test func codeStateClearsDiagramAccessibilityOwnership() {
+        let view = makeDiagramView()
+        let palette = ThemeRuntimeState.currentPalette()
+        view.applyAsDiagramSync(code: "graph TD\n    A-->B", palette: palette)
+        #expect(view.isAccessibilityElement)
+        #expect(view.accessibilityElementsHidden)
+
+        view.applyAsCode(language: "mermaid", code: "graph TD\n    A-->", palette: palette, isOpen: true)
+        #expect(!view.isAccessibilityElement)
+        #expect(!view.accessibilityElementsHidden)
+        #expect(view.accessibilityLabel == nil)
+        #expect(view.accessibilityHint == nil)
+        #expect(view.accessibilityTraits.isEmpty)
+        #expect(!view.accessibilityActivate())
     }
 
     @Test func mermaidExportRendersNonBlankImage() async {

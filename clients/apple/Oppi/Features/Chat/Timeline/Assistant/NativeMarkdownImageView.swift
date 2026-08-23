@@ -24,6 +24,32 @@ final class NativeMarkdownImageView: UIView {
     private static let imageCache = NSCache<NSURL, UIImage>()
     private static let svgDataCache = NSCache<NSURL, NSData>()
 
+    private enum PreparedImageArtifact {
+        case raster(image: UIImage, pixelSize: CGSize)
+        case web(data: Data, mimeType: String, aspectRatio: CGFloat?)
+    }
+
+    private struct PreparedImageResult {
+        let artifact: PreparedImageArtifact
+        let filePath: String
+    }
+
+    /// One joined operation owns fetch, metadata inspection, raster decode, or
+    /// web-rendered image preparation. Every runway/display waiter receives the
+    /// same artifact instead of repeating work after a joined fetch.
+    private struct InFlightLoad {
+        let id: UUID
+        let task: Task<PreparedImageResult, Error>
+        var rasterPixelSize: CGSize?
+        var metadataWaiters: [UUID: (CGSize) -> Void]
+    }
+
+    private static var inFlightLoads: [URL: InFlightLoad] = [:]
+    #if DEBUG
+    private static var debugPreparedOperationCount = 0
+    static var debugRasterDecodeGateForTesting: (() async -> Void)?
+    #endif
+
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let altLabel = UILabel()
     private let imageView = UIImageView()
@@ -33,15 +59,24 @@ final class NativeMarkdownImageView: UIView {
     private let remoteLoadButton = UIButton(type: .system)
 
     /// Web view for rendering SVG and animated images that UIImage doesn't support.
-    /// Created lazily on first SVG load to avoid WKWebView overhead for
-    /// raster-image-only messages.
+    /// Created lazily on first web-rendered image load to avoid WKWebView
+    /// overhead for raster-image-only messages.
     private var svgWebView: ReviewCommentWKWebView?
     private var svgTapOverlay: UIControl?
     private let svgHTMLTracker = HTMLContentTracker()
     private var svgPreviewData: Data?
     private var svgPreviewMimeType: String?
 
+    private struct RequestIdentity: Equatable {
+        let url: URL
+        let displayWidth: CGFloat?
+    }
+
     private var currentURL: URL?
+    private var currentRequestIdentity: RequestIdentity?
+    private var currentAltText = ""
+    private var preferredDisplayWidth: CGFloat?
+    private var preparesForDisplay = true
     private var pendingRemoteLoad: PendingImageLoad?
     private var loadTask: Task<Void, Never>?
 
@@ -57,6 +92,11 @@ final class NativeMarkdownImageView: UIView {
     /// viewport still. When set, async size changes do not invalidate the
     /// enclosing collection layout themselves.
     var onDisplayHeightChange: ((CGFloat) -> Void)?
+
+    /// Reader render-ahead uses this distinct signal to commit geometry only
+    /// after internal raster metadata/decode or SVG viewBox preparation has
+    /// completed. Loading-placeholder changes are intentionally excluded.
+    var onPreparedGeometry: ((CGFloat) -> Void)?
     #if DEBUG
     /// Height published from pixel metadata before the bitmap decode finishes.
     private(set) var debugPixelReservedHeightForTesting: CGFloat?
@@ -180,16 +220,18 @@ final class NativeMarkdownImageView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil {
-            flushSVGIfReady()
-        } else {
+        if window != nil, preparesForDisplay {
+            activatePreparedDisplay()
+        } else if window == nil {
             svgHTMLTracker.markNotReady()
         }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        flushSVGIfReady()
+        if preparesForDisplay {
+            activatePreparedDisplay()
+        }
     }
 
     func apply(
@@ -197,10 +239,25 @@ final class NativeMarkdownImageView: UIView {
         alt: String,
         fetchWorkspaceFile: FetchWorkspaceFile?,
         fetchSessionFile: FetchSessionFile?,
-        renderingMode: ContentRenderingMode = .live
+        renderingMode: ContentRenderingMode = .live,
+        preferredDisplayWidth: CGFloat? = nil,
+        preparesForDisplay: Bool = true
     ) {
-        guard url != currentURL else { return }
+        let canonicalWidth = preferredDisplayWidth.flatMap {
+            $0.isFinite && $0 > 0 ? $0 : nil
+        }
+        let identity = RequestIdentity(url: url, displayWidth: canonicalWidth)
+        currentAltText = alt
+        if identity == currentRequestIdentity {
+            self.preparesForDisplay = self.preparesForDisplay || preparesForDisplay
+            refreshLoadedAccessibilityIfNeeded()
+            if self.preparesForDisplay { activatePreparedDisplay() }
+            return
+        }
+        currentRequestIdentity = identity
         currentURL = url
+        self.preferredDisplayWidth = canonicalWidth
+        self.preparesForDisplay = preparesForDisplay
         svgPreviewData = nil
         svgPreviewMimeType = nil
         svgHTMLTracker.resetLoadedContent()
@@ -215,11 +272,12 @@ final class NativeMarkdownImageView: UIView {
             showLoadedState(image: cached)
             return
         }
-        if let cachedSVGData = Self.svgDataCache.object(forKey: url as NSURL) {
-            showSVGLoadedState(
-                data: cachedSVGData as Data,
-                mimeType: MediaMimeType.imageMimeType(forPathExtension: url.pathExtension)
-            )
+        if let cachedSVGData = Self.svgDataCache.object(forKey: url as NSURL),
+           let artifact = Self.preparedWebArtifact(
+               data: cachedSVGData as Data,
+               filePath: url.path
+           ) {
+            presentPreparedImage(artifact, url: url)
             return
         }
 
@@ -278,106 +336,199 @@ final class NativeMarkdownImageView: UIView {
         )
     }
 
+    private enum JoinedLoadError: LocalizedError {
+        case unavailable
+
+        var errorDescription: String? { "No permitted image loader is available" }
+    }
+
     private func loadImage(
         url: URL,
         alt: String,
         fetchWorkspaceFile: FetchWorkspaceFile?,
         fetchSessionFile: FetchSessionFile?
     ) async {
-        // Handle an internal session-file URL when supplied directly.
-        if let components = SessionFileURL.parse(url), let fetchSessionFile {
-            do {
-                let data = try await fetchSessionFile(
+        do {
+            let prepared = try await joinedPreparedImage(
+                url: url,
+                fetchWorkspaceFile: fetchWorkspaceFile,
+                fetchSessionFile: fetchSessionFile,
+                onRasterMetadata: { [weak self] pixelSize in
+                    self?.publishChatRasterMetadataIfNeeded(pixelSize)
+                }
+            )
+            guard !Task.isCancelled, currentURL == url else { return }
+            presentPreparedImage(prepared.artifact, url: url)
+        } catch {
+            guard !Task.isCancelled, currentURL == url else { return }
+            logger.error("Markdown image load failed: \(error.localizedDescription) url=\(url.absoluteString)")
+            if RemoteMarkdownImagePolicy.decision(for: url) == .blockedRemote {
+                showBlockedRemoteState(alt: alt)
+            } else {
+                showErrorState(alt: alt)
+            }
+        }
+    }
+
+    private func joinedPreparedImage(
+        url: URL,
+        fetchWorkspaceFile: FetchWorkspaceFile?,
+        fetchSessionFile: FetchSessionFile?,
+        onRasterMetadata: @escaping (CGSize) -> Void
+    ) async throws -> PreparedImageResult {
+        let waiterID = UUID()
+        if var existing = Self.inFlightLoads[url] {
+            if let pixelSize = existing.rasterPixelSize {
+                onRasterMetadata(pixelSize)
+            } else {
+                existing.metadataWaiters[waiterID] = onRasterMetadata
+                Self.inFlightLoads[url] = existing
+            }
+            return try await existing.task.value
+        }
+
+        let id = UUID()
+        let remoteFetch = fetchRemoteImage
+        let task = Task { @MainActor () throws -> PreparedImageResult in
+            let data: Data
+            let filePath: String
+            if let components = SessionFileURL.parse(url), let fetchSessionFile {
+                data = try await fetchSessionFile(
                     components.workspaceID,
                     components.sessionID,
                     components.filePath
                 )
-                guard !Task.isCancelled else { return }
-                if await presentFetchedImageData(data, url: url, filePath: components.filePath) {
-                    return
+                filePath = components.filePath
+            } else if let components = WorkspaceFileURL.parse(url), let fetchWorkspaceFile {
+                data = try await fetchWorkspaceFile(
+                    components.workspaceID,
+                    components.filePath
+                )
+                filePath = components.filePath
+            } else {
+                guard RemoteMarkdownImagePolicy.decision(for: url) == .loadableRemote else {
+                    throw JoinedLoadError.unavailable
                 }
-                logger.error("Session file is not a valid image: \(components.filePath) (\(data.count) bytes)")
-            } catch {
-                logger.error("Session image load failed: \(error.localizedDescription) path=\(components.filePath)")
-                guard !Task.isCancelled else { return }
+                data = try await remoteFetch(url)
+                filePath = url.path
             }
-        }
 
-        // Try workspace file path next.
-        if let components = WorkspaceFileURL.parse(url), let fetchWorkspaceFile {
-            do {
-                let data = try await fetchWorkspaceFile(components.workspaceID, components.filePath)
-                guard !Task.isCancelled else { return }
-                if await presentFetchedImageData(data, url: url, filePath: components.filePath) {
-                    return
-                }
-                logger.error("Workspace file is not a valid image: \(components.filePath) (\(data.count) bytes)")
-            } catch {
-                logger.error("Workspace image load failed: \(error.localizedDescription) path=\(components.filePath)")
-                guard !Task.isCancelled else { return }
+            #if DEBUG
+            Self.debugPreparedOperationCount += 1
+            #endif
+            if let artifact = Self.preparedWebArtifact(data: data, filePath: filePath) {
+                return PreparedImageResult(artifact: artifact, filePath: filePath)
             }
+            let pixelSize = Self.pixelSize(of: data)
+            if let pixelSize {
+                Self.publishRasterMetadata(pixelSize, for: url, operationID: id)
+            }
+            guard let image = await Self.decodeRasterImage(data: data) else {
+                logger.error("Fetched file is not a valid image: \(filePath) (\(data.count) bytes)")
+                throw JoinedLoadError.unavailable
+            }
+            return PreparedImageResult(
+                artifact: .raster(image: image, pixelSize: pixelSize ?? image.size),
+                filePath: filePath
+            )
         }
-
-        // Fall back to direct remote fetch only after the user explicitly taps
-        // the remote-image prompt. Direct remote loads use a constrained,
-        // ephemeral session and reject unsafe targets.
-        switch RemoteMarkdownImagePolicy.decision(for: url) {
-        case .loadableRemote:
-            break
-        case .blockedRemote:
-            showBlockedRemoteState(alt: alt)
-            return
-        case .internalImageURL, .unsupported:
-            showErrorState(alt: alt)
-            return
-        }
+        Self.inFlightLoads[url] = InFlightLoad(
+            id: id,
+            task: task,
+            rasterPixelSize: nil,
+            metadataWaiters: [waiterID: onRasterMetadata]
+        )
 
         do {
-            let data = try await fetchRemoteImage(url)
-            guard !Task.isCancelled else { return }
-
-            if await presentFetchedImageData(data, url: url, filePath: url.path) {
-                return
+            let result = try await task.value
+            if Self.inFlightLoads[url]?.id == id {
+                Self.inFlightLoads.removeValue(forKey: url)
             }
-
-            showErrorState(alt: alt)
+            return result
         } catch {
-            guard !Task.isCancelled else { return }
-            logger.error("Remote image load failed: \(error.localizedDescription) host=\(url.host(percentEncoded: false) ?? "unknown")")
-            showErrorState(alt: alt)
+            if Self.inFlightLoads[url]?.id == id {
+                Self.inFlightLoads.removeValue(forKey: url)
+            }
+            throw error
+        }
+    }
+
+    private static func publishRasterMetadata(
+        _ pixelSize: CGSize,
+        for url: URL,
+        operationID: UUID
+    ) {
+        guard var load = inFlightLoads[url], load.id == operationID else { return }
+        load.rasterPixelSize = pixelSize
+        let waiters = load.metadataWaiters.values
+        load.metadataWaiters.removeAll(keepingCapacity: false)
+        inFlightLoads[url] = load
+        for waiter in waiters {
+            waiter(pixelSize)
         }
     }
 
     private static func decodeRasterImage(data: Data) async -> UIImage? {
-        await Task.detached(priority: .userInitiated) {
+        #if DEBUG
+        if let debugRasterDecodeGateForTesting {
+            await debugRasterDecodeGateForTesting()
+        }
+        #endif
+        return await Task.detached(priority: .userInitiated) {
             ImageMediaInspector.downsampledImage(data: data, maxPixelSize: 1_600)
         }.value
     }
 
-    private func presentFetchedImageData(_ data: Data, url: URL, filePath: String) async -> Bool {
-        reserveHeightIfPixelSizeKnown(in: data)
-        let pathMimeType = MediaMimeType.imageMimeType(forPathExtension: (filePath as NSString).pathExtension)
+    private static func preparedWebArtifact(
+        data: Data,
+        filePath: String
+    ) -> PreparedImageArtifact? {
+        let pathMimeType = MediaMimeType.imageMimeType(
+            forPathExtension: (filePath as NSString).pathExtension
+        )
         let inspection = ImageMediaInspector.inspect(data: data, mimeType: pathMimeType)
-        if inspection.prefersWebRenderer {
-            let mimeType = MediaMimeType.safeImageMimeType(
-                inspection.normalizedMimeType,
-                fallback: MediaMimeType.isSVGData(data) ? "image/svg+xml" : "image/gif"
-            )
-            Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
-            showSVGLoadedState(data: data, mimeType: mimeType)
-            return true
-        }
-        if let image = await Self.decodeRasterImage(data: data) {
+        guard inspection.prefersWebRenderer else { return nil }
+        let mimeType = MediaMimeType.safeImageMimeType(
+            inspection.normalizedMimeType,
+            fallback: MediaMimeType.isSVGData(data) ? "image/svg+xml" : "image/gif"
+        )
+        return .web(
+            data: data,
+            mimeType: mimeType,
+            aspectRatio: inspection.aspectRatio
+                ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
+        )
+    }
+
+    /// Timeline rows preserve their historical async reflow behavior by using
+    /// cheap ImageIO dimensions as soon as fetch completes. Reader probes have
+    /// `onPreparedGeometry` installed and wait for the joined decode artifact
+    /// before committing durable geometry.
+    private func publishChatRasterMetadataIfNeeded(_ pixelSize: CGSize) {
+        guard onPreparedGeometry == nil else { return }
+        applyFittedDisplayHeight(width: pixelSize.width, height: pixelSize.height)
+        #if DEBUG
+        debugPixelReservedHeightForTesting = heightConstraint?.constant
+        #endif
+    }
+
+    private func presentPreparedImage(_ artifact: PreparedImageArtifact, url: URL) {
+        switch artifact {
+        case .raster(let image, let pixelSize):
             Self.imageCache.setObject(image, forKey: url as NSURL)
+            applyFittedDisplayHeight(width: pixelSize.width, height: pixelSize.height)
+            #if DEBUG
+            debugPixelReservedHeightForTesting = heightConstraint?.constant
+            #endif
             showLoadedState(image: image)
-            return true
-        }
-        if MediaMimeType.isSVGData(data) || filePath.lowercased().hasSuffix(".svg") {
+        case .web(let data, let mimeType, let aspectRatio):
             Self.svgDataCache.setObject(data as NSData, forKey: url as NSURL)
-            showSVGLoadedState(data: data, mimeType: "image/svg+xml")
-            return true
+            showSVGLoadedState(
+                data: data,
+                mimeType: mimeType,
+                aspectRatio: aspectRatio
+            )
         }
-        return false
     }
 
     private static func pixelSize(of data: Data) -> CGSize? {
@@ -408,9 +559,10 @@ final class NativeMarkdownImageView: UIView {
             width: width,
             height: height
         ) ?? 1
-        let displayWidth = bounds.width > 0
-            ? bounds.width
-            : (window?.windowScene?.screen.bounds.width ?? 360)
+        let displayWidth = preferredDisplayWidth
+            ?? (bounds.width > 0
+                ? bounds.width
+                : (window?.windowScene?.screen.bounds.width ?? 360))
         let displayHeight = ImageViewportSizing.fittedHeight(
             forWidth: displayWidth,
             heightToWidthRatio: heightToWidthRatio,
@@ -447,6 +599,34 @@ final class NativeMarkdownImageView: UIView {
         return "[\(alt)]"
     }
 
+    private func configureLoadedAccessibility() {
+        isAccessibilityElement = true
+        accessibilityIdentifier = "markdown-image.open"
+        accessibilityLabel = normalizedAltText(currentAltText) ?? String(localized: "Image")
+        accessibilityHint = String(localized: "Opens image full screen")
+        accessibilityTraits = [.image, .button]
+        // The container owns the rendered media semantics. WebKit, the tap
+        // overlay, and UIImageView must not become duplicate VoiceOver stops.
+        accessibilityElementsHidden = true
+    }
+
+    private func clearLoadedAccessibility() {
+        isAccessibilityElement = false
+        accessibilityIdentifier = nil
+        accessibilityLabel = nil
+        accessibilityHint = nil
+        accessibilityTraits = []
+        accessibilityElementsHidden = false
+    }
+
+    private func refreshLoadedAccessibilityIfNeeded() {
+        let rasterIsVisible = !imageView.isHidden && imageView.image != nil
+        let svgIsVisible = svgTapOverlay.map { !$0.isHidden } ?? false
+        if rasterIsVisible || svgIsVisible {
+            configureLoadedAccessibility()
+        }
+    }
+
     private func hideRemotePrompt() {
         remotePromptStack.isHidden = true
     }
@@ -455,6 +635,7 @@ final class NativeMarkdownImageView: UIView {
     /// If the image was previously viewed, the cache check above already
     /// handled it. This path is for uncached images only.
     private func showExportPlaceholder(alt: String) {
+        clearLoadedAccessibility()
         let palette = ThemeRuntimeState.currentPalette()
         let placeholderText = normalizedAltText(alt) ?? "[image]"
         backgroundColor = UIColor(palette.bgHighlight)
@@ -474,6 +655,7 @@ final class NativeMarkdownImageView: UIView {
     }
 
     private func showRemoteLoadPrompt(alt: String) {
+        clearLoadedAccessibility()
         let palette = ThemeRuntimeState.currentPalette()
         let normalizedAlt = normalizedAltText(alt)
         backgroundColor = UIColor(palette.bgHighlight)
@@ -492,6 +674,7 @@ final class NativeMarkdownImageView: UIView {
     }
 
     private func showLoadingState(alt: String) {
+        clearLoadedAccessibility()
         let palette = ThemeRuntimeState.currentPalette()
         let normalizedAlt = normalizedAltText(alt)
         backgroundColor = UIColor(palette.bgHighlight)
@@ -525,32 +708,47 @@ final class NativeMarkdownImageView: UIView {
         imageView.image = image
         imageView.isHidden = false
         backgroundColor = .clear
+        configureLoadedAccessibility()
+        publishPreparedGeometry()
     }
 
-    /// Render SVG or animated image data in a WKWebView.
-    private func showSVGLoadedState(data: Data, mimeType: String?) {
+    /// Commit web-rendered image geometry and retain prepared data. Runway
+    /// probes stop here: WKWebView is created and loaded only after a real
+    /// display cell activates this view.
+    private func showSVGLoadedState(
+        data: Data,
+        mimeType: String,
+        aspectRatio: CGFloat?
+    ) {
         showSVGLoadingWebState()
 
-        let inspection = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
-        let normalizedMimeType = MediaMimeType.safeImageMimeType(
-            inspection.normalizedMimeType,
-            fallback: MediaMimeType.isSVGData(data) ? "image/svg+xml" : "image/gif"
-        )
-        let aspectRatio = inspection.aspectRatio ?? MediaMimeType.extractSVGViewBoxAspectRatio(data)
-
         if let aspectRatio,
-           let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(1.0 / aspectRatio) {
+           let heightToWidthRatio = ImageViewportSizing.validatedHeightToWidthRatio(
+               1.0 / aspectRatio
+           ) {
             applyFittedDisplayHeight(width: 1, height: heightToWidthRatio)
         } else {
             setDisplayHeight(Self.loadingPlaceholderHeight)
         }
 
         svgPreviewData = data
-        svgPreviewMimeType = normalizedMimeType
+        svgPreviewMimeType = mimeType
+        publishPreparedGeometry()
+        if preparesForDisplay {
+            activatePreparedDisplay()
+        }
+    }
+
+    /// Called when a prepared runway view moves into a real collection cell.
+    func activatePreparedDisplay() {
+        preparesForDisplay = true
+        guard let data = svgPreviewData,
+              let mimeType = svgPreviewMimeType else { return }
         let webView = ensureSVGWebView()
         webView.isHidden = true
         ensureSVGTapOverlay().isHidden = true
-        queueSVGHTML(makeSVGHTML(data: data, mimeType: normalizedMimeType), in: webView)
+        queueSVGHTML(makeSVGHTML(data: data, mimeType: mimeType), in: webView)
+        flushSVGIfReady()
     }
 
     /// Create an HTML document that embeds image data for WKWebView rendering.
@@ -635,8 +833,7 @@ final class NativeMarkdownImageView: UIView {
         overlay.backgroundColor = .clear
         overlay.isUserInteractionEnabled = true
         overlay.accessibilityIdentifier = "markdown-image.svg.tap-overlay"
-        overlay.accessibilityLabel = "Open image preview"
-        overlay.accessibilityTraits = [.image, .button]
+        overlay.isAccessibilityElement = false
         overlay.addTarget(self, action: #selector(handleSVGTap), for: .touchUpInside)
 
         addSubview(overlay)
@@ -683,6 +880,7 @@ final class NativeMarkdownImageView: UIView {
     }
 
     private func showSVGLoadingWebState() {
+        clearLoadedAccessibility()
         let palette = ThemeRuntimeState.currentPalette()
         backgroundColor = UIColor(palette.bgHighlight)
         spinner.color = UIColor(palette.comment)
@@ -706,6 +904,7 @@ final class NativeMarkdownImageView: UIView {
         svgWebView?.isHidden = false
         svgTapOverlay?.isHidden = false
         backgroundColor = .clear
+        configureLoadedAccessibility()
     }
 
     private func recoverSVGWebLoad() {
@@ -730,6 +929,7 @@ final class NativeMarkdownImageView: UIView {
     }
 
     private func showMessageState(text: String) {
+        clearLoadedAccessibility()
         spinner.stopAnimating()
         altLabel.isHidden = true
         imageView.isHidden = true
@@ -744,6 +944,11 @@ final class NativeMarkdownImageView: UIView {
         setDisplayHeight(Self.loadingPlaceholderHeight)
         backgroundColor = UIColor(palette.bgHighlight)
         isHidden = false
+        publishPreparedGeometry()
+    }
+
+    private func publishPreparedGeometry() {
+        onPreparedGeometry?(heightConstraint?.constant ?? Self.loadingPlaceholderHeight)
     }
 
     private func invalidateTimelineLayout() {
@@ -754,21 +959,48 @@ final class NativeMarkdownImageView: UIView {
         ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
+    override func accessibilityActivate() -> Bool {
+        guard isAccessibilityElement else { return false }
+        if !imageView.isHidden {
+            return openRasterPreview()
+        }
+        if svgTapOverlay.map({ !$0.isHidden }) == true {
+            return openSVGPreview()
+        }
+        return false
+    }
+
     @objc private func handleTap() {
-        guard let image = imageView.image,
-              let presenter = nearestViewController() else { return }
-        FullScreenImageViewController.present(image: image, from: presenter)
+        _ = openRasterPreview()
+    }
+
+    @discardableResult
+    private func openRasterPreview() -> Bool {
+        guard let image = imageView.image, !imageView.isHidden else { return false }
+        if let presenter = nearestViewController() {
+            FullScreenImageViewController.present(image: image, from: presenter)
+        } else {
+            FullScreenImageViewController.present(image: image)
+        }
+        return true
     }
 
     @objc private func handleSVGTap() {
+        _ = openSVGPreview()
+    }
+
+    @discardableResult
+    private func openSVGPreview() -> Bool {
         guard let data = svgPreviewData,
-              let presenter = nearestViewController() else { return }
+              svgTapOverlay.map({ !$0.isHidden }) == true,
+              let presenter = nearestViewController() else { return false }
 
         FullScreenImageDataPreviewPresenter.present(
             data: data,
             mimeType: svgPreviewMimeType,
             from: presenter
         )
+        return true
     }
 
     private func nearestViewController() -> UIViewController? {
@@ -825,6 +1057,28 @@ extension NativeMarkdownImageView {
 
     func debugOpenRasterPreviewForTesting() {
         handleTap()
+    }
+
+    var debugPreparedDisplayWidthForTesting: CGFloat? { preferredDisplayWidth }
+    var debugHasPreparedArtifactForTesting: Bool {
+        imageView.image != nil || svgPreviewData != nil
+    }
+    var debugHasSVGWebViewForTesting: Bool { svgWebView != nil }
+    var debugIsSVGArtifactForTesting: Bool {
+        svgPreviewData != nil && svgPreviewMimeType == "image/svg+xml"
+    }
+
+    static var debugPreparedOperationCountForTesting: Int {
+        debugPreparedOperationCount
+    }
+
+    static func debugResetPreparedArtifactsForTesting() {
+        imageCache.removeAllObjects()
+        svgDataCache.removeAllObjects()
+        inFlightLoads.values.forEach { $0.task.cancel() }
+        inFlightLoads.removeAll()
+        debugPreparedOperationCount = 0
+        debugRasterDecodeGateForTesting = nil
     }
 }
 #endif

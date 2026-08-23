@@ -83,6 +83,7 @@ final class NativeLatexBlockView: UIView {
     private struct RenderIdentity: Equatable {
         let code: String
         let contentSizeCategory: UIContentSizeCategory
+        let availableWidth: CGFloat
     }
 
     private var currentCode: String?
@@ -95,6 +96,7 @@ final class NativeLatexBlockView: UIView {
 
     #if DEBUG
     static var renderDelayForTesting: Duration?
+    private var debugRenderCount = 0
     #endif
 
     // MARK: - Init
@@ -186,23 +188,30 @@ final class NativeLatexBlockView: UIView {
 
     /// Render synchronously on the current thread. Used by export paths that
     /// snapshot the view immediately after layout.
-    func applyAsFormulaSync(code: String, palette: ThemePalette) {
+    func applyAsFormulaSync(
+        code: String,
+        palette: ThemePalette,
+        availableWidth explicitWidth: CGFloat? = nil
+    ) {
+        let availableWidth = resolvedAvailableWidth(explicitWidth)
+        let identity = RenderIdentity(
+            code: code,
+            contentSizeCategory: traitCollection.preferredContentSizeCategory,
+            availableWidth: availableWidth
+        )
         // Re-entrant collection-view measurement reuses this cell. Rendering
         // again would rasterize a new image and force another layout pass.
-        if code == currentCode && isShowingFormula { return }
+        if identity == currentRenderIdentity && isShowingFormula { return }
         renderTask?.cancel()
         renderTask = nil
         currentCode = code
         currentPalette = palette
-        currentRenderIdentity = RenderIdentity(
-            code: code,
-            contentSizeCategory: traitCollection.preferredContentSizeCategory
-        )
+        currentRenderIdentity = identity
 
         let theme = ThemeRuntimeState.currentRenderTheme()
-        let availableWidth = bounds.width > 0
-            ? bounds.width
-            : (window?.windowScene?.screen.bounds.width ?? 360)
+        #if DEBUG
+        debugRenderCount += 1
+        #endif
 
         guard let result = DocumentRenderPipeline.renderLatexGraphicalImage(
             text: code,
@@ -217,14 +226,25 @@ final class NativeLatexBlockView: UIView {
             return
         }
 
-        showFormula(image: result.image, naturalSize: result.size, palette: palette)
+        showFormula(
+            image: result.image,
+            naturalSize: result.size,
+            palette: palette,
+            invalidateHostLayout: false
+        )
     }
 
     /// Render as a formula (fence closed, not streaming).
-    func applyAsFormula(code: String, palette: ThemePalette) {
+    func applyAsFormula(
+        code: String,
+        palette: ThemePalette,
+        availableWidth explicitWidth: CGFloat? = nil
+    ) {
+        let availableWidth = resolvedAvailableWidth(explicitWidth)
         let identity = RenderIdentity(
             code: code,
-            contentSizeCategory: traitCollection.preferredContentSizeCategory
+            contentSizeCategory: traitCollection.preferredContentSizeCategory,
+            availableWidth: availableWidth
         )
         guard identity != currentRenderIdentity || !isShowingFormula else { return }
         currentCode = code
@@ -232,6 +252,9 @@ final class NativeLatexBlockView: UIView {
         currentRenderIdentity = identity
 
         renderTask?.cancel()
+        #if DEBUG
+        debugRenderCount += 1
+        #endif
         renderTask = Task { [weak self] in
             guard let self else { return }
             #if DEBUG
@@ -242,9 +265,6 @@ final class NativeLatexBlockView: UIView {
             #endif
 
             let theme = ThemeRuntimeState.currentRenderTheme()
-            let availableWidth = self.bounds.width > 0
-                ? self.bounds.width
-                : (self.window?.windowScene?.screen.bounds.width ?? 360)
             let fontSize = self.displayFormulaFontSize
 
             let result: (image: UIImage, size: CGSize)? = await Task.detached(priority: .userInitiated) {
@@ -266,7 +286,12 @@ final class NativeLatexBlockView: UIView {
                 return
             }
 
-            self.showFormula(image: result.image, naturalSize: result.size, palette: palette)
+            self.showFormula(
+                image: result.image,
+                naturalSize: result.size,
+                palette: palette,
+                invalidateHostLayout: true
+            )
         }
     }
 
@@ -290,7 +315,21 @@ final class NativeLatexBlockView: UIView {
 
     // MARK: - Private
 
-    private func showFormula(image: UIImage, naturalSize: CGSize, palette: ThemePalette) {
+    private func resolvedAvailableWidth(_ explicitWidth: CGFloat?) -> CGFloat {
+        if let explicitWidth, explicitWidth.isFinite, explicitWidth > 0 {
+            return explicitWidth
+        }
+        return bounds.width > 0
+            ? bounds.width
+            : (window?.windowScene?.screen.bounds.width ?? 360)
+    }
+
+    private func showFormula(
+        image: UIImage,
+        naturalSize: CGSize,
+        palette: ThemePalette,
+        invalidateHostLayout: Bool
+    ) {
         let canvasHeight = max(naturalSize.height, 44)
         let displayHeight = min(canvasHeight, Self.maxInlineHeight)
 
@@ -312,7 +351,10 @@ final class NativeLatexBlockView: UIView {
         setNeedsLayout()
         superview?.setNeedsLayout()
         // Sync reader apply already runs inside a collection-view layout pass.
-        // Nested `layoutIfNeeded` re-enters `cellForItem` and overflows.
+        // Nested invalidation there re-enters `cellForItem` and overflows.
+        if invalidateHostLayout {
+            invalidateTimelineLayout()
+        }
     }
 
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
@@ -381,5 +423,7 @@ final class NativeLatexBlockView: UIView {
 extension NativeLatexBlockView {
     var debugIsShowingFormulaForTesting: Bool { isShowingFormula }
     var debugFormulaImageForTesting: UIImage? { formulaImageView.image }
+    var debugRenderWidthForTesting: CGFloat? { currentRenderIdentity?.availableWidth }
+    var debugRenderCountForTesting: Int { debugRenderCount }
 }
 #endif

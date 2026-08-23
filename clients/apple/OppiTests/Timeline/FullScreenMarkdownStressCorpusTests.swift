@@ -473,6 +473,11 @@ struct FullScreenMarkdownStressCorpusTests {
         collectionView.layoutIfNeeded()
         await settleReservedHeights(body)
         await settleReservedHeights(body)
+        let initialRunwaySettled = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
+            !body.debugIsRenderAheadActiveForTesting
+        }
+        #expect(initialRunwaySettled)
+        body.debugLayoutVisibleMarkdownCellsForTesting()
 
         let mermaidItems = body.debugRenderedSegmentsForTesting.indices.filter { item in
             if case .mermaidDiagram = body.debugRenderedSegmentsForTesting[item] { return true }
@@ -630,8 +635,8 @@ struct FullScreenMarkdownStressCorpusTests {
                 at: IndexPath(item: imageItem, section: 0)
             )?.frame.height
         )
-        let initialFittingHeight = try #require(body.debugFittingHeightForTesting(imageItem))
-        #expect(abs(initialAppliedHeight - initialFittingHeight) < 1)
+        #expect(!body.debugHasFinalGeometryForTesting(imageItem))
+        #expect(!body.debugIsItemPresentedForTesting(imageItem))
 
         body.debugSetCollectionUserInteractingForTesting(true)
         await fetchGate.release()
@@ -647,7 +652,7 @@ struct FullScreenMarkdownStressCorpusTests {
                 at: IndexPath(item: imageItem, section: 0)
             )?.frame.height
         )
-        #expect(deferredFittingHeight > initialFittingHeight + 1)
+        #expect(deferredFittingHeight > initialAppliedHeight + 1)
         #expect(
             abs(deferredAppliedHeight - initialAppliedHeight) < 1,
             "interaction must defer applied geometry changes"
@@ -677,7 +682,10 @@ struct FullScreenMarkdownStressCorpusTests {
         .timeLimit(.minutes(1))
     )
     func reservedHeightsMatchFittingAndVisibleAnchorStaysPut() async throws {
-        let content = try mixedStressFixture()
+        let content = try mixedStressFixture().replacingOccurrences(
+            of: "fixtures/synthetic-diagram.png",
+            with: "fixtures/deferred-\(UUID().uuidString).png"
+        )
         let pngData = try #require(Self.tallPNGData())
         let fetchGate = WorkspaceImageFetchGate(data: pngData)
         let body = NativeFullScreenMarkdownBody(
@@ -731,11 +739,11 @@ struct FullScreenMarkdownStressCorpusTests {
         let settledIndexPath = try #require(collectionView.indexPathsForVisibleItems.sorted().first)
         let settledCell = try #require(collectionView.cellForItem(at: settledIndexPath))
         body.collectionView(collectionView, willDisplay: settledCell, forItemAt: settledIndexPath)
-        await settleReservedHeights(body)
         #expect(
             body.debugLayoutReplaceCountForTesting == replacementCountAfterSettlement,
-            "an unchanged visible cell must not replace the collection layout again"
+            "an unchanged visible cell must not synchronously replace the collection layout"
         )
+        await settleReservedHeights(body)
         var anchor = try #require(body.debugVisibleAnchorForTesting(), "missing first-paint visible anchor")
         try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "first paint apply")
 
@@ -773,7 +781,8 @@ struct FullScreenMarkdownStressCorpusTests {
 
         body.debugScrollItemIntoViewForTesting(imageItem)
         await settleReservedHeights(body)
-        try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image placeholder")
+        #expect(!body.debugHasFinalGeometryForTesting(imageItem))
+        #expect(!body.debugIsItemPresentedForTesting(imageItem))
         let imageFrame = try #require(
             collectionView.layoutAttributesForItem(at: IndexPath(item: imageItem, section: 0))?.frame,
             "missing image frame before growth"
@@ -801,18 +810,14 @@ struct FullScreenMarkdownStressCorpusTests {
             "growing image must sit above the visible anchor (image \(imageItem), anchor \(growthAnchor.item))"
         )
 
+        let placeholderHeight = try #require(body.debugReservedHeightForTesting(imageItem))
         await fetchGate.release()
         let reservedFromPixels = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
-            pixelReservedImageView(in: body) != nil
+            (body.debugReservedHeightForTesting(imageItem) ?? 0) > placeholderHeight + 1
         }
-        #expect(reservedFromPixels, "workspace image never reserved height from pixel size")
-        let imageView = try #require(pixelReservedImageView(in: body))
-        let pixelReserved = try #require(imageView.debugPixelReservedHeightForTesting)
+        #expect(reservedFromPixels, "workspace image never committed prepared pixel geometry")
         let reservedDuringDecode = try #require(body.debugReservedHeightForTesting(imageItem))
-        #expect(
-            abs(reservedDuringDecode - pixelReserved) < 1,
-            "reserved height \(reservedDuringDecode) != pixel reserve \(pixelReserved) before/during decode"
-        )
+        #expect(reservedDuringDecode > placeholderHeight)
         try await assertVisibleAnchorStaysPut(
             in: body,
             expected: growthAnchor,
@@ -841,8 +846,10 @@ struct FullScreenMarkdownStressCorpusTests {
         anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after image reuse")
         try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
         #expect(
-            body.debugAppliedItemCountForTesting < body.debugRenderedSegmentCountForTesting,
-            "settlement/reuse applied the whole document (\(body.debugAppliedItemCountForTesting)/\(body.debugRenderedSegmentCountForTesting))"
+            collectionView.indexPathsForVisibleItems.allSatisfy {
+                body.debugHasFinalGeometryForTesting($0.item)
+            },
+            "every visible item must retain final geometry after settlement/reuse"
         )
     }
 

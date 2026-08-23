@@ -45,8 +45,29 @@ struct NonChatCollectionInvalidationTests {
         )
     }
 
+    @Test("timeline Mermaid keeps its small width-jitter tolerance")
+    func timelineMermaidDoesNotRerasterForFourPointJitter() {
+        let view = NativeMermaidBlockView(frame: CGRect(x: 0, y: 0, width: 360, height: 240))
+        view.applyAsDiagramSync(
+            code: "graph TD\n  A[Start] --> B[Done]",
+            palette: ThemeID.dark.palette
+        )
+        view.layoutIfNeeded()
+        let rendersBeforeJitter = view.debugRenderCountForTesting
+        #expect(rendersBeforeJitter >= 1)
+
+        view.frame.size.width = 364
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        #expect(
+            view.debugRenderCountForTesting == rendersBeforeJitter,
+            "ordinary timeline width jitter must not inherit reader exact-width rerastering"
+        )
+    }
+
     @Test(
-        "static Mermaid width settlement preserves the reader viewport",
+        "static Mermaid uses canonical width without a display-time reflow",
         .timeLimit(.minutes(1))
     )
     func staticMermaidWidthSettlementPreservesReaderViewport() async throws {
@@ -122,14 +143,21 @@ struct NonChatCollectionInvalidationTests {
         #expect(bottomY - readingOffsetY > 100)
         collectionView.contentOffset.y = readingOffsetY
         collectionView.layoutIfNeeded()
-        #expect(timelineFirstView(ofType: NativeMermaidBlockView.self, in: collectionView) != nil)
+        let mermaidView = try #require(
+            timelineFirstView(ofType: NativeMermaidBlockView.self, in: collectionView)
+        )
 
-        let invalidated = await waitForTimelineCondition(timeoutMs: 3_000) { @MainActor in
-            forcedInvalidationCount > 0
-        }
-        #expect(invalidated, "width \(width) never exercised Mermaid's forced reflow")
         await drainMainQueue()
         body.debugLayoutVisibleMarkdownCellsForTesting()
+        #expect(
+            abs((mermaidView.debugRasterWidthForTesting ?? 0) - (width - 24)) < 0.5,
+            "width \(width) did not use the canonical reader width"
+        )
+        #expect(mermaidView.debugRenderCountForTesting == 1)
+        #expect(
+            forcedInvalidationCount == 0,
+            "canonical Mermaid display must not trigger a second forced reflow"
+        )
         #expect(
             abs(collectionView.contentOffset.y - readingOffsetY) < 1,
             "width \(width) Mermaid settlement jumped the static reader viewport"
