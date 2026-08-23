@@ -197,6 +197,13 @@ private enum TeXMathValidator {
                     } else {
                         append(.unmatchedRight)
                     }
+                } else if case .sizedDelimiter = MathSymbolTable.lookup(command) {
+                    validateDelimiter(
+                        command: command,
+                        source: source,
+                        after: commandEnd,
+                        append: append
+                    )
                 } else if MathSymbolTable.lookup(command) == nil,
                           MathSymbolTable.escapedLiteral(for: command) == nil {
                     append(.unsupportedCommand(command))
@@ -818,6 +825,11 @@ private struct ParserState {
             // Stray \right without matching \left — return delimiter literal
             return parseStrayRight()
 
+        case .sizedDelimiter:
+            // Manual sizing aliases (\bigl, \Bigr, ...). Consume the next
+            // delimiter and paint it as a literal. Do not pair with a mate.
+            return parseSizedDelimiter()
+
         case .begin:
             return parseEnvironment()
 
@@ -977,6 +989,13 @@ private struct ParserState {
         return literalDelimiter(del)
     }
 
+    mutating func parseSizedDelimiter() -> MathNode? {
+        let del = parseDelimiter()
+        // \bigl. is an invisible delimiter — emit nothing.
+        guard del != .none else { return nil }
+        return literalDelimiter(del)
+    }
+
     mutating func parseDelimiter() -> Delimiter {
         guard let tok = peek() else { return .none }
         switch tok {
@@ -1010,13 +1029,20 @@ private struct ParserState {
     }
 
     func literalDelimiter(_ del: Delimiter) -> MathNode {
+        // Keep in lockstep with MathLayoutEngine.delimiterDisplayString.
+        // A TeX rawValue here would paint as an italic command string.
         switch del {
         case .paren: return .variable("(")
         case .closeParen: return .variable(")")
         case .bracket: return .variable("[")
         case .closeBracket: return .variable("]")
+        case .brace: return .variable("{")
+        case .closeBrace: return .variable("}")
         case .pipe: return .variable("|")
-        default: return .variable(del.rawValue)
+        case .doublePipe: return .variable("\u{2016}")
+        case .angle: return .variable("\u{27E8}")
+        case .closeAngle: return .variable("\u{27E9}")
+        case .none: return .variable("")
         }
     }
 

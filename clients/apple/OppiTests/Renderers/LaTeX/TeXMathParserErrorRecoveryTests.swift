@@ -149,6 +149,36 @@ struct TeXMathParserErrorRecoveryTests {
         }
     }
 
+    @Test func manualDelimiterSizingAndIffAreRenderable() {
+        let valid = [
+            #"\hat{h}_{n+1} = \hat{h}_n + \sum_{k \in C_n} \max\bigl(h_k,\, \alpha \cdot w^{-1} \cdot \ell(s_k)\bigr) + \delta_{\text{fence}} + \delta_{\text{mermaid}}"#,
+            #"\text{stable}(n) \iff \forall i \le n,\; \lvert y_i^{(n+1)} - y_i^{(n)} \rvert = 0"#,
+            #"\left\lvert x \right\rvert"#,
+            #"\bigl\{x\bigr\}"#,
+            #"\bigl\langle x \bigr\rangle"#,
+            #"\bigl\|x\bigr\|"#,
+        ]
+
+        for source in valid {
+            let result = parser.parseValidated(source)
+            #expect(result.diagnostics.isEmpty, "Unexpected diagnostics for \(source): \(result.diagnostics)")
+            #expect(result.isRenderable)
+        }
+    }
+
+    @Test func sizedDelimiterPrefixesRequireSupportedDelimiters() {
+        let malformed: [(String, TeXMathDiagnostic)] = [
+            (#"\bigl\alpha"#, .unsupportedDelimiter(command: "bigl", delimiter: #"\alpha"#)),
+            (#"\bigl"#, .missingDelimiter(command: "bigl")),
+        ]
+
+        for (source, diagnostic) in malformed {
+            let result = parser.parseValidated(source)
+            #expect(result.diagnostics.contains(diagnostic), "Missing \(diagnostic) for \(source): \(result.diagnostics)")
+            #expect(!result.isRenderable)
+        }
+    }
+
     @Test func leftAndRightRequireSupportedDelimiters() {
         let malformed: [(String, TeXMathDiagnostic)] = [
             (#"\left x\right)"#, .unsupportedDelimiter(command: "left", delimiter: "x")),

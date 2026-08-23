@@ -21,6 +21,7 @@ enum MathSymbolTable {
         case right              // \right
         case begin              // \begin
         case end                // \end
+        case sizedDelimiter     // \bigl / \Bigr / ...
     }
 
     /// Look up a backslash command (without the leading backslash).
@@ -38,6 +39,10 @@ enum MathSymbolTable {
         case "begin": return .begin
         case "end": return .end
         default: break
+        }
+
+        if sizedDelimiterCommands.contains(command) {
+            return .sizedDelimiter
         }
 
         // Check each category
@@ -90,6 +95,13 @@ enum MathSymbolTable {
         "rightarrow": .rightarrow,
         "leftarrow": .leftarrow,
         "mapsto": .mapsto,
+        "iff": .iff,
+        "implies": .doubleRightarrow,
+        "impliedby": .doubleLeftarrow,
+        "Rightarrow": .doubleRightarrow,
+        "Leftarrow": .doubleLeftarrow,
+        "Leftrightarrow": .doubleLeftrightarrow,
+        "leftrightarrow": .leftrightarrow,
     ]
 
     // MARK: - Symbol Table
@@ -235,9 +247,22 @@ enum MathSymbolTable {
         "}": .closeBrace,
         "langle": .angle,
         "rangle": .closeAngle,
-        "|": .pipe,
+        "|": .doublePipe,
+        "lvert": .pipe,
+        "rvert": .pipe,
         "lVert": .doublePipe,
         "rVert": .doublePipe,
         "Vert": .doublePipe,
+    ]
+
+    // MARK: - Sized Delimiter Prefixes
+
+    /// amsmath sizing prefixes. These do not change AST shape; the parser
+    /// consumes the following delimiter and paints it as a literal.
+    private static let sizedDelimiterCommands: Set<String> = [
+        "big", "bigl", "bigr", "bigm",
+        "Big", "Bigl", "Bigr", "Bigm",
+        "bigg", "biggl", "biggr", "biggm",
+        "Bigg", "Biggl", "Biggr", "Biggm",
     ]
 }

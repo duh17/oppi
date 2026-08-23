@@ -1115,6 +1115,11 @@ struct MathLayoutEngine: Sendable {
         case .rightarrow: return "\u{2192}"
         case .leftarrow: return "\u{2190}" // ←
         case .mapsto: return "\u{21A6}" // ↦
+        case .iff: return "\u{27FA}" // ⟺
+        case .doubleRightarrow: return "\u{21D2}" // ⇒
+        case .doubleLeftarrow: return "\u{21D0}" // ⇐
+        case .doubleLeftrightarrow: return "\u{21D4}" // ⇔
+        case .leftrightarrow: return "\u{2194}" // ↔
         case .colon: return ":"
         case .comma: return ","
         case .semicolon: return ";"
@@ -1126,7 +1131,9 @@ struct MathLayoutEngine: Sendable {
         switch op {
         case .equal, .lessThan, .greaterThan, .leq, .geq, .neq,
              .approx, .equiv, .sim, .in, .subset, .supset,
-             .subseteq, .supseteq, .to, .rightarrow, .leftarrow, .mapsto:
+             .subseteq, .supseteq, .to, .rightarrow, .leftarrow, .mapsto,
+             .iff, .doubleRightarrow, .doubleLeftarrow, .doubleLeftrightarrow,
+             .leftrightarrow:
             return true
         default:
             return false

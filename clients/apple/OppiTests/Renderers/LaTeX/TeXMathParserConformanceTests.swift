@@ -24,6 +24,7 @@ import Testing
 // [x] Spaces (\, \; \: \quad \qquad \! \ )
 // [x] Empty input
 // [x] Complex real-world expressions
+// [x] Manual delimiter sizing (\bigl/\bigr), \lvert/\rvert, \iff
 
 @Suite("TeXMathParser Conformance")
 struct TeXMathParserConformanceTests {
@@ -303,6 +304,27 @@ struct TeXMathParserConformanceTests {
         let result = parser.parse("\\left. x \\right|")
         #expect(result == [
             .leftRight(left: .none, right: .pipe, body: [.variable("x")]),
+        ])
+    }
+
+    @Test func manualSizedDelimitersAndIff() {
+        #expect(parser.parse(#"\bigl(x\bigr)"#) == [
+            .variable("("), .variable("x"), .variable(")"),
+        ])
+        #expect(parser.parse(#"\lvert x \rvert"#) == [
+            .variable("|"), .variable("x"), .variable("|"),
+        ])
+        #expect(parser.parse(#"\bigl\{x\bigr\}"#) == [
+            .variable("{"), .variable("x"), .variable("}"),
+        ])
+        #expect(parser.parse(#"\bigl\langle x \bigr\rangle"#) == [
+            .variable("\u{27E8}"), .variable("x"), .variable("\u{27E9}"),
+        ])
+        #expect(parser.parse(#"\bigl\|x\bigr\|"#) == [
+            .variable("\u{2016}"), .variable("x"), .variable("\u{2016}"),
+        ])
+        #expect(parser.parse(#"a \iff b"#) == [
+            .variable("a"), .operator(.iff), .variable("b"),
         ])
     }
 
