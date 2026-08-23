@@ -37,7 +37,6 @@ function makeCtx(renderers?: MobileRendererRegistry): TranslationContext {
     sessionId: "bench-session-001",
     partialResults: new Map(),
     streamedAssistantText: "",
-    hasStreamedThinking: false,
     mobileRenderers: renderers,
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
@@ -281,7 +280,6 @@ function benchTranslatePiEvent(renderers: MobileRendererRegistry): BenchResult[]
   const thinkingCtx = makeCtx(renderers);
   results.push(
     runBench("translate:thinking_delta", BENCH_ITERATIONS, () => {
-      thinkingCtx.hasStreamedThinking = false;
       translatePiEvent(THINKING_DELTA_EVENT, thinkingCtx);
     }),
   );

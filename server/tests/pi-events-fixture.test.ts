@@ -56,8 +56,6 @@ function makeCtx(): TranslationContext {
     sessionId: "pi-events-fixture",
     partialResults: new Map(),
     streamedAssistantText: "",
-    hasStreamedThinking: false,
-    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),

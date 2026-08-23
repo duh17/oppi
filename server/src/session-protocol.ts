@@ -503,10 +503,6 @@ export interface TranslationContext {
   partialResults: Map<string, string>;
   /** Assistant text already streamed via text_delta for the current turn. */
   streamedAssistantText: string;
-  /** True when thinking_delta events were already forwarded for the current message. */
-  hasStreamedThinking: boolean;
-  /** Thinking content indexes that have already streamed for the current assistant message. */
-  streamedThinkingContentIndexes: Set<number>;
   /** Current thinking block content index from thinking_start, used when deltas omit it. */
   currentThinkingContentIndex?: number;
   /** Mobile renderer registry for pre-rendering tool call/result summaries. */
@@ -830,14 +826,12 @@ export function translatePiEvent(
     case "agent_start":
       ctx.streamedAssistantText = "";
       ctx.currentThinkingContentIndex = undefined;
-      ctx.streamedThinkingContentIndexes.clear();
       ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_start" }];
 
     case "agent_end":
       ctx.streamedAssistantText = "";
       ctx.currentThinkingContentIndex = undefined;
-      ctx.streamedThinkingContentIndexes.clear();
       ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_end" }];
 
@@ -873,11 +867,7 @@ export function translatePiEvent(
         return EMPTY_MESSAGES;
       }
       if (evt?.type === "thinking_delta") {
-        ctx.hasStreamedThinking = true;
         const contentIndex = contentIndexFrom(evt.contentIndex) ?? ctx.currentThinkingContentIndex;
-        if (contentIndex !== undefined) {
-          ctx.streamedThinkingContentIndexes.add(contentIndex);
-        }
         return [
           {
             type: "thinking_delta",
@@ -1199,19 +1189,15 @@ export function translatePiEvent(
       ];
 
     // Pi can deliver final assistant text/thinking only in message_end.
-    // The authoritative text is in the message_end broadcast (see
-    // SessionAgentEventCoordinator). No synthetic text_delta recovery
-    // here — that caused duplicate assistant bubbles when the tail
-    // arrived after the assistant message was already finalized.
-    //
-    // Thinking recovery IS still needed: pi RPC doesn't stream
-    // thinking_delta, so message_end is the only source.
+    // The authoritative payload is the message_end broadcast (see
+    // SessionAgentEventCoordinator), including assistantContent thinking.
+    // Do not synthesize text_delta or thinking_delta here — late invented
+    // deltas finalize the live bubble and mint a second row.
     case "message_end": {
       const message = event.message;
       if (message.role !== "assistant") {
         ctx.streamedAssistantText = "";
         ctx.currentThinkingContentIndex = undefined;
-        ctx.streamedThinkingContentIndexes.clear();
         return EMPTY_MESSAGES;
       }
 
@@ -1224,48 +1210,13 @@ export function translatePiEvent(
           typeof msgRecord.errorMessage === "string" ? msgRecord.errorMessage : "Unknown error";
 
         ctx.streamedAssistantText = "";
-        ctx.hasStreamedThinking = false;
         ctx.currentThinkingContentIndex = undefined;
-        ctx.streamedThinkingContentIndexes.clear();
         return [{ type: "error", error: normalizeUserFacingError(rawError) }];
       }
 
-      const out: ServerMessage[] = [];
-
-      // Recover thinking only when it wasn't already streamed live.
-      // Streaming sets ctx.hasStreamedThinking; recovery is for reconnect
-      // catch-up scenarios where the client missed the streaming events.
-      // When contentIndex is available, recover only the specific thinking
-      // blocks that did not stream instead of suppressing the whole message.
-      const content = message.content;
-      const hasIndexedThinking = ctx.streamedThinkingContentIndexes.size > 0;
-      if (Array.isArray(content)) {
-        for (const [index, block] of (content as unknown[]).entries()) {
-          const record = asRecord(block);
-          if (!record) {
-            continue;
-          }
-
-          if (
-            record.type === "thinking" &&
-            typeof record.thinking === "string" &&
-            record.thinking.length > 0
-          ) {
-            const shouldRecover =
-              !ctx.hasStreamedThinking ||
-              (hasIndexedThinking && !ctx.streamedThinkingContentIndexes.has(index));
-            if (shouldRecover) {
-              out.push({ type: "thinking_delta", delta: record.thinking, contentIndex: index });
-            }
-          }
-        }
-      }
-
       ctx.streamedAssistantText = "";
-      ctx.hasStreamedThinking = false;
       ctx.currentThinkingContentIndex = undefined;
-      ctx.streamedThinkingContentIndexes.clear();
-      return out;
+      return EMPTY_MESSAGES;
     }
 
     default:

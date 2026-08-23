@@ -53,8 +53,6 @@ function makeActiveSession(): SessionAgentEventState {
     pendingUIRequests: new Map(),
     partialResults: new Map(),
     streamedAssistantText: "",
-    hasStreamedThinking: false,
-    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),

@@ -148,8 +148,6 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   session: Session;
   partialResults: Map<string, string>;
   streamedAssistantText: string;
-  hasStreamedThinking: boolean;
-  streamedThinkingContentIndexes: Set<number>;
   currentThinkingContentIndex?: number;
   pendingStop?: PendingStop;
   /** Tool names per toolCallId — tracked for shell preview decisions. */
@@ -209,8 +207,6 @@ export class SessionEventProcessor {
       sessionId: active.session.id,
       partialResults: active.partialResults,
       streamedAssistantText: active.streamedAssistantText,
-      hasStreamedThinking: active.hasStreamedThinking,
-      streamedThinkingContentIndexes: active.streamedThinkingContentIndexes,
       currentThinkingContentIndex: active.currentThinkingContentIndex,
       mobileRenderers: this.deps.mobileRenderers,
       toolNames: active.toolNames,

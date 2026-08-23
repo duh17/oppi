@@ -68,8 +68,6 @@ describe("SessionAgentEventCoordinator", () => {
       pendingUIRequests: new Map(),
       partialResults: new Map(),
       streamedAssistantText: "",
-      hasStreamedThinking: false,
-      streamedThinkingContentIndexes: new Set(),
       toolNames: new Map(),
       toolArgs: new Map(),
       shellPreviewLastSent: new Map(),
@@ -105,8 +103,6 @@ describe("SessionAgentEventCoordinator", () => {
           sessionId: active.session.id,
           partialResults: active.partialResults,
           streamedAssistantText: active.streamedAssistantText,
-          hasStreamedThinking: active.hasStreamedThinking,
-          streamedThinkingContentIndexes: active.streamedThinkingContentIndexes,
           currentThinkingContentIndex: active.currentThinkingContentIndex,
           mobileRenderers: {
             renderCall: vi.fn(),

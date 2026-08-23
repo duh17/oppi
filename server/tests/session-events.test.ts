@@ -23,8 +23,6 @@ function makeActiveSession(session: Session): EventProcessorSessionState {
     pendingUIRequests: new Map(),
     partialResults: new Map<string, string>(),
     streamedAssistantText: "",
-    hasStreamedThinking: false,
-    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map<string, string>(),
     shellPreviewLastSent: new Map<string, number>(),
     streamingToolUpdatesSeen: new Map<string, string>(),

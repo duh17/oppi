@@ -21,8 +21,6 @@ function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
     sessionId: "test-session",
     partialResults: new Map(),
     streamedAssistantText: "",
-    hasStreamedThinking: false,
-    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
@@ -808,7 +806,7 @@ describe("translatePiEvent", () => {
   });
 
   describe("message_update: thinking_delta", () => {
-    it("sets hasStreamedThinking and emits thinking_delta with contentIndex", () => {
+    it("emits thinking_delta with contentIndex", () => {
       const ctx = makeCtx();
       const event = {
         type: "message_update",
@@ -818,8 +816,6 @@ describe("translatePiEvent", () => {
 
       const result = translatePiEvent(event, ctx);
       expect(result).toEqual([{ type: "thinking_delta", delta: "hmm", contentIndex: 0 }]);
-      expect(ctx.hasStreamedThinking).toBe(true);
-      expect(ctx.streamedThinkingContentIndexes.has(0)).toBe(true);
     });
 
     it("uses thinking_start contentIndex when thinking_delta omits it", () => {
@@ -2146,65 +2142,8 @@ describe("translatePiEvent", () => {
       expect(ctx.streamedAssistantText).toBe("");
     });
 
-    it("recovers thinking when not streamed live", () => {
-      const ctx = makeCtx({ hasStreamedThinking: false });
-      const result = translatePiEvent(
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{ type: "thinking", thinking: "I should..." }],
-          },
-        } as AgentSessionEvent,
-        ctx,
-      );
-
-      expect(result).toHaveLength(1);
-      expect(result[0]).toEqual({ type: "thinking_delta", delta: "I should...", contentIndex: 0 });
-    });
-
-    it("skips thinking recovery when already streamed live", () => {
-      const ctx = makeCtx({ hasStreamedThinking: true });
-      const result = translatePiEvent(
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{ type: "thinking", thinking: "I should..." }],
-          },
-        } as AgentSessionEvent,
-        ctx,
-      );
-
-      expect(result).toEqual([]);
-    });
-
-    it("resets hasStreamedThinking after processing", () => {
-      const ctx = makeCtx({ hasStreamedThinking: true });
-      translatePiEvent(
-        {
-          type: "message_end",
-          message: { role: "assistant", content: [] },
-        } as unknown as AgentSessionEvent,
-        ctx,
-      );
-      expect(ctx.hasStreamedThinking).toBe(false);
-    });
-
-    it("resets streamedAssistantText after processing", () => {
-      const ctx = makeCtx({ streamedAssistantText: "some text" });
-      translatePiEvent(
-        {
-          type: "message_end",
-          message: { role: "assistant", content: [] },
-        } as unknown as AgentSessionEvent,
-        ctx,
-      );
-      expect(ctx.streamedAssistantText).toBe("");
-    });
-
-    it("recovers multiple thinking blocks", () => {
-      const ctx = makeCtx({ hasStreamedThinking: false });
+    it("does not synthesize thinking_delta from assistant thinking blocks", () => {
+      const ctx = makeCtx();
       const result = translatePiEvent(
         {
           type: "message_end",
@@ -2220,70 +2159,24 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({
-        type: "thinking_delta",
-        delta: "first thought",
-        contentIndex: 0,
-      });
-      expect(result[1]).toEqual({
-        type: "thinking_delta",
-        delta: "second thought",
-        contentIndex: 2,
-      });
-    });
-
-    it("recovers only unstreamed thinking blocks when indexed thinking streamed live", () => {
-      const ctx = makeCtx({ hasStreamedThinking: true });
-      ctx.streamedThinkingContentIndexes.add(0);
-
-      const result = translatePiEvent(
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [
-              { type: "thinking", thinking: "streamed" },
-              { type: "text", text: "middle" },
-              { type: "thinking", thinking: "not streamed" },
-            ],
-          },
-        } as AgentSessionEvent,
-        ctx,
-      );
-
-      expect(result).toEqual([{ type: "thinking_delta", delta: "not streamed", contentIndex: 2 }]);
-    });
-
-    it("skips empty thinking blocks", () => {
-      const ctx = makeCtx({ hasStreamedThinking: false });
-      const result = translatePiEvent(
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{ type: "thinking", thinking: "" }],
-          },
-        } as AgentSessionEvent,
-        ctx,
-      );
       expect(result).toEqual([]);
     });
 
-    // BUG PROBE: Interleaved tool calls between thinking and message_end.
-    // If thinking_delta sets hasStreamedThinking=true, then a tool call happens,
-    // then message_end arrives — hasStreamedThinking is still true, so thinking
-    // recovery is correctly skipped. But if the tool call is for a DIFFERENT
-    // message (new turn), hasStreamedThinking should have been reset.
-    // The reset only happens in message_end and agent_start/end.
-    // This means: if thinking is streamed for turn N, then turn N+1 starts
-    // without an intervening message_end for turn N's assistant message,
-    // hasStreamedThinking would be stale.
-    // In practice, message_end always fires, so this isn't a real issue.
-    it("hasStreamedThinking persists across tool executions within same turn", () => {
+    it("resets streamedAssistantText after processing", () => {
+      const ctx = makeCtx({ streamedAssistantText: "some text" });
+      translatePiEvent(
+        {
+          type: "message_end",
+          message: { role: "assistant", content: [] },
+        } as unknown as AgentSessionEvent,
+        ctx,
+      );
+      expect(ctx.streamedAssistantText).toBe("");
+    });
+
+    it("does not synthesize thinking_delta after live thinking and tools", () => {
       const ctx = makeCtx();
 
-      // Stream thinking
       translatePiEvent(
         {
           type: "message_update",
@@ -2292,9 +2185,6 @@ describe("translatePiEvent", () => {
         } as AgentSessionEvent,
         ctx,
       );
-      expect(ctx.hasStreamedThinking).toBe(true);
-
-      // Tool execution happens
       translatePiEvent(
         {
           type: "tool_execution_start",
@@ -2315,10 +2205,6 @@ describe("translatePiEvent", () => {
         ctx,
       );
 
-      // hasStreamedThinking should still be true
-      expect(ctx.hasStreamedThinking).toBe(true);
-
-      // message_end correctly skips thinking recovery
       const result = translatePiEvent(
         {
           type: "message_end",

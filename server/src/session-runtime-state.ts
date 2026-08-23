@@ -14,8 +14,6 @@ export interface RuntimeSessionStateScaffold<
   eventRing: EventRing;
   partialResults: Map<string, string>;
   streamedAssistantText: string;
-  hasStreamedThinking: boolean;
-  streamedThinkingContentIndexes: Set<number>;
   currentThinkingContentIndex?: number;
   pendingStop?: PendingStop;
   toolNames: Map<string, string>;
@@ -55,8 +53,6 @@ export function createRuntimeSessionStateScaffold<
     persistentExtensionUINotifications: new Map(),
     partialResults: new Map(),
     streamedAssistantText: "",
-    hasStreamedThinking: false,
-    streamedThinkingContentIndexes: new Set(),
     toolNames: new Map(),
     toolArgs: new Map(),
     shellPreviewLastSent: new Map(),
