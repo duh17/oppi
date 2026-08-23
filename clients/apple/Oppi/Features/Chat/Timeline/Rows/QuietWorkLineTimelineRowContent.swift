@@ -41,7 +41,7 @@ struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
 /// collapsed is fill, not a chevron. The configured density shows either
 /// bucket icons with counts or a stable words summary.
 final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
-    private static let thinkingBlinkAnimationKey = "oppi.quietWork.thinkingBlink"
+    private static let liveBlinkAnimationKey = "oppi.quietWork.liveBlink"
 
     private let chipView = UIView()
     private let button = UIButton(type: .system)
@@ -50,6 +50,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     private var currentConfiguration: QuietWorkLineTimelineRowConfiguration
     nonisolated(unsafe) private var durationTimer: Timer?
     private var durationStartedAt: Date?
+    private var lastSummaryIdentity: SummaryIdentity?
 
     init(configuration: QuietWorkLineTimelineRowConfiguration) {
         currentConfiguration = configuration
@@ -69,7 +70,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         updateDurationTimer()
-        updateThinkingAnimation()
+        updateLiveBlinkAnimation()
     }
 
     var configuration: UIContentConfiguration {
@@ -156,7 +157,6 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         // borderless user-message bubble.
         chipView.layer.borderWidth = 1 / max(1, traitCollection.displayScale)
         chipView.layer.borderColor = colors.border.cgColor
-        summaryLabel.textColor = colors.foreground
         durationLabel.textColor = colors.foreground
         durationLabel.font = summaryLabel.font
         refreshDurationText()
@@ -169,7 +169,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         button.isAccessibilityElement = true
         isAccessibilityElement = false
         updateDurationTimer()
-        updateThinkingAnimation()
+        updateLiveBlinkAnimation()
     }
 
     /// Translucent accent fills keep the strip in the tool-row family;
@@ -213,36 +213,60 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     }
 
     private func refreshDurationText(now: Date = Date()) {
+        refreshSummaryIfNeeded()
         let workLine = currentConfiguration.workLine
-        let work = workLine.workSummary
-        if workLine.isThinkingOnly {
-            if summaryLabel.attributedText != nil || summaryLabel.text != work {
-                summaryLabel.attributedText = nil
-                summaryLabel.text = work
-            }
-        } else {
-            switch currentConfiguration.style {
-            case .icons:
-                summaryLabel.attributedText = Self.iconSummary(
-                    for: workLine,
-                    foreground: summaryLabel.textColor,
-                    font: summaryLabel.font
-                )
-            case .words:
-                summaryLabel.text = nil
-                summaryLabel.attributedText = Self.wordsSummary(
-                    for: workLine,
-                    foreground: summaryLabel.textColor,
-                    font: summaryLabel.font
-                )
-            }
-        }
         durationLabel.text = workLine.durationString(now: now)
         durationLabel.isHidden = durationLabel.text == nil
         button.accessibilityLabel = Self.accessibilitySummary(for: workLine, now: now)
     }
 
-    static func thinkingBlinkAnimation(reduceMotion: Bool) -> CAAnimation? {
+    /// Duration ticks must not rewrite the summary. Rebuilding attributed text
+    /// or restarting the blink is what made live Thinking… go still.
+    private func refreshSummaryIfNeeded() {
+        let workLine = currentConfiguration.workLine
+        let colors = Self.stripColors(
+            workLine: workLine,
+            isHighlighted: currentConfiguration.isHighlighted,
+            palette: ThemeRuntimeState.currentPalette()
+        )
+        let identity = SummaryIdentity(
+            themeID: ThemeRuntimeState.currentThemeID(),
+            style: currentConfiguration.style,
+            isLive: workLine.isLive,
+            isHighlighted: currentConfiguration.isHighlighted,
+            isThinkingOnly: workLine.isThinkingOnly,
+            work: workLine.workSummary,
+            buckets: workLine.buckets
+        )
+        guard lastSummaryIdentity != identity else { return }
+        lastSummaryIdentity = identity
+
+        if workLine.isThinkingOnly {
+            summaryLabel.attributedText = nil
+            summaryLabel.textColor = colors.foreground
+            summaryLabel.text = workLine.workSummary
+            return
+        }
+        // Do not assign summaryLabel.textColor here. UILabel would recolor the
+        // whole attributed string and wipe the green/red edit counts.
+        switch currentConfiguration.style {
+        case .icons:
+            summaryLabel.attributedText = Self.iconSummary(
+                for: workLine,
+                foreground: colors.foreground,
+                font: summaryLabel.font
+            )
+        case .words:
+            summaryLabel.text = nil
+            summaryLabel.attributedText = Self.wordsSummary(
+                for: workLine,
+                foreground: colors.foreground,
+                font: summaryLabel.font
+            )
+        }
+    }
+
+    static func liveBlinkAnimation(reduceMotion: Bool) -> CAAnimation? {
         guard !reduceMotion else { return nil }
         let animation = CABasicAnimation(keyPath: "opacity")
         animation.fromValue = 1
@@ -255,25 +279,32 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     }
 
     @objc private func reduceMotionStatusDidChange() {
-        updateThinkingAnimation()
+        updateLiveBlinkAnimation()
     }
 
-    private func updateThinkingAnimation() {
+    private func updateLiveBlinkAnimation() {
         let shouldBlink = window != nil
             && currentConfiguration.workLine.isLive
-            && currentConfiguration.workLine.isThinkingOnly
             && !UIAccessibility.isReduceMotionEnabled
         if shouldBlink {
-            // Keep a running blink. Rewriting the label or removing this
-            // animation every duration tick is what made Thinking… go still.
-            if summaryLabel.layer.animation(forKey: Self.thinkingBlinkAnimationKey) == nil,
-               let animation = Self.thinkingBlinkAnimation(reduceMotion: false) {
-                summaryLabel.layer.add(animation, forKey: Self.thinkingBlinkAnimationKey)
+            if summaryLabel.layer.animation(forKey: Self.liveBlinkAnimationKey) == nil,
+               let animation = Self.liveBlinkAnimation(reduceMotion: false) {
+                summaryLabel.layer.add(animation, forKey: Self.liveBlinkAnimationKey)
             }
             return
         }
-        summaryLabel.layer.removeAnimation(forKey: Self.thinkingBlinkAnimationKey)
+        summaryLabel.layer.removeAnimation(forKey: Self.liveBlinkAnimationKey)
         summaryLabel.layer.opacity = 1
+    }
+
+    private struct SummaryIdentity: Equatable {
+        let themeID: ThemeID
+        let style: AppPreferences.ChatDisplay.WorkStripStyle
+        let isLive: Bool
+        let isHighlighted: Bool
+        let isThinkingOnly: Bool
+        let work: String
+        let buckets: [QuietWorkBucket]
     }
 
     private static func iconSummary(

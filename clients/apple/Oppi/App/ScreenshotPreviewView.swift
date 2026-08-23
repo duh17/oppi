@@ -1902,6 +1902,8 @@ private struct QuietWorkStripPreview: View {
             QuietWorkStripRowPreview(workLine: historicalWorkLine(style: style), style: style)
                 .frame(height: 44)
             assistantText("I’ll add failing tests first, then fix grouping.")
+            QuietWorkStripRowPreview(workLine: liveThinkingWorkLine(style: style), style: style)
+                .frame(height: 44)
             QuietWorkStripRowPreview(workLine: liveWorkLine(style: style), style: style)
                 .frame(height: 44)
         }
@@ -1945,6 +1947,21 @@ private struct QuietWorkStripPreview: View {
             isExpanded: false,
             isLive: false,
             liveStartedAt: nil
+        )
+    }
+
+    private func liveThinkingWorkLine(
+        style: AppPreferences.ChatDisplay.WorkStripStyle
+    ) -> QuietTimelineWorkLine {
+        QuietTimelineWorkLine(
+            id: "quiet-work-line:thinking-\(style.rawValue)",
+            turnID: "thinking-\(style.rawValue)",
+            sourceItemIDs: ["thinking-\(style.rawValue)"],
+            buckets: [],
+            displayStyle: style,
+            isExpanded: false,
+            isLive: true,
+            liveStartedAt: assistantStartedAt
         )
     }
 

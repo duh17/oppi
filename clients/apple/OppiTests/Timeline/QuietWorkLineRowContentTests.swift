@@ -80,28 +80,137 @@ struct QuietWorkLineRowContentTests {
         #expect(workLine.wordsSummary(now: Date(timeIntervalSince1970: 7)) == "Thinking… · 7s")
 
         let animation = try #require(
-            QuietWorkLineTimelineRowContentView.thinkingBlinkAnimation(reduceMotion: false)
+            QuietWorkLineTimelineRowContentView.liveBlinkAnimation(reduceMotion: false)
                 as? CABasicAnimation
         )
         #expect(animation.keyPath == "opacity")
         #expect(animation.autoreverses)
         #expect(animation.repeatCount == .infinity)
-        #expect(QuietWorkLineTimelineRowContentView.thinkingBlinkAnimation(reduceMotion: true) == nil)
+        #expect(QuietWorkLineTimelineRowContentView.liveBlinkAnimation(reduceMotion: true) == nil)
     }
 
     @Test func liveThinkingViewInstallsTheBlinkAnimation() throws {
-        let view = QuietWorkLineTimelineRowContentView(
-            configuration: QuietWorkLineTimelineRowConfiguration(
-                workLine: makeWorkLine(buckets: [], style: .words, isLive: true)
+        try expectLiveSummaryBlink(
+            on: makeWorkLine(buckets: [], style: .words, isLive: true)
+        )
+    }
+
+    @Test func liveWorkViewInstallsTheSameBlinkAsThinking() throws {
+        try expectLiveSummaryBlink(
+            on: makeWorkLine(
+                buckets: [
+                    .init(kind: .read, count: 3),
+                    .init(kind: .edit, count: 1, editStats: .init(added: 32, removed: 1)),
+                ],
+                isLive: true
             )
+        )
+    }
+
+    @Test func settledWorkViewDoesNotBlink() throws {
+        let view = attachedRow(for: makeWorkLine(buckets: [.init(kind: .read, count: 3)]))
+        #expect(summaryHasLiveBlink(view) == false)
+    }
+
+    private func expectLiveSummaryBlink(on workLine: QuietTimelineWorkLine) throws {
+        let view = attachedRow(for: workLine)
+        #expect(summaryHasLiveBlink(view) == !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    private func attachedRow(for workLine: QuietTimelineWorkLine) -> QuietWorkLineTimelineRowContentView {
+        let view = QuietWorkLineTimelineRowContentView(
+            configuration: QuietWorkLineTimelineRowConfiguration(workLine: workLine)
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(view)
         view.frame = CGRect(x: 0, y: 0, width: 390, height: 44)
         view.layoutIfNeeded()
+        return view
+    }
 
-        let hasAnimation = try #require(summaryLabel(in: view)).layer.animationKeys()?.isEmpty == false
-        #expect(hasAnimation == !UIAccessibility.isReduceMotionEnabled)
+    private func summaryHasLiveBlink(_ view: QuietWorkLineTimelineRowContentView) -> Bool {
+        summaryLabel(in: view)?.layer.animationKeys()?.isEmpty == false
+    }
+
+    private func expectEditStats(
+        in view: QuietWorkLineTimelineRowContentView,
+        added: String,
+        removed: String
+    ) throws {
+        let attributed = try #require(summaryLabel(in: view)?.attributedText)
+        let fullRange = NSRange(location: 0, length: attributed.length)
+        var colors: [UIColor] = []
+        attributed.enumerateAttribute(.foregroundColor, in: fullRange) { value, _, _ in
+            if let color = value as? UIColor { colors.append(color) }
+        }
+        #expect(attributed.string.contains(added))
+        #expect(attributed.string.contains(removed))
+        #expect(colors.contains(UIColor(ThemeRuntimeState.currentPalette().green)))
+        #expect(colors.contains(UIColor(ThemeRuntimeState.currentPalette().red)))
+    }
+
+    @Test func liveEditStatsStayGreenAndRedAfterReapply() throws {
+        let workLine = makeWorkLine(
+            buckets: [
+                .init(kind: .read, count: 3),
+                .init(kind: .edit, count: 1, editStats: .init(added: 32, removed: 1)),
+            ],
+            isLive: true
+        )
+        let view = QuietWorkLineTimelineRowContentView(
+            configuration: QuietWorkLineTimelineRowConfiguration(workLine: workLine)
+        )
+        view.configuration = QuietWorkLineTimelineRowConfiguration(workLine: workLine)
+
+        try expectEditStats(in: view, added: "+32", removed: "−1")
+    }
+
+    @Test func unchangedThinkingSummaryUpdatesForegroundAfterThemeChange() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        let workLine = makeWorkLine(buckets: [], style: .words)
+        let configuration = QuietWorkLineTimelineRowConfiguration(workLine: workLine)
+
+        ThemeRuntimeState.setThemeID(.dark)
+        let view = QuietWorkLineTimelineRowContentView(configuration: configuration)
+        let label = try #require(summaryLabel(in: view))
+        let darkForeground = try #require(label.textColor)
+
+        ThemeRuntimeState.setThemeID(.light)
+        view.configuration = configuration
+        let lightForeground = try #require(label.textColor)
+
+        #expect(color(darkForeground, approximatelyEquals: UIColor(ThemePalettes.dark.fgDim)))
+        #expect(color(lightForeground, approximatelyEquals: UIColor(ThemePalettes.light.fgDim)))
+        #expect(color(darkForeground, approximatelyEquals: lightForeground) == false)
+    }
+
+    @Test func unchangedIconSummaryRebuildsAllThemeColorsAfterThemeChange() throws {
+        let originalThemeID = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalThemeID) }
+        let workLine = makeWorkLine(buckets: [
+            .init(kind: .read, count: 4),
+            .init(kind: .edit, count: 1, editStats: .init(added: 12, removed: 3)),
+        ])
+        let configuration = QuietWorkLineTimelineRowConfiguration(workLine: workLine)
+
+        ThemeRuntimeState.setThemeID(.dark)
+        let view = QuietWorkLineTimelineRowContentView(configuration: configuration)
+        let darkSummary = try #require(summaryLabel(in: view)?.attributedText)
+        let darkIcon = try #require(firstAttachment(in: darkSummary))
+
+        ThemeRuntimeState.setThemeID(.light)
+        view.configuration = configuration
+        let lightSummary = try #require(summaryLabel(in: view)?.attributedText)
+        let lightIcon = try #require(firstAttachment(in: lightSummary))
+
+        #expect(darkIcon !== lightIcon)
+        #expect(color(attributedColor(in: darkSummary, for: "4"), approximatelyEquals: UIColor(ThemePalettes.dark.fgDim)))
+        #expect(color(attributedColor(in: lightSummary, for: "4"), approximatelyEquals: UIColor(ThemePalettes.light.fgDim)))
+        #expect(color(attributedColor(in: darkSummary, for: "+12"), approximatelyEquals: UIColor(ThemePalettes.dark.green)))
+        #expect(color(attributedColor(in: lightSummary, for: "+12"), approximatelyEquals: UIColor(ThemePalettes.light.green)))
+        #expect(color(attributedColor(in: darkSummary, for: "−3"), approximatelyEquals: UIColor(ThemePalettes.dark.red)))
+        #expect(color(attributedColor(in: lightSummary, for: "−3"), approximatelyEquals: UIColor(ThemePalettes.light.red)))
     }
 
     @Test func iconEditStatsUseSeparatePositiveAndNegativeColors() throws {
@@ -220,6 +329,16 @@ private func durationLabel(in view: QuietWorkLineTimelineRowContentView) -> UILa
 @MainActor
 private func accessibilityButton(in view: QuietWorkLineTimelineRowContentView) -> UIButton? {
     Mirror(reflecting: view).children.first { $0.label == "button" }?.value as? UIButton
+}
+
+private func firstAttachment(in attributed: NSAttributedString) -> NSTextAttachment? {
+    attributed.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+}
+
+private func attributedColor(in attributed: NSAttributedString, for text: String) -> UIColor? {
+    let range = (attributed.string as NSString).range(of: text)
+    guard range.location != NSNotFound else { return nil }
+    return attributed.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
 }
 
 private func color(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance: CGFloat = 0.01) -> Bool {
