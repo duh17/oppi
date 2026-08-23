@@ -2073,6 +2073,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func render(snapshot: ThinkingTraceStream.Snapshot) {
+        // Completion makes this a static document immediately. Cancel the
+        // policy flag before handling an unchanged snapshot so any tail-follow
+        // block queued by the final streaming layout yields when it runs.
+        if snapshot.isDone {
+            tailFollowCoordinator.shouldAutoFollowTail = false
+        }
         guard snapshot != renderedSnapshot else {
             tailFollowCoordinator.scheduleAutoFollowToBottomIfNeeded()
             return

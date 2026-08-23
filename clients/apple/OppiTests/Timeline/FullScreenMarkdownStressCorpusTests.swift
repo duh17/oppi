@@ -442,6 +442,153 @@ struct FullScreenMarkdownStressCorpusTests {
     }
 
     @Test(
+        "Mermaid gallery stays anchored while scrolling upward through every diagram",
+        .timeLimit(.minutes(2))
+    )
+    func mermaidGalleryStaysAnchoredDuringBottomToTopScroll() async throws {
+        let content = try String(
+            contentsOf: fixtureURL("mermaid-rendering-gallery.md"),
+            encoding: .utf8
+        )
+        let stream = ThinkingTraceStream(text: content, isDone: false)
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            stream: stream,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            sourceFilePath: ".internal/diagrams/mermaid-rendering-gallery.md"
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer {
+            body.debugSetCollectionUserInteractingForTesting(nil)
+            window.isHidden = true
+        }
+
+        body.layoutIfNeeded()
+        let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collectionView.layoutIfNeeded()
+        await settleReservedHeights(body)
+        await settleReservedHeights(body)
+
+        let mermaidItems = body.debugRenderedSegmentsForTesting.indices.filter { item in
+            if case .mermaidDiagram = body.debugRenderedSegmentsForTesting[item] { return true }
+            return false
+        }
+        #expect(mermaidItems.count >= 50, "gallery no longer exercises the full Mermaid corpus")
+
+        let minimumY = -collectionView.adjustedContentInset.top
+        let bottomY = max(
+            minimumY,
+            collectionView.contentSize.height
+                - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        let upwardMermaidItems = mermaidItems.filter { item in
+            guard let frame = collectionView.collectionViewLayout.layoutAttributesForItem(
+                at: IndexPath(item: item, section: 0)
+            )?.frame else { return false }
+            let centeredOffset = min(
+                bottomY,
+                max(minimumY, frame.midY - collectionView.bounds.height / 2)
+            )
+            // Skip the trailing diagrams that UIKit can only show while still
+            // clamped to the bottom edge; there is no independent screen anchor
+            // to preserve until the upward scroll has actually left that edge.
+            return bottomY - centeredOffset > 120
+        }
+        #expect(upwardMermaidItems.count >= 40, "gallery has too few upward-scroll Mermaid checkpoints")
+
+        collectionView.setContentOffset(
+            CGPoint(x: collectionView.contentOffset.x, y: bottomY),
+            animated: false
+        )
+        collectionView.layoutIfNeeded()
+
+        // Queue the same tail-follow work a Mermaid-triggered layout pass can
+        // leave behind immediately before an upward drag starts at the bottom.
+        body.setNeedsLayout()
+        body.layoutIfNeeded()
+        body.scrollViewWillBeginDragging(collectionView)
+
+        body.debugSetCollectionUserInteractingForTesting(true)
+        let replacementCountDuringDrag = body.debugLayoutReplaceCountForTesting
+        var previousOffsetY = collectionView.contentOffset.y
+        var lastExpectedAnchor: (item: Int, screenY: CGFloat)?
+        var lastMermaidItem: Int?
+        var hasLeftBottom = false
+        var checkpointsAwayFromBottom = 0
+        for item in upwardMermaidItems.reversed() {
+            body.debugScrollItemIntoViewForTesting(item)
+            let expected = try #require(
+                body.debugVisibleAnchorForTesting(),
+                "missing anchor after scrolling upward to Mermaid item \(item)"
+            )
+            #expect(
+                collectionView.contentOffset.y <= previousOffsetY + 1,
+                "scroll toward Mermaid item \(item) moved in the wrong direction"
+            )
+
+            // First turn covers a queued tail-follow block; the second covers
+            // visible-height reconciliation requested as the cell appeared.
+            await settleReservedHeights(body)
+            await settleReservedHeights(body)
+            try assertCurrentVisibleAnchor(
+                in: body,
+                equals: expected,
+                stage: "interactive Mermaid item \(item)"
+            )
+            let distanceFromBottom = collectionView.contentSize.height
+                - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+                - collectionView.contentOffset.y
+            if distanceFromBottom > 120 {
+                hasLeftBottom = true
+                checkpointsAwayFromBottom += 1
+            }
+            if hasLeftBottom {
+                #expect(
+                    distanceFromBottom > 20,
+                    "Mermaid item \(item) snapped back to the document bottom"
+                )
+            }
+            #expect(
+                body.debugLayoutReplaceCountForTesting == replacementCountDuringDrag,
+                "Mermaid item \(item) replaced layout during the upward drag"
+            )
+
+            previousOffsetY = collectionView.contentOffset.y
+            lastExpectedAnchor = expected
+            lastMermaidItem = item
+        }
+        #expect(checkpointsAwayFromBottom >= 40)
+
+        // The continuous drag defers fitting changes. Releasing once at the top
+        // applies the visible window's pending heights with the final anchor.
+        let finalAnchor = try #require(lastExpectedAnchor)
+        let finalMermaidItem = try #require(lastMermaidItem)
+        body.debugSetCollectionUserInteractingForTesting(false)
+        body.scrollViewDidEndDragging(collectionView, willDecelerate: false)
+        body.setNeedsLayout()
+        body.layoutIfNeeded()
+        await settleReservedHeights(body)
+        await settleReservedHeights(body)
+        try assertCurrentVisibleAnchor(
+            in: body,
+            equals: finalAnchor,
+            stage: "gallery settlement after upward drag"
+        )
+        try assertReservedHeightsMatchFitting(
+            in: body,
+            items: [finalMermaidItem],
+            stage: "final gallery Mermaid settlement"
+        )
+    }
+
+    @Test(
         "reserved-height layout replace retries after interaction clears",
         .timeLimit(.minutes(1))
     )
@@ -839,6 +986,14 @@ struct FullScreenMarkdownStressCorpusTests {
     ) async throws {
         try await Task.sleep(for: .milliseconds(120))
         body.debugLayoutVisibleMarkdownCellsForTesting()
+        try assertCurrentVisibleAnchor(in: body, equals: expected, stage: stage)
+    }
+
+    private func assertCurrentVisibleAnchor(
+        in body: NativeFullScreenMarkdownBody,
+        equals expected: (item: Int, screenY: CGFloat),
+        stage: String
+    ) throws {
         let current = try #require(
             body.debugVisibleAnchorForTesting(),
             "\(stage) lost the visible anchor"

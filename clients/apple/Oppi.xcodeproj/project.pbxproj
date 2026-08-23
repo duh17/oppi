@@ -953,6 +953,7 @@
 		BF340230EC9CE5CFE7CC3E2A /* IconAsset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FAE287873789BDD815BB217 /* IconAsset.swift */; };
 		BF9FA20832C1D25DD6079A1F /* MermaidMindmapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ED25B9D846471DDD5A97738 /* MermaidMindmapTests.swift */; };
 		BFAD9B94AA836C5C1F82D998 /* MathLayoutEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A8E514C47C3ACC89952835 /* MathLayoutEngine.swift */; };
+		BFC5A1E291D0C798583FFA4C /* mermaid-rendering-gallery.md in Resources */ = {isa = PBXBuildFile; fileRef = F5922FB5923BE3BFAAEE9E4A /* mermaid-rendering-gallery.md */; };
 		BFEE0F0B05252CB9BE9AEBE1 /* MacWorkspaceClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F17D16398175ED9E8F8B705 /* MacWorkspaceClient.swift */; };
 		C0220BE26FE35247429584CF /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E2E93EA6389E5A8B3E07F4C /* LogsView.swift */; };
 		C069A00C8D1AD2EF51A46B51 /* FullScreenImageViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E353CD6081B3126767E06A5 /* FullScreenImageViewController.swift */; };
@@ -2405,6 +2406,7 @@
 		F4660343EB2C2590CC6C8CA0 /* ForkHelperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForkHelperTests.swift; sourceTree = "<group>"; };
 		F4FC352387FBA40CACB7E522 /* VoiceInputSystemAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputSystemAccess.swift; sourceTree = "<group>"; };
 		F56CBA26FA91C47669FBA9CA /* ChatViewSessionReuseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewSessionReuseTests.swift; sourceTree = "<group>"; };
+		F5922FB5923BE3BFAAEE9E4A /* mermaid-rendering-gallery.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "mermaid-rendering-gallery.md"; sourceTree = "<group>"; };
 		F594E8B55F2381B02251C568 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F5ADACAB6BD406DA001130B7 /* VoiceInputError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputError.swift; sourceTree = "<group>"; };
 		F5B8BDAD418D144A0F1FA51F /* AppFontConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFontConstants.swift; sourceTree = "<group>"; };
@@ -3659,6 +3661,7 @@
 			isa = PBXGroup;
 			children = (
 				864385622E9BE372025A7A62 /* 2026-08-22-anthropic-s1-report.md */,
+				F5922FB5923BE3BFAAEE9E4A /* mermaid-rendering-gallery.md */,
 				776FDBD7D6EB1C0D4603C712 /* mixed-markdown-stress-corpus.md */,
 				096B1F033E9DFE4A1A7F02F8 /* synthetic-long-markdown.md */,
 			);
@@ -4881,6 +4884,7 @@
 			files = (
 				1B7D47808689D687E86B63DD /* 2026-08-22-anthropic-s1-report.md in Resources */,
 				F572AA36961CEC5DBE91BF24 /* AUDIT-RESULTS.md in Resources */,
+				BFC5A1E291D0C798583FFA4C /* mermaid-rendering-gallery.md in Resources */,
 				C0BB27F2808CFAAECD6B8DBA /* mixed-markdown-stress-corpus.md in Resources */,
 				FD3FED6CD03AE53F9499AE61 /* synthetic-long-markdown.md in Resources */,
 			);

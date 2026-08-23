@@ -201,6 +201,101 @@ struct FullScreenMarkdownAsyncRenderTests {
         )
     }
 
+    /// Regression: entering a Mermaid cell can schedule a layout pass while a
+    /// streaming reader is still following the tail. If the user starts an
+    /// upward drag at the bottom before that queued follow executes, the queued
+    /// block must yield to the user's new viewport instead of snapping back.
+    @MainActor
+    @Test("queued tail follow must not override an upward scroll near Mermaid")
+    func queuedTailFollowYieldsToUpwardScroll() async {
+        let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        scrollView.contentSize = CGSize(width: 390, height: 4_000)
+        let bottomY = scrollView.contentSize.height - scrollView.bounds.height
+        scrollView.contentOffset.y = bottomY
+
+        let coordinator = TailFollowScrollCoordinator(
+            scrollView: scrollView,
+            shouldAutoFollowTail: true,
+            performLayout: {}
+        )
+
+        // Model the Mermaid cell's visible-height reconciliation queuing a
+        // follow from a layout pass just before the upward drag takes control.
+        coordinator.scheduleAutoFollowToBottomIfNeeded()
+        coordinator.handleWillBeginDragging()
+        // UIKit may report an initial didScroll while the finger is still
+        // inside the near-bottom threshold. That must not re-arm following
+        // before the upward drag has moved far enough to leave the threshold.
+        coordinator.handleDidScroll(isUserDriven: true, isStreaming: true)
+        let upwardY = bottomY - 240
+        scrollView.contentOffset.y = upwardY
+
+        // The queued block can run before UIKit delivers the next
+        // user-driven didScroll callback, so drag-begin itself must revoke it.
+        await drainMarkdownHeightFlush()
+
+        #expect(
+            abs(scrollView.contentOffset.y - upwardY) < 1,
+            "queued tail follow snapped the upward scroll back to the bottom"
+        )
+        #expect(!coordinator.shouldAutoFollowTail)
+
+        // Reaching the live tail and releasing should still opt back into the
+        // normal streaming follow behavior.
+        scrollView.contentOffset.y = bottomY
+        coordinator.handleDidEndDragging(willDecelerate: false, isStreaming: true)
+        #expect(coordinator.shouldAutoFollowTail)
+    }
+
+    @MainActor
+    @Test("completed Markdown immediately stops following the tail")
+    func completedMarkdownStopsTailFollowImmediately() async throws {
+        let content = (0..<80)
+            .map { "Streaming paragraph \($0) with enough text to make the reader scroll." }
+            .joined(separator: "\n\n")
+        let stream = ThinkingTraceStream(text: content, isDone: false)
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            stream: stream,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        body.layoutIfNeeded()
+        let collectionView = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collectionView.layoutIfNeeded()
+        await drainMarkdownHeightFlush()
+
+        let bottomY = max(
+            -collectionView.adjustedContentInset.top,
+            collectionView.contentSize.height
+                - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        collectionView.contentOffset.y = bottomY
+
+        // Queue a follow while the snapshot is still live, then settle the
+        // document before that queued main-turn work executes.
+        body.setNeedsLayout()
+        body.layoutIfNeeded()
+        stream.update(text: content, isDone: true)
+        let readingY = bottomY - 240
+        collectionView.contentOffset.y = readingY
+
+        await drainMarkdownHeightFlush()
+
+        #expect(
+            abs(collectionView.contentOffset.y - readingY) < 1,
+            "completed Markdown still executed queued tail-follow work"
+        )
+    }
+
     @MainActor
     @Test("async graphical placeholders configure code-block accessibility")
     func asyncGraphicalPlaceholdersConfigureCodeBlockAccessibility() throws {

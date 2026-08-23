@@ -1347,23 +1347,27 @@ final class TailFollowScrollCoordinator {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pendingAutoFollowScroll = false
+            guard self.shouldAutoFollowTail else { return }
             self.scrollToBottomIfNeeded()
         }
     }
 
     func handleWillBeginDragging() {
-        if !isNearBottom() {
-            shouldAutoFollowTail = false
-        }
+        // The user's gesture owns the viewport immediately, even when it starts
+        // at the bottom. A Mermaid/LaTeX height reconciliation may already have
+        // queued a tail-follow block before UIKit delivers the first didScroll.
+        // Drag-end handling re-enables following when the user stays at bottom.
+        shouldAutoFollowTail = false
     }
 
     func handleDidScroll(isUserDriven: Bool, isStreaming: Bool) {
         guard !isApplyingProgrammaticScroll else { return }
         guard isUserDriven else { return }
 
-        if isNearBottom() {
-            shouldAutoFollowTail = isStreaming
-        } else {
+        // Never re-arm while a finger or deceleration still owns the viewport.
+        // Drag/deceleration end callbacks re-enable following if the user chose
+        // to settle at the bottom of a live stream.
+        if !isStreaming || !isNearBottom() {
             shouldAutoFollowTail = false
         }
     }
