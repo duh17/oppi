@@ -1366,6 +1366,124 @@ struct ToolPresentationBuilderTests {
         #expect(path == "Sources/App.swift")
         #expect(lines.contains { $0.kind == .removed && $0.text == "let value = 1" })
         #expect(lines.contains { $0.kind == .added && $0.text == "let value = 2" })
+        #expect(lines[0].oldLineNumber == 1 || lines[0].newLineNumber == 1)
+    }
+
+    @Test("extension expanded keeps multi-file generic patches as plain text")
+    func extensionExpandedMultiFileDiffStaysPlainText() {
+        let diffText = """
+        --- a/A.swift
+        +++ b/A.swift
+        @@ -1 +1 @@
+        -old-a
+        +new-a
+        --- a/B.swift
+        +++ b/B.swift
+        @@ -1 +1 @@
+        -old-b
+        +new-b
+        """
+
+        let hinted = ToolPresentationBuilder.build(
+            itemID: "ext-multi-hint", tool: "extensions.patch",
+            argsSummary: "",
+            outputPreview: diffText,
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object(["presentationFormat": .string("diff")]),
+                expanded: ["ext-multi-hint"],
+                fullOutput: diffText
+            )
+        )
+        let auto = ToolPresentationBuilder.build(
+            itemID: "ext-multi-auto", tool: "extensions.patch",
+            argsSummary: "",
+            outputPreview: diffText,
+            isError: false, isDone: true,
+            context: emptyContext(
+                expanded: ["ext-multi-auto"],
+                fullOutput: diffText
+            )
+        )
+
+        guard case .text(let hintedText, let hintedLanguage) = hinted.expandedContent else {
+            Issue.record("Expected plain text for multi-file format=diff, got \(String(describing: hinted.expandedContent))")
+            return
+        }
+        guard case .text(let autoText, let autoLanguage) = auto.expandedContent else {
+            Issue.record("Expected plain text for multi-file auto-detect, got \(String(describing: auto.expandedContent))")
+            return
+        }
+
+        #expect(hintedLanguage == nil)
+        #expect(autoLanguage == nil)
+        #expect(hintedText == diffText)
+        #expect(autoText == diffText)
+        #expect(!hintedText.contains("[render note:"))
+        #expect(hintedText.contains("--- a/A.swift"))
+        #expect(hintedText.contains("--- a/B.swift"))
+    }
+
+    @Test("extension expanded keeps text hunk plus non-hunk second file as plain text")
+    func extensionExpandedTextHunkPlusNonHunkSecondFileStaysPlainText() {
+        let diffText = """
+        --- a/A.swift
+        +++ b/A.swift
+        @@ -1 +1 @@
+        -old-a
+        +new-a
+        diff --git a/photo.png b/photo.png
+        index 1111111..2222222 100644
+        Binary files a/photo.png and b/photo.png differ
+        """
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "ext-text-binary", tool: "extensions.patch",
+            argsSummary: "",
+            outputPreview: diffText,
+            isError: false, isDone: true,
+            context: emptyContext(
+                details: .object(["presentationFormat": .string("diff")]),
+                expanded: ["ext-text-binary"],
+                fullOutput: diffText
+            )
+        )
+
+        guard case .text(let text, let language) = config.expandedContent else {
+            Issue.record("Expected plain unified text for text+binary patch, got \(String(describing: config.expandedContent))")
+            return
+        }
+        #expect(language == nil)
+        #expect(text == diffText)
+        #expect(!text.contains("[render note:"))
+        #expect(text.contains("--- a/A.swift"))
+        #expect(text.contains("Binary files a/photo.png and b/photo.png differ"))
+    }
+
+    @Test("extension expanded still accepts headerless single-file replacement")
+    func extensionExpandedHeaderlessSingleFileDiff() {
+        let diffText = """
+        -old line
+        +new line
+        """
+
+        let config = ToolPresentationBuilder.build(
+            itemID: "ext-headerless", tool: "extensions.patch",
+            argsSummary: "",
+            outputPreview: diffText,
+            isError: false, isDone: true,
+            context: emptyContext(
+                expanded: ["ext-headerless"],
+                fullOutput: diffText
+            )
+        )
+
+        guard case .diff(let lines, _) = config.expandedContent else {
+            Issue.record("Expected rich diff for headerless single-file replacement")
+            return
+        }
+        #expect(lines.map(\.kind) == [.removed, .added])
+        #expect(lines.map(\.text) == ["old line", "new line"])
     }
 
     @Test("extension expanded mode routing uses visual/json/markdown/text deterministically")

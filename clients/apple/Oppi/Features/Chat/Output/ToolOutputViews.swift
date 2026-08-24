@@ -142,11 +142,6 @@ extension ToolPresentationBuilder {
         let height: Int?
     }
 
-    private struct ParsedUnifiedDiff {
-        let lines: [DiffLine]
-        let path: String?
-    }
-
     static func resolveGenericExtensionExpandedContent(
         output: String,
         toolName: String,
@@ -225,14 +220,16 @@ extension ToolPresentationBuilder {
         }
 
         if format == "diff" {
-            if let parsed = parseUnifiedDiff(textOutput) {
-                return (.diff(lines: parsed.lines, path: parsed.path ?? filePathHint), textOutput)
+            switch genericUnifiedPatchContent(textOutput, filePathHint: filePathHint) {
+            case .some(let content):
+                return (content, textOutput)
+            case .none:
+                return (note("diff preview unavailable (invalid unified diff). showing text"), textOutput)
             }
-            return (note("diff preview unavailable (invalid unified diff). showing text"), textOutput)
         }
 
-        if let parsed = parseUnifiedDiff(textOutput) {
-            return (.diff(lines: parsed.lines, path: parsed.path ?? filePathHint), textOutput)
+        if let content = genericUnifiedPatchContent(textOutput, filePathHint: filePathHint) {
+            return (content, textOutput)
         }
 
         if looksLikeMarkdownContent(textOutput) {
@@ -517,79 +514,19 @@ extension ToolPresentationBuilder {
         return nil
     }
 
-    private static func parseUnifiedDiff(_ text: String) -> ParsedUnifiedDiff? {
-        let lines = text.replacingOccurrences(of: "\r\n", with: "\n")
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-
-        var parsedLines: [DiffLine] = []
-        parsedLines.reserveCapacity(lines.count)
-
-        var sawStructuredHeader = false
-        var added = 0
-        var removed = 0
-        var path: String?
-
-        for line in lines {
-            if line.hasPrefix("--- ") {
-                sawStructuredHeader = true
-                if path == nil {
-                    path = parseDiffPath(line, prefix: "--- ")
-                }
-                continue
-            }
-
-            if line.hasPrefix("+++ ") {
-                sawStructuredHeader = true
-                path = parseDiffPath(line, prefix: "+++ ") ?? path
-                continue
-            }
-
-            if line.hasPrefix("@@") {
-                sawStructuredHeader = true
-                continue
-            }
-
-            if line.hasPrefix("+"), !line.hasPrefix("+++") {
-                parsedLines.append(DiffLine(kind: .added, text: String(line.dropFirst())))
-                added += 1
-                continue
-            }
-
-            if line.hasPrefix("-"), !line.hasPrefix("---") {
-                parsedLines.append(DiffLine(kind: .removed, text: String(line.dropFirst())))
-                removed += 1
-                continue
-            }
-
-            if line.hasPrefix(" ") {
-                parsedLines.append(DiffLine(kind: .context, text: String(line.dropFirst())))
-            }
-        }
-
-        guard !parsedLines.isEmpty else { return nil }
-        guard sawStructuredHeader || (added > 0 && removed > 0) else { return nil }
-
-        return ParsedUnifiedDiff(lines: parsedLines, path: path)
-    }
-
-    private static func parseDiffPath(_ line: String, prefix: String) -> String? {
-        guard line.hasPrefix(prefix) else { return nil }
-        var candidate = String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let tabIndex = candidate.firstIndex(of: "\t") {
-            candidate = String(candidate[..<tabIndex])
-        }
-
-        if candidate == "/dev/null" || candidate.isEmpty {
+    /// Single-file unified patches become a rich diff. Multi-file patches stay
+    /// the original unified text so we never flatten several files into one.
+    private static func genericUnifiedPatchContent(_ text: String, filePathHint: String?) -> ToolExpandedContent? {
+        guard let document = UnifiedPatchParser.parse(text, options: .lenient) else {
             return nil
         }
-
-        if candidate.hasPrefix("a/") || candidate.hasPrefix("b/") {
-            candidate.removeFirst(2)
+        if document.isMultiFile {
+            return .text(text: text, language: nil)
         }
-
-        return candidate
+        guard let file = document.files.first, !file.lines.isEmpty else {
+            return nil
+        }
+        return .diff(lines: file.lines, path: file.displayPath ?? filePathHint)
     }
 
     private static func looksLikeMarkdownContent(_ text: String) -> Bool {

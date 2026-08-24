@@ -431,6 +431,25 @@ struct ToolCallFormattingTests {
         #expect(lines[2].text == "        Image(systemName: \"terminal.fill\")")
     }
 
+    @Test func editResultDiffLinesDoesNotFlattenMultiFilePatch() {
+        let details: JSONValue = .object([
+            "patch": .string("""
+            --- a/A.swift
+            +++ b/A.swift
+            @@ -1 +1 @@
+            -old-a
+            +new-a
+            --- a/B.swift
+            +++ b/B.swift
+            @@ -1 +1 @@
+            -old-b
+            +new-b
+            """),
+        ])
+
+        #expect(ToolCallFormatting.editResultDiffLines(from: details) == nil)
+    }
+
     // MARK: - Format Bytes
 
     @Test func formatBytesSmall() {

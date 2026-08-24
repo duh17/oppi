@@ -558,8 +558,11 @@ enum ToolCallFormatting {
         guard let object = details?.objectValue else { return nil }
 
         if let patch = object["patch"]?.stringValue,
-           let lines = parseUnifiedPatch(patch), !lines.isEmpty {
-            return lines
+           let document = UnifiedPatchParser.parse(patch, options: .strict),
+           !document.isMultiFile,
+           let file = document.files.first,
+           !file.lines.isEmpty {
+            return file.lines
         }
 
         if let diff = object["diff"]?.stringValue,
@@ -568,80 +571,6 @@ enum ToolCallFormatting {
         }
 
         return nil
-    }
-
-    private static func parseUnifiedPatch(_ text: String) -> [DiffLine]? {
-        let rawLines = normalizedDiffLines(text)
-        var lines: [DiffLine] = []
-        lines.reserveCapacity(rawLines.count)
-
-        var oldLineNumber: Int?
-        var newLineNumber: Int?
-        var sawHunk = false
-
-        for rawLine in rawLines {
-            if rawLine.hasPrefix("@@") {
-                guard let starts = parseUnifiedHunkHeader(rawLine) else { continue }
-                oldLineNumber = starts.old
-                newLineNumber = starts.new
-                sawHunk = true
-                continue
-            }
-
-            guard sawHunk, let prefix = rawLine.first else { continue }
-            if rawLine.hasPrefix("\\ No newline") { continue }
-
-            let text = String(rawLine.dropFirst())
-            switch prefix {
-            case " ":
-                guard let currentOldLine = oldLineNumber,
-                      let currentNewLine = newLineNumber else { continue }
-                lines.append(DiffLine(
-                    kind: .context,
-                    text: text,
-                    oldLineNumber: positiveLineNumber(currentOldLine),
-                    newLineNumber: positiveLineNumber(currentNewLine)
-                ))
-                Self.increment(&oldLineNumber)
-                Self.increment(&newLineNumber)
-            case "-":
-                guard let currentOldLine = oldLineNumber else { continue }
-                lines.append(DiffLine(
-                    kind: .removed,
-                    text: text,
-                    oldLineNumber: positiveLineNumber(currentOldLine),
-                    newLineNumber: nil
-                ))
-                Self.increment(&oldLineNumber)
-            case "+":
-                guard let currentNewLine = newLineNumber else { continue }
-                lines.append(DiffLine(
-                    kind: .added,
-                    text: text,
-                    oldLineNumber: nil,
-                    newLineNumber: positiveLineNumber(currentNewLine)
-                ))
-                Self.increment(&newLineNumber)
-            default:
-                continue
-            }
-        }
-
-        return lines.isEmpty ? nil : lines
-    }
-
-    private static func parseUnifiedHunkHeader(_ line: String) -> (old: Int, new: Int)? {
-        let pattern = #"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        let range = NSRange(line.startIndex..<line.endIndex, in: line)
-        guard let match = regex.firstMatch(in: line, range: range), match.numberOfRanges >= 3,
-              let oldRange = Range(match.range(at: 1), in: line),
-              let newRange = Range(match.range(at: 2), in: line),
-              let old = Int(String(line[oldRange])),
-              let new = Int(String(line[newRange])) else {
-            return nil
-        }
-        return (old, new)
     }
 
     private static func parsePiNumberedDiff(_ text: String) -> [DiffLine]? {
@@ -714,14 +643,6 @@ enum ToolCallFormatting {
         text.replacingOccurrences(of: "\r\n", with: "\n")
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
-    }
-
-    private static func positiveLineNumber(_ value: Int) -> Int? {
-        value > 0 ? value : nil
-    }
-
-    private static func increment(_ value: inout Int?) {
-        value = (value ?? 0) + 1
     }
 
     static func editDiffStats(from args: [String: JSONValue]?) -> DiffStats? {
