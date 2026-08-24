@@ -2271,10 +2271,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 filePath: filePath
             )
 
-        case .diff(_, _, let filePath, _):
+        case .diff(let document):
             return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenDiff,
-                filePath: filePath
+                filePath: document.filePath
             )
 
         case .markdown(_, let filePath, _):

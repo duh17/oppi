@@ -77,12 +77,12 @@ enum ToolTimelineRowFullScreenSupport {
 
         switch content {
         case .diff(let lines, let path):
-            let newText = outputCopyText ?? DiffEngine.formatUnified(lines)
             return .diff(
-                oldText: "",
-                newText: newText,
-                filePath: path,
-                precomputedLines: lines
+                ToolDiffDocument(
+                    lines: lines,
+                    filePath: path,
+                    copyText: outputCopyText ?? DiffEngine.formatUnified(lines)
+                )
             )
 
         case .markdown(let text):

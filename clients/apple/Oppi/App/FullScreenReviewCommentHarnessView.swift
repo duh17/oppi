@@ -134,17 +134,12 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
                 for: .diff
             )
             let filePath = "server/tests/architecture-layer-rules.test.ts"
-            let newText = Self.diffWrappingLines
-                .compactMap { line -> String? in
-                    if case .removed = line.kind { return nil }
-                    return line.text
-                }
-                .joined(separator: "\n")
             content = .diff(
-                oldText: "",
-                newText: newText,
-                filePath: filePath,
-                precomputedLines: Self.diffWrappingLines
+                ToolDiffDocument(
+                    lines: Self.diffWrappingLines,
+                    filePath: filePath,
+                    copyText: DiffEngine.formatUnified(Self.diffWrappingLines)
+                )
             )
             context = ReviewCommentSelectionContext(
                 dispatcher: router,

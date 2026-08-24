@@ -23,11 +23,21 @@ struct WorkspaceReviewModelsTests {
         #expect(WorkspaceReviewDiffLine.Kind.removed.prefix == "-")
     }
 
-    @Test func localDiffResponseBuildsHunksFromTexts() {
-        let response = WorkspaceReviewDiffResponse.local(
+    @Test func reviewDiffResponseBuildsHunksFromComputedLines() {
+        let baselineText = "let a = 1\nlet b = 2\n"
+        let currentText = "let a = 1\nlet b = 3\nlet c = 4\n"
+        let computedLines = DiffEngine.compute(old: baselineText, new: currentText)
+        let stats = DiffEngine.stats(computedLines)
+        let response = WorkspaceReviewDiffResponse(
+            workspaceId: "local-history",
             path: "Sources/App.swift",
-            baselineText: "let a = 1\nlet b = 2\n",
-            currentText: "let a = 1\nlet b = 3\nlet c = 4\n"
+            baselineText: baselineText,
+            currentText: currentText,
+            addedLines: stats.added,
+            removedLines: stats.removed,
+            hunks: WorkspaceReviewDiffHunkBuilder.buildHunks(from: computedLines),
+            revisionCount: nil,
+            cacheKey: nil
         )
 
         #expect(response.addedLines == 2)
@@ -40,18 +50,23 @@ struct WorkspaceReviewModelsTests {
         #expect(lines.contains { $0.kind == .added && $0.oldLine == nil && $0.newLine == 3 })
     }
 
-    @Test func localDiffResponseUsesPrecomputedLines() {
-        let precomputedLines = [
+    @Test func reviewDiffResponsePreservesExplicitHunkLines() {
+        let computedLines = [
             DiffLine(kind: .context, text: "same"),
             DiffLine(kind: .removed, text: "before"),
             DiffLine(kind: .added, text: "after")
         ]
-
-        let response = WorkspaceReviewDiffResponse.local(
+        let stats = DiffEngine.stats(computedLines)
+        let response = WorkspaceReviewDiffResponse(
+            workspaceId: "local-history",
             path: "Sources/App.swift",
             baselineText: "ignored old text",
             currentText: "ignored new text",
-            precomputedLines: precomputedLines
+            addedLines: stats.added,
+            removedLines: stats.removed,
+            hunks: WorkspaceReviewDiffHunkBuilder.buildHunks(from: computedLines),
+            revisionCount: nil,
+            cacheKey: nil
         )
 
         #expect(response.addedLines == 1)

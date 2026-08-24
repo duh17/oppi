@@ -271,16 +271,34 @@ final class SourceTraceStream {
     }
 }
 
+/// Lines-first payload for a completed full-screen tool diff.
+///
+/// `lines` are the only diff authority. `copyText` is clipboard, share, and
+/// initial selectable text (often a unified patch). HTML render and line-anchor
+/// notices use `reconstructedNewSideText`, never `copyText`.
+struct ToolDiffDocument: Sendable {
+    let lines: [DiffLine]
+    let filePath: String?
+    let copyText: String
+
+    var reconstructedNewSideText: String {
+        lines
+            .filter { $0.kind != .removed }
+            .map { $0.text }
+            .joined(separator: "\n")
+    }
+}
+
 /// Full-screen content viewer for tool output.
 ///
 /// Supports three modes:
 /// - `.code`: syntax-highlighted source with line numbers
-/// - `.diff`: unified diff with add/remove coloring
+/// - `.diff`: lines-first tool diff with add/remove coloring
 /// - `.markdown`: full markdown note/reader rendering
 indirect enum FullScreenCodeContent {
     case code(content: String, language: String?, filePath: String?, startLine: Int)
     case plainText(content: String, filePath: String?)
-    case diff(oldText: String, newText: String, filePath: String?, precomputedLines: [DiffLine]?)
+    case diff(ToolDiffDocument)
     case markdown(content: String, filePath: String?, workspaceContext: WorkspaceContext? = nil)
     case html(content: String, filePath: String?)
     case thinking(content: String, stream: ThinkingTraceStream? = nil)

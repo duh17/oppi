@@ -653,10 +653,7 @@ final class NativeFullScreenDiffBody: UIView {
     }
 
     init(
-        oldText: String,
-        newText: String,
-        filePath: String?,
-        precomputedLines: [DiffLine]?,
+        document: ToolDiffDocument,
         palette: ThemePalette,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.diff.defaultPreferences,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
@@ -669,6 +666,7 @@ final class NativeFullScreenDiffBody: UIView {
         super.init(frame: .zero)
         backgroundColor = UIColor(palette.bgDark)
 
+        let filePath = document.filePath
         let fileName = filePath.map { ($0 as NSString).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 }
         let relativePath = filePath.flatMap { path -> String? in
             guard let fileName else { return nil }
@@ -769,19 +767,13 @@ final class NativeFullScreenDiffBody: UIView {
             progressView.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        diffTextView.text = Self.initialSelectableText(
-            newText: newText,
-            precomputedLines: precomputedLines
-        )
+        diffTextView.text = document.copyText
         applyWrapMode()
         let displayPath = filePath ?? "diff.txt"
+        let lines = document.lines
         buildTask = Task { [weak self] in
-            let oldText = oldText
-            let newText = newText
-            let precomputedLines = precomputedLines
             let result = await Task.detached(priority: .userInitiated) {
-                let lines = precomputedLines ?? DiffEngine.compute(old: oldText, new: newText)
-                return Self.buildDiff(lines: lines, displayPath: displayPath)
+                Self.buildDiff(lines: lines, displayPath: displayPath)
             }.value
 
             guard !Task.isCancelled else { return }
@@ -800,14 +792,6 @@ final class NativeFullScreenDiffBody: UIView {
 
     private var codeFont: UIFont {
         FullScreenCodeTypography.codeFont(for: readerPreferences)
-    }
-
-    private static func initialSelectableText(
-        newText: String,
-        precomputedLines: [DiffLine]?
-    ) -> String {
-        guard let precomputedLines else { return newText }
-        return DiffEngine.formatUnified(precomputedLines)
     }
 
     nonisolated private static func buildDiff(lines: [DiffLine], displayPath: String) -> BuiltDiff {

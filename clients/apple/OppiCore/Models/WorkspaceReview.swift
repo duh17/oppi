@@ -29,28 +29,6 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     let revisionCount: Int?
     /// Cache key for client-side caching (session diff only).
     let cacheKey: String?
-
-    // periphery:ignore
-    static func local(
-        path: String,
-        baselineText: String,
-        currentText: String,
-        precomputedLines: [DiffLine]? = nil
-    ) -> Self {
-        let lines = precomputedLines ?? DiffEngine.compute(old: baselineText, new: currentText)
-        let stats = DiffEngine.stats(lines)
-        return Self(
-            workspaceId: "local-history",
-            path: path,
-            baselineText: baselineText,
-            currentText: currentText,
-            addedLines: stats.added,
-            removedLines: stats.removed,
-            hunks: WorkspaceReviewDiffHunkBuilder.buildHunks(from: lines),
-            revisionCount: nil,
-            cacheKey: nil
-        )
-    }
 }
 
 struct WorkspaceQuickActionOption: Codable, Sendable, Equatable, Identifiable {

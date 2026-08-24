@@ -807,15 +807,17 @@ struct FullScreenReviewCommentSelectionTests {
     }
 
     @Test func diffBodyKeepsSelectableTextWhileRichRenderBuilds() throws {
+        let lines = [
+            DiffLine(kind: .removed, text: "let value = 1"),
+            DiffLine(kind: .added, text: "let value = 2"),
+        ]
         let controller = makeController(
             content: .diff(
-                oldText: "let value = 1",
-                newText: "let value = 2",
-                filePath: "Value.swift",
-                precomputedLines: [
-                    DiffLine(kind: .removed, text: "let value = 1"),
-                    DiffLine(kind: .added, text: "let value = 2"),
-                ]
+                ToolDiffDocument(
+                    lines: lines,
+                    filePath: "Value.swift",
+                    copyText: DiffEngine.formatUnified(lines)
+                )
             )
         )
         let textView = try #require(timelineAllTextViews(in: controller.view).first {
@@ -830,6 +832,124 @@ struct FullScreenReviewCommentSelectionTests {
 
         let commentAction = try #require(menu.children.first as? UIAction)
         #expect(commentAction.title == "Comment")
+    }
+
+    @Test func fullScreenDiffCopyUsesNamedCopyTextNotReconstructedNewSide() throws {
+        let document = makeDistinguishingToolDiffDocument()
+        #expect(document.copyText != document.reconstructedNewSideText)
+
+        let configuration = makeTimelineToolConfiguration(
+            expandedContent: .diff(lines: document.lines, path: document.filePath),
+            copyOutputText: nil,
+            isExpanded: true
+        )
+        let content = try #require(
+            ToolTimelineRowFullScreenSupport.staticFullScreenContent(
+                configuration: configuration,
+                outputCopyText: nil,
+                terminalStream: nil
+            )
+        )
+        guard case .diff(let produced) = content else {
+            Issue.record("Expected lines-first full-screen diff document")
+            return
+        }
+        #expect(produced.copyText == document.copyText)
+        #expect(produced.copyText != produced.reconstructedNewSideText)
+
+        let copied = try capturingFullScreenCopy {
+            let controller = FullScreenCodeViewController(content: content)
+            controller.loadViewIfNeeded()
+            _ = try #require(
+                (controller.children.first as? UINavigationController)?
+                    .topViewController?
+                    .navigationItem.rightBarButtonItems?.last
+            )
+            _ = controller.perform(Selector("copyTapped"))
+        }
+
+        #expect(copied == document.copyText)
+        #expect(copied != document.reconstructedNewSideText)
+    }
+
+    @Test func fullScreenDiffSharePayloadUsesNamedCopyText() throws {
+        let document = makeDistinguishingToolDiffDocument()
+        let controller = makeController(content: .diff(document))
+
+        guard case .plainText(let shared)? = controller.shareableContentForTesting else {
+            Issue.record("Expected full-screen diff share payload to be plain copy text")
+            return
+        }
+        #expect(shared == document.copyText)
+        #expect(shared != document.reconstructedNewSideText)
+        #expect(controller.presentationCopyTextForTesting == document.copyText)
+    }
+
+    @Test func htmlDiffRenderToggleUsesReconstructedNewSideNotCopyText() throws {
+        let lines = [
+            DiffLine(kind: .removed, text: "<p>old</p>", oldLineNumber: 1, newLineNumber: nil),
+            DiffLine(kind: .added, text: "<p>new</p>", oldLineNumber: nil, newLineNumber: 1),
+            DiffLine(kind: .context, text: "<p>keep</p>", oldLineNumber: 2, newLineNumber: 2),
+        ]
+        let document = ToolDiffDocument(
+            lines: lines,
+            filePath: "index.html",
+            copyText: DiffEngine.formatUnified(lines)
+        )
+        #expect(document.copyText != document.reconstructedNewSideText)
+
+        let controller = makeController(content: .diff(document))
+        #expect(controller.installedBodyViewForTesting is NativeFullScreenDiffBody)
+        let navigationController = try #require(controller.children.first as? UINavigationController)
+        let titlesBefore = navigationController.topViewController?.navigationItem.rightBarButtonItems?.compactMap(\.title) ?? []
+        #expect(titlesBefore.contains("Render"))
+
+        controller.toggleSourceForTesting()
+        controller.view.layoutIfNeeded()
+
+        #expect(controller.installedBodyViewForTesting is HTMLRenderView)
+        guard case .html(let html, let filePath) = controller.presentationBodyContentForTesting else {
+            Issue.record("Expected HTML render body from reconstructed new-side text")
+            return
+        }
+        #expect(html == document.reconstructedNewSideText)
+        #expect(html == "<p>new</p>\n<p>keep</p>")
+        #expect(html != document.copyText)
+        #expect(filePath == "index.html")
+
+        let titlesAfter = navigationController.topViewController?.navigationItem.rightBarButtonItems?.compactMap(\.title) ?? []
+        #expect(titlesAfter.contains("Diff"))
+    }
+
+    @Test func diffLineAnchorNoticeUsesReconstructedNewSideNotCopyText() async throws {
+        let document = makeDistinguishingToolDiffDocument()
+        let copyLineCount = SourceLineMetrics.count(document.copyText)
+        let newSideLineCount = SourceLineMetrics.count(document.reconstructedNewSideText)
+        #expect(copyLineCount == 3)
+        #expect(newSideLineCount == 2)
+
+        let anchor = try #require(SourceLineAnchor(startLine: 3, endLine: 3))
+        var notices: [String] = []
+        let controller = FullScreenCodeViewController(
+            content: .diff(document),
+            lineAnchor: anchor,
+            lineAnchorNotice: { message in
+                notices.append(message)
+            }
+        )
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+
+        let delivered = await waitForMainActorCondition(timeout: .seconds(2)) {
+            controller.lineAnchorNoticeDeliveredForTesting
+        }
+        #expect(delivered)
+        #expect(notices.count == 1)
+        #expect(notices.first?.contains("Opened at the end") == true)
+        #expect(notices.first?.contains("(2 lines)") == true)
+        #expect(notices.first?.contains("(3 lines)") != true)
     }
 
     @Test func markdownBodyUsesItsProvidedOLEDPaletteWhenRuntimeThemeIsStale() throws {
@@ -1028,10 +1148,11 @@ struct FullScreenReviewCommentSelectionTests {
             DiffLine(kind: .added, text: "let value = newName", oldLineNumber: nil, newLineNumber: 8),
         ]
         let body = NativeFullScreenDiffBody(
-            oldText: "let value = oldName",
-            newText: "let value = newName",
-            filePath: "Value.swift",
-            precomputedLines: lines,
+            document: ToolDiffDocument(
+                lines: lines,
+                filePath: "Value.swift",
+                copyText: DiffEngine.formatUnified(lines)
+            ),
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -1096,10 +1217,11 @@ struct FullScreenReviewCommentSelectionTests {
             DiffLine(kind: .context, text: "let last = 4", oldLineNumber: 12, newLineNumber: 12),
         ]
         let body = NativeFullScreenDiffBody(
-            oldText: "",
-            newText: "",
-            filePath: "Sources/App.swift",
-            precomputedLines: lines,
+            document: ToolDiffDocument(
+                lines: lines,
+                filePath: "Sources/App.swift",
+                copyText: DiffEngine.formatUnified(lines)
+            ),
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter { captured.append($0) },
             reviewCommentSourceContext: ReviewCommentSourceContext(
@@ -1413,10 +1535,11 @@ struct FullScreenReviewCommentSelectionTests {
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
         let longLine = "let message = \"" + String(repeating: "wrap-me-", count: 28) + "\""
         let body = NativeFullScreenDiffBody(
-            oldText: "",
-            newText: longLine,
-            filePath: "LongLine.swift",
-            precomputedLines: [DiffLine(kind: .added, text: longLine, oldLineNumber: nil, newLineNumber: 220)],
+            document: ToolDiffDocument(
+                lines: [DiffLine(kind: .added, text: longLine, oldLineNumber: nil, newLineNumber: 220)],
+                filePath: "LongLine.swift",
+                copyText: longLine
+            ),
             palette: ThemeID.dark.palette,
             readerPreferences: FullScreenReaderPreferences(wrapsText: true),
             reviewCommentSelectionRouter: nil,
@@ -1855,6 +1978,21 @@ struct FullScreenReviewCommentSelectionTests {
         ))
         #expect(timelineActionTitles(in: menu) == ["Copy"])
         #expect(!textView.shouldPresentFallbackEditMenuForTesting())
+    }
+
+    private func makeDistinguishingToolDiffDocument(
+        filePath: String = "Value.swift"
+    ) -> ToolDiffDocument {
+        let lines = [
+            DiffLine(kind: .context, text: "keep", oldLineNumber: 1, newLineNumber: 1),
+            DiffLine(kind: .removed, text: "old", oldLineNumber: 2, newLineNumber: nil),
+            DiffLine(kind: .added, text: "new", oldLineNumber: nil, newLineNumber: 2),
+        ]
+        return ToolDiffDocument(
+            lines: lines,
+            filePath: filePath,
+            copyText: DiffEngine.formatUnified(lines)
+        )
     }
 
     private func capturingFullScreenCopy(_ body: () throws -> Void) throws -> String? {

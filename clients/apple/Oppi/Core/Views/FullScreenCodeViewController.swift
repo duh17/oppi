@@ -519,8 +519,8 @@ final class FullScreenCodeViewController: UIViewController {
              .thinking(let text, _),
              .terminal(let text, _, _):
             textAndFirstLine = (text, 1)
-        case .diff(_, let newText, _, _):
-            textAndFirstLine = (newText, 1)
+        case .diff(let document):
+            textAndFirstLine = (document.reconstructedNewSideText, 1)
         case .liveSource(let snapshot, _):
             return lineAnchorResolution(for: semanticContent(for: snapshot), anchor: anchor)
         }
@@ -726,18 +726,15 @@ final class FullScreenCodeViewController: UIViewController {
                 lineAnchor: lineAnchor,
                 focusLineAnchor: focusLineAnchor
             )
-        case .diff(let oldText, let newText, let filePath, let precomputedLines):
+        case .diff(let document):
             return NativeFullScreenDiffBody(
-                oldText: oldText,
-                newText: newText,
-                filePath: filePath,
-                precomputedLines: precomputedLines,
+                document: document,
                 palette: palette,
                 readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenDiff,
-                    filePath: filePath
+                    filePath: document.filePath
                 )
             )
         case .markdown(let text, let filePath, let wsContext):
@@ -1152,14 +1149,9 @@ final class FullScreenCodeViewController: UIViewController {
             if case .html(let text, let filePath) = content {
                 return .code(content: text, language: "html", filePath: filePath, startLine: 1)
             }
-            if case .diff(_, _, let filePath, let precomputedLines) = content,
-               Self.isHTMLFilePath(filePath),
-               let lines = precomputedLines {
-                let fullNewText = lines
-                    .filter { $0.kind != .removed }
-                    .map(\.text)
-                    .joined(separator: "\n")
-                return .html(content: fullNewText, filePath: filePath)
+            if case .diff(let document) = content,
+               Self.isHTMLFilePath(document.filePath) {
+                return .html(content: document.reconstructedNewSideText, filePath: document.filePath)
             }
             // Document types: toggle to source view
             if case .latex(let text, let filePath) = content {
@@ -1181,8 +1173,8 @@ final class FullScreenCodeViewController: UIViewController {
             return showSource ? String(localized: "Reader") : String(localized: "Source")
         case .html:
             return showSource ? String(localized: "Preview") : String(localized: "Source")
-        case .diff(_, _, let filePath, let precomputedLines):
-            guard Self.isHTMLFilePath(filePath), precomputedLines != nil else { return nil }
+        case .diff(let document):
+            guard Self.isHTMLFilePath(document.filePath) else { return nil }
             return showSource ? String(localized: "Diff") : String(localized: "Render")
         case .latex, .orgMode, .mermaid:
             return showSource ? String(localized: "Rendered") : String(localized: "Source")
@@ -1374,8 +1366,8 @@ final class FullScreenCodeViewController: UIViewController {
             return text
         case .plainText(let text, _):
             return text
-        case .diff(_, let newText, _, _):
-            return newText
+        case .diff(let document):
+            return document.copyText
         case .markdown(let text, _, _):
             return text
         case .html(let text, _):
@@ -1441,7 +1433,7 @@ final class FullScreenCodeViewController: UIViewController {
             return .plainText(stream?.snapshot.text ?? text)
         case .terminal(let text, _, let stream):
             return .plainText(stream?.snapshot.output ?? text)
-        case .diff(_, let newText, _, _): return .plainText(newText)
+        case .diff(let document): return .plainText(document.copyText)
         case .liveSource(let snapshot, _):
             return .plainText(snapshot.text)
         }
@@ -1773,6 +1765,18 @@ extension FullScreenCodeViewController {
 
     func toggleSourceForTesting() {
         toggleSource()
+    }
+
+    var presentationCopyTextForTesting: String {
+        makePresentation().copyText
+    }
+
+    var presentationBodyContentForTesting: FullScreenCodeContent {
+        makePresentation().bodyContent
+    }
+
+    var shareableContentForTesting: FileShareService.ShareableContent? {
+        shareableContent()
     }
 }
 #endif
