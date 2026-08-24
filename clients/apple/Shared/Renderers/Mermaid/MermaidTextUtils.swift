@@ -405,6 +405,7 @@ enum MermaidTextUtils {
     enum TextAlignment {
         case left
         case center
+        case right
     }
 
     /// Draw text centered in a rect, supporting multi-line text.
@@ -483,6 +484,9 @@ enum MermaidTextUtils {
             case .center:
                 let blockWidth = width ?? bounds.width
                 x = origin.x + (blockWidth - bounds.width) / 2
+            case .right:
+                let blockWidth = width ?? bounds.width
+                x = origin.x + (blockWidth - bounds.width)
             }
 
             drawCTLine(ctLine, at: CGPoint(x: x, y: currentY), fontSize: fontSize, in: ctx)

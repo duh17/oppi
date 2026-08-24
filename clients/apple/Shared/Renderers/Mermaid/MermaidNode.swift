@@ -23,34 +23,49 @@ enum MermaidDiagram: Equatable, Sendable {
 ///
 /// Spec: https://mermaid.js.org/syntax/xyChart.html
 ///
+/// Official `xychart` / `xychart-beta` orientation (header token only).
+///
+/// Leftover tokens that are not `horizontal` or `vertical` stay
+/// `.unsupported` so the renderer can fail visibly instead of drawing
+/// a silent vertical chart.
+enum XYChartOrientation: Equatable, Sendable {
+    case vertical
+    case horizontal
+    case unsupported(String)
+}
+
 /// Phone-first subset: title, categorical x-axis, numeric y-axis
-/// (optional title + `min --> max`), `bar` / `line` series, and a
-/// legend only for named series. Horizontal orientation, YAML theme
-/// config, and bar data labels are not modeled.
+/// (optional title + `min --> max`), `bar` / `line` series, official
+/// `horizontal` / `vertical` orientation, and a legend only for named
+/// series. YAML theme config and bar data labels are not modeled.
 struct XYChartDiagram: Equatable, Sendable {
     let title: String?
     let xAxis: XYChartXAxis
     let yAxis: XYChartYAxis
     /// Series in declaration order. Bars draw behind lines.
     let series: [XYChartSeries]
+    let orientation: XYChartOrientation
 
     init(
         title: String?,
         xAxis: XYChartXAxis,
         yAxis: XYChartYAxis,
-        series: [XYChartSeries]
+        series: [XYChartSeries],
+        orientation: XYChartOrientation = .vertical
     ) {
         self.title = title
         self.xAxis = xAxis
         self.yAxis = yAxis
         self.series = series
+        self.orientation = orientation
     }
 
     static let empty = Self(
         title: nil,
         xAxis: .categorical(title: nil, categories: []),
         yAxis: XYChartYAxis(title: nil, min: nil, max: nil),
-        series: []
+        series: [],
+        orientation: .vertical
     )
 }
 

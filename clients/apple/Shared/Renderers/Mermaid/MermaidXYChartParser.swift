@@ -13,10 +13,14 @@ import Foundation
 /// - numeric `x-axis` `min --> max`
 /// - numeric `y-axis` title + optional `min --> max`
 /// - `bar` / `line` with optional series name
+/// - official header orientation: `horizontal` / `vertical`
 /// - `%%` comments and blank lines
 ///
-/// Deferred: YAML theme/config, `horizontal` orientation, bar data labels,
-/// accessibility titles, and other missing diagram types.
+/// Leftover header tokens that are not `horizontal` / `vertical` become
+/// `XYChartOrientation.unsupported` so the renderer can fail visibly.
+///
+/// Deferred: YAML theme/config, bar data labels, accessibility titles,
+/// and other missing diagram types.
 enum MermaidXYChartParser {
 
     nonisolated static func parse(lines: [String]) -> XYChartDiagram {
@@ -24,16 +28,17 @@ enum MermaidXYChartParser {
         var xAxis = XYChartXAxis.categorical(title: nil, categories: [])
         var yAxis = XYChartYAxis(title: nil, min: nil, max: nil)
         var series: [XYChartSeries] = []
+        var orientation = XYChartOrientation.vertical
 
         for rawLine in lines {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
             if line.hasPrefix("%%") { continue }
 
-            if consumingKeyword(line, "xychart-beta") != nil
-                || consumingKeyword(line, "xychart") != nil
+            if let remainder = consumingKeyword(line, "xychart-beta")
+                ?? consumingKeyword(line, "xychart")
             {
-                // Orientation (`horizontal` / `vertical`) is out of scope.
+                orientation = parseOrientation(remainder)
                 continue
             }
 
@@ -67,7 +72,32 @@ enum MermaidXYChartParser {
             }
         }
 
-        return XYChartDiagram(title: title, xAxis: xAxis, yAxis: yAxis, series: series)
+        return XYChartDiagram(
+            title: title,
+            xAxis: xAxis,
+            yAxis: yAxis,
+            series: series,
+            orientation: orientation
+        )
+    }
+
+    /// Official jison: orientation is only `horizontal` or `vertical` on
+    /// the `xychart` / `xychart-beta` header. Anything else is leftover.
+    private static func parseOrientation(_ remainder: String) -> XYChartOrientation {
+        let trimmed = remainder.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return .vertical }
+        let tokens = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let first = tokens.first else { return .vertical }
+        switch first.lowercased() {
+        case "horizontal" where tokens.count == 1:
+            return .horizontal
+        case "vertical" where tokens.count == 1:
+            return .vertical
+        case "horizontal", "vertical":
+            return .unsupported(tokens.dropFirst().joined(separator: " "))
+        default:
+            return .unsupported(first)
+        }
     }
 
     // MARK: - Axis

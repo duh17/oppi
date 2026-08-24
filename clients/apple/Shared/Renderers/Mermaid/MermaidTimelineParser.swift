@@ -10,9 +10,10 @@ import Foundation
 //   parse():                   MermaidTimelineParser.parse(lines: body)
 //   renderer dispatch:         MermaidTimelineRenderer.layout(diagram, configuration:)
 
-/// Direction declared after the `timeline` keyword (v11.14.0+).
+/// Direction declared after the `timeline` / `timeline-beta` keyword (v11.14.0+).
 ///
-/// Parsed for conformance; the native renderer draws left-to-right only.
+/// Official grammar accepts only `LR` (default) and `TD`. Any other leftover
+/// header token is period text, not a silent fallback direction.
 enum TimelineDirection: String, Equatable, Sendable {
     case LR
     case TD
@@ -78,8 +79,8 @@ struct TimelineDiagram: Equatable, Sendable {
 /// - bare text lines, which are periods with no events
 /// - periods before any `section`, collected into an implicit unnamed section
 /// - `%%` comments and full-line `#` comments
-/// - the `timeline [LR|TD]` header line when callers pass it through
-///   (the shared parser normally strips the keyword)
+/// - the `timeline` / `timeline-beta` header line with optional `LR`/`TD`
+///   when callers pass it through (the shared parser keeps the keyword)
 ///
 /// Event splitting follows the official grammar: a colon separates events
 /// only when followed by whitespace or end of line, so embedded colons such
@@ -110,19 +111,18 @@ enum MermaidTimelineParser {
                 continue
             }
 
-            // The shared parser strips the `timeline` keyword before dispatch,
-            // but tolerate it here (with optional LR/TD) so this parser also
-            // works standalone on full diagram source.
+            // The shared parser keeps the `timeline` / `timeline-beta` header
+            // so this parser can read official `LR` / `TD`. Leftover tokens
+            // that are not those two directions become period text.
             if !state.headerChecked {
                 state.headerChecked = true
-                let lower = line.lowercased()
-                if lower == "timeline" { continue }
-                if lower.hasPrefix("timeline ") || lower.hasPrefix("timeline\t") {
-                    let rest = line.dropFirst("timeline".count).trimmingCharacters(in: .whitespaces)
-                    if let dir = TimelineDirection(rawValue: rest.uppercased()) {
+                if let header = consumeTimelineHeader(line) {
+                    switch header {
+                    case .empty:
+                        break
+                    case .direction(let dir):
                         state.direction = dir
-                    } else if !rest.isEmpty {
-                        // Header line carrying real content: parse the remainder.
+                    case .leftover(let rest):
                         handleStatement(rest, state: &state)
                     }
                     continue
@@ -218,6 +218,33 @@ enum MermaidTimelineParser {
             TimelineSection(name: state.currentSectionName, periods: state.currentPeriods)
         )
         state.currentPeriods = []
+    }
+
+    // MARK: - Header
+
+    private enum TimelineHeader {
+        case empty
+        case direction(TimelineDirection)
+        case leftover(String)
+    }
+
+    /// Official jison: `timeline`, `timeline LR`, `timeline TD`.
+    /// `timeline-beta` is accepted as an alias. Any other leftover token
+    /// is period text, matching the official lexer.
+    private static func consumeTimelineHeader(_ line: String) -> TimelineHeader? {
+        let lower = line.lowercased()
+        for keyword in ["timeline-beta", "timeline"] {
+            if lower == keyword { return .empty }
+            if lower.hasPrefix(keyword + " ") || lower.hasPrefix(keyword + "\t") {
+                let rest = line.dropFirst(keyword.count).trimmingCharacters(in: .whitespaces)
+                if rest.isEmpty { return .empty }
+                if let dir = TimelineDirection(rawValue: rest.uppercased()) {
+                    return .direction(dir)
+                }
+                return .leftover(rest)
+            }
+        }
+        return nil
     }
 
     // MARK: - Line helpers

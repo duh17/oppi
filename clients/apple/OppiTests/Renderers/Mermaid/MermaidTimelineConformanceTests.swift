@@ -171,18 +171,41 @@ struct MermaidTimelineConformanceTests {
         #expect(period.events == ["10:30 sync", "follow-up"])
     }
 
-    /// SPEC: "Direction (v11.14.0+)" — `timeline LR` / `timeline TD` after
-    /// the keyword are accepted and ignored by the renderer in v1.
-    @Test func directionTokensAreAcceptedAndIgnored() {
-        for header in ["timeline", "timeline LR", "timeline TD"] {
+    /// SPEC: "Direction (v11.14.0+)" — official header tokens are `LR`
+    /// (default) and `TD`. `timeline-beta` is accepted as a timeline alias.
+    @Test func officialDirectionTokensAreParsed() {
+        for header in ["timeline", "timeline LR", "timeline TD", "timeline-beta", "timeline-beta TD"] {
             let diagram = Self.parse("\(header)\ntitle T\n2001 : A")
             #expect(diagram.title == "T")
             let periods = diagram.sections.flatMap(\.periods)
             #expect(periods.map(\.label) == ["2001"])
         }
         #expect(Self.parse("timeline TD\n2001 : A").direction == .TD)
+        #expect(Self.parse("timeline-beta TD\n2001 : A").direction == .TD)
         #expect(Self.parse("timeline LR\n2001 : A").direction == .LR)
         #expect(Self.parse("2001 : A").direction == .LR)
+    }
+
+    /// Official lexer only has `timeline LR` / `timeline TD`. Leftover
+    /// tokens such as `RL` / `TB` are period text, not a silent LR draw.
+    @Test func leftoverTimelineOrientationsBecomePeriodText() {
+        let rl = Self.parse("timeline RL\n2001 : A")
+        #expect(rl.direction == .LR)
+        #expect(rl.sections.flatMap(\.periods).map(\.label) == ["RL", "2001"])
+
+        let tb = Self.parse("timeline TB\n2001 : A")
+        #expect(tb.direction == .LR)
+        #expect(tb.sections.flatMap(\.periods).map(\.label) == ["TB", "2001"])
+    }
+
+    @Test func sharedParserAcceptsTimelineBetaTD() {
+        let result = MermaidParser().parse("timeline-beta TD\n2001 : A\n2002 : B")
+        guard case .timeline(let diagram) = result else {
+            Issue.record("Expected timeline for timeline-beta, got \(result)")
+            return
+        }
+        #expect(diagram.direction == .TD)
+        #expect(diagram.sections.flatMap(\.periods).map(\.label) == ["2001", "2002"])
     }
 
     @Test func commentsAreIgnored() {
@@ -401,6 +424,71 @@ struct MermaidTimelineConformanceTests {
         // Terminal arrow points forward past the last period.
         #expect(model.spineArrowTipX > model.spineEndX)
         #expect(model.spineArrowTipX <= model.size.width + 0.5)
+    }
+
+    /// SPEC: `timeline TD` is top-down chronology, not a silent LR spine.
+    @Test func tdTimelineRendersTopDownChronology() {
+        let model = Self.renderLayout("""
+        timeline TD
+        title History of Social Media Platform
+        2002 : LinkedIn
+        2004 : Facebook
+             : Google
+        2005 : YouTube
+        2006 : Twitter
+        """)
+        #expect(model.direction == .TD)
+
+        let periods = model.sections.flatMap(\.periods)
+        #expect(periods.map(\.label) == ["2002", "2004", "2005", "2006"])
+
+        // Chronology reads top to bottom along one vertical spine.
+        for (earlier, later) in zip(periods, periods.dropFirst()) {
+            #expect(earlier.centerY < later.centerY)
+            #expect(abs(earlier.centerX - later.centerX) < 24)
+        }
+        #expect(model.spineStartY < model.spineEndY)
+        #expect(abs(model.spineStartX - model.spineEndX) < 0.5)
+        #expect(abs(model.spineX - model.spineStartX) < 0.5)
+        #expect(model.spineArrowTipY > model.spineEndY)
+
+        // Events hang to the right of the spine, still stacked in source order.
+        let stacked = periods[1]
+        #expect(stacked.eventBoxes.count == 2)
+        #expect(stacked.eventBoxes[0].frame.minY < stacked.eventBoxes[1].frame.minY)
+        for period in periods {
+            #expect(period.eventBoxes.count == period.events.count)
+            for box in period.eventBoxes {
+                #expect(box.frame.minX >= model.spineX - 0.5)
+                #expect(box.frame.height > 0)
+            }
+        }
+    }
+
+    @Test func timelineBetaTDRendersTopDownNotLR() {
+        let model = Self.renderLayout("""
+        timeline-beta TD
+        2001 : A
+        2002 : B
+        2003 : C
+        """)
+        #expect(model.direction == .TD)
+        let periods = model.sections.flatMap(\.periods)
+        #expect(periods.count == 3)
+        #expect(periods[0].centerY < periods[1].centerY)
+        #expect(periods[1].centerY < periods[2].centerY)
+        #expect(abs(periods[0].centerX - periods[2].centerX) < 24)
+    }
+
+    @Test func tdNamedSectionsStackVertically() {
+        let model = Self.renderLayout("""
+        timeline TD
+        \(Self.industrialRevolution)
+        """)
+        #expect(model.direction == .TD)
+        #expect(model.sections.count == 2)
+        #expect(model.sections[0].bandFrame.maxY <= model.sections[1].bandFrame.minY + 0.5)
+        #expect(model.sections[0].bandFrame.minX >= model.sections[1].bandFrame.minX - 0.5)
     }
 
     @Test func emptyTimelineIsPlaceholder() {

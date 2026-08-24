@@ -155,7 +155,7 @@ struct MermaidParser: DocumentParser, Sendable {
             return Header(type: .state, direction: nil)
         case "pie":
             return Header(type: .pie, direction: nil)
-        case "timeline":
+        case "timeline", "timeline-beta":
             return Header(type: .timeline, direction: nil)
         case "classdiagram", "classdiagram-v2":
             return Header(type: .classDiagram, direction: nil)

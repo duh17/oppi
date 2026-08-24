@@ -25,7 +25,6 @@ import Testing
 //
 // DEFERRED:
 // [ ] YAML theme/config
-// [ ] horizontal orientation
 // [ ] bar data labels
 // [ ] line per-point text labels
 // [ ] accTitle / accDescr
@@ -157,6 +156,75 @@ struct MermaidXYChartConformanceTests {
         ])
         #expect(diagram.series.map(\.name) == ["Revenue", "Forecast"])
         #expect(diagram.series.map(\.kind) == [.bar, .line])
+    }
+
+    @Test func parsesHorizontalAndVerticalHeaderOrientation() {
+        let horizontal = MermaidXYChartParser.parse(lines: [
+            "xychart horizontal",
+            "    x-axis [A, B, C]",
+            "    bar [1, 2, 3]",
+        ])
+        let betaHorizontal = MermaidXYChartParser.parse(lines: [
+            "xychart-beta horizontal",
+            "    x-axis [A, B]",
+            "    line [4, 5]",
+        ])
+        let vertical = MermaidXYChartParser.parse(lines: [
+            "xychart vertical",
+            "    bar [1, 2]",
+        ])
+        let implicit = MermaidXYChartParser.parse(lines: [
+            "xychart",
+            "    bar [1, 2]",
+        ])
+        #expect(horizontal.orientation == .horizontal)
+        #expect(betaHorizontal.orientation == .horizontal)
+        #expect(vertical.orientation == .vertical)
+        #expect(implicit.orientation == .vertical)
+        #expect(horizontal.series.first?.values == [1, 2, 3])
+    }
+
+    @Test func sharedParserKeepsHorizontalOnXYChartBetaHeader() {
+        let result = MermaidParser().parse("""
+        xychart-beta horizontal
+            x-axis [A, B, C]
+            y-axis "n" 0 --> 10
+            bar [1, 2, 3]
+        """)
+        guard case .xyChart(let diagram) = result else {
+            Issue.record("Expected xyChart, got \(result)")
+            return
+        }
+        #expect(diagram.orientation == .horizontal)
+        #expect(diagram.series.first?.values == [1, 2, 3])
+    }
+
+    /// Official orientation tokens are only `horizontal` / `vertical` on
+    /// the header line. Leftovers must not silently render vertical.
+    @Test func leftoverXYOrientationFailsVisibly() {
+        let diagonal = MermaidXYChartParser.parse(lines: [
+            "xychart diagonal",
+            "    x-axis [A, B]",
+            "    bar [1, 2]",
+        ])
+        let extra = MermaidXYChartParser.parse(lines: [
+            "xychart-beta horizontal sideways",
+            "    bar [1, 2, 3]",
+        ])
+        #expect(diagonal.orientation == .unsupported("diagonal"))
+        guard case .unsupported(let leftover) = extra.orientation else {
+            Issue.record("Expected unsupported leftover after horizontal, got \(extra.orientation)")
+            return
+        }
+        #expect(leftover.localizedCaseInsensitiveContains("sideways"))
+
+        let diagonalLayout = layoutXY(diagonal, maxWidth: 360)
+        let extraLayout = layoutXY(extra, maxWidth: 360)
+        #expect(diagonalLayout.isPlaceholder)
+        #expect(extraLayout.isPlaceholder)
+        #expect(diagonalLayout.placeholderText?.localizedCaseInsensitiveContains("orientation") == true)
+        #expect(diagonalLayout.placeholderText?.localizedCaseInsensitiveContains("diagonal") == true)
+        #expect(extraLayout.placeholderText?.localizedCaseInsensitiveContains("orientation") == true)
     }
 
     @Test func commentsAndBlanksIgnored() {
@@ -478,6 +546,86 @@ struct MermaidXYChartConformanceTests {
         #expect(size.width > 0)
         #expect(size.width <= 360)
         #expect(size.height > 0)
+    }
+
+    /// Official horizontal orientation: categorical x-axis sits on the
+    /// left, numeric y-axis runs along the top, bars grow sideways.
+    @Test func horizontalChartIsNotASilentVerticalChart() {
+        let diagram = MermaidXYChartParser.parse(lines: [
+            "xychart horizontal",
+            "    title Sales",
+            "    x-axis [A, B, C]",
+            "    y-axis \"n\" 0 --> 10",
+            "    bar [2, 5, 9]",
+        ])
+        #expect(diagram.orientation == .horizontal)
+        let layout = layoutXY(diagram, maxWidth: 360)
+        #expect(layout.isPlaceholder == false)
+        guard let plot = layout.graphResult.nodePositions["plot"],
+              let size = layout.customSize
+        else {
+            Issue.record("Expected horizontal plot")
+            return
+        }
+        #expect(size.width <= 360)
+
+        let categoryFrames = numberedFrames(layout.graphResult.nodePositions, prefix: "x-")
+        let valueFrames = numberedFrames(layout.graphResult.nodePositions, prefix: "y-")
+        #expect(categoryFrames.count >= 2)
+        #expect(valueFrames.count >= 2)
+
+        for pair in zip(categoryFrames, categoryFrames.dropFirst()) {
+            #expect(pair.0.frame.midY < pair.1.frame.midY, "categories must stack top-down")
+        }
+        for pair in zip(valueFrames, valueFrames.dropFirst()) {
+            #expect(pair.0.frame.midX < pair.1.frame.midX, "value ticks must run left-to-right")
+        }
+        if let firstCategory = categoryFrames.first?.frame {
+            #expect(firstCategory.maxX <= plot.minX + 0.5, "categories belong on the left")
+            #expect(firstCategory.midY >= plot.minY - 8)
+        }
+        if let firstValue = valueFrames.first?.frame {
+            #expect(firstValue.maxY <= plot.minY + 0.5, "numeric axis belongs above the plot")
+        }
+        #expect(draw(layout) != nil)
+    }
+
+    @Test func horizontalBetaChartDrawsSidewaysBars() {
+        let diagram = MermaidXYChartParser.parse(lines: [
+            "xychart-beta horizontal",
+            "    x-axis [Q1, Q2]",
+            "    bar [3, 8]",
+        ])
+        let layout = layoutXY(diagram, maxWidth: 360)
+        guard let plot = layout.graphResult.nodePositions["plot"] else {
+            Issue.record("Expected plot")
+            return
+        }
+        let categories = numberedFrames(layout.graphResult.nodePositions, prefix: "x-")
+        #expect(categories.count == 2)
+        #expect(categories[0].frame.midY < categories[1].frame.midY)
+        #expect(plot.width > 40)
+        #expect(draw(layout) != nil)
+    }
+
+    /// Negative-only range: bars must grow from the zero-adjacent edge
+    /// (`yMax`), not invert from `yMin` as the baseline.
+    @Test func negativeOnlyBarsGrowFromZeroAdjacentEdge() {
+        let plot = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let rect = MermaidXYChartRenderer.barRectForValue(
+            -4, x: 10, width: 10, yMin: -10, yMax: -1, plot: plot
+        )
+        // yMax (-1) is the top of the plot; yMin (-10) is the bottom.
+        #expect(rect.minY < 8, "bar should start at the zero-adjacent top edge")
+        #expect(rect.maxY < 55, "bar must not grow from yMin at the plot bottom")
+        #expect(rect.maxY > 20)
+        #expect(rect.height > 20)
+
+        let positive = MermaidXYChartRenderer.barRectForValue(
+            4, x: 10, width: 10, yMin: 1, yMax: 10, plot: plot
+        )
+        #expect(positive.maxY > 92, "positive-only bars still grow from yMin")
+        #expect(positive.minY > 40)
     }
 
     @Test func contrastHoldsInLightAndDark() {

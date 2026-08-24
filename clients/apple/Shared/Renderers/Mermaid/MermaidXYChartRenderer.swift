@@ -9,9 +9,13 @@ import Foundation
 /// `customDraw` / `customSize`, same pattern as pie and gantt.
 ///
 /// - Stay within `maxWidth`. Title and axis titles wrap/truncate.
+/// - Official `horizontal` swaps the visual axes: categories on the left,
+///   numeric values along the top, bars grow sideways.
+/// - Leftover orientations become a visible placeholder.
 /// - X labels skip rather than overlap. First/last shrink (ellipsis)
 ///   to stay inside the bitmap; last is dropped if they still collide.
 /// - Values outside the declared y-range clip; they do not expand layout.
+/// - Bars grow from the zero-adjacent edge (never invert from yMin).
 /// - Bars draw behind lines. Legend only for named series.
 /// - Theme tokens only: foreground / foregroundDim / background / accents.
 enum MermaidXYChartRenderer {
@@ -49,10 +53,25 @@ enum MermaidXYChartRenderer {
         let theme = configuration.theme
         let fontSize = configuration.fontSize
 
+        if case .unsupported(let token) = diagram.orientation {
+            return MermaidFlowchartRenderer().placeholderLayout(
+                text: "Unsupported XY chart orientation: \(token)",
+                configuration: configuration
+            )
+        }
+
         let prepared = prepare(diagram)
         guard !prepared.categories.isEmpty, !prepared.series.isEmpty else {
             return MermaidFlowchartRenderer().placeholderLayout(
                 text: "Empty XY chart",
+                configuration: configuration
+            )
+        }
+
+        if diagram.orientation == .horizontal {
+            return layoutHorizontal(
+                diagram,
+                prepared: prepared,
                 configuration: configuration
             )
         }
@@ -456,6 +475,414 @@ enum MermaidXYChartRenderer {
         )
     }
 
+    /// Official horizontal orientation: categorical x-axis on the left,
+    /// numeric y-axis along the top, bars grow sideways from the
+    /// zero-adjacent edge.
+    private static func layoutHorizontal(
+        _ diagram: XYChartDiagram,
+        prepared: PreparedChart,
+        configuration: RenderConfiguration
+    ) -> MermaidFlowchartRenderer.FlowchartLayout {
+        let theme = configuration.theme
+        let fontSize = configuration.fontSize
+        let maxWidth = max(configuration.maxWidth, 1)
+        let contentWidth = max(maxWidth - outerMargin * 2, 40)
+
+        let titleFont = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+        let axisTitleFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        let labelFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.75, nil)
+        let legendFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+
+        var y: CGFloat = outerMargin
+        var nodePositions: [String: CGRect] = [:]
+        var nodeLabels: [String: String] = [:]
+
+        let resolvedTitle = (diagram.title?.isEmpty == false) ? diagram.title : nil
+        var wrappedTitle: String?
+        if let title = resolvedTitle {
+            let wrapped = wrapTruncated(
+                title, font: titleFont, fontSize: fontSize, maxWidth: contentWidth, maxLines: titleMaxLines
+            )
+            wrappedTitle = wrapped
+            let titleSize = MermaidTextUtils.measureText(
+                wrapped, font: titleFont, fontSize: fontSize
+            )
+            nodeLabels["$title"] = wrapped
+            nodePositions["title"] = CGRect(
+                x: outerMargin, y: y, width: contentWidth, height: titleSize.height
+            )
+            y += titleSize.height + titleGap
+        }
+
+        if let yTitle = prepared.yTitle {
+            let wrapped = wrapTruncated(
+                yTitle,
+                font: axisTitleFont,
+                fontSize: fontSize * 0.85,
+                maxWidth: contentWidth,
+                maxLines: axisTitleMaxLines
+            )
+            let size = MermaidTextUtils.measureText(
+                wrapped, font: axisTitleFont, fontSize: fontSize * 0.85
+            )
+            nodeLabels["$yTitle"] = wrapped
+            nodePositions["yTitle"] = CGRect(
+                x: outerMargin, y: y, width: contentWidth, height: size.height
+            )
+            y += size.height + axisTitleGap
+        }
+
+        let rawCategoryWidths = prepared.categories.map { textWidth($0, font: labelFont) }
+        let categoryCol = min(
+            max(rawCategoryWidths.max() ?? 20, 20),
+            max(contentWidth * 0.36, 40)
+        )
+        let plotLeft = outerMargin + categoryCol + yLabelGap
+        let plotWidth = max(maxWidth - plotLeft - outerMargin, 40)
+        let rowHeight = max(fontSize * 1.8, 24)
+        let plotHeight = max(CGFloat(prepared.categories.count) * rowHeight, 80)
+
+        let yTickHeight = fontSize * 0.75 * 1.4
+        let yTicks = niceTicks(min: prepared.yMin, max: prepared.yMax)
+        let yTickLabels = yTicks.map { formatAxisNumber($0) }
+        let yTickWidths = yTickLabels.map { textWidth($0, font: labelFont) }
+        let tickCenters = yTicks.map { tick in
+            xPosition(tick, min: prepared.yMin, max: prepared.yMax, plot: CGRect(
+                x: plotLeft, y: 0, width: plotWidth, height: 1
+            ))
+        }
+        let shownY = xLabelsToShow(
+            labels: yTickLabels,
+            widths: yTickWidths,
+            slotCenters: tickCenters,
+            minGap: xLabelMinGap,
+            maxWidth: maxWidth,
+            font: labelFont
+        )
+        for item in shownY {
+            nodeLabels["$y-\(item.index)"] = item.text
+            nodePositions["y-\(item.index)"] = CGRect(
+                x: item.x,
+                y: y,
+                width: item.width,
+                height: yTickHeight
+            )
+        }
+        nodePositions["yAxis"] = CGRect(
+            x: plotLeft, y: y, width: plotWidth, height: yTickHeight
+        )
+        y += yTickHeight + xLabelGap
+
+        let plotTop = y
+        let plotRect = CGRect(x: plotLeft, y: plotTop, width: plotWidth, height: plotHeight)
+        nodePositions["plot"] = plotRect
+
+        let slotHeight = plotHeight / CGFloat(max(prepared.categories.count, 1))
+        let slotCenters = prepared.categories.indices.map { index in
+            plotTop + (CGFloat(index) + 0.5) * slotHeight
+        }
+        let xLabelHeight = fontSize * 0.75 * 1.4
+        for (index, label) in prepared.categories.enumerated() {
+            let text = truncateToWidth(label, maxWidth: categoryCol, font: labelFont)
+            let width = min(textWidth(text, font: labelFont), categoryCol)
+            nodeLabels["$x-\(index)"] = text
+            nodePositions["x-\(index)"] = CGRect(
+                x: outerMargin + categoryCol - width,
+                y: slotCenters[index] - xLabelHeight / 2,
+                width: width,
+                height: xLabelHeight
+            )
+        }
+        nodeLabels["$xLabels"] = prepared.categories.joined(separator: "\n")
+        nodePositions["xAxis"] = CGRect(
+            x: outerMargin, y: plotTop, width: categoryCol, height: plotHeight
+        )
+        y = plotRect.maxY
+
+        if let xTitle = prepared.xTitle {
+            y += axisTitleGap
+            let wrapped = wrapTruncated(
+                xTitle,
+                font: axisTitleFont,
+                fontSize: fontSize * 0.85,
+                maxWidth: plotWidth,
+                maxLines: axisTitleMaxLines
+            )
+            let size = MermaidTextUtils.measureText(
+                wrapped, font: axisTitleFont, fontSize: fontSize * 0.85
+            )
+            nodeLabels["$xTitle"] = wrapped
+            nodePositions["xTitle"] = CGRect(
+                x: plotLeft, y: y, width: plotWidth, height: size.height
+            )
+            y += size.height
+        }
+
+        let named = prepared.series.enumerated().compactMap { index, series -> (Int, String)? in
+            guard let name = series.name, !name.isEmpty else { return nil }
+            return (index, name)
+        }
+        var legendRows: [LegendRow] = []
+        if !named.isEmpty {
+            y += legendGap
+            let rows = wrapLegend(
+                items: named,
+                font: legendFont,
+                fontSize: fontSize * 0.85,
+                maxWidth: contentWidth
+            )
+            legendRows = rows
+            let legendHeight = rows.reduce(CGFloat(0)) { $0 + $1.height }
+            nodePositions["legend"] = CGRect(
+                x: outerMargin, y: y, width: contentWidth, height: legendHeight
+            )
+            for (index, name) in named {
+                nodeLabels["$legend-\(index)"] = name
+            }
+            y += legendHeight
+        }
+
+        let totalHeight = y + outerMargin
+        let size = CGSize(width: maxWidth, height: totalHeight)
+
+        let capturedTitle = wrappedTitle
+        let capturedTitleRect = nodePositions["title"]
+        let capturedYTitle = nodeLabels["$yTitle"]
+        let capturedYTitleRect = nodePositions["yTitle"]
+        let capturedXTitle = nodeLabels["$xTitle"]
+        let capturedXTitleRect = nodePositions["xTitle"]
+        let capturedLegendOrigin = nodePositions["legend"]?.origin ?? .zero
+        let capturedColors = seriesColors(theme: theme)
+        let capturedPrepared = prepared
+        let capturedYTicks = yTicks
+        let capturedShownY = shownY
+        let capturedSlotCenters = slotCenters
+        let capturedSlotHeight = slotHeight
+        let capturedLegendRows = legendRows
+        let capturedValueTickY = nodePositions["yAxis"]?.minY ?? 0
+        let capturedCategoryItems: [(text: String, frame: CGRect)] = prepared.categories.indices.compactMap { index in
+            guard let frame = nodePositions["x-\(index)"],
+                  let text = nodeLabels["$x-\(index)"]
+            else { return nil }
+            return (text, frame)
+        }
+
+        let customDraw: @Sendable (CGContext, CGPoint) -> Void = { ctx, origin in
+            let ox = origin.x
+            let oy = origin.y
+
+            if let title = capturedTitle, let rect = capturedTitleRect {
+                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+                MermaidTextUtils.drawText(
+                    title,
+                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
+                    width: rect.width,
+                    font: font,
+                    fontSize: fontSize,
+                    foregroundColor: theme.foreground,
+                    alignment: .left,
+                    in: ctx
+                )
+            }
+
+            if let yTitle = capturedYTitle, let rect = capturedYTitleRect {
+                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+                MermaidTextUtils.drawText(
+                    yTitle,
+                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
+                    width: rect.width,
+                    font: font,
+                    fontSize: fontSize * 0.85,
+                    foregroundColor: theme.foregroundDim,
+                    alignment: .left,
+                    in: ctx
+                )
+            }
+
+            let plot = plotRect.offsetBy(dx: ox, dy: oy)
+            drawHorizontalGridAndAxes(
+                ctx: ctx,
+                plot: plot,
+                ticks: capturedYTicks,
+                yMin: capturedPrepared.yMin,
+                yMax: capturedPrepared.yMax,
+                theme: theme
+            )
+
+            let labelFontLocal = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.75, nil)
+            for item in capturedShownY {
+                MermaidTextUtils.drawText(
+                    item.text,
+                    at: CGPoint(x: ox + item.x, y: oy + capturedValueTickY),
+                    width: item.width,
+                    font: labelFontLocal,
+                    fontSize: fontSize * 0.75,
+                    foregroundColor: theme.foregroundDim,
+                    alignment: .center,
+                    in: ctx
+                )
+            }
+
+            let bars = capturedPrepared.series.enumerated().filter { $0.element.kind == .bar }
+            let barCount = max(bars.count, 1)
+            let groupHeight = capturedSlotHeight * barSlotFraction
+            let singleBarHeight = groupHeight / CGFloat(barCount)
+            for (groupIndex, item) in bars.enumerated() {
+                let color = capturedColors[item.offset % capturedColors.count]
+                for (categoryIndex, value) in item.element.values.enumerated()
+                where categoryIndex < capturedPrepared.categories.count {
+                    let center = oy + capturedSlotCenters[categoryIndex]
+                    let groupTop = center - groupHeight / 2
+                    let barY = groupTop + CGFloat(groupIndex) * singleBarHeight
+                    let barRect = barRectForHorizontalValue(
+                        value,
+                        y: barY,
+                        height: max(singleBarHeight - 1, 1),
+                        yMin: capturedPrepared.yMin,
+                        yMax: capturedPrepared.yMax,
+                        plot: plot
+                    )
+                    guard barRect.width > 0.5 else { continue }
+                    let radius = min(barCornerRadius, barRect.width / 2, barRect.height / 2)
+                    ctx.saveGState()
+                    ctx.setFillColor(color.copy(alpha: 0.82) ?? color)
+                    ctx.addPath(CGPath(
+                        roundedRect: barRect,
+                        cornerWidth: radius,
+                        cornerHeight: radius,
+                        transform: nil
+                    ))
+                    ctx.fillPath()
+                    ctx.restoreGState()
+                }
+            }
+
+            let lines = capturedPrepared.series.enumerated().filter { $0.element.kind == .line }
+            for item in lines {
+                let color = capturedColors[item.offset % capturedColors.count]
+                var points: [CGPoint] = []
+                for (categoryIndex, value) in item.element.values.enumerated()
+                where categoryIndex < capturedPrepared.categories.count {
+                    let x = xPosition(
+                        value,
+                        min: capturedPrepared.yMin,
+                        max: capturedPrepared.yMax,
+                        plot: plot
+                    )
+                    let yPoint = oy + capturedSlotCenters[categoryIndex]
+                    points.append(CGPoint(x: x, y: yPoint))
+                }
+                guard points.count >= 1 else { continue }
+                ctx.saveGState()
+                ctx.setStrokeColor(color)
+                ctx.setLineWidth(lineWidth)
+                ctx.setLineJoin(.round)
+                ctx.setLineCap(.round)
+                ctx.addLines(between: points)
+                ctx.strokePath()
+                ctx.setFillColor(color)
+                ctx.setStrokeColor(theme.background)
+                ctx.setLineWidth(1)
+                for point in points {
+                    let dot = CGRect(
+                        x: point.x - pointRadius,
+                        y: point.y - pointRadius,
+                        width: pointRadius * 2,
+                        height: pointRadius * 2
+                    )
+                    ctx.fillEllipse(in: dot)
+                    ctx.strokeEllipse(in: dot)
+                }
+                ctx.restoreGState()
+            }
+
+            for item in capturedCategoryItems {
+                MermaidTextUtils.drawText(
+                    item.text,
+                    at: CGPoint(x: ox + item.frame.minX, y: oy + item.frame.minY),
+                    width: item.frame.width,
+                    font: labelFontLocal,
+                    fontSize: fontSize * 0.75,
+                    foregroundColor: theme.foregroundDim,
+                    alignment: .right,
+                    in: ctx
+                )
+            }
+
+            if let xTitle = capturedXTitle, let rect = capturedXTitleRect {
+                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+                MermaidTextUtils.drawText(
+                    xTitle,
+                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
+                    width: rect.width,
+                    font: font,
+                    fontSize: fontSize * 0.85,
+                    foregroundColor: theme.foregroundDim,
+                    alignment: .center,
+                    in: ctx
+                )
+            }
+
+            if !capturedLegendRows.isEmpty {
+                var legendY = oy + capturedLegendOrigin.y
+                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+                for row in capturedLegendRows {
+                    var x = ox + capturedLegendOrigin.x
+                    for item in row.items {
+                        let color = capturedColors[item.seriesIndex % capturedColors.count]
+                        let swatch = CGRect(
+                            x: x,
+                            y: legendY + 1,
+                            width: swatchSize,
+                            height: swatchSize
+                        )
+                        ctx.saveGState()
+                        ctx.setFillColor(color)
+                        ctx.addPath(CGPath(
+                            roundedRect: swatch, cornerWidth: 2, cornerHeight: 2, transform: nil
+                        ))
+                        ctx.fillPath()
+                        ctx.restoreGState()
+                        MermaidTextUtils.drawText(
+                            item.text,
+                            at: CGPoint(x: swatch.maxX + swatchTextGap, y: legendY),
+                            font: font,
+                            fontSize: fontSize * 0.85,
+                            foregroundColor: theme.foreground,
+                            in: ctx
+                        )
+                        x += item.width + legendItemGap
+                    }
+                    legendY += row.height
+                }
+            }
+        }
+
+        return MermaidFlowchartRenderer.FlowchartLayout(
+            graphResult: GraphLayoutResult(
+                nodePositions: nodePositions, edgePaths: [], totalSize: size
+            ),
+            flowchart: .empty,
+            subgraphFrames: [:],
+            nodeLabels: nodeLabels,
+            nodeShapes: [:],
+            edgeLabels: [:],
+            edgeStyles: [:],
+            edgeIds: [:],
+            edgeKeys: [],
+            edgeStyleDirectives: [:],
+            edgeEndpointSubgraphs: [:],
+            classDefs: [:],
+            styleDirectives: [:],
+            fontSize: fontSize,
+            theme: theme,
+            isPlaceholder: false,
+            placeholderText: nil,
+            customDraw: customDraw,
+            customSize: size
+        )
+    }
+
     // MARK: - Prepared chart
 
     struct PreparedChart: Equatable, Sendable {
@@ -465,6 +892,7 @@ enum MermaidXYChartRenderer {
         let yTitle: String?
         let yMin: Double
         let yMax: Double
+        let orientation: XYChartOrientation
     }
 
     /// Resolve categories, trim series to the x-axis length, and lock the y-range.
@@ -516,7 +944,8 @@ enum MermaidXYChartRenderer {
             xTitle: xTitle,
             yTitle: emptyToNil(diagram.yAxis.title),
             yMin: yMin,
-            yMax: yMax
+            yMax: yMax,
+            orientation: diagram.orientation
         )
     }
 
@@ -743,7 +1172,41 @@ enum MermaidXYChartRenderer {
         return plot.maxY - CGFloat(t) * plot.height
     }
 
-    private static func barRectForValue(
+    private static func xPosition(
+        _ value: Double,
+        min: Double,
+        max: Double,
+        plot: CGRect
+    ) -> CGFloat {
+        let span = max - min
+        guard span > 0 else { return plot.midX }
+        let clipped = clipY(value, min: min, max: max)
+        let t = (clipped - min) / span
+        return plot.minX + CGFloat(t) * plot.width
+    }
+
+    private static func barRectForHorizontalValue(
+        _ value: Double,
+        y: CGFloat,
+        height: CGFloat,
+        yMin: Double,
+        yMax: Double,
+        plot: CGRect
+    ) -> CGRect {
+        let baseline = clipY(0, min: yMin, max: yMax)
+        let start = xPosition(baseline, min: yMin, max: yMax, plot: plot)
+        let end = xPosition(value, min: yMin, max: yMax, plot: plot)
+        return CGRect(
+            x: min(start, end),
+            y: y,
+            width: abs(end - start),
+            height: height
+        )
+    }
+
+    /// Public for conformance tests: negative-only charts must not treat
+    /// `yMin` as the bar baseline (that inverts the bars).
+    nonisolated static func barRectForValue(
         _ value: Double,
         x: CGFloat,
         width: CGFloat,
@@ -751,12 +1214,9 @@ enum MermaidXYChartRenderer {
         yMax: Double,
         plot: CGRect
     ) -> CGRect {
-        let baseline: Double
-        if yMin <= 0 && yMax >= 0 {
-            baseline = 0
-        } else {
-            baseline = yMin
-        }
+        // Grow from 0 when it sits in range; otherwise from the edge
+        // closest to 0. Using yMin for negative-only charts inverts bars.
+        let baseline = clipY(0, min: yMin, max: yMax)
         let top = yPosition(value, min: yMin, max: yMax, plot: plot)
         let bottom = yPosition(baseline, min: yMin, max: yMax, plot: plot)
         let minY = Swift.min(top, bottom)
@@ -787,6 +1247,33 @@ enum MermaidXYChartRenderer {
         ctx.move(to: CGPoint(x: plot.minX, y: plot.minY))
         ctx.addLine(to: CGPoint(x: plot.minX, y: plot.maxY))
         ctx.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY))
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
+    private static func drawHorizontalGridAndAxes(
+        ctx: CGContext,
+        plot: CGRect,
+        ticks: [Double],
+        yMin: Double,
+        yMax: Double,
+        theme: RenderTheme
+    ) {
+        ctx.saveGState()
+        ctx.setStrokeColor(theme.foregroundDim.copy(alpha: 0.22) ?? theme.foregroundDim)
+        ctx.setLineWidth(0.5)
+        for tick in ticks {
+            let x = xPosition(tick, min: yMin, max: yMax, plot: plot)
+            ctx.move(to: CGPoint(x: x, y: plot.minY))
+            ctx.addLine(to: CGPoint(x: x, y: plot.maxY))
+        }
+        ctx.strokePath()
+
+        ctx.setStrokeColor(theme.foregroundDim.copy(alpha: 0.45) ?? theme.foregroundDim)
+        ctx.setLineWidth(1)
+        ctx.move(to: CGPoint(x: plot.minX, y: plot.maxY))
+        ctx.addLine(to: CGPoint(x: plot.minX, y: plot.minY))
+        ctx.addLine(to: CGPoint(x: plot.maxX, y: plot.minY))
         ctx.strokePath()
         ctx.restoreGState()
     }
