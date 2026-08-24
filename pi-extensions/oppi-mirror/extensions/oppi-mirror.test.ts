@@ -764,6 +764,55 @@ describe("oppi mirror input preflight", () => {
     });
   });
 
+  it("rejects persist on set_model and set_thinking_level instead of claiming success", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "persist-model",
+          command: {
+            type: "set_model",
+            provider: "anthropic",
+            modelId: "claude-sonnet-4",
+            persist: true,
+          },
+        }),
+      );
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "persist-thinking",
+          command: { type: "set_thinking_level", level: "high", persist: true },
+        }),
+      );
+      await drainMicrotasks();
+
+      expect(sentCommandResults(socket, "persist-model")).toEqual([
+        expect.objectContaining({
+          success: false,
+          error: "Mirrored Pi sessions cannot save a global default.",
+        }),
+      ]);
+      expect(sentCommandResults(socket, "persist-thinking")).toEqual([
+        expect.objectContaining({
+          success: false,
+          error: "Mirrored Pi sessions cannot save a global default.",
+        }),
+      ]);
+      expect(pi.setThinkingLevel).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects stale set_queue at the terminal authority without losing local intent", async () => {
     await withInteractiveTerminal(async () => {
       vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");

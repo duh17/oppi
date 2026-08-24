@@ -24,11 +24,11 @@ enum ClientMessage: Sendable {
     case setQueue(baseVersion: Int, steering: [MessageQueueDraftItem], followUp: [MessageQueueDraftItem], requestId: String? = nil)
 
     // ── Model ──
-    case setModel(provider: String, modelId: String, requestId: String? = nil)
+    case setModel(provider: String, modelId: String, requestId: String? = nil, persist: Bool? = nil)
     case cycleModel(requestId: String? = nil)
 
     // ── Thinking ──
-    case setThinkingLevel(level: ThinkingLevel, requestId: String? = nil)
+    case setThinkingLevel(level: ThinkingLevel, requestId: String? = nil, persist: Bool? = nil)
     case cycleThinkingLevel(requestId: String? = nil)
 
     // ── Session ──
@@ -261,21 +261,27 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Model ──
-        case .setModel(let provider, let modelId, let reqId):
+        case .setModel(let provider, let modelId, let reqId, let persist):
             try c.encode("set_model", forKey: .type)
             try c.encode(provider, forKey: .provider)
             try c.encode(modelId, forKey: .modelId)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+            if persist == true {
+                try c.encode(true, forKey: .persist)
+            }
 
         case .cycleModel(let reqId):
             try c.encode("cycle_model", forKey: .type)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Thinking ──
-        case .setThinkingLevel(let level, let reqId):
+        case .setThinkingLevel(let level, let reqId, let persist):
             try c.encode("set_thinking_level", forKey: .type)
             try c.encode(level, forKey: .level)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+            if persist == true {
+                try c.encode(true, forKey: .persist)
+            }
 
         case .cycleThinkingLevel(let reqId):
             try c.encode("cycle_thinking_level", forKey: .type)
@@ -394,7 +400,7 @@ extension ClientMessage: Encodable {
     enum CodingKeys: String, CodingKey {
         case type, message, attachments, streamingBehavior, requestId, clientTurnId
         case id, action, redactionPolicy, value, confirmed, cancelled
-        case provider, modelId, level, name, mode, enabled
+        case provider, modelId, persist, level, name, mode, enabled
         case customInstructions, entryId, filterMode
         case targetId, summarize, replaceInstructions, label
         case baseVersion, steering, followUp

@@ -357,7 +357,8 @@ export class SessionCommandCoordinator {
           throw new Error("Invalid set_model payload: expected model or provider+modelId");
         }
 
-        const result = await backend.setModel(model);
+        const persist = readOptionalBoolean(cmd.persist) === true;
+        const result = await backend.setModel(model, persist ? { persist: true } : undefined);
         if (!result.success) {
           throw new Error(result.error);
         }
@@ -377,7 +378,8 @@ export class SessionCommandCoordinator {
       "set_thinking_level",
       (backend, cmd) => {
         const level = readRequiredString(cmd.level, "level") as ThinkingLevel;
-        backend.session.setThinkingLevel(level);
+        const persist = readOptionalBoolean(cmd.persist) === true;
+        backend.session.setThinkingLevel(level, persist ? { persist: true } : undefined);
         return { level };
       },
     ],

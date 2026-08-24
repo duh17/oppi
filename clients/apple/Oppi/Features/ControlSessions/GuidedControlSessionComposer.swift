@@ -324,6 +324,10 @@ struct GuidedControlSessionComposer: View {
             session: nil,
             modelOverride: effectiveModelId,
             thinkingLevel: thinkingLevel,
+            supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                for: effectiveModelId,
+                in: chatState.cachedModels
+            ),
             onModelTap: { showModelPicker = true },
             onThinkingSelect: selectThinkingLevel
         )

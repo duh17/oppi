@@ -1431,7 +1431,7 @@ struct ChatActionHandlerTests {
         defer { connection.streamConsumptionTask?.cancel() }
 
         connection._sendMessageForTesting = { message in
-            guard case .setModel(_, _, let requestId) = message,
+            guard case .setModel(_, _, let requestId, _) = message,
                   let requestId else {
                 return
             }
@@ -1470,6 +1470,63 @@ struct ChatActionHandlerTests {
             return message.contains("Failed to set model") && message.contains("model unavailable")
         }
         #expect(hasModelError)
+    }
+
+    @Test func persistSetModelOnMirroredSessionFailsWithoutSending() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let sessionId = "s1"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, model: "anthropic/old-model", runtime: .piTui))
+
+        var sent = false
+        connection._sendMessageForTesting = { _ in
+            sent = true
+        }
+
+        handler.setModel(
+            ModelInfo(id: "new-model", name: "New model", provider: "anthropic", contextWindow: 200_000),
+            connection: connection,
+            reducer: reducer,
+            sessionStore: sessionStore,
+            sessionId: sessionId,
+            persist: true
+        )
+
+        #expect(!sent)
+        #expect(sessionStore.sessions.first(where: { $0.id == sessionId })?.model == "anthropic/old-model")
+        #expect(reducer.items.contains { item in
+            guard case .error(_, let message) = item else { return false }
+            return message == SessionRuntimeKind.persistUnsupportedMessage
+        })
+    }
+
+    @Test func persistThinkingOnMirroredSessionFailsWithoutSending() async {
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let sessionId = "s1"
+        let (connection, _) = makeTestConnection(sessionId: sessionId)
+        connection.sessionStore.upsert(makeTestSession(id: sessionId, runtime: .piTui))
+
+        var sent = false
+        connection._sendMessageForTesting = { _ in
+            sent = true
+        }
+
+        handler.setThinking(
+            .high,
+            connection: connection,
+            reducer: reducer,
+            sessionId: sessionId,
+            persist: true
+        )
+
+        #expect(!sent)
+        #expect(reducer.items.contains { item in
+            guard case .error(_, let message) = item else { return false }
+            return message == SessionRuntimeKind.persistUnsupportedMessage
+        })
     }
 
     // MARK: - Rename

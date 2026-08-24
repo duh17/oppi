@@ -118,8 +118,8 @@ final class TestEventPipeline {
             conn.messageQueueStore.clear(sessionId: deletedId)
         case .compactionStart(let reason):
             coalescer.receive(.compactionStart(sessionId: sessionId, reason: reason))
-        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore):
-            coalescer.receive(.compactionEnd(sessionId: sessionId, aborted: aborted, willRetry: willRetry, summary: summary, tokensBefore: tokensBefore))
+        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore, let errorMessage):
+            coalescer.receive(.compactionEnd(sessionId: sessionId, aborted: aborted, willRetry: willRetry, summary: summary, tokensBefore: tokensBefore, errorMessage: errorMessage))
         case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):
             coalescer.receive(.retryStart(sessionId: sessionId, attempt: attempt, maxAttempts: maxAttempts, delayMs: delayMs, errorMessage: errorMessage))
         case .retryEnd(let success, let attempt, let finalError):

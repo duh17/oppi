@@ -148,7 +148,12 @@ struct SessionTraceShellDetail: View {
                 refresh: { await store.loadAvailableModelsFromLocalConfig() },
                 selectModel: { model in
                     Task { await store.setModelFromLocalConfig(model) }
-                }
+                },
+                setDefaultModel: store.session?.supportsPersistingDefaults == false
+                    ? nil
+                    : { model in
+                        Task { await store.setModelFromLocalConfig(model, persist: true) }
+                    }
             )
         }
         .task(id: store.selectedTarget?.sessionId) {
@@ -244,28 +249,45 @@ struct SessionTraceShellDetail: View {
         .disabled(!store.canSendMessage || store.isUpdatingModel)
     }
 
+    private var supportedThinkingLevels: [MacComposerThinkingLevel] {
+        let protocolLevels = ThinkingLevelMenuSource.levels(
+            for: store.session?.model,
+            in: store.availableModels
+        )
+        let allowed = Set(protocolLevels.map(\.rawValue))
+        return MacComposerThinkingLevel.allCases.filter { allowed.contains($0.rawValue) }
+    }
+
     private var thinkingLevelMenu: some View {
-        Menu {
-            Picker("Thinking", selection: Binding(
-                get: { store.thinkingLevel },
-                set: { level in
-                    Task { await store.setThinkingLevelFromLocalConfig(level) }
+        HStack(spacing: 6) {
+            Menu {
+                Picker("Thinking", selection: Binding(
+                    get: { store.thinkingLevel },
+                    set: { level in
+                        Task { await store.setThinkingLevelFromLocalConfig(level) }
+                    }
+                )) {
+                    ForEach(supportedThinkingLevels) { level in
+                        Text(level.displayTitle).tag(level)
+                    }
                 }
-            )) {
-                ForEach(MacComposerThinkingLevel.allCases) { level in
-                    Text(level.displayTitle).tag(level)
+                if store.session?.supportsPersistingDefaults != false {
+                    Divider()
+                    Button("Save as Default") {
+                        Task { await store.setThinkingLevelFromLocalConfig(store.thinkingLevel, persist: true) }
+                    }
+                }
+            } label: {
+                if store.isUpdatingThinkingLevel {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label(store.thinkingLevel.displayTitle, systemImage: "brain")
                 }
             }
-        } label: {
-            if store.isUpdatingThinkingLevel {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Label(store.thinkingLevel.displayTitle, systemImage: "brain")
-            }
+            .menuStyle(.borderlessButton)
+            .disabled(!store.canSendMessage || store.isUpdatingThinkingLevel)
         }
-        .menuStyle(.borderlessButton)
-        .disabled(!store.canSendMessage || store.isUpdatingThinkingLevel)
     }
 
     private var composer: some View {

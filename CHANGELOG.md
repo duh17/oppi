@@ -42,6 +42,8 @@ Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi
 
 ### Added
 
+- **Client:** The model picker star saves that model as the Pi global default. Tapping a row still switches only the current session.
+- **Client:** The thinking popover can save the current level as default. Picking a level stays session-only.
 - **Client:** Session search lives in the bottom toolbar. Quick Session can pick a worktree, and `/` autocompletes workspace prompts and Skills before the session exists.
 - **Client/Server:** Skill Edit uses the guided composer. Wiki links can open host files the server can already read and focus line anchors.
 - **Client:** Double-tap zooms diagrams and images. Settings includes Privacy Policy and Support pages.
@@ -51,6 +53,7 @@ Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi
 
 ### Changed
 
+- **Client:** Thinking menus list only the current model's supported levels. Failed compaction shows the error instead of looking cancelled.
 - **Compatibility:** Build 46 requires `oppi-server@0.47.0` and `oppi-mirror@0.47.0`.
 - **Client/Server:** Pairing uses a per-device key and short-lived HTTPS token. Iroh pairing is gone; re-pair over HTTPS or Tailscale if there is no HTTPS endpoint.
 - **Client/Server:** Public session identity is Pi `Session.id` only.

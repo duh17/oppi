@@ -312,6 +312,14 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                 backgroundAlpha: 0.16
             )
 
+        case .failed:
+            return Style(
+                icon: "exclamationmark.triangle",
+                title: "Compaction failed",
+                color: UIColor(palette.red),
+                backgroundAlpha: 0.16
+            )
+
         case .branchSummary:
             return Style(
                 icon: "arrow.triangle.branch",

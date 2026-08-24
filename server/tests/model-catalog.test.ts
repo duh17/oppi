@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { ModelCatalog } from "../src/model-catalog.js";
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { defaultModelRefFromGlobalSettings, ModelCatalog } from "../src/model-catalog.js";
 import type { Storage } from "../src/storage.js";
 import type { Session } from "../src/types.js";
 
@@ -87,6 +88,84 @@ describe("ModelCatalog", () => {
       expect(models).toHaveLength(2);
       expect(models[0].id).toBe("anthropic/claude-sonnet-4-20250514");
       expect(models[1].id).toBe("openai/gpt-5.3-codex");
+      expect(models[0].thinkingLevels).toEqual(["off"]);
+      expect(models[0].isDefault).toBeUndefined();
+    });
+
+    it("advertises supported thinking levels and the current default", () => {
+      const sonnetWithThinking = {
+        ...SONNET,
+        reasoning: true,
+        thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+      };
+      const registry = makeRegistry([sonnetWithThinking, GPT]);
+      const catalog = new ModelCatalog(registry, makeStorage(), undefined, () => ({
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+      }));
+
+      catalog.refresh();
+
+      const models = catalog.getAll();
+      expect(models[0].thinkingLevels).toEqual([
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ]);
+      expect(models[0].isDefault).toBe(true);
+      expect(models[1].isDefault).toBeUndefined();
+    });
+
+    it("stars the Pi global default instead of a project override", () => {
+      const storage = {
+        global: undefined as string | undefined,
+        project: undefined as string | undefined,
+        withLock(
+          scope: "global" | "project",
+          fn: (current: string | undefined) => string | undefined,
+        ) {
+          const current = scope === "global" ? this.global : this.project;
+          const next = fn(current);
+          if (next !== undefined) {
+            if (scope === "global") this.global = next;
+            else this.project = next;
+          }
+        },
+      };
+      storage.withLock("global", () =>
+        JSON.stringify({
+          defaultProvider: "anthropic",
+          defaultModel: "claude-sonnet-4-20250514",
+        }),
+      );
+      storage.withLock("project", () =>
+        JSON.stringify({
+          defaultProvider: "openai",
+          defaultModel: "gpt-5.3-codex",
+        }),
+      );
+      const settings = SettingsManager.fromStorage(storage);
+
+      expect(settings.getDefaultModel()).toBe("gpt-5.3-codex");
+      expect(settings.getDefaultProvider()).toBe("openai");
+      expect(defaultModelRefFromGlobalSettings(settings)).toEqual({
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-20250514",
+      });
+
+      const catalog = new ModelCatalog(makeRegistry([SONNET, GPT]), makeStorage(), undefined, () =>
+        defaultModelRefFromGlobalSettings(settings),
+      );
+      catalog.refresh();
+
+      const models = catalog.getAll();
+      expect(models[0].id).toBe("anthropic/claude-sonnet-4-20250514");
+      expect(models[0].isDefault).toBe(true);
+      expect(models[1].isDefault).toBeUndefined();
     });
 
     it("returns an empty catalog when no providers are authenticated/configured", () => {

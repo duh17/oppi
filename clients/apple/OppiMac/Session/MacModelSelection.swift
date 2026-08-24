@@ -26,6 +26,23 @@ enum MacModelSelection {
         return currentModel == fullModelID(for: model) || currentModel == model.id
     }
 
+    /// Keep exactly one starred global default after a persist:true write.
+    static func markingDefault(_ models: [ModelInfo], as model: ModelInfo) -> [ModelInfo] {
+        let defaultID = fullModelID(for: model)
+        return models.map { existing in
+            let isDefault = fullModelID(for: existing) == defaultID || existing.id == model.id
+            guard existing.isDefault != isDefault else { return existing }
+            return ModelInfo(
+                id: existing.id,
+                name: existing.name,
+                provider: existing.provider,
+                contextWindow: existing.contextWindow,
+                thinkingLevels: existing.thinkingLevels,
+                isDefault: isDefault
+            )
+        }
+    }
+
     static func shortDisplayName(for modelID: String?) -> String? {
         guard let modelID else { return nil }
         let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)

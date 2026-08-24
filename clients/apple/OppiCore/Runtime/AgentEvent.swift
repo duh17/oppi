@@ -39,7 +39,7 @@ enum AgentEvent: Sendable {
 
     // Compaction
     case compactionStart(sessionId: String, reason: String)
-    case compactionEnd(sessionId: String, aborted: Bool, willRetry: Bool, summary: String?, tokensBefore: Int?)
+    case compactionEnd(sessionId: String, aborted: Bool, willRetry: Bool, summary: String?, tokensBefore: Int?, errorMessage: String? = nil)
 
     // Retry
     case retryStart(sessionId: String, attempt: Int, maxAttempts: Int, delayMs: Int, errorMessage: String)

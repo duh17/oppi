@@ -26,7 +26,18 @@ final class MacSessionTraceStore {
     private var liveWebSocket: URLSessionWebSocketTask?
     private var liveStreamTask: Task<Void, Never>?
     private var pendingCommandChanges: [String: MacSessionCommandPendingChange] = [:]
+    private enum CommandAck {
+        case expected
+        case waiting(CheckedContinuation<Void, Error>)
+        case finished(Result<Void, Error>)
+    }
+
+    private var pendingCommandAcks: [String: CommandAck] = [:]
     private var fileIndexWorkspaceId: String?
+
+    var _sendLiveMessageForTesting: ((ClientMessage) async throws -> Bool)?
+    var _listModelsForTesting: (() async throws -> [ModelInfo])?
+    var _commandAckTimeoutForTesting: Duration?
 
     private(set) var selectedTarget: MacSelectedSessionTarget?
     private(set) var session: Session?
@@ -90,6 +101,7 @@ final class MacSessionTraceStore {
         selectedTarget = target
         session = target.summary.session
         lastError = nil
+        failPendingCommandAcks(MacSessionTraceStoreError.commandRejected("Session selection changed."))
         pendingCommandChanges = [:]
         pendingAskRequests = []
         messageQueueError = nil
@@ -116,6 +128,7 @@ final class MacSessionTraceStore {
         selectedTarget = nil
         session = nil
         lastError = nil
+        failPendingCommandAcks(MacSessionTraceStoreError.commandRejected("Session selection cleared."))
         pendingCommandChanges = [:]
         pendingAskRequests = []
         messageQueueError = nil
@@ -183,6 +196,8 @@ final class MacSessionTraceStore {
             lastError = error.localizedDescription
         }
         isLoading = false
+        guard selectedTarget == target, !Task.isCancelled else { return }
+        await loadAvailableModels(client: client)
     }
 
     @discardableResult
@@ -221,7 +236,11 @@ final class MacSessionTraceStore {
         isLoadingModels = true
         modelLoadError = nil
         do {
-            availableModels = try await client.listModels()
+            if let listModels = _listModelsForTesting {
+                availableModels = try await listModels()
+            } else {
+                availableModels = try await client.listModels()
+            }
         } catch {
             macSessionTraceLogger.warning("Model list load failed: \(error.localizedDescription, privacy: .public)")
             modelLoadError = error.localizedDescription
@@ -583,7 +602,7 @@ final class MacSessionTraceStore {
         return uploaded
     }
 
-    func setThinkingLevelFromLocalConfig(_ level: MacComposerThinkingLevel) async {
+    func setThinkingLevelFromLocalConfig(_ level: MacComposerThinkingLevel, persist: Bool = false) async {
         guard let selectedTarget, canSendMessage else { return }
         let dataDir = ServerProcessManager.serverDataDir
         guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir),
@@ -595,11 +614,12 @@ final class MacSessionTraceStore {
         await setThinkingLevel(
             level,
             target: selectedTarget,
-            client: MacWorkspaceClient(baseURL: baseURL, token: token)
+            client: MacWorkspaceClient(baseURL: baseURL, token: token),
+            persist: persist
         )
     }
 
-    func setModelFromLocalConfig(_ model: ModelInfo) async {
+    func setModelFromLocalConfig(_ model: ModelInfo, persist: Bool = false) async {
         guard let selectedTarget, canSendMessage else { return }
         let dataDir = ServerProcessManager.serverDataDir
         guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir),
@@ -611,16 +631,23 @@ final class MacSessionTraceStore {
         await setModel(
             model,
             target: selectedTarget,
-            client: MacWorkspaceClient(baseURL: baseURL, token: token)
+            client: MacWorkspaceClient(baseURL: baseURL, token: token),
+            persist: persist
         )
     }
 
     func setThinkingLevel(
         _ level: MacComposerThinkingLevel,
         target: MacSelectedSessionTarget,
-        client: MacWorkspaceClient
+        client: MacWorkspaceClient,
+        persist: Bool = false
     ) async {
-        guard thinkingLevel != level else { return }
+        if persist, session?.supportsPersistingDefaults == false {
+            lastError = SessionRuntimeKind.persistUnsupportedMessage
+            reducer.appendSystemEvent(SessionRuntimeKind.persistUnsupportedMessage)
+            return
+        }
+        guard persist || thinkingLevel != level else { return }
         let previousLevel = session?.thinkingLevel
         let optimisticLevel = level.rawValue
         let requestId = UUID().uuidString
@@ -631,14 +658,17 @@ final class MacSessionTraceStore {
         let sentOverStream: Bool
         do {
             sentOverStream = try await sendSessionCommand(
-                .setThinkingLevel(level: level.protocolLevel, requestId: requestId),
+                .setThinkingLevel(
+                    level: level.protocolLevel,
+                    requestId: requestId,
+                    persist: persist ? true : nil
+                ),
                 target: target,
                 client: client,
                 requestId: requestId
             )
         } catch {
-            pendingCommandChanges[requestId] = nil
-            if !(error is MacSessionTraceStoreError) {
+            if pendingCommandChanges.removeValue(forKey: requestId) != nil {
                 session?.thinkingLevel = previousLevel
                 reducer.appendSystemEvent("Thinking level update failed: \(error.localizedDescription)")
                 lastError = error.localizedDescription
@@ -658,14 +688,21 @@ final class MacSessionTraceStore {
         applySessionProjection(from: message, target: target)
         applyAskEffects(from: message, target: target)
         applyQueueEffects(from: message, target: target)
+        _ = applyPendingCommandResult(from: message)
     }
 
     func setModel(
         _ model: ModelInfo,
         target: MacSelectedSessionTarget,
-        client: MacWorkspaceClient
+        client: MacWorkspaceClient,
+        persist: Bool = false
     ) async {
-        guard !MacModelSelection.isCurrent(model: model, currentModel: session?.model) else { return }
+        if persist, session?.supportsPersistingDefaults == false {
+            lastError = SessionRuntimeKind.persistUnsupportedMessage
+            reducer.appendSystemEvent(SessionRuntimeKind.persistUnsupportedMessage)
+            return
+        }
+        guard persist || !MacModelSelection.isCurrent(model: model, currentModel: session?.model) else { return }
         let previousModel = session?.model
         let optimisticModel = MacModelSelection.fullModelID(for: model)
         let requestId = UUID().uuidString
@@ -679,15 +716,16 @@ final class MacSessionTraceStore {
                 .setModel(
                     provider: model.provider,
                     modelId: MacModelSelection.commandModelID(for: model),
-                    requestId: requestId
+                    requestId: requestId,
+                    persist: persist ? true : nil
                 ),
                 target: target,
                 client: client,
-                requestId: requestId
+                requestId: requestId,
+                awaitResult: persist
             )
         } catch {
-            pendingCommandChanges[requestId] = nil
-            if !(error is MacSessionTraceStoreError) {
+            if pendingCommandChanges.removeValue(forKey: requestId) != nil {
                 session?.model = previousModel
                 reducer.appendSystemEvent("Model update failed: \(error.localizedDescription)")
                 lastError = error.localizedDescription
@@ -698,6 +736,10 @@ final class MacSessionTraceStore {
         }
 
         isUpdatingModel = false
+        if persist {
+            availableModels = MacModelSelection.markingDefault(availableModels, as: model)
+            await loadAvailableModels(client: client)
+        }
         if !sentOverStream {
             await load(target: target, client: client)
         }
@@ -831,30 +873,105 @@ final class MacSessionTraceStore {
         liveWebSocket = nil
         liveURLSession = nil
         isStreaming = false
+        failPendingCommandAcks(MacSessionTraceStoreError.commandRejected("Live session stream ended."))
     }
 
     private func sendSessionCommand(
         _ message: ClientMessage,
         target: MacSelectedSessionTarget,
         client: MacWorkspaceClient,
-        requestId: String? = nil
+        requestId: String? = nil,
+        awaitResult: Bool = false
     ) async throws -> Bool {
-        let sentOverStream = try await sendLiveMessageIfConnected(message)
-        if !sentOverStream {
-            let messages = try await client.sendWorkspaceSessionCommand(
-                workspaceId: target.workspaceId,
-                sessionId: target.sessionId,
-                message: message
-            )
-            try processCommandResponseMessages(messages, target: target, requestId: requestId)
+        if awaitResult, let requestId {
+            // Mark this request before send can yield. Unrelated command_result
+            // IDs are not buffered.
+            pendingCommandAcks[requestId] = .expected
+            async let acknowledged: Void = waitForCommandResult(requestId: requestId)
+            let sentOverStream = try await sendLiveMessageIfConnected(message)
+            if sentOverStream {
+                try await acknowledged
+                return true
+            }
+            abandonCommandAck(requestId: requestId)
+            _ = try? await acknowledged
+        } else {
+            let sentOverStream = try await sendLiveMessageIfConnected(message)
+            if sentOverStream {
+                return true
+            }
         }
-        return sentOverStream
+        let messages = try await client.sendWorkspaceSessionCommand(
+            workspaceId: target.workspaceId,
+            sessionId: target.sessionId,
+            message: message
+        )
+        try processCommandResponseMessages(messages, target: target, requestId: requestId)
+        return false
     }
 
     private func sendLiveMessageIfConnected(_ message: ClientMessage) async throws -> Bool {
+        if let sendLiveMessage = _sendLiveMessageForTesting {
+            return try await sendLiveMessage(message)
+        }
         guard let webSocket = liveWebSocket, isStreaming else { return false }
         try await webSocket.send(.string(message.jsonString()))
         return true
+    }
+
+    private func waitForCommandResult(requestId: String) async throws {
+        if case .finished(let result) = pendingCommandAcks.removeValue(forKey: requestId) {
+            try result.get()
+            return
+        }
+
+        let timeout = _commandAckTimeoutForTesting ?? .seconds(8)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            if case .finished(let result) = pendingCommandAcks.removeValue(forKey: requestId) {
+                continuation.resume(with: result)
+                return
+            }
+            pendingCommandAcks[requestId] = .waiting(continuation)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard let self else { return }
+                guard case .waiting(let pending) = self.pendingCommandAcks.removeValue(forKey: requestId) else {
+                    return
+                }
+                pending.resume(throwing: MacSessionTraceStoreError.commandRejected("Command timed out."))
+            }
+        }
+    }
+
+    private func completeCommandAck(requestId: String, error: Error?) {
+        let result: Result<Void, Error> = error.map { .failure($0) } ?? .success(())
+        switch pendingCommandAcks.removeValue(forKey: requestId) {
+        case .waiting(let continuation):
+            continuation.resume(with: result)
+        case .expected:
+            pendingCommandAcks[requestId] = .finished(result)
+        case .finished, nil:
+            break
+        }
+    }
+
+    private func abandonCommandAck(requestId: String) {
+        switch pendingCommandAcks.removeValue(forKey: requestId) {
+        case .waiting(let continuation):
+            continuation.resume()
+        case .expected, .finished, nil:
+            break
+        }
+    }
+
+    private func failPendingCommandAcks(_ error: Error) {
+        let pending = pendingCommandAcks
+        pendingCommandAcks = [:]
+        for (_, ack) in pending {
+            if case .waiting(let continuation) = ack {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 
     private func processCommandResponseMessages(
@@ -1082,20 +1199,30 @@ final class MacSessionTraceStore {
 
     private func applyPendingCommandResult(from message: ServerMessage) -> String? {
         guard case .commandResult(let command, let requestId, let success, _, let error) = message,
-              let requestId,
-              let pending = pendingCommandChanges.removeValue(forKey: requestId) else {
+              let requestId else {
             return nil
         }
 
-        guard !success else { return nil }
+        let failure: String?
+        if success {
+            failure = nil
+        } else {
+            failure = error?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? error ?? "\(command) failed"
+                : "\(command) failed"
+        }
 
-        let message = error?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? error ?? "\(command) failed"
-            : "\(command) failed"
-        pending.rollbackIfStillOptimistic(session: &session)
-        reducer.appendSystemEvent("\(pending.displayName) update failed: \(message)")
-        lastError = message
-        return message
+        if let pending = pendingCommandChanges.removeValue(forKey: requestId), let failure {
+            pending.rollbackIfStillOptimistic(session: &session)
+            reducer.appendSystemEvent("\(pending.displayName) update failed: \(failure)")
+            lastError = failure
+        }
+
+        completeCommandAck(
+            requestId: requestId,
+            error: failure.map(MacSessionTraceStoreError.commandRejected)
+        )
+        return failure
     }
 
     private static func makeStreamURL(baseURL: URL, target: MacSelectedSessionTarget) -> URL? {

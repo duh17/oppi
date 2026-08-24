@@ -31,4 +31,25 @@ struct MacModelSelectionTests {
         #expect(MacModelSelection.isCurrent(model: model, currentModel: "openai/gpt-5.5"))
         #expect(!MacModelSelection.isCurrent(model: model, currentModel: "anthropic/claude-sonnet"))
     }
+
+    @Test func markingDefaultStarsOnlyThePersistedGlobalDefault() {
+        let sonnet = ModelInfo(
+            id: "anthropic/claude-sonnet-4",
+            name: "Sonnet",
+            provider: "anthropic",
+            contextWindow: 200_000,
+            isDefault: true
+        )
+        let gpt = ModelInfo(
+            id: "gpt-5.5",
+            name: "GPT 5.5",
+            provider: "openai",
+            contextWindow: 200_000
+        )
+
+        let updated = MacModelSelection.markingDefault([sonnet, gpt], as: gpt)
+
+        #expect(updated.map(\.isDefault) == [false, true])
+        #expect(updated[1].id == "gpt-5.5")
+    }
 }

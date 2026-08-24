@@ -695,7 +695,7 @@ struct ServerConnectionStreamTests {
         var sentTypes: [String] = []
         conn._sendMessageForTesting = { message in
             sentTypes.append(message.typeLabel)
-            guard case .setModel(_, _, let requestId) = message,
+            guard case .setModel(_, _, let requestId, _) = message,
                   let requestId else {
                 return
             }

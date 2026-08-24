@@ -8,8 +8,10 @@ struct SessionToolbar: View {
     let session: Session?
     var modelOverride: String? = nil
     let thinkingLevel: ThinkingLevel
+    var supportedThinkingLevels: [ThinkingLevel] = ThinkingLevel.allCases
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
+    var onSaveThinkingAsDefault: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @State private var isThinkingPickerPresented = false
@@ -67,7 +69,7 @@ struct SessionToolbar: View {
         .buttonStyle(.plain)
         .popover(isPresented: $isThinkingPickerPresented, arrowEdge: .bottom) {
             VStack(spacing: 0) {
-                ForEach(ThinkingLevel.allCases.reversed(), id: \.rawValue) { level in
+                ForEach(supportedThinkingLevels.reversed(), id: \.rawValue) { level in
                     Button {
                         isThinkingPickerPresented = false
                         guard level != thinkingLevel else { return }
@@ -92,9 +94,29 @@ struct SessionToolbar: View {
                     .accessibilityValue(level == thinkingLevel ? "Selected" : "")
                     .accessibilityIdentifier("session.toolbar.thinking.option.\(level.rawValue)")
                 }
+
+                if let onSaveThinkingAsDefault {
+                    Divider()
+                        .padding(.vertical, 4)
+                    Button {
+                        isThinkingPickerPresented = false
+                        onSaveThinkingAsDefault()
+                    } label: {
+                        Text("Save as Default")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .font(.body)
+                            .foregroundStyle(.themeFg)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Save thinking level as default")
+                    .accessibilityIdentifier("session.toolbar.thinking.saveDefault")
+                }
             }
             .padding(.vertical, 6)
-            .frame(width: 190)
+            .frame(width: 220)
             .presentationCompactAdaptation(.popover)
             .presentationBackground(Color.themeSurfaceFill(.popover))
         }

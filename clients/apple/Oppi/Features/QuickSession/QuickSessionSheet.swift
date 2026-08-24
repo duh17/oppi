@@ -316,6 +316,10 @@ struct QuickSessionSheet: View {
                 onSend: handleSend,
                 onModelTap: { showModelPicker = true },
                 onThinkingSelect: selectThinkingLevel,
+                supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                    for: effectiveModelId,
+                    in: chatState.cachedModels
+                ),
                 allowsEmptySubmit: selectedAgentId == nil
             )
         }
@@ -454,6 +458,10 @@ struct QuickSessionSheet: View {
             session: nil,
             modelOverride: effectiveModelId,
             thinkingLevel: effectiveThinkingLevel,
+            supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                for: effectiveModelId,
+                in: chatState.cachedModels
+            ),
             onModelTap: { showModelPicker = true },
             onThinkingSelect: selectThinkingLevel
         )

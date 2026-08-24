@@ -7,6 +7,7 @@ struct MacModelPickerSheet: View {
     let error: String?
     let refresh: () async -> Void
     let selectModel: (ModelInfo) -> Void
+    var setDefaultModel: ((ModelInfo) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
@@ -58,9 +59,8 @@ struct MacModelPickerSheet: View {
         }
         .frame(minWidth: 520, minHeight: 520)
         .task {
-            if models.isEmpty {
-                await refresh()
-            }
+            // Match iOS: reload on every open so the current global default stays starred.
+            await refresh()
         }
     }
 
@@ -103,45 +103,61 @@ struct MacModelPickerSheet: View {
 
     private func modelRow(_ model: ModelInfo) -> some View {
         let isCurrent = MacModelSelection.isCurrent(model: model, currentModel: currentModel)
-        return Button {
-            selectModel(model)
-            dismiss()
-        } label: {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(model.name)
-                            .fontWeight(isCurrent ? .semibold : .regular)
-                        if isCurrent {
-                            Text("Current")
-                                .font(.caption2)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.blue.opacity(0.14), in: Capsule())
+        return HStack(spacing: 8) {
+            Button {
+                selectModel(model)
+                dismiss()
+            } label: {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(model.name)
+                                .fontWeight(isCurrent ? .semibold : .regular)
+                            if isCurrent {
+                                Text("Current")
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.blue.opacity(0.14), in: Capsule())
+                            }
                         }
+                        Text(MacModelSelection.fullModelID(for: model))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    Text(MacModelSelection.fullModelID(for: model))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
 
-                Spacer()
+                    Spacer()
 
-                if model.contextWindow > 0 {
-                    Text(SessionFormatting.tokenCount(model.contextWindow))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+                    if model.contextWindow > 0 {
+                        Text(SessionFormatting.tokenCount(model.contextWindow))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
 
-                if isCurrent {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(.blue)
+                    if isCurrent {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.blue)
+                    }
                 }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if let setDefaultModel {
+                Button {
+                    setDefaultModel(model)
+                    dismiss()
+                } label: {
+                    Image(systemName: model.isDefault ? "star.fill" : "star")
+                        .foregroundStyle(model.isDefault ? .orange : .secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(model.isDefault ? "Default model" : "Set as default")
+            }
         }
-        .buttonStyle(.plain)
     }
 }

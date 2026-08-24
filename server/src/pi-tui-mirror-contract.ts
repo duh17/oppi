@@ -52,3 +52,17 @@ export function isPiTuiMirrorRemoteCommand(
 export function piTuiMirrorUnsupportedRemoteCommandReason(commandType: string): string | undefined {
   return UNSUPPORTED_REMOTE_COMMAND_REASON_MAP.get(commandType);
 }
+
+/** Persist writes Pi user settings; mirrored TUI sessions cannot do that through Oppi. */
+export const PI_TUI_MIRROR_PERSIST_UNSUPPORTED_MESSAGE =
+  "Mirrored Pi sessions cannot save a global default.";
+
+export function piTuiMirrorPersistUnsupportedReason(
+  command: Record<string, unknown>,
+): string | undefined {
+  if (command.persist !== true) return undefined;
+  if (command.type === "set_model" || command.type === "set_thinking_level") {
+    return PI_TUI_MIRROR_PERSIST_UNSUPPORTED_MESSAGE;
+  }
+  return undefined;
+}

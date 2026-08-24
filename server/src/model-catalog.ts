@@ -8,28 +8,37 @@
  */
 
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
+import type { ModelInfo } from "./types/protocol.js";
 import { createLogger } from "./logger.js";
-import {
-  modelCandidatesFromRegistry,
-  type ModelAuthKind,
-  type ModelResolutionCandidate,
-} from "./model-resolution.js";
+import { modelCandidatesFromRegistry, type ModelResolutionCandidate } from "./model-resolution.js";
 
 // ─── Types ───
 
 const log = createLogger({ base: { component: "model_catalog" } });
 
-export interface ModelInfo {
-  id: string;
-  name: string;
-  provider: string;
-  contextWindow?: number;
-  authKind?: ModelAuthKind;
-}
+export type { ModelInfo };
 
 type ModelAllowlist = string[] | (() => string[] | undefined);
+
+export type DefaultModelRef = {
+  provider?: string;
+  modelId?: string;
+};
+
+/** Global Pi default only. Merged `getDefaultModel()` can follow a project override. */
+export function defaultModelRefFromGlobalSettings(settings: {
+  getGlobalSettings(): { defaultProvider?: string; defaultModel?: string };
+}): DefaultModelRef {
+  const global = settings.getGlobalSettings();
+  return {
+    provider: global.defaultProvider,
+    modelId: global.defaultModel,
+  };
+}
 
 // ─── Helpers ───
 
@@ -38,13 +47,33 @@ function normalizeModelToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function candidateToModelInfo(candidate: ModelResolutionCandidate): ModelInfo {
+function matchesDefaultModel(
+  candidate: ModelResolutionCandidate,
+  defaultModel?: DefaultModelRef,
+): boolean {
+  const modelId = defaultModel?.modelId?.trim();
+  if (!modelId) return false;
+  const provider = defaultModel?.provider?.trim();
+  if (provider && provider !== candidate.provider) return false;
+  return (
+    candidate.modelId === modelId ||
+    candidate.canonicalId === `${provider ?? candidate.provider}/${modelId}`
+  );
+}
+
+function candidateToModelInfo(
+  candidate: ModelResolutionCandidate,
+  defaultModel?: DefaultModelRef,
+): ModelInfo {
+  const thinkingLevels = getSupportedThinkingLevels(candidate.model as Model<Api>);
   return {
     id: candidate.canonicalId,
     name: candidate.name,
     provider: candidate.provider,
     contextWindow: candidate.contextWindow || 200000,
     ...(candidate.authKind ? { authKind: candidate.authKind } : {}),
+    ...(thinkingLevels.length > 0 ? { thinkingLevels } : {}),
+    ...(matchesDefaultModel(candidate, defaultModel) ? { isDefault: true } : {}),
   };
 }
 
@@ -58,10 +87,15 @@ export class ModelCatalog {
     private registry: ModelRegistry,
     private storage: Storage,
     private allowlist?: ModelAllowlist,
+    private getDefaultModel?: () => DefaultModelRef | undefined,
   ) {}
 
   private getAllowlist(): string[] | undefined {
     return typeof this.allowlist === "function" ? this.allowlist() : this.allowlist;
+  }
+
+  private defaultModelRef(): DefaultModelRef | undefined {
+    return this.getDefaultModel?.();
   }
 
   /** Start an SDK refresh without blocking callers, serving the current registry snapshot meanwhile. */
@@ -109,8 +143,9 @@ export class ModelCatalog {
   }
 
   private populateFromRegistry(): void {
+    const defaultModel = this.defaultModelRef();
     this.catalog = modelCandidatesFromRegistry(this.registry, this.getAllowlist()).map(
-      candidateToModelInfo,
+      (candidate) => candidateToModelInfo(candidate, defaultModel),
     );
     this.updatedAt = Date.now();
 

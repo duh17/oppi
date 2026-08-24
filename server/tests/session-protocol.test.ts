@@ -2273,6 +2273,30 @@ describe("translatePiEvent", () => {
         },
       ]);
     });
+
+    it("forwards compaction_end errorMessage for failed compact", () => {
+      const result = translatePiEvent(
+        {
+          type: "compaction_end",
+          reason: "threshold",
+          result: undefined,
+          aborted: false,
+          willRetry: false,
+          errorMessage: "provider overloaded",
+        } as AgentSessionEvent,
+        makeCtx(),
+      );
+      expect(result).toEqual([
+        {
+          type: "compaction_end",
+          aborted: false,
+          willRetry: false,
+          summary: undefined,
+          tokensBefore: undefined,
+          errorMessage: "provider overloaded",
+        },
+      ]);
+    });
   });
 
   describe("retry events", () => {

@@ -342,7 +342,7 @@ struct ProtocolSnapshotTests {
         #expect(reason == "Context window 85% full")
 
         let endMsg = try decodeMessage("compaction_end")
-        guard case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore) = endMsg else {
+        guard case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore, let errorMessage) = endMsg else {
             Issue.record("Expected .compactionEnd")
             return
         }
@@ -350,6 +350,14 @@ struct ProtocolSnapshotTests {
         #expect(willRetry == false)
         #expect(summary == "Compacted 15k tokens to 8k tokens")
         #expect(tokensBefore == 15000)
+        #expect(errorMessage == nil)
+
+        let failedMsg = try decodeMessage("compaction_end_error")
+        guard case .compactionEnd(_, _, _, _, let failedError) = failedMsg else {
+            Issue.record("Expected .compactionEnd for compaction_end_error")
+            return
+        }
+        #expect(failedError == "provider overloaded")
     }
 
     @Test func retry() throws {

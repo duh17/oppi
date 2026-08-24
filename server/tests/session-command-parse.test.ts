@@ -176,6 +176,15 @@ describe("parseClientCommand", () => {
       body: { type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4-0" },
     },
     {
+      name: "set_model persist true",
+      body: {
+        type: "set_model",
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-0",
+        persist: true,
+      },
+    },
+    {
       name: "set_model combined model",
       body: { type: "set_model", model: "anthropic/claude-sonnet-4-0" },
     },
@@ -186,6 +195,10 @@ describe("parseClientCommand", () => {
     {
       name: "set_thinking_level",
       body: { type: "set_thinking_level", level: "high" },
+    },
+    {
+      name: "set_thinking_level persist true",
+      body: { type: "set_thinking_level", level: "high", persist: true },
     },
     {
       name: "fork",

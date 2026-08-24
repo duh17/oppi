@@ -1705,6 +1705,86 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(received.filter((message) => message.type === "command_result")).toHaveLength(1);
   });
 
+  it("forwards session-only set_model without persist to pi-tui", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const commandPromise = runtime.forwardClientCommand(
+      sessionId,
+      {
+        type: "set_model",
+        provider: "anthropic",
+        modelId: "claude-sonnet-4",
+      },
+      "req-session-model",
+    );
+    const command = latestCommand(ws);
+    expect(command.command).toEqual({
+      type: "set_model",
+      provider: "anthropic",
+      modelId: "claude-sonnet-4",
+    });
+    ws.receive({
+      type: "command_result",
+      id: command.id,
+      success: true,
+      data: { provider: "anthropic", id: "claude-sonnet-4" },
+    });
+    await expect(commandPromise).resolves.toBeUndefined();
+  });
+
+  it("rejects persist on set_model without forwarding it to pi-tui", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    await expect(
+      runtime.forwardClientCommand(
+        sessionId,
+        {
+          type: "set_model",
+          provider: "anthropic",
+          modelId: "claude-sonnet-4",
+          persist: true,
+        },
+        "req-persist-model",
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(ws.sent.some((message) => message.type === "command")).toBe(false);
+    expect(received).toContainEqual({
+      type: "command_result",
+      command: "set_model",
+      requestId: "req-persist-model",
+      success: false,
+      error: "Mirrored Pi sessions cannot save a global default.",
+    });
+  });
+
+  it("rejects persist on set_thinking_level without forwarding it to pi-tui", async () => {
+    const { runtime } = makeRuntime();
+    const { ws, sessionId } = connectBridge(runtime);
+    const received: ServerMessage[] = [];
+    runtime.subscribe(sessionId, (message) => received.push(message));
+
+    await expect(
+      runtime.forwardClientCommand(
+        sessionId,
+        { type: "set_thinking_level", level: "high", persist: true },
+        "req-persist-thinking",
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(ws.sent.some((message) => message.type === "command")).toBe(false);
+    expect(received).toContainEqual({
+      type: "command_result",
+      command: "set_thinking_level",
+      requestId: "req-persist-thinking",
+      success: false,
+      error: "Mirrored Pi sessions cannot save a global default.",
+    });
+  });
+
   it("applies forwarded metadata command results and broadcasts canonical command_result", async () => {
     const { runtime } = makeRuntime();
     const { ws, sessionId } = connectBridge(runtime);

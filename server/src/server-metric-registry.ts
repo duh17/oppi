@@ -183,7 +183,7 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.compaction_result": {
     unit: "count",
-    description: "Compaction outcomes. Tagged by result (success, aborted, will_retry).",
+    description: "Compaction outcomes. Tagged by result (success, failed, aborted, will_retry).",
   },
   // ── Session Auto-Title ──
   "server.session_title_gen_ms": {

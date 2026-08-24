@@ -1156,7 +1156,11 @@ export function translatePiEvent(
     case "compaction_start":
       return [{ type: "compaction_start", reason: event.reason ?? "threshold" }];
 
-    case "compaction_end":
+    case "compaction_end": {
+      const errorMessage =
+        typeof event.errorMessage === "string" && event.errorMessage.trim().length > 0
+          ? normalizeUserFacingError(event.errorMessage)
+          : undefined;
       return [
         {
           type: "compaction_end",
@@ -1164,8 +1168,10 @@ export function translatePiEvent(
           willRetry: event.willRetry ?? false,
           summary: event.result?.summary,
           tokensBefore: event.result?.tokensBefore,
+          ...(errorMessage ? { errorMessage } : {}),
         },
       ];
+    }
 
     case "auto_retry_start":
       return [

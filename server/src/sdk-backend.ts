@@ -38,8 +38,13 @@ import {
   ModelRegistry,
   SettingsManager,
   getAgentDir,
+  resolveModelScopeWithDiagnostics,
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
+import {
+  resolveEnabledScopedModels,
+  resolveInitialScopedSessionPins,
+} from "./session-scoped-models.js";
 
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { CacheMissModelPriceSource } from "./cache-miss.js";
@@ -1299,16 +1304,53 @@ export class SdkBackend {
         ...reservedToolPolicy,
         ...(sandboxAllowlist.allowed ? { allowed: sandboxAllowlist.allowed } : {}),
       };
+      const scoped = await resolveEnabledScopedModels(
+        settingsManager.getEnabledModels(),
+        (patterns) => resolveModelScopeWithDiagnostics(patterns, modelRuntime),
+      );
+      for (const diagnostic of scoped.diagnostics) {
+        log.warn("sdk.scoped_models.diagnostic", {
+          sessionId: session.id,
+          code: diagnostic.code,
+          pattern: diagnostic.pattern,
+          message: diagnostic.message,
+        });
+      }
+      const existingMessages = sessionManager.buildSessionContext().messages.length > 0;
+      const isResume =
+        existingMessages ||
+        (session.messageCount ?? 0) > 0 ||
+        sessionStartEvent?.reason === "resume" ||
+        sessionStartEvent?.reason === "fork" ||
+        sessionStartEvent?.reason === "reload";
+      const explicitThinkingLevel =
+        normalizeThinkingLevel(session.thinkingLevel) ??
+        normalizeThinkingLevel(session.launch?.thinkingLevel);
+      const scopedPins = resolveInitialScopedSessionPins({
+        scopedModels: scoped.scopedModels,
+        resolvedModel: model,
+        sessionModel: session.model,
+        explicitThinkingLevel,
+        requiredLaunchModel: session.launch?.modelPolicy === "required",
+        isResume,
+      });
+      if (!session.thinkingLevel && scopedPins.thinkingLevel) {
+        session.thinkingLevel = scopedPins.thinkingLevel;
+      }
+      if (!session.model && scopedPins.model) {
+        session.model = `${scopedPins.model.provider}/${scopedPins.model.id}`;
+      }
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,
         modelRuntime,
-        model,
-        thinkingLevel: normalizeThinkingLevel(session.thinkingLevel),
+        model: scopedPins.model ?? model,
+        thinkingLevel: scopedPins.thinkingLevel,
         sessionManager,
         settingsManager,
         resourceLoader: loader,
         sessionStartEvent,
+        ...(scoped.scopedModels ? { scopedModels: scoped.scopedModels } : {}),
         ...(controlTools || sandboxTools ? { customTools: controlTools ?? sandboxTools } : {}),
         ...(effectiveToolPolicy.noTools ? { noTools: effectiveToolPolicy.noTools } : {}),
         ...(effectiveToolPolicy.allowed ? { tools: effectiveToolPolicy.allowed } : {}),
@@ -1893,7 +1935,10 @@ export class SdkBackend {
     });
   }
 
-  async setModel(modelId: string): Promise<{
+  async setModel(
+    modelId: string,
+    options?: { persist?: boolean },
+  ): Promise<{
     success: boolean;
     provider?: string;
     id?: string;
@@ -1914,7 +1959,10 @@ export class SdkBackend {
       }
 
       try {
-        await this.piSession.setModel(resolution.candidate.model);
+        await this.piSession.setModel(
+          resolution.candidate.model,
+          options?.persist === true ? { persist: true } : undefined,
+        );
 
         const activeModel = this.piSession.model;
         return {

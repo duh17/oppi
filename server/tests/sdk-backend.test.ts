@@ -798,7 +798,9 @@ describe("SdkBackend sandbox", () => {
             );
           }
           const stdout =
-            argv[0] === "/usr/bin/find" || argv[0] === "find" || /(?:^|\s|\/)find(?:\s|$)/.test(joined)
+            argv[0] === "/usr/bin/find" ||
+            argv[0] === "find" ||
+            /(?:^|\s|\/)find(?:\s|$)/.test(joined)
               ? "notes.md\n"
               : "notes.md:1: guest-workspace-hit\n";
           return Object.assign(
@@ -1851,6 +1853,80 @@ export default function (pi) {
     }
   });
 
+  it("applies a scoped thinking pin at createAgentSession when session.model is set", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-scoped-create-cwd-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-scoped-create-agent-"));
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(join(agentDir, "auth.json"), "{}", "utf-8");
+    writeFileSync(
+      join(cwd, ".pi", "settings.json"),
+      JSON.stringify({ enabledModels: ["testprov/pin-model:high"] }),
+    );
+    writeFileSync(
+      join(agentDir, "extensions", "pin-provider.ts"),
+      `
+export default function (pi) {
+  pi.registerProvider("testprov", {
+    name: "Test Provider",
+    api: "openai-completions",
+    baseUrl: "https://api.test.local/v1",
+    apiKey: "test-key",
+    models: [
+      {
+        id: "pin-model",
+        name: "Pin Model",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 100000,
+        maxTokens: 8000,
+      },
+    ],
+  });
+}
+`,
+      "utf-8",
+    );
+    const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession({
+          ephemeral: true,
+          model: "testprov/pin-model",
+        }),
+        workspace: {
+          id: "w1",
+          name: "Scoped create pin test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(backend.session.model).toEqual(
+        expect.objectContaining({ provider: "testprov", id: "pin-model" }),
+      );
+      expect(backend.session.thinkingLevel).toBe("high");
+      expect(backend.session.scopedModels).toEqual([
+        expect.objectContaining({
+          model: expect.objectContaining({ provider: "testprov", id: "pin-model" }),
+          thinkingLevel: "high",
+        }),
+      ]);
+    } finally {
+      await backend?.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+      if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+    }
+  });
+
   it('keeps bash disabled when launch policy uses noTools: "builtin"', async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-no-builtin-tools-"));
     const backend = await SdkBackend.create({
@@ -2401,6 +2477,22 @@ describe("SdkBackend.setModel", () => {
 
     expect(modelRuntime.refresh).not.toHaveBeenCalled();
     expect(modelRuntime.getAvailableSnapshot).toHaveBeenCalled();
+    expect(piSession.setModel).toHaveBeenCalledWith(model, undefined);
+  });
+
+  it("persists the model only when persist is true", async () => {
+    const model = {
+      provider: "omlx",
+      id: "gemma-4-31b-bf16",
+      name: "Gemma 4 31B",
+      contextWindow: 262_144,
+    };
+    const { backend, piSession } = makeSetModelHarness({ models: [model] });
+    piSession.model = model;
+
+    await backend.setModel("omlx/gemma-4-31b-bf16", { persist: true });
+
+    expect(piSession.setModel).toHaveBeenCalledWith(model, { persist: true });
   });
 
   it("blocks prompt admission while a managed model mutation is active", async () => {
@@ -2450,7 +2542,7 @@ describe("SdkBackend.setModel", () => {
 
     const result = await backend.setModel("studio/qwen3-coder");
 
-    expect(piSession.setModel).toHaveBeenCalledWith(model);
+    expect(piSession.setModel).toHaveBeenCalledWith(model, undefined);
     expect(result).toEqual({
       success: true,
       provider: "studio",
@@ -2481,7 +2573,7 @@ describe("SdkBackend.setModel", () => {
 
     const result = await backend.setModel("sonet");
 
-    expect(piSession.setModel).toHaveBeenCalledWith(subscriptionModel);
+    expect(piSession.setModel).toHaveBeenCalledWith(subscriptionModel, undefined);
     expect(result).toMatchObject({
       success: true,
       provider: "anthropic",

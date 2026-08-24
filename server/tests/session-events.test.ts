@@ -542,4 +542,104 @@ describe("SessionEventProcessor", () => {
       vi.useRealTimers();
     }
   });
+
+  it("counts a successful compaction_end and records success", () => {
+    const metrics = new MockMetrics();
+    const processor = new SessionEventProcessor({
+      storage: {} as never,
+      broadcast: vi.fn(),
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+      metrics: metrics as never,
+    });
+    const active = makeActiveSession(makeSession("sess-1"));
+
+    processor.updateSessionFromEvent("sess-1", active, {
+      type: "compaction_end",
+      aborted: false,
+      willRetry: false,
+      result: { summary: "ok" },
+    } as never);
+
+    expect(active.session.changeStats?.compactionCount).toBe(1);
+    expect(metrics.samples).toContainEqual(
+      expect.objectContaining({
+        metric: "server.compaction_result",
+        value: 1,
+        tags: expect.objectContaining({ result: "success" }),
+      }),
+    );
+  });
+
+  it("does not count a failed compaction_end as success", () => {
+    const metrics = new MockMetrics();
+    const processor = new SessionEventProcessor({
+      storage: {} as never,
+      broadcast: vi.fn(),
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+      metrics: metrics as never,
+    });
+    const active = makeActiveSession(makeSession("sess-1"));
+
+    processor.updateSessionFromEvent("sess-1", active, {
+      type: "compaction_end",
+      aborted: false,
+      willRetry: false,
+      errorMessage: "provider overloaded",
+    } as never);
+
+    expect(active.session.changeStats?.compactionCount).toBeUndefined();
+    expect(metrics.samples).toContainEqual(
+      expect.objectContaining({
+        metric: "server.compaction_result",
+        value: 1,
+        tags: expect.objectContaining({ result: "failed" }),
+      }),
+    );
+    expect(metrics.samples.some((sample) => sample.tags?.result === "success")).toBe(false);
+  });
+
+  it("classifies combined compaction_end flags as aborted, then failed, then will_retry", () => {
+    const metrics = new MockMetrics();
+    const processor = new SessionEventProcessor({
+      storage: {} as never,
+      broadcast: vi.fn(),
+      persistSessionNow: vi.fn(),
+      markSessionDirty: vi.fn(),
+      metrics: metrics as never,
+    });
+
+    const abortedAndRetrying = makeActiveSession(makeSession("sess-aborted"));
+    processor.updateSessionFromEvent("sess-aborted", abortedAndRetrying, {
+      type: "compaction_end",
+      aborted: true,
+      willRetry: true,
+      errorMessage: "provider overloaded",
+    } as never);
+
+    const failedAndRetrying = makeActiveSession(makeSession("sess-failed"));
+    processor.updateSessionFromEvent("sess-failed", failedAndRetrying, {
+      type: "compaction_end",
+      aborted: false,
+      willRetry: true,
+      errorMessage: "provider overloaded",
+    } as never);
+
+    const retryOnly = makeActiveSession(makeSession("sess-retry"));
+    processor.updateSessionFromEvent("sess-retry", retryOnly, {
+      type: "compaction_end",
+      aborted: false,
+      willRetry: true,
+    } as never);
+
+    expect(abortedAndRetrying.session.changeStats?.compactionCount).toBeUndefined();
+    expect(failedAndRetrying.session.changeStats?.compactionCount).toBeUndefined();
+    expect(retryOnly.session.changeStats?.compactionCount).toBe(1);
+    expect(metrics.samples.map((sample) => sample.tags?.result)).toEqual([
+      "aborted",
+      "failed",
+      "will_retry",
+    ]);
+  });
 });

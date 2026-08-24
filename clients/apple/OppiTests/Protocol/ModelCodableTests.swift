@@ -185,6 +185,24 @@ struct ModelInfoCodableTests {
         #expect(model.name == "Claude Sonnet 4")
         #expect(model.provider == "anthropic")
         #expect(model.contextWindow == 200000)
+        #expect(model.thinkingLevels == nil)
+        #expect(model.isDefault == false)
+    }
+
+    @Test func decodeModelInfoThinkingLevelsAndDefault() throws {
+        let json = """
+        {
+            "id": "claude-sonnet-4-20250514",
+            "name": "Claude Sonnet 4",
+            "provider": "anthropic",
+            "contextWindow": 200000,
+            "thinkingLevels": ["off", "low", "high", "not-a-level"],
+            "isDefault": true
+        }
+        """
+        let model = try JSONDecoder().decode(ModelInfo.self, from: json.data(using: .utf8)!)
+        #expect(model.thinkingLevels == [.off, .low, .high])
+        #expect(model.isDefault)
     }
 }
 

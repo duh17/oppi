@@ -21,6 +21,11 @@ enum SessionStatus: String, Codable, Sendable {
 enum SessionRuntimeKind: String, Codable, Sendable {
     case oppi
     case piTui = "pi-tui"
+
+    /// Persist writes Pi user settings. Mirrored TUI sessions cannot do that through Oppi.
+    var supportsPersistingDefaults: Bool { self != .piTui }
+
+    static let persistUnsupportedMessage = "Mirrored Pi sessions cannot save a global default."
 }
 
 struct PiTuiMirrorTerminalInfo: Codable, Sendable, Equatable {
@@ -176,6 +181,7 @@ struct Session: Identifiable, Sendable, Equatable {
 
     // Runtime ownership
     var runtime: SessionRuntimeKind? = nil
+    var supportsPersistingDefaults: Bool { runtime != .piTui }
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var control: ControlSessionMetadata? = nil
     var launch: SessionLaunchMetadata? = nil
@@ -271,6 +277,7 @@ struct SessionSummary: Sendable, Equatable {
     var lastMessage: String?
     var thinkingLevel: String?
     var runtime: SessionRuntimeKind? = nil
+    var supportsPersistingDefaults: Bool { runtime != .piTui }
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var control: ControlSessionMetadata? = nil
     var agentId: String? = nil
@@ -534,4 +541,40 @@ struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
     let name: String
     let provider: String
     let contextWindow: Int
+    let thinkingLevels: [ThinkingLevel]?
+    let isDefault: Bool
+
+    init(
+        id: String,
+        name: String,
+        provider: String,
+        contextWindow: Int,
+        thinkingLevels: [ThinkingLevel]? = nil,
+        isDefault: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.provider = provider
+        self.contextWindow = contextWindow
+        self.thinkingLevels = thinkingLevels
+        self.isDefault = isDefault
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        provider = try c.decode(String.self, forKey: .provider)
+        contextWindow = try c.decode(Int.self, forKey: .contextWindow)
+        if let rawLevels = try c.decodeIfPresent([String].self, forKey: .thinkingLevels) {
+            thinkingLevels = rawLevels.compactMap(ThinkingLevel.init(rawValue:))
+        } else {
+            thinkingLevels = nil
+        }
+        isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, provider, contextWindow, thinkingLevels, isDefault
+    }
 }

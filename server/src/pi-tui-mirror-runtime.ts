@@ -44,6 +44,7 @@ import {
   PI_TUI_MIRROR_QUEUE_VERSION_EXHAUSTED_CODE,
   PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
   PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS,
+  piTuiMirrorPersistUnsupportedReason,
   piTuiMirrorUnsupportedRemoteCommandReason,
 } from "./pi-tui-mirror-contract.js";
 import { SessionAgentEventCoordinator } from "./session-agent-events.js";
@@ -2037,6 +2038,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     }
 
     const commandType = typeof command.type === "string" ? command.type : "unknown";
+    const persistUnsupported = piTuiMirrorPersistUnsupportedReason(command);
+    if (persistUnsupported) {
+      return Promise.reject(new Error(persistUnsupported));
+    }
     if (
       connection &&
       (commandType === "prompt" || commandType === "steer" || commandType === "follow_up") &&

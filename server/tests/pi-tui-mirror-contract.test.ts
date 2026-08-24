@@ -8,7 +8,9 @@ import {
   PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE,
   PI_TUI_MIRROR_REMOTE_COMMANDS,
   PI_TUI_MIRROR_SUPPORTED_BRIDGE_PROTOCOL_VERSIONS,
+  PI_TUI_MIRROR_PERSIST_UNSUPPORTED_MESSAGE,
   PI_TUI_MIRROR_UNSUPPORTED_REMOTE_COMMAND_REASONS,
+  piTuiMirrorPersistUnsupportedReason,
 } from "../src/pi-tui-mirror-contract.js";
 import {
   OPPI_MIRROR_BRIDGE_COMMANDS,
@@ -91,5 +93,37 @@ describe("pi-tui mirror contract", () => {
     expect(OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY).toBe(PI_TUI_MIRROR_INPUT_PREFLIGHT_CAPABILITY);
     expect(OPPI_MIRROR_QUEUE_VERSION_MISMATCH_CODE).toBe(PI_TUI_MIRROR_QUEUE_VERSION_MISMATCH_CODE);
     expect(OPPI_MIRROR_CAPABILITIES).toContain(OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY);
+  });
+
+  it("rejects persist on mirrored set_model and set_thinking_level", () => {
+    expect(
+      piTuiMirrorPersistUnsupportedReason({
+        type: "set_model",
+        provider: "anthropic",
+        modelId: "claude-sonnet-4",
+        persist: true,
+      }),
+    ).toBe(PI_TUI_MIRROR_PERSIST_UNSUPPORTED_MESSAGE);
+    expect(
+      piTuiMirrorPersistUnsupportedReason({
+        type: "set_thinking_level",
+        level: "high",
+        persist: true,
+      }),
+    ).toBe(PI_TUI_MIRROR_PERSIST_UNSUPPORTED_MESSAGE);
+    expect(
+      piTuiMirrorPersistUnsupportedReason({
+        type: "set_model",
+        provider: "anthropic",
+        modelId: "claude-sonnet-4",
+      }),
+    ).toBeUndefined();
+    expect(
+      piTuiMirrorPersistUnsupportedReason({
+        type: "set_thinking_level",
+        level: "high",
+        persist: false,
+      }),
+    ).toBeUndefined();
   });
 });

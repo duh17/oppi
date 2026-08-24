@@ -1140,8 +1140,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .compactionStart(_, let reason):
             return handleCompactionStart(reason: reason)
 
-        case .compactionEnd(_, let aborted, let willRetry, let summary, let tokensBefore):
-            return handleCompactionEnd(aborted: aborted, willRetry: willRetry, summary: summary, tokensBefore: tokensBefore)
+        case .compactionEnd(_, let aborted, let willRetry, let summary, let tokensBefore, let errorMessage):
+            return handleCompactionEnd(
+                aborted: aborted,
+                willRetry: willRetry,
+                summary: summary,
+                tokensBefore: tokensBefore,
+                errorMessage: errorMessage
+            )
 
         case .retryStart(_, let attempt, let maxAttempts, _, let errorMessage):
             return handleRetryStart(
@@ -1358,10 +1364,20 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         return true
     }
 
-    private func handleCompactionEnd(aborted: Bool, willRetry: Bool, summary: String?, tokensBefore: Int?) -> Bool {
+    private func handleCompactionEnd(
+        aborted: Bool,
+        willRetry: Bool,
+        summary: String?,
+        tokensBefore: Int?,
+        errorMessage: String?
+    ) -> Bool {
         let message: String
+        let cleanedError = errorMessage.map { UserFacingErrorText.normalize($0) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if aborted {
             message = String(localized: "Compaction cancelled")
+        } else if let cleanedError, !cleanedError.isEmpty {
+            message = "Compaction failed: \(cleanedError)"
         } else if willRetry {
             message = String(localized: "Context compacted — retrying...")
         } else {

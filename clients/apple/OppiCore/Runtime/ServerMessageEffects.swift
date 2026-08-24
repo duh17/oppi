@@ -59,13 +59,14 @@ enum ServerMessageEffects {
             return [.sessionEnded(sessionId: sessionId, reason: reason)]
         case .compactionStart(let reason):
             return [.compactionStart(sessionId: sessionId, reason: reason)]
-        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore):
+        case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore, let errorMessage):
             return [.compactionEnd(
                 sessionId: sessionId,
                 aborted: aborted,
                 willRetry: willRetry,
                 summary: summary,
-                tokensBefore: tokensBefore
+                tokensBefore: tokensBefore,
+                errorMessage: errorMessage
             )]
         case .retryStart(let attempt, let maxAttempts, let delayMs, let errorMessage):
             return [.retryStart(

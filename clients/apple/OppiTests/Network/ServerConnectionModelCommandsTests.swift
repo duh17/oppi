@@ -12,7 +12,7 @@ struct ServerConnectionModelCommandsTests {
         let sink = CapturedClientMessages()
         connection._sendMessageForTesting = { message in
             await sink.append(message)
-            guard case .setModel(_, _, let requestId) = message,
+            guard case .setModel(_, _, let requestId, _) = message,
                   let requestId else {
                 return
             }
@@ -29,8 +29,9 @@ struct ServerConnectionModelCommandsTests {
 
         let messages = await sink.messages
         let modelMessages = messages.compactMap { message -> (String, String, String)? in
-            guard case .setModel(let provider, let modelId, let requestId) = message,
+            guard case .setModel(let provider, let modelId, let requestId, let persist) = message,
                   let requestId else { return nil }
+            #expect(persist == nil)
             return (provider, modelId, requestId)
         }
         #expect(modelMessages.count == 1)
@@ -40,12 +41,42 @@ struct ServerConnectionModelCommandsTests {
         #expect(!requestId.isEmpty)
     }
 
+    @Test func setModelPersistSendsPersistFlag() async throws {
+        let (connection, _) = makeTestConnection()
+        await markFocusedSessionFullySubscribed(connection)
+        defer { connection.streamConsumptionTask?.cancel() }
+        let sink = CapturedClientMessages()
+        connection._sendMessageForTesting = { message in
+            await sink.append(message)
+            guard case .setModel(_, _, let requestId, _) = message,
+                  let requestId else {
+                return
+            }
+            _ = connection.commands.resolveCommandResult(
+                command: "set_model",
+                requestId: requestId,
+                success: true,
+                data: ["provider": "anthropic", "id": "claude-sonnet-4"],
+                error: nil
+            )
+        }
+
+        try await connection.setModel(provider: "anthropic", modelId: "claude-sonnet-4", persist: true)
+
+        let messages = await sink.messages
+        guard case .setModel(_, _, _, let persist) = messages[0] else {
+            Issue.record("Expected setModel")
+            return
+        }
+        #expect(persist == true)
+    }
+
     @Test func setModelSurfacesAuthoritativeRejection() async throws {
         let (connection, _) = makeTestConnection()
         await markFocusedSessionFullySubscribed(connection)
         defer { connection.streamConsumptionTask?.cancel() }
         connection._sendMessageForTesting = { message in
-            guard case .setModel(_, _, let requestId) = message,
+            guard case .setModel(_, _, let requestId, _) = message,
                   let requestId else {
                 return
             }
@@ -86,7 +117,7 @@ struct ServerConnectionModelCommandsTests {
         }
         #expect(thinkingMessages.count == 2)
 
-        guard case .setThinkingLevel(let level, _) = thinkingMessages[0] else {
+        guard case .setThinkingLevel(let level, _, _) = thinkingMessages[0] else {
             Issue.record("Expected setThinkingLevel client message")
             return
         }

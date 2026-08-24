@@ -27,7 +27,7 @@ import { RouteHandler } from "./routes/index.js";
 import { SdkBackend } from "./sdk-backend.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { shouldRecordHttpRequestMetric } from "./http-request-metrics.js";
-import { ModelCatalog } from "./model-catalog.js";
+import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog.js";
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import { LiveActivityBridge } from "./live-activity.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
@@ -664,8 +664,11 @@ export class Server {
       modelsPath: join(agentDir, "models.json"),
     });
     this.modelRegistry = new ModelRegistry(this.modelRuntime);
-    this.models = new ModelCatalog(this.modelRegistry, this.storage, () =>
-      SettingsManager.create(process.cwd(), agentDir).getEnabledModels(),
+    this.models = new ModelCatalog(
+      this.modelRegistry,
+      this.storage,
+      () => SettingsManager.create(process.cwd(), agentDir).getEnabledModels(),
+      () => defaultModelRefFromGlobalSettings(SettingsManager.create(process.cwd(), agentDir)),
     );
 
     // Discover custom provider extensions (e.g. kiro/antigravity) and register

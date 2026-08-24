@@ -104,7 +104,7 @@ enum ServerMessage: Sendable, Equatable {
 
     // Compaction
     case compactionStart(reason: String)
-    case compactionEnd(aborted: Bool, willRetry: Bool, summary: String?, tokensBefore: Int?)
+    case compactionEnd(aborted: Bool, willRetry: Bool, summary: String?, tokensBefore: Int?, errorMessage: String? = nil)
 
     // Retry
     case retryStart(attempt: Int, maxAttempts: Int, delayMs: Int, errorMessage: String)
@@ -492,7 +492,14 @@ extension ServerMessage: Decodable {
             let willRetry = try c.decodeIfPresent(Bool.self, forKey: .willRetry) ?? false
             let summary = try c.decodeIfPresent(String.self, forKey: .summary)
             let tokensBefore = try c.decodeIfPresent(Int.self, forKey: .tokensBefore)
-            self = .compactionEnd(aborted: aborted, willRetry: willRetry, summary: summary, tokensBefore: tokensBefore)
+            let errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
+            self = .compactionEnd(
+                aborted: aborted,
+                willRetry: willRetry,
+                summary: summary,
+                tokensBefore: tokensBefore,
+                errorMessage: errorMessage
+            )
 
         case "retry_start":
             let attempt = try c.decode(Int.self, forKey: .attempt)

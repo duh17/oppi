@@ -348,6 +348,12 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     summary: "Compacted 15k tokens to 8k tokens",
     tokensBefore: 15000,
   },
+  compaction_end_error: {
+    type: "compaction_end",
+    aborted: false,
+    willRetry: false,
+    errorMessage: "provider overloaded",
+  },
 
   // Retry
   retry_start: {
@@ -596,6 +602,7 @@ const SERVER_MESSAGE_ORDER = [
   "command_result_error",
   "compaction_start",
   "compaction_end",
+  "compaction_end_error",
   "retry_start",
   "retry_end",
   "extension_ui_request",

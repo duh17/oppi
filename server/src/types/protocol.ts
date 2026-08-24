@@ -105,12 +105,19 @@ export type ClientMessage = // ── Prompting ──
         requestId?: string;
       }
     // ── Model ──
-    | { type: "set_model"; provider: string; modelId: string; requestId?: string }
+    | {
+        type: "set_model";
+        provider: string;
+        modelId: string;
+        persist?: boolean;
+        requestId?: string;
+      }
     | { type: "cycle_model"; requestId?: string }
     // ── Thinking ──
     | {
         type: "set_thinking_level";
         level: ThinkingLevel;
+        persist?: boolean;
         requestId?: string;
       }
     | { type: "cycle_thinking_level"; requestId?: string }
@@ -504,6 +511,7 @@ export type ServerMessage = // ── Connection ──
         willRetry: boolean;
         summary?: string;
         tokensBefore?: number;
+        errorMessage?: string;
       }
     // ── Retry ──
     | {
@@ -593,3 +601,18 @@ export type ServerMessage = // ── Connection ──
      */
     sessionId?: string;
   };
+
+// ── HTTP model catalog (GET /models) ──
+
+export type ModelAuthKind = "subscription" | "local" | "apiKey";
+
+/** Model row returned by GET /models. */
+export interface ModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow?: number;
+  authKind?: ModelAuthKind;
+  thinkingLevels?: ThinkingLevel[];
+  isDefault?: boolean;
+}

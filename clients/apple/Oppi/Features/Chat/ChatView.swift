@@ -962,6 +962,10 @@ struct ChatView: View {
             SessionToolbar(
                 session: session,
                 thinkingLevel: chatState.thinkingLevel,
+                supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                    for: session?.model,
+                    in: chatState.cachedModels
+                ),
                 onModelTap: { showModelPicker = true },
                 onThinkingSelect: { level in
                     actionHandler.setThinking(
@@ -970,9 +974,22 @@ struct ChatView: View {
                         reducer: reducer,
                         sessionId: sessionId
                     )
-                }
+                },
+                onSaveThinkingAsDefault: canPersistSessionDefaults ? {
+                    actionHandler.setThinking(
+                        chatState.thinkingLevel,
+                        connection: connection,
+                        reducer: reducer,
+                        sessionId: sessionId,
+                        persist: true
+                    )
+                } : nil
             )
         }
+    }
+
+    private var canPersistSessionDefaults: Bool {
+        session?.supportsPersistingDefaults ?? true
     }
 
     private func toggleChatFilePanel(source: String) {
@@ -1937,14 +1954,15 @@ struct ChatView: View {
         }
     }
 
-    private func applyModelSelection(_ model: ModelInfo) {
+    private func applyModelSelection(_ model: ModelInfo, persist: Bool = false) {
         AppPreferences.RecentModels.record(ModelSwitchPolicy.fullModelID(for: model))
         actionHandler.setModel(
             model,
             connection: connection,
             reducer: reducer,
             sessionStore: sessionStore,
-            sessionId: sessionId
+            sessionId: sessionId,
+            persist: persist
         )
     }
 
@@ -2300,9 +2318,13 @@ struct ChatView: View {
     }
 
     private var modelPickerSheet: some View {
-        ModelPickerSheet(currentModel: session?.model) { model in
-            handleModelSelection(model)
-        }
+        ModelPickerSheet(
+            currentModel: session?.model,
+            onSelect: handleModelSelection,
+            onSetDefault: canPersistSessionDefaults ? { model in
+                applyModelSelection(model, persist: true)
+            } : nil
+        )
         .presentationDetents([.medium, .large])
     }
 
@@ -2332,6 +2354,19 @@ struct ChatView: View {
                     sessionId: sessionId
                 )
             },
+            onSaveThinkingAsDefault: canPersistSessionDefaults ? {
+                actionHandler.setThinking(
+                    chatState.thinkingLevel,
+                    connection: connection,
+                    reducer: reducer,
+                    sessionId: sessionId,
+                    persist: true
+                )
+            } : nil,
+            supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                for: session?.model,
+                in: chatState.cachedModels
+            ),
             isSubmitInFlight: composerIsSending,
             preservesVoiceInputOnDismiss: true
         )

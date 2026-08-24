@@ -897,6 +897,42 @@ struct TimelineReducerTests {
         #expect(message == "Context compacted (123,456 tokens): \(summary)")
     }
 
+    @Test func failedCompactionShowsErrorAndCancelStaysCancelled() {
+        let failed = TimelineReducer()
+        failed.process(
+            .compactionEnd(
+                sessionId: "s1",
+                aborted: false,
+                willRetry: false,
+                summary: nil,
+                tokensBefore: nil,
+                errorMessage: "provider overloaded"
+            )
+        )
+        guard case .systemEvent(_, let failedMessage) = failed.items[0] else {
+            Issue.record("Expected systemEvent for failed compaction_end")
+            return
+        }
+        #expect(failedMessage == "Compaction failed: provider overloaded")
+
+        let cancelled = TimelineReducer()
+        cancelled.process(
+            .compactionEnd(
+                sessionId: "s1",
+                aborted: true,
+                willRetry: false,
+                summary: nil,
+                tokensBefore: nil,
+                errorMessage: "provider overloaded"
+            )
+        )
+        guard case .systemEvent(_, let cancelledMessage) = cancelled.items[0] else {
+            Issue.record("Expected systemEvent for cancelled compaction_end")
+            return
+        }
+        #expect(cancelledMessage == "Compaction cancelled")
+    }
+
     @Test func loadSessionToolResultErrorFlag() {
         let reducer = TimelineReducer()
         let events = [

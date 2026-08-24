@@ -4969,6 +4969,9 @@ async function createTuiMirrorRuntime(
         return { commands: pi.getCommands() };
 
       case "set_model": {
+        if (command.persist === true) {
+          throw new Error("Mirrored Pi sessions cannot save a global default.");
+        }
         const provider = String(command.provider ?? "");
         const modelId = String(command.modelId ?? command.id ?? "");
         const models = await ctx.modelRegistry.getAvailable();
@@ -4996,6 +4999,9 @@ async function createTuiMirrorRuntime(
       }
 
       case "set_thinking_level":
+        if (command.persist === true) {
+          throw new Error("Mirrored Pi sessions cannot save a global default.");
+        }
         pi.setThinkingLevel(
           String(command.level ?? "medium") as Parameters<
             typeof pi.setThinkingLevel

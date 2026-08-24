@@ -145,6 +145,25 @@ struct ClientMessageTests {
         let json = try decode(msg)
         #expect(json["type"] as? String == "set_model")
         #expect(json["requestId"] as? String == "model-request-1")
+        #expect(json["persist"] == nil)
+    }
+
+    @Test func encodesSetModelPersistOnlyWhenTrue() throws {
+        let persist = ClientMessage.setModel(
+            provider: "anthropic",
+            modelId: "claude-sonnet-4",
+            persist: true
+        )
+        let persistJSON = try decode(persist)
+        #expect(persistJSON["persist"] as? Bool == true)
+
+        let sessionOnly = ClientMessage.setModel(
+            provider: "anthropic",
+            modelId: "claude-sonnet-4",
+            persist: false
+        )
+        let sessionJSON = try decode(sessionOnly)
+        #expect(sessionJSON["persist"] == nil)
     }
 
     @Test func encodesCycleModel() throws {
@@ -157,6 +176,13 @@ struct ClientMessageTests {
         let json = try decode(msg)
         #expect(json["type"] as? String == "set_thinking_level")
         #expect(json["level"] as? String == "high")
+        #expect(json["persist"] == nil)
+    }
+
+    @Test func encodesSetThinkingLevelPersistOnlyWhenTrue() throws {
+        let persist = ClientMessage.setThinkingLevel(level: .high, persist: true)
+        let persistJSON = try decode(persist)
+        #expect(persistJSON["persist"] as? Bool == true)
     }
 
     @Test func encodesMaxThinkingLevel() throws {

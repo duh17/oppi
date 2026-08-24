@@ -445,8 +445,10 @@ export class SessionEventProcessor {
       case "compaction_end": {
         const aborted = event.aborted === true;
         const willRetry = event.willRetry === true;
+        const failed =
+          typeof event.errorMessage === "string" && event.errorMessage.trim().length > 0;
 
-        if (!aborted) {
+        if (!aborted && !failed) {
           incrementSessionCompactionCount(session);
         }
 
@@ -459,8 +461,14 @@ export class SessionEventProcessor {
               routingTags(session),
             );
           }
-          // Result
-          const result = aborted ? "aborted" : willRetry ? "will_retry" : "success";
+          // Result: aborted wins, then a real error, then a retry-without-error.
+          const result = aborted
+            ? "aborted"
+            : failed
+              ? "failed"
+              : willRetry
+                ? "will_retry"
+                : "success";
           metrics.record("server.compaction_result", 1, routingTags(session, { result }));
         }
         active.compactionStartedAt = undefined;

@@ -7,6 +7,7 @@ import SwiftUI
 struct ModelPickerSheet: View {
     let currentModel: String?
     let onSelect: (ModelInfo) -> Void
+    var onSetDefault: ((ModelInfo) -> Void)? = nil
 
     @Environment(\.apiClient) private var apiClient
     @Environment(ChatSessionState.self) private var chatState
@@ -161,17 +162,40 @@ struct ModelPickerSheet: View {
     @ViewBuilder
     private func modelRow(_ model: ModelInfo) -> some View {
         let isCurrent = isCurrentModel(model)
-        ModelRow(model: model, isCurrent: isCurrent)
-            .contentShape(Rectangle())
-            .onTapGesture {
+        HStack(spacing: 0) {
+            Button {
                 AppHaptics.selectionChanged()
                 onSelect(model)
                 dismiss()
+            } label: {
+                ModelRow(model: model, isCurrent: isCurrent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-            .listRowBackground(
-                isCurrent ? Color.themeBlue.opacity(0.12) : Color.themeBg
-            )
-            .accessibilityIdentifier("model.picker.row.\(fullId(model))")
+            .buttonStyle(.plain)
+
+            if let onSetDefault {
+                Button {
+                    AppHaptics.selectionChanged()
+                    onSetDefault(model)
+                    dismiss()
+                } label: {
+                    Image(systemName: model.isDefault ? "star.fill" : "star")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(model.isDefault ? .themeOrange : .themeComment)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(model.isDefault ? "Default model" : "Set as default")
+                .accessibilityAddTraits(model.isDefault ? .isSelected : [])
+                .accessibilityIdentifier("model.picker.star.\(fullId(model))")
+            }
+        }
+        .listRowBackground(
+            isCurrent ? Color.themeBlue.opacity(0.12) : Color.themeBg
+        )
+        .accessibilityIdentifier("model.picker.row.\(fullId(model))")
     }
 
     private func isCurrentModel(_ model: ModelInfo) -> Bool {

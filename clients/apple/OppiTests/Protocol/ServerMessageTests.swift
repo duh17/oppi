@@ -57,6 +57,15 @@ struct ServerMessageTests {
             return
         }
         #expect(session.runtime == .piTui)
+        #expect(!session.supportsPersistingDefaults)
+    }
+
+    @Test func managedSessionsSupportPersistingDefaults() {
+        #expect(SessionRuntimeKind.oppi.supportsPersistingDefaults)
+        #expect(!SessionRuntimeKind.piTui.supportsPersistingDefaults)
+        #expect(makeTestSession(runtime: nil).supportsPersistingDefaults)
+        #expect(makeTestSession(runtime: .oppi).supportsPersistingDefaults)
+        #expect(!makeTestSession(runtime: .piTui).supportsPersistingDefaults)
     }
 
     @Test func rejectsUnknownSessionRuntimeKinds() {
@@ -1011,7 +1020,7 @@ struct ServerMessageTests {
         {"type":"compaction_end","aborted":false,"willRetry":true,"summary":"Summarized context","tokensBefore":150000}
         """
         let msg = try ServerMessage.decode(from: json)
-        guard case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore) = msg else {
+        guard case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore, let errorMessage) = msg else {
             Issue.record("Expected .compactionEnd")
             return
         }
@@ -1019,6 +1028,23 @@ struct ServerMessageTests {
         #expect(willRetry)
         #expect(summary == "Summarized context")
         #expect(tokensBefore == 150_000)
+        #expect(errorMessage == nil)
+    }
+
+    @Test func decodesCompactionEndErrorMessage() throws {
+        let json = """
+        {"type":"compaction_end","aborted":false,"willRetry":false,"errorMessage":"provider overloaded"}
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .compactionEnd(let aborted, let willRetry, let summary, let tokensBefore, let errorMessage) = msg else {
+            Issue.record("Expected .compactionEnd")
+            return
+        }
+        #expect(!aborted)
+        #expect(!willRetry)
+        #expect(summary == nil)
+        #expect(tokensBefore == nil)
+        #expect(errorMessage == "provider overloaded")
     }
 
     // MARK: - Retry

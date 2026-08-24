@@ -56,18 +56,23 @@ enum ShareSessionRequestError: LocalizedError {
 extension ServerConnection {
     // ── Model ──
 
-    func setModel(provider: String, modelId: String) async throws {
+    func setModel(provider: String, modelId: String, persist: Bool = false) async throws {
         try await waitForFocusedFullSubscriptionIfNeeded()
         _ = try await sendCommandAwaitingResult(command: "set_model") { requestId in
-            .setModel(provider: provider, modelId: modelId, requestId: requestId)
+            .setModel(
+                provider: provider,
+                modelId: modelId,
+                requestId: requestId,
+                persist: persist ? true : nil
+            )
         }
     }
 
     // ── Thinking ──
 
-    func setThinkingLevel(_ level: ThinkingLevel) async throws {
+    func setThinkingLevel(_ level: ThinkingLevel, persist: Bool = false) async throws {
         try await waitForFocusedFullSubscriptionIfNeeded()
-        try await send(.setThinkingLevel(level: level))
+        try await send(.setThinkingLevel(level: level, persist: persist ? true : nil))
     }
 
     // periphery:ignore - used by ChatActionHandler; false positive from extension file split

@@ -14,7 +14,8 @@ func makeTestSession(
     model: String? = nil,
     messageCount: Int = 0,
     firstMessage: String? = nil,
-    thinkingLevel: String? = nil
+    thinkingLevel: String? = nil,
+    runtime: SessionRuntimeKind? = nil
 ) -> Session {
     Session(
         id: id,
@@ -33,7 +34,8 @@ func makeTestSession(
         contextWindow: nil,
         firstMessage: firstMessage,
         lastMessage: nil,
-        thinkingLevel: thinkingLevel
+        thinkingLevel: thinkingLevel,
+        runtime: runtime
     )
 }
 

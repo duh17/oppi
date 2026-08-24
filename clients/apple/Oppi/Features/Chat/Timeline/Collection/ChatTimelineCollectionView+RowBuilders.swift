@@ -316,6 +316,7 @@ extension ChatTimelineCollectionHost.Controller {
             case completed
             case retrying
             case cancelled
+            case failed
             case branchSummary
         }
 
@@ -347,6 +348,14 @@ extension ChatTimelineCollectionHost.Controller {
 
         if message.hasPrefix("Compaction cancelled") {
             return CompactionPresentation(phase: .cancelled, detail: nil, tokensBefore: nil)
+        }
+
+        if message.hasPrefix("Compaction failed") {
+            return CompactionPresentation(
+                phase: .failed,
+                detail: detailAfterFirstColon(from: message),
+                tokensBefore: nil
+            )
         }
 
         if message.hasPrefix("Context compacted \u{2014} retrying") {

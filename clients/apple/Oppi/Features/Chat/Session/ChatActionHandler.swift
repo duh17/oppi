@@ -499,11 +499,18 @@ final class ChatActionHandler {
         _ level: ThinkingLevel,
         connection: ServerConnection,
         reducer: TimelineReducer,
-        sessionId: String
+        sessionId: String,
+        persist: Bool = false
     ) {
+        if persist, connection.sessionStore.sessions.first(where: { $0.id == sessionId })?.supportsPersistingDefaults == false {
+            reducer.process(
+                .error(sessionId: sessionId, message: SessionRuntimeKind.persistUnsupportedMessage)
+            )
+            return
+        }
         Task {
             do {
-                try await connection.setThinkingLevel(level)
+                try await connection.setThinkingLevel(level, persist: persist)
                 try? await connection.requestState()
             } catch {
                 reducer.process(.error(sessionId: sessionId, message: "Failed to set thinking: \(error.localizedDescription)"))
@@ -561,9 +568,16 @@ final class ChatActionHandler {
         connection: ServerConnection,
         reducer: TimelineReducer,
         sessionStore: SessionStore,
-        sessionId: String
+        sessionId: String,
+        persist: Bool = false
     ) {
         let session = sessionStore.sessions.first(where: { $0.id == sessionId })
+        if persist, session?.supportsPersistingDefaults == false {
+            reducer.process(
+                .error(sessionId: sessionId, message: SessionRuntimeKind.persistUnsupportedMessage)
+            )
+            return
+        }
         let previousModel = session?.model
         let fullModelId = model.id.hasPrefix("\(model.provider)/")
             ? model.id
@@ -584,7 +598,7 @@ final class ChatActionHandler {
                     modelId = model.id
                 }
 
-                try await connection.setModel(provider: model.provider, modelId: modelId)
+                try await connection.setModel(provider: model.provider, modelId: modelId, persist: persist)
                 try? await connection.requestState()
             } catch {
                 if var rollback = sessionStore.sessions.first(where: { $0.id == sessionId }) {

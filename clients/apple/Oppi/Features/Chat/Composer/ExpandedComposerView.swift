@@ -43,6 +43,8 @@ struct ExpandedComposerView: View {
     let onSend: () -> Void
     let onModelTap: () -> Void
     let onThinkingSelect: (ThinkingLevel) -> Void
+    var onSaveThinkingAsDefault: (() -> Void)? = nil
+    var supportedThinkingLevels: [ThinkingLevel] = ThinkingLevel.allCases
     var titleOverride: String? = nil
     var headerMessage: String? = nil
     var cancelTitle = "Done"
@@ -341,8 +343,10 @@ struct ExpandedComposerView: View {
                             session: session,
                             modelOverride: modelOverride,
                             thinkingLevel: thinkingLevel,
+                            supportedThinkingLevels: supportedThinkingLevels,
                             onModelTap: onModelTap,
-                            onThinkingSelect: onThinkingSelect
+                            onThinkingSelect: onThinkingSelect,
+                            onSaveThinkingAsDefault: onSaveThinkingAsDefault
                         )
                     }
                 }
