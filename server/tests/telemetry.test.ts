@@ -65,7 +65,7 @@ describe("telemetry routes", () => {
   });
 
   it("accepts and stores sanitized client log batches", async () => {
-    const generatedAt = Date.parse("2026-05-25T12:00:00Z");
+    const generatedAt = Date.now();
     const harness = makeHarness({
       generatedAt,
       appVersion: "1.0",
@@ -121,7 +121,7 @@ describe("telemetry routes", () => {
         harness.dataDir,
         "diagnostics",
         "telemetry",
-        "client-logs-2026-05-25.jsonl",
+        `client-logs-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
       );
       const record = JSON.parse(readFileSync(path, "utf8").trim()) as Record<string, unknown>;
       expect(record).toMatchObject({
