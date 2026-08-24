@@ -2477,10 +2477,10 @@ describe("SdkBackend.setModel", () => {
 
     expect(modelRuntime.refresh).not.toHaveBeenCalled();
     expect(modelRuntime.getAvailableSnapshot).toHaveBeenCalled();
-    expect(piSession.setModel).toHaveBeenCalledWith(model, undefined);
+    expect(piSession.setModel).toHaveBeenCalledWith(model);
   });
 
-  it("persists the model only when persist is true", async () => {
+  it("accepts persist without passing a second argument to Pi 0.84.3 setModel", async () => {
     const model = {
       provider: "omlx",
       id: "gemma-4-31b-bf16",
@@ -2492,7 +2492,7 @@ describe("SdkBackend.setModel", () => {
 
     await backend.setModel("omlx/gemma-4-31b-bf16", { persist: true });
 
-    expect(piSession.setModel).toHaveBeenCalledWith(model, { persist: true });
+    expect(piSession.setModel).toHaveBeenCalledWith(model);
   });
 
   it("blocks prompt admission while a managed model mutation is active", async () => {
@@ -2542,7 +2542,7 @@ describe("SdkBackend.setModel", () => {
 
     const result = await backend.setModel("studio/qwen3-coder");
 
-    expect(piSession.setModel).toHaveBeenCalledWith(model, undefined);
+    expect(piSession.setModel).toHaveBeenCalledWith(model);
     expect(result).toEqual({
       success: true,
       provider: "studio",
@@ -2573,7 +2573,7 @@ describe("SdkBackend.setModel", () => {
 
     const result = await backend.setModel("sonet");
 
-    expect(piSession.setModel).toHaveBeenCalledWith(subscriptionModel, undefined);
+    expect(piSession.setModel).toHaveBeenCalledWith(subscriptionModel);
     expect(result).toMatchObject({
       success: true,
       provider: "anthropic",

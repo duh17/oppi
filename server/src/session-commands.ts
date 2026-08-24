@@ -378,8 +378,8 @@ export class SessionCommandCoordinator {
       "set_thinking_level",
       (backend, cmd) => {
         const level = readRequiredString(cmd.level, "level") as ThinkingLevel;
-        const persist = readOptionalBoolean(cmd.persist) === true;
-        backend.session.setThinkingLevel(level, persist ? { persist: true } : undefined);
+        // Pi 0.84.3 setThinkingLevel always writes session + settings when the level changes.
+        backend.session.setThinkingLevel(level);
         return { level };
       },
     ],

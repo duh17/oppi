@@ -1937,7 +1937,7 @@ export class SdkBackend {
 
   async setModel(
     modelId: string,
-    options?: { persist?: boolean },
+    _options?: { persist?: boolean },
   ): Promise<{
     success: boolean;
     provider?: string;
@@ -1959,10 +1959,9 @@ export class SdkBackend {
       }
 
       try {
-        await this.piSession.setModel(
-          resolution.candidate.model,
-          options?.persist === true ? { persist: true } : undefined,
-        );
+        // Pi 0.84.3 AgentSession.setModel always writes session + settings.
+        // Oppi still accepts persist on the command; it cannot stay session-only.
+        await this.piSession.setModel(resolution.candidate.model);
 
         const activeModel = this.piSession.model;
         return {
