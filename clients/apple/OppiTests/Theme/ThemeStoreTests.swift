@@ -60,6 +60,38 @@ struct ThemeStoreTests {
         }
     }
 
+    @Test func systemPresetsIgnoreMismatchedColorSchemes() {
+        withCleanThemeDefaults {
+            UserDefaults.standard.set(ThemeMode.system.rawValue, forKey: modeKey)
+            UserDefaults.standard.set(ThemeID.night.rawValue, forKey: lightThemeKey)
+            UserDefaults.standard.set(ThemeID.light.rawValue, forKey: darkThemeKey)
+
+            let store = ThemeStore(initialSystemColorScheme: .light, systemColorSchemeProvider: { _ in .light })
+
+            #expect(store.lightThemeID == .light)
+            #expect(store.darkThemeID == .dark)
+            #expect(store.activeThemeID == .light)
+            #expect(UserDefaults.standard.string(forKey: lightThemeKey) == ThemeID.light.rawValue)
+            #expect(UserDefaults.standard.string(forKey: darkThemeKey) == ThemeID.dark.rawValue)
+        }
+    }
+
+    @Test func assigningDarkThemeToLightPresetClampsToLight() {
+        withCleanThemeDefaults {
+            let store = ThemeStore(initialSystemColorScheme: .light, systemColorSchemeProvider: { _ in .light })
+            store.lightThemeID = .night
+            #expect(store.lightThemeID == .light)
+        }
+    }
+
+    @Test func assigningLightThemeToDarkPresetClampsToDark() {
+        withCleanThemeDefaults {
+            let store = ThemeStore(initialSystemColorScheme: .dark, systemColorSchemeProvider: { _ in .dark })
+            store.darkThemeID = .light
+            #expect(store.darkThemeID == .dark)
+        }
+    }
+
     @Test func settingSelectedThemeReturnsToManualMode() {
         withCleanThemeDefaults {
             UserDefaults.standard.set(ThemeMode.system.rawValue, forKey: modeKey)

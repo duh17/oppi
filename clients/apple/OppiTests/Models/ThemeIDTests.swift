@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Oppi
 
@@ -215,6 +216,54 @@ struct ThemeIDTests {
         #expect(ThemeID.builtins == [.dark, .oled, .light, .night])
     }
 
+    @Test func lightPickerIncludesOnlyLightThemes() {
+        let themes = ThemeID.pickerThemes(matching: .light)
+        #expect(themes.contains(.light))
+        #expect(!themes.contains(.dark))
+        #expect(!themes.contains(.oled))
+        #expect(!themes.contains(.night))
+    }
+
+    @Test func darkPickerIncludesOnlyDarkThemes() {
+        let themes = ThemeID.pickerThemes(matching: .dark)
+        #expect(themes.contains(.dark))
+        #expect(themes.contains(.oled))
+        #expect(themes.contains(.night))
+        #expect(!themes.contains(.light))
+    }
+
+    @Test func unfilteredPickerIncludesEveryBuiltin() {
+        let themes = ThemeID.pickerThemes(matching: nil)
+        #expect(ThemeID.builtins.allSatisfy(themes.contains))
+    }
+
+    @Test func pickerSplitsImportedThemesByColorScheme() {
+        let lightName = "picker-light-\(UUID().uuidString)"
+        let darkName = "picker-dark-\(UUID().uuidString)"
+        defer {
+            CustomThemeStore.delete(name: lightName)
+            CustomThemeStore.delete(name: darkName)
+        }
+
+        CustomThemeStore.save(RemoteTheme(
+            name: lightName,
+            colorScheme: "light",
+            colors: .themeIDTestStub
+        ))
+        CustomThemeStore.save(RemoteTheme(
+            name: darkName,
+            colorScheme: "dark",
+            colors: .themeIDTestStub
+        ))
+
+        let lightThemes = ThemeID.pickerThemes(matching: .light)
+        let darkThemes = ThemeID.pickerThemes(matching: .dark)
+        #expect(lightThemes.contains(.custom(lightName)))
+        #expect(!lightThemes.contains(.custom(darkName)))
+        #expect(darkThemes.contains(.custom(darkName)))
+        #expect(!darkThemes.contains(.custom(lightName)))
+    }
+
     // MARK: - Hashable
 
     @Test func hashableEquality() {
@@ -291,4 +340,27 @@ struct ThemeRuntimeStateTests {
         let palette = ThemeRuntimeState.currentPalette()
         _ = palette.bg
     }
+}
+
+private extension RemoteThemeColors {
+    static let themeIDTestStub = RemoteThemeColors(
+        bg: "#111111", bgDark: "#000000", bgHighlight: "#222222",
+        fg: "#eeeeee", fgDim: "#aaaaaa", comment: "#888888",
+        blue: "#0000ff", cyan: "#00ffff", green: "#00ff00",
+        orange: "#ff8800", purple: "#8800ff", red: "#ff0000",
+        yellow: "#ffff00", thinkingText: "#aaaaaa",
+        userMessageBg: "#222222", userMessageText: "#eeeeee",
+        toolPendingBg: "#111133", toolSuccessBg: "#113311", toolErrorBg: "#331111",
+        toolTitle: "#eeeeee", toolOutput: "#aaaaaa",
+        mdHeading: "#0000ff", mdLink: "#00ffff", mdLinkUrl: "#888888",
+        mdCode: "#00ffff", mdCodeBlock: "#00ff00", mdCodeBlockBorder: "#444444",
+        mdQuote: "#aaaaaa", mdQuoteBorder: "#444444", mdHr: "#444444",
+        mdListBullet: "#ff8800",
+        toolDiffAdded: "#00ff00", toolDiffRemoved: "#ff0000", toolDiffContext: "#888888",
+        syntaxComment: "#888888", syntaxKeyword: "#8800ff", syntaxFunction: "#0000ff",
+        syntaxVariable: "#eeeeee", syntaxString: "#00ff00", syntaxNumber: "#ff8800",
+        syntaxType: "#00ffff", syntaxOperator: "#eeeeee", syntaxPunctuation: "#aaaaaa",
+        thinkingOff: "#444444", thinkingMinimal: "#888888", thinkingLow: "#0000ff",
+        thinkingMedium: "#00ffff", thinkingHigh: "#8800ff", thinkingXhigh: "#ff0000"
+    )
 }

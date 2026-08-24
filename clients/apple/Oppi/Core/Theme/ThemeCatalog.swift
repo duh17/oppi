@@ -148,6 +148,30 @@ enum ThemeID: Hashable, Codable, Sendable {
     /// Built-in themes (shipped in the app). Custom/imported themes added separately.
     static let builtins: [Self] = [.dark, .oled, .light, .night]
 
+    /// Themes shown in a Settings picker.
+    ///
+    /// Pass `.light` or `.dark` to keep day and night lists from mixing.
+    /// Pass `nil` for the manual picker, which can choose any theme.
+    static func pickerThemes(matching scheme: ColorScheme?) -> [Self] {
+        let builtinMatches = builtins.filter { scheme == nil || $0.preferredColorScheme == scheme }
+        let customMatches = CustomThemeStore.names().compactMap { name -> ThemeID? in
+            let themeID = ThemeID.custom(name)
+            guard scheme == nil || themeID.preferredColorScheme == scheme else { return nil }
+            return themeID
+        }
+        return builtinMatches + customMatches
+    }
+
+    /// Default built-in for a system appearance slot.
+    static func defaultTheme(for scheme: ColorScheme) -> Self {
+        scheme == .light ? .light : .dark
+    }
+
+    /// Keep a persisted Light/Dark preset on the matching side of the picker.
+    func matching(scheme: ColorScheme) -> ThemeID {
+        preferredColorScheme == scheme ? self : ThemeID.defaultTheme(for: scheme)
+    }
+
     static let storageKey = "\(AppIdentifiers.subsystem).theme.id"
 
     /// Stable string ID for persistence.

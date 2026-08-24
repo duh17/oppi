@@ -43,7 +43,7 @@ struct SettingsView: View {
                     themePicker("Theme", selection: Binding(
                         get: { themeStore.manualThemeID },
                         set: { themeStore.manualThemeID = $0 }
-                    ))
+                    ), matching: nil)
 
                     if !themeStore.manualThemeID.detail.isEmpty {
                         Text(themeStore.manualThemeID.detail)
@@ -54,12 +54,12 @@ struct SettingsView: View {
                     themePicker("Light Theme", selection: Binding(
                         get: { themeStore.lightThemeID },
                         set: { themeStore.lightThemeID = $0 }
-                    ))
+                    ), matching: .light)
 
                     themePicker("Dark Theme", selection: Binding(
                         get: { themeStore.darkThemeID },
                         set: { themeStore.darkThemeID = $0 }
-                    ))
+                    ), matching: .dark)
 
                     Text("Uses your iOS Display & Brightness setting, including Apple's automatic schedule.")
                         .font(.footnote)
@@ -373,16 +373,14 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func themePicker(_ title: String, selection: Binding<ThemeID>) -> some View {
+    private func themePicker(
+        _ title: String,
+        selection: Binding<ThemeID>,
+        matching scheme: ColorScheme?
+    ) -> some View {
         Picker(title, selection: selection) {
-            ForEach(ThemeID.builtins, id: \.self) { themeID in
+            ForEach(ThemeID.pickerThemes(matching: scheme), id: \.self) { themeID in
                 Text(themeID.displayName).tag(themeID)
-            }
-            let customNames = CustomThemeStore.names()
-            if !customNames.isEmpty {
-                ForEach(customNames, id: \.self) { name in
-                    Text(name).tag(ThemeID.custom(name))
-                }
             }
         }
     }

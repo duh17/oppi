@@ -63,6 +63,11 @@ final class ThemeStore {
 
     var lightThemeID: ThemeID {
         didSet {
+            let matched = lightThemeID.matching(scheme: .light)
+            if matched != lightThemeID {
+                lightThemeID = matched
+                return
+            }
             guard lightThemeID != oldValue else { return }
             UserDefaults.standard.set(lightThemeID.rawValue, forKey: Self.lightThemeKey)
             applyResolvedTheme()
@@ -71,6 +76,11 @@ final class ThemeStore {
 
     var darkThemeID: ThemeID {
         didSet {
+            let matched = darkThemeID.matching(scheme: .dark)
+            if matched != darkThemeID {
+                darkThemeID = matched
+                return
+            }
             guard darkThemeID != oldValue else { return }
             UserDefaults.standard.set(darkThemeID.rawValue, forKey: Self.darkThemeKey)
             applyResolvedTheme()
@@ -114,10 +124,16 @@ final class ThemeStore {
         let persistedManual = ThemeID.loadPersisted()
         let persistedMode = UserDefaults.standard.string(forKey: Self.modeKey)
             .flatMap(ThemeMode.init(rawValue:)) ?? .manual
-        let persistedLight = UserDefaults.standard.string(forKey: Self.lightThemeKey)
-            .map(ThemeID.init(rawValue:)) ?? .light
-        let persistedDark = UserDefaults.standard.string(forKey: Self.darkThemeKey)
-            .map(ThemeID.init(rawValue:)) ?? (persistedManual.preferredColorScheme == .light ? .dark : persistedManual)
+        let persistedLight = Self.persistedTheme(
+            key: Self.lightThemeKey,
+            fallback: .light,
+            scheme: .light
+        )
+        let persistedDark = Self.persistedTheme(
+            key: Self.darkThemeKey,
+            fallback: persistedManual.preferredColorScheme == .light ? .dark : persistedManual,
+            scheme: .dark
+        )
 
         self.systemColorSchemeProvider = systemColorSchemeProvider
         systemColorScheme = observedSystemColorScheme
@@ -133,6 +149,18 @@ final class ThemeStore {
 
     func updateSystemColorScheme(_ colorScheme: ColorScheme) {
         systemColorScheme = colorScheme
+    }
+
+    /// Load a Light/Dark preset, keep it on the matching side of the picker,
+    /// and rewrite a stored mismatch so the next launch does not re-clamp.
+    private static func persistedTheme(key: String, fallback: ThemeID, scheme: ColorScheme) -> ThemeID {
+        let stored = UserDefaults.standard.string(forKey: key)
+        let raw = stored.map(ThemeID.init(rawValue:)) ?? fallback
+        let matched = raw.matching(scheme: scheme)
+        if let stored, matched.rawValue != stored {
+            UserDefaults.standard.set(matched.rawValue, forKey: key)
+        }
+        return matched
     }
 
     private static func currentSystemColorScheme(fallback: ColorScheme = .dark) -> ColorScheme {
