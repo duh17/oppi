@@ -296,7 +296,6 @@ struct MarkdownReaderRenderAheadContractTests {
         }.joined(separator: "\n\n")
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil
@@ -348,7 +347,6 @@ struct MarkdownReaderRenderAheadContractTests {
         }.joined(separator: "\n\n")
         let body = NativeFullScreenMarkdownBody(
             content: content,
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil

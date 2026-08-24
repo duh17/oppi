@@ -242,7 +242,6 @@ struct MarkdownInlineVideoTests {
         let baseURL = try #require(URL(string: "https://server.example.com"))
         let body = NativeFullScreenMarkdownBody(
             content: (0..<12).map { "Paragraph \($0)." }.joined(separator: "\n\n") + "\n\n![[movie.mp4]]\n\nAfter.",
-            stream: nil,
             palette: ThemeID.dark.palette,
             reviewCommentSelectionRouter: nil,
             reviewCommentSourceContext: nil,

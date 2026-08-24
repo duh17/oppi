@@ -1422,6 +1422,71 @@ struct ToolTimelineRowModeDispatchTests {
         )
     }
 
+    @Test func streamingMarkdownCompletionPreservesTailIntent() async throws {
+        let text = (0..<80).map {
+            "Paragraph \($0) with enough markdown text to overflow the expanded viewport."
+        }.joined(separator: "\n\n")
+
+        let streaming = makeToolConfiguration(
+            toolNamePrefix: "extensions.notes",
+            expandedContent: .markdown(text: text),
+            isExpanded: true,
+            isDone: false
+        )
+        let view = ToolTimelineRowContentView(configuration: streaming)
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue(passes: 6)
+
+        let expandedScrollView = try #require(privateScrollView(named: "expandedScrollView", in: view))
+        ToolTimelineRowUIHelpers.scrollToBottom(expandedScrollView, animated: false)
+        drainMainQueue(passes: 2)
+        #expect(ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView))
+
+        view.configuration = makeToolConfiguration(
+            toolNamePrefix: "extensions.notes",
+            expandedContent: .markdown(text: text + "\n\nDone."),
+            isExpanded: true,
+            isDone: true
+        )
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue(passes: 6)
+
+        let markdownViewport = try #require(
+            privateOptionalView(named: "expandedReadMediaContentView", in: view) as? NativeFullScreenMarkdownBody
+        )
+        await markdownViewport.debugWaitForDocumentPreparationForTesting()
+        markdownViewport.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: markdownViewport))
+        #expect(collection.contentSize.height > collection.bounds.height + 28)
+        #expect(abs(collection.contentOffset.y - maximumScrollOffsetY(collection)) < 28)
+        #expect(!collection.isScrollEnabled)
+    }
+
+    @Test func doneMarkdownFirstOpenStartsAtTop() async throws {
+        let text = (0..<80).map {
+            "Paragraph \($0) with enough markdown text to overflow the expanded viewport."
+        }.joined(separator: "\n\n")
+        let view = ToolTimelineRowContentView(configuration: makeToolConfiguration(
+            toolNamePrefix: "extensions.notes",
+            expandedContent: .markdown(text: text),
+            isExpanded: true,
+            isDone: true
+        ))
+        _ = fittedSize(for: view, width: 360)
+        drainMainQueue(passes: 6)
+
+        let markdownViewport = try #require(
+            privateOptionalView(named: "expandedReadMediaContentView", in: view) as? NativeFullScreenMarkdownBody
+        )
+        await markdownViewport.debugWaitForDocumentPreparationForTesting()
+        markdownViewport.debugLayoutVisibleMarkdownCellsForTesting()
+
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: markdownViewport))
+        #expect(collection.contentSize.height > collection.bounds.height + 28)
+        #expect(collection.contentOffset.y - (-collection.adjustedContentInset.top) < 28)
+    }
+
     // Write tool with large markdown content should still render as structured markdown,
     // not collapse into one plain-text segment.
     @Test func writeToolLargeMarkdownContentRendersAsMarkdown() throws {
@@ -1961,6 +2026,15 @@ private func privateConstraint(named name: String, in view: ToolTimelineRowConte
 @MainActor
 private func privateBool(named name: String, in view: ToolTimelineRowContentView) -> Bool? {
     Mirror(reflecting: view).children.first { $0.label == name }?.value as? Bool
+}
+
+@MainActor
+private func maximumScrollOffsetY(_ scrollView: UIScrollView) -> CGFloat {
+    max(
+        -scrollView.adjustedContentInset.top,
+        scrollView.contentSize.height - scrollView.bounds.height
+            + scrollView.adjustedContentInset.bottom
+    )
 }
 
 @MainActor

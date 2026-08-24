@@ -1012,7 +1012,8 @@ final class FullScreenCodeViewController: UIViewController {
                     serverBaseURL: workspaceContext?.serverBaseURL,
                     sourceFilePath: filePath,
                     fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
-                    fetchSessionFile: workspaceContext?.fetchSessionFile
+                    fetchSessionFile: workspaceContext?.fetchSessionFile,
+                    makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource
                 )
             } else {
                 let body = makeLiveSourceMarkdownBody(
@@ -1079,7 +1080,8 @@ final class FullScreenCodeViewController: UIViewController {
                     serverBaseURL: workspaceContext?.serverBaseURL,
                     sourceFilePath: filePath,
                     fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
-                    fetchSessionFile: workspaceContext?.fetchSessionFile
+                    fetchSessionFile: workspaceContext?.fetchSessionFile,
+                    makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource
                 )
                 liveSourceMarkdownBodyView = nil
                 liveSourceBodyView = nil

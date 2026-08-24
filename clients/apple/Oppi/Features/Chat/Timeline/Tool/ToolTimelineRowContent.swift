@@ -773,6 +773,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         textSelectionEnabled: Bool
     ) {
         let themeID = ThemeRuntimeState.currentThemeID()
+        let liveViewportIntent = (!isStreaming && expandedMarkdownUsesIncrementalViewport)
+            ? FullScreenMarkdownViewportIntent.capturing(
+                scrollView: expandedScrollView,
+                followsTail: expandedShouldAutoFollow
+            )
+            : nil
         expandedMarkdownUsesIncrementalViewport = isStreaming
 
         if isStreaming {
@@ -823,6 +829,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         heightConstraint.priority = .required
         heightConstraint.isActive = true
         expandedReadMediaViewportHeightConstraint = heightConstraint
+        if let liveViewportIntent {
+            native.restoreViewportAfterMutableTransition(liveViewportIntent)
+        }
         native.setNeedsLayout()
         setNeedsLayout()
     }

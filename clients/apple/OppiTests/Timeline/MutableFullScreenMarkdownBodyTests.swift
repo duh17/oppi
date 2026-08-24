@@ -399,6 +399,69 @@ struct MutableFullScreenMarkdownBodyTests {
         #expect((menu.children.first as? UIAction)?.title == "Comment")
     }
 
+    @Test("mutable context preserves markdown video source through live render and immutable handoff")
+    func videoSourceFlowsThroughSharedRenderer() async throws {
+        var resolved = 0
+        let provider: MarkdownVideoMediaSourceProvider = { _ in
+            resolved += 1
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let body = NativeMutableFullScreenMarkdownBody(
+            content: "Before\n\n![[movie.mp4]]\n\nAfter",
+            isStreaming: true,
+            themeID: .dark,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-1",
+            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            sourceFilePath: "docs/Draft.md",
+            makeMarkdownVideoSource: provider
+        )
+        let fixture = attach(body)
+        defer { fixture.window.isHidden = true }
+
+        let liveVideoMounted = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            timelineFirstView(ofType: NativeMarkdownVideoView.self, in: body) != nil
+        }
+        #expect(liveVideoMounted)
+        let liveResolved = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            resolved > 0
+        }
+        #expect(liveResolved)
+        #expect(resolved >= 1)
+
+        let resolvedBeforeHandoff = resolved
+        body.update(
+            content: "Before\n\n![[movie.mp4]]\n\nAfter\n\nDone.",
+            isStreaming: false,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-1",
+            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            sourceFilePath: "docs/Draft.md",
+            fetchWorkspaceFile: nil,
+            fetchSessionFile: nil,
+            makeMarkdownVideoSource: provider
+        )
+        await drainMutableMarkdownQueue()
+        fixture.window.layoutIfNeeded()
+
+        #expect(body.debugIsShowingImmutableReaderForTesting)
+        let immutableVideoMounted = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            timelineFirstView(ofType: NativeMarkdownVideoView.self, in: body) != nil
+        }
+        #expect(immutableVideoMounted)
+        let handoffResolved = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            resolved > resolvedBeforeHandoff
+        }
+        #expect(handoffResolved)
+    }
+
     private func makeController(content: FullScreenCodeContent) -> FullScreenCodeViewController {
         let controller = FullScreenCodeViewController.makeHarnessController(
             content: content,

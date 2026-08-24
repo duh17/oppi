@@ -5,6 +5,28 @@ enum FullScreenMarkdownViewportIntent: Equatable {
     case top
     case tail
     case detached(progress: CGFloat)
+
+    static func capturing(
+        scrollView: UIScrollView,
+        followsTail: Bool,
+        edgeSlop: CGFloat = 28
+    ) -> Self {
+        let minimumY = -scrollView.adjustedContentInset.top
+        let maximumY = max(
+            minimumY,
+            scrollView.contentSize.height - scrollView.bounds.height
+                + scrollView.adjustedContentInset.bottom
+        )
+        let y = min(max(scrollView.contentOffset.y, minimumY), maximumY)
+        if y - minimumY <= edgeSlop {
+            return .top
+        }
+        if followsTail || maximumY - y <= edgeSlop {
+            return .tail
+        }
+        let span = maximumY - minimumY
+        return .detached(progress: span > 0 ? (y - minimumY) / span : 0)
+    }
 }
 
 /// Full-screen host for append-only Markdown while its source is still changing.
@@ -35,6 +57,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private let perfSurface: MarkdownStreamingPerf.Surface?
     private var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     private var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+    private var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
 
     private var readerPreferences: FullScreenReaderPreferences
     private var latestContent: String
@@ -78,7 +101,8 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.markdown.defaultPreferences,
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
     ) {
         let initialSnapshot = stream?.snapshot
         self.stream = stream
@@ -97,6 +121,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.perfSurface = perfSurface
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
+        self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.latestContent = initialSnapshot?.text ?? content
         self.isStreaming = initialSnapshot.map { !$0.isDone } ?? isStreaming
         super.init(frame: .zero)
@@ -158,6 +183,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         markdownView.backgroundColor = .clear
         markdownView.fetchWorkspaceFile = fetchWorkspaceFile
         markdownView.fetchSessionFile = fetchSessionFile
+        markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
 
         addSubview(scrollView)
         scrollView.addSubview(markdownView)
@@ -187,7 +213,8 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
             fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile
+            fetchSessionFile: fetchSessionFile,
+            makeMarkdownVideoSource: makeMarkdownVideoSource
         )
     }
 
@@ -202,7 +229,8 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         serverBaseURL: URL?,
         sourceFilePath: String?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
-        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+        fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     ) {
         guard immutableBody == nil else { return }
         let completionIntent = isStreaming ? nil : currentViewportIntent()
@@ -225,8 +253,10 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.sourceFilePath = sourceFilePath
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
+        self.makeMarkdownVideoSource = makeMarkdownVideoSource
         markdownView.fetchWorkspaceFile = fetchWorkspaceFile
         markdownView.fetchSessionFile = fetchSessionFile
+        markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
 
         guard contentChanged || streamingChanged || contextChanged else {
             viewportOwner.scheduleFollowTail()
@@ -320,7 +350,8 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             readerPreferences: readerPreferences,
             perfSurface: perfSurface,
             fetchWorkspaceFile: fetchWorkspaceFile,
-            fetchSessionFile: fetchSessionFile
+            fetchSessionFile: fetchSessionFile,
+            makeMarkdownVideoSource: makeMarkdownVideoSource
         )
         body.accessibilityIdentifier = accessibilityIdentifier
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -365,21 +396,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     }
 
     func currentViewportIntent() -> FullScreenMarkdownViewportIntent {
-        let minimumY = -scrollView.adjustedContentInset.top
-        let maximumY = max(
-            minimumY,
-            scrollView.contentSize.height - scrollView.bounds.height
-                + scrollView.adjustedContentInset.bottom
-        )
-        let y = min(max(scrollView.contentOffset.y, minimumY), maximumY)
-        if y - minimumY <= 28 {
-            return .top
-        }
-        if viewportOwner.followsTail || maximumY - y <= 28 {
-            return .tail
-        }
-        let span = maximumY - minimumY
-        return .detached(progress: span > 0 ? (y - minimumY) / span : 0)
+        .capturing(scrollView: scrollView, followsTail: viewportOwner.followsTail)
     }
 
     private var isViewportInteracting: Bool {
