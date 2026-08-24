@@ -151,10 +151,7 @@ async function executeUnscopedCliCommand(
         positional.slice(1),
         flags,
         options.cwd ?? process.cwd(),
-        options.callerSessionId ||
-        options.signal ||
-        options.sandboxScope ||
-        options.onLiveSnapshot
+        options.callerSessionId || options.signal || options.sandboxScope || options.onLiveSnapshot
           ? {
               ...(options.callerSessionId ? { callerSessionId: options.callerSessionId } : {}),
               ...(options.sandboxScope ? { sandboxScope: options.sandboxScope } : {}),

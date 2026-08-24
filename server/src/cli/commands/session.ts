@@ -211,9 +211,7 @@ export async function cmdSession(
             if (progress.length < 50) progress.push(snapshot);
             if (!jsonOutput) writeHumanLine(formatWaitProgress(snapshot));
           },
-          ...(callerContext.onLiveSnapshot
-            ? { onLiveSnapshot: callerContext.onLiveSnapshot }
-            : {}),
+          ...(callerContext.onLiveSnapshot ? { onLiveSnapshot: callerContext.onLiveSnapshot } : {}),
           ...(callerContext.signal ? { signal: callerContext.signal } : {}),
         },
         call,

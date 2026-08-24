@@ -75,8 +75,7 @@ function safeTitlePart(value: string, max = 40): string {
 }
 
 const waitBooleanFlags = new Set(["--all", "--json", "--help", "-h"]);
-const uuidPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function shortenWaitSessionId(id: string): string {
   return uuidPattern.test(id) ? `${id.slice(0, 8)}…` : id;

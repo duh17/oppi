@@ -297,10 +297,7 @@ export async function defaultVmFactory(
   > = {
     [workspaceGuestPath]: workspaceProvider,
   };
-  const readonlyMounts = withSandboxPiOverlayMounts(
-    workspaceGuestPath,
-    options.readonlyMounts,
-  );
+  const readonlyMounts = withSandboxPiOverlayMounts(workspaceGuestPath, options.readonlyMounts);
   for (const mount of readonlyMounts) {
     const hostPath = typeof mount === "string" ? mount : mount.hostPath;
     const guestPath = typeof mount === "string" ? mount : mount.guestPath;
