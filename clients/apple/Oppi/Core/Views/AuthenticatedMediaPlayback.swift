@@ -809,6 +809,11 @@ final class AuthenticatedMediaPlaybackSession {
     }
 }
 
+enum MediaPlaybackDisappearSource: Equatable {
+    case playerSurface
+    case timelineVisibility
+}
+
 enum MediaPlaybackTeardownPolicy {
     struct Ownership: Equatable {
         var isVisible = true
@@ -875,6 +880,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     private var recordedStartIdentity: String?
     private var recordedErrorIdentity: String?
     private var ownership = MediaPlaybackTeardownPolicy.Ownership()
+    private var suppressNextReturnedSurfaceDisappear = false
 #if DEBUG
     var debugDidTeardownForTesting = false
     var debugIsVisibleForTesting: Bool { ownership.isVisible }
@@ -1000,10 +1006,16 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     }
 
     func setFullScreen(_ fullScreen: Bool) {
+        if fullScreen {
+            suppressNextReturnedSurfaceDisappear = false
+        }
         applyOwnership(fullScreen ? .willBeginFullScreen : .didEndFullScreen)
     }
 
     func setPictureInPicture(_ pictureInPicture: Bool) {
+        if pictureInPicture {
+            suppressNextReturnedSurfaceDisappear = false
+        }
         applyOwnership(pictureInPicture ? .willStartPictureInPicture : .didStopPictureInPicture)
     }
 
@@ -1011,16 +1023,27 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         applyOwnership(.setVisible(visible))
     }
 
-    func handleDisappear() {
-        // AVKit detaches the inline host while presenting full-screen or PiP.
-        // That is not a real offscreen hide; keep the same player until native
-        // presentation ends or a later unowned hide arrives.
+    @discardableResult
+    func handleDisappear(source: MediaPlaybackDisappearSource = .playerSurface) -> Bool {
+        // AVKit detaches the inline host and can make its collection-view cell
+        // end display while presenting full-screen or PiP. Neither callback is
+        // a real offscreen hide; keep the same player until native presentation
+        // ends or a later unowned hide arrives.
         if ownership.isFullScreen
             || ownership.isPictureInPicture
             || ownership.isFullScreenTransitioning {
-            return
+            return false
+        }
+        if source == .playerSurface, suppressNextReturnedSurfaceDisappear {
+            // When dismissing the selected player, SwiftUI can deliver its
+            // representable's onDisappear after AVKit's did-end completion. This
+            // one callback still belongs to the native transition. Timeline
+            // visibility and explicit recycle remain authoritative teardown paths.
+            suppressNextReturnedSurfaceDisappear = false
+            return false
         }
         setVisible(false)
+        return true
     }
 
     func handleWillEndFullScreen() {
@@ -1028,7 +1051,9 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     }
 
     func handleDidEndFullScreen(hostIsAttached _: Bool = true) {
+        let returnsToVisibleSurface = ownership.isVisible && player != nil
         applyOwnership(.didEndFullScreen)
+        suppressNextReturnedSurfaceDisappear = returnsToVisibleSurface
         // AVKit reports the player VC detached at dismiss completion even
         // when the inline wiki card is still on screen. handleDisappear
         // during fullscreen is a no-op, so treating that detach as hide
@@ -1039,7 +1064,9 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     }
 
     func handleDidStopPictureInPicture(hostIsAttached _: Bool = true) {
+        let returnsToVisibleSurface = ownership.isVisible && player != nil
         applyOwnership(.didStopPictureInPicture)
+        suppressNextReturnedSurfaceDisappear = returnsToVisibleSurface
     }
 
     private func applyOwnership(_ event: MediaPlaybackTeardownPolicy.Event) {
@@ -1068,6 +1095,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         ownership.isFullScreen = false
         ownership.isPictureInPicture = false
         ownership.isFullScreenTransitioning = false
+        suppressNextReturnedSurfaceDisappear = false
 #if DEBUG
         debugDidTeardownForTesting = true
 #endif

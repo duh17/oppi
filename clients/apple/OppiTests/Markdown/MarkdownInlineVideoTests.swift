@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SwiftUI
 import Testing
@@ -874,10 +875,13 @@ struct MarkdownInlineVideoTests {
         model.teardown()
         let installedPlayer = model.debugInstallStandalonePlayerForTesting()
         model.setFullScreen(true)
-        // AVKit detaches the inline host and SwiftUI reports disappear.
-        // Neither event is recycle, and apply() will no-op on the same identity.
+        // AVKit detaches the timeline cell as well as the inline SwiftUI host.
+        // UICollectionView.didEndDisplaying forwards this false offscreen signal
+        // through setPlaybackVisible(false); it is not recycle while AVKit owns
+        // the player, and apply() will no-op on the same identity after dismiss.
         video.willMove(toSuperview: nil)
         model.handleDisappear()
+        video.setPlaybackVisible(false)
         model.handleWillEndFullScreen()
         model.handleDidEndFullScreen(hostIsAttached: false)
 
@@ -889,9 +893,109 @@ struct MarkdownInlineVideoTests {
         )
 
         #expect(video.debugHasPlayerForTesting)
+        #expect(video.debugIsPlaybackVisibleForTesting)
         #expect(model.player === installedPlayer)
         #expect(model.errorMessage == nil)
         video.prepareForRemoval()
+    }
+
+    @MainActor
+    @Test("post-dismiss grace is one surface callback and never overrides timeline or recycle")
+    func postDismissGraceKeepsTeardownAuthoritative() {
+        let returnedSurface = AuthenticatedMediaPlayerModel()
+        _ = returnedSurface.debugInstallStandalonePlayerForTesting()
+        returnedSurface.setFullScreen(true)
+        returnedSurface.handleWillEndFullScreen()
+        returnedSurface.handleDidEndFullScreen(hostIsAttached: false)
+
+        #expect(!returnedSurface.handleDisappear(source: .playerSurface))
+        #expect(!returnedSurface.debugDidTeardownForTesting)
+        #expect(returnedSurface.handleDisappear(source: .playerSurface))
+        #expect(returnedSurface.debugDidTeardownForTesting)
+
+        let timelineHidden = AuthenticatedMediaPlayerModel()
+        _ = timelineHidden.debugInstallStandalonePlayerForTesting()
+        timelineHidden.setFullScreen(true)
+        timelineHidden.handleWillEndFullScreen()
+        timelineHidden.handleDidEndFullScreen(hostIsAttached: false)
+
+        #expect(timelineHidden.handleDisappear(source: .timelineVisibility))
+        #expect(timelineHidden.debugDidTeardownForTesting)
+    }
+
+    @MainActor
+    @Test(
+        "fullscreen dismiss preserves only the selected player across callback order and playback state",
+        arguments: FullScreenDismissVideoCase.allCases
+    )
+    func fullscreenDismissPreservesSelectedPlayerAmongMultipleEmbeds(
+        testCase: FullScreenDismissVideoCase
+    ) async throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let source = dummyMediaSource()
+        let parent = UIViewController()
+        let markdown = AssistantMarkdownContentView()
+        markdown.makeMarkdownVideoSource = { _ in source }
+        parent.view.addSubview(markdown)
+        markdown.frame = CGRect(x: 0, y: 0, width: 360, height: 700)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let configuration = AssistantMarkdownContentView.Configuration.make(
+            content: "![[one.mp4]]\n\n![[two.mp4]]\n\n![[three.mp4]]",
+            isStreaming: false,
+            themeID: .dark,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        markdown.apply(configuration: configuration)
+        markdown.layoutIfNeeded()
+
+        var videos: [NativeMarkdownVideoView] = []
+        for _ in 0..<40 {
+            videos = timelineAllViews(in: markdown).compactMap { $0 as? NativeMarkdownVideoView }
+            if videos.count == 3, videos.allSatisfy(\.debugHasPlayerForTesting) { break }
+            await Task.yield()
+        }
+        #expect(videos.count == 3)
+        try #require(videos.count == 3)
+
+        let players = videos.map { video -> AVPlayer in
+            let model = video.debugPlaybackModelForTesting
+            model.teardown()
+            return model.debugInstallStandalonePlayerForTesting()
+        }
+        let selected = videos[1]
+        let selectedModel = selected.debugPlaybackModelForTesting
+        if testCase.isPlaying {
+            players[1].play()
+        } else {
+            players[1].pause()
+        }
+
+        selectedModel.setFullScreen(true)
+        if testCase.disappearTiming == .beforeDidEnd {
+            selectedModel.handleDisappear()
+        }
+        selectedModel.handleWillEndFullScreen()
+        selectedModel.handleDidEndFullScreen(hostIsAttached: false)
+        if testCase.disappearTiming == .afterDidEnd {
+            selectedModel.handleDisappear()
+        }
+
+        // The timeline reapplies the same three identities after native dismiss.
+        // Only the selected representable disappeared; siblings stayed mounted.
+        markdown.apply(configuration: configuration)
+
+        #expect(videos[0].debugPlaybackModelForTesting.player === players[0])
+        #expect(selectedModel.player === players[1])
+        #expect(videos[2].debugPlaybackModelForTesting.player === players[2])
+        #expect(videos.allSatisfy { $0.debugPlaybackModelForTesting.errorMessage == nil })
+        markdown.clearContent()
     }
 
     @MainActor
@@ -1181,6 +1285,27 @@ struct MarkdownInlineVideoTests {
             }
             return false
         }
+    }
+}
+
+struct FullScreenDismissVideoCase: CaseIterable, CustomTestStringConvertible, Sendable {
+    enum DisappearTiming: String, CaseIterable, Sendable {
+        case beforeDidEnd
+        case afterDidEnd
+    }
+
+    let isPlaying: Bool
+    let disappearTiming: DisappearTiming
+
+    static let allCases = DisappearTiming.allCases.flatMap { timing in
+        [
+            Self(isPlaying: false, disappearTiming: timing),
+            Self(isPlaying: true, disappearTiming: timing),
+        ]
+    }
+
+    var testDescription: String {
+        "\(isPlaying ? "playing" : "paused")-\(disappearTiming.rawValue)"
     }
 }
 

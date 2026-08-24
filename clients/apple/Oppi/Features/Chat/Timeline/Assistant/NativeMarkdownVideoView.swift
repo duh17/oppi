@@ -256,10 +256,21 @@ final class NativeMarkdownVideoView: UIView {
     }
 
     func setPlaybackVisible(_ visible: Bool) {
-        guard isPlaybackVisible != visible else { return }
-        isPlaybackVisible = visible
-        playbackModel.setVisible(visible)
-        guard visible, let source = currentSource else { return }
+        if !visible {
+            guard isPlaybackVisible else { return }
+            // Native fullscreen can make UICollectionView report the row as no
+            // longer displayed. Preserve both this flag and the player while
+            // AVKit owns presentation; a real later offscreen/recycle callback
+            // still tears down through this path or prepareForRemoval().
+            guard playbackModel.handleDisappear(source: .timelineVisibility) else { return }
+            isPlaybackVisible = false
+            return
+        }
+
+        guard !isPlaybackVisible else { return }
+        isPlaybackVisible = true
+        playbackModel.setVisible(true)
+        guard let source = currentSource else { return }
         playbackModel.prepare(
             source: source,
             autoplay: MarkdownInlineVideoLayout.autoplay,
