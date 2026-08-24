@@ -38,7 +38,7 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi runtime `0.84.2`, and unpublished `oppi-mirror@0.47.0`.
+Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi runtime `0.84.3`, and unpublished `oppi-mirror@0.47.0`.
 
 ### Added
 
@@ -54,7 +54,7 @@ Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi
 - **Compatibility:** Build 46 requires `oppi-server@0.47.0` and `oppi-mirror@0.47.0`.
 - **Client/Server:** Pairing uses a per-device key and short-lived HTTPS token. Iroh pairing is gone; re-pair over HTTPS or Tailscale if there is no HTTPS endpoint.
 - **Client/Server:** Public session identity is Pi `Session.id` only.
-- **Server:** Bundled Pi runtime packages move from `0.84.1` to `0.84.2`.
+- **Server:** Bundled Pi runtime packages move from `0.84.2` to `0.84.3`.
 - **Mirror:** The extension connects over the owner Unix socket. Slash input from Oppi expands as Pi commands.
 
 ### Fixed
