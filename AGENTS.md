@@ -62,10 +62,10 @@ cd server && npm run test:gate:pr-fast
 
 # Apple
 cd clients/apple && xcodegen generate
-cd clients/apple && ./scripts/sim-pool.sh \
- run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
-cd clients/apple && ./scripts/sim-pool.sh \
- run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
+./scripts/sim-pool.sh run -- \
+  xcodebuild -project Oppi.xcodeproj -scheme Oppi build
+./scripts/sim-pool.sh run -- \
+  xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
 ```
 
 ## Cursor Cloud specific instructions

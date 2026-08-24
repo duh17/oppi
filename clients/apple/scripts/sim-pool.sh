@@ -6,6 +6,7 @@
 # Usage:
 #   ./sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
 #   ./sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
+#   From the repo root: ./scripts/sim-pool.sh ...  or  clients/apple/scripts/sim-pool.sh ...
 #
 # The script auto-injects -destination and -derivedDataPath — do NOT pass your own.
 # On build failure, prints a deduped error summary with the full log path.
@@ -416,6 +417,24 @@ EOF
       || die "self-test: OPPI_SIM_POOL_INDEX_STORE=1 still injected index-store disable"
   )
 
+  unset OPPI_SIM_POOL_ALLOW_SLOW_UNIT_TEST_SCHEME || true
+  normalize_command_args xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiTests/Foo
+  [[ "${NORMALIZED_ARGS[*]}" == *"-scheme OppiUnitTests"* ]] \
+    || die "self-test: OppiTests-only Oppi scheme was not rewritten to OppiUnitTests"
+  normalize_command_args xcodebuild -scheme Oppi test -only-testing:OppiE2ETests/Foo
+  [[ "${NORMALIZED_ARGS[*]}" == *"-scheme Oppi "* || "${NORMALIZED_ARGS[*]}" == *"-scheme Oppi" ]] \
+    || die "self-test: E2E Oppi scheme was rewritten"
+  [[ "${NORMALIZED_ARGS[*]}" != *OppiUnitTests* ]] \
+    || die "self-test: E2E run was rewritten to OppiUnitTests"
+  normalize_command_args xcodebuild -scheme Oppi test -only-testing:OppiTests/Foo -only-testing:OppiUITests/Bar
+  [[ "${NORMALIZED_ARGS[*]}" != *OppiUnitTests* ]] \
+    || die "self-test: mixed OppiTests/UI scheme was rewritten"
+  OPPI_SIM_POOL_ALLOW_SLOW_UNIT_TEST_SCHEME=1
+  normalize_command_args xcodebuild -scheme Oppi test -only-testing:OppiTests/Foo
+  [[ "${NORMALIZED_ARGS[*]}" != *OppiUnitTests* ]] \
+    || die "self-test: ALLOW_SLOW override still rewrote the scheme"
+  unset OPPI_SIM_POOL_ALLOW_SLOW_UNIT_TEST_SCHEME || true
+
   echo "sim-pool self-test passed."
 }
 
@@ -432,6 +451,73 @@ has_only_testing_target() {
   done
 
   return 1
+}
+
+only_testing_targets_are() {
+  local bundle="$1"
+  local saw=0
+  shift
+
+  for arg in "$@"; do
+    case "$arg" in
+      "-only-testing:${bundle}"|"-only-testing:${bundle}/"*)
+        saw=1
+        ;;
+      -only-testing:*)
+        return 1
+        ;;
+    esac
+  done
+
+  [[ "$saw" -eq 1 ]]
+}
+
+rewrite_scheme_in_args() {
+  local old_scheme="$1"
+  local new_scheme="$2"
+  local previous=""
+  local arg
+  shift 2
+  REWRITTEN_ARGS=()
+  for arg in "$@"; do
+    if [[ "$previous" == "-scheme" && "$arg" == "$old_scheme" ]]; then
+      REWRITTEN_ARGS+=("$new_scheme")
+    else
+      REWRITTEN_ARGS+=("$arg")
+    fi
+    previous="$arg"
+  done
+}
+
+ensure_apple_cwd() {
+  if [[ ! -f "Oppi.xcodeproj/project.pbxproj" && -f "$SCRIPT_DIR/../Oppi.xcodeproj/project.pbxproj" ]]; then
+    cd "$SCRIPT_DIR/.."
+    echo "[sim-pool] Using Apple checkout $PWD" >&2
+  fi
+}
+
+normalize_command_args() {
+  local scheme=""
+  local is_test_action=0
+  local arg
+  NORMALIZED_ARGS=("$@")
+  scheme=$(extract_flag_value "-scheme" "$@" 2>/dev/null || true)
+  for arg in "$@"; do
+    case "$arg" in
+      test|build-for-testing|test-without-building)
+        is_test_action=1
+        ;;
+    esac
+  done
+
+  if [[ "${OPPI_SIM_POOL_ALLOW_SLOW_UNIT_TEST_SCHEME:-}" != "1" ]] \
+    && [[ "$is_test_action" -eq 1 ]] \
+    && [[ "$scheme" == "Oppi" ]] \
+    && only_testing_targets_are "OppiTests" "$@"; then
+    echo "[sim-pool] Rewriting -scheme Oppi -> OppiUnitTests for OppiTests-only run" >&2
+    rewrite_scheme_in_args Oppi OppiUnitTests "$@"
+    NORMALIZED_ARGS=("${REWRITTEN_ARGS[@]}")
+  fi
 }
 
 validate_command_guardrails() {
@@ -451,7 +537,7 @@ validate_command_guardrails() {
   if [[ "${OPPI_SIM_POOL_ALLOW_SLOW_UNIT_TEST_SCHEME:-}" != "1" ]] \
     && [[ "$is_test_action" -eq 1 ]] \
     && [[ "$scheme" == "Oppi" ]] \
-    && has_only_testing_target "OppiTests" "$@"; then
+    && only_testing_targets_are "OppiTests" "$@"; then
     die "slow unit-test invocation detected: '-scheme Oppi' still builds OppiPerfTests/OppiUITests/OppiE2ETests. Use '-scheme OppiUnitTests' for OppiTests (override with OPPI_SIM_POOL_ALLOW_SLOW_UNIT_TEST_SCHEME=1)."
   fi
 }
@@ -1316,6 +1402,10 @@ esac
 [[ "${1:-}" == "--" ]] || usage
 shift
 [[ $# -gt 0 ]] || usage
+
+ensure_apple_cwd
+normalize_command_args "$@"
+set -- "${NORMALIZED_ARGS[@]}"
 
 # Reject manually passed -destination or -derivedDataPath
 for arg in "$@"; do

@@ -26,6 +26,7 @@ scripts/*
 !scripts/pre-push-plan.test.ts
 !scripts/detect-ci-relevant-paths.sh
 !scripts/detect-ci-relevant-paths.test.ts
+!scripts/sim-pool.sh
 clients/apple/scripts/*
 !clients/apple/scripts/check-coverage.sh
 !clients/apple/scripts/check-privacy-manifests.sh

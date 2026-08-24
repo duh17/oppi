@@ -148,6 +148,8 @@ xcodebuild -project Oppi.xcodeproj -scheme Oppi build \
 
 Use the dedicated `OppiUnitTests` scheme for `OppiTests`.
 
+From the repo root, `./scripts/sim-pool.sh` and `clients/apple/scripts/sim-pool.sh` both work. An OppiTests-only `-scheme Oppi` run is rewritten to `OppiUnitTests` so agents do not build UI/E2E/perf bundles.
+
 ```bash
 cd clients/apple
 ./scripts/sim-pool.sh run -- \
