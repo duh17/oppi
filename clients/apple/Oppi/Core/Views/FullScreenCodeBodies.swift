@@ -2203,20 +2203,50 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             guard let self else { return nil }
             self.layoutIfNeeded()
             self.collectionView.layoutIfNeeded()
-            let minimumY = -self.collectionView.adjustedContentInset.top
-            let maximumY = max(
-                minimumY,
-                self.collectionView.contentSize.height - self.collectionView.bounds.height
-                    + self.collectionView.adjustedContentInset.bottom
-            )
-            switch intent {
-            case .top:
-                return minimumY
-            case .tail:
-                return maximumY
-            case .detached(let progress):
-                return minimumY + (maximumY - minimumY) * min(max(progress, 0), 1)
-            }
+            return self.offsetY(forMutableTransition: intent)
+        }
+    }
+
+    private func offsetY(
+        forMutableTransition intent: FullScreenMarkdownViewportIntent
+    ) -> CGFloat {
+        let minimumY = -collectionView.adjustedContentInset.top
+        let maximumY = max(
+            minimumY,
+            collectionView.contentSize.height - collectionView.bounds.height
+                + collectionView.adjustedContentInset.bottom
+        )
+        switch intent {
+        case .top:
+            return minimumY
+        case .tail:
+            return maximumY
+        case .detached(let anchor):
+            let rawY = offsetY(for: anchor) ?? anchor.absoluteOffset
+            return min(max(rawY, minimumY), maximumY)
+        }
+    }
+
+    private func offsetY(for anchor: FullScreenMarkdownViewportAnchor) -> CGFloat? {
+        guard let segmentID = resolvedSegmentID(for: anchor),
+              let item = renderedSegmentIDs.firstIndex(of: segmentID),
+              itemHeights.indices.contains(item) else { return nil }
+        let spacing = readerPreferences.spacing.markdownStackSpacing
+        var itemMinY = CGFloat(10)
+        if item > 0 {
+            let prior = itemHeights[0..<item].reduce(0, +)
+            itemMinY += prior + spacing * CGFloat(item)
+        }
+        return itemMinY + anchor.offsetInItem
+    }
+
+    private func resolvedSegmentID(
+        for anchor: FullScreenMarkdownViewportAnchor
+    ) -> MarkdownReaderSegmentID? {
+        guard let segmentID = anchor.segmentID else { return nil }
+        if renderedSegmentIDs.contains(segmentID) { return segmentID }
+        return renderedSegmentIDs.first {
+            $0.kind == segmentID.kind && $0.sourceStartLine == segmentID.sourceStartLine
         }
     }
 

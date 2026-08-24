@@ -195,6 +195,152 @@ struct MutableFullScreenMarkdownBodyTests {
         #expect(wrapper.debugTransitionCountForTesting == 1)
     }
 
+    @Test("attached short viewport captures tail instead of top")
+    func capturingPrefersFollowsTailOverTop() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        scroll.contentSize = CGSize(width: 393, height: 220)
+        scroll.contentOffset = .zero
+
+        let intent = FullScreenMarkdownViewportIntent.capturing(
+            scrollView: scroll,
+            followsTail: true
+        )
+
+        #expect(intent == .tail)
+        #expect(scroll.contentSize.height < scroll.bounds.height)
+    }
+
+    @Test("detached short viewport that still fits is not classified as tail")
+    func capturingPrefersTopWhenDetachedShortViewportFits() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        scroll.contentSize = CGSize(width: 393, height: 220)
+        scroll.contentOffset = .zero
+
+        let intent = FullScreenMarkdownViewportIntent.capturing(
+            scrollView: scroll,
+            followsTail: false
+        )
+
+        #expect(intent == .top)
+        #expect(scroll.contentSize.height < scroll.bounds.height)
+    }
+
+    @Test("detached mid-document position survives a large final append")
+    func completionPreservesDetachedContentAnchor() async throws {
+        let initial = tallMarkdown(paragraphs: 45)
+        let body = makeBody(content: initial)
+        let fixture = attach(body)
+        defer { fixture.window.isHidden = true }
+        await drainMutableMarkdownQueue()
+        fixture.window.layoutIfNeeded()
+
+        let scroll = body.debugMutableScrollViewForTesting
+        body.scrollViewWillBeginDragging(scroll)
+        let detachedY = max(80, maximumOffsetY(scroll) / 2)
+        scroll.contentOffset.y = detachedY
+        body.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        fixture.window.layoutIfNeeded()
+
+        let visibleBefore = try #require(firstVisibleParagraphLabel(in: body, scrollView: scroll))
+        let oldMinimumY = -scroll.adjustedContentInset.top
+        let oldMaximumY = maximumOffsetY(scroll)
+        let oldProgress = (detachedY - oldMinimumY) / max(oldMaximumY - oldMinimumY, 1)
+
+        let final = initial + "\n\n" + tallMarkdown(paragraphs: 40)
+        body.update(content: final, isStreaming: false)
+        await drainMutableMarkdownQueue()
+        fixture.window.layoutIfNeeded()
+        await drainMutableMarkdownQueue()
+
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collection.layoutIfNeeded()
+        let visibleAfter = try #require(firstVisibleParagraphLabel(in: body, scrollView: collection))
+        let progressRestoredY = -collection.adjustedContentInset.top
+            + (maximumOffsetY(collection) + collection.adjustedContentInset.top) * oldProgress
+
+        #expect(visibleAfter == visibleBefore)
+        #expect(abs(collection.contentOffset.y - progressRestoredY) > 40)
+        #expect(maximumOffsetY(collection) - collection.contentOffset.y > 28)
+    }
+
+    @Test("detached completion keeps a content anchor after a mixed relative-image paragraph")
+    func detachedCompletionKeepsAnchorAfterMixedRelativeImage() async throws {
+        let mixedPrefix = "See the chart ![chart](images/chart.png) before the rest.\n\n"
+        let initial = mixedPrefix + tallMarkdown(paragraphs: 45)
+        let body = NativeMutableFullScreenMarkdownBody(
+            content: initial,
+            isStreaming: true,
+            themeID: .dark,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-1",
+            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            sourceFilePath: "docs/Draft.md",
+            fetchWorkspaceFile: { _, _ in try #require(Self.pngData()) }
+        )
+        let fixture = attach(body)
+        defer { fixture.window.isHidden = true }
+        await drainMutableMarkdownQueue()
+        fixture.window.layoutIfNeeded()
+
+        let scroll = body.debugMutableScrollViewForTesting
+        body.scrollViewWillBeginDragging(scroll)
+        let detachedY = max(80, maximumOffsetY(scroll) / 2)
+        scroll.contentOffset.y = detachedY
+        body.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        fixture.window.layoutIfNeeded()
+
+        let capturedAnchor = try #require({
+            if case .detached(let anchor) = body.currentViewportIntent() { return anchor }
+            return nil
+        }())
+        let capturedID = try #require(capturedAnchor.segmentID)
+        let visibleBefore = try #require(firstVisibleParagraphLabel(in: body, scrollView: scroll))
+
+        let final = initial + "\n\n" + tallMarkdown(paragraphs: 40)
+        body.update(content: final, isStreaming: false)
+        await drainMutableMarkdownQueue()
+        fixture.window.layoutIfNeeded()
+        await drainMutableMarkdownQueue()
+
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collection.layoutIfNeeded()
+        let visibleAfter = try #require(firstVisibleParagraphLabel(in: body, scrollView: collection))
+        let reader = try #require(timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: body))
+
+        #expect(visibleAfter == visibleBefore)
+        #expect(reader.debugRenderedSegmentIDsForTesting.contains(capturedID))
+        #expect(maximumOffsetY(collection) - collection.contentOffset.y > 28)
+    }
+
+    @Test("attached short stream that still fits hands off as tail")
+    func attachedShortCompletionHandsOffAsTail() async throws {
+        let initial = "Short live paragraph that still fits the viewport."
+        let body = makeBody(content: initial)
+        let fixture = attach(body)
+        defer { fixture.window.isHidden = true }
+        await drainMutableMarkdownQueue()
+        fixture.window.layoutIfNeeded()
+
+        let scroll = body.debugMutableScrollViewForTesting
+        #expect(scroll.contentSize.height <= scroll.bounds.height + 1)
+        #expect(body.currentViewportIntent() == .tail)
+
+        let final = initial + "\n\n" + tallMarkdown(paragraphs: 30)
+        body.update(content: final, isStreaming: false)
+        await drainMutableMarkdownQueue()
+        fixture.window.layoutIfNeeded()
+        await drainMutableMarkdownQueue()
+
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collection.layoutIfNeeded()
+        #expect(abs(collection.contentOffset.y - maximumOffsetY(collection)) < 1)
+        #expect(collection.contentOffset.y > 80)
+    }
+
     @Test("tail intent survives a large final completion burst")
     func completionPreservesTailIntent() async throws {
         let initial = tallMarkdown(paragraphs: 45)
@@ -517,6 +663,27 @@ struct MutableFullScreenMarkdownBodyTests {
             scrollView.contentSize.height - scrollView.bounds.height
                 + scrollView.adjustedContentInset.bottom
         )
+    }
+
+    private func firstVisibleParagraphLabel(in root: UIView, scrollView: UIScrollView) -> String? {
+        let visibleTop = scrollView.contentOffset.y + 8
+        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height
+        for textView in timelineAllTextViews(in: root) {
+            let frame = textView.convert(textView.bounds, to: scrollView)
+            guard frame.maxY > visibleTop, frame.minY < visibleBottom else { continue }
+            let point = CGPoint(x: 8, y: max(0, visibleTop - frame.minY))
+            guard let position = textView.closestPosition(to: point),
+                  let range = textView.tokenizer.rangeEnclosingPosition(
+                    position,
+                    with: .paragraph,
+                    inDirection: .layout(.right)
+                  ),
+                  let paragraph = textView.text(in: range),
+                  let match = paragraph.range(of: #"Paragraph \d+"#, options: .regularExpression)
+            else { continue }
+            return String(paragraph[match])
+        }
+        return nil
     }
 
     private func drainMutableMarkdownQueue() async {

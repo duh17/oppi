@@ -1,15 +1,26 @@
 import UIKit
 
+/// Visible content position carried across the one-way mutable-to-immutable swap.
+///
+/// Prefer a stable reader segment plus the offset inside that item. Absolute
+/// content offset is only the fallback when the live stack cannot be mapped.
+struct FullScreenMarkdownViewportAnchor: Equatable {
+    var segmentID: MarkdownReaderSegmentID?
+    var offsetInItem: CGFloat
+    var absoluteOffset: CGFloat
+}
+
 /// Viewport intent carried across the one-way mutable-to-immutable Markdown swap.
 enum FullScreenMarkdownViewportIntent: Equatable {
     case top
     case tail
-    case detached(progress: CGFloat)
+    case detached(FullScreenMarkdownViewportAnchor)
 
     static func capturing(
         scrollView: UIScrollView,
         followsTail: Bool,
-        edgeSlop: CGFloat = 28
+        edgeSlop: CGFloat = 28,
+        visibleAnchor: FullScreenMarkdownViewportAnchor? = nil
     ) -> Self {
         let minimumY = -scrollView.adjustedContentInset.top
         let maximumY = max(
@@ -18,14 +29,25 @@ enum FullScreenMarkdownViewportIntent: Equatable {
                 + scrollView.adjustedContentInset.bottom
         )
         let y = min(max(scrollView.contentOffset.y, minimumY), maximumY)
+        // Attached streams stay on the tail even when the live document still
+        // fits the viewport, where y is also the top edge.
+        if followsTail {
+            return .tail
+        }
         if y - minimumY <= edgeSlop {
             return .top
         }
-        if followsTail || maximumY - y <= edgeSlop {
+        if maximumY - y <= edgeSlop {
             return .tail
         }
-        let span = maximumY - minimumY
-        return .detached(progress: span > 0 ? (y - minimumY) / span : 0)
+        if let visibleAnchor {
+            return .detached(visibleAnchor)
+        }
+        return .detached(FullScreenMarkdownViewportAnchor(
+            segmentID: nil,
+            offsetInItem: 0,
+            absoluteOffset: y
+        ))
     }
 }
 
@@ -396,7 +418,79 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     }
 
     func currentViewportIntent() -> FullScreenMarkdownViewportIntent {
-        .capturing(scrollView: scrollView, followsTail: viewportOwner.followsTail)
+        .capturing(
+            scrollView: scrollView,
+            followsTail: viewportOwner.followsTail,
+            visibleAnchor: captureVisibleContentAnchor()
+        )
+    }
+
+    private func captureVisibleContentAnchor() -> FullScreenMarkdownViewportAnchor {
+        layoutIfNeeded()
+        let y = scrollView.contentOffset.y
+        guard let stack = markdownStackView,
+              let firstIndex = firstVisibleArrangedSubviewIndex(in: stack)
+        else {
+            return FullScreenMarkdownViewportAnchor(
+                segmentID: nil,
+                offsetInItem: 0,
+                absoluteOffset: y
+            )
+        }
+        let view = stack.arrangedSubviews[firstIndex]
+        let frame = view.convert(view.bounds, to: scrollView)
+        let ids = currentReaderSegmentIDs()
+        return FullScreenMarkdownViewportAnchor(
+            segmentID: ids.indices.contains(firstIndex) ? ids[firstIndex] : nil,
+            offsetInItem: y - frame.minY,
+            absoluteOffset: y
+        )
+    }
+
+    private var markdownStackView: UIStackView? {
+        markdownView.subviews.compactMap { $0 as? UIStackView }.first
+    }
+
+    private func firstVisibleArrangedSubviewIndex(in stack: UIStackView) -> Int? {
+        let visibleRect = CGRect(origin: scrollView.contentOffset, size: scrollView.bounds.size)
+        return stack.arrangedSubviews.firstIndex { view in
+            view.convert(view.bounds, to: scrollView).intersects(visibleRect)
+        }
+    }
+
+    private func currentReaderSegmentIDs() -> [MarkdownReaderSegmentID] {
+        // Match applyMutableContent() so mixed relative-image paragraphs split
+        // the same way as the live stack and the immutable reader.
+        let sourceDirectory: String? = {
+            guard let sourceFilePath else { return nil }
+            let dir = (sourceFilePath as NSString).deletingLastPathComponent
+            return dir.isEmpty || dir == "." ? nil : dir
+        }()
+        let build = FlatSegment.buildWithSourceLineRanges(
+            from: parseCommonMarkLocated(latestContent),
+            themeID: themeID,
+            serverID: serverID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            serverBaseURL: serverBaseURL,
+            sourceDirectory: sourceDirectory,
+            mergeAdjacentTextSegments: lineAnchor == nil
+        )
+        return build.identities
+    }
+
+    private func mutableOffsetY(for anchor: FullScreenMarkdownViewportAnchor) -> CGFloat? {
+        guard let segmentID = anchor.segmentID,
+              let stack = markdownStackView else { return nil }
+        let ids = currentReaderSegmentIDs()
+        let index = ids.firstIndex(of: segmentID)
+            ?? ids.firstIndex {
+                $0.kind == segmentID.kind && $0.sourceStartLine == segmentID.sourceStartLine
+            }
+        guard let index, stack.arrangedSubviews.indices.contains(index) else { return nil }
+        let view = stack.arrangedSubviews[index]
+        let frame = view.convert(view.bounds, to: scrollView)
+        return frame.minY + anchor.offsetInItem
     }
 
     private var isViewportInteracting: Bool {
@@ -430,8 +524,9 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             targetY = minimumY
         case .tail:
             targetY = maximumY
-        case .detached(let progress):
-            targetY = minimumY + (maximumY - minimumY) * min(max(progress, 0), 1)
+        case .detached(let anchor):
+            let rawY = mutableOffsetY(for: anchor) ?? anchor.absoluteOffset
+            targetY = min(max(rawY, minimumY), maximumY)
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
