@@ -1027,19 +1027,19 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         applyOwnership(.willEndFullScreen)
     }
 
-    func handleDidEndFullScreen(hostIsAttached: Bool = true) {
+    func handleDidEndFullScreen(hostIsAttached _: Bool = true) {
         applyOwnership(.didEndFullScreen)
-        if !hostIsAttached {
-            // Host left the hierarchy during native presentation.
-            applyOwnership(.setVisible(false))
-        }
+        // AVKit reports the player VC detached at dismiss completion even
+        // when the inline wiki card is still on screen. handleDisappear
+        // during fullscreen is a no-op, so treating that detach as hide
+        // nils the player and AuthenticatedMediaPlayerSurface sits on
+        // ProgressView forever. Real offscreen/recycle already called
+        // setVisible(false) or prepareForRemoval(); teardown then runs
+        // once fullscreen ownership clears.
     }
 
-    func handleDidStopPictureInPicture(hostIsAttached: Bool = true) {
+    func handleDidStopPictureInPicture(hostIsAttached _: Bool = true) {
         applyOwnership(.didStopPictureInPicture)
-        if !hostIsAttached {
-            applyOwnership(.setVisible(false))
-        }
     }
 
     private func applyOwnership(_ event: MediaPlaybackTeardownPolicy.Event) {

@@ -804,13 +804,23 @@ struct MarkdownInlineVideoTests {
         #expect(fullScreen.player?.currentTime() == fullScreenTime)
 
         let detachedHost = AuthenticatedMediaPlayerModel()
-        _ = detachedHost.debugInstallStandalonePlayerForTesting()
+        let detachedPlayer = detachedHost.debugInstallStandalonePlayerForTesting()
         detachedHost.setFullScreen(true)
         detachedHost.handleDisappear()
         detachedHost.handleWillEndFullScreen()
         detachedHost.handleDidEndFullScreen(hostIsAttached: false)
-        #expect(detachedHost.debugDidTeardownForTesting)
-        #expect(detachedHost.player == nil)
+        #expect(!detachedHost.debugDidTeardownForTesting)
+        #expect(detachedHost.player === detachedPlayer)
+        #expect(detachedHost.player != nil || detachedHost.errorMessage != nil)
+
+        let hiddenDuringPresentation = AuthenticatedMediaPlayerModel()
+        _ = hiddenDuringPresentation.debugInstallStandalonePlayerForTesting()
+        hiddenDuringPresentation.setFullScreen(true)
+        hiddenDuringPresentation.setVisible(false)
+        hiddenDuringPresentation.handleWillEndFullScreen()
+        hiddenDuringPresentation.handleDidEndFullScreen(hostIsAttached: false)
+        #expect(hiddenDuringPresentation.debugDidTeardownForTesting)
+        #expect(hiddenDuringPresentation.player == nil)
 
         let pictureInPicture = AuthenticatedMediaPlayerModel()
         let pipPlayer = pictureInPicture.debugInstallStandalonePlayerForTesting()
@@ -825,6 +835,63 @@ struct MarkdownInlineVideoTests {
         #expect(!pictureInPicture.debugDidTeardownForTesting)
         #expect(pictureInPicture.player === pipPlayer)
         #expect(pictureInPicture.player?.currentTime() == pipTime)
+
+        let detachedPiP = AuthenticatedMediaPlayerModel()
+        let detachedPiPPlayer = detachedPiP.debugInstallStandalonePlayerForTesting()
+        detachedPiP.setPictureInPicture(true)
+        detachedPiP.handleDisappear()
+        detachedPiP.handleDidStopPictureInPicture(hostIsAttached: false)
+        #expect(!detachedPiP.debugDidTeardownForTesting)
+        #expect(detachedPiP.player === detachedPiPPlayer)
+    }
+
+    @MainActor
+    @Test("dismissing fullscreen while the inline card remains does not leave the empty spinner")
+    func fullscreenDismissWhileInlineHostRemainsDoesNotLeaveEmptySpinner() async throws {
+        let embed = try makeEmbed("![[movie.mp4]]")
+        let source = dummyMediaSource()
+        let parent = UIViewController()
+        let video = NativeMarkdownVideoView()
+        parent.view.addSubview(video)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        video.apply(
+            embed: embed,
+            sourceProvider: { _ in source },
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+        for _ in 0..<40 where !video.debugHasPlayerForTesting {
+            await Task.yield()
+        }
+        #expect(video.debugHasPlayerForTesting)
+
+        let model = video.debugPlaybackModelForTesting
+        // Lifecycle only: drop any live resource-loader session and pin a player.
+        model.teardown()
+        let installedPlayer = model.debugInstallStandalonePlayerForTesting()
+        model.setFullScreen(true)
+        // AVKit detaches the inline host and SwiftUI reports disappear.
+        // Neither event is recycle, and apply() will no-op on the same identity.
+        video.willMove(toSuperview: nil)
+        model.handleDisappear()
+        model.handleWillEndFullScreen()
+        model.handleDidEndFullScreen(hostIsAttached: false)
+
+        video.apply(
+            embed: embed,
+            sourceProvider: { _ in source },
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+
+        #expect(video.debugHasPlayerForTesting)
+        #expect(model.player === installedPlayer)
+        #expect(model.errorMessage == nil)
+        video.prepareForRemoval()
     }
 
     @MainActor
