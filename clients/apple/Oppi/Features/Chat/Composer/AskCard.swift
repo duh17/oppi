@@ -100,12 +100,12 @@ struct AskCard: View {
                 answers: $answers,
                 isExpanded: $isExpanded,
                 voiceInputManager: voiceInputManager,
+                sheetDetent: $expandedSheetDetent,
                 onSubmit: { submitAnswers($0, surface: "expanded") },
                 onIgnoreAll: { ignoreAll(surface: "expanded") }
             )
             .presentationDetents([.medium, .large], selection: $expandedSheetDetent)
             .presentationDragIndicator(.visible)
-            .presentationContentInteraction(.resizes)
             .presentationCornerRadius(28)
         }
     }

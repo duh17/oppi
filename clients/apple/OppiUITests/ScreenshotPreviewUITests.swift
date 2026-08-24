@@ -782,6 +782,49 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "ask-card-expanded-sheet")
     }
 
+    func testAskCardExpandedCustomInputStaysAboveKeyboard() throws {
+        launchPreview(screen: "ask-card-expanded-custom")
+
+        let keyboardFirstRunContinue = app.buttons["Continue"]
+        if keyboardFirstRunContinue.waitForExistence(timeout: 2) {
+            keyboardFirstRunContinue.tap()
+        }
+
+        let input = app.descendants(matching: .any)["ask.input"]
+        let dictation = app.descendants(matching: .any)["ask.voiceInput"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5), "Pinned custom answer field not visible")
+        XCTAssertTrue(input.isHittable, "Custom answer field must stay above the option list")
+        XCTAssertTrue(dictation.waitForExistence(timeout: 5), "Dictation button missing from the custom answer field")
+        XCTAssertTrue(dictation.isHittable, "Dictation must stay tappable in the pinned custom answer field")
+
+        input.tap()
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Keyboard did not appear for the custom answer")
+        XCTAssertTrue(input.waitForExistence(timeout: 3), "Custom answer field disappeared after focus")
+        XCTAssertTrue(dictation.waitForExistence(timeout: 3), "Dictation button disappeared after focusing the custom answer")
+        XCTAssertLessThanOrEqual(
+            input.frame.maxY,
+            keyboard.frame.minY - 4,
+            "Custom answer field must stay visibly separated from the keyboard"
+        )
+        XCTAssertLessThanOrEqual(
+            dictation.frame.maxY,
+            keyboard.frame.minY - 4,
+            "Dictation must stay above the keyboard with the custom answer field"
+        )
+
+        let ignore = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Ignore")).firstMatch
+        XCTAssertTrue(ignore.exists, "Ignore should remain available while typing a custom answer")
+        XCTAssertLessThanOrEqual(
+            ignore.frame.maxY,
+            keyboard.frame.minY - 4,
+            "Ignore must stay above the keyboard with the custom answer field"
+        )
+
+        saveScreenshot(name: "ask-card-expanded-custom-keyboard")
+    }
+
     func testOppiCommandApprovalRoutesInlineActionsImmediately() throws {
         launchPreview(screen: "oppi-command-approval-inline")
 

@@ -120,6 +120,64 @@ struct AskCardExpandedTests {
         #expect(AskCardExpanded.usesPinnedConfirmationActions(Self.singleSelectRequest()) == false)
     }
 
+    @Test("Custom answers pin into the keyboard-safe footer instead of the option list")
+    func customAnswersPinIntoBottomChrome() {
+        #expect(AskCardExpanded.pinsCustomAnswerInBottomChrome(Self.singleSelectRequest()))
+        #expect(AskCardExpanded.pinsCustomAnswerInBottomChrome(Self.multiQuestionRequest()))
+    }
+
+    @Test("Asks without custom input do not reserve footer chrome for a text field")
+    func asksWithoutCustomInputDoNotPinCustomAnswer() {
+        #expect(AskCardExpanded.pinsCustomAnswerInBottomChrome(Self.multiSelectOnlyRequest()) == false)
+    }
+
+    @Test("Pinned confirmations never steal the footer for a custom field")
+    func pinnedConfirmationsDoNotPinCustomAnswer() {
+        let request = AskRequest(
+            id: "approval-2",
+            sessionId: "session-1",
+            questions: [
+                AskQuestion(
+                    id: ExtensionUIRequest.inlineQuestionId,
+                    question: "Approve command",
+                    options: [
+                        AskOption(value: ExtensionUIRequest.confirmValue, label: "Confirm"),
+                        AskOption(value: ExtensionUIRequest.cancelValue, label: "Cancel"),
+                    ],
+                    multiSelect: false
+                ),
+            ],
+            allowCustom: true,
+            timeout: nil,
+            responseEncoding: .extensionConfirm
+        )
+
+        #expect(AskCardExpanded.usesPinnedConfirmationActions(request))
+        #expect(AskCardExpanded.pinsCustomAnswerInBottomChrome(request) == false)
+    }
+
+    @Test("Focusing the custom answer lifts the expanded sheet to large")
+    func customAnswerFocusLiftsSheetToLarge() {
+        #expect(
+            AskCardExpanded.sheetDetentForCustomAnswerFocus(
+                request: Self.singleSelectRequest(),
+                isCustomAnswerFocused: true
+            ) == .large
+        )
+        #expect(
+            AskCardExpanded.sheetDetentForCustomAnswerFocus(
+                request: Self.singleSelectRequest(),
+                isCustomAnswerFocused: false
+            ) == nil
+        )
+        #expect(
+            AskCardExpanded.sheetDetentForCustomAnswerFocus(
+                request: Self.multiSelectOnlyRequest(),
+                isCustomAnswerFocused: true
+            ) == nil
+        )
+    }
+
     // MARK: - Page Count Consistency
 
     @Test("Single-select single question: 1 page, no submit page")

@@ -17,6 +17,7 @@ struct AskCardExpanded: View {
     @Binding var answers: [String: AskAnswer]
     @Binding var isExpanded: Bool
     var voiceInputManager: VoiceInputManager? = nil
+    var sheetDetent: Binding<PresentationDetent>? = nil
     let onSubmit: ([String: AskAnswer]) -> Void
     let onIgnoreAll: () -> Void
 
@@ -85,7 +86,7 @@ struct AskCardExpanded: View {
             .frame(maxHeight: .infinity)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            footerBar
+            bottomChrome
         }
         .background(theme.bg.primary.ignoresSafeArea())
         .onAppear {
@@ -204,10 +205,6 @@ struct AskCardExpanded: View {
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
             }
-
-            if request.allowCustom {
-                customTextInput(for: question)
-            }
         }
     }
 
@@ -239,9 +236,11 @@ struct AskCardExpanded: View {
     @ViewBuilder
     private func customTextInput(for question: AskQuestion) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Or type your answer")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.themeComment)
+            if focusedQuestionId != question.id {
+                Text("Or type your answer")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.themeComment)
+            }
 
             HStack(alignment: .bottom, spacing: 8) {
                 dictationButton(for: question)
@@ -285,7 +284,7 @@ struct AskCardExpanded: View {
                         onOverflowChange: nil,
                         onLineCountChange: nil,
                         onFocusChange: { isFocused in
-                            focusedQuestionId = isFocused ? question.id : nil
+                            handleCustomAnswerFocusChange(isFocused: isFocused, questionId: question.id)
                         },
                         onDictationStateChange: nil,
                         focusRequestID: focusRequestID,
@@ -342,17 +341,37 @@ struct AskCardExpanded: View {
 
     // MARK: - Footer
 
+    /// Custom answers live in this keyboard-safe chrome so a long option list
+    /// cannot scroll the field under the keyboard.
+    private var bottomChrome: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .overlay(theme.text.tertiary.opacity(0.15))
+
+            if let question = currentQuestion, Self.pinsCustomAnswerInBottomChrome(request) {
+                customTextInput(for: question)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+            }
+
+            footerActions
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+        }
+        .background(theme.bg.primary)
+    }
+
     @ViewBuilder
-    private var footerBar: some View {
+    private var footerActions: some View {
         if usesPinnedConfirmationActions {
-            pinnedConfirmationFooter
+            pinnedConfirmationActions
         } else {
-            standardFooter
+            standardFooterActions
         }
     }
 
-    private var standardFooter: some View {
-        footerContainer {
+    private var standardFooterActions: some View {
             HStack {
                 Button {
                     handleIgnore()
@@ -424,11 +443,9 @@ struct AskCardExpanded: View {
                     .buttonStyle(.plain)
                 }
             }
-        }
     }
 
-    private var pinnedConfirmationFooter: some View {
-        footerContainer {
+    private var pinnedConfirmationActions: some View {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
                     ignoreConfirmationButton
@@ -444,7 +461,6 @@ struct AskCardExpanded: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-        }
     }
 
     private var ignoreConfirmationButton: some View {
@@ -483,17 +499,6 @@ struct AskCardExpanded: View {
         .frame(minHeight: 44)
         .background(.themeBlue, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityIdentifier("ask.confirmation.confirm")
-    }
-
-    private func footerContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 0) {
-            Divider()
-                .overlay(theme.text.tertiary.opacity(0.15))
-            content()
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-        }
-        .background(theme.bg.primary)
     }
 
     private var usesPinnedConfirmationActions: Bool {
@@ -666,7 +671,7 @@ struct AskCardExpanded: View {
         let base = customTexts[question.id] ?? ""
         dictationQuestionId = question.id
         dictationBaseText = base
-        focusedQuestionId = question.id
+        revealCustomAnswerChrome(for: question.id)
 
         do {
             dictationPrefixText = try await ComposerShared.startVoiceInput(
@@ -743,6 +748,24 @@ struct AskCardExpanded: View {
         dictationPrefixText = ""
     }
 
+    private func handleCustomAnswerFocusChange(isFocused: Bool, questionId: String) {
+        if isFocused {
+            revealCustomAnswerChrome(for: questionId)
+        } else if focusedQuestionId == questionId {
+            focusedQuestionId = nil
+        }
+    }
+
+    private func revealCustomAnswerChrome(for questionId: String) {
+        focusedQuestionId = questionId
+        if let detent = Self.sheetDetentForCustomAnswerFocus(
+            request: request,
+            isCustomAnswerFocused: true
+        ) {
+            sheetDetent?.wrappedValue = detent
+        }
+    }
+
     private func handleKeyboardRestoreRequest() {
         suppressKeyboard = false
         guard dictationQuestionId != nil else { return }
@@ -772,6 +795,22 @@ extension AskCardExpanded {
         let values = Set(question.options.map(\.value))
         return values.contains(ExtensionUIRequest.confirmValue)
             && values.contains(ExtensionUIRequest.cancelValue)
+    }
+
+    /// Keep the custom field in the footer chrome. Confirmation sheets already
+    /// own that space for Confirm/Cancel.
+    static func pinsCustomAnswerInBottomChrome(_ request: AskRequest) -> Bool {
+        request.allowCustom && !usesPinnedConfirmationActions(request)
+    }
+
+    static func sheetDetentForCustomAnswerFocus(
+        request: AskRequest,
+        isCustomAnswerFocused: Bool
+    ) -> PresentationDetent? {
+        guard isCustomAnswerFocused, pinsCustomAnswerInBottomChrome(request) else {
+            return nil
+        }
+        return .large
     }
 
     static func dictationPrefix(for base: String) -> String {

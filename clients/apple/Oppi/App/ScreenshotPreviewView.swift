@@ -89,6 +89,8 @@ struct ScreenshotPreviewView: View {
             AskCardMultiSelectLongOptionsPreview()
         case "ask-card-expanded-sheet":
             AskCardExpandedSheetPreview()
+        case "ask-card-expanded-custom":
+            AskCardExpandedCustomPreview()
         case "oppi-command-approval-inline":
             OppiCommandApprovalInlinePreview()
         case "context-bar-overlap":
@@ -1374,6 +1376,47 @@ private enum AskCardPreviewFixture {
         allowCustom: true,
         timeout: nil
     )
+
+    static let customAnswerRequest = AskRequest(
+        id: "preview-expanded-custom",
+        sessionId: "preview-session",
+        questions: [
+            AskQuestion(
+                id: "guide-scope",
+                question: "How should the session-link guide and invite handling change?",
+                options: [
+                    AskOption(
+                        value: "full",
+                        label: "Sol's full C",
+                        description: "Guide split + accept only session links + stop invite fallthrough"
+                    ),
+                    AskOption(
+                        value: "guide-invite",
+                        label: "Guide + invite fix",
+                        description: "Clarify syntax and stop the toast; do not accept the hybrid"
+                    ),
+                    AskOption(
+                        value: "guide-only",
+                        label: "Guide only",
+                        description: "Make the file vs session split unmistakable; leave runtime as-is"
+                    ),
+                    AskOption(
+                        value: "handling-only",
+                        label: "Handling only",
+                        description: "Accept the hybrid and fix invite fallthrough; leave the guide"
+                    ),
+                    AskOption(
+                        value: "docs-only",
+                        label: "Docs only",
+                        description: "Leave runtime and invite handling alone"
+                    ),
+                ],
+                multiSelect: false
+            ),
+        ],
+        allowCustom: true,
+        timeout: nil
+    )
 }
 
 private struct AskCardPreview: View {
@@ -1596,6 +1639,47 @@ private struct AskCardExpandedSheetPreview: View {
                 currentPage: $currentPage,
                 answers: $answers,
                 isExpanded: $isExpanded,
+                onSubmit: { _ in },
+                onIgnoreAll: {}
+            )
+            .presentationDetents([.medium, .large], selection: $expandedSheetDetent)
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
+        }
+        .onAppear { isExpanded = true }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+private struct AskCardExpandedCustomPreview: View {
+    @State private var currentPage = 0
+    @State private var answers: [String: AskAnswer] = [:]
+    @State private var isExpanded = true
+    @State private var expandedSheetDetent: PresentationDetent = .medium
+    @State private var voiceInputManager = VoiceInputManager()
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            VStack(spacing: 12) {
+                Text("Ask card")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("Expanded custom answer preview")
+                    .font(.subheadline)
+                    .foregroundStyle(.themeComment)
+            }
+        }
+        .sheet(isPresented: $isExpanded) {
+            AskCardExpanded(
+                request: AskCardPreviewFixture.customAnswerRequest,
+                currentPage: $currentPage,
+                answers: $answers,
+                isExpanded: $isExpanded,
+                voiceInputManager: voiceInputManager,
+                sheetDetent: $expandedSheetDetent,
                 onSubmit: { _ in },
                 onIgnoreAll: {}
             )
