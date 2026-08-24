@@ -102,6 +102,28 @@ struct MermaidRendererTests {
         #expect(a.height > 0)
     }
 
+    @Test func markdownNodeBoxUsesFormattedWidth() {
+        let markdown = parser.parse("""
+        flowchart TD
+          M["`**bold** and _italic_`"]
+        """)
+        let formatted = parser.parse("""
+        flowchart TD
+          M[bold and italic]
+        """)
+        let rawMarkers = parser.parse("""
+        flowchart TD
+          M["**bold** and _italic_"]
+        """)
+        let markdownWidth = renderer.layout(markdown, configuration: config).graphResult.nodePositions["M"]?.width ?? 0
+        let formattedWidth = renderer.layout(formatted, configuration: config).graphResult.nodePositions["M"]?.width ?? 0
+        let rawWidth = renderer.layout(rawMarkers, configuration: config).graphResult.nodePositions["M"]?.width ?? 0
+        #expect(
+            abs(markdownWidth - formattedWidth) < abs(markdownWidth - rawWidth),
+            "Markdown box \(markdownWidth) should be closer to formatted \(formattedWidth) than raw markers \(rawWidth)"
+        )
+    }
+
     @Test func subgraphBoundingBoxIncludesContainerMargins() {
         let diagram = parser.parse("""
             flowchart TD

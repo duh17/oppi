@@ -37,16 +37,167 @@ enum MermaidTextUtils {
         )
     }
 
+    /// Result of inspecting a Mermaid label before drawing.
+    struct LabelInspection: Equatable, Sendable {
+        let text: String
+        let isMarkdown: Bool
+    }
+
     /// Normalize Mermaid label text from parsed delimiters.
     ///
     /// Official flowchart and mindmap syntax uses quoted strings for labels
     /// containing syntax characters, backtick-wrapped markdown strings, and
     /// entity codes such as `#quot;` and `#9829;`.
     static func normalizeLabel(_ text: String) -> String {
+        inspectLabel(text).text
+    }
+
+    /// Detect official quoted+backtick markdown strings before stripping delimiters.
+    ///
+    /// `A["`**bold**`"]` is markdown. `A["text with *stars*"]` is not.
+    static func inspectLabel(_ text: String) -> LabelInspection {
         var result = normalizeBrTags(text)
         result = stripWrappingDelimiter(result, delimiter: "\"")
+        // Official markdown strings are the backtick-wrapped form, with or
+        // without quotes: A["`**bold**`"] and A("`**bold**`").
+        // Plain quoted text such as A["*stars*"] stays literal.
+        let hadBackticks = result.count >= 2 && result.first == "`" && result.last == "`"
         result = stripWrappingDelimiter(result, delimiter: "`")
-        return decodeMermaidEntities(result)
+        return LabelInspection(
+            text: decodeMermaidEntities(result),
+            isMarkdown: hadBackticks
+        )
+    }
+
+    /// One visible run after official-subset markdown parsing.
+    struct LabelRun: Equatable, Sendable {
+        let text: String
+        let isBold: Bool
+        let isItalic: Bool
+    }
+
+    /// Official flowchart markdown subset: `**bold**`, `*italic*`, `_italic_`.
+    /// Unmatched markers stay literal. Nested spans are not parsed.
+    static func markdownLabelRuns(_ text: String) -> [LabelRun] {
+        var runs: [LabelRun] = []
+        var literal = ""
+        var index = text.startIndex
+
+        func flushLiteral() {
+            guard !literal.isEmpty else { return }
+            runs.append(LabelRun(text: literal, isBold: false, isItalic: false))
+            literal = ""
+        }
+
+        while index < text.endIndex {
+            if text[index...].hasPrefix("**") {
+                if let span = takeSpan(text, from: index, delimiter: "**") {
+                    flushLiteral()
+                    runs.append(LabelRun(text: span.text, isBold: true, isItalic: false))
+                    index = span.end
+                } else {
+                    literal.append(contentsOf: "**")
+                    index = text.index(index, offsetBy: 2)
+                }
+                continue
+            }
+            if text[index...].hasPrefix("*") {
+                if let span = takeSpan(text, from: index, delimiter: "*") {
+                    flushLiteral()
+                    runs.append(LabelRun(text: span.text, isBold: false, isItalic: true))
+                    index = span.end
+                } else {
+                    literal.append("*")
+                    index = text.index(after: index)
+                }
+                continue
+            }
+            if text[index...].hasPrefix("_") {
+                if let span = takeSpan(text, from: index, delimiter: "_") {
+                    flushLiteral()
+                    runs.append(LabelRun(text: span.text, isBold: false, isItalic: true))
+                    index = span.end
+                } else {
+                    literal.append("_")
+                    index = text.index(after: index)
+                }
+                continue
+            }
+            literal.append(text[index])
+            index = text.index(after: index)
+        }
+        flushLiteral()
+        return runs
+    }
+
+    /// Build an attributed label. Markdown formatting is applied only when `isMarkdown`.
+    static func attributedLabel(
+        _ text: String,
+        font: CTFont,
+        fontSize: CGFloat,
+        foregroundColor: CGColor? = nil,
+        isMarkdown: Bool
+    ) -> NSAttributedString {
+        if !isMarkdown {
+            return attributedRun(text, font: font, foregroundColor: foregroundColor)
+        }
+        let result = NSMutableAttributedString()
+        for run in markdownLabelRuns(text) {
+            let runFont = styledFont(from: font, size: fontSize, bold: run.isBold, italic: run.isItalic)
+            result.append(attributedRun(run.text, font: runFont, foregroundColor: foregroundColor))
+        }
+        return result
+    }
+
+    private static func takeSpan(
+        _ text: String,
+        from start: String.Index,
+        delimiter: String
+    ) -> (text: String, end: String.Index)? {
+        guard text[start...].hasPrefix(delimiter) else { return nil }
+        let innerStart = text.index(start, offsetBy: delimiter.count)
+        guard innerStart < text.endIndex,
+              let close = text[innerStart...].range(of: delimiter),
+              close.lowerBound > innerStart
+        else { return nil }
+        return (String(text[innerStart..<close.lowerBound]), close.upperBound)
+    }
+
+    private static func attributedRun(
+        _ text: String,
+        font: CTFont,
+        foregroundColor: CGColor?
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: text)
+        let range = NSRange(location: 0, length: result.length)
+        result.addAttribute(.font, value: font, range: range)
+        if let foregroundColor {
+            result.addAttribute(.foregroundColor, value: foregroundColor, range: range)
+        }
+        return result
+    }
+
+    private static func styledFont(
+        from base: CTFont,
+        size: CGFloat,
+        bold: Bool,
+        italic: Bool
+    ) -> CTFont {
+        if !bold && !italic { return base }
+        var traits: CTFontSymbolicTraits = []
+        if bold { traits.insert(.traitBold) }
+        if italic { traits.insert(.traitItalic) }
+        if let styled = CTFontCreateCopyWithSymbolicTraits(base, 0, nil, traits, traits) {
+            return styled
+        }
+        let name: String
+        switch (bold, italic) {
+        case (true, true): name = "Helvetica-BoldOblique"
+        case (true, false): name = "Helvetica-Bold"
+        case (false, true): name = "Helvetica-Oblique"
+        default: return base
+        }
+        return CTFontCreateWithName(name as CFString, size, nil)
     }
 
     private static func stripWrappingDelimiter(_ text: String, delimiter: Character) -> String {
@@ -204,20 +355,21 @@ enum MermaidTextUtils {
         _ text: String,
         font: CTFont,
         fontSize: CGFloat,
-        lineSpacing: CGFloat? = nil
+        lineSpacing: CGFloat? = nil,
+        isMarkdown: Bool = false
     ) -> CGSize {
         let spacing = lineSpacing ?? fontSize * 0.3
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         if lines.count <= 1 {
-            return measureSingleLine(text, font: font, fontSize: fontSize)
+            return measureSingleLine(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
         }
 
         var maxWidth: CGFloat = 0
         var totalHeight: CGFloat = 0
 
         for (i, line) in lines.enumerated() {
-            let size = measureSingleLine(line, font: font, fontSize: fontSize)
+            let size = measureSingleLine(line, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
             maxWidth = max(maxWidth, size.width)
             totalHeight += size.height
             if i < lines.count - 1 {
@@ -235,10 +387,10 @@ enum MermaidTextUtils {
     private static func measureSingleLine(
         _ text: String,
         font: CTFont,
-        fontSize: CGFloat
+        fontSize: CGFloat,
+        isMarkdown: Bool = false
     ) -> CGSize {
-        let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        let attrStr = NSAttributedString(string: text, attributes: attrs)
+        let attrStr = attributedLabel(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
         let line = CTLineCreateWithAttributedString(attrStr)
         let bounds = CTLineGetBoundsWithOptions(line, [])
         return CGSize(
@@ -263,10 +415,17 @@ enum MermaidTextUtils {
         fontSize: CGFloat,
         foregroundColor: CGColor,
         lineSpacing: CGFloat? = nil,
+        isMarkdown: Bool = false,
         in ctx: CGContext
     ) {
         let spacing = lineSpacing ?? fontSize * 0.3
-        let textSize = measureText(text, font: font, fontSize: fontSize, lineSpacing: spacing)
+        let textSize = measureText(
+            text,
+            font: font,
+            fontSize: fontSize,
+            lineSpacing: spacing,
+            isMarkdown: isMarkdown
+        )
         let x = rect.midX - textSize.width / 2
         let y = rect.midY - textSize.height / 2
 
@@ -279,6 +438,7 @@ enum MermaidTextUtils {
             foregroundColor: foregroundColor,
             alignment: .center,
             lineSpacing: spacing,
+            isMarkdown: isMarkdown,
             in: ctx
         )
     }
@@ -296,19 +456,22 @@ enum MermaidTextUtils {
         foregroundColor: CGColor,
         alignment: TextAlignment = .left,
         lineSpacing: CGFloat? = nil,
+        isMarkdown: Bool = false,
         in ctx: CGContext
     ) {
         let spacing = lineSpacing ?? fontSize * 0.3
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: foregroundColor,
-        ]
 
         var currentY = origin.y
 
         for line in lines {
-            let attrStr = NSAttributedString(string: line, attributes: attrs)
+            let attrStr = attributedLabel(
+                line,
+                font: font,
+                fontSize: fontSize,
+                foregroundColor: foregroundColor,
+                isMarkdown: isMarkdown
+            )
             let ctLine = CTLineCreateWithAttributedString(attrStr)
             let bounds = CTLineGetBoundsWithOptions(ctLine, [])
             let lineHeight = max(bounds.height, fontSize * 1.4)

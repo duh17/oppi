@@ -247,6 +247,24 @@ private struct MermaidRenderingPreview: View {
 
     private static let diagrams: [Diagram] = [
         Diagram(
+            id: "flowchart-labels",
+            heading: "Flowchart labels",
+            markdown: #"""
+            ```mermaid
+            flowchart TD
+              subgraph "`**Labels**`"
+                Q["text with (parens) and *stars*"]
+                M["`**bold** and _italic_`"]
+                E["quote:#quot; amp:#amp;"]
+                U["Café — 日本語 — emoji ✅"]
+                Q --> M
+                M -- "`**edge**`" --> E
+                E --> U
+              end
+            ```
+            """#
+        ),
+        Diagram(
             id: "flowchart",
             heading: "Flowchart",
             markdown: #"""

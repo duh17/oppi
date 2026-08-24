@@ -249,7 +249,12 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
         var layoutNodes: [GraphLayoutNode] = []
         for node in flowchart.nodes {
-            let textSize = measureText(node.label, font: font, fontSize: fontSize)
+            let textSize = measureText(
+                node.label,
+                font: font,
+                fontSize: fontSize,
+                isMarkdown: node.isMarkdown
+            )
             let paddedSize = padForShape(textSize, shape: node.shape, fontSize: fontSize)
             layoutNodes.append(GraphLayoutNode(id: node.id, size: paddedSize))
         }
@@ -2008,8 +2013,13 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     // MARK: - Text measurement
 
     /// Measure text size using CoreText. Returns the natural size without padding.
-    private func measureText(_ text: String, font: CTFont, fontSize: CGFloat) -> CGSize {
-        MermaidTextUtils.measureText(text, font: font, fontSize: fontSize)
+    private func measureText(
+        _ text: String,
+        font: CTFont,
+        fontSize: CGFloat,
+        isMarkdown: Bool = false
+    ) -> CGSize {
+        MermaidTextUtils.measureText(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
     }
 
     /// Add shape-specific padding around text.
@@ -2145,7 +2155,16 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 ? layout.edgeKeys[index]
                 : "\(edgePath.from)->\(edgePath.to)"
             if let label = layout.edgeLabels[key] {
-                drawEdgeLabel(label, path: edgePath, layout: layout, in: ctx, offset: offset)
+                let isMarkdown = index < layout.flowchart.edges.count
+                    && layout.flowchart.edges[index].isMarkdown
+                drawEdgeLabel(
+                    label,
+                    path: edgePath,
+                    isMarkdown: isMarkdown,
+                    layout: layout,
+                    in: ctx,
+                    offset: offset
+                )
             }
         }
 
@@ -2157,7 +2176,15 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
 
             let styleProps = layout.styleDirectives[id] ?? [:]
             drawNodeShape(shape, rect: offsetRect, style: styleProps, layout: layout, in: ctx)
-            drawNodeLabel(label, in: offsetRect, style: styleProps, layout: layout, ctx: ctx)
+            let isMarkdown = layout.flowchart.nodes.first { $0.id == id }?.isMarkdown ?? false
+            drawNodeLabel(
+                label,
+                in: offsetRect,
+                style: styleProps,
+                isMarkdown: isMarkdown,
+                layout: layout,
+                ctx: ctx
+            )
         }
     }
 
@@ -2207,6 +2234,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 font: font,
                 fontSize: titleFontSize,
                 foregroundColor: titleColor,
+                isMarkdown: subgraph.isMarkdown,
                 in: ctx
             )
         }
@@ -2266,6 +2294,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                       label,
                       path: path,
                       fontSize: layout.fontSize,
+                      isMarkdown: index < layout.flowchart.edges.count
+                          && layout.flowchart.edges[index].isMarkdown,
                       among: layout.graphResult.edgePaths
                   ) else { continue }
             bounds = bounds.union(labelLayout.rect)
@@ -2804,6 +2834,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         _ text: String,
         in rect: CGRect,
         style: [String: String],
+        isMarkdown: Bool,
         layout: FlowchartLayout,
         ctx: CGContext
     ) {
@@ -2816,6 +2847,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             font: font,
             fontSize: layout.fontSize,
             foregroundColor: foreground,
+            isMarkdown: isMarkdown,
             in: ctx
         )
     }
@@ -2953,13 +2985,19 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         _ text: String,
         path: GraphLayoutEdgePath,
         fontSize: CGFloat,
+        isMarkdown: Bool = false,
         among others: [GraphLayoutEdgePath]
     ) -> EdgeLabelLayout? {
         guard path.points.count >= 2 else { return nil }
         let anchor = edgeLabelAnchor(on: path, fontSize: fontSize, among: others)
         let labelFontSize = fontSize * 0.85
         let font = CTFontCreateWithName("Helvetica" as CFString, labelFontSize, nil)
-        let textSize = MermaidTextUtils.measureText(text, font: font, fontSize: labelFontSize)
+        let textSize = MermaidTextUtils.measureText(
+            text,
+            font: font,
+            fontSize: labelFontSize,
+            isMarkdown: isMarkdown
+        )
         return EdgeLabelLayout(
             rect: CGRect(
                 x: anchor.x - textSize.width / 2 - 3,
@@ -3054,6 +3092,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     private func drawEdgeLabel(
         _ text: String,
         path: GraphLayoutEdgePath,
+        isMarkdown: Bool,
         layout: FlowchartLayout,
         in ctx: CGContext,
         offset: CGPoint
@@ -3062,6 +3101,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             text,
             path: path,
             fontSize: layout.fontSize,
+            isMarkdown: isMarkdown,
             among: layout.graphResult.edgePaths
         ) else { return }
         let labelRect = labelLayout.rect.offsetBy(dx: offset.x, dy: offset.y)
@@ -3080,6 +3120,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             fontSize: labelLayout.fontSize,
             foregroundColor: layout.theme.foreground,
             alignment: .center,
+            isMarkdown: isMarkdown,
             in: ctx
         )
         ctx.restoreGState()

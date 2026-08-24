@@ -832,6 +832,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
     func testMermaidRenderingPreview() throws {
         let diagrams: [(heading: String, kind: String)] = [
+            ("Flowchart labels", "flowchart-labels"),
             ("Flowchart", "flowchart"),
             ("Sequence", "sequence"),
             ("State", "state"),
@@ -1253,7 +1254,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
     /// diagram below it is the screenshot subject.
     private func scrollMermaidHeadingIntoView(_ heading: String) {
         let label = app.staticTexts.containing(
-            NSPredicate(format: "label BEGINSWITH %@", heading)
+            NSPredicate(format: "label == %@", heading)
         ).firstMatch
         XCTAssertTrue(label.waitForExistence(timeout: 5), "Mermaid heading \(heading) not found")
 

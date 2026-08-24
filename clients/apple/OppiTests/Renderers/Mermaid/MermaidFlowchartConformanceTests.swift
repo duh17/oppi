@@ -155,8 +155,91 @@ struct MermaidFlowchartConformanceTests {
             Issue.record("Expected flowchart")
             return
         }
-        #expect(d.nodes.first { $0.id == "A" }?.label == "This **is** _Markdown_")
+        let node = d.nodes.first { $0.id == "A" }
+        #expect(node?.label == "This **is** _Markdown_")
+        #expect(node?.isMarkdown == true)
         #expect(d.edges.first?.label == "Bold **edge label**")
+        #expect(d.edges.first?.isMarkdown == true)
+    }
+
+    /// SPEC: ## Markdown Strings — ordinary quoted labels stay literal.
+    @Test func galleryQuotedPlainAndMarkdownLabels() {
+        let result = parser.parse("""
+        flowchart TD
+          Q["text with (parens) and *stars*"]
+          M["`**bold** and _italic_`"]
+          E["quote:#quot; amp:#amp;"]
+          U["Café — 日本語 — emoji ✅"]
+          Q --> M --> E --> U
+        """)
+        guard case .flowchart(let d) = result else {
+            Issue.record("Expected flowchart")
+            return
+        }
+
+        let quoted = d.nodes.first { $0.id == "Q" }
+        #expect(quoted?.isMarkdown == false)
+        #expect(quoted?.label == "text with (parens) and *stars*")
+
+        let markdown = d.nodes.first { $0.id == "M" }
+        #expect(markdown?.isMarkdown == true)
+        #expect(markdown?.label == "**bold** and _italic_")
+
+        let entities = d.nodes.first { $0.id == "E" }
+        #expect(entities?.isMarkdown == false)
+        #expect(entities?.label == "quote:\" amp:&")
+
+        let unicode = d.nodes.first { $0.id == "U" }
+        #expect(unicode?.isMarkdown == false)
+        #expect(unicode?.label == "Café — 日本語 — emoji ✅")
+    }
+
+    /// SPEC: ## Markdown Strings — subgraph titles use the same quoted+backtick opt-in.
+    @Test func markdownStringSubgraphTitle() {
+        let result = parser.parse("""
+        flowchart TD
+            subgraph G ["`**Cluster**`"]
+                A --> B
+            end
+        """)
+        guard case .flowchart(let d) = result else {
+            Issue.record("Expected flowchart")
+            return
+        }
+        #expect(d.subgraphs.first?.isMarkdown == true)
+        #expect(d.subgraphs.first?.title == "**Cluster**")
+    }
+
+    /// SPEC: ## Markdown Strings — a quoted title-only subgraph keeps spaces.
+    @Test func markdownStringTitleOnlySubgraphWithSpaces() {
+        let result = parser.parse("""
+        flowchart TD
+            subgraph "`**Bold cluster title**`"
+                A --> B
+            end
+        """)
+        guard case .flowchart(let d) = result else {
+            Issue.record("Expected flowchart")
+            return
+        }
+        #expect(d.subgraphs.first?.isMarkdown == true)
+        #expect(d.subgraphs.first?.title == "**Bold cluster title**")
+        #expect(d.subgraphs.first?.id == "**Bold cluster title**")
+    }
+
+    /// SPEC: ## Markdown Strings — backticks inside a shape are enough.
+    @Test func markdownStringInsideRoundedShape() {
+        let result = parser.parse("""
+        flowchart LR
+            A("`**bold**`")
+        """)
+        guard case .flowchart(let d) = result else {
+            Issue.record("Expected flowchart")
+            return
+        }
+        let node = d.nodes.first { $0.id == "A" }
+        #expect(node?.isMarkdown == true)
+        #expect(node?.label == "**bold**")
     }
 
     /// SPEC: ### Entity codes to escape characters — `#quot;`, decimal `#9829;`, and `#35;`.

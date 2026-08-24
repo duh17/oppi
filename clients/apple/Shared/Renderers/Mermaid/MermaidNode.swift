@@ -388,12 +388,21 @@ struct FlowNode: Equatable, Sendable {
     let label: String
     let shape: FlowNodeShape
     let classes: [String]
+    /// Official quoted+backtick markdown string: `A["`**bold**`"]`.
+    let isMarkdown: Bool
 
-    init(id: String, label: String, shape: FlowNodeShape, classes: [String] = []) {
+    init(
+        id: String,
+        label: String,
+        shape: FlowNodeShape,
+        classes: [String] = [],
+        isMarkdown: Bool = false
+    ) {
         self.id = id
         self.label = label
         self.shape = shape
         self.classes = classes
+        self.isMarkdown = isMarkdown
     }
 }
 
@@ -403,13 +412,23 @@ struct FlowEdge: Equatable, Sendable {
     let label: String?
     let style: FlowEdgeStyle
     let id: String?
+    /// Official quoted+backtick markdown string on the edge label.
+    let isMarkdown: Bool
 
-    init(from: String, to: String, label: String?, style: FlowEdgeStyle, id: String? = nil) {
+    init(
+        from: String,
+        to: String,
+        label: String?,
+        style: FlowEdgeStyle,
+        id: String? = nil,
+        isMarkdown: Bool = false
+    ) {
         self.from = from
         self.to = to
         self.label = label
         self.style = style
         self.id = id
+        self.isMarkdown = isMarkdown
     }
 }
 
@@ -544,6 +563,26 @@ struct FlowSubgraph: Equatable, Sendable {
     let nodeIds: [String]
     let regionCount: Int
     let subgraphs: [Self]
+    /// Official quoted+backtick markdown string on the subgraph title.
+    let isMarkdown: Bool
+
+    init(
+        id: String,
+        title: String?,
+        direction: FlowDirection?,
+        nodeIds: [String],
+        regionCount: Int,
+        subgraphs: [Self],
+        isMarkdown: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.direction = direction
+        self.nodeIds = nodeIds
+        self.regionCount = regionCount
+        self.subgraphs = subgraphs
+        self.isMarkdown = isMarkdown
+    }
 }
 
 struct FlowStyleDirective: Equatable, Sendable {

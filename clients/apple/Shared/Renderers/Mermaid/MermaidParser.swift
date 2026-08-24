@@ -172,7 +172,11 @@ struct MermaidParser: DocumentParser, Sendable {
 
     /// Normalize Mermaid label syntax: HTML breaks, quote/backtick wrappers, and entity codes.
     private func normalize(_ text: String) -> String {
-        MermaidTextUtils.normalizeLabel(text)
+        inspect(text).text
+    }
+
+    private func inspect(_ text: String) -> MermaidTextUtils.LabelInspection {
+        MermaidTextUtils.inspectLabel(text)
     }
 
     // MARK: - Comment stripping
@@ -369,7 +373,8 @@ struct MermaidParser: DocumentParser, Sendable {
                 direction: subgraph.direction,
                 nodeIds: subgraph.nodeIds.filter { homeSubgraphId(for: $0) == subgraph.id },
                 regionCount: subgraph.regionCount,
-                subgraphs: subgraph.subgraphs.map(filter)
+                subgraphs: subgraph.subgraphs.map(filter),
+                isMarkdown: subgraph.isMarkdown
             )
         }
 
@@ -437,13 +442,15 @@ struct MermaidParser: DocumentParser, Sendable {
     private final class SubgraphBuilder {
         let id: String
         let title: String?
+        let isMarkdown: Bool
         var direction: FlowDirection?
         var nodeIds: Set<String> = []
         var subgraphs: [FlowSubgraph] = []
 
-        init(id: String, title: String?) {
+        init(id: String, title: String?, isMarkdown: Bool = false) {
             self.id = id
             self.title = title
+            self.isMarkdown = isMarkdown
         }
 
         func build() -> FlowSubgraph {
@@ -453,7 +460,8 @@ struct MermaidParser: DocumentParser, Sendable {
                 direction: direction,
                 nodeIds: Array(nodeIds.sorted()),
                 regionCount: 0,
-                subgraphs: subgraphs
+                subgraphs: subgraphs,
+                isMarkdown: isMarkdown
             )
         }
     }
@@ -471,19 +479,44 @@ struct MermaidParser: DocumentParser, Sendable {
         if let bracketStart = rest.firstIndex(of: "["),
            let bracketEnd = rest.lastIndex(of: "]") {
             let id = String(rest[rest.startIndex ..< bracketStart]).trimmingCharacters(in: .whitespaces)
-            let title = String(rest[rest.index(after: bracketStart) ..< bracketEnd])
-            return SubgraphBuilder(id: id.isEmpty ? title : id, title: title)
+            let inspected = inspect(String(rest[rest.index(after: bracketStart) ..< bracketEnd]))
+            return SubgraphBuilder(
+                id: id.isEmpty ? inspected.text : id,
+                title: inspected.text,
+                isMarkdown: inspected.isMarkdown
+            )
+        }
+
+        // A fully quoted title is one label, including spaces:
+        // subgraph "`**Bold cluster title**`"
+        if let first = rest.first, first == "\"" || first == "`" {
+            let inspected = inspect(rest)
+            return SubgraphBuilder(
+                id: inspected.text,
+                title: inspected.text,
+                isMarkdown: inspected.isMarkdown
+            )
         }
 
         // Otherwise: first token is id (if there are multiple tokens) or title
         let tokens = rest.split(separator: " ", maxSplits: 1).map(String.init)
         if tokens.count == 1 {
             // Single token: use as both id and title
-            return SubgraphBuilder(id: tokens[0], title: tokens[0])
+            let inspected = inspect(tokens[0])
+            return SubgraphBuilder(
+                id: tokens[0],
+                title: inspected.text,
+                isMarkdown: inspected.isMarkdown
+            )
         }
 
         // Multi-token: first is id, rest is title
-        return SubgraphBuilder(id: tokens[0], title: tokens.count > 1 ? tokens[1] : nil)
+        let inspected = inspect(tokens[1])
+        return SubgraphBuilder(
+            id: tokens[0],
+            title: inspected.text,
+            isMarkdown: inspected.isMarkdown
+        )
     }
 
     // MARK: - metadata directive
@@ -624,7 +657,7 @@ struct MermaidParser: DocumentParser, Sendable {
 
         while i < tokens.count {
             // Expect an edge operator.
-            guard case .edge(let style, let label, let edgeId) = tokens[i] else { break }
+            guard case .edge(let style, let label, let edgeId, let isMarkdown) = tokens[i] else { break }
             i += 1
 
             // Parse next node group.
@@ -636,7 +669,14 @@ struct MermaidParser: DocumentParser, Sendable {
             // Create edges from each source to each target.
             for src in prevGroup {
                 for dst in nextGroup {
-                    edges.append(FlowEdge(from: src.id, to: dst.id, label: label, style: style, id: edgeId))
+                    edges.append(FlowEdge(
+                        from: src.id,
+                        to: dst.id,
+                        label: label,
+                        style: style,
+                        id: edgeId,
+                        isMarkdown: isMarkdown
+                    ))
                 }
             }
 
@@ -667,7 +707,7 @@ struct MermaidParser: DocumentParser, Sendable {
 
     private enum FlowToken {
         case node(FlowNode)
-        case edge(FlowEdgeStyle, String?, String?)
+        case edge(FlowEdgeStyle, String?, String?, Bool)
         case ampersand
     }
 
@@ -683,7 +723,7 @@ struct MermaidParser: DocumentParser, Sendable {
 
             // Try to match an edge operator.
             if let match = tryParseEdge(chars, pos) {
-                tokens.append(.edge(match.style, match.label, match.id))
+                tokens.append(.edge(match.style, match.label, match.id, match.isMarkdown))
                 pos = match.endPos
                 continue
             }
@@ -722,12 +762,20 @@ struct MermaidParser: DocumentParser, Sendable {
         let label: String?
         let endPos: Int
         let id: String?
+        let isMarkdown: Bool
 
-        init(style: FlowEdgeStyle, label: String?, endPos: Int, id: String? = nil) {
+        init(
+            style: FlowEdgeStyle,
+            label: String?,
+            endPos: Int,
+            id: String? = nil,
+            isMarkdown: Bool = false
+        ) {
             self.style = style
             self.label = label
             self.endPos = endPos
             self.id = id
+            self.isMarkdown = isMarkdown
         }
     }
 
@@ -735,12 +783,24 @@ struct MermaidParser: DocumentParser, Sendable {
         let label: String
         let style: FlowEdgeStyle
         let endPos: Int
+        let isMarkdown: Bool
     }
 
     private struct ShapeMatch {
         let label: String
+        let isMarkdown: Bool
         let shape: FlowNodeShape
         let endPos: Int
+    }
+
+    private func shapeMatch(_ raw: String, shape: FlowNodeShape, endPos: Int) -> ShapeMatch {
+        let inspected = inspect(raw)
+        return ShapeMatch(
+            label: inspected.text,
+            isMarkdown: inspected.isMarkdown,
+            shape: shape,
+            endPos: endPos
+        )
     }
 
     // MARK: - Edge parsing
@@ -759,32 +819,42 @@ struct MermaidParser: DocumentParser, Sendable {
         if remaining >= 3, chars[pos] == "=", chars[pos + 1] == "=", chars[pos + 2] == ">" {
             // Check for label: ==>|text|
             let afterArrow = pos + 3
-            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
-                return EdgeMatch(style: .thick, label: label, endPos: end)
+            if let label = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .thick, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .thick, label: nil, endPos: afterArrow)
         }
 
         // Thick labeled: ==text==>
         if remaining >= 4, chars[pos] == "=", chars[pos + 1] == "=" {
-            if let (label, end) = tryParseInlineLabel(chars, pos + 2, terminator: "==>") {
-                return EdgeMatch(style: .thick, label: label, endPos: end)
+            if let label = tryParseInlineLabel(chars, pos + 2, terminator: "==>") {
+                return EdgeMatch(
+                    style: .thick,
+                    label: label.text,
+                    endPos: label.endPos,
+                    isMarkdown: label.isMarkdown
+                )
             }
         }
 
         // Dotted arrow: -.->
         if remaining >= 4, chars[pos] == "-", chars[pos + 1] == ".", chars[pos + 2] == "-", chars[pos + 3] == ">" {
             let afterArrow = pos + 4
-            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
-                return EdgeMatch(style: .dotted, label: label, endPos: end)
+            if let label = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .dotted, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .dotted, label: nil, endPos: afterArrow)
         }
 
         // Dotted with label: -. text .->
         if remaining >= 3, chars[pos] == "-", chars[pos + 1] == "." {
-            if let (label, end) = tryParseDottedLabel(chars, pos + 2) {
-                return EdgeMatch(style: .dotted, label: label, endPos: end)
+            if let label = tryParseDottedLabel(chars, pos + 2) {
+                return EdgeMatch(
+                    style: .dotted,
+                    label: label.text,
+                    endPos: label.endPos,
+                    isMarkdown: label.isMarkdown
+                )
             }
         }
 
@@ -796,8 +866,8 @@ struct MermaidParser: DocumentParser, Sendable {
         // Bidirectional arrow: <-->
         if remaining >= 4, chars[pos] == "<", chars[pos + 1] == "-", chars[pos + 2] == "-", chars[pos + 3] == ">" {
             let afterArrow = pos + 4
-            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
-                return EdgeMatch(style: .biArrow, label: label, endPos: end)
+            if let label = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .biArrow, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .biArrow, label: nil, endPos: afterArrow)
         }
@@ -805,8 +875,8 @@ struct MermaidParser: DocumentParser, Sendable {
         // Bidirectional circle: o--o
         if remaining >= 4, chars[pos] == "o", chars[pos + 1] == "-", chars[pos + 2] == "-", chars[pos + 3] == "o" {
             let afterArrow = pos + 4
-            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
-                return EdgeMatch(style: .biCircle, label: label, endPos: end)
+            if let label = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .biCircle, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .biCircle, label: nil, endPos: afterArrow)
         }
@@ -814,8 +884,8 @@ struct MermaidParser: DocumentParser, Sendable {
         // Bidirectional cross: x--x
         if remaining >= 4, chars[pos] == "x", chars[pos + 1] == "-", chars[pos + 2] == "-", chars[pos + 3] == "x" {
             let afterArrow = pos + 4
-            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
-                return EdgeMatch(style: .biCross, label: label, endPos: end)
+            if let label = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .biCross, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .biCross, label: nil, endPos: afterArrow)
         }
@@ -823,8 +893,8 @@ struct MermaidParser: DocumentParser, Sendable {
         // Circle edge: --o
         if remaining >= 3, chars[pos] == "-", chars[pos + 1] == "-", chars[pos + 2] == "o" {
             let afterArrow = pos + 3
-            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
-                return EdgeMatch(style: .circle, label: label, endPos: end)
+            if let label = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .circle, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .circle, label: nil, endPos: afterArrow)
         }
@@ -832,8 +902,8 @@ struct MermaidParser: DocumentParser, Sendable {
         // Cross edge: --x
         if remaining >= 3, chars[pos] == "-", chars[pos + 1] == "-", chars[pos + 2] == "x" {
             let afterArrow = pos + 3
-            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
-                return EdgeMatch(style: .cross, label: label, endPos: end)
+            if let label = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .cross, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .cross, label: nil, endPos: afterArrow)
         }
@@ -841,8 +911,8 @@ struct MermaidParser: DocumentParser, Sendable {
         // Arrow with pipe label: -->|text|
         if remaining >= 3, chars[pos] == "-", chars[pos + 1] == "-", chars[pos + 2] == ">" {
             let afterArrow = pos + 3
-            if let (label, end) = tryParsePipeLabel(chars, afterArrow) {
-                return EdgeMatch(style: .arrow, label: label, endPos: end)
+            if let label = tryParsePipeLabel(chars, afterArrow) {
+                return EdgeMatch(style: .arrow, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .arrow, label: nil, endPos: afterArrow)
         }
@@ -851,7 +921,12 @@ struct MermaidParser: DocumentParser, Sendable {
         if remaining >= 2, chars[pos] == "-", chars[pos + 1] == "-" {
             // Must check if this is a labeled edge: -- text -->  or  -- text ---
             if let match = tryParseDoubleHyphenLabel(chars, pos + 2) {
-                return EdgeMatch(style: match.style, label: match.label, endPos: match.endPos)
+                return EdgeMatch(
+                    style: match.style,
+                    label: match.label,
+                    endPos: match.endPos,
+                    isMarkdown: match.isMarkdown
+                )
             }
         }
 
@@ -860,8 +935,8 @@ struct MermaidParser: DocumentParser, Sendable {
             // Consume extra hyphens
             var end = pos + 3
             while end < chars.count, chars[end] == "-" { end += 1 }
-            if let (label, endL) = tryParsePipeLabel(chars, end) {
-                return EdgeMatch(style: .open, label: label, endPos: endL)
+            if let label = tryParsePipeLabel(chars, end) {
+                return EdgeMatch(style: .open, label: label.text, endPos: label.endPos, isMarkdown: label.isMarkdown)
             }
             return EdgeMatch(style: .open, label: nil, endPos: end)
         }
@@ -882,19 +957,28 @@ struct MermaidParser: DocumentParser, Sendable {
         else { return nil }
 
         let id = String(chars[pos..<idEnd])
-        return EdgeMatch(style: match.style, label: match.label, endPos: match.endPos, id: id)
+        return EdgeMatch(
+            style: match.style,
+            label: match.label,
+            endPos: match.endPos,
+            id: id,
+            isMarkdown: match.isMarkdown
+        )
     }
 
     /// Try to parse `|text|` at the given position.
-    private func tryParsePipeLabel(_ chars: [Character], _ pos: Int) -> (String, Int)? {
+    private func tryParsePipeLabel(
+        _ chars: [Character],
+        _ pos: Int
+    ) -> (text: String, isMarkdown: Bool, endPos: Int)? {
         guard pos < chars.count, chars[pos] == "|" else { return nil }
         var end = pos + 1
         while end < chars.count, chars[end] != "|" {
             end += 1
         }
         guard end < chars.count else { return nil }
-        let label = normalize(String(chars[(pos + 1) ..< end]))
-        return (label, end + 1)
+        let inspected = inspect(String(chars[(pos + 1) ..< end]))
+        return (inspected.text, inspected.isMarkdown, end + 1)
     }
 
     /// Try to parse inline label for `-- text -->` or `-- text ---` patterns.
@@ -910,21 +994,31 @@ struct MermaidParser: DocumentParser, Sendable {
         // Find --> or ---
         if let arrowRange = remaining.range(of: "-->") {
             let labelEnd = remaining.distance(from: remaining.startIndex, to: arrowRange.lowerBound)
-            let label = normalize(String(remaining[remaining.startIndex ..< arrowRange.lowerBound]).trimmingCharacters(in: .whitespaces))
-            if !label.isEmpty {
+            let inspected = inspect(String(remaining[remaining.startIndex ..< arrowRange.lowerBound]).trimmingCharacters(in: .whitespaces))
+            if !inspected.text.isEmpty {
                 let totalConsumed = start + labelEnd + 3
-                return LabeledEdgeMatch(label: label, style: .arrow, endPos: totalConsumed)
+                return LabeledEdgeMatch(
+                    label: inspected.text,
+                    style: .arrow,
+                    endPos: totalConsumed,
+                    isMarkdown: inspected.isMarkdown
+                )
             }
         }
 
         if let openRange = remaining.range(of: "---") {
             let labelEnd = remaining.distance(from: remaining.startIndex, to: openRange.lowerBound)
-            let label = normalize(String(remaining[remaining.startIndex ..< openRange.lowerBound]).trimmingCharacters(in: .whitespaces))
-            if !label.isEmpty {
+            let inspected = inspect(String(remaining[remaining.startIndex ..< openRange.lowerBound]).trimmingCharacters(in: .whitespaces))
+            if !inspected.text.isEmpty {
                 var totalConsumed = start + labelEnd + 3
                 // Consume extra hyphens
                 while totalConsumed < chars.count, chars[totalConsumed] == "-" { totalConsumed += 1 }
-                return LabeledEdgeMatch(label: label, style: .open, endPos: totalConsumed)
+                return LabeledEdgeMatch(
+                    label: inspected.text,
+                    style: .open,
+                    endPos: totalConsumed,
+                    isMarkdown: inspected.isMarkdown
+                )
             }
         }
 
@@ -932,24 +1026,31 @@ struct MermaidParser: DocumentParser, Sendable {
     }
 
     /// Try to parse inline label in thick edges: `== text ==>`.
-    private func tryParseInlineLabel(_ chars: [Character], _ pos: Int, terminator: String) -> (String, Int)? {
+    private func tryParseInlineLabel(
+        _ chars: [Character],
+        _ pos: Int,
+        terminator: String
+    ) -> (text: String, isMarkdown: Bool, endPos: Int)? {
         let remaining = String(chars[pos...])
         guard let range = remaining.range(of: terminator) else { return nil }
-        let label = normalize(String(remaining[remaining.startIndex ..< range.lowerBound]).trimmingCharacters(in: .whitespaces))
-        if label.isEmpty { return nil }
+        let inspected = inspect(String(remaining[remaining.startIndex ..< range.lowerBound]).trimmingCharacters(in: .whitespaces))
+        if inspected.text.isEmpty { return nil }
         let consumed = pos + remaining.distance(from: remaining.startIndex, to: range.upperBound)
-        return (label, consumed)
+        return (inspected.text, inspected.isMarkdown, consumed)
     }
 
     /// Try to parse dotted label: `-. text .->`.
-    private func tryParseDottedLabel(_ chars: [Character], _ pos: Int) -> (String, Int)? {
+    private func tryParseDottedLabel(
+        _ chars: [Character],
+        _ pos: Int
+    ) -> (text: String, isMarkdown: Bool, endPos: Int)? {
         let remaining = String(chars[pos...])
         // Look for .-> terminator
         guard let range = remaining.range(of: ".->") else { return nil }
-        let label = normalize(String(remaining[remaining.startIndex ..< range.lowerBound]).trimmingCharacters(in: .whitespaces))
-        if label.isEmpty { return nil }
+        let inspected = inspect(String(remaining[remaining.startIndex ..< range.lowerBound]).trimmingCharacters(in: .whitespaces))
+        if inspected.text.isEmpty { return nil }
         let consumed = pos + remaining.distance(from: remaining.startIndex, to: range.upperBound)
-        return (label, consumed)
+        return (inspected.text, inspected.isMarkdown, consumed)
     }
 
     // MARK: - Node reference parsing
@@ -972,11 +1073,11 @@ struct MermaidParser: DocumentParser, Sendable {
         if idEnd < chars.count {
             if let match = tryParseMetadataShape(chars, idEnd, defaultLabel: id) {
                 let suffix = parseClassSuffix(chars, match.endPos)
-                return (FlowNode(id: id, label: match.label, shape: match.shape, classes: suffix.classes), suffix.endPos)
+                return (FlowNode(id: id, label: match.label, shape: match.shape, classes: suffix.classes, isMarkdown: match.isMarkdown), suffix.endPos)
             }
             if let match = tryParseShape(chars, idEnd) {
                 let suffix = parseClassSuffix(chars, match.endPos)
-                return (FlowNode(id: id, label: match.label, shape: match.shape, classes: suffix.classes), suffix.endPos)
+                return (FlowNode(id: id, label: match.label, shape: match.shape, classes: suffix.classes, isMarkdown: match.isMarkdown), suffix.endPos)
             }
         }
 
@@ -1033,9 +1134,10 @@ struct MermaidParser: DocumentParser, Sendable {
               let shape = flowNodeShape(forMetadataShape: rawShape)
         else { return nil }
 
-        let label = properties["label"].map { normalize($0.trimmingCharacters(in: .whitespaces)) }
-            ?? defaultLabel
-        return ShapeMatch(label: label, shape: shape, endPos: end + 1)
+        if let rawLabel = properties["label"] {
+            return shapeMatch(rawLabel.trimmingCharacters(in: .whitespaces), shape: shape, endPos: end + 1)
+        }
+        return ShapeMatch(label: defaultLabel, isMarkdown: false, shape: shape, endPos: end + 1)
     }
 
     private func findMetadataEnd(_ chars: [Character], start: Int) -> Int? {
@@ -1223,26 +1325,22 @@ struct MermaidParser: DocumentParser, Sendable {
                     // Cylindrical: [(text)]
                     if let end = findClosing(chars, pos + 2, open: nil, close: ")") {
                         if end + 1 < chars.count, chars[end + 1] == "]" {
-                            let label = normalize(String(chars[(pos + 2) ..< end]))
-                            return ShapeMatch(label: label, shape: .cylindrical, endPos: end + 2)
+                            return shapeMatch(String(chars[(pos + 2) ..< end]), shape: .cylindrical, endPos: end + 2)
                         }
                     }
                 } else if chars[pos + 1] == "[" {
                     // Subroutine: [[text]]
                     if let end = findDoubleClosing(chars, pos + 2, close: "]") {
-                        let label = normalize(String(chars[(pos + 2) ..< end]))
-                        return ShapeMatch(label: label, shape: .subroutine, endPos: end + 2)
+                        return shapeMatch(String(chars[(pos + 2) ..< end]), shape: .subroutine, endPos: end + 2)
                     }
                 } else if chars[pos + 1] == "/" {
                     // Parallelogram [/text/] or Trapezoid [/text\]
                     if let end = findClosing(chars, pos + 2, open: nil, close: "]") {
                         let inner = chars[(pos + 2) ..< end]
                         if inner.last == "/" {
-                            let label = normalize(String(inner.dropLast()))
-                            return ShapeMatch(label: label, shape: .parallelogram, endPos: end + 1)
+                            return shapeMatch(String(inner.dropLast()), shape: .parallelogram, endPos: end + 1)
                         } else if inner.last == "\\" {
-                            let label = normalize(String(inner.dropLast()))
-                            return ShapeMatch(label: label, shape: .trapezoid, endPos: end + 1)
+                            return shapeMatch(String(inner.dropLast()), shape: .trapezoid, endPos: end + 1)
                         }
                     }
                 } else if chars[pos + 1] == "\\" {
@@ -1250,19 +1348,16 @@ struct MermaidParser: DocumentParser, Sendable {
                     if let end = findClosing(chars, pos + 2, open: nil, close: "]") {
                         let inner = chars[(pos + 2) ..< end]
                         if inner.last == "\\" {
-                            let label = normalize(String(inner.dropLast()))
-                            return ShapeMatch(label: label, shape: .parallelogramAlt, endPos: end + 1)
+                            return shapeMatch(String(inner.dropLast()), shape: .parallelogramAlt, endPos: end + 1)
                         } else if inner.last == "/" {
-                            let label = normalize(String(inner.dropLast()))
-                            return ShapeMatch(label: label, shape: .trapezoidAlt, endPos: end + 1)
+                            return shapeMatch(String(inner.dropLast()), shape: .trapezoidAlt, endPos: end + 1)
                         }
                     }
                 }
             }
             // Rectangle: [text]
             if let end = findClosing(chars, pos + 1, open: nil, close: "]") {
-                let label = normalize(String(chars[(pos + 1) ..< end]))
-                return ShapeMatch(label: label, shape: .rectangle, endPos: end + 1)
+                return shapeMatch(String(chars[(pos + 1) ..< end]), shape: .rectangle, endPos: end + 1)
             }
 
         case "(":
@@ -1272,8 +1367,7 @@ struct MermaidParser: DocumentParser, Sendable {
                     // Stadium: ([text])
                     if let end = findClosing(chars, pos + 2, open: nil, close: "]") {
                         if end + 1 < chars.count, chars[end + 1] == ")" {
-                            let label = normalize(String(chars[(pos + 2) ..< end]))
-                            return ShapeMatch(label: label, shape: .stadium, endPos: end + 2)
+                            return shapeMatch(String(chars[(pos + 2) ..< end]), shape: .stadium, endPos: end + 2)
                         }
                     }
                 } else if chars[pos + 1] == "(" {
@@ -1281,20 +1375,17 @@ struct MermaidParser: DocumentParser, Sendable {
                     if pos + 2 < chars.count, chars[pos + 2] == "(" {
                         // Triple-paren: (((text)))
                         if let end = findTripleClosing(chars, pos + 3, close: ")") {
-                            let label = normalize(String(chars[(pos + 3) ..< end]))
-                            return ShapeMatch(label: label, shape: .doubleCircle, endPos: end + 3)
+                            return shapeMatch(String(chars[(pos + 3) ..< end]), shape: .doubleCircle, endPos: end + 3)
                         }
                     }
                     if let end = findDoubleClosing(chars, pos + 2, close: ")") {
-                        let label = normalize(String(chars[(pos + 2) ..< end]))
-                        return ShapeMatch(label: label, shape: .circle, endPos: end + 2)
+                        return shapeMatch(String(chars[(pos + 2) ..< end]), shape: .circle, endPos: end + 2)
                     }
                 }
             }
             // Rounded: (text)
             if let end = findClosing(chars, pos + 1, open: nil, close: ")") {
-                let label = normalize(String(chars[(pos + 1) ..< end]))
-                return ShapeMatch(label: label, shape: .rounded, endPos: end + 1)
+                return shapeMatch(String(chars[(pos + 1) ..< end]), shape: .rounded, endPos: end + 1)
             }
 
         case "{":
@@ -1302,21 +1393,18 @@ struct MermaidParser: DocumentParser, Sendable {
             if pos + 1 < chars.count, chars[pos + 1] == "{" {
                 // Hexagon: {{text}}
                 if let end = findDoubleClosing(chars, pos + 2, close: "}") {
-                    let label = normalize(String(chars[(pos + 2) ..< end]))
-                    return ShapeMatch(label: label, shape: .hexagon, endPos: end + 2)
+                    return shapeMatch(String(chars[(pos + 2) ..< end]), shape: .hexagon, endPos: end + 2)
                 }
             }
             // Diamond: {text}
             if let end = findClosing(chars, pos + 1, open: nil, close: "}") {
-                let label = normalize(String(chars[(pos + 1) ..< end]))
-                return ShapeMatch(label: label, shape: .diamond, endPos: end + 1)
+                return shapeMatch(String(chars[(pos + 1) ..< end]), shape: .diamond, endPos: end + 1)
             }
 
         case ">":
             // Asymmetric: >text]
             if let end = findClosing(chars, pos + 1, open: nil, close: "]") {
-                let label = normalize(String(chars[(pos + 1) ..< end]))
-                return ShapeMatch(label: label, shape: .asymmetric, endPos: end + 1)
+                return shapeMatch(String(chars[(pos + 1) ..< end]), shape: .asymmetric, endPos: end + 1)
             }
 
         default:

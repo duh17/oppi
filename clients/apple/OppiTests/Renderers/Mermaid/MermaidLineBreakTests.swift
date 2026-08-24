@@ -1,5 +1,7 @@
 import CoreText
+import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 // SPEC: https://github.com/mermaid-js/mermaid/blob/develop/packages/mermaid/src/diagrams/common/common.ts
@@ -224,5 +226,106 @@ struct MermaidLineBreakTests {
         let longLine = MermaidTextUtils.measureText("Much longer line here", font: font, fontSize: 14)
         // Width should match the widest line.
         #expect(abs(size.width - longLine.width) < 1.0)
+    }
+
+    // MARK: - Official markdown string labels
+
+    @Test func inspectLabelDetectsQuotedBacktickMarkdown() {
+        let markdown = MermaidTextUtils.inspectLabel("\"`**bold** and _italic_`\"")
+        #expect(markdown.isMarkdown)
+        #expect(markdown.text == "**bold** and _italic_")
+
+        let shapeBackticks = MermaidTextUtils.inspectLabel("`**bold**`")
+        #expect(shapeBackticks.isMarkdown)
+        #expect(shapeBackticks.text == "**bold**")
+
+        let plain = MermaidTextUtils.inspectLabel("\"text with (parens) and *stars*\"")
+        #expect(!plain.isMarkdown)
+        #expect(plain.text == "text with (parens) and *stars*")
+    }
+
+    @Test func inspectLabelKeepsEntitiesAndUnicode() {
+        let entities = MermaidTextUtils.inspectLabel("\"quote:#quot; amp:#amp;\"")
+        #expect(!entities.isMarkdown)
+        #expect(entities.text == "quote:\" amp:&")
+
+        let unicode = MermaidTextUtils.inspectLabel("\"Café — 日本語 — emoji ✅\"")
+        #expect(!unicode.isMarkdown)
+        #expect(unicode.text == "Café — 日本語 — emoji ✅")
+    }
+
+    @Test func attributedMarkdownGalleryLabelHasBoldAndItalicRuns() {
+        let font = CTFontCreateWithName("Helvetica" as CFString, 14, nil)
+        let attributed = MermaidTextUtils.attributedLabel(
+            "**bold** and _italic_",
+            font: font,
+            fontSize: 14,
+            isMarkdown: true
+        )
+        #expect(attributed.string == "bold and italic")
+        #expect(!attributed.string.contains("*"))
+        #expect(!attributed.string.contains("_"))
+        #expect(!attributed.string.contains("`"))
+
+        let runs = MermaidTextUtils.markdownLabelRuns("**bold** and _italic_")
+        #expect(runs.contains { $0.text == "bold" && $0.isBold && !$0.isItalic })
+        #expect(runs.contains { $0.text == "italic" && $0.isItalic && !$0.isBold })
+
+        var boldText: String?
+        var italicText: String?
+        attributed.enumerateAttribute(
+            .font,
+            in: NSRange(location: 0, length: attributed.length)
+        ) { value, range, _ in
+            guard let uiFont = value as? UIFont else { return }
+            let name = uiFont.fontName
+            let fragment = (attributed.string as NSString).substring(with: range)
+            if name.contains("Bold") {
+                boldText = fragment
+            }
+            if name.contains("Oblique") || name.contains("Italic") {
+                italicText = fragment
+            }
+        }
+        #expect(boldText == "bold")
+        #expect(italicText == "italic")
+    }
+
+    @Test func attributedPlainQuotedStarsStayLiteral() {
+        let font = CTFontCreateWithName("Helvetica" as CFString, 14, nil)
+        let text = "text with (parens) and *stars*"
+        let attributed = MermaidTextUtils.attributedLabel(
+            text,
+            font: font,
+            fontSize: 14,
+            isMarkdown: false
+        )
+        #expect(attributed.string == text)
+        #expect(attributed.string.contains("*stars*"))
+    }
+
+    @Test func attributedMarkdownKeepsUnmatchedMarkersLiteral() {
+        let font = CTFontCreateWithName("Helvetica" as CFString, 14, nil)
+        let text = "**unclosed and *also"
+        let attributed = MermaidTextUtils.attributedLabel(
+            text,
+            font: font,
+            fontSize: 14,
+            isMarkdown: true
+        )
+        #expect(attributed.string == text)
+    }
+
+    @Test func markdownLabelMeasuresCloserToFormattedTextThanMarkers() {
+        let font = CTFontCreateWithName("Helvetica" as CFString, 14, nil)
+        let raw = "**bold** and _italic_"
+        let formatted = "bold and italic"
+        let markdownSize = MermaidTextUtils.measureText(raw, font: font, fontSize: 14, isMarkdown: true)
+        let formattedSize = MermaidTextUtils.measureText(formatted, font: font, fontSize: 14)
+        let rawSize = MermaidTextUtils.measureText(raw, font: font, fontSize: 14)
+        #expect(
+            abs(markdownSize.width - formattedSize.width) < abs(markdownSize.width - rawSize.width),
+            "Markdown width \(markdownSize.width) should be closer to formatted \(formattedSize.width) than raw \(rawSize.width)"
+        )
     }
 }
