@@ -1059,6 +1059,20 @@ struct WorkspaceWikiLinkRenderingTests {
         #expect(attributed.runs.compactMap(\.link).isEmpty)
     }
 
+    @Test func hybridSessionWikiLinkRemainsLiteral() throws {
+        let source = "[[oppi://session/RV97TbYj|label]]"
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("Open \(source)"),
+            themeID: .dark,
+            serverID: "server-1",
+            workspaceID: "workspace-1",
+            sessionID: "session-source"
+        ))
+
+        #expect(String(attributed.characters) == "Open \(source)")
+        #expect(attributed.runs.compactMap(\.link).isEmpty)
+    }
+
     @Test func givenRelativeWikiLinkThenItStaysAWorkspaceFileCandidate() throws {
         let attributed = try textSegment(from: FlatSegment.build(
             from: parseCommonMark("See [[server/src/file-serving-policy.ts]]"),

@@ -45,7 +45,16 @@ describe("Oppi documentation prompt hint", () => {
     expect(guide).toContain("![[path/to/video.mp4]]");
     expect(guide).toContain("[[path/to/video.mp4]] stays a file link");
     expect(guide).toContain("Remote URLs, HTML <video>, and attachment IDs are not embeds");
+    expect(guide).toContain("[Label](oppi://session/<session-id>)");
     expect(guide).toContain("oppi://session/<session-id>");
+    expect(guide).not.toContain("[[oppi://session");
+    const bullets = guide.split("\n").filter((line) => line.startsWith("- "));
+    expect(
+      bullets.some(
+        (line) => line.includes("[[path/to/file.ext|Label]]") && !line.includes("oppi://session"),
+      ),
+    ).toBe(true);
+    expect(bullets.some((line) => line.includes("[Label](oppi://session/<session-id>)"))).toBe(true);
     expect(guide).toContain("real relative, absolute, or ~ paths");
     expect(guide).not.toMatch(/lead with|be concise|short paragraphs|instead of|must use/i);
     expect(guide).not.toContain("screen dimension");

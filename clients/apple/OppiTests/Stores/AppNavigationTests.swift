@@ -131,6 +131,31 @@ struct AppNavigationShellRoutingTests {
         #expect(InAppSessionLink.parse(web) == nil)
     }
 
+    @Test func inviteClaimPredicateClaimsOnlyConnectAndPairRoutes() throws {
+        let claimed = [
+            "oppi://connect?v=3&invite=x",
+            "oppi://pair?v=3&invite=x",
+            "OPPI://CONNECT?v=3",
+            "oppi:/connect?v=3",
+            "oppi:/pair?v=3",
+        ]
+        let declined = [
+            "oppi://session/a/b",
+            "oppi://session/child-1",
+            "oppi://workspace?path=/tmp/project",
+            "https://example.com/connect",
+        ]
+
+        for raw in claimed {
+            let url = try #require(URL(string: raw))
+            #expect(InAppInviteLink.claims(url), "\(raw)")
+        }
+        for raw in declined {
+            let url = try #require(URL(string: raw))
+            #expect(!InAppInviteLink.claims(url), "\(raw)")
+        }
+    }
+
     @Test func inAppSessionServerResolutionRequiresSourceOrGlobalUniqueness() {
         #expect(InAppSessionServerResolution.resolve(
             sourceServerID: "server-b",

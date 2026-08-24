@@ -137,6 +137,17 @@ struct InAppSessionLink: Equatable, Sendable {
     }
 }
 
+enum InAppInviteLink {
+    /// True only for invite-shaped connect/pair routes (host or path form).
+    /// Failed leftover `oppi://` URLs must not use the invite-format toast.
+    static func claims(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "oppi" else { return false }
+        let route = url.host?.lowercased()
+            ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        return route == "connect" || route == "pair"
+    }
+}
+
 enum MissingSessionDeepLinkNavigationPolicy {
     @MainActor
     static func showWorkspaceRoot(in navigation: AppNavigation) {
@@ -1275,7 +1286,7 @@ struct OppiApp: App {
     private func handleIncomingInviteURL(_ url: URL) async {
         guard !inviteBootstrapInFlight else { return }
         guard let credentials = ServerCredentials.decodeInviteURL(url) else {
-            if url.scheme?.lowercased() == "oppi" {
+            if InAppInviteLink.claims(url) {
                 connection.extensionToast = "Unsupported invite link format"
             }
             return
