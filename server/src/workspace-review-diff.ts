@@ -300,6 +300,19 @@ function computeWordSpans(
   };
 }
 
+/**
+ * Apply the existing token-LCS word spans to already-numbered hunks.
+ * Does not renumber lines or load file text.
+ */
+export function applyWordSpansToNumberedHunks(
+  hunks: WorkspaceReviewDiffHunk[],
+): WorkspaceReviewDiffHunk[] {
+  for (const hunk of hunks) {
+    applyWordLevelHighlights(hunk.lines);
+  }
+  return hunks;
+}
+
 function applyWordLevelHighlights(lines: MutableReviewLine[]): void {
   let index = 0;
 

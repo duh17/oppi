@@ -10,7 +10,7 @@ import { execFile } from "node:child_process";
 
 import { resolveHomePath } from "./git-utils.js";
 import { computeDiffLines, computeLineDiffStatsFromLines } from "./diff-core.js";
-import { buildDiffHunks } from "./workspace-review-diff.js";
+import { applyWordSpansToNumberedHunks, buildDiffHunks } from "./workspace-review-diff.js";
 import type {
   GitCommitDetail,
   GitCommitFileInfo,
@@ -359,7 +359,7 @@ export async function getCommitFileDiff(
     throw new CommitDiffError(422, "Binary files are not supported in diff view.");
   }
 
-  const hunks = parseUnifiedDiffHunks(patchText);
+  const hunks = applyWordSpansToNumberedHunks(parseUnifiedDiffHunks(patchText));
   let addedLines = 0;
   let removedLines = 0;
   for (const hunk of hunks) {

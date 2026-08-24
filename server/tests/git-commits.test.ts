@@ -56,8 +56,10 @@ describe("getCommitFileDiff", () => {
     git(dir, ["add", filePath]);
     git(dir, ["commit", "-m", "initial"]);
 
+    // Edit from the end so earlier line numbers stay stable on the old side.
+    lines.splice(15_000, 1);
     lines[10_000] = "int value_10000 = 42;";
-    lines.splice(10_001, 0, "int inserted_a = 1;", "int inserted_b = 2;", "int inserted_c = 3;");
+    lines.splice(51, 0, "int inserted_only = 1;");
     await writeFile(join(dir, filePath), `${lines.join("\n")}\n`);
     git(dir, ["add", filePath]);
     git(dir, ["commit", "-m", "tiny change"]);
@@ -65,10 +67,30 @@ describe("getCommitFileDiff", () => {
     const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
     const diff = await getCommitFileDiff(dir, sha, filePath, "test-workspace");
 
-    expect(diff.addedLines).toBe(4);
-    expect(diff.removedLines).toBe(1);
-    expect(diff.hunks).toHaveLength(1);
-    expect(diff.hunks[0]?.lines.some((line) => line.text === "int value_10000 = 42;")).toBe(true);
+    expect(diff.addedLines).toBe(2);
+    expect(diff.removedLines).toBe(2);
+    expect(diff.baselineText).toBe("");
+    expect(diff.currentText).toBe("");
+    expect(Buffer.byteLength(diff.baselineText, "utf8")).toBe(0);
+    expect(Buffer.byteLength(diff.currentText, "utf8")).toBe(0);
+    expect(diff.hunks.length).toBeGreaterThanOrEqual(3);
+
+    const allLines = diff.hunks.flatMap((hunk) => hunk.lines);
+    const removedPaired = allLines.find((line) => line.text === "int value_10000 = 10000;");
+    const addedPaired = allLines.find((line) => line.text === "int value_10000 = 42;");
+    const addedOnly = allLines.find((line) => line.text === "int inserted_only = 1;");
+    const removedOnly = allLines.find((line) => line.text === "int value_15000 = 15000;");
+
+    expect(removedPaired?.kind).toBe("removed");
+    expect(addedPaired?.kind).toBe("added");
+    expect(removedPaired?.oldLine).toBe(10001);
+    expect(addedPaired?.newLine).toBe(10002);
+    expect(removedPaired?.spans?.length).toBeGreaterThan(0);
+    expect(addedPaired?.spans?.length).toBeGreaterThan(0);
+    expect(addedOnly?.kind).toBe("added");
+    expect(addedOnly?.spans).toBeUndefined();
+    expect(removedOnly?.kind).toBe("removed");
+    expect(removedOnly?.spans).toBeUndefined();
   });
 
   it("returns full text diff for newly added files", async () => {
