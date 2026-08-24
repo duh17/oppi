@@ -412,7 +412,7 @@ struct ToolCallFormattingTests {
         #expect(lines[2].text == "        Image(systemName: \"terminal.fill\")")
     }
 
-    @Test func editResultDiffLinesFallsBackToPiNumberedDiff() throws {
+    @Test func editResultDiffLinesIgnoresNumberedDiffWithoutPatch() {
         let details: JSONValue = .object([
             "diff": .string("""
               314 var body: some View {
@@ -422,13 +422,7 @@ struct ToolCallFormattingTests {
             """),
         ])
 
-        let lines = try #require(ToolCallFormatting.editResultDiffLines(from: details))
-        #expect(lines.map(\.kind) == [.context, .context, .added, .context])
-        #expect(lines[0].oldLineNumber == 314)
-        #expect(lines[0].newLineNumber == 314)
-        #expect(lines[2].oldLineNumber == nil)
-        #expect(lines[2].newLineNumber == 316)
-        #expect(lines[2].text == "        Image(systemName: \"terminal.fill\")")
+        #expect(ToolCallFormatting.editResultDiffLines(from: details) == nil)
     }
 
     @Test func editResultDiffLinesDoesNotFlattenMultiFilePatch() {

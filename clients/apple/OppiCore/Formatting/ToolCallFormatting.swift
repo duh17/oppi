@@ -557,92 +557,14 @@ enum ToolCallFormatting {
     static func editResultDiffLines(from details: JSONValue?) -> [DiffLine]? {
         guard let object = details?.objectValue else { return nil }
 
-        if let patch = object["patch"]?.stringValue,
-           let document = UnifiedPatchParser.parse(patch, options: .strict),
-           !document.isMultiFile,
-           let file = document.files.first,
-           !file.lines.isEmpty {
-            return file.lines
-        }
-
-        if let diff = object["diff"]?.stringValue,
-           let lines = parsePiNumberedDiff(diff), !lines.isEmpty {
-            return lines
-        }
-
-        return nil
-    }
-
-    private static func parsePiNumberedDiff(_ text: String) -> [DiffLine]? {
-        let rawLines = normalizedDiffLines(text)
-        var lines: [DiffLine] = []
-        lines.reserveCapacity(rawLines.count)
-
-        for rawLine in rawLines {
-            guard let prefix = rawLine.first,
-                  prefix == "+" || prefix == "-" || prefix == " " else {
-                continue
-            }
-
-            guard let parsed = parsePiNumberedDiffBody(rawLine.dropFirst()) else { continue }
-            let text = parsed.text
-            switch prefix {
-            case "+":
-                guard let number = parsed.lineNumber else { continue }
-                lines.append(DiffLine(
-                    kind: .added,
-                    text: text,
-                    oldLineNumber: nil,
-                    newLineNumber: number
-                ))
-            case "-":
-                guard let number = parsed.lineNumber else { continue }
-                lines.append(DiffLine(
-                    kind: .removed,
-                    text: text,
-                    oldLineNumber: number,
-                    newLineNumber: nil
-                ))
-            default:
-                lines.append(DiffLine(
-                    kind: .context,
-                    text: text,
-                    oldLineNumber: parsed.lineNumber,
-                    newLineNumber: parsed.lineNumber
-                ))
-            }
-        }
-
-        return lines.isEmpty ? nil : lines
-    }
-
-    private static func parsePiNumberedDiffBody(_ body: Substring) -> (lineNumber: Int?, text: String)? {
-        var cursor = body.startIndex
-        while cursor < body.endIndex, body[cursor] == " " {
-            cursor = body.index(after: cursor)
-        }
-
-        let numberStart = cursor
-        while cursor < body.endIndex, body[cursor].isNumber {
-            cursor = body.index(after: cursor)
-        }
-
-        let lineNumber = numberStart == cursor ? nil : Int(String(body[numberStart..<cursor]))
-        if cursor < body.endIndex, body[cursor] == " " {
-            cursor = body.index(after: cursor)
-        }
-
-        let text = String(body[cursor...])
-        if lineNumber == nil && text != "..." {
+        guard let patch = object["patch"]?.stringValue,
+              let document = UnifiedPatchParser.parse(patch, options: .strict),
+              !document.isMultiFile,
+              let file = document.files.first,
+              !file.lines.isEmpty else {
             return nil
         }
-        return (lineNumber, text)
-    }
-
-    private static func normalizedDiffLines(_ text: String) -> [String] {
-        text.replacingOccurrences(of: "\r\n", with: "\n")
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
+        return file.lines
     }
 
     static func editDiffStats(from args: [String: JSONValue]?) -> DiffStats? {

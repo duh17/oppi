@@ -631,22 +631,24 @@ struct ToolPresentationBuilderTests {
     @Test("patch-only edit collapsed shows result diff stats")
     func patchOnlyEditCollapsedWithResultDiff() {
         let details: JSONValue = .object([
-            "diff": .string("""
-            File: clients/apple/Oppi/Core/Theme/AppFontConstants.swift
-            - 126     static let appCaptionMono = Font.system(size: 11, design: .monospaced)
-            + 126     static var appCaptionMono: Font {
-            + 127         Font.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
-            + 128     }
+            "patch": .string("""
+            --- a/clients/apple/Oppi/Core/Theme/AppFontConstants.swift
+            +++ b/clients/apple/Oppi/Core/Theme/AppFontConstants.swift
+            @@ -126,1 +126,3 @@
+            -    static let appCaptionMono = Font.system(size: 11, design: .monospaced)
+            +    static var appCaptionMono: Font {
+            +        Font.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
+            +    }
             """),
         ])
 
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "edit",
-            argsSummary: "patch: *** Begin Patch",
-            outputPreview: "Applied patch with 1 operation(s).",
+            argsSummary: "path: AppFontConstants.swift",
+            outputPreview: "Successfully replaced 1 block(s).",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["patch": .string("*** Begin Patch\n*** Update File: clients/apple/Oppi/Core/Theme/AppFontConstants.swift\n*** End Patch")],
+                args: ["path": .string("clients/apple/Oppi/Core/Theme/AppFontConstants.swift")],
                 details: details
             )
         )
@@ -658,22 +660,24 @@ struct ToolPresentationBuilderTests {
     @Test("patch-only edit expanded shows result diff lines")
     func patchOnlyEditExpandedWithResultDiff() {
         let details: JSONValue = .object([
-            "diff": .string("""
-            File: clients/apple/Oppi/Core/Theme/AppFontConstants.swift
-            - 126     static let appCaptionMono = Font.system(size: 11, design: .monospaced)
-            + 126     static var appCaptionMono: Font {
-            + 127         Font.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
-            + 128     }
+            "patch": .string("""
+            --- a/clients/apple/Oppi/Core/Theme/AppFontConstants.swift
+            +++ b/clients/apple/Oppi/Core/Theme/AppFontConstants.swift
+            @@ -126,1 +126,3 @@
+            -    static let appCaptionMono = Font.system(size: 11, design: .monospaced)
+            +    static var appCaptionMono: Font {
+            +        Font.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
+            +    }
             """),
         ])
 
         let config = ToolPresentationBuilder.build(
             itemID: "t1", tool: "edit",
-            argsSummary: "patch: *** Begin Patch",
-            outputPreview: "Applied patch with 1 operation(s).",
+            argsSummary: "path: AppFontConstants.swift",
+            outputPreview: "Successfully replaced 1 block(s).",
             isError: false, isDone: true,
             context: emptyContext(
-                args: ["patch": .string("*** Begin Patch\n*** Update File: clients/apple/Oppi/Core/Theme/AppFontConstants.swift\n*** End Patch")],
+                args: ["path": .string("clients/apple/Oppi/Core/Theme/AppFontConstants.swift")],
                 details: details,
                 expanded: ["t1"]
             )
