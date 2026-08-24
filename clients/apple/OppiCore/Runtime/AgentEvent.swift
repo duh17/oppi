@@ -27,7 +27,8 @@ enum AgentEvent: Sendable {
     case messageEnd(
         sessionId: String,
         content: String,
-        assistantContent: [AssistantMessageContentPart]? = nil
+        assistantContent: [AssistantMessageContentPart]? = nil,
+        entryId: String? = nil
     )
     case cacheMiss(sessionId: String, id: String, message: String)
 

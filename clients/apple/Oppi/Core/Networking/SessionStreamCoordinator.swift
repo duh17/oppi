@@ -202,16 +202,32 @@ final class SessionStreamCoordinator {
         catchUpTracker.seedLastSeenSeq(sessionId: sessionId, value: value)
     }
 
+    func seedRuntimeEpoch(sessionId: String, value: String?) {
+        catchUpTracker.seedRuntimeEpoch(sessionId: sessionId, value: value)
+    }
+
     func lastSeenSeq(sessionId: String) -> Int {
         catchUpTracker.lastSeenSeq(sessionId: sessionId)
+    }
+
+    func runtimeEpoch(sessionId: String) -> String? {
+        catchUpTracker.runtimeEpoch(sessionId: sessionId)
     }
 
     func consumeLiveSeq(sessionId: String, seq: Int) -> Bool {
         catchUpTracker.consumeLiveSeq(sessionId: sessionId, seq: seq)
     }
 
-    func catchUpDecision(sessionId: String, currentSeq: Int) -> CatchUpDecision {
-        catchUpTracker.catchUpDecision(sessionId: sessionId, currentSeq: currentSeq)
+    func catchUpDecision(
+        sessionId: String,
+        currentSeq: Int,
+        runtimeEpoch: String? = nil
+    ) -> CatchUpDecision {
+        catchUpTracker.catchUpDecision(
+            sessionId: sessionId,
+            currentSeq: currentSeq,
+            runtimeEpoch: runtimeEpoch
+        )
     }
 
     func applyCatchUpProgress(sessionId: String, seq: Int) {

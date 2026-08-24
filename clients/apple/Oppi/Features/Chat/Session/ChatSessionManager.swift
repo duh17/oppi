@@ -215,6 +215,10 @@ final class ChatSessionManager {
         "chat.lastSeenSeq.\(sessionId)"
     }
 
+    private static func epochDefaultsKey(sessionId: String) -> String {
+        "chat.runtimeEpoch.\(sessionId)"
+    }
+
     static func shouldFallbackToFullTrace(_ error: any Error) -> Bool {
         guard case APIError.server(let status, _) = error else { return false }
         return status == 404 || status == 405 || status == 409
@@ -224,8 +228,21 @@ final class ChatSessionManager {
         UserDefaults.standard.integer(forKey: seqDefaultsKey(sessionId: sessionId))
     }
 
+    private static func loadRuntimeEpoch(sessionId: String) -> String? {
+        UserDefaults.standard.string(forKey: epochDefaultsKey(sessionId: sessionId))
+    }
+
     private func persistLastSeenSeq(_ seq: Int) {
         UserDefaults.standard.set(seq, forKey: Self.seqDefaultsKey(sessionId: sessionId))
+    }
+
+    private func persistRuntimeEpoch(_ epoch: String?) {
+        let key = Self.epochDefaultsKey(sessionId: sessionId)
+        if let epoch, !epoch.isEmpty {
+            UserDefaults.standard.set(epoch, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 
     private func resolveWorkspaceId(from sessionStore: SessionStore) -> String? {
@@ -530,6 +547,10 @@ final class ChatSessionManager {
             sessionId: sessionId,
             value: persistedLastSeenSeq
         )
+        connection.sessionStreamCoordinator.seedRuntimeEpoch(
+            sessionId: sessionId,
+            value: Self.loadRuntimeEpoch(sessionId: sessionId)
+        )
 
         // Measure stale-cache window: from session entry until first confirmed fresh content.
         telemetry.updateTransportPath(connection.transportPath)
@@ -806,22 +827,22 @@ final class ChatSessionManager {
                 // events emitted while the app had no bound-session subscriber.
                 if let currentSeq = inboundMeta?.currentSeq {
                     let canFetchCatchUp = _loadCatchUpForTesting != nil || connection.apiClient != nil
-                    let trackedSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
-                    let hasCachedTimeline = (latestTraceSignature?.eventCount ?? 0) > 0
-                    if canFetchCatchUp, !hasCachedTimeline, currentSeq != trackedSeq {
+                    if canFetchCatchUp {
                         let outcome = await performCatchUpIfNeeded(
                             currentSeq: currentSeq,
+                            runtimeEpoch: inboundMeta?.runtimeEpoch,
                             generation: generation,
                             connection: connection,
                             sessionStore: sessionStore
                         )
-                        log.warning("First connect seq=\(currentSeq) catchUp=\(String(describing: outcome), privacy: .public) for \(self.sessionId)")
+                        log.warning("First connect seq=\(currentSeq) epoch=\(inboundMeta?.runtimeEpoch ?? "none", privacy: .public) catchUp=\(String(describing: outcome), privacy: .public) for \(self.sessionId)")
                     } else {
                         connection.sessionStreamCoordinator.seedLastSeenSeq(
                             sessionId: sessionId,
                             value: currentSeq
                         )
                         persistLastSeenSeq(currentSeq)
+                        persistRuntimeEpoch(inboundMeta?.runtimeEpoch)
                         log.warning("First connect: seeded seq=\(currentSeq) for \(self.sessionId)")
                     }
                 }
@@ -844,6 +865,7 @@ final class ChatSessionManager {
                 if let currentSeq = inboundMeta?.currentSeq {
                     let outcome = await performCatchUpIfNeeded(
                         currentSeq: currentSeq,
+                        runtimeEpoch: inboundMeta?.runtimeEpoch,
                         generation: generation,
                         connection: connection,
                         sessionStore: sessionStore
@@ -1126,7 +1148,7 @@ final class ChatSessionManager {
                 resultSegments: resultSegments
             ))
 
-        case .messageEnd(let role, let content, _):
+        case .messageEnd(let role, let content, _, _):
             if role == "user", !content.isEmpty,
                !suppressTimelineMutationWhilePaused(),
                !reducer.hasUserMessage(matching: content) {
@@ -1196,16 +1218,16 @@ final class ChatSessionManager {
         }
     }
 
-    /// Ring buffer catch-up for WS reconnection only.
+    /// Ring buffer catch-up for first connect and WS reconnection.
     ///
     /// Fills the gap in live events between the last seen seq and the
     /// server's current seq. Falls back to a full history reload when
-    /// the ring can't serve the gap (ring miss, regression, fetch failure).
-    ///
-    /// This is NOT used on first connect — first connect seeds the seq
-    /// directly and relies on the independent history reload for content.
+    /// the ring can't serve the gap (ring miss, regression, epoch change,
+    /// or fetch failure). Same-epoch first connect uses the stored seq even
+    /// when a cached timeline exists.
     private func performCatchUpIfNeeded(
         currentSeq: Int,
+        runtimeEpoch: String? = nil,
         generation: Int,
         connection: ServerConnection,
         sessionStore: SessionStore
@@ -1219,15 +1241,39 @@ final class ChatSessionManager {
             ChatSessionTelemetry.recordCatchup(durationMs: durationMs, sessionId: self.sessionId, result: result)
         }
 
+        if runtimeEpoch == nil {
+            connection.sessionStreamCoordinator.seedLastSeenSeq(
+                sessionId: sessionId,
+                value: currentSeq
+            )
+            connection.sessionStreamCoordinator.seedRuntimeEpoch(sessionId: sessionId, value: nil)
+            persistLastSeenSeq(currentSeq)
+            persistRuntimeEpoch(nil)
+            if case .awaitingConnected = entryState {
+                recordCatchupMs("missing_epoch_baseline")
+                return .noGap
+            }
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                sessionStore: sessionStore,
+                cachedSignature: nil
+            )
+            recordCatchupMs("missing_epoch")
+            return .fullReloadScheduled
+        }
+
         let decision = connection.sessionStreamCoordinator.catchUpDecision(
             sessionId: sessionId,
-            currentSeq: currentSeq
+            currentSeq: currentSeq,
+            runtimeEpoch: runtimeEpoch
         )
 
         switch decision {
         case .seqRegression(let resetTo):
             log.warning("Seq regression for \(self.sessionId): currentSeq=\(currentSeq) — scheduling history reload")
             persistLastSeenSeq(resetTo)
+            persistRuntimeEpoch(runtimeEpoch)
             scheduleHistoryReload(
                 generation: generation,
                 connection: connection,
@@ -1237,7 +1283,26 @@ final class ChatSessionManager {
             recordCatchupMs("seq_regression")
             return .fullReloadScheduled
 
+        case .epochChanged(let resetTo), .missingEpoch(let resetTo):
+            persistLastSeenSeq(resetTo)
+            persistRuntimeEpoch(runtimeEpoch)
+            if case .awaitingConnected = entryState {
+                log.warning("Runtime epoch baseline for \(self.sessionId): currentSeq=\(currentSeq) epoch=\(runtimeEpoch ?? "none", privacy: .public) — first connect history reload remains authoritative")
+                recordCatchupMs("epoch_baseline")
+                return .noGap
+            }
+            log.warning("Runtime epoch repair for \(self.sessionId): currentSeq=\(currentSeq) epoch=\(runtimeEpoch ?? "none", privacy: .public) — scheduling history reload")
+            scheduleHistoryReload(
+                generation: generation,
+                connection: connection,
+                sessionStore: sessionStore,
+                cachedSignature: nil
+            )
+            recordCatchupMs(runtimeEpoch == nil ? "missing_epoch" : "epoch_changed")
+            return .fullReloadScheduled
+
         case .noGap:
+            persistRuntimeEpoch(runtimeEpoch)
             recordCatchupMs("no_gap")
             return .noGap
 
@@ -1276,6 +1341,25 @@ final class ChatSessionManager {
 
             markSyncSucceeded()
 
+            if let responseEpoch = response.runtimeEpoch,
+               let focusedEpoch = runtimeEpoch,
+               responseEpoch != focusedEpoch {
+                log.warning("Catch-up epoch mismatch for \(self.sessionId) — scheduling history reload")
+                connection.sessionStreamCoordinator.seedRuntimeEpoch(
+                    sessionId: sessionId,
+                    value: focusedEpoch
+                )
+                persistRuntimeEpoch(focusedEpoch)
+                scheduleHistoryReload(
+                    generation: generation,
+                    connection: connection,
+                    sessionStore: sessionStore,
+                    cachedSignature: nil
+                )
+                recordCatchupMs("epoch_mismatch")
+                return .fullReloadScheduled
+            }
+
             if !response.catchUpComplete {
                 log.warning("Ring miss for \(self.sessionId) since seq \(since) — scheduling history reload")
                 connection.sessionStreamCoordinator.seedLastSeenSeq(
@@ -1283,6 +1367,7 @@ final class ChatSessionManager {
                     value: response.currentSeq
                 )
                 persistLastSeenSeq(response.currentSeq)
+                persistRuntimeEpoch(runtimeEpoch ?? response.runtimeEpoch)
                 scheduleHistoryReload(
                     generation: generation,
                     connection: connection,
@@ -1325,6 +1410,7 @@ final class ChatSessionManager {
 
             let persistedSeq = connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId)
             persistLastSeenSeq(persistedSeq)
+            persistRuntimeEpoch(runtimeEpoch ?? response.runtimeEpoch)
 
             recordCatchupMs(appliedCatchUp ? "applied" : "no_gap")
             return appliedCatchUp ? .applied : .noGap

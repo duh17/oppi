@@ -398,8 +398,23 @@ actor APIClient: ClientLogUploading {
     struct SessionEventsResponse: Sendable, Equatable {
         let events: [SequencedServerEvent]
         let currentSeq: Int
+        let runtimeEpoch: String?
         let session: Session
         let catchUpComplete: Bool
+
+        init(
+            events: [SequencedServerEvent],
+            currentSeq: Int,
+            runtimeEpoch: String? = nil,
+            session: Session,
+            catchUpComplete: Bool
+        ) {
+            self.events = events
+            self.currentSeq = currentSeq
+            self.runtimeEpoch = runtimeEpoch
+            self.session = session
+            self.catchUpComplete = catchUpComplete
+        }
     }
 
     private func focusedSessionPath(scope: SessionRouteScope, sessionId: String) -> String {
@@ -431,6 +446,7 @@ actor APIClient: ClientLogUploading {
         return SessionEventsResponse(
             events: events,
             currentSeq: payload.currentSeq,
+            runtimeEpoch: payload.runtimeEpoch,
             session: payload.session,
             catchUpComplete: payload.catchUpComplete
         )
@@ -444,6 +460,7 @@ actor APIClient: ClientLogUploading {
     private struct SessionEventsPayload: Decodable {
         let events: [SequencedEventEntry]
         let currentSeq: Int
+        let runtimeEpoch: String?
         let catchUpComplete: Bool
         let session: Session
     }

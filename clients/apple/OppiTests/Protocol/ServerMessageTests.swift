@@ -143,7 +143,7 @@ struct ServerMessageTests {
         let structured = try ServerMessage.decode(
             from: #"{"type":"message_end","role":"assistant","content":"Before\n\nAfter","assistantContent":[{"kind":"text","content":"Before","contentIndex":0},{"kind":"thinking","content":"Check","contentIndex":1},{"kind":"text","content":"After","contentIndex":2}]}"#
         )
-        guard case .messageEnd(let role, let content, let assistantContent) = structured else {
+        guard case .messageEnd(let role, let content, let assistantContent, _) = structured else {
             Issue.record("Expected .messageEnd")
             return
         }
@@ -158,12 +158,39 @@ struct ServerMessageTests {
         let olderPeer = try ServerMessage.decode(
             from: #"{"type":"message_end","role":"assistant","content":"Done"}"#
         )
-        guard case .messageEnd(_, let olderContent, let olderAssistantContent) = olderPeer else {
+        guard case .messageEnd(_, let olderContent, let olderAssistantContent, _) = olderPeer else {
             Issue.record("Expected older .messageEnd")
             return
         }
         #expect(olderContent == "Done")
         #expect(olderAssistantContent == nil)
+    }
+
+    @Test func decodesMessageEndCanonicalIdentityFields() throws {
+        let structured = try ServerMessage.decode(
+            from: #"{"type":"message_end","role":"assistant","content":"Before\n\nAfter","entryId":"entry-assistant-1","assistantContent":[{"kind":"text","content":"Before","contentIndex":0,"id":"entry-assistant-1-text-0"},{"kind":"thinking","content":"Check","contentIndex":1,"id":"entry-assistant-1-think-1"},{"kind":"text","content":"After","contentIndex":2,"id":"entry-assistant-1-text-2"}]}"#
+        )
+        guard case .messageEnd(let role, let content, let assistantContent, let entryId) = structured else {
+            Issue.record("Expected .messageEnd")
+            return
+        }
+        #expect(role == "assistant")
+        #expect(content == "Before\n\nAfter")
+        #expect(entryId == "entry-assistant-1")
+        #expect(assistantContent == [
+            AssistantMessageContentPart(kind: "text", content: "Before", contentIndex: 0, id: "entry-assistant-1-text-0"),
+            AssistantMessageContentPart(kind: "thinking", content: "Check", contentIndex: 1, id: "entry-assistant-1-think-1"),
+            AssistantMessageContentPart(kind: "text", content: "After", contentIndex: 2, id: "entry-assistant-1-text-2"),
+        ])
+    }
+
+    @Test func decodesConnectedRuntimeEpochOnStreamMessage() throws {
+        let json = """
+        {"type":"connected","currentSeq":42,"runtimeEpoch":"epoch-test-1","session":{"id":"abc","status":"ready","createdAt":1700000000000,"lastActivity":1700000000000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+        """
+        let stream = try StreamMessage.decode(from: json)
+        #expect(stream.currentSeq == 42)
+        #expect(stream.runtimeEpoch == "epoch-test-1")
     }
 
     @Test func decodesTextDeltaWithOptionalContentIndex() throws {

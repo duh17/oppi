@@ -85,13 +85,19 @@ struct ProtocolSnapshotTests {
 
     @Test func orderedAssistantContentContract() throws {
         let messageEnd = try decodeMessage("message_end")
-        guard case .messageEnd(_, let content, let assistantContent) = messageEnd else {
+        guard case .messageEnd(_, let content, let assistantContent, let entryId) = messageEnd else {
             Issue.record("Expected structured message_end snapshot")
             return
         }
+        #expect(entryId == "entry-assistant-1")
         #expect(content == "Before\n\nAfter")
         #expect(assistantContent?.map(\.kind) == ["text", "thinking", "text"])
         #expect(assistantContent?.map(\.contentIndex) == [0, 1, 2])
+        #expect(assistantContent?.map(\.id) == [
+            "entry-assistant-1-text-0",
+            "entry-assistant-1-think-1",
+            "entry-assistant-1-text-2",
+        ])
 
         let textDelta = try decodeMessage("text_delta")
         guard case .textDelta(_, let deltaContentIndex) = textDelta else {

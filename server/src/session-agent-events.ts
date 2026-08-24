@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 import {
   asCacheMissAssistantMessage,
@@ -16,6 +16,13 @@ import {
 } from "./extension-ui-state.js";
 import type { ExtensionAudioStreamEvent, PiMessage, SessionBackendEvent } from "./pi-events.js";
 import { createLogger } from "./logger.js";
+import {
+  resolvePersistedMessageEntry,
+  resolvePersistedMessageEntrySlow,
+  sessionTreeFromUnknown,
+  type CanonicalSessionTree,
+  type PendingCanonicalMessage,
+} from "./canonical-message.js";
 import {
   extractAssistantText,
   extractToolFullOutputPath,
@@ -92,6 +99,10 @@ export class SessionAgentEventCoordinator {
   private static readonly CHANGE_SUMMARY_TOOL_NAMES = new Set(["edit", "write"]);
 
   private readonly lastSummaryFingerprintBySession = new Map<string, string>();
+  private readonly pendingCanonicalByKey = new Map<
+    string,
+    PendingCanonicalMessage & { cacheMissNotice?: CacheMissNotice }
+  >();
 
   constructor(private readonly deps: SessionAgentEventCoordinatorDeps) {}
 
@@ -100,6 +111,8 @@ export class SessionAgentEventCoordinator {
     if (!active) {
       return;
     }
+
+    this.flushPendingCanonicalMessage(key, active);
 
     if (data.type === "extension_ui_request") {
       handleExtensionUIRequestState(active, data, {
@@ -273,29 +286,8 @@ export class SessionAgentEventCoordinator {
 
     if (event.type === "message_end") {
       const role = event.message.role;
-      if (role === "assistant") {
-        // Keep exactly one historical frame per Pi assistant message. Older
-        // clients ignore assistantContent and retain their complete aggregate
-        // row; newer clients use it to reconcile text/thinking/tool order.
-        this.deps.broadcast(key, {
-          type: "message_end",
-          role,
-          content: extractAssistantText(event.message),
-          assistantContent: projectAssistantMessageContent(event.message),
-        });
-      } else if (role === "user") {
-        this.deps.broadcast(key, {
-          type: "message_end",
-          role,
-          content: extractAssistantText(event.message),
-        });
-      }
-      if (cacheMissNotice) {
-        this.deps.broadcast(key, {
-          type: "cache_miss",
-          id: cacheMissNotice.id,
-          message: formatCacheMissNotice(cacheMissNotice),
-        });
+      if (role === "assistant" || role === "user") {
+        this.queueOrBroadcastMessageEnd(key, active, event, cacheMissNotice);
       }
     }
 
@@ -304,6 +296,124 @@ export class SessionAgentEventCoordinator {
     }
 
     this.deps.resetIdleTimer(key);
+  }
+
+  private sessionTreeFor(active: SessionAgentEventState): CanonicalSessionTree | undefined {
+    return sessionTreeFromUnknown(active.sdkBackend?.session?.sessionManager);
+  }
+
+  private flushPendingCanonicalMessage(key: string, active: SessionAgentEventState): void {
+    const pending = this.pendingCanonicalByKey.get(key);
+    if (!pending) {
+      return;
+    }
+    this.pendingCanonicalByKey.delete(key);
+
+    const tree = this.sessionTreeFor(active);
+    let entry = tree ? resolvePersistedMessageEntry(tree, pending) : null;
+    if (!entry && tree) {
+      entry = resolvePersistedMessageEntrySlow(tree, pending);
+    }
+    if (!entry) {
+      log.error("session_agent_events.canonical_message.resolve_failed", {
+        sessionId: active.session.id,
+        expectedRole: pending.event.message.role,
+        capturedLeaf: pending.preAppendLeafId,
+        observedLeaf: tree?.getLeafId() ?? null,
+        eventType: pending.event.type,
+      });
+    }
+    this.broadcastResolvedMessageEnd(key, pending.event, entry, pending.cacheMissNotice);
+  }
+
+  private queueOrBroadcastMessageEnd(
+    key: string,
+    active: SessionAgentEventState,
+    event: Extract<AgentSessionEvent, { type: "message_end" }>,
+    cacheMissNotice?: CacheMissNotice,
+  ): void {
+    const incomingEntryId =
+      "entryId" in event && typeof event.entryId === "string" && event.entryId.length > 0
+        ? event.entryId
+        : undefined;
+    if (incomingEntryId) {
+      this.broadcastResolvedMessageEnd(
+        key,
+        event,
+        {
+          type: "message",
+          id: incomingEntryId,
+          parentId: null,
+          timestamp: "",
+          message: event.message,
+        },
+        cacheMissNotice,
+      );
+      return;
+    }
+
+    const tree = this.sessionTreeFor(active);
+    if (!tree) {
+      this.broadcastResolvedMessageEnd(key, event, null, cacheMissNotice);
+      return;
+    }
+
+    const leaf = tree.getLeafEntry();
+    if (leaf?.type === "message" && leaf.message === event.message) {
+      this.broadcastResolvedMessageEnd(key, event, leaf, cacheMissNotice);
+      return;
+    }
+
+    this.pendingCanonicalByKey.set(key, {
+      preAppendLeafId: tree.getLeafId(),
+      event,
+      cacheMissNotice,
+    });
+    queueMicrotask(() => {
+      const current = this.deps.getActiveSession(key);
+      if (!current) {
+        this.pendingCanonicalByKey.delete(key);
+        return;
+      }
+      this.flushPendingCanonicalMessage(key, current);
+    });
+  }
+
+  private broadcastResolvedMessageEnd(
+    key: string,
+    event: Extract<AgentSessionEvent, { type: "message_end" }> | PendingCanonicalMessage["event"],
+    entry: Extract<SessionEntry, { type: "message" }> | null,
+    cacheMissNotice?: CacheMissNotice,
+  ): void {
+    const message = entry?.message ?? event.message;
+    const role = message.role;
+    const entryId = entry?.id;
+    if (role === "assistant") {
+      this.deps.broadcast(key, {
+        type: "message_end",
+        role,
+        content: extractAssistantText(message),
+        ...(entryId ? { entryId } : {}),
+        assistantContent: projectAssistantMessageContent(
+          message,
+          entryId ? { entryId } : undefined,
+        ),
+      });
+    } else if (role === "user") {
+      this.deps.broadcast(key, {
+        type: "message_end",
+        role,
+        content: extractAssistantText(message),
+        ...(entryId ? { entryId } : {}),
+      });
+    }
+    if (cacheMissNotice) {
+      this.deps.broadcast(key, {
+        type: "cache_miss",
+        id: cacheMissNotice.id,
+        message: formatCacheMissNotice(cacheMissNotice),
+      });
+    }
   }
 
   private shouldBroadcastSessionSummaryAfterUpdate(event: AgentSessionEvent): boolean {

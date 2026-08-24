@@ -11,6 +11,7 @@
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import { canonicalAssistantBlockId } from "./canonical-message.js";
 import type {
   AssistantMessageContentPart,
   ServerMessage,
@@ -419,35 +420,61 @@ export function projectAssistantTextRuns(message: Pick<PiMessage, "content">): s
  */
 export function projectAssistantMessageContent(
   message: Pick<PiMessage, "content">,
+  options?: { entryId?: string },
 ): AssistantMessageContentPart[] {
+  const entryId = options?.entryId;
+  const stringContent = typeof message.content === "string";
   return projectAssistantContentRuns(message).map((part) => {
+    const withId = <T extends AssistantMessageContentPart>(
+      projected: T,
+      toolCallId?: string,
+    ): T => {
+      if (!entryId) {
+        return projected;
+      }
+      const id = canonicalAssistantBlockId({
+        entryId,
+        kind: projected.kind,
+        contentIndex: projected.contentIndex,
+        toolCallId,
+        stringContent,
+      });
+      return id ? { ...projected, id } : projected;
+    };
+
     if (part.kind === "text") {
-      return {
+      return withId({
         kind: "text",
         content: part.text,
         contentIndex: part.contentIndex,
-      };
+      });
     }
 
     if (part.block.type === "thinking" && typeof part.block.thinking === "string") {
-      return {
+      if (part.block.thinking.length === 0) {
+        return withId({ kind: "boundary", contentIndex: part.contentIndex });
+      }
+      return withId({
         kind: "thinking",
         content: part.block.thinking,
         contentIndex: part.contentIndex,
-      };
+      });
     }
 
     if (part.block.type === "toolCall") {
-      return {
-        kind: "tool",
-        contentIndex: part.contentIndex,
-        ...(typeof part.block.id === "string" && part.block.id.length > 0
-          ? { toolCallId: part.block.id }
-          : {}),
-      };
+      const toolCallId =
+        typeof part.block.id === "string" && part.block.id.length > 0 ? part.block.id : undefined;
+      return withId(
+        {
+          kind: "tool",
+          contentIndex: part.contentIndex,
+          ...(toolCallId ? { toolCallId } : {}),
+        },
+        toolCallId,
+      );
     }
 
-    return { kind: "boundary", contentIndex: part.contentIndex };
+    return withId({ kind: "boundary", contentIndex: part.contentIndex });
   });
 }
 

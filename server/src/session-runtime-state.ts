@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { EventRing } from "./event-ring.js";
 import type { CacheMissModelPriceSource, CacheMissTrackerState } from "./cache-miss.js";
 import type { ExtensionUIState } from "./extension-ui-state.js";
@@ -11,6 +13,7 @@ export interface RuntimeSessionStateScaffold<
   session: Session;
   subscribers: Set<(msg: ServerMessage) => void>;
   seq: number;
+  runtimeEpoch: string;
   eventRing: EventRing;
   partialResults: Map<string, string>;
   streamedAssistantText: string;
@@ -48,6 +51,7 @@ export function createRuntimeSessionStateScaffold<
     session,
     subscribers: new Set(),
     seq: 0,
+    runtimeEpoch: randomUUID(),
     eventRing: new EventRing(eventRingCapacity),
     pendingUIRequests: new Map(),
     persistentExtensionUINotifications: new Map(),

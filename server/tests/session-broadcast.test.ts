@@ -372,6 +372,16 @@ describe("SessionBroadcaster", () => {
       const catchUp = broadcaster.getCatchUp("k1", 0);
       expect(catchUp!.session.id).toBe("s42");
     });
+
+    it("includes the scaffold runtimeEpoch when present", () => {
+      const { broadcaster, activeSessions } = createHarness();
+      const active = makeActive();
+      active.runtimeEpoch = "epoch-live-1";
+      activeSessions.set("k1", active);
+
+      const catchUp = broadcaster.getCatchUp("k1", 0);
+      expect(catchUp!.runtimeEpoch).toBe("epoch-live-1");
+    });
   });
 
   describe("getCurrentSeq", () => {

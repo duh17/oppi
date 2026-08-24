@@ -737,6 +737,7 @@ final class WebSocketClient {
                     let inboundMeta = InboundMeta(
                         seq: streamMessage.seq,
                         currentSeq: streamMessage.currentSeq,
+                        runtimeEpoch: streamMessage.runtimeEpoch,
                         receivedAtMs: Date.nowMs(),
                         transportPath: transportPath
                     )

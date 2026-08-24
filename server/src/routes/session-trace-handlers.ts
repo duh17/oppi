@@ -272,6 +272,7 @@ export function createSessionTraceRouteHandlers(
     helpers.json(res, {
       events: catchUp.events,
       currentSeq: catchUp.currentSeq,
+      ...(catchUp.runtimeEpoch ? { runtimeEpoch: catchUp.runtimeEpoch } : {}),
       session: ctx.ensureSessionContextWindow(catchUp.session),
       catchUpComplete: catchUp.catchUpComplete,
     });

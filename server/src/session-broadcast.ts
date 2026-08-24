@@ -7,6 +7,7 @@ import { createLogger } from "./logger.js";
 export interface SessionCatchUpResponse {
   events: ServerMessage[];
   currentSeq: number;
+  runtimeEpoch?: string;
   session: Session;
   catchUpComplete: boolean;
 }
@@ -23,6 +24,7 @@ export interface BroadcastSessionState {
   session: Session;
   subscribers: Set<(msg: ServerMessage) => void>;
   seq: number;
+  runtimeEpoch?: string;
   eventRing: EventRing;
 }
 
@@ -99,6 +101,9 @@ export class SessionBroadcaster {
     return {
       events,
       currentSeq: active.seq,
+      ...(typeof active.runtimeEpoch === "string" && active.runtimeEpoch.length > 0
+        ? { runtimeEpoch: active.runtimeEpoch }
+        : {}),
       session: active.session,
       catchUpComplete: canServe,
     };

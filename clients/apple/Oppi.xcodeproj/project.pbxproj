@@ -1136,6 +1136,7 @@
 		DFB7216E224A7A9FB4BDDCDD /* TimelineStreamingScrollMatrixSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 692A4747C46B99B0BF61915E /* TimelineStreamingScrollMatrixSupport.swift */; };
 		DFC3F1DA65F3CC0ECC873E9A /* MathNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25711154EFC224B8FE7389BE /* MathNode.swift */; };
 		E0619212C187E184C561D14E /* ServerStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888DF2FC37263AD54D8168EA /* ServerStats.swift */; };
+		E07E4E3F8719B7B0EEFDD774 /* TimelineReducerCanonicalIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28E66ACBD6D7AF7A15737C9C /* TimelineReducerCanonicalIdentityTests.swift */; };
 		E09128A1527E1294D213F222 /* FileShareService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD7ADD0C6492EF1E8C9DA32E /* FileShareService.swift */; };
 		E0A4890B095EB7606C7F8463 /* TimelineCopyFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 092FC69A0DFD4B5496F54F5B /* TimelineCopyFeedback.swift */; };
 		E0B83DCB6DBB32347D163BCC /* QuickSessionControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 132682218D7EF18B477FF353 /* QuickSessionControl.swift */; };
@@ -1306,6 +1307,7 @@
 		FF44B6093AE45627DC21314C /* MermaidParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C5B379ED83CA2067BC8BB8 /* MermaidParser.swift */; };
 		FF588BFB342001E284DE8D7C /* DailyDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6EAFA671AFD6EEB1DCBDAA5 /* DailyDetailView.swift */; };
 		FF9CEC2DEF4F3B418974A665 /* ModelProvidersNavigationE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A6302BDCA7995387C4CD97 /* ModelProvidersNavigationE2ETests.swift */; };
+		FF9DA0EF6ED037660FEAA3EF /* SessionStreamCatchUpEpochTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293B0F9C22D372DEE0F84B70 /* SessionStreamCatchUpEpochTests.swift */; };
 		FFAE7C1A20640DA1706E27C9 /* TLSPinningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FD2EAE6117D634A836F3BD /* TLSPinningTests.swift */; };
 		FFC0C570AC0192A3B2ACA75E /* WorkspaceDeepLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 386D2A5B1D351116F6A908C0 /* WorkspaceDeepLinkTests.swift */; };
 		FFD44562115EDFABA4BA2A9A /* SessionWorktreeIndicatorPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9BFA86D83D6A746828A9200 /* SessionWorktreeIndicatorPresentationTests.swift */; };
@@ -1560,6 +1562,8 @@
 		2810372B3C2B96381C2D995C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		289020DB12617C97F6B318B1 /* FullScreenMarkdownStressCorpusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenMarkdownStressCorpusTests.swift; sourceTree = "<group>"; };
 		28C73151FBE517B9FEB95D84 /* ServerProcessManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProcessManagerTests.swift; sourceTree = "<group>"; };
+		28E66ACBD6D7AF7A15737C9C /* TimelineReducerCanonicalIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerCanonicalIdentityTests.swift; sourceTree = "<group>"; };
+		293B0F9C22D372DEE0F84B70 /* SessionStreamCatchUpEpochTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStreamCatchUpEpochTests.swift; sourceTree = "<group>"; };
 		29452A53714399D6EA0C7888 /* ClientMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientMessageTests.swift; sourceTree = "<group>"; };
 		296D3A2F832F7B57652427A5 /* RenderableDocumentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderableDocumentView.swift; sourceTree = "<group>"; };
 		297E2FFAD1C0ED1218CE1704 /* ProcessRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessRunnerTests.swift; sourceTree = "<group>"; };
@@ -2610,6 +2614,7 @@
 				221CF6E92CE06F3892EAA6F2 /* ServerMessageEffectsTests.swift */,
 				F3D7DFC692D67059B3E7E1B9 /* ServerResourceAPIClientTests.swift */,
 				11D9892E24E4721341F62D77 /* ServerTransportPolicyTests.swift */,
+				293B0F9C22D372DEE0F84B70 /* SessionStreamCatchUpEpochTests.swift */,
 				6DB5C8F0842B4F17E968C073 /* SessionStreamCoordinatorTests.swift */,
 				AD1BED11F1546666FD197EE7 /* StreamRecoveryTests.swift */,
 				B3FD2EAE6117D634A836F3BD /* TLSPinningTests.swift */,
@@ -3383,6 +3388,7 @@
 				7143EE6A5B229771E7F0EE93 /* TimelineOffsetControllerTests.swift */,
 				0568D4E6AE1774A817C312B8 /* TimelineReducerAskTests.swift */,
 				F8BFD07507D57A0FBB97E3A3 /* TimelineReducerBasicTests.swift */,
+				28E66ACBD6D7AF7A15737C9C /* TimelineReducerCanonicalIdentityTests.swift */,
 				D78994A18A6C8CABCD3C2BBF /* TimelineReducerEdgeCaseTests.swift */,
 				6125E0158C3B9818B5FB97FF /* TimelineReducerImageOrphanTests.swift */,
 				51844A88F73A4E0B0B9BD90D /* TimelineReducerInvariantTests.swift */,
@@ -5635,6 +5641,7 @@
 				ABF15A9A4A51D8B4D4AB2EE8 /* SessionSearchStoreTests.swift in Sources */,
 				564F73E4F8F5F0E8D4244263 /* SessionStatusPillTests.swift in Sources */,
 				1A2564495CEE58CE46D01A5B /* SessionStoreTests.swift in Sources */,
+				FF9DA0EF6ED037660FEAA3EF /* SessionStreamCatchUpEpochTests.swift in Sources */,
 				6B3757365571A8C7647CEED4 /* SessionStreamCoordinatorTests.swift in Sources */,
 				98D7F76AF466CA41AB00078E /* SessionTimelineNavigationTests.swift in Sources */,
 				E64853F3AA54EB450248126E /* SessionTouchedFileRoutingTests.swift in Sources */,
@@ -5674,6 +5681,7 @@
 				996B55E777F29E24A0B28006 /* TimelineOffsetControllerTests.swift in Sources */,
 				B43E49465DC9F54E81A5C2C5 /* TimelineReducerAskTests.swift in Sources */,
 				660C9ED83A4696A33B193AF5 /* TimelineReducerBasicTests.swift in Sources */,
+				E07E4E3F8719B7B0EEFDD774 /* TimelineReducerCanonicalIdentityTests.swift in Sources */,
 				6CE65547B556E2D0BACE96E6 /* TimelineReducerEdgeCaseTests.swift in Sources */,
 				5973187F170F46427B342E5E /* TimelineReducerImageOrphanTests.swift in Sources */,
 				7B160589723C3628E0A8F730 /* TimelineReducerInvariantTests.swift in Sources */,

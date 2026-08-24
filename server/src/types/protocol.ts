@@ -385,14 +385,14 @@ export type AppEventMessage =
     });
 
 export type AssistantMessageContentPart =
-  | { kind: "text" | "thinking"; content: string; contentIndex: number }
-  | { kind: "tool"; contentIndex: number; toolCallId?: string }
-  | { kind: "boundary"; contentIndex: number };
+  | { kind: "text" | "thinking"; content: string; contentIndex: number; id?: string }
+  | { kind: "tool"; contentIndex: number; toolCallId?: string; id?: string }
+  | { kind: "boundary"; contentIndex: number; id?: string };
 
 // Server → Client
 export type ServerMessage = // ── Connection ──
   (
-    | { type: "connected"; session: Session; currentSeq?: number }
+    | { type: "connected"; session: Session; currentSeq?: number; runtimeEpoch?: string }
     | { type: "stream_connected"; userName: string; serverDictationAvailable: boolean }
     | { type: "state"; session: Session }
     | { type: "session_summary"; summary: SessionSummary }
@@ -411,6 +411,8 @@ export type ServerMessage = // ── Connection ──
         role: "user" | "assistant";
         /** Complete text projection retained for older clients. */
         content: string;
+        /** Pi SessionEntry.id once the message is persisted. */
+        entryId?: string;
         /** Ordered assistant structure for clients that can render split content. */
         assistantContent?: AssistantMessageContentPart[];
       }

@@ -26,17 +26,20 @@ struct AssistantMessageContentPart: Codable, Sendable, Equatable {
     let content: String?
     let contentIndex: Int
     let toolCallId: String?
+    let id: String?
 
     init(
         kind: String,
         content: String? = nil,
         contentIndex: Int,
-        toolCallId: String? = nil
+        toolCallId: String? = nil,
+        id: String? = nil
     ) {
         self.kind = kind
         self.content = content
         self.contentIndex = contentIndex
         self.toolCallId = toolCallId
+        self.id = id
     }
 }
 
@@ -79,7 +82,8 @@ enum ServerMessage: Sendable, Equatable {
     case messageEnd(
         role: String,
         content: String,
-        assistantContent: [AssistantMessageContentPart]? = nil
+        assistantContent: [AssistantMessageContentPart]? = nil,
+        entryId: String? = nil
     )
     case cacheMiss(id: String, message: String)
     case textDelta(delta: String, contentIndex: Int? = nil)
@@ -289,7 +293,7 @@ extension ServerMessage: Decodable {
         // session_ended / stop lifecycle
         case reason, source
         // message_end / cache_miss / text_delta / thinking_delta / audio_stream
-        case role, content, assistantContent, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
+        case role, content, assistantContent, entryId, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, details, callSegments, resultSegments
         // tool_output
@@ -383,7 +387,8 @@ extension ServerMessage: Decodable {
                 assistantContent: try c.decodeIfPresent(
                     [AssistantMessageContentPart].self,
                     forKey: .assistantContent
-                )
+                ),
+                entryId: try c.decodeIfPresent(String.self, forKey: .entryId)
             )
 
         case "cache_miss":
@@ -653,24 +658,42 @@ struct StreamMessage: Sendable, Equatable {
     let sessionId: String?
     let seq: Int?
     let currentSeq: Int?
+    let runtimeEpoch: String?
     let message: ServerMessage
+
+    init(
+        sessionId: String?,
+        seq: Int?,
+        currentSeq: Int?,
+        runtimeEpoch: String? = nil,
+        message: ServerMessage
+    ) {
+        self.sessionId = sessionId
+        self.seq = seq
+        self.currentSeq = currentSeq
+        self.runtimeEpoch = runtimeEpoch
+        self.message = message
+    }
 }
 
 /// Transport metadata attached to the same frame as a server message.
 struct InboundStreamMeta: Sendable, Equatable {
     let seq: Int?
     let currentSeq: Int?
+    let runtimeEpoch: String?
     let receivedAtMs: Int64?
     let transportPath: ConnectionTransportPath
 
     init(
         seq: Int?,
         currentSeq: Int?,
+        runtimeEpoch: String? = nil,
         receivedAtMs: Int64? = nil,
         transportPath: ConnectionTransportPath = .paired
     ) {
         self.seq = seq
         self.currentSeq = currentSeq
+        self.runtimeEpoch = runtimeEpoch
         self.receivedAtMs = receivedAtMs
         self.transportPath = transportPath
     }
@@ -693,7 +716,7 @@ struct SessionStreamEvent: Sendable, Equatable {
 
 extension StreamMessage: Decodable {
     enum CodingKeys: String, CodingKey {
-        case sessionId, seq, currentSeq
+        case sessionId, seq, currentSeq, runtimeEpoch
     }
 
     init(from decoder: Decoder) throws {
@@ -701,6 +724,7 @@ extension StreamMessage: Decodable {
         sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
         seq = try c.decodeIfPresent(Int.self, forKey: .seq)
         currentSeq = try c.decodeIfPresent(Int.self, forKey: .currentSeq)
+        runtimeEpoch = try c.decodeIfPresent(String.self, forKey: .runtimeEpoch)
         message = try ServerMessage(from: decoder)
     }
 

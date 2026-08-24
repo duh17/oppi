@@ -14,6 +14,8 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
 
+import { createMirrorCanonicalFlush } from "./canonical-message-flush.ts";
+import { messageFromMirrorEvent } from "./canonical-message.ts";
 import {
   assertOppiMirrorQueueVersion,
   isOppiMirrorBridgeCommand,
@@ -2869,6 +2871,13 @@ async function createTuiMirrorRuntime(
   >();
   let suppressUIForwarding = false;
   let runtimeActive = true;
+  const canonicalFlush = createMirrorCanonicalFlush((details) => {
+    writeMirrorLog("warn", "canonical_message_unresolved", {
+      expectedRole: details.expectedRole,
+      capturedLeaf: details.capturedLeaf,
+      observedLeaf: details.observedLeaf,
+    });
+  });
   let connectionSerial = 0;
   let nextReconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS;
   let createWorkspaceOnNextConnect = false;
@@ -2908,6 +2917,19 @@ async function createTuiMirrorRuntime(
   const internalAgentEventListener: InternalAgentSessionEventListener = (
     event,
   ) => {
+    const ctx = latestCtx;
+    if (ctx) {
+      const flushed = canonicalFlush.flush(ctx.sessionManager);
+      if (flushed) {
+        send({
+          type: "event",
+          event: flushed.guessed
+            ? mirrorAgentEventPayload("message_end", flushed.event, ctx)
+            : flushed.event,
+          state: stateSnapshot(pi, ctx),
+        });
+      }
+    }
     const includeState =
       event.type === "compaction_end" || event.type === "auto_retry_end";
     const state =
@@ -5232,6 +5254,23 @@ async function createTuiMirrorRuntime(
         `event:${eventType}`,
         (event: unknown, ctx: ExtensionContext) => {
           latestCtx = ctx;
+          const flushed = canonicalFlush.flush(ctx.sessionManager);
+          if (flushed) {
+            send({
+              type: "event",
+              event: flushed.guessed
+                ? mirrorAgentEventPayload("message_end", flushed.event, ctx)
+                : flushed.event,
+              state: stateSnapshot(pi, ctx),
+            });
+          }
+          if (eventType === "message_end") {
+            const role = messageFromMirrorEvent(event).role;
+            if (role === "assistant" || role === "user") {
+              canonicalFlush.captureMessageEnd(event, ctx.sessionManager);
+              return;
+            }
+          }
           const lifecycleEntry = mirrorLifecycleEntryData(eventType, event);
           if (ctx.mode === "tui" && lifecycleEntry) {
             pi.appendEntry(OPPI_LIFECYCLE_CUSTOM_TYPE, lifecycleEntry);
@@ -5270,6 +5309,16 @@ async function createTuiMirrorRuntime(
     guardExtensionCallback(
       "session_shutdown",
       (event: unknown, ctx: ExtensionContext) => {
+        const flushed = canonicalFlush.flush(ctx.sessionManager);
+        if (flushed && !flushed.guessed) {
+          send({
+            type: "event",
+            event: flushed.event,
+            state: stateSnapshot(pi, ctx),
+          });
+        } else {
+          canonicalFlush.discard();
+        }
         runtimeActive = false;
         queueUpdateBridge.listeners.delete(queueUpdateListener);
         queueUpdateBridge.internalEventListeners.delete(

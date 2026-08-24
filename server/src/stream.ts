@@ -452,6 +452,7 @@ export class BoundSessionStreamMux {
         type: "connected",
         session: hydratedSession,
         currentSeq: bootstrapCurrentSeq,
+        ...(catchUp?.runtimeEpoch ? { runtimeEpoch: catchUp.runtimeEpoch } : {}),
       });
 
       const catchUpEvents = catchUp?.events ?? [];

@@ -95,12 +95,13 @@ final class TestEventPipeline {
         case .toolEnd(_, let toolCallId, let details, let isError, let resultSegments):
             conn.silenceWatchdog.recordEvent()
             coalescer.receive(toolCallCorrelator.end(sessionId: sessionId, toolCallId: toolCallId, details: details, isError: isError, resultSegments: resultSegments))
-        case .messageEnd(let role, let content, let assistantContent):
+        case .messageEnd(let role, let content, let assistantContent, let entryId):
             if role == "assistant" {
                 coalescer.receive(.messageEnd(
                     sessionId: sessionId,
                     content: content,
-                    assistantContent: assistantContent
+                    assistantContent: assistantContent,
+                    entryId: entryId
                 ))
             } else if role == "user", !content.isEmpty, !reducer.hasUserMessage(matching: content) {
                 reducer.appendUserMessage(content)

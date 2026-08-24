@@ -25,9 +25,12 @@ struct SessionStreamCatchUpTracker: Equatable, Sendable {
         case noGap
         case fetchSince(Int)
         case seqRegression(resetTo: Int)
+        case epochChanged(resetTo: Int)
+        case missingEpoch(resetTo: Int)
     }
 
     private var lastSeenSeqBySession: [String: Int] = [:]
+    private var runtimeEpochBySession: [String: String] = [:]
 
     init() {}
 
@@ -35,8 +38,20 @@ struct SessionStreamCatchUpTracker: Equatable, Sendable {
         lastSeenSeqBySession[sessionId] = value
     }
 
+    mutating func seedRuntimeEpoch(sessionId: String, value: String?) {
+        if let value, !value.isEmpty {
+            runtimeEpochBySession[sessionId] = value
+        } else {
+            runtimeEpochBySession.removeValue(forKey: sessionId)
+        }
+    }
+
     func lastSeenSeq(sessionId: String) -> Int {
         lastSeenSeqBySession[sessionId] ?? 0
+    }
+
+    func runtimeEpoch(sessionId: String) -> String? {
+        runtimeEpochBySession[sessionId]
     }
 
     mutating func consumeLiveSeq(sessionId: String, seq: Int) -> Bool {
@@ -46,7 +61,30 @@ struct SessionStreamCatchUpTracker: Equatable, Sendable {
         return true
     }
 
-    mutating func catchUpDecision(sessionId: String, currentSeq: Int) -> CatchUpDecision {
+    mutating func catchUpDecision(
+        sessionId: String,
+        currentSeq: Int,
+        runtimeEpoch: String? = nil
+    ) -> CatchUpDecision {
+        if let runtimeEpoch {
+            let storedEpoch = runtimeEpochBySession[sessionId]
+            if storedEpoch == nil {
+                runtimeEpochBySession[sessionId] = runtimeEpoch
+                // A persisted seq without an epoch is unsafe to apply to this
+                // ring. Reset to 0 so bootstrap events on the new ring are not
+                // rejected. A zero cursor is a first observation, not a stale seq.
+                let lastSeen = lastSeenSeqBySession[sessionId] ?? 0
+                if lastSeen > 0 {
+                    lastSeenSeqBySession[sessionId] = 0
+                    return .missingEpoch(resetTo: 0)
+                }
+            } else if storedEpoch != runtimeEpoch {
+                lastSeenSeqBySession[sessionId] = 0
+                runtimeEpochBySession[sessionId] = runtimeEpoch
+                return .epochChanged(resetTo: 0)
+            }
+        }
+
         let lastSeen = lastSeenSeqBySession[sessionId] ?? 0
 
         if currentSeq < lastSeen {

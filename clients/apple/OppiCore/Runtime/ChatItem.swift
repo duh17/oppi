@@ -40,6 +40,37 @@ enum ChatItem: Identifiable, Equatable {
         case .error(let id, _): return id
         }
     }
+
+    func replacingID(_ newID: String) -> ChatItem {
+        switch self {
+        case .userMessage(_, let text, let images, let timestamp):
+            return .userMessage(id: newID, text: text, images: images, timestamp: timestamp)
+        case .assistantMessage(_, let text, let timestamp):
+            return .assistantMessage(id: newID, text: text, timestamp: timestamp)
+        case .audioClip(_, let title, let fileURL, let timestamp):
+            return .audioClip(id: newID, title: title, fileURL: fileURL, timestamp: timestamp)
+        case .thinking(_, let preview, let hasMore, let isDone):
+            return .thinking(id: newID, preview: preview, hasMore: hasMore, isDone: isDone)
+        case .toolCall(_, let tool, let argsSummary, let outputPreview, let outputByteCount, let isError, let isDone):
+            return .toolCall(
+                id: newID,
+                tool: tool,
+                argsSummary: argsSummary,
+                outputPreview: outputPreview,
+                outputByteCount: outputByteCount,
+                isError: isError,
+                isDone: isDone
+            )
+        case .systemEvent(_, let message):
+            return .systemEvent(id: newID, message: message)
+        case .cacheMiss(_, let message):
+            return .cacheMiss(id: newID, message: message)
+        case .customEvent(_, let message, let presentation):
+            return .customEvent(id: newID, message: message, presentation: presentation)
+        case .error(_, let message):
+            return .error(id: newID, message: message)
+        }
+    }
 }
 
 // MARK: - Preview helpers

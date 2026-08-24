@@ -284,8 +284,8 @@ struct ChatSessionReentryTests {
 
         // First connect: currentSeq = 5, then reconnect: currentSeq = 8
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
-            .init(seq: nil, currentSeq: 5),     // first connect
-            .init(seq: nil, currentSeq: 8),     // WS reconnect
+            .init(seq: nil, currentSeq: 5, runtimeEpoch: "epoch-1"),     // first connect
+            .init(seq: nil, currentSeq: 8, runtimeEpoch: "epoch-1"),     // WS reconnect
         ]
         manager._consumeInboundMetaForTesting = {
             guard !inboundMetaQueue.isEmpty else { return nil }
@@ -741,6 +741,168 @@ struct ChatSessionReentryTests {
         streams.finish(index: 0)
         await connectTask.value
         await TimelineCache.shared.removeTrace(sessionId)
+    }
+
+    @Test func sameEpochFirstConnectWithCacheCatchesUpFromLastSeen() async {
+        let sessionId = "epoch-same-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        UserDefaults.standard.set(10, forKey: "chat.lastSeenSeq.\(sessionId)")
+        UserDefaults.standard.set("epoch-a", forKey: "chat.runtimeEpoch.\(sessionId)")
+        await TimelineCache.shared.saveTrace(sessionId, events: [
+            makeTraceEvent(id: "cached-1", text: "cached"),
+        ])
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        var catchUpSince: Int?
+        manager._loadCatchUpForTesting = { since, _ in
+            catchUpSince = since
+            return APIClient.SessionEventsResponse(
+                events: [
+                    .init(seq: 11, message: .agentEnd),
+                ],
+                currentSeq: 12,
+                runtimeEpoch: "epoch-a",
+                session: makeTestSession(id: sessionId, workspaceId: workspaceId),
+                catchUpComplete: true
+            )
+        }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            (makeTestSession(id: sessionId, workspaceId: workspaceId), [makeTraceEvent(id: "t1")])
+        }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 12, runtimeEpoch: "epoch-a"),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: workspaceId)))
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { catchUpSince == 10 }
+        })
+        #expect(catchUpSince == 10)
+        streams.finish(index: 0)
+        await connectTask.value
+        UserDefaults.standard.removeObject(forKey: "chat.lastSeenSeq.\(sessionId)")
+        UserDefaults.standard.removeObject(forKey: "chat.runtimeEpoch.\(sessionId)")
+        await TimelineCache.shared.removeTrace(sessionId)
+    }
+
+    @Test func firstVisitWithServerEpochCatchesUpFromZero() async {
+        let sessionId = "epoch-first-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        var catchUpSince: Int?
+        manager._loadCatchUpForTesting = { since, _ in
+            catchUpSince = since
+            return APIClient.SessionEventsResponse(
+                events: [
+                    .init(seq: 1, message: .agentStart),
+                ],
+                currentSeq: 12,
+                runtimeEpoch: "epoch-a",
+                session: makeTestSession(id: sessionId, workspaceId: workspaceId),
+                catchUpComplete: true
+            )
+        }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            (makeTestSession(id: sessionId, workspaceId: workspaceId), [makeTraceEvent(id: "t1")])
+        }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 12, runtimeEpoch: "epoch-a"),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId))
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: workspaceId)))
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { catchUpSince == 0 }
+        })
+        #expect(catchUpSince == 0)
+        streams.finish(index: 0)
+        await connectTask.value
+        UserDefaults.standard.removeObject(forKey: "chat.lastSeenSeq.\(sessionId)")
+        UserDefaults.standard.removeObject(forKey: "chat.runtimeEpoch.\(sessionId)")
+    }
+
+    @Test func epochMismatchDoesNotCatchUpFromStaleSeq() async {
+        let sessionId = "epoch-mismatch-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+
+        UserDefaults.standard.set(500, forKey: "chat.lastSeenSeq.\(sessionId)")
+        UserDefaults.standard.set("epoch-a", forKey: "chat.runtimeEpoch.\(sessionId)")
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        var catchUpCalled = false
+        manager._loadCatchUpForTesting = { _, _ in
+            catchUpCalled = true
+            return APIClient.SessionEventsResponse(
+                events: [],
+                currentSeq: 600,
+                runtimeEpoch: "epoch-b",
+                session: makeTestSession(id: sessionId),
+                catchUpComplete: true
+            )
+        }
+        manager._loadHistoryForTesting = { _, _ in (eventCount: 1, lastEventId: "t1") }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 600, runtimeEpoch: "epoch-b"),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                connection.sessionStreamCoordinator.lastSeenSeq(sessionId: sessionId) == 0
+                    && connection.sessionStreamCoordinator.runtimeEpoch(sessionId: sessionId) == "epoch-b"
+            }
+        })
+        #expect(!catchUpCalled)
+        #expect(UserDefaults.standard.string(forKey: "chat.runtimeEpoch.\(sessionId)") == "epoch-b")
+        streams.finish(index: 0)
+        await connectTask.value
+        UserDefaults.standard.removeObject(forKey: "chat.lastSeenSeq.\(sessionId)")
+        UserDefaults.standard.removeObject(forKey: "chat.runtimeEpoch.\(sessionId)")
     }
 
     // MARK: - Helpers

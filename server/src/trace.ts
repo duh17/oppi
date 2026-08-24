@@ -26,6 +26,7 @@ import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
 } from "./session-attachments.js";
+import { canonicalAssistantBlockId } from "./canonical-message.js";
 import { projectAssistantContentRuns } from "./session-protocol.js";
 
 export type TraceViewMode = "context" | "full";
@@ -673,7 +674,12 @@ function emitMessageEvents(
       for (const projected of projectAssistantContentRuns(msg)) {
         if (projected.kind === "text") {
           events.push({
-            id: `${entry.id}-text-${projected.contentIndex}`,
+            id:
+              canonicalAssistantBlockId({
+                entryId: entry.id,
+                kind: "text",
+                contentIndex: projected.contentIndex,
+              }) ?? `${entry.id}-text-${projected.contentIndex}`,
             type: "assistant",
             timestamp,
             text: projected.text,
@@ -687,14 +693,28 @@ function emitMessageEvents(
         const subIdx = projected.contentIndex;
         if (b.type === "thinking" && typeof b.thinking === "string" && b.thinking.length > 0) {
           events.push({
-            id: `${entry.id}-think-${subIdx}`,
+            id:
+              canonicalAssistantBlockId({
+                entryId: entry.id,
+                kind: "thinking",
+                contentIndex: subIdx,
+              }) ?? `${entry.id}-think-${subIdx}`,
             type: "thinking",
             timestamp,
             thinking: b.thinking,
           });
         } else if (b.type === "toolCall") {
+          const toolCallId = typeof b.id === "string" && b.id.length > 0 ? b.id : undefined;
           events.push({
-            id: (b.id as string) || `${entry.id}-tool-${subIdx}`,
+            id:
+              canonicalAssistantBlockId({
+                entryId: entry.id,
+                kind: "tool",
+                contentIndex: subIdx,
+                toolCallId,
+              }) ??
+              toolCallId ??
+              `${entry.id}-tool-${subIdx}`,
             type: "toolCall",
             timestamp,
             tool: (b.name as string) || "unknown",
@@ -711,7 +731,13 @@ function emitMessageEvents(
       }
     } else if (typeof content === "string" && content) {
       events.push({
-        id: entry.id,
+        id:
+          canonicalAssistantBlockId({
+            entryId: entry.id,
+            kind: "text",
+            contentIndex: 0,
+            stringContent: true,
+          }) ?? entry.id,
         type: "assistant",
         timestamp,
         text: content,
@@ -761,6 +787,15 @@ function emitMessageEvents(
       ...(details !== undefined ? { details } : {}),
     });
   }
+}
+
+const TRACE_RENDERABLE_TYPES = new Set<TraceEvent["type"]>(["assistant", "thinking", "toolCall"]);
+
+/** Ordered renderable block IDs for one persisted assistant message entry. */
+export function collectAssistantTraceIds(entry: SessionEntry): string[] {
+  const events: TraceEvent[] = [];
+  emitMessageEvents(entry, entry.timestamp ?? "", events);
+  return events.filter((event) => TRACE_RENDERABLE_TYPES.has(event.type)).map((event) => event.id);
 }
 
 // ─── JSONL Parsing ───

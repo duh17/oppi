@@ -1060,7 +1060,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
             return renderMutationCheckpoint() != before
 
-        case .messageEnd(_, let content, let assistantContent):
+        case .messageEnd(_, let content, let assistantContent, _):
             let before = renderMutationCheckpoint()
             handleMessageEnd(content, assistantContent: assistantContent)
             return renderMutationCheckpoint() != before
@@ -1511,7 +1511,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         assistantContent: [AssistantMessageContentPart]?
     ) {
         if let assistantContent {
-            reconcileAssistantContent(assistantContent)
+            if assistantContent.contains(where: { $0.id != nil }) {
+                reconcileCanonicalAssistantContent(assistantContent)
+            } else {
+                reconcileAssistantContent(assistantContent)
+            }
             clearCurrentAssistantMessageTracking()
             return
         }
@@ -1546,6 +1550,195 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
         finalizeAssistantMessage()
         clearCurrentAssistantMessageTracking()
+    }
+
+    private func reconcileCanonicalAssistantContent(_ parts: [AssistantMessageContentPart]) {
+        finalizeAssistantMessage()
+        finalizeThinking()
+
+        var leftoverAssistant = liveProvisionalRowIDs(assistant: true)
+        var leftoverThinking = liveProvisionalRowIDs(assistant: false)
+        var previousID: String?
+
+        for part in parts {
+            switch part.kind {
+            case "text":
+                guard let text = part.content,
+                      !StringFastChecks.isEffectivelyEmpty(text) else { continue }
+                previousID = upsertCanonicalText(
+                    text: text,
+                    canonicalID: part.id,
+                    leftover: &leftoverAssistant,
+                    after: previousID
+                ) ?? previousID
+
+            case "thinking":
+                guard let thinking = part.content,
+                      !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    continue
+                }
+                previousID = upsertCanonicalThinking(
+                    thinking: thinking,
+                    canonicalID: part.id,
+                    leftover: &leftoverThinking,
+                    after: previousID
+                ) ?? previousID
+
+            case "tool":
+                if let toolCallId = part.toolCallId, indexForID(toolCallId) != nil {
+                    previousID = toolCallId
+                }
+
+            default:
+                continue
+            }
+        }
+
+        for leftoverID in leftoverAssistant + leftoverThinking {
+            if indexForID(leftoverID) != nil {
+                removeItem(id: leftoverID)
+            }
+        }
+
+        lastAssistantIDThisTurn = items.reversed().first(where: { item in
+            if case .assistantMessage = item { return true }
+            return false
+        })?.id
+    }
+
+    private func upsertCanonicalText(
+        text: String,
+        canonicalID: String?,
+        leftover: inout [String],
+        after previousID: String?
+    ) -> String? {
+        guard let canonicalID else { return nil }
+        if let idx = indexForID(canonicalID) {
+            let timestamp: Date
+            if case .assistantMessage(_, _, let existing) = items[idx] {
+                timestamp = existing
+            } else {
+                timestamp = Date()
+            }
+            items[idx] = TimelineTurnAssembler.makeAssistantItem(
+                id: canonicalID,
+                text: text,
+                timestamp: timestamp
+            )
+            leftover.removeAll { $0 == canonicalID }
+            bumpItemsMutationSeq()
+            return canonicalID
+        }
+
+        if let provisionalID = leftover.first, indexForID(provisionalID) != nil {
+            leftover.removeFirst()
+            rekeyItem(from: provisionalID, to: canonicalID)
+            if let idx = indexForID(canonicalID) {
+                let timestamp: Date
+                if case .assistantMessage(_, _, let existing) = items[idx] {
+                    timestamp = existing
+                } else {
+                    timestamp = Date()
+                }
+                items[idx] = TimelineTurnAssembler.makeAssistantItem(
+                    id: canonicalID,
+                    text: text,
+                    timestamp: timestamp
+                )
+                bumpItemsMutationSeq()
+            }
+            return canonicalID
+        }
+
+        insertCanonicalItem(
+            TimelineTurnAssembler.makeAssistantItem(id: canonicalID, text: text, timestamp: Date()),
+            after: previousID
+        )
+        return canonicalID
+    }
+
+    private func upsertCanonicalThinking(
+        thinking: String,
+        canonicalID: String?,
+        leftover: inout [String],
+        after previousID: String?
+    ) -> String? {
+        guard let canonicalID else { return nil }
+        let item = TimelineTurnAssembler.makeThinkingItem(
+            id: canonicalID,
+            preview: thinking,
+            hasMore: thinking.utf8.count > ChatItem.maxPreviewLength,
+            isDone: true
+        )
+        if indexForID(canonicalID) != nil {
+            if let idx = indexForID(canonicalID) {
+                items[idx] = item
+            }
+            leftover.removeAll { $0 == canonicalID }
+            bumpItemsMutationSeq()
+            return canonicalID
+        }
+        if let provisionalID = leftover.first, indexForID(provisionalID) != nil {
+            leftover.removeFirst()
+            rekeyItem(from: provisionalID, to: canonicalID)
+            if let idx = indexForID(canonicalID) {
+                items[idx] = item
+                bumpItemsMutationSeq()
+            }
+            return canonicalID
+        }
+        insertCanonicalItem(item, after: previousID)
+        return canonicalID
+    }
+
+    /// Streaming rows for the current message, including live-region rows that
+    /// were never registered in the per-message ID arrays. Busy re-entry and
+    /// catch-up replay can deliver deltas without `agentStart`, so those arrays
+    /// stay empty; exact-ID upsert still has to rekey or remove those rows.
+    private func liveProvisionalRowIDs(assistant: Bool) -> [String] {
+        var ids = assistant ? assistantIDsThisMessage : thinkingIDsThisMessage
+        guard messageRegionStart < items.count else { return ids }
+        var seen = Set(ids)
+        for item in items[messageRegionStart...] {
+            let rowID: String?
+            switch item {
+            case .assistantMessage(let id, _, _) where assistant:
+                rowID = id
+            case .thinking(let id, _, _, _) where !assistant:
+                rowID = id
+            default:
+                rowID = nil
+            }
+            if let rowID, seen.insert(rowID).inserted {
+                ids.append(rowID)
+            }
+        }
+        return ids
+    }
+
+    private func rekeyItem(from oldID: String, to newID: String) {
+        guard oldID != newID, let idx = indexForID(oldID) else { return }
+        items[idx] = items[idx].replacingID(newID)
+        itemIndex.remove(id: oldID)
+        if expandedItemIDs.remove(oldID) != nil {
+            expandedItemIDs.insert(newID)
+        }
+        if currentAssistantID == oldID { currentAssistantID = newID }
+        if currentThinkingID == oldID { currentThinkingID = newID }
+        if lastAssistantIDThisTurn == oldID { lastAssistantIDThisTurn = newID }
+        rebuildIndex()
+        bumpItemsMutationSeq()
+    }
+
+    private func insertCanonicalItem(_ item: ChatItem, after previousID: String?) {
+        if let previousID, let previousIndex = indexForID(previousID) {
+            let insertionIndex = previousIndex + 1
+            items.insert(item, at: insertionIndex)
+        } else {
+            items.append(item)
+        }
+        rebuildIndex()
+        bumpItemsMutationSeq()
     }
 
     private func reconcileAssistantContent(_ parts: [AssistantMessageContentPart]) {

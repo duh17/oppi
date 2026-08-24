@@ -1284,10 +1284,10 @@ struct ChatSessionManagerTests {
         manager._loadHistoryForTesting = { _, _ in nil }
 
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
-            .init(seq: nil, currentSeq: 0),
+            .init(seq: nil, currentSeq: 0, runtimeEpoch: "epoch-1"),
             nil,
             nil,
-            .init(seq: nil, currentSeq: 2),
+            .init(seq: nil, currentSeq: 2, runtimeEpoch: "epoch-1"),
         ]
         manager._consumeInboundMetaForTesting = {
             guard !inboundMetaQueue.isEmpty else { return nil }
@@ -1375,8 +1375,8 @@ struct ChatSessionManagerTests {
         }
 
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
-            .init(seq: nil, currentSeq: 0),
-            .init(seq: nil, currentSeq: 2),
+            .init(seq: nil, currentSeq: 0, runtimeEpoch: "epoch-1"),
+            .init(seq: nil, currentSeq: 2, runtimeEpoch: "epoch-1"),
         ]
         manager._consumeInboundMetaForTesting = {
             guard !inboundMetaQueue.isEmpty else { return nil }
@@ -1665,8 +1665,8 @@ struct ChatSessionManagerTests {
 
         // First .connected seeds seq=0, second triggers reconnect catch-up.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
-            .init(seq: nil, currentSeq: 0),
-            .init(seq: nil, currentSeq: 2),
+            .init(seq: nil, currentSeq: 0, runtimeEpoch: "epoch-1"),
+            .init(seq: nil, currentSeq: 2, runtimeEpoch: "epoch-1"),
         ]
         manager._consumeInboundMetaForTesting = {
             guard !inboundMetaQueue.isEmpty else { return nil }
@@ -1728,8 +1728,8 @@ struct ChatSessionManagerTests {
 
         // First .connected seeds seq=0, second triggers reconnect catch-up.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
-            .init(seq: nil, currentSeq: 0),
-            .init(seq: nil, currentSeq: 2),
+            .init(seq: nil, currentSeq: 0, runtimeEpoch: "epoch-1"),
+            .init(seq: nil, currentSeq: 2, runtimeEpoch: "epoch-1"),
         ]
         manager._consumeInboundMetaForTesting = {
             guard !inboundMetaQueue.isEmpty else { return nil }
@@ -1799,8 +1799,8 @@ struct ChatSessionManagerTests {
 
         // First .connected seeds seq=0, second triggers reconnect with ring miss.
         var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
-            .init(seq: nil, currentSeq: 0),
-            .init(seq: nil, currentSeq: 5),
+            .init(seq: nil, currentSeq: 0, runtimeEpoch: "epoch-1"),
+            .init(seq: nil, currentSeq: 5, runtimeEpoch: "epoch-1"),
         ]
         manager._consumeInboundMetaForTesting = {
             guard !inboundMetaQueue.isEmpty else { return nil }

@@ -196,6 +196,8 @@ interface MockExtensionContext {
     getSessionId: ReturnType<typeof vi.fn>;
     getSessionName: ReturnType<typeof vi.fn>;
     getLeafId: ReturnType<typeof vi.fn>;
+    getLeafEntry: ReturnType<typeof vi.fn>;
+    getEntry: ReturnType<typeof vi.fn>;
     getEntries: ReturnType<typeof vi.fn>;
   };
   getContextUsage: ReturnType<typeof vi.fn>;
@@ -270,6 +272,8 @@ function createMockContext(sessionId = "pi-session-1"): MockExtensionContext {
       getSessionId: vi.fn(() => sessionId),
       getSessionName: vi.fn(() => "Session"),
       getLeafId: vi.fn(() => "leaf-1"),
+      getLeafEntry: vi.fn(() => undefined),
+      getEntry: vi.fn(() => undefined),
       getEntries: vi.fn(() => []),
     },
     getContextUsage: vi.fn(() => ({ tokens: 1, contextWindow: 100 })),
@@ -1486,6 +1490,105 @@ describe("oppi mirror unix socket connect", () => {
       );
       expect(socket.url).toBe(`ws+unix:${socketPath}:/mirror/v1/bridge`);
       expect(socket.options.headers).toBeUndefined();
+    });
+  });
+});
+
+describe("oppi mirror canonical flush wiring", () => {
+  it("flushes enriched message_end before an internal auto_retry_end", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      const entries = new Map<
+        string,
+        {
+          type: string;
+          id: string;
+          parentId: string | null;
+          message?: { role: string; content: unknown };
+        }
+      >();
+      let leafId: string | null = "root";
+      ctx.sessionManager.getLeafId = vi.fn(() => leafId);
+      ctx.sessionManager.getLeafEntry = vi.fn(() =>
+        leafId ? entries.get(leafId) : undefined,
+      );
+      ctx.sessionManager.getEntry = vi.fn((id: string) => entries.get(id));
+
+      await startSession(pi, ctx);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      const message = { role: "assistant", content: "done" };
+      for (const handler of pi.handlers.get("message_end") ?? []) {
+        await handler({ type: "message_end", message }, ctx);
+      }
+      entries.set("persisted-1", {
+        type: "message",
+        id: "persisted-1",
+        parentId: "root",
+        message,
+      });
+      leafId = "persisted-1";
+
+      const bridge = (
+        globalThis as typeof globalThis & {
+          __oppiMirrorQueueUpdateBridge?: {
+            internalEventListeners: Set<(event: unknown) => void>;
+          };
+        }
+      ).__oppiMirrorQueueUpdateBridge;
+      expect(bridge).toBeDefined();
+      for (const listener of bridge?.internalEventListeners ?? []) {
+        listener({ type: "auto_retry_end", success: true, attempt: 1 });
+      }
+
+      const events = socket.sent
+        .map((line) => JSON.parse(line) as { type?: string; event?: { type?: string; entryId?: string } })
+        .filter((frame) => frame.type === "event")
+        .map((frame) => frame.event);
+      const types = events.map((event) => event?.type);
+      expect(types.indexOf("message_end")).toBeGreaterThanOrEqual(0);
+      expect(types.indexOf("auto_retry_end")).toBeGreaterThanOrEqual(0);
+      expect(types.indexOf("message_end")).toBeLessThan(types.indexOf("auto_retry_end"));
+      expect(events.find((event) => event?.type === "message_end")?.entryId).toBe(
+        "persisted-1",
+      );
+    });
+  });
+
+  it("forwards non-user/assistant message_end immediately without a pending flush", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      for (const handler of pi.handlers.get("message_end") ?? []) {
+        await handler(
+          { type: "message_end", message: { role: "custom", content: "lifecycle" } },
+          ctx,
+        );
+      }
+      for (const handler of pi.handlers.get("turn_end") ?? []) {
+        await handler({ type: "turn_end" }, ctx);
+      }
+
+      const events = socket.sent
+        .map((line) => JSON.parse(line) as { type?: string; event?: { type?: string; role?: string } })
+        .filter((frame) => frame.type === "event")
+        .map((frame) => frame.event?.type);
+      expect(events.filter((type) => type === "message_end")).toHaveLength(1);
+      expect(events.indexOf("message_end")).toBeLessThan(events.indexOf("turn_end"));
     });
   });
 });

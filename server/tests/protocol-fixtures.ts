@@ -112,6 +112,7 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "connected",
     session: TEST_SESSION,
     currentSeq: 42,
+    runtimeEpoch: "epoch-test-1",
   },
   stream_connected: {
     type: "stream_connected",
@@ -200,10 +201,11 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "message_end",
     role: "assistant",
     content: "Before\n\nAfter",
+    entryId: "entry-assistant-1",
     assistantContent: [
-      { kind: "text", content: "Before", contentIndex: 0 },
-      { kind: "thinking", content: "Check", contentIndex: 1 },
-      { kind: "text", content: "After", contentIndex: 2 },
+      { kind: "text", content: "Before", contentIndex: 0, id: "entry-assistant-1-text-0" },
+      { kind: "thinking", content: "Check", contentIndex: 1, id: "entry-assistant-1-think-1" },
+      { kind: "text", content: "After", contentIndex: 2, id: "entry-assistant-1-text-2" },
     ],
   },
   cache_miss: {

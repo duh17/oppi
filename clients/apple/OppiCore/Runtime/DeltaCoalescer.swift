@@ -577,7 +577,7 @@ final class DeltaCoalescer {
         case .thinkingDelta(_, let delta, _):
             return delta.utf8.count
 
-        case .messageEnd(_, let content, let assistantContent):
+        case .messageEnd(_, let content, let assistantContent, _):
             return content.utf8.count + (assistantContent?.reduce(into: 0) { total, part in
                 total += part.kind.utf8.count
                 total += part.content?.utf8.count ?? 0
