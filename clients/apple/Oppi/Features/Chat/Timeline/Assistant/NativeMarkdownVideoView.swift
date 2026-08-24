@@ -12,17 +12,10 @@ enum MarkdownInlineVideoLayout {
     static let fallbackAspectRatio: CGFloat = 16.0 / 9.0
     private static let fallbackWidth: CGFloat = 320
 
-    /// Revealed embeds keep one height. Metadata may size only not-yet-revealed
-    /// prepared geometry; after reveal the fallback or first reserved ratio stays.
-    static func reservedHeight(
-        forWidth width: CGFloat,
-        metadataAspectRatio: CGFloat? = nil
-    ) -> CGFloat {
+    /// Wiki-file syntax has no dimensions, so every mount keeps 16:9.
+    static func reservedHeight(forWidth width: CGFloat) -> CGFloat {
         let resolvedWidth = width.isFinite && width > 0 ? width : fallbackWidth
-        let aspectRatio = metadataAspectRatio.flatMap {
-            $0.isFinite && $0 > 0 ? $0 : nil
-        } ?? fallbackAspectRatio
-        return ceil(resolvedWidth / aspectRatio)
+        return ceil(resolvedWidth / fallbackAspectRatio)
     }
 }
 
@@ -34,13 +27,6 @@ enum MarkdownInlineVideoLayout {
 /// `AuthenticatedMediaPlayerView` / `AuthenticatedMediaPlaybackSession`.
 @MainActor
 final class NativeMarkdownVideoView: UIView {
-    /// AVPlayer metadata learned from an earlier prepared presentation can size
-    /// a later mount before reveal. The current mount never resizes after its
-    /// geometry is chosen. Bounded so a long session cannot grow this forever.
-    private static let metadataCacheLimit = 64
-    private static var metadataAspectRatioByReference: [ResourceReference: CGFloat] = [:]
-    private static var metadataInsertionOrder: [ResourceReference] = []
-
     private let statusLabel = UILabel()
     private let openButton = UIButton(type: .system)
     private var heightConstraint: NSLayoutConstraint?
@@ -56,7 +42,7 @@ final class NativeMarkdownVideoView: UIView {
     private var sourceProvider: MarkdownVideoMediaSourceProvider?
     private(set) var reservedHeight: CGFloat = MarkdownInlineVideoLayout.reservedHeight(forWidth: .nan)
     private(set) var isStaticFallback = false
-    /// Render-ahead may publish a metadata-backed height before reveal.
+    /// Render-ahead may publish the reserved 16:9 height before reveal.
     var onPreparedGeometry: ((CGFloat) -> Void)?
 
     override init(frame: CGRect) {
@@ -91,18 +77,10 @@ final class NativeMarkdownVideoView: UIView {
             embed.reference.fileCandidatePath ?? "",
             String(describing: renderingMode),
         ].joined(separator: "|")
-        let metadataAspectRatio = canUseMetadata(renderingMode: renderingMode)
-            ? Self.metadataAspectRatioByReference[embed.reference]
-            : nil
-        let nextHeight = MarkdownInlineVideoLayout.reservedHeight(
-            forWidth: width,
-            metadataAspectRatio: metadataAspectRatio
-        )
+        let nextHeight = MarkdownInlineVideoLayout.reservedHeight(forWidth: width)
 
         if identity == currentIdentity {
-            if !hasCommittedRevealGeometry {
-                updatePreparedHeight(nextHeight)
-            }
+            applyReservedHeight(nextHeight)
             return
         }
 
@@ -111,11 +89,7 @@ final class NativeMarkdownVideoView: UIView {
         self.renderingMode = renderingMode
         self.sourceProvider = sourceProvider
         hasCommittedRevealGeometry = shouldCommitRevealGeometry(renderingMode: renderingMode)
-        reservedHeight = nextHeight
-        heightConstraint?.constant = nextHeight
-        if !hasCommittedRevealGeometry {
-            onPreparedGeometry?(nextHeight)
-        }
+        applyReservedHeight(nextHeight)
         resolutionTask?.cancel()
         removePlayer()
 
@@ -291,7 +265,7 @@ final class NativeMarkdownVideoView: UIView {
             telemetrySource: "markdown_inline_video",
             telemetryMode: "inline",
             telemetrySessionId: currentEmbed?.reference.sourceSessionID,
-            onPresentationSize: presentationSizeHandler(for: currentEmbed)
+            onPresentationSize: nil
         )
     }
 
@@ -310,34 +284,11 @@ final class NativeMarkdownVideoView: UIView {
             unavailableSystemImage: "film",
             failureActionTitle: String(localized: "Open video file"),
             onFailureAction: { [weak self] in self?.openReference() },
-            onPresentationSize: presentationSizeHandler(for: embed),
             telemetrySource: "markdown_inline_video",
             telemetryMode: "inline",
             telemetrySessionId: embed?.reference.sourceSessionID,
             model: playbackModel
         )
-    }
-
-    private func presentationSizeHandler(
-        for embed: MarkdownVideoEmbed?
-    ) -> @MainActor @Sendable (CGSize) -> Void {
-        { [weak self] size in
-            guard size.width > 0, size.height > 0,
-                  let self,
-                  let reference = embed?.reference ?? self.currentEmbed?.reference else { return }
-            let aspectRatio = size.width / size.height
-            guard aspectRatio.isFinite, aspectRatio > 0 else { return }
-            Self.storeMetadata(aspectRatio, for: reference)
-            // Metadata may refine prepared geometry only before reveal.
-            guard !self.hasCommittedRevealGeometry else { return }
-            let width = self.bounds.width > 0 ? self.bounds.width : 320
-            self.updatePreparedHeight(
-                MarkdownInlineVideoLayout.reservedHeight(
-                    forWidth: width,
-                    metadataAspectRatio: aspectRatio
-                )
-            )
-        }
     }
 
     private func removePlayer() {
@@ -363,32 +314,24 @@ final class NativeMarkdownVideoView: UIView {
         }
     }
 
-    private static func storeMetadata(_ aspectRatio: CGFloat, for reference: ResourceReference) {
-        if metadataAspectRatioByReference[reference] != nil {
-            metadataAspectRatioByReference[reference] = aspectRatio
-            return
-        }
-        metadataAspectRatioByReference[reference] = aspectRatio
-        metadataInsertionOrder.append(reference)
-        while metadataInsertionOrder.count > metadataCacheLimit {
-            let evicted = metadataInsertionOrder.removeFirst()
-            metadataAspectRatioByReference.removeValue(forKey: evicted)
-        }
-    }
-
-    private func canUseMetadata(renderingMode: ContentRenderingMode) -> Bool {
-        renderingMode != .export && !hasCommittedRevealGeometry
-    }
-
     private func shouldCommitRevealGeometry(renderingMode: ContentRenderingMode) -> Bool {
         renderingMode == .export || renderingMode == .live || window != nil
     }
 
-    private func updatePreparedHeight(_ height: CGFloat) {
-        guard !hasCommittedRevealGeometry, reservedHeight != height else { return }
+    private func applyReservedHeight(_ height: CGFloat) {
+        guard reservedHeight != height else { return }
         reservedHeight = height
         heightConstraint?.constant = height
-        onPreparedGeometry?(height)
+        if let host = hostingController, let source = currentSource {
+            host.rootView = makePlayerView(
+                source: source,
+                embed: currentEmbed,
+                isActive: isPlaybackVisible
+            )
+        }
+        if !hasCommittedRevealGeometry {
+            onPreparedGeometry?(height)
+        }
     }
 
     private func applyDynamicTypeFonts() {
@@ -447,19 +390,6 @@ extension NativeMarkdownVideoView {
     var debugOpenButtonIsHiddenForTesting: Bool { openButton.isHidden }
     var debugOpenButtonAdjustsFontForTesting: Bool {
         openButton.titleLabel?.adjustsFontForContentSizeCategory == true
-    }
-
-    static func debugSeedMetadataForTesting(_ reference: ResourceReference, _ aspectRatio: CGFloat) {
-        storeMetadata(aspectRatio, for: reference)
-    }
-
-    static func debugClearMetadataForTesting() {
-        metadataAspectRatioByReference.removeAll()
-        metadataInsertionOrder.removeAll()
-    }
-
-    static func debugMetadataCountForTesting() -> Int {
-        metadataAspectRatioByReference.count
     }
 }
 #endif

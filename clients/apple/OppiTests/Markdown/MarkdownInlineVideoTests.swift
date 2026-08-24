@@ -145,7 +145,6 @@ struct MarkdownInlineVideoTests {
         #expect(abs(MarkdownInlineVideoLayout.fallbackAspectRatio - (16.0 / 9.0)) < 0.000_001)
         #expect(MarkdownInlineVideoLayout.reservedHeight(forWidth: 320) == 180)
         #expect(MarkdownInlineVideoLayout.reservedHeight(forWidth: 369) == 208)
-        #expect(MarkdownInlineVideoLayout.reservedHeight(forWidth: 320, metadataAspectRatio: 4.0 / 3.0) == 240)
         #expect(MarkdownInlineVideoLayout.reservedHeight(forWidth: .nan) == 180)
     }
 
@@ -273,11 +272,8 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
-    @Test("revealed video keeps committed height when metadata arrives before a streaming re-apply")
-    func revealedVideoDoesNotJumpOnMetadataReapply() throws {
-        NativeMarkdownVideoView.debugClearMetadataForTesting()
-        defer { NativeMarkdownVideoView.debugClearMetadataForTesting() }
-
+    @Test("revealed video keeps 16:9 after a streaming re-apply")
+    func revealedVideoKeepsSixteenByNineOnReapply() throws {
         let embed = try makeEmbed("![[movie.mp4]]")
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
         let host = UIViewController()
@@ -297,7 +293,6 @@ struct MarkdownInlineVideoTests {
         #expect(video.debugReservedHeightForTesting == 180)
         #expect(video.debugHasCommittedRevealGeometryForTesting)
 
-        NativeMarkdownVideoView.debugSeedMetadataForTesting(embed.reference, 4.0 / 3.0)
         video.apply(
             embed: embed,
             sourceProvider: { _ in throw CocoaError(.fileNoSuchFile) },
@@ -309,11 +304,8 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
-    @Test("in-place streaming apply does not resize a revealed timeline video after metadata")
-    func streamingInPlaceApplyDoesNotJumpAfterMetadata() throws {
-        NativeMarkdownVideoView.debugClearMetadataForTesting()
-        defer { NativeMarkdownVideoView.debugClearMetadataForTesting() }
-
+    @Test("in-place streaming apply keeps a revealed timeline video at 16:9")
+    func streamingInPlaceApplyKeepsSixteenByNine() throws {
         let baseURL = try #require(URL(string: "https://server.example.com"))
         let view = AssistantMarkdownContentView()
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
@@ -331,10 +323,6 @@ struct MarkdownInlineVideoTests {
         let revealedHeight = video.debugReservedHeightForTesting
         #expect(revealedHeight == 180)
 
-        NativeMarkdownVideoView.debugSeedMetadataForTesting(
-            try makeEmbed("![[movie.mp4]]").reference,
-            4.0 / 3.0
-        )
         view.apply(configuration: .make(
             content: "![[movie.mp4]]\n\nTrailing stream text.",
             isStreaming: true,
@@ -350,13 +338,9 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
-    @Test("metadata may size only a not-yet-revealed prepared video")
-    func unrevealedPreparedVideoCanUseMetadata() throws {
-        NativeMarkdownVideoView.debugClearMetadataForTesting()
-        defer { NativeMarkdownVideoView.debugClearMetadataForTesting() }
-
+    @Test("unrevealed prepared video stays 16:9")
+    func unrevealedPreparedVideoStaysSixteenByNine() throws {
         let embed = try makeEmbed("![[movie.mp4]]")
-        NativeMarkdownVideoView.debugSeedMetadataForTesting(embed.reference, 4.0 / 3.0)
         let video = NativeMarkdownVideoView()
         video.apply(
             embed: embed,
@@ -365,7 +349,61 @@ struct MarkdownInlineVideoTests {
             preferredDisplayWidth: 320
         )
         #expect(!video.debugHasCommittedRevealGeometryForTesting)
-        #expect(video.debugReservedHeightForTesting == 240)
+        #expect(video.debugReservedHeightForTesting == 180)
+    }
+
+    @MainActor
+    @Test("a later remount of the same embed stays 16:9")
+    func remountKeepsSixteenByNine() throws {
+        let embed = try makeEmbed("![[movie.mp4]]")
+        let first = NativeMarkdownVideoView()
+        first.apply(
+            embed: embed,
+            sourceProvider: { _ in throw CocoaError(.fileNoSuchFile) },
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+        #expect(first.debugReservedHeightForTesting == 180)
+
+        let remount = NativeMarkdownVideoView()
+        remount.apply(
+            embed: embed,
+            sourceProvider: { _ in throw CocoaError(.fileNoSuchFile) },
+            renderingMode: .staticReader,
+            preferredDisplayWidth: 320
+        )
+        #expect(remount.debugReservedHeightForTesting == 180)
+    }
+
+    @MainActor
+    @Test("revealed video keeps 16:9 when the display width changes")
+    func revealedVideoKeepsSixteenByNineOnWidthChange() throws {
+        let embed = try makeEmbed("![[movie.mp4]]")
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        let host = UIViewController()
+        let video = NativeMarkdownVideoView()
+        host.view.addSubview(video)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        video.apply(
+            embed: embed,
+            sourceProvider: { _ in throw CocoaError(.fileNoSuchFile) },
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+        video.layoutIfNeeded()
+        #expect(video.debugReservedHeightForTesting == 180)
+        #expect(video.debugHasCommittedRevealGeometryForTesting)
+
+        video.apply(
+            embed: embed,
+            sourceProvider: { _ in throw CocoaError(.fileNoSuchFile) },
+            renderingMode: .live,
+            preferredDisplayWidth: 640
+        )
+        #expect(video.debugReservedHeightForTesting == 360)
     }
 
     @MainActor
@@ -938,27 +976,6 @@ struct MarkdownInlineVideoTests {
         if let resized = failureControl(in: host.view) {
             #expect(resized.bounds.height >= 44)
         }
-    }
-
-    @MainActor
-    @Test("process-wide video metadata cache stays bounded")
-    func metadataCacheIsBounded() {
-        NativeMarkdownVideoView.debugClearMetadataForTesting()
-        defer { NativeMarkdownVideoView.debugClearMetadataForTesting() }
-
-        for index in 0..<80 {
-            NativeMarkdownVideoView.debugSeedMetadataForTesting(
-                ResourceReference(
-                    target: "clip-\(index).mp4",
-                    sourceServerID: "server-a",
-                    workspaceID: "workspace-a",
-                    sourceSessionID: "session-a",
-                    fileCandidatePath: "clip-\(index).mp4"
-                ),
-                16.0 / 9.0
-            )
-        }
-        #expect(NativeMarkdownVideoView.debugMetadataCountForTesting() <= 64)
     }
 
     private func dummyMediaSource() -> AuthenticatedMediaSource {

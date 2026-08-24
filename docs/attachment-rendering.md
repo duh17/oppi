@@ -211,7 +211,7 @@ Use `![[video-file]]` to embed a current workspace, worktree, session-reported, 
 
 Inline video uses Oppi's authenticated range-streaming player. Playback never starts automatically. The player keeps native controls, full-screen presentation, Picture in Picture, and an open-file fallback when playback fails. Oppi does not embed remote video sites, arbitrary URLs, HTML `<video>`, or stored attachment IDs through this syntax.
 
-The player uses previously prepared AVPlayer dimensions when they are available before layout. Otherwise it reserves final 16:9 fallback geometry because wiki-file syntax has no dimensions. Playback metadata can size a later mount, but never resizes an already revealed embed. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
+The player always reserves 16:9 geometry because wiki-file syntax has no dimensions. Playback metadata never resizes an embed, including later remounts. Portrait and landscape clips letterbox inside that slot. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
 
 ## Extension authoring API
 
