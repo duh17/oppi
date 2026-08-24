@@ -82,6 +82,21 @@ struct CustomThemeStoreTests {
 
     // MARK: - Delete
 
+    @Test func migrateRenamesPaperOfficialToPaper() {
+        let oldName = "Paper Official"
+        defer {
+            CustomThemeStore.delete(name: oldName)
+            CustomThemeStore.delete(name: "Paper")
+        }
+
+        CustomThemeStore.save(makeTheme(name: oldName, colorScheme: "light"))
+        CustomThemeStore.migrateRenamedThemes()
+
+        #expect(CustomThemeStore.load(name: oldName) == nil)
+        #expect(CustomThemeStore.load(name: "Paper")?.name == "Paper")
+        #expect(CustomThemeStore.migratedThemeID(.custom(oldName)) == .custom("Paper"))
+    }
+
     @Test func deleteRemovesTheme() {
         let name = testName("ToDelete")
 

@@ -125,7 +125,7 @@ struct WorkspaceSandboxMark: View {
             .foregroundStyle(.themeBg)
             .frame(width: size, height: size)
             .background(Circle().fill(.themeOrange))
-            .overlay(Circle().stroke(Color.themeBg, lineWidth: 1))
+            .overlay(Circle().stroke(.themeBg, lineWidth: 1))
             .accessibilityLabel("Sandbox")
     }
 }
@@ -156,7 +156,7 @@ struct WorkspaceSelectionButton: View {
 struct RuntimeBadge: View {
     var compact: Bool = false
     var icon: ServerBadgeIcon = .defaultValue
-    var tint: Color = .themeComment
+    var tint: ThemeShapeStyle = .themeComment
 
     private var resolvedSymbolName: String {
         if UIImage(systemName: icon.symbolName) != nil {
@@ -254,7 +254,7 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         }
     }
 
-    var tintColor: Color {
+    var tintColor: ThemeShapeStyle {
         switch self {
         case .connected: return .themeGreen
         case .connecting: return .themeBlue

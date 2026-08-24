@@ -136,7 +136,7 @@ struct ModelBreakdownSection: View {
                     let share = metricShare(for: item)
                     ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(Color.themeComment.opacity(0.12))
+                            .fill(.themeComment.opacity(0.12))
                             .frame(height: 5)
                         Capsule()
                             .fill(modelColor(item.representativeModel).opacity(0.55))

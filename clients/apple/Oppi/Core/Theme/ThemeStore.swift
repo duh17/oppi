@@ -121,18 +121,26 @@ final class ThemeStore {
             Self.currentSystemColorScheme(fallback: fallback)
         }
         let observedSystemColorScheme = initialSystemColorScheme ?? systemColorSchemeProvider(.dark)
-        let persistedManual = ThemeID.loadPersisted()
+        CustomThemeStore.migrateRenamedThemes()
+        let persistedManual = CustomThemeStore.migratedThemeID(ThemeID.loadPersisted())
+        if persistedManual != ThemeID.loadPersisted() {
+            UserDefaults.standard.set(persistedManual.rawValue, forKey: ThemeID.storageKey)
+        }
         let persistedMode = UserDefaults.standard.string(forKey: Self.modeKey)
             .flatMap(ThemeMode.init(rawValue:)) ?? .manual
-        let persistedLight = Self.persistedTheme(
-            key: Self.lightThemeKey,
-            fallback: .light,
-            scheme: .light
+        let persistedLight = CustomThemeStore.migratedThemeID(
+            Self.persistedTheme(
+                key: Self.lightThemeKey,
+                fallback: .light,
+                scheme: .light
+            )
         )
-        let persistedDark = Self.persistedTheme(
-            key: Self.darkThemeKey,
-            fallback: persistedManual.preferredColorScheme == .light ? .dark : persistedManual,
-            scheme: .dark
+        let persistedDark = CustomThemeStore.migratedThemeID(
+            Self.persistedTheme(
+                key: Self.darkThemeKey,
+                fallback: persistedManual.preferredColorScheme == .light ? .dark : persistedManual,
+                scheme: .dark
+            )
         )
 
         self.systemColorSchemeProvider = systemColorSchemeProvider
@@ -149,6 +157,19 @@ final class ThemeStore {
 
     func updateSystemColorScheme(_ colorScheme: ColorScheme) {
         systemColorScheme = colorScheme
+    }
+
+    func removeImportedTheme(named name: String) {
+        CustomThemeStore.delete(name: name)
+        if case .custom(let current) = manualThemeID, current == name {
+            manualThemeID = .dark
+        }
+        if case .custom(let current) = lightThemeID, current == name {
+            lightThemeID = .light
+        }
+        if case .custom(let current) = darkThemeID, current == name {
+            darkThemeID = .dark
+        }
     }
 
     /// Load a Light/Dark preset, keep it on the matching side of the picker,

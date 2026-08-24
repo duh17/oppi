@@ -89,13 +89,14 @@ final class NativeFullScreenCodeBody: UIView {
     private let language: String?
     private let startLine: Int
     private let lineCount: Int
-    private let palette: ThemePalette
+    private var palette: ThemePalette
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let alwaysBounceVertical: Bool
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private var readerPreferences: FullScreenReaderPreferences
+    private var appliedPaletteSignature: String = ""
     private var gutterWidthConstraint: NSLayoutConstraint?
     private var contentContainerWidthConstraint: NSLayoutConstraint?
     private var highlightedSourceText: NSAttributedString?
@@ -257,6 +258,21 @@ final class NativeFullScreenCodeBody: UIView {
 
     private var codeFont: UIFont {
         FullScreenCodeTypography.codeFont(for: readerPreferences)
+    }
+
+    func applyPalette(_ newPalette: ThemePalette) {
+        let signature = "\(newPalette.bg.description)|\(newPalette.fg.description)|\(newPalette.comment.description)"
+        guard signature != appliedPaletteSignature else { return }
+        appliedPaletteSignature = signature
+        palette = newPalette
+        backgroundColor = UIColor(palette.bgDark)
+        scrollView.backgroundColor = UIColor(palette.bgDark)
+        gutterView.textColor = UIColor(palette.comment)
+        separatorView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
+        codeTextView.textColor = UIColor(palette.fg)
+        highlightTask?.cancel()
+        loadHighlighting()
+        invalidateGutterLayout()
     }
 
     private func loadHighlighting() {

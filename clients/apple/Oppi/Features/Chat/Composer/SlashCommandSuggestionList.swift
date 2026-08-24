@@ -24,14 +24,14 @@ struct SlashCommandSuggestionList: View {
 
                     if index < suggestions.count - 1 {
                         Divider()
-                            .overlay(Color.themeComment.opacity(0.18))
+                            .overlay(.themeComment.opacity(0.18))
                     }
                 }
             }
         }
         .frame(maxHeight: maxPanelHeight)
         .background(.themeBgDark, in: panelShape)
-        .overlay(panelShape.stroke(Color.themeComment.opacity(0.22), lineWidth: 1))
+        .overlay(panelShape.stroke(.themeComment.opacity(0.22), lineWidth: 1))
         .clipShape(panelShape)
     }
 

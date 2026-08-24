@@ -340,7 +340,7 @@ struct WorkspaceReviewFileDetailView: View {
                 removedLines: currentFile.removedLines
             )
 
-            Divider().overlay(Color.themeComment.opacity(0.2))
+            Divider().overlay(.themeComment.opacity(0.2))
 
             FileBrowserContentView(
                 workspaceId: workspaceId,
@@ -367,7 +367,7 @@ struct WorkspaceReviewFileDetailView: View {
 
             if isNewFile {
                 // New file: skip tabs, show syntax-highlighted content directly
-                Divider().overlay(Color.themeComment.opacity(0.2))
+                Divider().overlay(.themeComment.opacity(0.2))
 
                 FileContentView(
                     content: diff.currentText,
@@ -378,7 +378,7 @@ struct WorkspaceReviewFileDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if isDeletedFile {
                 // Deleted file: skip tabs, show diff (the only useful view)
-                Divider().overlay(Color.themeComment.opacity(0.2))
+                Divider().overlay(.themeComment.opacity(0.2))
 
                 WorkspaceReviewDiffView(
                     diff: diff,
@@ -397,7 +397,7 @@ struct WorkspaceReviewFileDetailView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
 
-                Divider().overlay(Color.themeComment.opacity(0.2))
+                Divider().overlay(.themeComment.opacity(0.2))
 
                 Group {
                     switch selectedTab {

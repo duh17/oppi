@@ -6,15 +6,47 @@ import UIKit
 /// Used in review rows, session changes, and anywhere a file needs a
 /// recognizable icon at a glance. Colors are kept to a handful of buckets
 /// — the icon shape does the heavy lifting for identification.
+enum FileIconTint: Equatable, Sendable {
+    case comment, blue, cyan, orange, yellow, red, purple, green
+
+    var style: ThemeShapeStyle {
+        switch self {
+        case .comment: .themeComment
+        case .blue: .themeBlue
+        case .cyan: .themeCyan
+        case .orange: .themeOrange
+        case .yellow: .themeYellow
+        case .red: .themeRed
+        case .purple: .themePurple
+        case .green: .themeGreen
+        }
+    }
+
+    var snapshotColor: Color {
+        switch self {
+        case .comment: .themeComment
+        case .blue: .themeBlue
+        case .cyan: .themeCyan
+        case .orange: .themeOrange
+        case .yellow: .themeYellow
+        case .red: .themeRed
+        case .purple: .themePurple
+        case .green: .themeGreen
+        }
+    }
+}
+
 struct FileIcon: Equatable, Sendable {
     let symbolName: String
-    let color: Color
+    let tint: FileIconTint
     /// Asset catalog image name. When set, preferred over `symbolName`.
     let assetName: String?
 
-    init(symbolName: String, color: Color, assetName: String? = nil) {
+    var color: Color { tint.snapshotColor }
+
+    init(symbolName: String, tint: FileIconTint, assetName: String? = nil) {
         self.symbolName = symbolName
-        self.color = color
+        self.tint = tint
         self.assetName = assetName
     }
 
@@ -54,12 +86,12 @@ struct FileIcon: Equatable, Sendable {
             image  // .resizable() already applied
                 .renderingMode(.template)
                 .scaledToFit()
-                .foregroundStyle(color)
+                .foregroundStyle(tint.style)
                 .frame(width: size, height: size)
         } else {
             Image(systemName: symbolName)
                 .font(font ?? .system(size: max(9, size * 0.6), weight: .medium))
-                .foregroundStyle(color)
+                .foregroundStyle(tint.style)
                 .frame(width: size, height: size)
         }
     }
@@ -79,7 +111,7 @@ struct FileIcon: Equatable, Sendable {
         // Extension-based
         if !ext.isEmpty, let icon = extensionIcon(ext) { return icon }
 
-        return Self(symbolName: "doc.text", color: .themeComment)
+        return Self(symbolName: "doc.text", tint: .comment)
     }
 
     // MARK: - Well-Known Filenames
@@ -93,29 +125,29 @@ struct FileIcon: Equatable, Sendable {
              "go.mod", "pubspec.yaml", "build.gradle",
              "build.gradle.kts", "requirements.txt",
              "setup.py", "pyproject.toml", "pipfile":
-            return Self(symbolName: "shippingbox.fill", color: .themeBlue)
+            return Self(symbolName: "shippingbox.fill", tint: .blue)
 
         // Lock files
         case "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
              "podfile.lock", "gemfile.lock", "cargo.lock",
              "go.sum", "composer.lock", "pipfile.lock",
              "shrinkwrap.yaml", "packages.resolved":
-            return Self(symbolName: "lock.fill", color: .themeComment)
+            return Self(symbolName: "lock.fill", tint: .comment)
 
         // Build / project
         case "dockerfile", "containerfile":
-            return Self(symbolName: "shippingbox.fill", color: .themeCyan)
+            return Self(symbolName: "shippingbox.fill", tint: .cyan)
         case "makefile", "gnumakefile", "cmakelists.txt",
              "justfile", "rakefile", "gulpfile.js",
              "gruntfile.js", "webpack.config.js",
              "rollup.config.js", "vite.config.ts",
              "vite.config.js":
-            return Self(symbolName: "hammer.fill", color: .themeOrange)
+            return Self(symbolName: "hammer.fill", tint: .orange)
 
         // Project config
         case "project.yml", "project.yaml", "project.pbxproj",
              "xcodeproj", "xcworkspace":
-            return Self(symbolName: "wrench.and.screwdriver", color: .themeComment)
+            return Self(symbolName: "wrench.and.screwdriver", tint: .comment)
 
         // Tool config (JSON-based)
         case "tsconfig.json", "jsconfig.json",
@@ -123,12 +155,12 @@ struct FileIcon: Equatable, Sendable {
              ".swiftlint.yml", "swiftlint.yml",
              "babel.config.js", "babel.config.json",
              ".babelrc", ".browserslistrc":
-            return Self(symbolName: "gearshape.fill", color: .themeComment)
+            return Self(symbolName: "gearshape.fill", tint: .comment)
 
         // License
         case "license", "licence", "license.md", "licence.md",
              "license.txt", "licence.txt":
-            return Self(symbolName: "doc.text", color: .themeComment)
+            return Self(symbolName: "doc.text", tint: .comment)
 
         default:
             return nil
@@ -140,16 +172,16 @@ struct FileIcon: Equatable, Sendable {
     private static func dotfileIcon(_ name: String) -> Self? {
         switch name {
         case ".gitignore", ".dockerignore", ".npmignore", ".slugignore":
-            return Self(symbolName: "eye.slash", color: .themeComment)
+            return Self(symbolName: "eye.slash", tint: .comment)
         case ".gitattributes", ".gitmodules":
-            return Self(symbolName: "arrow.triangle.branch", color: .themeComment)
+            return Self(symbolName: "arrow.triangle.branch", tint: .comment)
         case ".env", ".env.local", ".env.development",
              ".env.production", ".env.test", ".env.example":
-            return Self(symbolName: "key.fill", color: .themeYellow)
+            return Self(symbolName: "key.fill", tint: .yellow)
         case ".editorconfig", ".prettierrc", ".prettierrc.json",
              ".prettierrc.yml", ".eslintrc", ".eslintrc.json",
              ".eslintrc.yml", ".eslintrc.js":
-            return Self(symbolName: "gearshape.fill", color: .themeComment)
+            return Self(symbolName: "gearshape.fill", tint: .comment)
         default:
             return nil
         }
@@ -161,171 +193,171 @@ struct FileIcon: Equatable, Sendable {
         switch ext {
         // Swift
         case "swift":
-            return Self(symbolName: "swift", color: .themeOrange, assetName: "lang-swift")
+            return Self(symbolName: "swift", tint: .orange, assetName: "lang-swift")
 
         // TypeScript
         case "ts", "tsx", "mts", "cts":
-            return Self(symbolName: "t.square.fill", color: .themeBlue, assetName: "lang-typescript")
+            return Self(symbolName: "t.square.fill", tint: .blue, assetName: "lang-typescript")
 
         // JavaScript
         case "js", "jsx", "mjs", "cjs":
-            return Self(symbolName: "j.square.fill", color: .themeYellow, assetName: "lang-nodejs")
+            return Self(symbolName: "j.square.fill", tint: .yellow, assetName: "lang-nodejs")
 
         // Python
         case "py", "pyi", "pyw":
-            return Self(symbolName: "p.square.fill", color: .themeCyan, assetName: "lang-python")
+            return Self(symbolName: "p.square.fill", tint: .cyan, assetName: "lang-python")
 
         // Go
         case "go":
-            return Self(symbolName: "g.square.fill", color: .themeCyan, assetName: "lang-go")
+            return Self(symbolName: "g.square.fill", tint: .cyan, assetName: "lang-go")
 
         // Rust
         case "rs":
-            return Self(symbolName: "r.square.fill", color: .themeOrange, assetName: "lang-rust")
+            return Self(symbolName: "r.square.fill", tint: .orange, assetName: "lang-rust")
 
         // Ruby
         case "rb", "erb":
-            return Self(symbolName: "r.square.fill", color: .themeRed, assetName: "lang-ruby")
+            return Self(symbolName: "r.square.fill", tint: .red, assetName: "lang-ruby")
 
         // Shell
         case "sh", "bash", "zsh", "fish", "ksh", "csh":
-            return Self(symbolName: "terminal.fill", color: .themeGreen)
+            return Self(symbolName: "terminal.fill", tint: .green)
 
         // C
         case "c", "h":
-            return Self(symbolName: "c.square.fill", color: .themeCyan)
+            return Self(symbolName: "c.square.fill", tint: .cyan)
 
         // C++
         case "cpp", "cc", "cxx", "hpp", "hxx", "hh":
-            return Self(symbolName: "c.square.fill", color: .themePurple)
+            return Self(symbolName: "c.square.fill", tint: .purple)
 
         // Java
         case "java":
-            return Self(symbolName: "cup.and.saucer.fill", color: .themeRed)
+            return Self(symbolName: "cup.and.saucer.fill", tint: .red)
 
         // Kotlin
         case "kt", "kts":
-            return Self(symbolName: "k.square.fill", color: .themePurple)
+            return Self(symbolName: "k.square.fill", tint: .purple)
 
         // Zig
         case "zig":
-            return Self(symbolName: "z.square.fill", color: .themeOrange, assetName: "lang-zig")
+            return Self(symbolName: "z.square.fill", tint: .orange, assetName: "lang-zig")
 
         // HTML / XML / markup
         case "html", "htm", "xml", "xhtml", "svg", "plist", "xib",
              "storyboard":
-            return Self(symbolName: "chevron.left.forwardslash.chevron.right", color: .themeOrange)
+            return Self(symbolName: "chevron.left.forwardslash.chevron.right", tint: .orange)
 
         // CSS
         case "css", "scss", "less", "sass":
-            return Self(symbolName: "paintbrush.fill", color: .themeBlue)
+            return Self(symbolName: "paintbrush.fill", tint: .blue)
 
         // JSON
         case "json", "jsonl", "geojson", "jsonc":
-            return Self(symbolName: "curlybraces", color: .themeYellow)
+            return Self(symbolName: "curlybraces", tint: .yellow)
 
         // YAML
         case "yaml", "yml":
-            return Self(symbolName: "list.bullet.rectangle", color: .themeRed)
+            return Self(symbolName: "list.bullet.rectangle", tint: .red)
 
         // TOML
         case "toml":
-            return Self(symbolName: "list.bullet.rectangle", color: .themeComment)
+            return Self(symbolName: "list.bullet.rectangle", tint: .comment)
 
         // SQL
         case "sql", "sqlite", "db":
-            return Self(symbolName: "cylinder.fill", color: .themeBlue)
+            return Self(symbolName: "cylinder.fill", tint: .blue)
 
         // Markdown
         case "md", "mdx", "markdown", "rst":
-            return Self(symbolName: "doc.richtext", color: .themeBlue, assetName: "lang-markdown")
+            return Self(symbolName: "doc.richtext", tint: .blue, assetName: "lang-markdown")
 
         // Images
         case "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp",
              "tiff", "tif", "heic", "heif", "avif":
-            return Self(symbolName: "photo.fill", color: .themePurple)
+            return Self(symbolName: "photo.fill", tint: .purple)
 
         // Audio
         case "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus",
              "caf", "aiff", "wma":
-            return Self(symbolName: "waveform", color: .themePurple)
+            return Self(symbolName: "waveform", tint: .purple)
 
         // Video
         case "mp4", "mov", "avi", "mkv", "webm", "m4v", "wmv",
              "flv":
-            return Self(symbolName: "film", color: .themePurple)
+            return Self(symbolName: "film", tint: .purple)
 
         // PDF
         case "pdf":
-            return Self(symbolName: "doc.richtext", color: .themeRed)
+            return Self(symbolName: "doc.richtext", tint: .red)
 
         // Archives
         case "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz":
-            return Self(symbolName: "doc.zipper", color: .themeComment)
+            return Self(symbolName: "doc.zipper", tint: .comment)
 
         // Fonts
         case "ttf", "otf", "woff", "woff2":
-            return Self(symbolName: "textformat", color: .themePurple)
+            return Self(symbolName: "textformat", tint: .purple)
 
         // Certificates / keys
         case "pem", "cert", "crt", "cer", "p12", "pfx":
-            return Self(symbolName: "lock.shield.fill", color: .themeYellow)
+            return Self(symbolName: "lock.shield.fill", tint: .yellow)
 
         // Protobuf
         case "proto":
-            return Self(symbolName: "network", color: .themeCyan)
+            return Self(symbolName: "network", tint: .cyan)
 
         // GraphQL
         case "graphql", "gql":
-            return Self(symbolName: "point.3.connected.trianglepath.dotted", color: .themePurple)
+            return Self(symbolName: "point.3.connected.trianglepath.dotted", tint: .purple)
 
         // Env / INI
         case "env", "ini", "cfg", "conf":
-            return Self(symbolName: "gearshape.fill", color: .themeComment)
+            return Self(symbolName: "gearshape.fill", tint: .comment)
 
         // Log
         case "log":
-            return Self(symbolName: "doc.text.magnifyingglass", color: .themeComment)
+            return Self(symbolName: "doc.text.magnifyingglass", tint: .comment)
 
         // Diff / patch
         case "diff", "patch":
-            return Self(symbolName: "plus.forwardslash.minus", color: .themeGreen)
+            return Self(symbolName: "plus.forwardslash.minus", tint: .green)
 
         // Text
         case "txt", "text":
-            return Self(symbolName: "doc.text", color: .themeComment)
+            return Self(symbolName: "doc.text", tint: .comment)
 
         // Wasm
         case "wasm", "wat":
-            return Self(symbolName: "cpu", color: .themePurple)
+            return Self(symbolName: "cpu", tint: .purple)
 
         // R
         case "r", "rmd":
-            return Self(symbolName: "r.square.fill", color: .themeBlue)
+            return Self(symbolName: "r.square.fill", tint: .blue)
 
         // Lua
         case "lua":
-            return Self(symbolName: "l.square.fill", color: .themeBlue)
+            return Self(symbolName: "l.square.fill", tint: .blue)
 
         // Dart
         case "dart":
-            return Self(symbolName: "d.square.fill", color: .themeCyan)
+            return Self(symbolName: "d.square.fill", tint: .cyan)
 
         // Elixir / Erlang
         case "ex", "exs", "erl", "hrl":
-            return Self(symbolName: "e.square.fill", color: .themePurple)
+            return Self(symbolName: "e.square.fill", tint: .purple)
 
         // Scala
         case "scala", "sc":
-            return Self(symbolName: "s.square.fill", color: .themeRed)
+            return Self(symbolName: "s.square.fill", tint: .red)
 
         // Haskell
         case "hs", "lhs":
-            return Self(symbolName: "h.square.fill", color: .themePurple)
+            return Self(symbolName: "h.square.fill", tint: .purple)
 
         // Perl
         case "pl", "pm":
-            return Self(symbolName: "p.square.fill", color: .themeCyan)
+            return Self(symbolName: "p.square.fill", tint: .cyan)
 
         default:
             return nil

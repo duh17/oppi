@@ -295,7 +295,7 @@ struct SFSymbolPicker: View {
                             .frame(width: 36, height: 36)
                             .background(
                                 selection == symbol
-                                    ? Color.themeBlue.opacity(0.15)
+                                    ? .themeBlue.opacity(0.15)
                                     : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 6)
                             )

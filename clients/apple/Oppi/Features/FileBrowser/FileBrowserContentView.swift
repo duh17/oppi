@@ -711,7 +711,7 @@ struct AdjacentFileNavigatorControls: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.headline.weight(.semibold))
-                .foregroundStyle(isEnabled ? Color.themeFg : Color.themeComment)
+                .foregroundStyle(isEnabled ? .themeFg : .themeComment)
                 .frame(
                     width: FullScreenFloatingControlChrome.groupedButtonSize,
                     height: FullScreenFloatingControlChrome.groupedButtonSize

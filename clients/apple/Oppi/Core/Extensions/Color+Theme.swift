@@ -110,6 +110,8 @@ struct ThemeShapeStyle: ShapeStyle {
         case red
         case yellow
         case scrim
+        case dimScrim
+        case recessedInset
         case onBlue
         case onGreen
         case syntaxComment
@@ -150,17 +152,17 @@ struct ThemeShapeStyle: ShapeStyle {
         case .red: theme.accent.red
         case .yellow: theme.accent.yellow
         case .scrim: theme.bg.secondary.opacity(0.82)
+        case .dimScrim: theme.bg.primary.opacity(0.5)
+        case .recessedInset: theme.bg.primary.opacity(0.30)
         case .onBlue:
-            ThemeColorContrast.foreground(
-                for: theme.accent.blue,
-                highLuminanceForeground: theme.bg.secondary,
-                lowLuminanceForeground: theme.text.primary
+            ThemeColorContrast.contrastingForeground(
+                on: theme.accent.blue,
+                candidates: [theme.text.primary, theme.bg.primary]
             )
         case .onGreen:
-            ThemeColorContrast.foreground(
-                for: theme.accent.green,
-                highLuminanceForeground: theme.bg.secondary,
-                lowLuminanceForeground: theme.text.primary
+            ThemeColorContrast.contrastingForeground(
+                on: theme.accent.green,
+                candidates: [theme.text.primary, theme.bg.primary]
             )
         case .syntaxComment: theme.syntax.comment
         case .syntaxKeyword: theme.syntax.keyword
@@ -195,6 +197,8 @@ extension ShapeStyle where Self == ThemeShapeStyle {
     static var themeYellow: ThemeShapeStyle { ThemeShapeStyle(role: .yellow) }
 
     static var themeScrim: ThemeShapeStyle { ThemeShapeStyle(role: .scrim) }
+    static var themeDimScrim: ThemeShapeStyle { ThemeShapeStyle(role: .dimScrim) }
+    static var themeRecessedInset: ThemeShapeStyle { ThemeShapeStyle(role: .recessedInset) }
     static var themeOnBlue: ThemeShapeStyle { ThemeShapeStyle(role: .onBlue) }
     // periphery:ignore - used by ChatSubviews through SwiftUI contextual static member lookup
     static var themeOnGreen: ThemeShapeStyle { ThemeShapeStyle(role: .onGreen) }
@@ -429,11 +433,27 @@ extension View {
 
 enum ThemeColorContrast {
     static func foreground(for fill: Color) -> Color {
-        foreground(
-            for: fill,
-            highLuminanceForeground: .themeBgDark,
-            lowLuminanceForeground: .themeFg
-        )
+        contrastingForeground(on: fill, candidates: [.themeFg, .themeBg])
+    }
+
+    /// Pick the candidate with the stronger contrast against `fill`.
+    /// Light themes can have a dark accent and a dark `themeFg`; using `themeFg`
+    /// on that fill makes send arrows disappear.
+    static func contrastingForeground(on fill: Color, candidates: [Color]) -> Color {
+        guard let fillLuminance = relativeLuminance(of: fill) else {
+            return candidates.last ?? .themeFg
+        }
+        return candidates.max { lhs, rhs in
+            contrastRatio(relativeLuminance(of: lhs), fillLuminance)
+                < contrastRatio(relativeLuminance(of: rhs), fillLuminance)
+        } ?? candidates[0]
+    }
+
+    private static func contrastRatio(_ first: CGFloat?, _ second: CGFloat) -> CGFloat {
+        guard let first else { return 0 }
+        let lighter = max(first, second)
+        let darker = min(first, second)
+        return (lighter + 0.05) / (darker + 0.05)
     }
 
     static func foreground(

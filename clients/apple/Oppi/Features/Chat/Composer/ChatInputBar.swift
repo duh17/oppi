@@ -96,6 +96,8 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var askClearing = AskComposerClearingState()
     @State private var isBusyModePickerPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
 
     /// Bumped to programmatically focus the text field.
     @State private var focusRequestID = 0
@@ -174,7 +176,7 @@ struct ChatInputBar<ActionRow: View>: View {
         )
     }
 
-    private var accentColor: Color { .themeBlue }
+    private var accentColor: Color { theme.accent.blue }
 
     private var composerPlaceholder: String {
         placeholderOverride ?? Self.composerPlaceholder(
@@ -187,9 +189,9 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var sendActionFillColor: Color {
         if isSendInFlight {
-            return isBusy ? .themePurple : accentColor
+            return isBusy ? theme.accent.purple : accentColor
         }
-        return canSend ? (isBusy ? .themePurple : accentColor) : .themeBgHighlight
+        return canSend ? (isBusy ? theme.accent.purple : accentColor) : theme.bg.highlight
     }
 
     private var isSendInFlight: Bool {
@@ -200,12 +202,15 @@ struct ChatInputBar<ActionRow: View>: View {
         if isSendInFlight {
             return sendActionFillColor.opacity(0.9)
         }
-        return canSend ? sendActionFillColor.opacity(0.9) : .themeComment.opacity(0.35)
+        return canSend ? sendActionFillColor.opacity(0.9) : theme.text.tertiary.opacity(0.35)
     }
 
     private var sendActionForegroundColor: Color {
-        guard canSend || isSendInFlight else { return .themeComment }
-        return ThemeColorContrast.foreground(for: sendActionFillColor)
+        guard canSend || isSendInFlight else { return theme.text.tertiary }
+        return ThemeColorContrast.contrastingForeground(
+            on: sendActionFillColor,
+            candidates: [theme.text.primary, theme.bg.primary]
+        )
     }
 
     private var primaryActionKind: ChatInputPrimaryActionKind {
@@ -465,8 +470,8 @@ struct ChatInputBar<ActionRow: View>: View {
                         text: textFieldBinding,
                         placeholder: "",
                         font: composerInputFont,
-                        textColor: UIColor(Color.themeFg),
-                        tintColor: UIColor(isBusy ? Color.themePurple : accentColor),
+                        textColor: UIColor(theme.text.primary),
+                        tintColor: UIColor(isBusy ? theme.accent.purple : accentColor),
                         volatileSuffixLength: ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .inlineComposer),
                         correctionRanges: correctionRangesForDisplay,
                         maxLines: effectiveMaxLines,

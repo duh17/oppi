@@ -125,6 +125,8 @@ func inlineComposerShouldFastPathToMaxHeight(
 /// Inline mode auto-expands with content up to `maxLines`, then keeps
 /// scrolling internally for overflow.
 struct PastableTextView: UIViewRepresentable {
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
     @Binding var text: String
     let placeholder: String
     let font: UIFont
@@ -213,10 +215,10 @@ struct PastableTextView: UIViewRepresentable {
             font: font,
             baseColor: textColor,
             volatileSuffixLength: volatileSuffixLength,
-            volatileColor: UIColor(Color.themeBlue),
-            volatileBackgroundColor: composerVolatileTranscriptBackgroundColor(),
+            volatileColor: UIColor(theme.accent.blue),
+            volatileBackgroundColor: UIColor(theme.accent.blue.opacity(0.20)),
             correctionRanges: correctionRanges,
-            correctionUnderlineColor: UIColor(Color.themeOrange),
+            correctionUnderlineColor: UIColor(theme.accent.orange),
             scrollCaretToVisible: false
         )
         textView.onPasteImages = onPasteImages
@@ -519,6 +521,8 @@ struct PastableTextView: UIViewRepresentable {
 /// always scrolls and fills its container. Keyboard dismiss is interactive
 /// (drag to dismiss). Can optionally auto-focus on appear.
 struct FullSizeTextView: UIViewRepresentable {
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
     @Binding var text: String
     @Binding var keyboardLanguage: String?
     let font: UIFont
@@ -589,10 +593,10 @@ struct FullSizeTextView: UIViewRepresentable {
             font: font,
             baseColor: textColor,
             volatileSuffixLength: volatileSuffixLength,
-            volatileColor: UIColor(Color.themeBlue),
-            volatileBackgroundColor: composerVolatileTranscriptBackgroundColor(),
+            volatileColor: UIColor(theme.accent.blue),
+            volatileBackgroundColor: UIColor(theme.accent.blue.opacity(0.20)),
             correctionRanges: correctionRanges,
-            correctionUnderlineColor: UIColor(Color.themeOrange),
+            correctionUnderlineColor: UIColor(theme.accent.orange),
             scrollCaretToVisible: true
         )
         textView.onPasteImages = onPasteImages

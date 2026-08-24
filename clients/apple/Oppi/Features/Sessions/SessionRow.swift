@@ -338,7 +338,7 @@ struct SessionRow: View {
             .foregroundStyle(.themePurple)
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
-            .background(Color.themePurple.opacity(0.14), in: Capsule())
+            .background(.themePurple.opacity(0.14), in: Capsule())
             .accessibilityLabel("Incognito session")
     }
 

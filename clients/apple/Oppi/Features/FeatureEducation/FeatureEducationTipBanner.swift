@@ -126,6 +126,21 @@ final class FeatureEducationTipBannerView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleThemeDidChange),
+            name: .oppiThemeDidChange,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc
+    private func handleThemeDidChange() {
+        applyThemeColors()
     }
 
     @available(*, unavailable)

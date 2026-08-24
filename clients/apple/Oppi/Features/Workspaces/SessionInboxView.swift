@@ -1945,6 +1945,7 @@ struct WorkspaceSidebarGitSummary: Equatable {
 
 struct WorkspaceSidebarRow: View {
     @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
 
     let workspace: Workspace
     let status: WorkspaceSidebarSessionStatus
@@ -2006,6 +2007,7 @@ struct WorkspaceSidebarRow: View {
             }
         }
         .contentShape(Rectangle())
+        .id(themeID)
     }
 }
 
@@ -2049,7 +2051,7 @@ struct WorkspaceSidebarGitStatusLine: View {
     private func metric(
         text: String,
         symbol: String,
-        tint: Color,
+        tint: ThemeShapeStyle,
         symbolScale: Image.Scale = .medium
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -2088,7 +2090,7 @@ struct WorkspaceSidebarSessionStatusIndicator: View {
         .accessibilityHidden(true)
     }
 
-    private func metric(symbol: String, count: Int, tint: Color) -> some View {
+    private func metric(symbol: String, count: Int, tint: ThemeShapeStyle) -> some View {
         HStack(alignment: .center, spacing: 2) {
             Image(systemName: symbol)
                 .imageScale(.small)

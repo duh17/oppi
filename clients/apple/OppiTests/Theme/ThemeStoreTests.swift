@@ -76,6 +76,21 @@ struct ThemeStoreTests {
         }
     }
 
+    @Test func removingImportedThemeFallsBackToBuiltins() {
+        withCleanThemeDefaults {
+            let name = "imported-theme-\(UUID().uuidString)"
+            defer { CustomThemeStore.delete(name: name) }
+            CustomThemeStore.save(Self.makeLightTheme(name: name))
+
+            let store = ThemeStore(initialSystemColorScheme: .light, systemColorSchemeProvider: { _ in .light })
+            store.lightThemeID = .custom(name)
+            store.removeImportedTheme(named: name)
+
+            #expect(CustomThemeStore.load(name: name) == nil)
+            #expect(store.lightThemeID == .light)
+        }
+    }
+
     @Test func assigningDarkThemeToLightPresetClampsToLight() {
         withCleanThemeDefaults {
             let store = ThemeStore(initialSystemColorScheme: .light, systemColorSchemeProvider: { _ in .light })
@@ -153,6 +168,38 @@ struct ThemeStoreTests {
         #expect(UIColor(foreground.color(in: oledEnvironment)) == UIColor(ThemePalettes.oled.fg))
         #expect(UIColor(background.color(in: lightEnvironment)) == UIColor(ThemePalettes.light.bg))
         #expect(UIColor(background.color(in: oledEnvironment)) == UIColor(ThemePalettes.oled.bg))
+    }
+
+    private static func makeLightTheme(name: String) -> RemoteTheme {
+        RemoteTheme(
+            name: name,
+            colorScheme: "light",
+            colors: RemoteThemeColors(
+                bg: "#fbfaf7", bgDark: "#f2f0ea", bgHighlight: "#e7e4dc",
+                fg: "#111111", fgDim: "#4f4f4f", comment: "#777777",
+                blue: "#1f1f1f", cyan: "#3a3a3a", green: "#2f3a33",
+                orange: "#4a4037", purple: "#303030", red: "#4a2f2f",
+                yellow: "#4a4533", thinkingText: "#666666",
+                userMessageBg: "#f2f0ea", userMessageText: "#111111",
+                toolPendingBg: "#f5f4f0", toolSuccessBg: "#f2f3ef",
+                toolErrorBg: "#f3f0ef", toolTitle: "#111111", toolOutput: "#5f5f5f",
+                mdHeading: "#111111", mdLink: "#111111", mdLinkUrl: "#777777",
+                mdCode: "#1f1f1f", mdCodeBlock: "#333333",
+                mdCodeBlockBorder: "#d3d0c7", mdQuote: "#5f5f5f",
+                mdQuoteBorder: "#c9c6bd", mdHr: "#d8d5cc",
+                mdListBullet: "#111111",
+                toolDiffAdded: "#2f3a33", toolDiffRemoved: "#4a2f2f",
+                toolDiffContext: "#777777",
+                syntaxComment: "#777777", syntaxKeyword: "#111111",
+                syntaxFunction: "#1f1f1f", syntaxVariable: "#111111",
+                syntaxString: "#333333", syntaxNumber: "#4a4037",
+                syntaxType: "#303030", syntaxOperator: "#4f4f4f",
+                syntaxPunctuation: "#5f5f5f",
+                thinkingOff: "#c9c6bd", thinkingMinimal: "#8b8b8b",
+                thinkingLow: "#666666", thinkingMedium: "#4f4f4f",
+                thinkingHigh: "#333333", thinkingXhigh: "#111111"
+            )
+        )
     }
 
     private func withCleanThemeDefaults(_ body: () -> Void) {

@@ -505,7 +505,7 @@ struct ChatView: View {
                 // instead of Color.clear prevents the visual overlap
                 // between expanded bar content and the timeline behind.
                 if contextBarExpanded {
-                    Color.themeDimScrim
+                    Rectangle().fill(.themeDimScrim)
                         .ignoresSafeArea()
                         .onTapGesture { contextBarCollapseToken &+= 1 }
                 }

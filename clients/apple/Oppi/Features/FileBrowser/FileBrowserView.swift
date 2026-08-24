@@ -349,7 +349,7 @@ struct FileBrowserView: View {
                 .padding(.vertical, 16)
 
             Divider()
-                .overlay(Color.themeComment.opacity(0.18))
+                .overlay(.themeComment.opacity(0.18))
                 .padding(.vertical, 20)
 
             selectedFileContent
@@ -673,13 +673,13 @@ struct FileBrowserView: View {
 
     private func fileTreeRow(
         icon: String,
-        iconColor: Color,
+        iconColor: ThemeShapeStyle,
         title: String,
         subtitle: String?,
         trailing: String? = nil,
         trailingText: String? = nil,
         isSelected: Bool,
-        trailingColor: Color = .themeComment
+        trailingColor: ThemeShapeStyle = .themeComment
     ) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
@@ -722,13 +722,13 @@ struct FileBrowserView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(
-            isSelected ? Color.themeBlue.opacity(0.16) : Color.clear,
+            isSelected ? .themeBlue.opacity(0.16) : Color.clear,
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
         )
         .overlay {
             if isSelected {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.themeBlue.opacity(0.36), lineWidth: 1)
+                    .stroke(.themeBlue.opacity(0.36), lineWidth: 1)
             }
         }
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -1200,7 +1200,7 @@ private struct FileBrowserBreadcrumb: View {
                         } label: {
                             Text(segment.label)
                                 .font(.caption.weight(segment.depth == currentDepth ? .semibold : .medium))
-                                .foregroundStyle(segment.depth == currentDepth ? Color.themeBlue : .themeComment)
+                                .foregroundStyle(segment.depth == currentDepth ? .themeBlue : .themeComment)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 4)
                                 .contentShape(Rectangle())

@@ -735,7 +735,7 @@ private struct ScheduleRunRow: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: iconName)
                 .font(.title3)
-                .foregroundStyle(tone.color)
+                .foregroundStyle(tone.style)
                 .frame(width: 24, height: 28)
                 .accessibilityHidden(true)
 

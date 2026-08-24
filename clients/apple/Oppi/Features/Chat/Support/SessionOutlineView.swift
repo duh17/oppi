@@ -31,6 +31,7 @@ struct SessionOutlineView: View {
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.themeID) private var themeID
 
     @State private var outlineLayout: OutlineLayout = .timeline
     @State private var searchText = ""
@@ -95,6 +96,7 @@ struct SessionOutlineView: View {
         NavigationStack {
             outlinePane
             .background(.themeBg)
+            .id(themeID)
             .searchable(text: $searchText, prompt: searchPrompt)
             .navigationTitle("Session Outline")
             .navigationBarTitleDisplayMode(.inline)
@@ -711,7 +713,7 @@ struct SessionOutlineView: View {
         VStack(spacing: 0) {
             if hasTree {
                 outlineLayoutPicker
-                Divider().overlay(Color.themeComment.opacity(0.3))
+                Divider().overlay(.themeComment.opacity(0.3))
             }
 
             switch outlineLayout {
@@ -731,7 +733,7 @@ struct SessionOutlineView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(
-                isSelected ? Color.themeBlue : Color.themeBgHighlight,
+                isSelected ? .themeBlue : .themeBgHighlight,
                 in: Capsule()
             )
             .foregroundStyle(isSelected ? .themeOnBlue : .themeFgDim)
@@ -774,7 +776,7 @@ struct SessionOutlineView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
 
-            Divider().overlay(Color.themeComment.opacity(0.3))
+            Divider().overlay(.themeComment.opacity(0.3))
 
             // Outline list with render window
             ScrollView {
@@ -795,10 +797,10 @@ struct SessionOutlineView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(Color.themeOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(.themeOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.themeOrange.opacity(0.35), lineWidth: 1)
+                            .stroke(.themeOrange.opacity(0.35), lineWidth: 1)
                     )
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
@@ -888,7 +890,7 @@ struct SessionOutlineView: View {
         VStack(spacing: 0) {
             treeFilterBar
 
-            Divider().overlay(Color.themeComment.opacity(0.3))
+            Divider().overlay(.themeComment.opacity(0.3))
 
             if isLoadingTree, treeSnapshot == nil {
                 VStack(spacing: 12) {
@@ -936,10 +938,10 @@ struct SessionOutlineView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(Color.themeOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(.themeOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.themeOrange.opacity(0.35), lineWidth: 1)
+                                .stroke(.themeOrange.opacity(0.35), lineWidth: 1)
                         )
                         .padding(.horizontal, 12)
                         .padding(.top, 8)
@@ -1115,6 +1117,7 @@ private struct OutlineEntry: Identifiable {
 // MARK: - Outline Row
 
 private struct OutlineRow: View {
+    @Environment(\.theme) private var theme
     let item: ChatItem?
     let kind: OutlineEntryKind
     let tool: String?
@@ -1156,7 +1159,7 @@ private struct OutlineRow: View {
                         .font(.caption2.bold())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.themeOrange.opacity(0.18), in: Capsule())
+                        .background(.themeOrange.opacity(0.18), in: Capsule())
                         .foregroundStyle(.themeOrange)
                 }
 
@@ -1188,7 +1191,7 @@ private struct OutlineRow: View {
 
             if showDivider {
                 Divider()
-                    .overlay(Color.themeComment.opacity(0.15))
+                    .overlay(.themeComment.opacity(0.15))
                     .padding(.leading, 42)
             }
         }
@@ -1205,7 +1208,7 @@ private struct OutlineRow: View {
                 var end = i
                 while end + 1 < scalars.count, matchSet.contains(end + 1) { end += 1 }
                 var seg = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
-                seg.foregroundColor = .themeYellow
+                seg.foregroundColor = theme.accent.yellow
                 seg.font = .caption.bold()
                 result.append(seg)
                 i = end + 1
@@ -1213,7 +1216,7 @@ private struct OutlineRow: View {
                 var end = i
                 while end + 1 < scalars.count, !matchSet.contains(end + 1) { end += 1 }
                 var seg = AttributedString(String(String.UnicodeScalarView(scalars[i...end])))
-                seg.foregroundColor = textColor
+                seg.foregroundColor = attributedTextColor
                 seg.font = .caption
                 result.append(seg)
                 i = end + 1
@@ -1240,7 +1243,7 @@ private struct OutlineRow: View {
         }
     }
 
-    private var iconColor: Color {
+    private var iconColor: ThemeShapeStyle {
         if isCompaction {
             return .themeOrange
         }
@@ -1256,7 +1259,21 @@ private struct OutlineRow: View {
         }
     }
 
-    private var textColor: Color {
+    private var attributedTextColor: Color {
+        if isCompaction {
+            return theme.text.primary
+        }
+        switch kind {
+        case .user: return theme.text.primary
+        case .assistant: return theme.text.secondary
+        case .thinking: return theme.text.tertiary
+        case .tool: return theme.text.secondary
+        case .compaction: return theme.text.primary
+        default: return theme.text.tertiary
+        }
+    }
+
+    private var textColor: ThemeShapeStyle {
         if isCompaction {
             return .themeFg
         }
@@ -1548,7 +1565,7 @@ private struct OutlineTreeRow: View {
         }
     }
 
-    private var roleColor: Color {
+    private var roleColor: ThemeShapeStyle {
         if node.type == "message" {
             switch node.role {
             case "user": return .themeBlue
@@ -1566,6 +1583,7 @@ private struct OutlineTreeRow: View {
 }
 
 private struct OutlineTreeConnectorLines: View {
+    @Environment(\.theme) private var theme
     let displayNode: SessionTreeDisplayNode
 
     private let levelWidth: CGFloat = OutlineTreeLayout.levelIndent
@@ -1574,7 +1592,7 @@ private struct OutlineTreeConnectorLines: View {
         GeometryReader { _ in
             Canvas { context, size in
                 let stroke = StrokeStyle(lineWidth: 1, lineCap: .round)
-                let lineColor = Color.themeComment.opacity(0.38)
+                let lineColor = theme.text.tertiary.opacity(0.38)
                 let centerY = size.height * 0.5
 
                 for gutter in displayNode.gutters where gutter.show {

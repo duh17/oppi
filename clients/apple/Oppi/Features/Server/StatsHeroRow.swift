@@ -48,7 +48,7 @@ struct StatsHeroRow: View {
             .overlay(alignment: .bottom) {
                 if selectedMetric == metric {
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.themeBlue)
+                        .fill(.themeBlue)
                         .frame(width: 32, height: 2)
                         .padding(.bottom, 2)
                 }

@@ -105,7 +105,7 @@ struct TruncationNotice: View {
             .foregroundStyle(.themeComment)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
-            .background(Color.themeRecessedInset)
+            .background(.themeRecessedInset)
     }
 }
 
@@ -167,6 +167,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
     @Environment(\.reviewCommentSelectionRouter) private var reviewCommentSelectionRouter
     @Environment(\.reviewCommentSourceContext) private var environmentReviewCommentSourceContext
     @Environment(\.horizontalBackSwipeAction) private var horizontalBackSwipeAction
+    @Environment(\.themeID) private var themeID
 
     /// Approximate line height for the current fullscreen code font.
     private static var estimatedLineHeight: CGFloat { ceil(FullScreenCodeTypography.codeFont.lineHeight) }
@@ -182,7 +183,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
             content: content,
             language: language,
             startLine: startLine,
-            palette: ThemeRuntimeState.currentThemeID().palette,
+            palette: themeID.palette,
             alwaysBounceVertical: maxHeight == nil,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext ?? environmentReviewCommentSourceContext
@@ -192,6 +193,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: NativeFullScreenCodeBody, context: Context) {
+        uiView.applyPalette(themeID.palette)
         context.coordinator.installBackSwipe(action: horizontalBackSwipeAction, on: uiView)
     }
 

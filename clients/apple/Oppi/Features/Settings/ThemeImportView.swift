@@ -63,6 +63,13 @@ struct ThemeImportView: View {
                 .onTapGesture {
                     Task { await importTheme(summary) }
                 }
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    if CustomThemeStore.load(name: summary.name) != nil {
+                        Button("Delete", role: .destructive) {
+                            themeStore.removeImportedTheme(named: summary.name)
+                        }
+                    }
+                }
             }
         }
     }

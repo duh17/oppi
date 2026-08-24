@@ -113,6 +113,18 @@ struct ElevatedSurfaceOpacityTests {
         }
     }
 
+    @MainActor
+    @Test func contrastingForegroundPicksPaperBackgroundOnBlackSendDisc() throws {
+        let fill = try rgb(of: Color(red: 31 / 255, green: 31 / 255, blue: 31 / 255))
+        let ink = Color(red: 17 / 255, green: 17 / 255, blue: 17 / 255)
+        let paper = Color(red: 251 / 255, green: 250 / 255, blue: 247 / 255)
+        let chosen = ThemeColorContrast.contrastingForeground(on: Color(red: 31 / 255, green: 31 / 255, blue: 31 / 255), candidates: [ink, paper])
+        let chosenRGB = try rgb(of: chosen)
+        let paperRGB = try rgb(of: paper)
+        #expect(abs(chosenRGB.red - paperRGB.red) < 0.02)
+        #expect(contrastRatio(chosenRGB, fill) > contrastRatio(try rgb(of: ink), fill))
+    }
+
     @Test func adaptiveSurfaceOpacityPreservesDarkBaselineAndBoostsLight() {
         let darkControlOpacity = ThemeColorContrast.adaptiveSurfaceOpacity(
             for: ThemePalettes.dark.bgDark,

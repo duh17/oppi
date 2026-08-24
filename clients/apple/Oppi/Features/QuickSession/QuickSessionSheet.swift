@@ -1603,7 +1603,7 @@ private struct QuickSessionWorkspacePickerRow: View {
         .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
         .padding(.horizontal, 12)
         .background(
-            isSelected ? Color.themeBlue.opacity(0.10) : Color.clear,
+            isSelected ? .themeBlue.opacity(0.10) : Color.clear,
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
         .padding(.horizontal, 8)
@@ -1618,7 +1618,7 @@ private struct QuickSessionWorkspacePickerRowButtonStyle: ButtonStyle {
             .overlay {
                 if configuration.isPressed {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.themeFg.opacity(0.06))
+                        .fill(.themeFg.opacity(0.06))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 1)
                 }

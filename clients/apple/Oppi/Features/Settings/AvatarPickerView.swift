@@ -102,7 +102,7 @@ struct AssistantAvatarPreview: View {
         .scaledToFit()
         .frame(width: size, height: size)
         .background(
-            Color.themeComment.opacity(0.10),
+            .themeComment.opacity(0.10),
             in: RoundedRectangle(cornerRadius: size * 0.32, style: .continuous)
         )
         .accessibilityHidden(true)

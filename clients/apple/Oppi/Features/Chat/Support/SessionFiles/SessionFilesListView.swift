@@ -311,7 +311,7 @@ struct SessionFilesListView: View {
                     .frame(width: 28, height: 28)
                     .background(
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(icon.color.opacity(0.1))
+                            .fill(icon.tint.style.opacity(0.1))
                     )
 
                 // File name + parent path

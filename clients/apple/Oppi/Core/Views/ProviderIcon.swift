@@ -5,6 +5,8 @@ import SwiftUI
 /// Prefers a bundled provider logo asset when available. Falls back to a
 /// monogram mark when we don't have a vetted local asset yet.
 struct ProviderIcon: View {
+    @Environment(\.themeID) private var themeID
+
     let provider: String
     var size: CGFloat = Self.defaultIconSize
 
@@ -19,14 +21,14 @@ struct ProviderIcon: View {
                     .scaledToFit()
                     .foregroundStyle(providerIconTint(
                         Self.brandColor(for: provider),
-                        palette: ThemeRuntimeState.currentPalette()
+                        palette: themeID.palette
                     ))
             } else {
                 Text(Self.mark(for: provider))
                     .font(.system(size: max(8, size * 0.8), weight: .heavy, design: .rounded))
                     .foregroundStyle(providerIconTint(
                         Self.brandColor(for: provider),
-                        palette: ThemeRuntimeState.currentPalette()
+                        palette: themeID.palette
                     ))
             }
         }

@@ -37,7 +37,7 @@ struct FileSuggestionList: View {
             HStack(spacing: 8) {
                 Group {
                     if suggestion.isDirectory {
-                        FileIcon(symbolName: "folder.fill", color: .themeYellow)
+                        FileIcon(symbolName: "folder.fill", tint: .yellow)
                             .iconView(size: 16, font: .caption)
                     } else {
                         FileIcon.forPath(suggestion.path)

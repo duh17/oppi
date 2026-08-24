@@ -235,6 +235,12 @@ struct ThemeIDTests {
     @Test func unfilteredPickerIncludesEveryBuiltin() {
         let themes = ThemeID.pickerThemes(matching: nil)
         #expect(ThemeID.builtins.allSatisfy(themes.contains))
+        #expect(themes.filter(\.isImported).allSatisfy { theme in
+            if case .custom = theme { return true }
+            return false
+        })
+        #expect(ThemeID.light.isImported == false)
+        #expect(ThemeID.custom("Paper").isImported)
     }
 
     @Test func pickerSplitsImportedThemesByColorScheme() {

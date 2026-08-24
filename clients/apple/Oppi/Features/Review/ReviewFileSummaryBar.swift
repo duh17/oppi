@@ -47,7 +47,7 @@ struct ReviewFileSummaryBar: View {
 
                     StatusPill(
                         text: statusLabel,
-                        tone: .custom(GitStatusColor.color(for: status)),
+                        tone: GitStatusColor.tone(for: status),
                         emphasis: .tinted,
                         size: .mini
                     )

@@ -22,18 +22,18 @@ private extension View {
     func extensionGlassInset(cornerRadius: CGFloat = 12) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
-            .background(Color.themeFg.opacity(0.04), in: shape)
+            .background(.themeFg.opacity(0.04), in: shape)
             .overlay {
-                shape.stroke(Color.themeFg.opacity(0.08), lineWidth: 0.5)
+                shape.stroke(.themeFg.opacity(0.08), lineWidth: 0.5)
             }
     }
 
     func extensionSubtleInset(cornerRadius: CGFloat = 12) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
-            .background(Color.themeFg.opacity(0.035), in: shape)
+            .background(.themeFg.opacity(0.035), in: shape)
             .overlay {
-                shape.stroke(Color.themeFg.opacity(0.08), lineWidth: 0.5)
+                shape.stroke(.themeFg.opacity(0.08), lineWidth: 0.5)
             }
     }
 
@@ -66,10 +66,10 @@ private struct ExtensionProgressBar: View {
 
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.themeFg.opacity(0.12))
+                    .fill(.themeFg.opacity(0.12))
 
                 Capsule()
-                    .fill(Color.themeFg.opacity(0.82))
+                    .fill(.themeFg.opacity(0.82))
                     .frame(width: width)
             }
         }
@@ -1024,12 +1024,12 @@ private struct ExtensionNativeActivityRowContent: View {
         .padding(.vertical, 5)
         .frame(minHeight: showsNavigationCue || showsDisclosureCue ? 44 : 34, alignment: .center)
         .background(
-            Color.themeFg.opacity(rowHighlightOpacity),
+            .themeFg.opacity(rowHighlightOpacity),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.themeComment.opacity(rowBorderOpacity), lineWidth: 1)
+                .stroke(.themeComment.opacity(rowBorderOpacity), lineWidth: 1)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -1629,12 +1629,12 @@ private struct ExtensionSurfaceStripPill: View {
             .padding(.vertical, 8)
             .frame(minHeight: 36)
             .background(
-                Color.themeFg.opacity(isActive ? 0.1 : 0.045),
+                .themeFg.opacity(isActive ? 0.1 : 0.045),
                 in: Capsule()
             )
             .overlay {
                 Capsule()
-                    .stroke(isActive ? entry.stateTone.color.opacity(0.45) : Color.themeFg.opacity(0.08), lineWidth: 1)
+                    .stroke(isActive ? entry.stateTone.color.opacity(0.45) : .themeFg.opacity(0.08), lineWidth: 1)
             }
             .contentShape(Capsule())
         }
@@ -1696,7 +1696,7 @@ private struct ExtensionSurfaceDrawer: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.themeComment)
                         .frame(width: 32, height: 32)
-                        .background(Color.themeFg.opacity(0.04), in: Circle())
+                        .background(.themeFg.opacity(0.04), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-drawer-collapse")

@@ -9,6 +9,7 @@ struct ContextInspectorView: View {
     @State private var statsLoading = false
     @State private var statsError: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.themeID) private var themeID
 
     private struct SkillEstimate: Identifiable {
         let name: String
@@ -22,7 +23,7 @@ struct ContextInspectorView: View {
         let label: String
         let detail: String
         let tokens: Int
-        let color: Color
+        let color: ThemeShapeStyle
 
         var id: String { label }
     }
@@ -31,7 +32,7 @@ struct ContextInspectorView: View {
         let title: String
         let value: String
         let detail: String
-        let tint: Color
+        let tint: ThemeShapeStyle
     }
 
     private var contextSnapshot: ContextUsageSnapshot {
@@ -270,6 +271,7 @@ struct ContextInspectorView: View {
         .scrollContentBackground(.hidden)
         .background(.themeBg)
         .tint(.themeBlue)
+        .id(themeID)
         .task(id: session?.id) {
             await refreshSessionStats()
         }
@@ -331,7 +333,7 @@ struct ContextInspectorView: View {
 
                     if remainingWidth > 1 {
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(Color.themeComment.opacity(0.2))
+                            .fill(.themeComment.opacity(0.2))
                             .frame(width: remainingWidth)
                     }
                 }
@@ -476,7 +478,7 @@ struct ContextInspectorView: View {
         }
     }
 
-    private func usageMetric(title: String, value: String, detail: String, tint: Color) -> some View {
+    private func usageMetric(title: String, value: String, detail: String, tint: ThemeShapeStyle) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Circle()
                 .fill(tint)

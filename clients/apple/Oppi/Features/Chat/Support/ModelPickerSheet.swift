@@ -13,6 +13,7 @@ struct ModelPickerSheet: View {
     @Environment(ChatSessionState.self) private var chatState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.themeID) private var themeID
 
     @State private var searchText = ""
     @State private var collapsedProviders: Set<String> = []
@@ -193,8 +194,9 @@ struct ModelPickerSheet: View {
             }
         }
         .listRowBackground(
-            isCurrent ? Color.themeBlue.opacity(0.12) : Color.themeBg
+            Rectangle().fill(isCurrent ? AnyShapeStyle(.themeBlue.opacity(0.12)) : AnyShapeStyle(.themeBg))
         )
+        .id(themeID)
         .accessibilityIdentifier("model.picker.row.\(fullId(model))")
     }
 

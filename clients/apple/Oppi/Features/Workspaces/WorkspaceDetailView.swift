@@ -557,7 +557,7 @@ struct WorkspaceDetailView: View {
         .contentMargins(.top, contextBarHeight, for: .scrollContent)
         .overlay {
             if contextBarExpanded {
-                Color.themeDimScrim
+                Rectangle().fill(.themeDimScrim)
                     .onTapGesture { contextBarCollapseToken &+= 1 }
             }
         }

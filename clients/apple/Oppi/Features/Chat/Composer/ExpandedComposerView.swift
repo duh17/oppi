@@ -26,6 +26,8 @@ import UniformTypeIdentifiers
 /// └─────────────────────────────┘
 /// ```
 struct ExpandedComposerView: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
     @Binding var text: String
     @Binding var textBeforeRecording: String?
     @Binding var pendingAttachments: [PendingAttachment]
@@ -111,7 +113,7 @@ struct ExpandedComposerView: View {
         !isSubmitInFlight && !isHandlingVoiceLifecycle && (allowsEmptySubmit || canSend)
     }
 
-    private var accentColor: Color { .themeBlue }
+    private var accentColor: Color { theme.accent.blue }
     private var composerInputFont: UIFont { .preferredFont(forTextStyle: .body) }
     private var composerAutocorrectionEnabled: Bool { true }
 
@@ -195,8 +197,8 @@ struct ExpandedComposerView: View {
                     text: textFieldBinding,
                     keyboardLanguage: $keyboardLanguage,
                     font: composerInputFont,
-                    textColor: UIColor(Color.themeFg),
-                    tintColor: UIColor(accentColor),
+                    textColor: UIColor(theme.text.primary),
+                    tintColor: UIColor(theme.accent.blue),
                     volatileSuffixLength: ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .expandedComposer),
                     correctionRanges: correctionRangesForDisplay,
                     autocorrectionEnabled: composerAutocorrectionEnabled,

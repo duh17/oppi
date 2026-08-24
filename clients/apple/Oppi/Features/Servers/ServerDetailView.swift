@@ -1225,7 +1225,7 @@ struct ModelProvidersQuotaPreview: View {
                             .foregroundStyle(.themeBlue)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                            .background(Color.themeBlue.opacity(0.14), in: Capsule())
+                            .background(.themeBlue.opacity(0.14), in: Capsule())
                     }
                 }
             }

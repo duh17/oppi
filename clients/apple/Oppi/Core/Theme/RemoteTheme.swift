@@ -185,22 +185,56 @@ private extension Color {
 /// Stores imported custom themes in UserDefaults so they survive app restarts.
 enum CustomThemeStore {
     private static let storageKey = "\(AppIdentifiers.subsystem).customThemes"
+    static let renamedThemes = ["Paper Official": "Paper"]
 
     /// Save a remote theme locally.
     static func save(_ theme: RemoteTheme) {
-        var themes = loadAll()
+        var themes = loadAllRaw()
         themes[theme.name] = theme
+        persist(themes)
+    }
+
+    /// Load all saved custom themes.
+    static func loadAll() -> [String: RemoteTheme] {
+        migrateRenamedThemes()
+        return loadAllRaw()
+    }
+
+    static func migratedThemeID(_ themeID: ThemeID) -> ThemeID {
+        guard case .custom(let name) = themeID, let newName = renamedThemes[name] else {
+            return themeID
+        }
+        return .custom(newName)
+    }
+
+    private static func loadAllRaw() -> [String: RemoteTheme] {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let themes = try? JSONDecoder().decode([String: RemoteTheme].self, from: data)
+        else { return [:] }
+        return themes
+    }
+
+    private static func persist(_ themes: [String: RemoteTheme]) {
         if let data = try? JSONEncoder().encode(themes) {
             UserDefaults.standard.set(data, forKey: storageKey)
         }
     }
 
-    /// Load all saved custom themes.
-    static func loadAll() -> [String: RemoteTheme] {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let themes = try? JSONDecoder().decode([String: RemoteTheme].self, from: data)
-        else { return [:] }
-        return themes
+    static func migrateRenamedThemes() {
+        var themes = loadAllRaw()
+        var changed = false
+        for (oldName, newName) in renamedThemes {
+            guard let theme = themes.removeValue(forKey: oldName) else { continue }
+            themes[newName] = RemoteTheme(
+                name: newName,
+                colorScheme: theme.colorScheme,
+                colors: theme.colors
+            )
+            changed = true
+        }
+        if changed {
+            persist(themes)
+        }
     }
 
     /// Load a specific theme by name.

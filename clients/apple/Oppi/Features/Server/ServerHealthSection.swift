@@ -53,7 +53,7 @@ struct ServerHealthSection: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.themeComment.opacity(0.2))
+                        .fill(.themeComment.opacity(0.2))
                         .frame(height: 6)
                     Capsule()
                         .fill(rssBarColor)

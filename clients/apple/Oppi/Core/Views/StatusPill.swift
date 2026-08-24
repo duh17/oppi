@@ -10,22 +10,22 @@ enum StatusPillTone {
     case info
     case custom(Color)
 
-    var color: Color {
+    var style: AnyShapeStyle {
         switch self {
         case .neutral:
-            return .themeComment
+            AnyShapeStyle(ThemeShapeStyle(role: .comment))
         case .accent, .working:
-            return .themeBlue
+            AnyShapeStyle(ThemeShapeStyle(role: .blue))
         case .success:
-            return .themeGreen
+            AnyShapeStyle(ThemeShapeStyle(role: .green))
         case .warning:
-            return .themeOrange
+            AnyShapeStyle(ThemeShapeStyle(role: .orange))
         case .danger:
-            return .themeRed
+            AnyShapeStyle(ThemeShapeStyle(role: .red))
         case .info:
-            return .themeCyan
+            AnyShapeStyle(ThemeShapeStyle(role: .cyan))
         case .custom(let color):
-            return color
+            AnyShapeStyle(color)
         }
     }
 }
@@ -85,6 +85,8 @@ enum StatusPillSize {
 }
 
 struct StatusPill: View {
+    @Environment(\.themeID) private var themeID
+
     let text: String
     var systemImage: String? = nil
     var tone: StatusPillTone = .neutral
@@ -94,6 +96,7 @@ struct StatusPill: View {
     var accessibilityLabel: String? = nil
 
     var body: some View {
+        let _ = themeID
         switch emphasis {
         case .glass:
             content
@@ -105,7 +108,7 @@ struct StatusPill: View {
             content
                 .padding(.horizontal, size.horizontalPadding)
                 .padding(.vertical, size.verticalPadding)
-                .background(backgroundColor, in: Capsule())
+                .background(backgroundStyle, in: Capsule())
                 .accessibilityLabel(accessibilityLabel ?? text)
         }
     }
@@ -116,12 +119,12 @@ struct StatusPill: View {
                 Image(systemName: systemImage)
                     .font(size.font)
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(iconColor)
+                    .foregroundStyle(tone.style)
             }
 
             labelText
                 .font(size.font)
-                .foregroundStyle(labelColor)
+                .foregroundStyle(labelStyle)
         }
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
@@ -136,28 +139,23 @@ struct StatusPill: View {
         }
     }
 
-    private var iconColor: Color {
-        tone.color
-    }
-
-    private var labelColor: Color {
+    private var labelStyle: AnyShapeStyle {
         switch emphasis {
         case .quiet:
-            return systemImage == nil ? tone.color : .themeComment
+            systemImage == nil ? tone.style : AnyShapeStyle(ThemeShapeStyle(role: .comment))
         case .tinted, .glass:
-            return tone.color
+            tone.style
         }
     }
 
-    private var backgroundColor: Color {
+    private var backgroundStyle: AnyShapeStyle {
         switch emphasis {
         case .quiet:
-            return .themeFg.opacity(0.08)
+            AnyShapeStyle(ThemeShapeStyle(role: .foreground).opacity(0.08))
         case .tinted:
-            let color = tone.color
-            return color.opacity(0.14)
+            AnyShapeStyle(tone.style.opacity(0.14))
         case .glass:
-            return .clear
+            AnyShapeStyle(Color.clear)
         }
     }
 }

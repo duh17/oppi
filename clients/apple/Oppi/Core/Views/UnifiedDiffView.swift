@@ -18,6 +18,7 @@ struct UnifiedDiffView: View {
     var reviewCommentSelectionContext: ReviewCommentSelectionContext?
 
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.themeID) private var themeID
 
     private var effectiveReviewCommentSelectionContext: ReviewCommentSelectionContext? {
         reviewCommentSelectionContext ?? reviewCommentSelectionScope?.makeContext()
@@ -52,7 +53,7 @@ struct UnifiedDiffView: View {
                     .background(.themeBgDark)
             }
         }
-        .task(id: filePath + "|\(hunks.count)") {
+        .task(id: filePath + "|\(hunks.count)|\(themeID.rawValue)") {
             guard !hunks.isEmpty else { return }
             let h = hunks
             let fp = filePath
@@ -234,7 +235,21 @@ private struct UnifiedDiffTextView: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.reviewCommentSelectionContext = reviewCommentSelectionContext
         context.coordinator.sourceContext = sourceContext
+        let background = UIColor(Color.themeBgDark)
+        uiView.backgroundColor = background
         if let scrollView = uiView.subviews.compactMap({ $0 as? UnifiedDiffScrollView }).first {
+            scrollView.backgroundColor = background
+            if let textView = scrollView.subviews.compactMap({ $0 as? UITextView }).first {
+                textView.textStorage.setAttributedString(built.attributedText)
+                if let width = textView.constraints.first(where: { $0.firstAttribute == .width && $0.secondItem == nil }) {
+                    width.constant = built.contentWidth
+                }
+            }
+            scrollView.diffLayoutManager?.measuredContentWidth = built.contentWidth
+            scrollView.diffLayoutManager?.invalidateDisplay(forCharacterRange: NSRange(
+                location: 0,
+                length: built.attributedText.length
+            ))
             context.coordinator.installBackSwipe(action: horizontalBackSwipeAction, on: scrollView)
         }
     }

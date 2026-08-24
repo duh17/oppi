@@ -38,7 +38,7 @@ struct MessageQueueContainer: View {
     private struct StatusBannerModel {
         let title: String
         let message: String
-        let color: Color
+        let color: ThemeShapeStyle
     }
 
     let queue: MessageQueueState
@@ -233,21 +233,26 @@ struct MessageQueueContainer: View {
         .accessibilityValue("\(displayedQueue.steering.count) steering, \(displayedQueue.followUp.count) follow-up")
     }
 
-    private var messageQueueStatusColor: Color {
+    private var messageQueueStatusColor: ThemeShapeStyle {
         isQueueEmpty ? .themeComment : .themeGreen
     }
 
-    private func countPill(count: Int, label: String, tint: Color) -> some View {
+    private func countPill(count: Int, label: String, tint: ThemeShapeStyle) -> some View {
         Text("\(count) \(label)")
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(count > 0 ? Color.themeFg : Color.themeComment)
+            .foregroundStyle(count > 0 ? .themeFg : .themeComment)
             .lineLimit(1)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(Color.themeFg.opacity(count > 0 ? 0.075 : 0.04), in: Capsule())
+            .background(.themeFg.opacity(count > 0 ? 0.075 : 0.04), in: Capsule())
             .overlay {
                 Capsule()
-                    .stroke(count > 0 ? tint.opacity(0.35) : Color.themeFg.opacity(0.08), lineWidth: 1)
+                    .stroke(
+                        count > 0
+                            ? AnyShapeStyle(tint.opacity(0.35))
+                            : AnyShapeStyle(ThemeShapeStyle(role: .foreground).opacity(0.08)),
+                        lineWidth: 1
+                    )
             }
     }
 
@@ -260,7 +265,7 @@ struct MessageQueueContainer: View {
     }
 
     @ViewBuilder
-    private func statusBanner(title: String, message: String, color: Color) -> some View {
+    private func statusBanner(title: String, message: String, color: ThemeShapeStyle) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.caption.weight(.semibold))
@@ -274,7 +279,7 @@ struct MessageQueueContainer: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.themeRecessedInset)
+                .fill(.themeRecessedInset)
         )
     }
 
@@ -326,7 +331,7 @@ struct MessageQueueContainer: View {
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.themeRecessedInset)
+                    .fill(.themeRecessedInset)
             )
 
             rowActions(kind: kind, index: index)
@@ -377,7 +382,7 @@ struct MessageQueueContainer: View {
                     .aspectRatio(contentMode: .fill)
             } else {
                 ZStack {
-                    Color.themeRecessedInset
+                    Rectangle().fill(.themeRecessedInset)
                     Image(systemName: "photo")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.themeComment)
@@ -388,7 +393,7 @@ struct MessageQueueContainer: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
+                .stroke(.themeComment.opacity(0.3), lineWidth: 1)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("chat.messageQueue.attachment.\(id)")
@@ -628,7 +633,7 @@ private struct IconActionButton: View {
                 .frame(width: 24, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color.themeRecessedInset)
+                        .fill(.themeRecessedInset)
                 )
         }
         .buttonStyle(.plain)

@@ -179,11 +179,11 @@ struct CommitDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 commitHeader(detail)
 
-                Divider().overlay(Color.themeComment.opacity(0.2))
+                Divider().overlay(.themeComment.opacity(0.2))
 
                 filesSectionHeader(detail)
 
-                Divider().overlay(Color.themeComment.opacity(0.15))
+                Divider().overlay(.themeComment.opacity(0.15))
 
                 fileList(detail)
             }
@@ -458,7 +458,7 @@ struct CommitFileDiffView: View {
                 removedLines: file.removedLines
             )
 
-            Divider().overlay(Color.themeComment.opacity(0.2))
+            Divider().overlay(.themeComment.opacity(0.2))
 
             Group {
                 if let diff {

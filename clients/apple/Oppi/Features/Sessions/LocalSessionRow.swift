@@ -44,7 +44,7 @@ struct LocalSessionRow: View {
                         .padding(.vertical, 1)
                         .background(
                             RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.themeComment.opacity(0.15))
+                                .fill(.themeComment.opacity(0.15))
                         )
 
                     if let modelSummary {

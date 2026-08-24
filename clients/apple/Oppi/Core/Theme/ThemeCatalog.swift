@@ -172,6 +172,18 @@ enum ThemeID: Hashable, Codable, Sendable {
         preferredColorScheme == scheme ? self : ThemeID.defaultTheme(for: scheme)
     }
 
+    var isImported: Bool {
+        if case .custom = self { return true }
+        return false
+    }
+
+    func replacingImportedName(_ oldName: String, with newName: String) -> ThemeID {
+        if case .custom(let name) = self, name == oldName {
+            return .custom(newName)
+        }
+        return self
+    }
+
     static let storageKey = "\(AppIdentifiers.subsystem).theme.id"
 
     /// Stable string ID for persistence.

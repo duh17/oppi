@@ -582,7 +582,7 @@ struct ComposerFilePill: View {
 
     var body: some View {
         let icon = file.isDirectory
-            ? FileIcon(symbolName: "folder.fill", color: .themeYellow)
+            ? FileIcon(symbolName: "folder.fill", tint: .yellow)
             : FileIcon.forPath(file.path)
 
         HStack(spacing: 4) {

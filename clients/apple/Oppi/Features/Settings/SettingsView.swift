@@ -379,8 +379,20 @@ struct SettingsView: View {
         matching scheme: ColorScheme?
     ) -> some View {
         Picker(title, selection: selection) {
-            ForEach(ThemeID.pickerThemes(matching: scheme), id: \.self) { themeID in
-                Text(themeID.displayName).tag(themeID)
+            let themes = ThemeID.pickerThemes(matching: scheme)
+            let builtins = themes.filter { !$0.isImported }
+            let imported = themes.filter(\.isImported)
+            Section("Built-in") {
+                ForEach(builtins, id: \.self) { themeID in
+                    Text(themeID.displayName).tag(themeID)
+                }
+            }
+            if !imported.isEmpty {
+                Section("Imported") {
+                    ForEach(imported, id: \.self) { themeID in
+                        Text(themeID.displayName).tag(themeID)
+                    }
+                }
             }
         }
     }
