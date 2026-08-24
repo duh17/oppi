@@ -1491,6 +1491,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.backgroundColor = .clear
+        contentView.clipsToBounds = true
         backgroundColor = .clear
         stackView.setContentHuggingPriority(.required, for: .vertical)
         stackView.setContentCompressionResistancePriority(.required, for: .vertical)
@@ -1836,6 +1837,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var debugLayoutReplacementReasons: [MarkdownReaderLayoutReplacementReason] = []
     private var debugGeometryCommitCount = 0
     private var debugWillDisplayRenderAheadMissCount = 0
+    /// Offset or anchor writes while a gesture owns the viewport.
     private var debugVisibleHeightCorrectionDuringInteractionCount = 0
     private var debugOffsetWriteReasons: [MarkdownReaderOffsetWriteReason] = []
     private var debugIsPerformingDirectScroll = false
@@ -1874,6 +1876,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var deferredInitialRenderTask: Task<Void, Never>?
     private var asyncRenderTask: Task<Void, Never>?
     private var renderAheadTask: Task<Void, Never>?
+    private var scheduledRenderAheadFirstVisibleItem: Int?
     private var latestSnapshot: ThinkingTraceStream.Snapshot
     private var pendingInteractionSnapshot: ThinkingTraceStream.Snapshot?
     private var pendingReaderPreferences: FullScreenReaderPreferences?
@@ -1975,7 +1978,11 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         _ = viewportOwner
         #if DEBUG
         viewportOwner.onOffsetWrite = { [weak self] reason, _, _ in
-            self?.debugOffsetWriteReasons.append(reason)
+            guard let self else { return }
+            self.debugOffsetWriteReasons.append(reason)
+            if self.isCollectionUserInteracting {
+                self.debugVisibleHeightCorrectionDuringInteractionCount += 1
+            }
         }
         #endif
 
@@ -2753,29 +2760,37 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
            heightLedger.finalHeight(
                for: renderedSegmentIDs[indexPath.item],
                canonicalWidth: canonicalWidth
-           ) == nil,
-           let config = currentConfig {
+           ) == nil {
             #if DEBUG
             debugWillDisplayRenderAheadMissCount += 1
             #endif
-            settleItemGeometry(
-                indexPath.item,
-                config: config,
-                canonicalWidth: canonicalWidth
-            )
-            itemHeights = heightLedger.heights()
-            let becameFinal = heightLedger.finalHeight(
-                for: renderedSegmentIDs[indexPath.item],
-                canonicalWidth: canonicalWidth
-            ) != nil
-            if becameFinal {
-                // A miss is not settled by mutating the ledger alone: replace
-                // the active compositional layout and compensate the anchor in
-                // the same nonanimated transaction before revealing the cell.
-                replaceCollectionLayout(
-                    preserveViewport: true,
-                    reason: .willDisplayMiss
+            if !waitsForPreparedInternalGeometry(indexPath.item),
+               let token = heightLedger.workToken(
+                   for: renderedSegmentIDs[indexPath.item],
+                   canonicalWidth: canonicalWidth
+               ) {
+                let width = cell.contentView.bounds.width > 0
+                    ? cell.contentView.bounds.width
+                    : canonicalWidth
+                let commit = heightLedger.commitFinal(
+                    token: token,
+                    height: cell.measuredFittingHeight(width: width),
+                    anchorID: captureViewportAnchorID()
                 )
+                if commit.accepted {
+                    #if DEBUG
+                    debugGeometryCommitCount += 1
+                    #endif
+                    itemHeights = heightLedger.heights()
+                    if isCollectionUserInteracting {
+                        needsLayoutReplaceAfterInteraction = true
+                    } else {
+                        replaceCollectionLayout(
+                            preserveViewport: true,
+                            reason: .willDisplayMiss
+                        )
+                    }
+                }
             }
             refreshGeometryPresentationForVisibleCells()
         }
@@ -2892,6 +2907,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         preparedCanonicalWidth = canonicalWidth
         heightFlushGeneration &+= 1
         pendingHeightFlush = false
+        scheduledRenderAheadFirstVisibleItem = nil
         needsLayoutReplaceAfterInteraction = false
         needsVisibleHeightRefreshAfterInteraction = false
         suppressParkedReinstall = false
@@ -3221,11 +3237,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
 
     private func scheduleRenderAheadForCurrentViewport() {
         guard !renderedSegments.isEmpty else { return }
-        let targetY = collectionView.contentOffset.y + collectionView.bounds.height * 3
         let first = collectionView.indexPathsForVisibleItems.map(\.item).min() ?? 0
+        guard scheduledRenderAheadFirstVisibleItem != first else { return }
+        scheduledRenderAheadFirstVisibleItem = first
         scheduleRenderAheadSlices(
             fromItem: first,
-            targetY: targetY,
+            targetY: collectionView.contentOffset.y + collectionView.bounds.height * 3,
             generation: heightFlushGeneration
         )
     }
@@ -3353,25 +3370,9 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         on cell: FullScreenMarkdownSegmentCell,
         item: Int
     ) {
-        guard renderedSegmentIDs.indices.contains(item),
-              let canonicalWidth = preparedCanonicalWidth else {
-            cell.setGeometryPresentationReady(false)
-            return
-        }
-        let finalHeight = heightLedger.finalHeight(
-            for: renderedSegmentIDs[item],
-            canonicalWidth: canonicalWidth
-        )
-        let activeHeight = activeLayoutItemHeights.indices.contains(item)
-            ? activeLayoutItemHeights[item]
-            : nil
-        let isReady: Bool
-        if let finalHeight, let activeHeight {
-            isReady = abs(activeHeight - finalHeight) <= 0.5
-        } else {
-            isReady = false
-        }
-        cell.setGeometryPresentationReady(isReady)
+        // Hide only when this cell's own content geometry is unknowable.
+        // A pending layout-height mismatch must not blank a visible cell.
+        cell.setGeometryPresentationReady(!waitsForPreparedInternalGeometry(item))
     }
 
     private func refreshGeometryPresentationForVisibleCells() {
@@ -3419,12 +3420,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         guard commit.accepted else { return }
         #if DEBUG
         debugGeometryCommitCount += 1
-        if heightChanged,
-           let visibleCell,
-           visibleCell.isGeometryPresentationReady,
-           isCollectionUserInteracting {
-            debugVisibleHeightCorrectionDuringInteractionCount += 1
-        }
         #endif
         itemHeights = heightLedger.heights()
         if isCollectionUserInteracting {
@@ -3874,6 +3869,7 @@ extension NativeFullScreenMarkdownBody {
         debugInitialSynchronousPreparationItemCount
     }
     var debugIsRenderAheadActiveForTesting: Bool { renderAheadTask != nil }
+    /// Counts viewport offset or anchor writes during an in-progress gesture.
     var debugVisibleHeightCorrectionDuringInteractionCountForTesting: Int {
         debugVisibleHeightCorrectionDuringInteractionCount
     }
@@ -3882,6 +3878,7 @@ extension NativeFullScreenMarkdownBody {
     }
     func debugResetOffsetWriteReasonsForTesting() {
         debugOffsetWriteReasons.removeAll()
+        debugVisibleHeightCorrectionDuringInteractionCount = 0
     }
     func debugQueueAutomaticViewportWritesForTesting(focusY: CGFloat) {
         viewportOwner.scheduleFollowTail()

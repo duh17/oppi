@@ -581,6 +581,122 @@ struct MarkdownReaderRenderAheadContractTests {
     }
 
     @MainActor
+    @Test("continuous flick presents viewport cells before lift")
+    func continuousFlickPresentsViewportCellsBeforeLift() throws {
+        let content = (0..<80).map { index in
+            "```text\nrunway block \(index) \(String(repeating: "word ", count: 16))\n```"
+        }.joined(separator: "\n\n")
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer {
+            body.debugSetCollectionUserInteractingForTesting(nil)
+            window.isHidden = true
+        }
+
+        body.layoutIfNeeded()
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collection.layoutIfNeeded()
+        #expect(body.debugRenderedSegmentCountForTesting == 80)
+
+        body.scrollViewWillBeginDragging(collection)
+        body.debugSetCollectionUserInteractingForTesting(true)
+        body.debugResetOffsetWriteReasonsForTesting()
+        let replacementsBeforeFlick = body.debugLayoutReplaceCountForTesting
+        let deepItem = body.debugRenderedSegmentCountForTesting - 8
+        scrollProduction(body: body, collection: collection, item: deepItem)
+
+        let visibleItems = collection.indexPathsForVisibleItems.map(\.item).sorted()
+        #expect(!visibleItems.isEmpty)
+        #expect(visibleItems.contains(where: { $0 >= deepItem - 2 }))
+        for item in visibleItems {
+            if case .image = body.debugRenderedSegmentsForTesting[item] {
+                continue
+            }
+            #expect(
+                body.debugIsItemPresentedForTesting(item),
+                "item \(item) stayed blank during the in-progress flick"
+            )
+        }
+        #expect(body.debugOffsetWriteReasonsForTesting.isEmpty)
+        #expect(body.debugVisibleHeightCorrectionDuringInteractionCountForTesting == 0)
+        #expect(body.debugLayoutReplaceCountForTesting == replacementsBeforeFlick)
+        #expect(body.debugNeedsLayoutReplaceAfterInteractionForTesting)
+    }
+
+    @MainActor
+    @Test("multi-stop ride presents every viewport before lift")
+    func multiStopRidePresentsEveryViewportBeforeLift() throws {
+        let content = (0..<80).map { index in
+            "```text\nride block \(index) \(String(repeating: "word ", count: 16))\n```"
+        }.joined(separator: "\n\n")
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            stream: nil,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer {
+            body.debugSetCollectionUserInteractingForTesting(nil)
+            window.isHidden = true
+        }
+
+        body.layoutIfNeeded()
+        let collection = try #require(timelineFirstView(ofType: UICollectionView.self, in: body))
+        collection.layoutIfNeeded()
+
+        body.scrollViewWillBeginDragging(collection)
+        body.debugSetCollectionUserInteractingForTesting(true)
+        body.debugResetOffsetWriteReasonsForTesting()
+        let replacementsBeforeRide = body.debugLayoutReplaceCountForTesting
+        let stops = [0, 20, 40, 60, 72]
+
+        for stop in stops {
+            scrollProduction(body: body, collection: collection, item: stop)
+            let visibleItems = collection.indexPathsForVisibleItems.map(\.item).sorted()
+            #expect(!visibleItems.isEmpty, "stop \(stop) had no visible cells")
+            #expect(visibleItems.contains(where: { abs($0 - stop) <= 3 }), "stop \(stop) did not land near the target")
+            for item in visibleItems {
+                #expect(
+                    body.debugIsItemPresentedForTesting(item),
+                    "item \(item) stayed blank at ride stop \(stop)"
+                )
+            }
+        }
+
+        #expect(body.debugOffsetWriteReasonsForTesting.isEmpty)
+        #expect(body.debugVisibleHeightCorrectionDuringInteractionCountForTesting == 0)
+        #expect(body.debugLayoutReplaceCountForTesting == replacementsBeforeRide)
+
+        let anchorBeforeLift = try #require(body.debugVisibleAnchorForTesting())
+        body.debugSetCollectionUserInteractingForTesting(false)
+        body.scrollViewDidEndDragging(collection, willDecelerate: false)
+        collection.layoutIfNeeded()
+
+        let visibleAfterLift = collection.indexPathsForVisibleItems.map(\.item).sorted()
+        #expect(!visibleAfterLift.isEmpty)
+        for item in visibleAfterLift {
+            #expect(body.debugIsItemPresentedForTesting(item))
+        }
+        let anchorAfterLift = try #require(body.debugVisibleAnchorForTesting())
+        #expect(anchorAfterLift.item == anchorBeforeLift.item)
+        #expect(abs(anchorAfterLift.screenY - anchorBeforeLift.screenY) < 1)
+    }
+
+    @MainActor
     @Test("cold raster and SVG misses stay hidden until prepared geometry is active")
     func coldInternalImageMissesWaitForPreparedGeometry() async throws {
         let raster = try #require(Self.pngData(size: CGSize(width: 80, height: 240)))
