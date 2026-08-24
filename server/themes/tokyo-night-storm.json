@@ -7,7 +7,7 @@
     "bgHighlight": "#292e42",
     "fg": "#c0caf5",
     "fgDim": "#a9b1d6",
-    "comment": "#565f89",
+    "comment": "#979ebd",
     "blue": "#7aa2f7",
     "cyan": "#7dcfff",
     "green": "#9ece6a",
@@ -19,28 +19,29 @@
 
     "userMessageBg": "#292e42",
     "userMessageText": "#c0caf5",
-    "toolPendingBg": "#1e2a4a",
-    "toolSuccessBg": "#1e2e1e",
-    "toolErrorBg": "#2e1e1e",
+
+    "toolPendingBg": "#303955",
+    "toolSuccessBg": "#333c41",
+    "toolErrorBg": "#3d3145",
     "toolTitle": "#c0caf5",
     "toolOutput": "#a9b1d6",
 
     "mdHeading": "#7aa2f7",
     "mdLink": "#1abc9c",
-    "mdLinkUrl": "#565f89",
+    "mdLinkUrl": "#979ebd",
     "mdCode": "#7aa2f7",
     "mdCodeBlock": "#9ece6a",
-    "mdCodeBlockBorder": "#565f89",
-    "mdQuote": "#565f89",
-    "mdQuoteBorder": "#565f89",
+    "mdCodeBlockBorder": "#979ebd",
+    "mdQuote": "#a9b1d6",
+    "mdQuoteBorder": "#979ebd",
     "mdHr": "#e0af68",
     "mdListBullet": "#ff9e64",
 
     "toolDiffAdded": "#449dab",
-    "toolDiffRemoved": "#914c54",
-    "toolDiffContext": "#545c7e",
+    "toolDiffRemoved": "#b97980",
+    "toolDiffContext": "#9299b6",
 
-    "syntaxComment": "#565f89",
+    "syntaxComment": "#979ebd",
     "syntaxKeyword": "#9d7cd8",
     "syntaxFunction": "#7aa2f7",
     "syntaxVariable": "#c0caf5",
@@ -50,11 +51,11 @@
     "syntaxOperator": "#89ddff",
     "syntaxPunctuation": "#a9b1d6",
 
-    "thinkingOff": "#505050",
-    "thinkingMinimal": "#6e6e6e",
-    "thinkingLow": "#5f87af",
-    "thinkingMedium": "#81a2be",
-    "thinkingHigh": "#b294bb",
-    "thinkingXhigh": "#d183e8"
+    "thinkingOff": "#4a5069",
+    "thinkingMinimal": "#979ebd",
+    "thinkingLow": "#7aa2f7",
+    "thinkingMedium": "#7dcfff",
+    "thinkingHigh": "#bb9af7",
+    "thinkingXhigh": "#f7768e"
   }
 }

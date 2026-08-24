@@ -1,0 +1,61 @@
+{
+  "name": "Rosé Pine",
+  "colorScheme": "dark",
+  "colors": {
+    "bg": "#191724",
+    "bgDark": "#15131e",
+    "bgHighlight": "#26233a",
+    "fg": "#e0def4",
+    "fgDim": "#b1adc5",
+    "comment": "#918da5",
+    "blue": "#3a8aaa",
+    "cyan": "#9ccfd8",
+    "green": "#9cd8c1",
+    "orange": "#f69b77",
+    "purple": "#c4a7e7",
+    "red": "#eb6f92",
+    "yellow": "#f6c177",
+    "thinkingText": "#b1adc5",
+
+    "userMessageBg": "#26233a",
+    "userMessageText": "#e0def4",
+
+    "toolPendingBg": "#1e2737",
+    "toolSuccessBg": "#292e37",
+    "toolErrorBg": "#322231",
+    "toolTitle": "#e0def4",
+    "toolOutput": "#b1adc5",
+
+    "mdHeading": "#9ccfd8",
+    "mdLink": "#3a8aaa",
+    "mdLinkUrl": "#918da5",
+    "mdCode": "#9ccfd8",
+    "mdCodeBlock": "#9cd8c1",
+    "mdCodeBlockBorder": "#918da5",
+    "mdQuote": "#b1adc5",
+    "mdQuoteBorder": "#918da5",
+    "mdHr": "#f6c177",
+    "mdListBullet": "#f69b77",
+
+    "toolDiffAdded": "#9cd8c1",
+    "toolDiffRemoved": "#eb6f92",
+    "toolDiffContext": "#918da5",
+
+    "syntaxComment": "#918da5",
+    "syntaxKeyword": "#3a8aaa",
+    "syntaxFunction": "#ebbcba",
+    "syntaxVariable": "#e0def4",
+    "syntaxString": "#f6c177",
+    "syntaxNumber": "#ebbcba",
+    "syntaxType": "#9ccfd8",
+    "syntaxOperator": "#b1adc5",
+    "syntaxPunctuation": "#b1adc5",
+
+    "thinkingOff": "#4f4c63",
+    "thinkingMinimal": "#918da5",
+    "thinkingLow": "#3a8aaa",
+    "thinkingMedium": "#9ccfd8",
+    "thinkingHigh": "#f6c177",
+    "thinkingXhigh": "#eb6f92"
+  }
+}

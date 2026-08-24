@@ -1,0 +1,61 @@
+{
+  "name": "Rosé Pine Dawn",
+  "colorScheme": "light",
+  "colors": {
+    "bg": "#faf4ed",
+    "bgDark": "#f2e9e1",
+    "bgHighlight": "#dfdad9",
+    "fg": "#575279",
+    "fgDim": "#5c5772",
+    "comment": "#605a6d",
+    "blue": "#286983",
+    "cyan": "#42717a",
+    "green": "#3f7463",
+    "orange": "#bb4114",
+    "purple": "#795f95",
+    "red": "#a44f67",
+    "yellow": "#965d0f",
+    "thinkingText": "#5c5772",
+
+    "userMessageBg": "#dfdad9",
+    "userMessageText": "#575279",
+
+    "toolPendingBg": "#d8dedc",
+    "toolSuccessBg": "#dce0d7",
+    "toolErrorBg": "#ecdad8",
+    "toolTitle": "#575279",
+    "toolOutput": "#5c5772",
+
+    "mdHeading": "#42717a",
+    "mdLink": "#286983",
+    "mdLinkUrl": "#605a6d",
+    "mdCode": "#42717a",
+    "mdCodeBlock": "#3f7463",
+    "mdCodeBlockBorder": "#605a6d",
+    "mdQuote": "#5c5772",
+    "mdQuoteBorder": "#605a6d",
+    "mdHr": "#965d0f",
+    "mdListBullet": "#bb4114",
+
+    "toolDiffAdded": "#3f7463",
+    "toolDiffRemoved": "#a44f67",
+    "toolDiffContext": "#605a6d",
+
+    "syntaxComment": "#605a6d",
+    "syntaxKeyword": "#286983",
+    "syntaxFunction": "#bb3f3a",
+    "syntaxVariable": "#575279",
+    "syntaxString": "#965d0f",
+    "syntaxNumber": "#bb3f3a",
+    "syntaxType": "#42717a",
+    "syntaxOperator": "#5c5772",
+    "syntaxPunctuation": "#5c5772",
+
+    "thinkingOff": "#c1bcc4",
+    "thinkingMinimal": "#605a6d",
+    "thinkingLow": "#286983",
+    "thinkingMedium": "#42717a",
+    "thinkingHigh": "#965d0f",
+    "thinkingXhigh": "#a44f67"
+  }
+}

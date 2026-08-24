@@ -126,9 +126,14 @@ Start with a bundled example in `server/themes/`:
 - `night.json` — dark, high-contrast Night theme
 - `latte-things.json` — light, Latte Things theme
 - `nord.json` — dark, Nord color scheme
-- `tokyo-night.json` — dark, Tokyo Night color scheme
-- `tokyo-night-storm.json` — dark, Tokyo Night Storm variant
-- `tokyo-night-day.json` — light, Tokyo Night Day variant
+- `tokyo-night.json` — dark, Tokyo Night
+- `tokyo-night-storm.json` — dark, Tokyo Night Storm
+- `tokyo-night-day.json` — light, Tokyo Night Day
+- `rose-pine.json` — dark, Rosé Pine
+- `rose-pine-moon.json` — dark, Rosé Pine Moon
+- `rose-pine-dawn.json` — light, Rosé Pine Dawn
+
+Tokyo Night and Rosé Pine keep the official hues. Comments, quotes, and light-theme accents are lifted so chat and code text meet WCAG AA.
 
 ### Tips
 
@@ -186,7 +191,7 @@ You can ask Pi to create a theme; point it to this document and describe what yo
     "bgHighlight": "#292e42",
     "fg": "#c0caf5",
     "fgDim": "#a9b1d6",
-    "comment": "#565f89",
+    "comment": "#8991b5",
     "blue": "#7aa2f7",
     "cyan": "#7dcfff",
     "green": "#9ece6a",
@@ -197,25 +202,25 @@ You can ask Pi to create a theme; point it to this document and describe what yo
     "thinkingText": "#a9b1d6",
     "userMessageBg": "#292e42",
     "userMessageText": "#c0caf5",
-    "toolPendingBg": "#1e2a4a",
-    "toolSuccessBg": "#1e2e1e",
-    "toolErrorBg": "#2e1e1e",
+    "toolPendingBg": "#272e43",
+    "toolSuccessBg": "#2a302e",
+    "toolErrorBg": "#352632",
     "toolTitle": "#c0caf5",
     "toolOutput": "#a9b1d6",
     "mdHeading": "#7aa2f7",
     "mdLink": "#1abc9c",
-    "mdLinkUrl": "#565f89",
+    "mdLinkUrl": "#8991b5",
     "mdCode": "#7aa2f7",
     "mdCodeBlock": "#9ece6a",
-    "mdCodeBlockBorder": "#565f89",
-    "mdQuote": "#565f89",
-    "mdQuoteBorder": "#565f89",
+    "mdCodeBlockBorder": "#8991b5",
+    "mdQuote": "#a9b1d6",
+    "mdQuoteBorder": "#8991b5",
     "mdHr": "#e0af68",
     "mdListBullet": "#ff9e64",
     "toolDiffAdded": "#449dab",
-    "toolDiffRemoved": "#914c54",
-    "toolDiffContext": "#545c7e",
-    "syntaxComment": "#565f89",
+    "toolDiffRemoved": "#b26c74",
+    "toolDiffContext": "#868dae",
+    "syntaxComment": "#8991b5",
     "syntaxKeyword": "#9d7cd8",
     "syntaxFunction": "#7aa2f7",
     "syntaxVariable": "#c0caf5",
@@ -224,12 +229,12 @@ You can ask Pi to create a theme; point it to this document and describe what yo
     "syntaxType": "#2ac3de",
     "syntaxOperator": "#89ddff",
     "syntaxPunctuation": "#a9b1d6",
-    "thinkingOff": "#505050",
-    "thinkingMinimal": "#6e6e6e",
-    "thinkingLow": "#5f87af",
-    "thinkingMedium": "#81a2be",
-    "thinkingHigh": "#b294bb",
-    "thinkingXhigh": "#d183e8"
+    "thinkingOff": "#4a5069",
+    "thinkingMinimal": "#8991b5",
+    "thinkingLow": "#7aa2f7",
+    "thinkingMedium": "#7dcfff",
+    "thinkingHigh": "#bb9af7",
+    "thinkingXhigh": "#f7768e"
   }
 }
 ```

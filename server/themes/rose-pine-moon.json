@@ -1,0 +1,61 @@
+{
+  "name": "Rosé Pine Moon",
+  "colorScheme": "dark",
+  "colors": {
+    "bg": "#232136",
+    "bgDark": "#1d1b2c",
+    "bgHighlight": "#393552",
+    "fg": "#e0def4",
+    "fgDim": "#b6b3c9",
+    "comment": "#9a97ac",
+    "blue": "#4093b4",
+    "cyan": "#9ccfd8",
+    "green": "#9cd8c1",
+    "orange": "#f69b77",
+    "purple": "#c4a7e7",
+    "red": "#eb6f92",
+    "yellow": "#f6c177",
+    "thinkingText": "#b6b3c9",
+
+    "userMessageBg": "#393552",
+    "userMessageText": "#e0def4",
+
+    "toolPendingBg": "#273148",
+    "toolSuccessBg": "#323747",
+    "toolErrorBg": "#3b2a41",
+    "toolTitle": "#e0def4",
+    "toolOutput": "#b6b3c9",
+
+    "mdHeading": "#9ccfd8",
+    "mdLink": "#4093b4",
+    "mdLinkUrl": "#9a97ac",
+    "mdCode": "#9ccfd8",
+    "mdCodeBlock": "#9cd8c1",
+    "mdCodeBlockBorder": "#9a97ac",
+    "mdQuote": "#b6b3c9",
+    "mdQuoteBorder": "#9a97ac",
+    "mdHr": "#f6c177",
+    "mdListBullet": "#f69b77",
+
+    "toolDiffAdded": "#9cd8c1",
+    "toolDiffRemoved": "#eb6f92",
+    "toolDiffContext": "#9a97ac",
+
+    "syntaxComment": "#9a97ac",
+    "syntaxKeyword": "#4093b4",
+    "syntaxFunction": "#ea9a97",
+    "syntaxVariable": "#e0def4",
+    "syntaxString": "#f6c177",
+    "syntaxNumber": "#ea9a97",
+    "syntaxType": "#9ccfd8",
+    "syntaxOperator": "#b6b3c9",
+    "syntaxPunctuation": "#b6b3c9",
+
+    "thinkingOff": "#5e5a76",
+    "thinkingMinimal": "#9a97ac",
+    "thinkingLow": "#4093b4",
+    "thinkingMedium": "#9ccfd8",
+    "thinkingHigh": "#f6c177",
+    "thinkingXhigh": "#eb6f92"
+  }
+}
