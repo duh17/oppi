@@ -146,6 +146,8 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
     private var contextsByTaskId: [Int: LoadingContext] = [:]
     private var tasksByRequestId: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var isInvalidated = false
+    private var liveTaskIds: Set<Int> = []
+    private var networkLifetime: AuthenticatedMediaResourceLoader?
 
     let delegateQueue = DispatchQueue(label: "dev.chenda.oppi.authenticated-media.resource-loader")
     private lazy var session: URLSession = {
@@ -172,7 +174,8 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
     }
 
     deinit {
-        cancelAll()
+        // cancelAll() may retain self while CFNetwork still has callbacks.
+        // Do not do that from deinit. Idle loaders only need session invalidation.
         session.invalidateAndCancel()
     }
 
@@ -183,12 +186,25 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
             context.cancelled = true
         }
         let tasks = Array(tasksByRequestId.values)
+        let shouldRetain = !liveTaskIds.isEmpty || !tasks.isEmpty
+        if shouldRetain {
+            // Keep the URLSession delegate alive until didComplete / invalidation.
+            // Dropping it here UAFs under in-flight CFNetwork callbacks.
+            networkLifetime = self
+        }
+#if DEBUG
+        AuthenticatedMediaResourceLoaderTesting.lastCancelRetainedSelfForInFlightCallbacks = shouldRetain
+#endif
         contextsByTaskId.removeAll()
         tasksByRequestId.removeAll()
         lock.unlock()
 
         for task in tasks {
             task.cancel()
+        }
+
+        if !shouldRetain {
+            session.invalidateAndCancel()
         }
     }
 
@@ -253,6 +269,7 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
                 }
                 self.contextsByTaskId[task.taskIdentifier] = context
                 self.tasksByRequestId[requestId] = task
+                self.liveTaskIds.insert(task.taskIdentifier)
                 return true
             }
             if shouldStart {
@@ -382,24 +399,35 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         didCompleteWithError error: Error?
     ) {
         let context = removeContext(for: task)
-        guard let context, !context.cancelled else { return }
-
-        if let error = context.responseError ?? error {
-            context.loadingRequest.finishLoading(with: error)
-            return
+        let shouldInvalidate = lock.withLock { () -> Bool in
+            liveTaskIds.remove(task.taskIdentifier)
+            return isInvalidated && liveTaskIds.isEmpty
         }
 
-        if context.continueToEnd,
-           let deliveredEnd = context.deliveredEnd,
-           let nextOffset = AuthenticatedMediaRangeContinuation.nextOffset(
-            afterEnd: deliveredEnd,
-            totalLength: context.totalLength
-           ) {
-            startNextChunk(context: context, offset: nextOffset)
-            return
+        if let context, !context.cancelled {
+            if let error = context.responseError ?? error {
+                context.loadingRequest.finishLoading(with: error)
+            } else if context.continueToEnd,
+                      let deliveredEnd = context.deliveredEnd,
+                      let nextOffset = AuthenticatedMediaRangeContinuation.nextOffset(
+                        afterEnd: deliveredEnd,
+                        totalLength: context.totalLength
+                      ) {
+                startNextChunk(context: context, offset: nextOffset)
+            } else {
+                context.loadingRequest.finishLoading()
+            }
         }
 
-        context.loadingRequest.finishLoading()
+        if shouldInvalidate {
+            session.invalidateAndCancel()
+        }
+    }
+
+    func urlSession(_ session: URLSession, didBecomeInvalidWithError: Error?) {
+        lock.lock()
+        networkLifetime = nil
+        lock.unlock()
     }
 
     private func startNextChunk(context: LoadingContext, offset: Int64) {
@@ -447,6 +475,7 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
                 }
                 self.contextsByTaskId[task.taskIdentifier] = nextContext
                 self.tasksByRequestId[requestId] = task
+                self.liveTaskIds.insert(task.taskIdentifier)
                 return true
             }
             if shouldStart {
@@ -1431,6 +1460,62 @@ enum AuthenticatedMediaPlayerTesting {
     @MainActor
     static func record(_ model: AuthenticatedMediaPlayerModel) {
         resolvedModels.append(ObjectIdentifier(model))
+    }
+}
+
+enum AuthenticatedMediaResourceLoaderTesting {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var lastCancelRetained = false
+
+    /// Set when `cancelAll()` keeps the URLSession delegate alive because a
+    /// CFNetwork task is still outstanding. Tests read this instead of racing
+    /// `didComplete` on the session queue.
+    static var lastCancelRetainedSelfForInFlightCallbacks: Bool {
+        get { lock.withLock { lastCancelRetained } }
+        set { lock.withLock { lastCancelRetained = newValue } }
+    }
+}
+
+final class AuthenticatedMediaResourceLoaderLifetimeProbe: @unchecked Sendable {
+    private weak var loader: AuthenticatedMediaResourceLoader?
+
+    fileprivate init(loader: AuthenticatedMediaResourceLoader) {
+        self.loader = loader
+    }
+
+    var isAlive: Bool { loader != nil }
+
+    var retainsSelfUntilNetworkIdle: Bool {
+        loader?.debugRetainsSelfUntilNetworkIdle ?? false
+    }
+}
+
+extension AuthenticatedMediaResourceLoader {
+    var debugRetainsSelfUntilNetworkIdle: Bool {
+        lock.withLock { networkLifetime != nil }
+    }
+
+    func debugStartInFlightDataTask(url: URL) {
+        let task = session.dataTask(with: url)
+        lock.lock()
+        liveTaskIds.insert(task.taskIdentifier)
+        tasksByRequestId[ObjectIdentifier(task)] = task
+        lock.unlock()
+        task.resume()
+    }
+}
+
+extension AuthenticatedMediaPlaybackSession {
+    func debugStartInFlightResourceRequest(url: URL) {
+        loader.debugStartInFlightDataTask(url: url)
+    }
+
+    func debugResourceLoaderLifetimeProbe() -> AuthenticatedMediaResourceLoaderLifetimeProbe {
+        AuthenticatedMediaResourceLoaderLifetimeProbe(loader: loader)
+    }
+
+    var debugRetainsResourceLoaderUntilNetworkIdle: Bool {
+        loader.debugRetainsSelfUntilNetworkIdle
     }
 }
 

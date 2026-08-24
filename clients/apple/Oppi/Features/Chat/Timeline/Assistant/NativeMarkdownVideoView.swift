@@ -60,6 +60,8 @@ final class NativeMarkdownVideoView: UIView {
         resolutionTask?.cancel()
     }
 
+    /// Recycle / identity-change teardown. Do not call from `willMove(toSuperview:)`;
+    /// AVKit detaches this view during fullscreen, PiP, and dismiss.
     func prepareForRemoval() {
         removePlayer()
     }
@@ -132,9 +134,8 @@ final class NativeMarkdownVideoView: UIView {
 
     override func willMove(toSuperview newSuperview: UIView?) {
         super.willMove(toSuperview: newSuperview)
-        if newSuperview == nil {
-            prepareForRemoval()
-        }
+        // AVKit detaches this inline host during fullscreen, PiP, and dismiss.
+        // That is not recycle. Recycle and identity changes call prepareForRemoval().
     }
 
     override func didMoveToWindow() {
@@ -385,6 +386,7 @@ extension NativeMarkdownVideoView {
     var debugHasCommittedRevealGeometryForTesting: Bool { hasCommittedRevealGeometry }
     var debugHostingControllerForTesting: UIViewController? { hostingController }
     var debugHostingParentForTesting: UIViewController? { hostingController?.parent }
+    var debugPlaybackModelForTesting: AuthenticatedMediaPlayerModel { playbackModel }
     var debugFailureHitAreaForTesting: CGSize { openButton.bounds.size }
     var debugStatusLabelAdjustsFontForTesting: Bool { statusLabel.adjustsFontForContentSizeCategory }
     var debugOpenButtonIsHiddenForTesting: Bool { openButton.isHidden }

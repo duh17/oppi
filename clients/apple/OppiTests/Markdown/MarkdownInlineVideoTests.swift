@@ -828,6 +828,80 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
+    @Test("willMove toSuperview nil must not teardown the hosted player")
+    func willMoveToSuperviewNilDoesNotTeardownHostedPlayer() async throws {
+        let embed = try makeEmbed("![[movie.mp4]]")
+        let source = dummyMediaSource()
+        let parent = UIViewController()
+        let video = NativeMarkdownVideoView()
+        parent.view.addSubview(video)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        video.apply(
+            embed: embed,
+            sourceProvider: { _ in source },
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+        for _ in 0..<40 where !video.debugHasPlayerForTesting {
+            await Task.yield()
+        }
+        let installedPlayer = video.debugPlaybackModelForTesting.player
+        #expect(video.debugHasPlayerForTesting)
+
+        video.willMove(toSuperview: nil)
+        #expect(video.debugHasPlayerForTesting)
+        #expect(video.debugPlaybackModelForTesting.player === installedPlayer)
+
+        video.debugPlaybackModelForTesting.setFullScreen(true)
+        video.willMove(toSuperview: nil)
+        #expect(video.debugHasPlayerForTesting)
+        #expect(video.debugPlaybackModelForTesting.player === installedPlayer)
+
+        video.debugPlaybackModelForTesting.setPictureInPicture(true)
+        video.willMove(toSuperview: nil)
+        #expect(video.debugHasPlayerForTesting)
+        #expect(video.debugPlaybackModelForTesting.player === installedPlayer)
+
+        video.prepareForRemoval()
+        #expect(!video.debugHasPlayerForTesting)
+        #expect(video.debugPlaybackModelForTesting.player == nil)
+    }
+
+    @MainActor
+    @Test("cancel keeps the resource loader alive until an in-flight CFNetwork session becomes idle")
+    func cancelKeepsResourceLoaderAliveUntilInFlightCallbacksFinish() async throws {
+        let server = try HangingHTTPServer()
+        defer { server.stop() }
+
+        AuthenticatedMediaResourceLoaderTesting.lastCancelRetainedSelfForInFlightCallbacks = false
+        var session: AuthenticatedMediaPlaybackSession? = AuthenticatedMediaPlaybackSession(
+            source: dummyMediaSource()
+        )
+        let probe = try #require(session).debugResourceLoaderLifetimeProbe()
+        try #require(session).debugStartInFlightResourceRequest(url: server.url)
+        try await server.waitUntilAccepted()
+
+        try #require(session).teardown()
+        session = nil
+
+        #expect(
+            AuthenticatedMediaResourceLoaderTesting.lastCancelRetainedSelfForInFlightCallbacks,
+            "secondary: cancelAll took the in-flight retain-self path"
+        )
+        if probe.isAlive {
+            #expect(probe.retainsSelfUntilNetworkIdle)
+        }
+
+        server.stop()
+        let released = await waitUntil(timeout: .seconds(2)) { !probe.isAlive }
+        #expect(released)
+    }
+
+    @MainActor
     @Test("applier clear detaches hosted video controllers from the parent")
     func clearDetachesHostedPlayerFromParent() async throws {
         let baseURL = try #require(URL(string: "https://server.example.com"))
@@ -1064,5 +1138,143 @@ private struct FileBrowserStylePlayerHost: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(height: knob.height)
+    }
+}
+
+private func waitUntil(
+    timeout: Duration,
+    _ condition: @escaping @Sendable () -> Bool
+) async -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return condition()
+}
+
+/// Accepts TCP clients and never writes a response so a URLSession task stays
+/// in-flight until `stop()` closes the socket. Accept and stop share one
+/// condition so a late `accept()` cannot leak an fd after `stop()` snapshots.
+private final class HangingHTTPServer: @unchecked Sendable {
+    private let listenFD: Int32
+    private let acceptQueue = DispatchQueue(label: "dev.chenda.oppi.tests.hanging-http")
+    private let condition = NSCondition()
+    private var clientFDs: [Int32] = []
+    private var stopped = false
+    private var acceptedCount = 0
+    let url: URL
+
+    init() throws {
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        var reuse: Int32 = 1
+        Darwin.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr = in_addr(s_addr: UInt32(0x7F00_0001).bigEndian)
+        addr.sin_port = 0
+
+        let bindResult = withUnsafePointer(to: &addr) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindResult == 0, Darwin.listen(fd, 16) == 0 else {
+            Darwin.close(fd)
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        var bound = sockaddr_in()
+        var boundLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &bound) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.getsockname(fd, $0, &boundLen)
+            }
+        }
+        let port = UInt16(bigEndian: bound.sin_port)
+        guard nameResult == 0,
+              port > 0,
+              let url = URL(string: "http://127.0.0.1:\(port)/video.mp4") else {
+            Darwin.close(fd)
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        listenFD = fd
+        self.url = url
+        acceptQueue.async { [weak self] in
+            self?.acceptLoop()
+        }
+    }
+
+    func waitUntilAccepted(timeout: TimeInterval = 2) async throws {
+        let accepted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                continuation.resume(returning: self.waitUntilAcceptedSync(timeout: timeout))
+            }
+        }
+        guard accepted else {
+            throw CocoaError(.fileReadUnknown)
+        }
+    }
+
+    func stop() {
+        condition.lock()
+        let alreadyStopped = stopped
+        stopped = true
+        let clients = clientFDs
+        clientFDs.removeAll()
+        condition.broadcast()
+        condition.unlock()
+        guard !alreadyStopped else { return }
+        Darwin.shutdown(listenFD, SHUT_RDWR)
+        Darwin.close(listenFD)
+        for client in clients {
+            Darwin.close(client)
+        }
+    }
+
+    deinit {
+        stop()
+    }
+
+    private func waitUntilAcceptedSync(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        condition.lock()
+        while acceptedCount == 0 && !stopped {
+            if !condition.wait(until: deadline) {
+                break
+            }
+        }
+        let accepted = acceptedCount > 0
+        condition.unlock()
+        return accepted
+    }
+
+    private func acceptLoop() {
+        while true {
+            let client = Darwin.accept(listenFD, nil, nil)
+            condition.lock()
+            if stopped {
+                condition.unlock()
+                if client >= 0 {
+                    Darwin.close(client)
+                }
+                return
+            }
+            if client < 0 {
+                condition.unlock()
+                return
+            }
+            clientFDs.append(client)
+            acceptedCount += 1
+            condition.broadcast()
+            condition.unlock()
+        }
     }
 }
