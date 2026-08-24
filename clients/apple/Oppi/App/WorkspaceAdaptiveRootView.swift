@@ -391,6 +391,6 @@ private struct WorkspaceSplitPlaceholder: View {
             Text(description)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.themeBg)
+        .background(.themeBg)
     }
 }

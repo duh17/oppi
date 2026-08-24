@@ -296,7 +296,7 @@ private struct ScheduleDetailView: View {
             if isLoading && schedule == nil {
                 ProgressView("Loading schedule…")
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowBackground(Color.themeBg)
+                    .themedListRowBackground()
             } else if let schedule {
                 Section {
                     scheduleSummaryHeader(schedule)
@@ -363,7 +363,7 @@ private struct ScheduleDetailView: View {
                 }
             } else {
                 ContentUnavailableView("Schedule Not Found", systemImage: "questionmark.circle")
-                    .listRowBackground(Color.themeBg)
+                    .themedListRowBackground()
             }
         }
         .navigationTitle(schedule?.name ?? "Schedule")

@@ -634,7 +634,7 @@ private struct TypographyPreviewCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
-            .background(Color.themeBgDark, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(.themeBgDark, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Assistant message")
@@ -647,7 +647,7 @@ private struct TypographyPreviewCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
-            .background(Color.themeBgHighlight.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(.themeBgHighlight.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)

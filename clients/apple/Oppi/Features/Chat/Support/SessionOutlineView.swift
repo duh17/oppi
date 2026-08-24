@@ -94,7 +94,7 @@ struct SessionOutlineView: View {
     var body: some View {
         NavigationStack {
             outlinePane
-            .background(Color.themeBg)
+            .background(.themeBg)
             .searchable(text: $searchText, prompt: searchPrompt)
             .navigationTitle("Session Outline")
             .navigationBarTitleDisplayMode(.inline)
@@ -671,7 +671,7 @@ struct SessionOutlineView: View {
                 Spacer(minLength: 0)
             }
             .padding(16)
-            .background(Color.themeBg)
+            .background(.themeBg)
             .navigationTitle("Summary Instructions")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -898,7 +898,7 @@ struct SessionOutlineView: View {
                         .foregroundStyle(.themeComment)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.themeBgDark)
+                .background(.themeBgDark)
             } else if displayedTreeNodes.isEmpty {
                 if let treeLoadErrorMessage, treeSnapshot == nil {
                     ContentUnavailableView(
@@ -906,17 +906,17 @@ struct SessionOutlineView: View {
                         systemImage: "arrow.triangle.branch",
                         description: Text(treeLoadErrorMessage)
                     )
-                    .background(Color.themeBgDark)
+                    .background(.themeBgDark)
                 } else if !debouncedSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentUnavailableView.search(text: debouncedSearchText)
-                        .background(Color.themeBgDark)
+                        .background(.themeBgDark)
                 } else {
                     ContentUnavailableView(
                         "No tree data",
                         systemImage: "arrow.triangle.branch",
                         description: Text("This session has no tree entries yet.")
                     )
-                    .background(Color.themeBgDark)
+                    .background(.themeBgDark)
                 }
             } else {
                 ScrollView {

@@ -188,7 +188,7 @@ struct ExpandedComposerView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
-                        .background(Color.themeBgDark)
+                        .background(.themeBgDark)
                 }
 
                 FullSizeTextView(
@@ -242,7 +242,7 @@ struct ExpandedComposerView: View {
                     bottomBar
                 }
             }
-            .background(Color.themeBg)
+            .background(.themeBg)
             .navigationTitle(expandedTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -372,7 +372,7 @@ struct ExpandedComposerView: View {
             }
         }
         .padding(.top, 8)
-        .background(Color.themeBgDark)
+        .background(.themeBgDark)
     }
 
     private var attachmentStrip: some View {

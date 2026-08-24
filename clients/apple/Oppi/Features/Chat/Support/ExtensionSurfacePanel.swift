@@ -435,7 +435,7 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .background(Color.themeBg.ignoresSafeArea())
+        .themedScrollSurface()
         .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail")
     }
 }

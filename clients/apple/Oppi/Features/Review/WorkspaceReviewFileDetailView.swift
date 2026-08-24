@@ -137,14 +137,14 @@ struct WorkspaceReviewFileDetailView: View {
                 case .loading:
                     ProgressView("Loading file review…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.themeBgDark)
+                        .background(.themeBgDark)
                 case .unavailable(let error):
                     ContentUnavailableView(
                         "Review Unavailable",
                         systemImage: "exclamationmark.triangle",
                         description: Text(error)
                     )
-                    .background(Color.themeBgDark)
+                    .background(.themeBgDark)
                 case .loaded(let diff):
                     content(diff: diff)
                 }
@@ -352,7 +352,7 @@ struct WorkspaceReviewFileDetailView: View {
                 allowsHorizontalBackSwipe: allowsHorizontalBackSwipe
             )
         }
-        .background(Color.themeBgDark)
+        .background(.themeBgDark)
     }
 
     private func content(diff: WorkspaceReviewDiffResponse) -> some View {
@@ -415,7 +415,7 @@ struct WorkspaceReviewFileDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color.themeBgDark)
+        .background(.themeBgDark)
     }
 
     private func currentContent(diff: WorkspaceReviewDiffResponse) -> some View {

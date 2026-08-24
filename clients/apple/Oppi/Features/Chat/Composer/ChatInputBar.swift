@@ -698,7 +698,7 @@ struct ChatInputBar<ActionRow: View>: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color.themeBgHighlight.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(.themeBgHighlight.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(Color.themeCyan.opacity(0.24), lineWidth: 1)

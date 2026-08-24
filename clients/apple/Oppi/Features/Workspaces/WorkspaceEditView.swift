@@ -944,7 +944,7 @@ private struct WorkspaceSystemPromptEditorView: View {
                 .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color.themeBg.ignoresSafeArea())
+        .themedScrollSurface()
         .navigationTitle("Workspace Instructions")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

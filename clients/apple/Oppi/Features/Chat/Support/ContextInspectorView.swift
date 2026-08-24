@@ -268,7 +268,7 @@ struct ContextInspectorView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color.themeBg)
+        .background(.themeBg)
         .tint(.themeBlue)
         .task(id: session?.id) {
             await refreshSessionStats()

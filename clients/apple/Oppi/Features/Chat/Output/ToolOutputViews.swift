@@ -82,7 +82,7 @@ struct AsyncAudioBlob: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.themeBgHighlight)
+        .background(.themeBgHighlight)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .task(id: base64.prefix(32)) {
             decodeFailed = false

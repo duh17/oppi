@@ -114,7 +114,7 @@ struct SessionTouchedFileContentView: View {
     var body: some View {
         fileContent
             .filePushTransition(id: currentFilePath, direction: fileTransitionDirection)
-            .background(Color.themeBgDark)
+            .background(.themeBgDark)
             .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe) { dismiss() }
             .overlay(alignment: .bottom) {
                 fileNavigatorControls

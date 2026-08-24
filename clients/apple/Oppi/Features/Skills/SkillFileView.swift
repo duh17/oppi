@@ -50,7 +50,7 @@ struct SkillFileView: View {
                 )
             }
         }
-        .background(Color.themeBg)
+        .background(.themeBg)
         .navigationTitle(isUsingFileViewer ? "" : fileName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)

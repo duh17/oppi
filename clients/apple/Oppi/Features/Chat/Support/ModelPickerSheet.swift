@@ -101,7 +101,7 @@ struct ModelPickerSheet: View {
                     modelList
                 }
             }
-            .background(Color.themeBg)
+            .background(.themeBg)
             .navigationTitle("Models")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search models…")

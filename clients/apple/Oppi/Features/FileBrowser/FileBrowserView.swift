@@ -355,7 +355,7 @@ struct FileBrowserView: View {
             selectedFileContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Color.themeBg)
+        .background(.themeBg)
     }
 
     private func portraitOverlayContent(size: CGSize) -> some View {
@@ -381,7 +381,7 @@ struct FileBrowserView: View {
                     .zIndex(2)
             }
         }
-        .background(Color.themeBg)
+        .background(.themeBg)
         .animation(.easeInOut(duration: 0.18), value: isTreeOverlayVisible)
     }
 
@@ -407,7 +407,7 @@ struct FileBrowserView: View {
                 Text("Choose a file from the tree.")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.themeBg)
+            .background(.themeBg)
         }
     }
 

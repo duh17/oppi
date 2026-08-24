@@ -227,7 +227,7 @@ struct ChatTimelineView: View {
                 bottomOverlap: bottomOverlap
             )
         )
-        .background(Color.themeBg)
+        .background(.themeBg)
         .overlay {
             if reducer.items.isEmpty && !isBusy {
                 ChatEmptyState(

@@ -96,7 +96,7 @@ struct ChatFileBrowserPanel: View {
             content
                 .id(selectedTab)
         }
-        .background(Color.themeBg)
+        .background(.themeBg)
         .onAppear {
             ClientLog.info("FileBrowser", "Chat file panel appeared", metadata: [
                 "sessionId": sessionId,
@@ -176,7 +176,7 @@ struct ChatFileBrowserPanel: View {
                     systemImage: "folder.badge.questionmark",
                     description: Text("This session is not attached to a workspace.")
                 )
-                .background(Color.themeBg)
+                .background(.themeBg)
             }
         }
     }

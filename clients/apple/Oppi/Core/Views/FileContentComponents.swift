@@ -59,7 +59,7 @@ struct FileHeader: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.themeBgHighlight)
+        .background(.themeBgHighlight)
     }
 }
 
@@ -135,7 +135,7 @@ extension View {
     /// Border is optional for cleaner reader-style presentation.
     func codeBlockChrome(showBorder: Bool = true) -> some View {
         self
-            .background(Color.themeBgDark)
+            .background(.themeBgDark)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
                 if showBorder {

@@ -155,7 +155,7 @@ struct ServerSkillFileView: View {
                 }
             }
         }
-        .background(Color.themeBg)
+        .background(.themeBg)
         .navigationTitle(content == nil ? fileName : "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(content == nil ? .automatic : .hidden, for: .navigationBar)

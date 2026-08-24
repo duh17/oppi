@@ -21,7 +21,7 @@ struct FileSuggestionList: View {
             }
         }
         .frame(maxHeight: maxPanelHeight)
-        .background(Color.themeBgDark, in: panelShape)
+        .background(.themeBgDark, in: panelShape)
         .overlay(panelShape.stroke(Color.themeComment.opacity(0.22), lineWidth: 1))
         .clipShape(panelShape)
     }

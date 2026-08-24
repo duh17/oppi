@@ -423,7 +423,7 @@ struct WorkspaceDetailView: View {
                             Spacer()
                         }
                         .frame(minHeight: 88)
-                        .listRowBackground(Color.themeBg)
+                        .themedListRowBackground()
                     }
                 } else if data.searchMatches.isEmpty && data.localFiltered.isEmpty {
                     Section {
@@ -432,7 +432,7 @@ struct WorkspaceDetailView: View {
                             systemImage: "magnifyingglass",
                             description: Text("No sessions match “\(sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines))”.")
                         )
-                        .listRowBackground(Color.themeBg)
+                        .themedListRowBackground()
                     }
                 } else {
                     if !data.searchMatches.isEmpty {
@@ -451,7 +451,7 @@ struct WorkspaceDetailView: View {
                                     LocalSessionRow(session: local)
                                 }
                                 .accessibilityIdentifier("localSession.nav.\(local.piSessionId)")
-                                .listRowBackground(Color.themeBg)
+                                .themedListRowBackground()
                                 .disabled(isImportingLocal)
                             }
                         }
@@ -469,7 +469,7 @@ struct WorkspaceDetailView: View {
                             .accessibilityIdentifier("session.nav.\(session.id)")
                             .accessibilityValue(sessionRowAccessibilityValue(for: session))
                             .buttonStyle(.plain)
-                            .listRowBackground(Color.themeBg)
+                            .themedListRowBackground()
                             .swipeActions(edge: .trailing) {
                                 Button {
                                     Task { await stopSession(session) }
@@ -494,7 +494,7 @@ struct WorkspaceDetailView: View {
                             .accessibilityIdentifier("session.nav.\(session.id)")
                             .accessibilityValue(sessionRowAccessibilityValue(for: session))
                             .buttonStyle(.plain)
-                            .listRowBackground(Color.themeBg)
+                            .themedListRowBackground()
                             .swipeActions(edge: .trailing) {
                                 Button {
                                     Task { await stopSession(session) }
@@ -546,7 +546,7 @@ struct WorkspaceDetailView: View {
                             systemImage: "terminal",
                             description: Text("Tap the compose button to start a new session in this worktree. Long press for incognito.")
                         )
-                        .listRowBackground(Color.themeBg)
+                        .themedListRowBackground()
                     }
                 }
             }
@@ -684,7 +684,7 @@ struct WorkspaceDetailView: View {
         .accessibilityIdentifier("session.nav.\(session.id)")
         .accessibilityValue(sessionRowAccessibilityValue(for: session))
         .buttonStyle(.plain)
-        .listRowBackground(Color.themeBg)
+        .themedListRowBackground()
         .swipeActions(edge: .trailing) {
             sessionSwipeActions(for: session)
         }

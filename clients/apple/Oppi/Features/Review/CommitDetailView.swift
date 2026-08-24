@@ -67,7 +67,7 @@ struct CommitDetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color.themeBgDark)
+        .background(.themeBgDark)
         .navigationTitle("Commit")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: commit.sha) {
@@ -475,7 +475,7 @@ struct CommitFileDiffView: View {
                 }
             }
         }
-        .background(Color.themeBgDark)
+        .background(.themeBgDark)
         .navigationTitle(file.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: sha + "|" + file.path) {

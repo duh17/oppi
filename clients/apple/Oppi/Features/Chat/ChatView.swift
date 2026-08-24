@@ -786,7 +786,7 @@ struct ChatView: View {
 
     private var configuredChatNavigationContent: some View {
         chatTimelineScaffold
-            .background(Color.themeBg.ignoresSafeArea())
+            .themedScrollSurface()
             .navigationTitle(sessionDisplayName)
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(usesCustomChatBackButton)
@@ -935,7 +935,7 @@ struct ChatView: View {
                                     .fixedSize(horizontal: true, vertical: false)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 7)
-                                    .background(Color.themeBgHighlight.opacity(0.85), in: Capsule())
+                                    .background(.themeBgHighlight.opacity(0.85), in: Capsule())
                             }
                             .buttonStyle(.plain)
                             .foregroundStyle(.themeFg)
@@ -950,7 +950,7 @@ struct ChatView: View {
                     Image(systemName: "xmark")
                         .font(.subheadline.weight(.bold))
                         .frame(width: 32, height: 32)
-                        .background(Color.themeBgHighlight.opacity(0.85), in: Circle())
+                        .background(.themeBgHighlight.opacity(0.85), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.themeFgDim)

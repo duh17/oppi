@@ -55,6 +55,7 @@ const previewAllowlistGlobs = [
   "**/ExtensionDockStressPreview.swift",
   "**/StreamingFlickerPreviewView.swift",
   "**/FeatureEducationP0TipPreview.swift",
+  "**/*Preview.swift",
   "**/*HarnessView.swift",
 ];
 
@@ -108,6 +109,25 @@ const checks: GuardCheck[] = [
     title: "Explicit snapshot theme color in foregroundStyle",
     pattern: String.raw`\.foregroundStyle\(\s*Color\.theme`,
     fix: "Use contextual .foregroundStyle(.theme*) shorthand so ThemeShapeStyle resolves from the current SwiftUI environment",
+  },
+  {
+    id: "snapshot-list-row-background",
+    title: "Snapshot Color.theme* in listRowBackground",
+    pattern: String.raw`\.listRowBackground\(\s*Color\.theme`,
+    fix: "Use .themedListRowBackground() so mounted list rows repaint when iOS day/night switches the active theme",
+  },
+  {
+    id: "snapshot-canvas-background",
+    title: "Snapshot Color.themeBg* canvas background",
+    pattern:
+      String.raw`\.background\(\s*Color\.themeBg(Dark|Highlight)?(\s*\.ignoresSafeArea\([^)]*\))?\s*(\)|,)`,
+    fix: "Use .background(.themeBg/.themeBgDark), .themedScrollSurface(), or .themedListSurface() so persistent canvases follow EnvironmentValues.theme",
+  },
+  {
+    id: "snapshot-canvas-opacity-background",
+    title: "Snapshot Color.themeBg* opacity background",
+    pattern: String.raw`\.background\(\s*Color\.themeBg(Dark|Highlight)?\s*\.opacity\(`,
+    fix: "Use .background(.themeBgHighlight.opacity(...), in:) so mounted capsules follow EnvironmentValues.theme",
   },
   {
     id: "ask-card-snapshot-theme-style",

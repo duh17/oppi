@@ -176,7 +176,7 @@ struct FileBrowserContentView: View {
     var body: some View {
         fileContent
             .filePushTransition(id: currentFilePath, direction: fileTransitionDirection)
-            .background(Color.themeBg)
+            .background(.themeBg)
             .horizontalBackSwipeGesture(
                 isEnabled: Self.shouldInstallHorizontalBackSwipe(
                     allowsHorizontalBackSwipe: allowsHorizontalBackSwipe,
@@ -276,7 +276,7 @@ struct FileBrowserContentView: View {
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(Color.themeBg)
+        .background(.themeBg)
     }
 
     // MARK: - Size Warning
@@ -358,7 +358,7 @@ struct FileBrowserContentView: View {
             )
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.themeBgDark)
+            .background(.themeBgDark)
         }
     }
 
@@ -372,7 +372,7 @@ struct FileBrowserContentView: View {
         )
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.themeBg)
+        .background(.themeBg)
     }
 
     // MARK: - Loading

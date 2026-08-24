@@ -536,7 +536,7 @@ private struct ExtensionToastSheet: View {
                 }
                 .padding()
             }
-            .background(Color.themeBg)
+            .background(.themeBg)
             .navigationTitle("Extension")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

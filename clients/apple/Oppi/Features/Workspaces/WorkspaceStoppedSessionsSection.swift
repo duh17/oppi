@@ -172,7 +172,7 @@ struct WorkspaceStoppedSessionsSection: View {
                                 .foregroundStyle(.themeComment)
                             Spacer()
                         }
-                        .listRowBackground(Color.themeBg)
+                        .themedListRowBackground()
                     } else {
                         ForEach(archiveItems(for: bucket)) { item in
                             stoppedItemRow(for: item)
@@ -237,7 +237,7 @@ struct WorkspaceStoppedSessionsSection: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("session.nav.\(session.id)")
-            .listRowBackground(Color.themeBg)
+            .themedListRowBackground()
             .swipeActions(edge: .leading) {
                 if session.ephemeral != true {
                     Button {
@@ -265,7 +265,7 @@ struct WorkspaceStoppedSessionsSection: View {
                 LocalSessionRow(session: local)
             }
             .accessibilityIdentifier("localSession.nav.\(local.piSessionId)")
-            .listRowBackground(Color.themeBg)
+            .themedListRowBackground()
             .disabled(isImportingLocal)
         }
     }

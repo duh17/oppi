@@ -35,7 +35,7 @@ struct UnifiedDiffView: View {
                     description: Text(emptyDescription)
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.themeBgDark)
+                .background(.themeBgDark)
             } else if let built {
                 UnifiedDiffTextView(
                     built: built,
@@ -49,7 +49,7 @@ struct UnifiedDiffView: View {
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.themeBgDark)
+                    .background(.themeBgDark)
             }
         }
         .task(id: filePath + "|\(hunks.count)") {

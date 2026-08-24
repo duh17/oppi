@@ -49,14 +49,14 @@ struct AgentManagementView: View {
             if isLoading && agents.isEmpty {
                 ProgressView("Loading agents…")
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowBackground(Color.themeBg)
+                    .themedListRowBackground()
             } else if agents.isEmpty {
                 ContentUnavailableView(
                     "No Agents",
                     systemImage: "person.crop.circle.badge.plus",
                     description: Text("Describe the Agent you need below. Oppi will clarify its behavior before creating it.")
                 )
-                .listRowBackground(Color.themeBg)
+                .themedListRowBackground()
             } else {
                 Section {
                     ForEach(agents) { agent in
@@ -201,7 +201,7 @@ private struct AgentDetailView: View {
             if isLoading && agent == nil {
                 ProgressView("Loading agent…")
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowBackground(Color.themeBg)
+                    .themedListRowBackground()
             } else if let agent {
                 Section("Definition") {
                     Button {
@@ -319,7 +319,7 @@ private struct AgentDetailView: View {
                 }
             } else {
                 ContentUnavailableView("Agent Not Found", systemImage: "questionmark.circle")
-                    .listRowBackground(Color.themeBg)
+                    .themedListRowBackground()
             }
         }
         .navigationTitle(agent?.name ?? "Agent")
