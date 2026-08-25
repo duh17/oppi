@@ -108,7 +108,7 @@ export function formatQuotaRemaining(remainingPercent: number): string {
 export function formatQuotaPacing(window: ProviderQuotaWindow): string {
   const pacing = window.pacing;
   const status = pacingStatusLabel(pacing?.status);
-  if (status === "Pace unknown") return status;
+  if (status === "Not enough data to calculate") return status;
 
   const supplyRatio = pacing?.supplyRatio;
   const ratio =
@@ -137,7 +137,7 @@ function pacingStatusLabel(status: ProviderQuotaPacing["status"] | undefined): s
     case "conserve":
       return "Conserve";
     default:
-      return "Pace unknown";
+      return "Not enough data to calculate";
   }
 }
 

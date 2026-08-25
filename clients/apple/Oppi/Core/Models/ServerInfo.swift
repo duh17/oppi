@@ -133,7 +133,7 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
                 case "plenty": return "Plenty"
                 case "on_pace": return "On pace"
                 case "conserve": return "Conserve"
-                default: return "Pace unknown"
+                default: return "Not enough data to calculate"
                 }
             }
 

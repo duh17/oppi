@@ -505,7 +505,7 @@ describe("fetchOpenCodeGoProviderQuota", () => {
           title: "Monthly",
           usedPercent: 0,
           remainingPercent: 100,
-          limitWindowSeconds: null,
+          limitWindowSeconds: 31 * 24 * 60 * 60,
           resetAt: Math.floor(Date.parse("2026-09-15T07:35:54.948Z") / 1000),
           includeWeekdayInReset: false,
         },
@@ -523,6 +523,95 @@ describe("fetchOpenCodeGoProviderQuota", () => {
     ];
     expect(init.headers.get("Authorization")).toBe("Bearer sk-go-test");
   });
+
+  it("infers monthly length from resetAt so snapshot pacing can be calculated", async () => {
+    const fetchedAt = Date.parse("2026-08-25T07:01:00.000Z");
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            usage: {
+              monthly: {
+                status: "ok",
+                percent: 97,
+                resetsAt: "2026-09-15T07:35:54.948Z",
+              },
+            },
+          }),
+          { status: 200 },
+        ),
+    ) as never;
+
+    const result = await fetchOpenCodeGoProviderQuota({
+      modelRuntime: { getAuth: vi.fn() },
+      readCredential: vi.fn(() => ({ type: "api_key", key: "sk-go-test" }) as const),
+      fetchImpl,
+      now: () => fetchedAt,
+    });
+
+    const monthly = result.windows.find((window) => window.key === "monthly");
+    expect(monthly?.limitWindowSeconds).toBe(31 * 24 * 60 * 60);
+    expect(monthly?.remainingPercent).toBe(3);
+    expect(monthly?.pacing?.source).toBe("snapshot");
+    expect(monthly?.pacing?.status).toBe("conserve");
+    expect(monthly?.pacing?.supplyRatio).toBeCloseTo(0.044, 2);
+  });
+
+  it.each([
+    {
+      name: "Mar 31",
+      resetsAt: "2026-03-31T12:00:00.000Z",
+      limitWindowSeconds: 31 * 24 * 60 * 60,
+    },
+    {
+      name: "May 31",
+      resetsAt: "2026-05-31T12:00:00.000Z",
+      limitWindowSeconds: 31 * 24 * 60 * 60,
+    },
+    {
+      name: "Dec 31",
+      resetsAt: "2026-12-31T12:00:00.000Z",
+      limitWindowSeconds: 31 * 24 * 60 * 60,
+    },
+    {
+      name: "non-leap Mar 29",
+      resetsAt: "2026-03-29T12:00:00.000Z",
+      limitWindowSeconds: 29 * 24 * 60 * 60,
+    },
+    {
+      name: "leap Mar 31",
+      resetsAt: "2028-03-31T12:00:00.000Z",
+      limitWindowSeconds: 31 * 24 * 60 * 60,
+    },
+  ])(
+    "clamps OpenCode Go monthly length at $name instead of overflowing",
+    async ({ resetsAt, limitWindowSeconds }) => {
+      const fetchedAt = Date.parse(resetsAt) - 24 * 60 * 60 * 1000;
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              usage: {
+                monthly: { status: "ok", percent: 40, resetsAt },
+              },
+            }),
+            { status: 200 },
+          ),
+      ) as never;
+
+      const result = await fetchOpenCodeGoProviderQuota({
+        modelRuntime: { getAuth: vi.fn() },
+        readCredential: vi.fn(() => ({ type: "api_key", key: "sk-go-test" }) as const),
+        fetchImpl,
+        now: () => fetchedAt,
+      });
+
+      const monthly = result.windows.find((window) => window.key === "monthly");
+      expect(monthly?.limitWindowSeconds).toBe(limitWindowSeconds);
+      expect(monthly?.pacing?.source).toBe("snapshot");
+      expect(monthly?.pacing?.status).not.toBe("unknown");
+    },
+  );
 
   it("clamps percent above 100 and tolerates unparseable resetsAt", async () => {
     const fetchImpl = vi.fn(

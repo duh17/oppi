@@ -1041,7 +1041,7 @@ fileprivate struct ProviderQuotaDetails: View {
             }
             .frame(height: 6)
 
-            Text(window.pacing?.compactLabel ?? "Pace unknown")
+            Text(window.pacing?.compactLabel ?? "Not enough data to calculate")
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.themeComment)
 
@@ -1059,7 +1059,7 @@ fileprivate struct ProviderQuotaDetails: View {
 
     private func accessibilityValue(for window: ProviderQuota.Window) -> String {
         let remaining = "\(Int(window.remainingPercent.rounded()))% left"
-        let pacing = window.pacing?.accessibilityLabel ?? "Pace unknown"
+        let pacing = window.pacing?.accessibilityLabel ?? "Not enough data to calculate"
         guard let resetDate = window.resetDate else { return "\(remaining), \(pacing)" }
         return "\(remaining), \(pacing), \(resetLabel(for: resetDate, window: window))"
     }

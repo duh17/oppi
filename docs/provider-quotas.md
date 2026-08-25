@@ -34,7 +34,7 @@ Pace labels use the supply ratio:
 | Plenty | greater than 1.20 |
 | On pace | 0.80 through 1.20 |
 | Conserve | less than 0.80 |
-| Pace unknown | no usable snapshot |
+| Not enough data to calculate | no usable snapshot |
 
 `1.00× supply` means the remaining quota fraction matches the remaining time fraction. Above `1.00×`, more quota remains than time. Below `1.00×`, quota is running out faster than the window.
 
@@ -70,7 +70,7 @@ Same window, still half the time left:
 - 40% left → \(0.80\times\) → On pace
 - 30% left → \(0.60\times\) → Conserve
 
-## Pace unknown
+## Not enough data to calculate
 
 The server returns unknown pace when any of these is true:
 
@@ -79,7 +79,7 @@ The server returns unknown pace when any of these is true:
 - window length is missing or not greater than 0
 - remaining percent is not a finite number
 
-The Apple client also shows **Pace unknown** when the server omits `pacing`. That happens with a server built before this field. Rebuild and restart the server.
+The Apple client also shows **Not enough data to calculate** when the server omits `pacing`. That happens with a server built before this field. Rebuild and restart the server.
 
 ## Snapshot only
 

@@ -59,8 +59,8 @@ const WINDOW_SPECS: readonly OpenCodeGoWindowSpec[] = [
     includeWeekdayInReset: true,
   },
   {
-    // Monthly resetsAt is calendar-anchored and the window length varies; leave
-    // null so the aggregator sorts it after the shorter windows.
+    // Monthly resetsAt is calendar-anchored. Infer length from resetAt when
+    // building the window so snapshot pacing has a denominator.
     payloadKey: "monthly",
     key: "monthly",
     shortLabel: "30d",
@@ -70,6 +70,38 @@ const WINDOW_SPECS: readonly OpenCodeGoWindowSpec[] = [
   },
 ];
 
+function utcDaysInMonth(year: number, monthIndex: number): number {
+  return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+}
+
+/**
+ * Seconds from the same UTC civil time one month earlier to `resetAt`.
+ * If that day does not exist, clamp to the last day of the previous month.
+ * JS `setUTCMonth` overflows (Mar 31 → Mar 3) and would lie about pace.
+ */
+function calendarMonthSecondsEndingAt(resetAt: number): number | null {
+  if (!Number.isFinite(resetAt) || resetAt <= 0) return null;
+  const end = new Date(resetAt * 1000);
+  if (Number.isNaN(end.getTime())) return null;
+
+  const year = end.getUTCFullYear();
+  const month = end.getUTCMonth();
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const prevYear = month === 0 ? year - 1 : year;
+  const clampedDay = Math.min(end.getUTCDate(), utcDaysInMonth(prevYear, prevMonth));
+  const startMs = Date.UTC(
+    prevYear,
+    prevMonth,
+    clampedDay,
+    end.getUTCHours(),
+    end.getUTCMinutes(),
+    end.getUTCSeconds(),
+    end.getUTCMilliseconds(),
+  );
+  const seconds = Math.round((end.getTime() - startMs) / 1000);
+  return seconds > 0 ? seconds : null;
+}
+
 function normalizeOpenCodeGoWindows(usage: Record<string, unknown>): ProviderQuotaWindow[] {
   const windows: ProviderQuotaWindow[] = [];
   for (const spec of WINDOW_SPECS) {
@@ -77,14 +109,17 @@ function normalizeOpenCodeGoWindows(usage: Record<string, unknown>): ProviderQuo
     if (!window) continue;
     const usedPercent = readNumber(window.percent);
     if (usedPercent === null) continue;
+    const resetAt = parseIsoToUnixSeconds(readString(window.resetsAt));
+    const limitWindowSeconds =
+      spec.limitWindowSeconds ?? (resetAt === null ? null : calendarMonthSecondsEndingAt(resetAt));
     windows.push(
       makeProviderQuotaWindow({
         key: spec.key,
         shortLabel: spec.shortLabel,
         title: spec.title,
         usedPercent,
-        limitWindowSeconds: spec.limitWindowSeconds,
-        resetAt: parseIsoToUnixSeconds(readString(window.resetsAt)),
+        limitWindowSeconds,
+        resetAt,
         includeWeekdayInReset: spec.includeWeekdayInReset,
       }),
     );

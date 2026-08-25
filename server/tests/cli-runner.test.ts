@@ -387,8 +387,8 @@ describe("canonical CLI runner", () => {
       },
     });
     const human = result.humanOutput.replace(/\u001b\[[0-9;]*m/g, "");
-    expect(human).toContain("Pace unknown");
-    expect(human).not.toContain("Pace: Pace unknown");
+    expect(human).toContain("Not enough data to calculate");
+    expect(human).not.toContain("Pace: Not enough data to calculate");
     expect(human).toMatch(/ds4\n\s+Local/);
     expect(human).toMatch(/omlx\n\s+Local/);
     expect(human).toMatch(/qwen-token-plan\n\s+No quota reported/);

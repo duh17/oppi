@@ -289,7 +289,7 @@ struct ServerInfoTests {
         )
 
         #expect(missing.pacing?.compactLabel == nil)
-        #expect(unknown.pacing?.compactLabel == "Pace unknown")
+        #expect(unknown.pacing?.compactLabel == "Not enough data to calculate")
     }
 
     @Test func providerQuotaWindowsSortShortestFirstAndCompactTakesOne() {
