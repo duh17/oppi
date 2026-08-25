@@ -1466,7 +1466,7 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
-    @Test func terminalBodyDefaultsToUnwrappedOutputAndCanToggleWrapping() throws {
+    @Test func terminalBodyDefaultsToUnwrappedOutputAndAppliesReaderPreferences() throws {
         let longLine = String(repeating: "abcdefghij", count: 40)
         let body = NativeFullScreenTerminalBody(
             content: longLine,
@@ -1495,12 +1495,12 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(outputView.textContainer.lineBreakMode == .byClipping)
         #expect(outerScrollView.showsHorizontalScrollIndicator)
 
-        body.setOutputWrapped(true)
+        body.applyReaderPreferences(FullScreenReaderPreferences(wrapsText: true))
         host.layoutIfNeeded()
         #expect(outputView.textContainer.lineBreakMode == .byCharWrapping)
         #expect(!outerScrollView.showsHorizontalScrollIndicator)
 
-        body.setOutputWrapped(false)
+        body.applyReaderPreferences(FullScreenReaderPreferences(wrapsText: false))
         host.layoutIfNeeded()
         #expect(outputView.textContainer.lineBreakMode == .byClipping)
         #expect(outerScrollView.showsHorizontalScrollIndicator)

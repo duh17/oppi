@@ -1323,14 +1323,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate {
         }
     }
 
-    func setOutputWrapped(_ wrapped: Bool) {
-        guard readerPreferences.wrapsText != wrapped else { return }
-        readerPreferences.wrapsText = wrapped
-        applyOutputWrapMode()
-        setNeedsLayout()
-        layoutIfNeeded()
-    }
-
     private var codeFont: UIFont {
         FullScreenCodeTypography.codeFont(for: readerPreferences)
     }
@@ -2193,14 +2185,6 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         let snapshot = ThinkingTraceStream.Snapshot(text: content, isDone: true)
         latestSnapshot = snapshot
         render(snapshot: snapshot)
-    }
-
-    func installViewportGestureRecognizer(_ gesture: UIGestureRecognizer) {
-        collectionView.addGestureRecognizer(gesture)
-    }
-
-    func setViewportDoubleTapActivation(_ activation: (() -> Void)?) {
-        viewportDoubleTapActivation = activation
     }
 
     /// Restore the broad reading intent captured by the mutable one-scroll-view
