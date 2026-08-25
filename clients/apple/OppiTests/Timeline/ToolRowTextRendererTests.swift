@@ -76,27 +76,6 @@ struct SyntaxOutputTests {
     }
 }
 
-// MARK: - Markdown
-
-@Suite("ToolRowTextRenderer — Markdown")
-struct MarkdownTests {
-    @Test func rendersSimpleMarkdown() {
-        let result = ToolRowTextRenderer.makeMarkdownAttributedText("**bold** text")
-        #expect(result.length > 0)
-    }
-
-    @Test func emptyStringProducesEmptyResult() {
-        let result = ToolRowTextRenderer.makeMarkdownAttributedText("")
-        #expect(result.length == 0)
-    }
-
-    @Test func invalidMarkdownDoesNotCrash() {
-        // Unterminated code fences — should not crash, may return partial or empty
-        let result = ToolRowTextRenderer.makeMarkdownAttributedText("```unterminated")
-        _ = result // No crash = pass
-    }
-}
-
 // MARK: - Code
 
 @Suite("ToolRowTextRenderer — Code")

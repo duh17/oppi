@@ -84,39 +84,6 @@ enum ToolRowTextRenderer {
         textView.textColor = plainTextColor
     }
 
-    // MARK: - Markdown
-
-    // periphery:ignore - used by ToolRowTextRendererTests via @testable import
-    static func makeMarkdownAttributedText(_ text: String) -> NSAttributedString {
-        let markdownOptions = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .full,
-            failurePolicy: .returnPartiallyParsedIfPossible
-        )
-
-        let rendered: NSMutableAttributedString
-        if let markdown = try? AttributedString(markdown: text, options: markdownOptions) {
-            rendered = NSMutableAttributedString(attributedString: NSAttributedString(markdown))
-        } else {
-            rendered = NSMutableAttributedString(string: text)
-        }
-
-        let fullRange = NSRange(location: 0, length: rendered.length)
-        guard fullRange.length > 0 else { return rendered }
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 1
-        paragraph.lineBreakMode = .byWordWrapping
-
-        rendered.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
-        rendered.addAttribute(.foregroundColor, value: UIColor(Color.themeFg), range: fullRange)
-        AttributedStringNormalizer.ensureFont(
-            in: rendered,
-            fallback: AppFont.monoMedium
-        )
-
-        return rendered
-    }
-
     // MARK: - Code
 
     static func makeCodeAttributedText(
