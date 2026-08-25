@@ -66,7 +66,7 @@ private struct WorkspaceSplitRootView: View {
             NavigationStack(path: $nav.splitDetailPath) {
                 WorkspaceSplitDetailDestinationView(target: navigation.splitDetailTarget)
                     .navigationDestination(for: FileBrowserNavTarget.self) { target in
-                        WorkspaceSplitFileBrowserDestinationView(target: target)
+                        WorkspaceFileBrowserDestinationView(target: target)
                     }
                     .navigationDestination(for: WorkspaceSessionNavTarget.self) { target in
                         WorkspaceSessionScopedDestinationView(target: target)
@@ -135,7 +135,7 @@ private struct WorkspaceSplitDetailDestinationView: View {
         case .session(let target):
             WorkspaceSessionScopedDestinationView(target: target)
         case .fileBrowser(let target):
-            WorkspaceSplitFileBrowserDestinationView(target: target)
+            WorkspaceFileBrowserDestinationView(target: target)
         case .linkedFile(let target):
             WorkspaceLinkedFileDestinationView(target: target)
         case .workspaceConfiguration(let target):
@@ -148,40 +148,6 @@ private struct WorkspaceSplitDetailDestinationView: View {
             } else {
                 SessionInboxView()
             }
-        }
-    }
-}
-
-private struct WorkspaceSplitFileBrowserDestinationView: View {
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(AppNavigation.self) private var navigation
-    let target: FileBrowserNavTarget
-
-    @State private var scopedConnection: ServerConnection?
-
-    private var targetServerId: String {
-        target.serverId
-    }
-
-    private var resolvedConnection: ServerConnection? { scopedConnection }
-
-    var body: some View {
-        Group {
-            if let connection = resolvedConnection {
-                FileBrowserView(
-                    serverId: targetServerId,
-                    workspaceId: target.workspaceId,
-                    worktreeId: target.worktreeId,
-                    initialPath: target.path
-                )
-                .withServerScopedEnvironment(connection)
-            } else {
-                ProgressView("Connecting…")
-            }
-        }
-        .task(id: targetServerId) {
-            guard await coordinator.switchToServerReady(targetServerId) else { return }
-            scopedConnection = coordinator.connection(for: targetServerId)
         }
     }
 }
