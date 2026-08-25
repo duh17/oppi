@@ -92,6 +92,9 @@ struct ChatInputBar<ActionRow: View>: View {
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var showFileImporter = false
+    @State private var showCanvas = false
+    @State private var canvasBackgroundImage: UIImage?
+    @State private var canvasReplacingAttachmentID: String?
     @State private var inlineVisualLineCount = 1
     @State private var askClearing = AskComposerClearingState()
     @State private var isBusyModePickerPresented = false
@@ -381,6 +384,19 @@ struct ChatInputBar<ActionRow: View>: View {
             }
         }
         .composerCameraCover(isPresented: $showCamera, pendingAttachments: $pendingAttachments)
+        .composerCanvasCover(
+            isPresented: $showCanvas,
+            text: $text,
+            pendingAttachments: $pendingAttachments,
+            backgroundImage: canvasBackgroundImage,
+            replacingAttachmentID: canvasReplacingAttachmentID
+        )
+        .onChange(of: showCanvas) { _, isPresented in
+            if !isPresented {
+                canvasBackgroundImage = nil
+                canvasReplacingAttachmentID = nil
+            }
+        }
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.item],
@@ -581,23 +597,12 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var attachButton: some View {
         Menu {
-            Button {
-                showPhotoPicker = true
-            } label: {
-                Label("Photo Library", systemImage: "photo.on.rectangle")
-            }
-
-            Button {
-                showCamera = true
-            } label: {
-                Label("Camera", systemImage: "camera")
-            }
-
-            Button {
-                showFileImporter = true
-            } label: {
-                Label("Choose File", systemImage: "paperclip")
-            }
+            ComposerShared.attachmentMenuButtons(
+                showPhotoPicker: $showPhotoPicker,
+                showCamera: $showCamera,
+                showFileImporter: $showFileImporter,
+                showCanvas: $showCanvas
+            )
         } label: {
             Image(systemName: "plus")
                 .font(.caption2.weight(.semibold))
@@ -674,7 +679,14 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private var attachmentStrip: some View {
-        ComposerShared.attachmentStrip(pendingAttachments: $pendingAttachments)
+        ComposerShared.attachmentStrip(
+            pendingAttachments: $pendingAttachments,
+            onAnnotateImage: { attachment in
+                canvasBackgroundImage = ComposerShared.image(forPendingAttachment: attachment)
+                canvasReplacingAttachmentID = attachment.id
+                showCanvas = true
+            }
+        )
     }
 
     private var reviewCommentStashBar: some View {
@@ -1275,7 +1287,7 @@ struct PendingImage: Identifiable, Sendable {
 
     private typealias EncodedImage = (data: Data, mimeType: String)
 
-    private static let autoResizeMaxDimension: CGFloat = 2_000
+    static let autoResizeMaxDimension: CGFloat = 2_000
     static let autoResizeMaxBase64Bytes = 4_718_592
     static let autoResizeMaxDataBytes = (autoResizeMaxBase64Bytes / 4) * 3
     private static let autoResizeJPEGQualities: [CGFloat] = [0.8, 0.85, 0.7, 0.55, 0.4]

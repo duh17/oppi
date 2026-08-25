@@ -176,11 +176,13 @@ enum ToolTimelineRowPresentationHelpers {
         guard let presenter = nearestViewController(from: sourceView) else { return }
         guard !isWithinFullScreenModalContext(presenter) else { return }
 
+        let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
         let controller = FullScreenImageViewController.makeSlideDownController(
             image: image,
             prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(
                 for: sourceView.traitCollection
-            )
+            ),
+            addToChatDestination: destination
         )
         ImagePreviewPresentationCoordinator.present(controller, from: presenter)
     }

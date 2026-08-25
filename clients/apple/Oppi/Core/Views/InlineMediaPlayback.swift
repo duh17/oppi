@@ -502,6 +502,9 @@ enum ImagePreviewWebSecurity {
 // MARK: - Animated Image Web View
 
 final class ImagePreviewNavigationBlocker: NSObject, WKNavigationDelegate {
+    var onDidFinish: (() -> Void)?
+    var onDidFail: ((any Error) -> Void)?
+
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -513,6 +516,21 @@ final class ImagePreviewNavigationBlocker: NSObject, WKNavigationDelegate {
         }
         decisionHandler(navigationAction.navigationType == .other ? .allow : .cancel)
     }
+
+    // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        onDidFinish?()
+    }
+
+    // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        onDidFail?(error)
+    }
+
+    // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        onDidFail?(error)
+    }
 }
 
 final class AnimatedImageWebContainerView: UIView {
@@ -521,6 +539,8 @@ final class AnimatedImageWebContainerView: UIView {
     private var currentSignature: Int?
     private var loadedSignature: Int?
     private var pendingDataURLString: String?
+    private(set) var isRenderReady = false
+    var onRenderStateChange: (() -> Void)?
 
     override init(frame: CGRect) {
         self.webView = ReviewCommentWKWebView(frame: .zero, configuration: ImagePreviewWebSecurity.makeConfiguration())
@@ -541,6 +561,21 @@ final class AnimatedImageWebContainerView: UIView {
         loadPendingContentIfReady()
     }
 
+    func snapshotRenderedImage() async throws -> UIImage {
+        guard isRenderReady else {
+            throw PaperMarkupCanvasSession.SnapshotError.notReady
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            webView.takeSnapshot(with: nil) { image, error in
+                continuation.resume(with: PaperMarkupCanvasSession.renderedSnapshot(image: image, error: error))
+            }
+        }
+    }
+
+    func markRenderReadyForTesting() {
+        setRenderReady(true)
+    }
+
     func apply(dataURLString: String) {
         var hasher = Hasher()
         hasher.combine(dataURLString.count)
@@ -554,7 +589,14 @@ final class AnimatedImageWebContainerView: UIView {
         currentSignature = signature
         loadedSignature = nil
         pendingDataURLString = dataURLString
+        setRenderReady(false)
         loadPendingContentIfReady()
+    }
+
+    private func setRenderReady(_ ready: Bool) {
+        guard isRenderReady != ready else { return }
+        isRenderReady = ready
+        onRenderStateChange?()
     }
 
     private func loadPendingContentIfReady() {
@@ -570,6 +612,7 @@ final class AnimatedImageWebContainerView: UIView {
         }
 
         loadedSignature = currentSignature
+        setRenderReady(false)
         webView.loadHTMLString(Self.makeHTML(dataURLString: dataURLString), baseURL: nil)
     }
 
@@ -626,6 +669,12 @@ final class AnimatedImageWebContainerView: UIView {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isUserInteractionEnabled = false
         webView.navigationDelegate = navigationBlocker
+        navigationBlocker.onDidFinish = { [weak self] in
+            self?.setRenderReady(true)
+        }
+        navigationBlocker.onDidFail = { [weak self] _ in
+            self?.setRenderReady(false)
+        }
         if #available(iOS 16.4, *) {
             webView.isInspectable = false
         }
@@ -695,6 +744,8 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     private let scrollView = UIScrollView()
     private let containerView = AnimatedImageWebContainerView()
     private var swipeDismissHandler: HorizontalBackSwipeGestureInstaller?
+    private var annotateButton: UIBarButtonItem?
+    private var isSnapshotting = false
 
     init(data: Data, mimeType: String?, title: String) {
         self.data = data
@@ -731,6 +782,21 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
             palette: palette,
             accessibilityIdentifier: "fullscreen-image-data.dismiss"
         )
+        let annotate = UIBarButtonItem(
+            image: UIImage(systemName: PaperMarkupCanvasSession.AnnotateAction.systemImage),
+            style: .plain,
+            target: self,
+            action: #selector(annotateTapped)
+        )
+        annotate.accessibilityLabel = PaperMarkupCanvasSession.AnnotateAction.title
+        annotate.accessibilityIdentifier = PaperMarkupCanvasSession.AnnotateAction.dataViewerIdentifier
+        annotate.tintColor = UIColor(palette.cyan)
+        annotateButton = annotate
+        navigationItem.rightBarButtonItem = annotate
+        containerView.onRenderStateChange = { [weak self] in
+            self?.updateAnnotateAvailability()
+        }
+        updateAnnotateAvailability()
     }
 
     private func setupSwipeDismiss() {
@@ -789,6 +855,43 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
 
     @objc private func dismissTapped() {
         dismiss(animated: true)
+    }
+
+    @objc private func annotateTapped() {
+        guard containerView.isRenderReady, !isSnapshotting else { return }
+        isSnapshotting = true
+        updateAnnotateAvailability()
+        Task { @MainActor in
+            defer {
+                isSnapshotting = false
+                updateAnnotateAvailability()
+            }
+            do {
+                let image = try await containerView.snapshotRenderedImage()
+                PaperMarkupCanvasHostController.present(
+                    background: .image(PaperMarkupCanvasSession.copiedImage(from: image)),
+                    from: self,
+                    destination: ComposerCanvasDestinationResolver.resolve(from: self)
+                )
+            } catch {
+                presentPaperMarkupSnapshotFailure(error)
+            }
+        }
+    }
+
+    private func updateAnnotateAvailability() {
+        annotateButton?.isEnabled = containerView.isRenderReady && !isSnapshotting
+    }
+
+    var annotateSourceForTesting: PaperMarkupCanvasSession.AnnotateSource {
+        PaperMarkupCanvasSession.annotateSource(for: .svg)
+    }
+
+    var isShowingSnapshotProgressForTesting: Bool { isSnapshotting }
+
+    func markRenderReadyForTesting() {
+        containerView.markRenderReadyForTesting()
+        updateAnnotateAvailability()
     }
 
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {

@@ -159,6 +159,8 @@ enum HostFilePreviewPolicy {
 final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfigurable {
     private let webView: ReviewCommentWKWebView
     private let contentTracker = HTMLContentTracker()
+    private(set) var isRenderReady = false
+    var onRenderStateChange: (() -> Void)?
 
     init(htmlString: String, reviewCommentHandler: ((String, UIViewController?) -> Void)? = nil) {
         let wv = ReviewCommentWKWebView(frame: .zero, configuration: HTMLContentSecurity.makeConfiguration())
@@ -236,6 +238,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
     /// Load new HTML content. Loads immediately if ready, otherwise deferred.
     func load(_ htmlString: String) {
         if let html = contentTracker.setContent(HTMLContentSecurity.injectContentSecurityPolicy(into: htmlString)) {
+            setRenderReady(false)
             webView.loadHTMLString(html, baseURL: nil)
         }
     }
@@ -249,13 +252,40 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         webView.reviewCommentHandler = handler
     }
 
+    func snapshotRenderedImage() async throws -> UIImage {
+        guard isRenderReady else {
+            throw PaperMarkupCanvasSession.SnapshotError.notReady
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            webView.takeSnapshot(with: nil) { image, error in
+                continuation.resume(with: PaperMarkupCanvasSession.renderedSnapshot(image: image, error: error))
+            }
+        }
+    }
+
+    func markRenderReadyForTesting() {
+        setRenderReady(true)
+    }
+
+    private func setRenderReady(_ ready: Bool) {
+        guard isRenderReady != ready else { return }
+        isRenderReady = ready
+        onRenderStateChange?()
+    }
+
     // MARK: - Private
 
     private func flushIfReady() {
         guard window != nil, bounds.width > 0, bounds.height > 0 else { return }
         if let html = contentTracker.markReady() {
+            setRenderReady(false)
             webView.loadHTMLString(html, baseURL: nil)
         }
+    }
+
+    // swiftlint:disable:next no_force_unwrap_production
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        setRenderReady(true)
     }
 
     // MARK: - WKNavigationDelegate
@@ -299,17 +329,20 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
 
     // swiftlint:disable:next no_force_unwrap_production
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        setRenderReady(false)
         contentTracker.markProcessTerminated()
         flushIfReady()
     }
 
     // swiftlint:disable:next no_force_unwrap_production
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        setRenderReady(false)
         contentTracker.markProcessTerminated()
         flushIfReady()
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        setRenderReady(false)
         contentTracker.markProcessTerminated()
         flushIfReady()
     }

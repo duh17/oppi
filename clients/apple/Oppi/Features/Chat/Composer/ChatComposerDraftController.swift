@@ -216,10 +216,12 @@ final class ChatComposerDraftController {
         }
     }
 
-    func setPendingAttachments(_ attachments: [PendingAttachment]) {
-        guard mode == .message else { return }
-        guard !(isSubmissionInFlight && messagePayload.isEmpty && attachments.isEmpty) else { return }
+    @discardableResult
+    func setPendingAttachments(_ attachments: [PendingAttachment]) -> Bool {
+        guard mode == .message else { return false }
+        guard !(isSubmissionInFlight && messagePayload.isEmpty && attachments.isEmpty) else { return false }
         pendingAttachments = attachments
+        return true
     }
 
     func replaceMessage(

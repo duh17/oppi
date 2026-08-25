@@ -229,6 +229,8 @@ targets:
         shell: /bin/bash
         showEnvVars: false
     dependencies:
+      - sdk: PaperKit.framework
+      - sdk: PencilKit.framework
       - package: swift-cmark
         product: cmark-gfm
       - package: swift-cmark

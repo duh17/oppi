@@ -302,6 +302,34 @@ struct ChatView: View {
         return .message
     }
 
+    /// Shared by the viewer destination and composer callback.
+    /// Accept only if the message-mode draft actually stored the attachment.
+    @discardableResult
+    static func deliverCanvasToComposer(
+        attachment: PendingAttachment,
+        recognizedText: String,
+        draftController: ChatComposerDraftController,
+        pendingAttachments: inout [PendingAttachment]
+    ) -> Bool {
+        var nextAttachments = pendingAttachments
+        if !nextAttachments.contains(where: { $0.id == attachment.id }) {
+            nextAttachments.append(attachment)
+        }
+        guard draftController.setPendingAttachments(nextAttachments),
+              draftController.pendingAttachments.contains(where: { $0.id == attachment.id }) else {
+            return false
+        }
+        pendingAttachments = draftController.pendingAttachments
+        let next = PaperMarkupCanvasSession.prependRecognizedText(
+            recognizedText,
+            into: draftController.text
+        )
+        if next != draftController.text {
+            draftController.updateVisibleText(next, for: .message)
+        }
+        return true
+    }
+
     static func resolvedComposerAskRequest(
         _ askRequest: AskRequest?,
         hasReviewComment: Bool
@@ -352,8 +380,8 @@ struct ChatView: View {
         Binding(
             get: { pendingAttachments },
             set: { newAttachments in
+                guard composerDraftController.setPendingAttachments(newAttachments) else { return }
                 pendingAttachments = newAttachments
-                composerDraftController.setPendingAttachments(newAttachments)
             }
         )
     }
@@ -651,6 +679,16 @@ struct ChatView: View {
                 seedE2EChatImageAttachmentIfRequested()
 #endif
                 applyExtensionToolsExpandedState()
+            }
+            .background {
+                ComposerCanvasDestinationAnchor(
+                    destination: ComposerCanvasDestination(sessionId: sessionId) { attachment, recognizedText in
+                        deliverCanvasToComposer(
+                            attachment: attachment,
+                            recognizedText: recognizedText
+                        )
+                    }
+                )
             }
             .onChange(of: chatState.extensionEditorTextUpdate?.revision) { _, _ in
                 handleExtensionEditorTextUpdate()
@@ -1407,6 +1445,16 @@ struct ChatView: View {
         } else {
             pendingAttachments = []
         }
+    }
+
+    @discardableResult
+    private func deliverCanvasToComposer(attachment: PendingAttachment, recognizedText: String) -> Bool {
+        Self.deliverCanvasToComposer(
+            attachment: attachment,
+            recognizedText: recognizedText,
+            draftController: composerDraftController,
+            pendingAttachments: &pendingAttachments
+        )
     }
 
     @MainActor

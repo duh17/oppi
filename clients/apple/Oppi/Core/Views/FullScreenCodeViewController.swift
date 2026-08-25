@@ -98,6 +98,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var liveSourceMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
     private var lastNavigationPresentation: NavigationPresentation?
     private var appliedThemeID: ThemeID?
+    private var annotateButton: UIBarButtonItem?
+    private var isSnapshotting = false
 
     private var bodyThemeID: ThemeID {
         appliedThemeID ?? ThemeRuntimeState.currentThemeID()
@@ -507,8 +509,14 @@ final class FullScreenCodeViewController: UIViewController {
         if let floatingViewingOptionsButton {
             viewController.view.bringSubviewToFront(floatingViewingOptionsButton)
         }
+        if let htmlView = bodyView as? HTMLRenderView {
+            htmlView.onRenderStateChange = { [weak self] in
+                self?.updateAnnotateAvailability()
+            }
+        }
         restorePendingMarkdownViewportIfNeeded(in: bodyView)
         scheduleLineAnchorNotice()
+        updateAnnotateAvailability()
     }
 
     private func currentMarkdownViewportIntent() -> FullScreenMarkdownViewportIntent? {
@@ -626,6 +634,7 @@ final class FullScreenCodeViewController: UIViewController {
                 presentation: presentation,
                 palette: palette
             )
+            updateAnnotateAvailability()
             return
         }
 
@@ -662,12 +671,29 @@ final class FullScreenCodeViewController: UIViewController {
             rightItems.append(toggle)
         }
 
+        if canAnnotateRenderedContent {
+            let annotate = UIBarButtonItem(
+                image: UIImage(systemName: PaperMarkupCanvasSession.AnnotateAction.systemImage),
+                style: .plain,
+                target: self,
+                action: #selector(annotateRenderedViewTapped)
+            )
+            annotate.accessibilityLabel = PaperMarkupCanvasSession.AnnotateAction.title
+            annotate.accessibilityIdentifier = PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier
+            annotate.tintColor = UIColor(palette.cyan)
+            annotateButton = annotate
+            rightItems.append(annotate)
+        } else {
+            annotateButton = nil
+        }
+
         viewController.navigationItem.rightBarButtonItems = rightItems
         configureFloatingViewingOptionsButton(
             on: viewController,
             presentation: presentation,
             palette: palette
         )
+        updateAnnotateAvailability()
     }
 
     private func makeNavigationActionButton(_ action: FullScreenViewerNavigationAction) -> UIBarButtonItem {
@@ -1529,6 +1555,81 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
+    private var canAnnotateRenderedHTML: Bool {
+        installedBodyView is HTMLRenderView || liveSourceHTMLBodyView != nil
+    }
+
+    private var canAnnotateRenderedDiagram: Bool {
+        !showSource && installedBodyView is NativeFullScreenRenderedDocumentBody
+    }
+
+    private var canAnnotateRenderedContent: Bool {
+        canAnnotateRenderedHTML || canAnnotateRenderedDiagram
+    }
+
+    @objc private func annotateRenderedViewTapped() {
+        guard isRenderedContentReady, !isSnapshotting else { return }
+        isSnapshotting = true
+        updateAnnotateAvailability()
+        Task { @MainActor in
+            defer {
+                isSnapshotting = false
+                updateAnnotateAvailability()
+            }
+            do {
+                let image = try await snapshotRenderedContent()
+                PaperMarkupCanvasHostController.present(
+                    background: .image(PaperMarkupCanvasSession.copiedImage(from: image)),
+                    from: self,
+                    destination: ComposerCanvasDestinationResolver.resolve(from: self)
+                )
+            } catch {
+                presentPaperMarkupSnapshotFailure(error)
+            }
+        }
+    }
+
+    private var isHTMLRenderReady: Bool {
+        ((installedBodyView as? HTMLRenderView) ?? liveSourceHTMLBodyView)?.isRenderReady == true
+    }
+
+    private var isRenderedContentReady: Bool {
+        if canAnnotateRenderedHTML {
+            return isHTMLRenderReady
+        }
+        return canAnnotateRenderedDiagram
+    }
+
+    private func updateAnnotateAvailability() {
+        annotateButton?.isEnabled = isRenderedContentReady && !isSnapshotting
+    }
+
+    private func snapshotRenderedHTML() async throws -> UIImage {
+        let renderView = (installedBodyView as? HTMLRenderView) ?? liveSourceHTMLBodyView
+        guard let renderView else {
+            throw PaperMarkupCanvasSession.SnapshotError.notReady
+        }
+        return try await renderView.snapshotRenderedImage()
+    }
+
+    private func snapshotRenderedContent() async throws -> UIImage {
+        if canAnnotateRenderedHTML {
+            return try await snapshotRenderedHTML()
+        }
+        guard let body = installedBodyView else {
+            throw PaperMarkupCanvasSession.SnapshotError.notReady
+        }
+        body.layoutIfNeeded()
+        let bounds = body.bounds
+        guard bounds.width > 1, bounds.height > 1 else {
+            throw PaperMarkupCanvasSession.SnapshotError.notReady
+        }
+        let renderer = UIGraphicsImageRenderer(bounds: bounds)
+        return renderer.image { _ in
+            body.drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
+    }
+
     // MARK: - Share
 
     private func shareableContent() -> FileShareService.ShareableContent? {
@@ -1886,6 +1987,18 @@ extension FullScreenCodeViewController {
 
     var presentationBodyContentForTesting: FullScreenCodeContent {
         makePresentation().bodyContent
+    }
+
+    var annotateSourceForTesting: PaperMarkupCanvasSession.AnnotateSource {
+        PaperMarkupCanvasSession.annotateSource(for: .html)
+    }
+
+    var isShowingSnapshotProgressForTesting: Bool { isSnapshotting }
+
+    func markRenderReadyForTesting() {
+        (installedBodyView as? HTMLRenderView)?.markRenderReadyForTesting()
+        liveSourceHTMLBodyView?.markRenderReadyForTesting()
+        updateAnnotateAvailability()
     }
 
     var shareableContentForTesting: FileShareService.ShareableContent? {

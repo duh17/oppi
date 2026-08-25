@@ -6,15 +6,18 @@ import UIKit
 /// dismissal behavior used by other "full-screen" previews.
 final class FullScreenImageViewController: UIViewController {
     private let image: UIImage
+    private let addToChatDestination: ComposerCanvasDestination?
     private var palette: ThemePalette
     private let scrollView = UIScrollView()
     private let toolbar = UIToolbar()
     private let imageView: UIImageView
     private var swipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private var savedFeedbackLabel: UILabel?
+    private(set) var didDismissAfterCanvasDeliveryForTesting = false
 
-    init(image: UIImage) {
+    init(image: UIImage, addToChatDestination: ComposerCanvasDestination? = nil) {
         self.image = image
+        self.addToChatDestination = addToChatDestination
         self.palette = ThemeRuntimeState.currentThemeID().palette
         self.imageView = UIImageView(image: image)
         super.init(nibName: nil, bundle: nil)
@@ -134,14 +137,24 @@ final class FullScreenImageViewController: UIViewController {
             target: self,
             action: #selector(shareTapped)
         )
+        shareButton.accessibilityLabel = "Share"
         let flexSpace = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+        let annotateButton = UIBarButtonItem(
+            image: UIImage(systemName: PaperMarkupCanvasSession.AnnotateAction.systemImage),
+            style: .plain,
+            target: self,
+            action: #selector(annotateTapped)
+        )
+        annotateButton.accessibilityLabel = PaperMarkupCanvasSession.AnnotateAction.title
+        annotateButton.accessibilityIdentifier = PaperMarkupCanvasSession.AnnotateAction.imageViewerIdentifier
         let saveButton = UIBarButtonItem(
             image: UIImage(systemName: "square.and.arrow.down"),
             style: .plain,
             target: self,
             action: #selector(saveTapped(_:))
         )
-        toolbar.items = [shareButton, flexSpace, saveButton]
+        saveButton.accessibilityLabel = "Save"
+        toolbar.items = [shareButton, flexSpace, annotateButton, flexSpace, saveButton]
     }
 
     private func applyToolbarTheme() {
@@ -194,6 +207,39 @@ final class FullScreenImageViewController: UIViewController {
 
     @objc private func dismissTapped() {
         dismiss(animated: true)
+    }
+
+    @objc private func annotateTapped() {
+        presentAnnotate()
+    }
+
+    private func presentAnnotate() {
+        // Use the destination captured when the image sheet opened. Do not
+        // walk the presented chain again — that misses SwiftUI chat anchors
+        // and can pick up an unrelated destination later.
+        PaperMarkupCanvasHostController.present(
+            background: .image(PaperMarkupCanvasSession.copiedImage(from: image)),
+            from: navigationController ?? self,
+            destination: addToChatDestination,
+            onDeliveryAccepted: { [weak self] in
+                self?.handleAnnotateDeliveryAccepted()
+            }
+        )
+    }
+
+    private func handleAnnotateDeliveryAccepted() {
+        didDismissAfterCanvasDeliveryForTesting = true
+        presentingViewController?.dismiss(animated: true)
+    }
+
+    func makeAnnotateHostForTesting() -> PaperMarkupCanvasHostController {
+        PaperMarkupCanvasHostController.makeFullScreenController(
+            background: .image(PaperMarkupCanvasSession.copiedImage(from: image)),
+            destination: addToChatDestination,
+            onDeliveryAccepted: { [weak self] in
+                self?.handleAnnotateDeliveryAccepted()
+            }
+        )
     }
 
     @objc private func shareTapped() {
@@ -257,6 +303,10 @@ extension FullScreenImageViewController: UIScrollViewDelegate {
 extension FullScreenImageViewController {
     func debugToggleZoomForTesting(at pointInImage: CGPoint) {
         toggleZoom(at: pointInImage, animated: false)
+    }
+
+    func debugAnnotateForTesting() {
+        presentAnnotate()
     }
 }
 #endif
@@ -359,10 +409,14 @@ extension FullScreenImageViewController {
     /// slide-down dismissal affordance.
     static func makeSlideDownController(
         image: UIImage,
-        prefersFullScreenOverlay: Bool = false
+        prefersFullScreenOverlay: Bool = false,
+        addToChatDestination: ComposerCanvasDestination? = nil
     ) -> UIViewController {
         let themeID = ThemeRuntimeState.currentThemeID()
-        let viewer = FullScreenImageViewController(image: image)
+        let viewer = FullScreenImageViewController(
+            image: image,
+            addToChatDestination: addToChatDestination
+        )
         let navigation = ImagePreviewNavigationController(rootViewController: viewer)
         navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
 
@@ -383,12 +437,16 @@ extension FullScreenImageViewController {
 
     /// Present the image viewer from a specific presenter.
     static func present(image: UIImage, from presenter: UIViewController) {
+        // Resolve before presenting. The sheet's later presenter chain is not
+        // a reliable path back to the chat composer destination.
+        let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
         ImagePreviewPresentationCoordinator.present(
             makeSlideDownController(
                 image: image,
                 prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(
                     for: presenter.traitCollection
-                )
+                ),
+                addToChatDestination: destination
             ),
             from: presenter
         )

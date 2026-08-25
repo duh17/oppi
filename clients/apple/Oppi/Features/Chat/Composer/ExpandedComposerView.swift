@@ -73,6 +73,9 @@ struct ExpandedComposerView: View {
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var showFileImporter = false
+    @State private var showCanvas = false
+    @State private var canvasBackgroundImage: UIImage?
+    @State private var canvasReplacingAttachmentID: String?
 
     /// BCP 47 language of the active keyboard (e.g. "zh-Hans", "en-US").
     /// Updated by FullSizeTextView while editing.
@@ -307,6 +310,19 @@ struct ExpandedComposerView: View {
             }
         }
         .composerCameraCover(isPresented: $showCamera, pendingAttachments: $pendingAttachments)
+        .composerCanvasCover(
+            isPresented: $showCanvas,
+            text: $text,
+            pendingAttachments: $pendingAttachments,
+            backgroundImage: canvasBackgroundImage,
+            replacingAttachmentID: canvasReplacingAttachmentID
+        )
+        .onChange(of: showCanvas) { _, isPresented in
+            if !isPresented {
+                canvasBackgroundImage = nil
+                canvasReplacingAttachmentID = nil
+            }
+        }
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.item],
@@ -380,7 +396,12 @@ struct ExpandedComposerView: View {
     private var attachmentStrip: some View {
         ComposerShared.attachmentStrip(
             pendingAttachments: $pendingAttachments,
-            horizontalPadding: 16
+            horizontalPadding: 16,
+            onAnnotateImage: { attachment in
+                canvasBackgroundImage = ComposerShared.image(forPendingAttachment: attachment)
+                canvasReplacingAttachmentID = attachment.id
+                showCanvas = true
+            }
         )
     }
 
@@ -393,23 +414,12 @@ struct ExpandedComposerView: View {
 
     private var attachMenu: some View {
         Menu {
-            Button {
-                showPhotoPicker = true
-            } label: {
-                Label("Photo Library", systemImage: "photo.on.rectangle")
-            }
-
-            Button {
-                showCamera = true
-            } label: {
-                Label("Camera", systemImage: "camera")
-            }
-
-            Button {
-                showFileImporter = true
-            } label: {
-                Label("Choose File", systemImage: "paperclip")
-            }
+            ComposerShared.attachmentMenuButtons(
+                showPhotoPicker: $showPhotoPicker,
+                showCamera: $showCamera,
+                showFileImporter: $showFileImporter,
+                showCanvas: $showCanvas
+            )
         } label: {
             ZStack {
                 Circle().fill(Color.themeBgHighlight)

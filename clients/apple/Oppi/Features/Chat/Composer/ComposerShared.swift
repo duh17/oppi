@@ -11,8 +11,11 @@ import UniformTypeIdentifiers
 /// static functions instead of maintaining their own copies.
 @MainActor
 enum ComposerShared {
-    private static let attachmentThumbnailSize: CGFloat = 56
-    private static let attachmentTileSize: CGFloat = 64
+    /// Visible photo in the composer strip. Keep larger than the old 56pt tile
+    /// so annotate vs remove is easy to hit. HIG wants at least 44×44 hit regions.
+    static let attachmentThumbnailSize: CGFloat = 76
+    static let attachmentTileSize: CGFloat = 88
+    static let attachmentRemoveHitSize: CGFloat = 44
     /// Picker UX limit only. Server-side chat attachments are constrained by byte budgets,
     /// not by a small fixed image count, so keep this comfortably above the old 5-item cap.
     static let maxPhotoSelectionCount = 10
@@ -117,6 +120,86 @@ enum ComposerShared {
 
     // MARK: - Image Handling
 
+    @ViewBuilder
+    static func attachmentMenuButtons(
+        showPhotoPicker: Binding<Bool>,
+        showCamera: Binding<Bool>,
+        showFileImporter: Binding<Bool>,
+        showCanvas: Binding<Bool>
+    ) -> some View {
+        ForEach(PaperMarkupCanvasSession.attachmentMenuItems, id: \.self) { item in
+            Button {
+                switch item {
+                case .photoLibrary:
+                    showPhotoPicker.wrappedValue = true
+                case .camera:
+                    showCamera.wrappedValue = true
+                case .chooseFile:
+                    showFileImporter.wrappedValue = true
+                case .canvas:
+                    showCanvas.wrappedValue = true
+                }
+            } label: {
+                Label(item.title, systemImage: item.systemImage)
+            }
+        }
+    }
+
+    @discardableResult
+    static func applyCanvasToComposer(
+        attachment: PendingAttachment,
+        recognizedText: String,
+        text: Binding<String>,
+        pendingAttachments: Binding<[PendingAttachment]>,
+        replacingAttachmentID: String? = nil
+    ) -> Bool {
+        pendingAttachments.wrappedValue = replacedPendingAttachments(
+            pendingAttachments.wrappedValue,
+            with: attachment,
+            replacingAttachmentID: replacingAttachmentID
+        )
+        guard pendingAttachments.wrappedValue.contains(where: { $0.id == attachment.id }) else {
+            return false
+        }
+        text.wrappedValue = PaperMarkupCanvasSession.prependRecognizedText(
+            recognizedText,
+            into: text.wrappedValue
+        )
+        return true
+    }
+
+    static func replacedPendingAttachments(
+        _ pendingAttachments: [PendingAttachment],
+        with attachment: PendingAttachment,
+        replacingAttachmentID: String?
+    ) -> [PendingAttachment] {
+        var next = pendingAttachments
+        if let replacingAttachmentID,
+           let index = next.firstIndex(where: { $0.id == replacingAttachmentID }) {
+            next[index] = attachment
+            return next
+        }
+        if !next.contains(where: { $0.id == attachment.id }) {
+            next.append(attachment)
+        }
+        return next
+    }
+
+    static func image(forPendingAttachment attachment: PendingAttachment) -> UIImage? {
+        let raw: UIImage?
+        if let imageAttachment = attachment.imageAttachment,
+           let data = Data(base64Encoded: imageAttachment.data, options: .ignoreUnknownCharacters),
+           let image = UIImage(data: data) {
+            raw = image
+        } else if let data = attachment.localFileData,
+                  attachment.localMimeType?.hasPrefix("image/") == true {
+            raw = UIImage(data: data)
+        } else {
+            raw = attachment.thumbnail
+        }
+        return raw.map(PaperMarkupCanvasSession.copiedImage(from:))
+    }
+
     static func loadSelectedPhotos(
         _ items: [PhotosPickerItem],
         into pendingAttachments: Binding<[PendingAttachment]>
@@ -209,14 +292,21 @@ enum ComposerShared {
 
     static func attachmentStrip(
         pendingAttachments: Binding<[PendingAttachment]>,
-        horizontalPadding: CGFloat? = nil
+        horizontalPadding: CGFloat? = nil,
+        onAnnotateImage: ((PendingAttachment) -> Void)? = nil
     ) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             if let horizontalPadding {
-                attachmentRow(pendingAttachments: pendingAttachments)
+                attachmentRow(
+                    pendingAttachments: pendingAttachments,
+                    onAnnotateImage: onAnnotateImage
+                )
                     .padding(.horizontal, horizontalPadding)
             } else {
-                attachmentRow(pendingAttachments: pendingAttachments)
+                attachmentRow(
+                    pendingAttachments: pendingAttachments,
+                    onAnnotateImage: onAnnotateImage
+                )
             }
         }
         .frame(height: attachmentTileSize)
@@ -238,31 +328,47 @@ enum ComposerShared {
     }
 
     private static func attachmentRow(
-        pendingAttachments: Binding<[PendingAttachment]>
+        pendingAttachments: Binding<[PendingAttachment]>,
+        onAnnotateImage: ((PendingAttachment) -> Void)? = nil
     ) -> some View {
         HStack(alignment: .center, spacing: 8) {
             ForEach(pendingAttachments.wrappedValue) { attachment in
                 if attachment.source == .image, let thumbnail = attachment.thumbnail {
                     ZStack(alignment: .topTrailing) {
-                        Image(uiImage: thumbnail)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: attachmentThumbnailSize, height: attachmentThumbnailSize)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
-                            )
-                            .frame(width: attachmentTileSize, height: attachmentTileSize, alignment: .bottomLeading)
+                        Button {
+                            onAnnotateImage?(attachment)
+                        } label: {
+                            Image(uiImage: thumbnail)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: attachmentThumbnailSize, height: attachmentThumbnailSize)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.themeComment.opacity(0.3), lineWidth: 1)
+                                )
+                                .frame(width: attachmentTileSize, height: attachmentTileSize, alignment: .bottomLeading)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Annotate photo")
+                        .accessibilityIdentifier("chat.attachment.image.annotate.\(attachment.id)")
 
                         Button {
                             removeAttachment(attachment.id, from: pendingAttachments)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.themeFg)
-                                .background(Circle().fill(.themeScrim))
+                                .font(.title3)
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.themeFg, .themeScrim)
+                                .frame(
+                                    width: attachmentRemoveHitSize,
+                                    height: attachmentRemoveHitSize
+                                )
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove photo")
+                        .offset(x: 8, y: -8)
                     }
                     .frame(width: attachmentTileSize, height: attachmentTileSize)
                     .accessibilityIdentifier("chat.attachment.image.\(attachment.id)")
@@ -650,7 +756,56 @@ struct ComposerAttachmentPill: View {
 
 // MARK: - Camera Cover
 
+struct ComposerCanvasDestinationAnchor: UIViewControllerRepresentable {
+    let destination: ComposerCanvasDestination
+
+    func makeUIViewController(context: Context) -> ComposerCanvasDestinationAnchorController {
+        let controller = ComposerCanvasDestinationAnchorController()
+        controller.destination = destination
+        return controller
+    }
+
+    func updateUIViewController(
+        _ uiViewController: ComposerCanvasDestinationAnchorController,
+        context: Context
+    ) {
+        uiViewController.destination = destination
+    }
+}
+
 extension View {
+    /// Full-screen PaperKit canvas shared by inline and expanded composers.
+    func composerCanvasCover(
+        isPresented: Binding<Bool>,
+        text: Binding<String>,
+        pendingAttachments: Binding<[PendingAttachment]>,
+        backgroundImage: UIImage? = nil,
+        replacingAttachmentID: String? = nil
+    ) -> some View {
+        fullScreenCover(isPresented: isPresented) {
+            PaperMarkupCanvasHostView(
+                background: backgroundImage.map { .image($0) } ?? .blank,
+                onAddToChat: { attachment, recognizedText in
+                    let accepted = ComposerShared.applyCanvasToComposer(
+                        attachment: attachment,
+                        recognizedText: recognizedText,
+                        text: text,
+                        pendingAttachments: pendingAttachments,
+                        replacingAttachmentID: replacingAttachmentID
+                    )
+                    if accepted {
+                        isPresented.wrappedValue = false
+                    }
+                    return accepted
+                },
+                onCancel: {
+                    isPresented.wrappedValue = false
+                }
+            )
+            .ignoresSafeArea()
+        }
+    }
+
     /// Camera full-screen cover shared by inline and expanded composers.
     func composerCameraCover(
         isPresented: Binding<Bool>,
