@@ -24,40 +24,135 @@ struct MutableFullScreenMarkdownBodyTests {
         #expect(timelineFirstView(ofType: UICollectionView.self, in: controller.view) == nil)
     }
 
-    @Test("thinking uses the same mutable engine while its trace is live")
-    func thinkingUsesSharedMutableRenderer() throws {
+    @Test("thinking stays in one plain text view while its trace is live")
+    func thinkingStaysPlainText() throws {
         let stream = ThinkingTraceStream(text: "**Considering** the first option", isDone: false)
         let controller = makeController(
             content: .thinking(content: stream.snapshot.text, stream: stream)
         )
 
-        #expect(controller.installedBodyViewForTesting is NativeMutableFullScreenMarkdownBody)
-        let markdown = try #require(
-            timelineFirstView(ofType: AssistantMarkdownContentView.self, in: controller.view)
-        )
-        let rendered = timelineAllTextViews(in: markdown).map(timelineRenderedText).joined()
-        #expect(rendered.contains("Considering"))
-        #expect(!rendered.contains("**Considering**"))
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody)
+        #expect(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: body) == nil)
+        #expect(body.debugTextViewForTesting.text == "**Considering** the first option")
+        #expect(body.debugFollowsTailForTesting)
     }
 
-    @Test("thinking completion flushes immediately into the immutable reader")
-    func thinkingCompletionTransitionsOnce() async throws {
+    @Test("thinking selection and review menu detach live tail following")
+    func thinkingSelectionDetachesTailFollow() throws {
+        let stream = ThinkingTraceStream(
+            text: tallMarkdown(paragraphs: 45),
+            isDone: false
+        )
+        let controller = makeController(
+            content: .thinking(content: stream.snapshot.text, stream: stream)
+        )
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody)
+        let textView = body.debugTextViewForTesting
+        textView.selectedRange = NSRange(location: 12, length: 18)
+
+        let menu = body.textView(
+            textView,
+            editMenuForTextIn: textView.selectedRange,
+            suggestedActions: [UIAction(title: "Copy") { _ in }]
+        )
+
+        #expect(menu != nil)
+        #expect(!body.debugFollowsTailForTesting)
+    }
+
+    @Test("thinking layout never follows tail while selection owns the text view")
+    func thinkingSelectionRejectsLayoutOffsetWrites() async throws {
+        let initial = tallMarkdown(paragraphs: 55)
+        let stream = ThinkingTraceStream(text: initial, isDone: false)
+        let controller = makeController(
+            content: .thinking(content: stream.snapshot.text, stream: stream)
+        )
+        let body = try #require(controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody)
+        let textView = body.debugTextViewForTesting
+        let detachedY = max(80, maximumOffsetY(textView) / 2)
+        textView.contentOffset.y = detachedY
+        textView.selectedRange = NSRange(location: 10, length: 20)
+
+        stream.update(text: initial + "\n\nA further live thought.", isDone: false)
+        await drainMutableMarkdownQueue()
+        controller.view.layoutIfNeeded()
+
+        #expect(abs(textView.contentOffset.y - detachedY) < 1)
+        #expect(!body.debugFollowsTailForTesting)
+        #expect(textView.selectedRange.length == 20)
+    }
+
+    @Test("thinking completion swaps the live plain text body for immutable Markdown")
+    func thinkingCompletionSwapsToImmutableMarkdown() async throws {
         let stream = ThinkingTraceStream(text: "Considering", isDone: false)
         let controller = makeController(
             content: .thinking(content: stream.snapshot.text, stream: stream)
         )
-        let wrapper = try #require(
-            controller.installedBodyViewForTesting as? NativeMutableFullScreenMarkdownBody
-        )
+        let liveBody = try #require(controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody)
 
-        stream.update(text: "Considering\n\nFinal answer.", isDone: true)
+        stream.update(text: "Considering\n\nFinal **answer**.", isDone: true)
         await drainMutableMarkdownQueue()
         controller.view.layoutIfNeeded()
 
-        #expect(wrapper.debugIsShowingImmutableReaderForTesting)
-        #expect(wrapper.debugTransitionCountForTesting == 1)
-        let rendered = timelineAllTextViews(in: wrapper).map(timelineRenderedText).joined(separator: "\n")
-        #expect(rendered.contains("Final answer"))
+        #expect(controller.installedBodyViewForTesting !== liveBody)
+        let completedBody = try #require(
+            controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody
+        )
+        #expect(timelineFirstView(ofType: NativeFullScreenThinkingBody.self, in: completedBody) == nil)
+        let rendered = timelineAllTextViews(in: completedBody).map(timelineRenderedText).joined(separator: "\n")
+        #expect(rendered.contains("Final answer."))
+        #expect(!rendered.contains("**answer**"))
+    }
+
+    @Test("thinking completion waits for viewport interaction and restores detached intent")
+    func thinkingCompletionDefersDuringInteraction() async throws {
+        let initial = tallMarkdown(paragraphs: 55)
+        let stream = ThinkingTraceStream(text: initial, isDone: false)
+        let controller = makeController(
+            content: .thinking(content: stream.snapshot.text, stream: stream)
+        )
+        let liveBody = try #require(
+            controller.installedBodyViewForTesting as? NativeFullScreenThinkingBody
+        )
+        let textView = liveBody.debugTextViewForTesting
+        liveBody.scrollViewWillBeginDragging(textView)
+        let detachedY = max(80, maximumOffsetY(textView) / 2)
+        textView.contentOffset.y = detachedY
+
+        let final = initial + "\n\n" + tallMarkdown(paragraphs: 20)
+        stream.update(text: final, isDone: true)
+        controller.view.layoutIfNeeded()
+
+        #expect(controller.installedBodyViewForTesting === liveBody)
+        #expect(abs(textView.contentOffset.y - detachedY) < 1)
+
+        liveBody.scrollViewDidEndDragging(textView, willDecelerate: true)
+        #expect(controller.installedBodyViewForTesting === liveBody)
+        liveBody.scrollViewDidEndDecelerating(textView)
+        await drainMutableMarkdownQueue()
+        controller.view.layoutIfNeeded()
+        await drainMutableMarkdownQueue()
+
+        let completedBody = try #require(
+            controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody
+        )
+        let collection = try #require(
+            timelineFirstView(ofType: UICollectionView.self, in: completedBody)
+        )
+        collection.layoutIfNeeded()
+        #expect(collection.contentOffset.y > 28)
+        #expect(maximumOffsetY(collection) - collection.contentOffset.y > 28)
+    }
+
+    @Test("already-completed thinking opens directly in immutable Markdown")
+    func completedThinkingOpensInImmutableMarkdown() {
+        let stream = ThinkingTraceStream(text: "Final **reasoning**.", isDone: true)
+        let controller = makeController(
+            content: .thinking(content: stream.snapshot.text, stream: stream)
+        )
+
+        #expect(controller.installedBodyViewForTesting is NativeFullScreenMarkdownBody)
+        #expect(!(controller.installedBodyViewForTesting is NativeFullScreenThinkingBody))
     }
 
     @Test("append updates retain committed prefix views and update only the provisional tail")
@@ -71,7 +166,6 @@ struct MutableFullScreenMarkdownBodyTests {
         let codeBefore = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: body))
 
         body.update(content: initial + " tail grows.", isStreaming: true)
-        body.debugFlushPendingMutableApplyForTesting()
         fixture.window.layoutIfNeeded()
 
         #expect(timelineAllTextViews(in: body).first === prefixBefore)
@@ -94,7 +188,6 @@ struct MutableFullScreenMarkdownBodyTests {
         #expect(abs(scroll.contentOffset.y - firstBottom) < 1)
 
         body.update(content: initial + "\n\nA new live tail paragraph.", isStreaming: true)
-        body.debugFlushPendingMutableApplyForTesting()
         await drainMutableMarkdownQueue()
         fixture.window.layoutIfNeeded()
         #expect(abs(scroll.contentOffset.y - maximumOffsetY(scroll)) < 1)
@@ -104,7 +197,6 @@ struct MutableFullScreenMarkdownBodyTests {
         scroll.contentOffset.y = detachedY
         body.scrollViewDidEndDragging(scroll, willDecelerate: false)
         body.update(content: initial + "\n\nA new live tail paragraph grows again.", isStreaming: true)
-        body.debugFlushPendingMutableApplyForTesting()
         await drainMutableMarkdownQueue()
         fixture.window.layoutIfNeeded()
 
@@ -112,7 +204,7 @@ struct MutableFullScreenMarkdownBodyTests {
         #expect(maximumOffsetY(scroll) - scroll.contentOffset.y > 28)
     }
 
-    @Test("live bursts coalesce while completion flushes immediately")
+    @Test("live bursts apply immediately while completion still swaps once")
     func liveBurstCadenceAndCompletionFlush() throws {
         let body = makeBody(content: "Initial")
         let initialApplyCount = body.debugMutableApplyCountForTesting
@@ -121,13 +213,9 @@ struct MutableFullScreenMarkdownBodyTests {
             body.update(content: "Initial \(index)", isStreaming: true)
         }
 
-        #expect(body.debugHasPendingMutableApplyForTesting)
-        #expect(body.debugMutableApplyCountForTesting == initialApplyCount)
-        body.debugFlushPendingMutableApplyForTesting()
-        #expect(body.debugMutableApplyCountForTesting == initialApplyCount + 1)
+        #expect(body.debugMutableApplyCountForTesting == initialApplyCount + 12)
 
         body.update(content: "Final bytes", isStreaming: false)
-        #expect(!body.debugHasPendingMutableApplyForTesting)
         #expect(body.debugIsShowingImmutableReaderForTesting)
     }
 

@@ -32,7 +32,8 @@ struct DeltaCoalescerTelemetry: Sendable {
 /// Batches high-frequency stream deltas for smooth rendering.
 ///
 /// Rules:
-/// - `textDelta` / `thinkingDelta` / `toolOutput`: buffer and flush about every 50ms
+/// - `textDelta` / `thinkingDelta` / `toolOutput`: buffer and flush on
+///   `LiveStreamingPresentation.flushInterval` (50ms)
 /// - Repeated `toolUpdate` / duplicate `toolStart` events for the same tool
 ///   call are also coalesced so streamed args (for example write/edit content)
 ///   don't thrash the reducer and collection layout on every chunk.
@@ -59,7 +60,8 @@ final class DeltaCoalescer {
     private var buffer: [AgentEvent] = []
     private var flushTask: Task<Void, Never>?
     private var flushGeneration = 0
-    private let flushInterval: Duration = .milliseconds(50)
+    static let flushInterval: Duration = LiveStreamingPresentation.flushInterval
+    private var flushInterval: Duration { Self.flushInterval }
     private var activeToolStarts: Set<ToolStartKey> = []
     private var previewToolStarts: Set<ToolStartKey> = []
 

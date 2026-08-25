@@ -189,6 +189,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var titleLeadingToStatusConstraint: NSLayoutConstraint?
     private var titleLeadingToToolConstraint: NSLayoutConstraint?
     var expandedShouldAutoFollow = true
+    private var liveStreamingFollow = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
     var expandedRenderSignature: Int?
     private var expandedUsesViewport = false
     var expandedUsesMarkdownLayout = false
@@ -1094,6 +1095,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedViewportHeightConstraint?.isActive = false
         expandedUsesViewport = false
         expandedShouldAutoFollow = true
+        liveStreamingFollow = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
         ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
     }
 
@@ -1907,9 +1909,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 : showExpandedHostedView()
         }
 
+        if output.surface == .markdownViewport {
+            _ = liveStreamingFollow.applyStreamTick(
+                isStreaming: !currentConfiguration.isDone,
+                shouldRerender: output.scrollBehavior != .preserve,
+                wasVisible: wasMarkdownViewport,
+                previousText: expandedRenderedText,
+                currentText: output.renderedText ?? ""
+            )
+            expandedShouldAutoFollow = liveStreamingFollow.followsTail
+        } else {
+            expandedShouldAutoFollow = output.shouldAutoFollow
+        }
         expandedRenderSignature = output.renderSignature
         expandedRenderedText = output.renderedText
-        expandedShouldAutoFollow = output.shouldAutoFollow
         activeExpandedViewportPolicy = output.viewportPolicy
         expandedViewportMode = output.viewportMode
 
@@ -2423,6 +2436,33 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
     #endif
 
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === expandedScrollView, expandedUsesMarkdownLayout else { return }
+        _ = liveStreamingFollow.handle(.interactionBegan)
+        expandedShouldAutoFollow = liveStreamingFollow.followsTail
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === expandedScrollView, expandedUsesMarkdownLayout, !decelerate else { return }
+        finishMarkdownLiveFollowInteraction()
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === expandedScrollView, expandedUsesMarkdownLayout else { return }
+        finishMarkdownLiveFollowInteraction()
+    }
+
+    private func finishMarkdownLiveFollowInteraction() {
+        let intent = liveStreamingFollow.handle(.interactionEnded(
+            isNearBottom: ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView),
+            isStreaming: !currentConfiguration.isDone
+        ))
+        expandedShouldAutoFollow = liveStreamingFollow.followsTail
+        if intent == .followTail {
+            scheduleExpandedAutoScrollToBottomIfNeeded()
+        }
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         // outputScrollView scroll events are handled by BashToolRowView (its own delegate).
         if scrollView === expandedScrollView {
@@ -2432,6 +2472,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     expandedScrollView.contentOffset.y = lockedY
                 }
             }
+            if expandedUsesMarkdownLayout { return }
             expandedShouldAutoFollow = ToolTimelineRowUIHelpers.isNearBottom(expandedScrollView)
         }
     }

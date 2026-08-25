@@ -57,14 +57,9 @@ enum FullScreenMarkdownViewportIntent: Equatable {
 /// type owns only the outer viewport and the one-way handoff to the immutable,
 /// render-ahead reader when the stream completes.
 final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
-    /// Live Markdown is readable at this cadence without making TextKit and
-    /// block renderers react to every token. Completion always bypasses it.
-    private static let mutableApplyInterval: Duration = .milliseconds(75)
-
     private let scrollView = UIScrollView()
     private let markdownView = AssistantMarkdownContentView()
 
-    private var stream: ThinkingTraceStream?
     private let themeID: ThemeID
     private let palette: ThemePalette
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -84,13 +79,11 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private var readerPreferences: FullScreenReaderPreferences
     private var latestContent: String
     private var isStreaming: Bool
-    private var streamObserverID: UUID?
     private var immutableBody: NativeFullScreenMarkdownBody?
     private var pendingCompletionContent: String?
     private var pendingCompletionViewportIntent: FullScreenMarkdownViewportIntent?
     private var isTransitioningToImmutable = false
     private var transitionCount = 0
-    private var pendingMutableApplyTask: Task<Void, Never>?
     private var mutableApplyCount = 0
 
     #if DEBUG
@@ -107,7 +100,6 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 
     init(
         content: String,
-        stream: ThinkingTraceStream? = nil,
         isStreaming: Bool = true,
         themeID: ThemeID? = nil,
         palette: ThemePalette,
@@ -126,8 +118,6 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
     ) {
-        let initialSnapshot = stream?.snapshot
-        self.stream = stream
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         self.palette = palette
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
@@ -144,19 +134,13 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
-        self.latestContent = initialSnapshot?.text ?? content
-        self.isStreaming = initialSnapshot.map { !$0.isDone } ?? isStreaming
+        self.latestContent = content
+        self.isStreaming = isStreaming
         super.init(frame: .zero)
 
         setupMutableViewport()
         applyMutableContent()
         _ = viewportOwner
-
-        if let stream {
-            streamObserverID = stream.addObserver(deliverImmediately: false) { [weak self] snapshot in
-                self?.update(content: snapshot.text, isStreaming: !snapshot.isDone)
-            }
-        }
 
         if !self.isStreaming {
             transitionToImmutableIfPossible()
@@ -165,16 +149,6 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    deinit {
-        pendingMutableApplyTask?.cancel()
-        if let streamObserverID {
-            let stream = stream
-            Task { @MainActor in
-                stream?.removeObserver(streamObserverID)
-            }
-        }
-    }
 
     override var accessibilityIdentifier: String? {
         didSet {
@@ -291,32 +265,18 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         if isStreaming {
             pendingCompletionContent = nil
             pendingCompletionViewportIntent = nil
-            scheduleMutableApply()
+            // `DeltaCoalescer` already batches live ticks. Apply immediately
+            // so this reader does not invent a second clock.
+            applyMutableContent()
             // Ordinary append ticks must not re-arm following after the reader
             // has intentionally detached from the live tail.
             viewportOwner.scheduleFollowTail()
         } else {
-            // Completion bypasses cadence so final bytes and context are never
-            // stranded behind a scheduled live update.
-            pendingMutableApplyTask?.cancel()
-            pendingMutableApplyTask = nil
             applyMutableContent()
             pendingCompletionContent = content
             pendingCompletionViewportIntent = completionIntent
             viewportOwner.streamCompleted()
             transitionToImmutableIfPossible()
-        }
-    }
-
-    private func scheduleMutableApply() {
-        guard pendingMutableApplyTask == nil else { return }
-        pendingMutableApplyTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.mutableApplyInterval)
-            guard let self, !Task.isCancelled else { return }
-            self.pendingMutableApplyTask = nil
-            guard self.isStreaming, self.immutableBody == nil else { return }
-            self.applyMutableContent()
-            self.viewportOwner.scheduleFollowTail()
         }
     }
 
@@ -400,21 +360,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         // The immutable reader now owns presentation and source context. Tear
         // down mutable segment views and their async work instead of retaining
         // two full render trees behind the wrapper.
-        pendingMutableApplyTask?.cancel()
-        pendingMutableApplyTask = nil
         markdownView.clearContent()
-        if let streamObserverID {
-            let completedStream = stream
-            self.streamObserverID = nil
-            // Completion can arrive while the stream is iterating observers.
-            // Remove on the next actor turn rather than mutating that dictionary
-            // from inside its delivery callback.
-            Task { @MainActor in
-                await Task.yield()
-                completedStream?.removeObserver(streamObserverID)
-            }
-        }
-        stream = nil
     }
 
     func currentViewportIntent() -> FullScreenMarkdownViewportIntent {
@@ -577,6 +523,282 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     }
 }
 
+/// Plain-text fullscreen thinking surface. Thinking bypasses CommonMark and
+/// receives the already-coalesced snapshots directly, sharing only the common
+/// attached/detached viewport policy with other live surfaces.
+final class NativeFullScreenThinkingBody: UIView, UITextViewDelegate {
+    private let textView = UITextView(usingTextLayoutManager: true)
+    private let stream: ThinkingTraceStream?
+    private let palette: ThemePalette
+    private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    private let reviewCommentSourceContext: ReviewCommentSourceContext?
+    private let onCompletion: ((NativeFullScreenThinkingBody, String, FullScreenMarkdownViewportIntent) -> Void)?
+    private var readerPreferences: FullScreenReaderPreferences
+    private struct PendingCompletion {
+        let text: String
+        let viewportIntent: FullScreenMarkdownViewportIntent
+    }
+
+    private var streamObserverID: UUID?
+    private var isStreaming: Bool
+    private var completionDelivered = false
+    private var pendingCompletion: PendingCompletion?
+    private var isApplyingSnapshot = false
+    private var followPolicy: LiveStreamingPresentation.ViewportPolicy
+
+    init(
+        content: String,
+        stream: ThinkingTraceStream?,
+        palette: ThemePalette,
+        readerPreferences: FullScreenReaderPreferences,
+        reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
+        reviewCommentSourceContext: ReviewCommentSourceContext?,
+        onCompletion: ((NativeFullScreenThinkingBody, String, FullScreenMarkdownViewportIntent) -> Void)? = nil
+    ) {
+        let snapshot = stream?.snapshot
+        let initialText = snapshot?.text ?? content
+        let isStreaming = snapshot.map { !$0.isDone } ?? false
+        self.stream = stream
+        self.palette = palette
+        self.readerPreferences = readerPreferences
+        self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
+        self.reviewCommentSourceContext = reviewCommentSourceContext
+        self.onCompletion = onCompletion
+        self.isStreaming = isStreaming
+        self.followPolicy = LiveStreamingPresentation.ViewportPolicy(followsTail: isStreaming)
+        super.init(frame: .zero)
+
+        backgroundColor = UIColor(palette.bgDark)
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.backgroundColor = .clear
+        textView.textColor = UIColor(palette.fg)
+        textView.font = thinkingFont
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = true
+        textView.alwaysBounceVertical = true
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.delegate = self
+        textView.text = initialText
+        textView.panGestureRecognizer.addTarget(self, action: #selector(handlePanStateChange(_:)))
+        addSubview(textView)
+        NSLayoutConstraint.activate([
+            textView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            textView.topAnchor.constraint(equalTo: topAnchor),
+            textView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        if let stream {
+            streamObserverID = stream.addObserver(deliverImmediately: false) { [weak self] snapshot in
+                self?.apply(snapshot)
+            }
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        guard let streamObserverID else { return }
+        let stream = stream
+        Task { @MainActor in
+            stream?.removeObserver(streamObserverID)
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        followTailIfNeeded()
+    }
+
+    private var thinkingFont: UIFont {
+        FullScreenCodeTypography.scaledFont(AppFont.messageBody, scale: readerPreferences.textScale)
+    }
+
+    private func apply(_ snapshot: ThinkingTraceStream.Snapshot) {
+        let previousText = textView.text ?? ""
+        let previousSelection = textView.selectedRange
+        let wasStreaming = isStreaming
+        if snapshot.isDone, wasStreaming, pendingCompletion == nil {
+            pendingCompletion = PendingCompletion(
+                text: snapshot.text,
+                viewportIntent: .capturing(
+                    scrollView: textView,
+                    followsTail: followPolicy.followsTail
+                )
+            )
+        }
+
+        isApplyingSnapshot = true
+        isStreaming = !snapshot.isDone
+        _ = followPolicy.applyStreamTick(
+            isStreaming: isStreaming,
+            shouldRerender: previousText != snapshot.text,
+            wasVisible: true,
+            previousText: previousText,
+            currentText: snapshot.text
+        )
+        if previousText != snapshot.text {
+            textView.text = snapshot.text
+            restoreSelection(previousSelection)
+        }
+        isApplyingSnapshot = false
+
+        if wasStreaming != isStreaming || previousText != snapshot.text {
+            setNeedsLayout()
+            followTailIfNeeded()
+        }
+        deliverPendingCompletionIfPossible()
+    }
+
+    private func restoreSelection(_ selection: NSRange) {
+        guard selection.location != NSNotFound else { return }
+        let textLength = (textView.text as NSString?)?.length ?? 0
+        let location = min(selection.location, textLength)
+        let length = min(selection.length, max(0, textLength - location))
+        textView.selectedRange = NSRange(location: location, length: length)
+    }
+
+    private func followTailIfNeeded() {
+        guard rejectUIKitOwnedInteractionIfNeeded(),
+              followPolicy.handle(.requestFollowTail) == .followTail else { return }
+        textView.layoutIfNeeded()
+        guard rejectUIKitOwnedInteractionIfNeeded() else { return }
+        let minimumY = -textView.adjustedContentInset.top
+        let maximumY = max(
+            minimumY,
+            textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom
+        )
+        textView.setContentOffset(CGPoint(x: textView.contentOffset.x, y: maximumY), animated: false)
+    }
+
+    var isViewportInteracting: Bool {
+        isUIKitOwningViewport || followPolicy.isInteracting
+    }
+
+    private var isUIKitOwningViewport: Bool {
+        let panState = textView.panGestureRecognizer.state
+        return textView.isTracking
+            || textView.isDragging
+            || textView.isDecelerating
+            || panState == .began
+            || panState == .changed
+            || textView.selectedRange.length > 0
+    }
+
+    /// Transfers viewport ownership to UIKit before every automatic offset
+    /// write, including layout-driven writes that race touch-down or selection.
+    @discardableResult
+    private func rejectUIKitOwnedInteractionIfNeeded() -> Bool {
+        guard !isUIKitOwningViewport else {
+            beginInteraction()
+            return false
+        }
+        return true
+    }
+
+    private func beginInteraction() {
+        _ = followPolicy.handle(.interactionBegan)
+    }
+
+    private func finishInteractionIfPossible() {
+        guard !isUIKitOwningViewport else { return }
+        if followPolicy.isInteracting {
+            let distance = textView.contentSize.height
+                - textView.bounds.height
+                + textView.adjustedContentInset.bottom
+                - textView.contentOffset.y
+            let intent = followPolicy.handle(.interactionEnded(
+                isNearBottom: distance <= 28,
+                isStreaming: isStreaming
+            ))
+            if intent == .followTail { followTailIfNeeded() }
+        }
+        deliverPendingCompletionIfPossible()
+    }
+
+    private func deliverPendingCompletionIfPossible() {
+        guard !completionDelivered,
+              !isViewportInteracting,
+              let pendingCompletion else { return }
+        completionDelivered = true
+        self.pendingCompletion = nil
+        onCompletion?(self, pendingCompletion.text, pendingCompletion.viewportIntent)
+    }
+
+    @objc private func handlePanStateChange(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            beginInteraction()
+        case .ended, .cancelled, .failed:
+            DispatchQueue.main.async { [weak self] in
+                self?.finishInteractionIfPossible()
+            }
+        default:
+            break
+        }
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        beginInteraction()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate { finishInteractionIfPossible() }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        finishInteractionIfPossible()
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        guard !isApplyingSnapshot else { return }
+        if textView.selectedRange.length > 0 {
+            beginInteraction()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.finishInteractionIfPossible()
+            }
+        }
+    }
+
+    func textView(
+        _ textView: UITextView,
+        editMenuForTextIn range: NSRange,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        // Copy and review-comment actions own the current selection. Detach
+        // before presenting either action so live layout cannot move it.
+        beginInteraction()
+        return buildFullScreenReviewCommentMenu(
+            textView: textView,
+            range: range,
+            suggestedActions: suggestedActions,
+            router: reviewCommentSelectionRouter,
+            sourceContext: reviewCommentSourceContext
+        )
+    }
+}
+
+extension NativeFullScreenThinkingBody: FullScreenReaderConfigurable {
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        guard preferences != readerPreferences else { return }
+        readerPreferences = preferences
+        textView.font = thinkingFont
+        textView.setNeedsLayout()
+        setNeedsLayout()
+    }
+}
+
+#if DEBUG
+extension NativeFullScreenThinkingBody {
+    var debugTextViewForTesting: UITextView { textView }
+    var debugFollowsTailForTesting: Bool { followPolicy.followsTail }
+}
+#endif
+
 extension NativeMutableFullScreenMarkdownBody: FullScreenReaderConfigurable {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
@@ -596,15 +818,6 @@ extension NativeMutableFullScreenMarkdownBody {
     var debugMutableApplyCountForTesting: Int { mutableApplyCount }
     var debugMutableScrollViewForTesting: UIScrollView { scrollView }
     var debugMarkdownViewForTesting: AssistantMarkdownContentView { markdownView }
-    var debugHasPendingMutableApplyForTesting: Bool { pendingMutableApplyTask != nil }
-
-    func debugFlushPendingMutableApplyForTesting() {
-        pendingMutableApplyTask?.cancel()
-        pendingMutableApplyTask = nil
-        guard isStreaming, immutableBody == nil else { return }
-        applyMutableContent()
-        viewportOwner.scheduleFollowTail()
-    }
 
     func debugSetViewportInteractingForTesting(_ interacting: Bool?) {
         debugViewportInteractionOverride = interacting

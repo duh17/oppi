@@ -96,6 +96,7 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     private var fadeApplied = false
     /// Render signature to skip redundant text updates.
     private var renderSignature: Int?
+    private var liveStreamingFollow = LiveStreamingPresentation.ViewportPolicy(followsTail: true)
 
     private var currentConfiguration: ThinkingTimelineRowConfiguration
     private let fullScreenThinkingStream: ThinkingTraceStream
@@ -288,11 +289,19 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
     private func apply(configuration: ThinkingTimelineRowConfiguration) {
         let wasStreaming = !currentConfiguration.isDone
         let isNowStreaming = !configuration.isDone
+        let previousText = currentConfiguration.displayText
         currentConfiguration = configuration
 
         if isNowStreaming && !wasStreaming {
             scrollView.contentOffset = .zero
         }
+        _ = liveStreamingFollow.applyStreamTick(
+            isStreaming: isNowStreaming,
+            shouldRerender: true,
+            wasVisible: wasStreaming,
+            previousText: wasStreaming ? previousText : nil,
+            currentText: configuration.displayText
+        )
 
         let themeID = ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
@@ -366,7 +375,8 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                     renderSignature = signature
                 }
                 updateBubbleHeight(forWidth: bounds.width)
-                if needsTextUpdate, contentIsTruncated {
+                if needsTextUpdate, contentIsTruncated,
+                   liveStreamingFollow.handle(.requestFollowTail) == .followTail {
                     ToolTimelineRowUIHelpers.followTail(
                         in: scrollView,
                         contentLabel: textLabel
@@ -385,7 +395,6 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         bubbleDoubleTapGesture.isEnabled = interaction.enablesTapActivation
         bubblePinchGesture.isEnabled = interaction.enablesPinchActivation
     }
-
 
     /// Cheap render signature to skip redundant text updates.
     private static func textSignature(text: String, isDone: Bool, themeID: ThemeID) -> Int {
@@ -506,6 +515,10 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
         // If content overflows, apply() must have driven the scroll.
         // A positive offset proves auto-scroll happened.
         return scrollView.contentOffset.y > 0
+    }
+
+    var liveStreamingFollowsTailForTesting: Bool { // periphery:ignore
+        liveStreamingFollow.followsTail
     }
     #endif
 

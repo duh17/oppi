@@ -21,14 +21,15 @@ struct ToolRowMarkdownRenderStrategy {
         let contentChanged = signature != previousSignature
         let shouldRerender = contentChanged || !isUsingMarkdownViewportLayout
 
-        let autoFollow = ToolTimelineRowUIHelpers.computeAutoFollow(
+        var follow = LiveStreamingPresentation.ViewportPolicy(followsTail: previousAutoFollow)
+        _ = follow.applyStreamTick(
             isStreaming: isStreaming,
             shouldRerender: shouldRerender,
-            wasExpandedVisible: wasExpandedVisible,
-            previousRenderedText: previousRenderedText,
-            currentDisplayText: text,
-            currentAutoFollow: previousAutoFollow
+            wasVisible: wasExpandedVisible,
+            previousText: previousRenderedText,
+            currentText: text
         )
+        let autoFollow = follow.followsTail
 
         let scrollBehavior: ExpandedRenderOutput.ScrollBehavior
         if shouldRerender {

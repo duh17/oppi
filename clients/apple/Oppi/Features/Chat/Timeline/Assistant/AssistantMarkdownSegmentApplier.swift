@@ -1,5 +1,220 @@
 import UIKit
 
+enum MarkdownChunkSettleMotionGate {
+    static func allowsCurrentEnvironment() -> Bool {
+        allows(
+            reduceMotion: UIAccessibility.isReduceMotionEnabled,
+            lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            thermalState: ProcessInfo.processInfo.thermalState
+        )
+    }
+
+    static func allows(
+        reduceMotion: Bool,
+        lowPower: Bool,
+        thermalState: ProcessInfo.ThermalState
+    ) -> Bool {
+        guard !reduceMotion, !lowPower else { return false }
+        switch thermalState {
+        case .serious, .critical:
+            return false
+        case .nominal, .fair:
+            return true
+        @unknown default:
+            return false
+        }
+    }
+}
+
+@MainActor
+protocol MarkdownChunkSettleAnimationDriver: AnyObject {
+    func start(
+        duration: TimeInterval,
+        update: @escaping (CGFloat) -> Void,
+        completion: @escaping () -> Void
+    )
+    func cancel()
+}
+
+/// TextKit rendering attributes are not animatable UIKit properties, so a
+/// property animator would apply their final value immediately. Drive each
+/// intermediate alpha explicitly on the display clock instead.
+@MainActor
+private final class UIKitMarkdownChunkSettleAnimationDriver: NSObject, MarkdownChunkSettleAnimationDriver {
+    private var displayLink: CADisplayLink?
+    private var startTime: CFTimeInterval = 0
+    private var duration: TimeInterval = 0
+    private var update: ((CGFloat) -> Void)?
+    private var completion: (() -> Void)?
+
+    func start(
+        duration: TimeInterval,
+        update: @escaping (CGFloat) -> Void,
+        completion: @escaping () -> Void
+    ) {
+        cancel()
+        guard duration > 0 else {
+            update(1)
+            completion()
+            return
+        }
+
+        self.duration = duration
+        self.update = update
+        self.completion = completion
+        startTime = CACurrentMediaTime()
+
+        let displayLink = CADisplayLink(target: self, selector: #selector(step(_:)))
+        self.displayLink = displayLink
+        displayLink.add(to: .main, forMode: .common)
+    }
+
+    func cancel() {
+        displayLink?.invalidate()
+        displayLink = nil
+        update = nil
+        completion = nil
+    }
+
+    @objc private func step(_ displayLink: CADisplayLink) {
+        let linearProgress = min(max((displayLink.timestamp - startTime) / duration, 0), 1)
+        let remaining = 1 - linearProgress
+        let easedProgress = 1 - remaining * remaining * remaining
+        update?(CGFloat(easedProgress))
+
+        guard linearProgress >= 1 else { return }
+        let completion = completion
+        self.displayLink?.invalidate()
+        self.displayLink = nil
+        update = nil
+        self.completion = nil
+        completion?()
+    }
+}
+
+/// Owns the only motion applied to live Markdown chunks. The newest appended
+/// text range fades through TextKit 2 rendering attributes; structural edits
+/// cancel the in-flight range and reveal the document attributes immediately.
+@MainActor
+private final class MarkdownChunkSettleAnimator {
+    private struct ColorRun {
+        let range: NSRange
+        let color: UIColor
+    }
+
+    private static let duration: TimeInterval = 0.16
+
+    private let motionAllowed: @MainActor @Sendable () -> Bool
+    private let animationDriver: MarkdownChunkSettleAnimationDriver
+    private weak var activeTextView: UITextView?
+    private var activeRange: NSRange?
+
+    init(
+        motionAllowed: @escaping @MainActor @Sendable () -> Bool,
+        animationDriver: MarkdownChunkSettleAnimationDriver
+    ) {
+        self.motionAllowed = motionAllowed
+        self.animationDriver = animationDriver
+    }
+
+    func animateAppendedRange(
+        _ range: NSRange,
+        attributedText: NSAttributedString,
+        in textView: UITextView
+    ) {
+        cancelAndSnap()
+        guard range.length > 0, motionAllowed(), let layoutManager = textView.textLayoutManager else {
+            return
+        }
+
+        let localRange = NSRange(location: 0, length: attributedText.length)
+        var colorRuns: [ColorRun] = []
+        attributedText.enumerateAttribute(.foregroundColor, in: localRange) { value, run, _ in
+            let color = value as? UIColor ?? textView.textColor ?? .label
+            colorRuns.append(ColorRun(
+                range: NSRange(location: range.location + run.location, length: run.length),
+                color: color
+            ))
+        }
+        guard let textRange = Self.textRange(range, in: layoutManager) else { return }
+
+        layoutManager.addRenderingAttribute(.foregroundColor, value: UIColor.clear, for: textRange)
+        activeTextView = textView
+        activeRange = range
+
+        animationDriver.start(
+            duration: Self.duration,
+            update: { [weak self, weak textView] progress in
+                guard let self, let textView, self.activeTextView === textView,
+                      self.activeRange == range,
+                      let layoutManager = textView.textLayoutManager else { return }
+                for run in colorRuns {
+                    guard let runRange = Self.textRange(run.range, in: layoutManager) else { continue }
+                    let color = run.color.withAlphaComponent(run.color.cgColor.alpha * progress)
+                    layoutManager.addRenderingAttribute(.foregroundColor, value: color, for: runRange)
+                }
+            },
+            completion: { [weak self, weak textView] in
+                guard let self, let textView, self.activeTextView === textView,
+                      self.activeRange == range else { return }
+                self.removeRenderingOverride(range, from: textView)
+                self.activeTextView = nil
+                self.activeRange = nil
+            }
+        )
+    }
+
+    func cancelAndSnap() {
+        guard let range = activeRange else { return }
+        animationDriver.cancel()
+        if let textView = activeTextView {
+            removeRenderingOverride(range, from: textView)
+        }
+        activeTextView = nil
+        activeRange = nil
+    }
+
+    private func removeRenderingOverride(_ range: NSRange, from textView: UITextView) {
+        guard let layoutManager = textView.textLayoutManager,
+              let textRange = Self.textRange(range, in: layoutManager) else { return }
+        layoutManager.removeRenderingAttribute(.foregroundColor, for: textRange)
+    }
+
+    private static func textRange(
+        _ range: NSRange,
+        in layoutManager: NSTextLayoutManager
+    ) -> NSTextRange? {
+        guard range.location >= 0, range.length >= 0,
+              let contentStorage = layoutManager.textContentManager as? NSTextContentStorage else {
+            return nil
+        }
+        let documentStart = contentStorage.documentRange.location
+        guard let start = contentStorage.location(documentStart, offsetBy: range.location),
+              let end = contentStorage.location(start, offsetBy: range.length) else { return nil }
+        return NSTextRange(location: start, end: end)
+    }
+
+    #if DEBUG
+    var activeRangeForTesting: NSRange? { activeRange }
+
+    func renderingAlphaForTesting(at offset: Int) -> CGFloat? {
+        guard let textView = activeTextView,
+              let layoutManager = textView.textLayoutManager,
+              let contentStorage = layoutManager.textContentManager as? NSTextContentStorage,
+              let location = contentStorage.location(contentStorage.documentRange.location, offsetBy: offset)
+        else { return nil }
+
+        var alpha: CGFloat?
+        layoutManager.enumerateRenderingAttributes(from: location, reverse: false) { _, attributes, range in
+            guard range.contains(location) else { return true }
+            alpha = (attributes[.foregroundColor] as? UIColor)?.cgColor.alpha
+            return false
+        }
+        return alpha
+    }
+    #endif
+}
+
 @MainActor
 final class AssistantMarkdownSegmentApplier {
     private let stackView: UIStackView
@@ -38,6 +253,7 @@ final class AssistantMarkdownSegmentApplier {
     /// Used only to detect append-only prose deltas that cannot close inline
     /// markdown syntax and therefore do not need rendered-prefix validation.
     private var cachedStreamingSourceContent: String?
+    private let chunkSettleAnimator: MarkdownChunkSettleAnimator
 
     /// Closure for fetching workspace files (for inline markdown images).
     /// Injected by the owning view chain, wrapping `APIClient` at the site
@@ -90,12 +306,22 @@ final class AssistantMarkdownSegmentApplier {
     private var appliedHangHeight: CGFloat = -1
     private var appliedHangUsesTopMargin = false
 
-    init(stackView: UIStackView, textViewDelegate: any UITextViewDelegate) {
+    init(
+        stackView: UIStackView,
+        textViewDelegate: any UITextViewDelegate,
+        chunkSettleMotionAllowed: @escaping @MainActor @Sendable () -> Bool = MarkdownChunkSettleMotionGate.allowsCurrentEnvironment,
+        chunkSettleAnimationDriver: MarkdownChunkSettleAnimationDriver = UIKitMarkdownChunkSettleAnimationDriver()
+    ) {
         self.stackView = stackView
         self.textViewDelegate = textViewDelegate
+        self.chunkSettleAnimator = MarkdownChunkSettleAnimator(
+            motionAllowed: chunkSettleMotionAllowed,
+            animationDriver: chunkSettleAnimationDriver
+        )
     }
 
     func clear() {
+        chunkSettleAnimator.cancelAndSnap()
         cachedStreamingTailNS = nil
         cachedStreamingTailPlain = nil
         cachedStreamingSourceContent = nil
@@ -216,6 +442,7 @@ final class AssistantMarkdownSegmentApplier {
     ) {
         self.sourceLineRanges = sourceLineRanges
         if !config.isStreaming {
+            chunkSettleAnimator.cancelAndSnap()
             cachedStreamingTailNS = nil
             cachedStreamingTailPlain = nil
             cachedStreamingSourceContent = nil
@@ -431,6 +658,7 @@ final class AssistantMarkdownSegmentApplier {
         signatures: [SegmentSignature],
         config: AssistantMarkdownContentView.Configuration
     ) {
+        chunkSettleAnimator.cancelAndSnap()
         let oldSigs = renderedSegmentSignatures
 
         // Find the common prefix length.
@@ -711,9 +939,9 @@ final class AssistantMarkdownSegmentApplier {
                 ) || fullNS.string.hasPrefix(cachedPlain as String)
 
                 if prefixValid {
-                    let delta = fullNS.attributedSubstring(
-                        from: NSRange(location: oldLength, length: newLength - oldLength)
-                    )
+                    let appendedRange = NSRange(location: oldLength, length: newLength - oldLength)
+                    let delta = fullNS.attributedSubstring(from: appendedRange)
+                    chunkSettleAnimator.cancelAndSnap()
                     textView.textStorage.beginEditing()
                     textView.textStorage.append(delta)
                     textView.textStorage.endEditing()
@@ -721,8 +949,15 @@ final class AssistantMarkdownSegmentApplier {
                     cachedPlain.append(delta.string)
                     cachedStreamingSourceContent = config.content
                     refreshTextViewLayoutAfterContentChange(textView)
+                    textView.layoutIfNeeded()
+                    chunkSettleAnimator.animateAppendedRange(
+                        appendedRange,
+                        attributedText: delta,
+                        in: textView
+                    )
                 } else {
                     // Markdown structure changed — full replacement.
+                    chunkSettleAnimator.cancelAndSnap()
                     let fullPlain = fullNS.string
                     textView.attributedText = fullNS
                     refreshTextViewLayoutAfterContentChange(textView)
@@ -731,6 +966,7 @@ final class AssistantMarkdownSegmentApplier {
                     cachedStreamingSourceContent = config.content
                 }
             } else if newLength != oldLength {
+                chunkSettleAnimator.cancelAndSnap()
                 let fullPlain = fullNS.string
                 textView.attributedText = fullNS
                 refreshTextViewLayoutAfterContentChange(textView)
@@ -742,6 +978,7 @@ final class AssistantMarkdownSegmentApplier {
                 // markdown structure changed without changing character count
                 // (for example, inline markers closed while new characters
                 // arrived in the same tick). Fall back to full replacement.
+                chunkSettleAnimator.cancelAndSnap()
                 let fullPlain = fullNS.string
                 textView.attributedText = fullNS
                 refreshTextViewLayoutAfterContentChange(textView)
@@ -752,6 +989,7 @@ final class AssistantMarkdownSegmentApplier {
             // else: same length and same attributed content — truly no change, skip
         } else {
             // First tick or cache mismatch — full initialization
+            chunkSettleAnimator.cancelAndSnap()
             let fullNS = NSAttributedString(attributed)
             textView.attributedText = fullNS
             refreshTextViewLayoutAfterContentChange(textView)
@@ -762,7 +1000,7 @@ final class AssistantMarkdownSegmentApplier {
     }
 
     private func makeTextView(palette: ThemePalette) -> BaselineSafeTextView {
-        let textView = BaselineSafeTextView()
+        let textView = BaselineSafeTextView(usingTextLayoutManager: true)
         textView.isEditable = false
         textView.isSelectable = true
         textView.isScrollEnabled = false
@@ -917,6 +1155,18 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 }
+
+#if DEBUG
+extension AssistantMarkdownSegmentApplier {
+    var debugActiveChunkRangeForTesting: NSRange? {
+        chunkSettleAnimator.activeRangeForTesting
+    }
+
+    func debugRenderingAlphaForTesting(at offset: Int) -> CGFloat? {
+        chunkSettleAnimator.renderingAlphaForTesting(at: offset)
+    }
+}
+#endif
 
 private struct SegmentRenderContext: Equatable {
     let themeID: ThemeID

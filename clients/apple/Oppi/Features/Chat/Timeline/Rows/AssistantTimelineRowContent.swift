@@ -5,8 +5,8 @@ import UIKit
 /// Uses `AssistantMarkdownContentView` for both streaming and done states.
 /// During streaming, the incremental markdown pipeline (tail-only CommonMark
 /// parse + structural segment diffing) renders formatted content on coalescer ticks.
-/// Text appears immediately on each coalescer flush — no per-character
-/// animation — keeping CPU cost minimal.
+/// Each coalesced text tail lands immediately, then settles with one short
+/// range-only fade; there is no per-character typewriter.
 struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let text: String
     let isStreaming: Bool
@@ -300,7 +300,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         // During streaming, the incremental parser (tail-only CommonMark parse
         // with FNV-1a prefix caching) keeps main-thread cost low. The segment
         // applier does structural diffing and only updates the growing tail.
-        // Text appears immediately on each coalescer flush (no reveal animation).
+        // The segment applier settles only the newly appended TextKit range.
         markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
         markdownView.fetchSessionFile = configuration.fetchSessionFile
         markdownView.makeMarkdownVideoSource = configuration.makeMarkdownVideoSource

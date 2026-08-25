@@ -208,56 +208,7 @@ enum MarkdownReaderLayoutReplacementReason: String, Equatable, Sendable {
 }
 
 /// Pure viewport policy used by the UIKit owner and unit tests.
-struct MarkdownReaderViewportPolicy: Equatable, Sendable {
-    enum Intent: Equatable, Sendable {
-        case none
-        case preserveAnchor
-        case followTail
-        case explicitFocus
-    }
-
-    enum Event: Equatable, Sendable {
-        case streamStarted
-        case streamCompleted
-        case interactionBegan
-        case interactionEnded(isNearBottom: Bool, isStreaming: Bool)
-        case requestPreserveAnchor
-        case requestFollowTail
-        case requestExplicitFocus
-    }
-
-    private(set) var isInteracting = false
-    private(set) var followsTail: Bool
-
-    init(followsTail: Bool) {
-        self.followsTail = followsTail
-    }
-
-    mutating func handle(_ event: Event) -> Intent {
-        switch event {
-        case .streamStarted:
-            if !isInteracting { followsTail = true }
-            return .none
-        case .streamCompleted:
-            followsTail = false
-            return .none
-        case .interactionBegan:
-            isInteracting = true
-            followsTail = false
-            return .none
-        case .interactionEnded(let isNearBottom, let isStreaming):
-            isInteracting = false
-            followsTail = isNearBottom && isStreaming
-            return followsTail ? .followTail : .none
-        case .requestPreserveAnchor:
-            return isInteracting ? .none : .preserveAnchor
-        case .requestFollowTail:
-            return !isInteracting && followsTail ? .followTail : .none
-        case .requestExplicitFocus:
-            return isInteracting ? .none : .explicitFocus
-        }
-    }
-}
+typealias MarkdownReaderViewportPolicy = LiveStreamingPresentation.ViewportPolicy
 
 @MainActor
 final class MarkdownReaderViewportOwner {

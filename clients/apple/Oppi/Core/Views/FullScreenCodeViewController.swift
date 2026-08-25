@@ -774,34 +774,26 @@ final class FullScreenCodeViewController: UIViewController {
         case .thinking(let text, let stream):
             let snapshot = stream?.snapshot
             let displayedText = snapshot?.text ?? text
-            let isStreaming = snapshot.map { !$0.isDone } ?? false
-            if isStreaming {
-                return NativeMutableFullScreenMarkdownBody(
-                    content: displayedText,
-                    stream: stream,
-                    isStreaming: true,
-                    themeID: themeID,
-                    palette: palette,
-                    reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
-                    reviewCommentSourceContext: makeSourceContext(
-                        surface: .fullScreenThinking,
-                        fallbackSourceLabel: String(localized: "Thinking")
-                    ),
-                    readerPreferences: readerPreferences(for: content),
-                    perfSurface: .fullScreenThinking
-                )
+            guard snapshot?.isDone == false else {
+                return makeCompletedThinkingBody(text: displayedText, themeID: themeID)
             }
-            return NativeFullScreenMarkdownBody(
+            return NativeFullScreenThinkingBody(
                 content: displayedText,
-                themeID: themeID,
+                stream: stream,
                 palette: palette,
+                readerPreferences: readerPreferences(for: content),
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenThinking,
                     fallbackSourceLabel: String(localized: "Thinking")
                 ),
-                readerPreferences: readerPreferences(for: content),
-                perfSurface: .fullScreenThinking
+                onCompletion: { [weak self] body, finalText, viewportIntent in
+                    self?.completeThinking(
+                        body: body,
+                        finalText: finalText,
+                        viewportIntent: viewportIntent
+                    )
+                }
             )
         case .terminal(let text, let command, let stream):
             return NativeFullScreenTerminalBody(
@@ -887,6 +879,41 @@ final class FullScreenCodeViewController: UIViewController {
         }
     }
 
+    private func makeCompletedThinkingBody(
+        text: String,
+        themeID: ThemeID
+    ) -> NativeFullScreenMarkdownBody {
+        NativeFullScreenMarkdownBody(
+            content: text,
+            themeID: themeID,
+            palette: themeID.palette,
+            reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
+            reviewCommentSourceContext: makeSourceContext(
+                surface: .fullScreenThinking,
+                fallbackSourceLabel: String(localized: "Thinking")
+            ),
+            readerPreferences: readerPreferences(for: .thinking(content: text)),
+            perfSurface: .fullScreenThinking
+        )
+    }
+
+    private func completeThinking(
+        body: NativeFullScreenThinkingBody,
+        finalText: String,
+        viewportIntent: FullScreenMarkdownViewportIntent
+    ) {
+        guard installedBodyView === body,
+              !body.isViewportInteracting,
+              case .thinking(_, let stream) = content,
+              stream?.snapshot.isDone == true,
+              let viewController = contentHostController else { return }
+
+        let completedBody = makeCompletedThinkingBody(text: finalText, themeID: bodyThemeID)
+        installBodyView(completedBody, on: viewController)
+        completedBody.restoreViewportAfterMutableTransition(viewportIntent)
+        configureNavigation(on: viewController, palette: bodyThemeID.palette)
+    }
+
     private func makeLiveSourceBody(
         snapshot: SourceTraceStream.Snapshot,
         palette: ThemePalette
@@ -916,7 +943,6 @@ final class FullScreenCodeViewController: UIViewController {
         let palette = themeID.palette
         return NativeMutableFullScreenMarkdownBody(
             content: text,
-            stream: nil,
             isStreaming: isStreaming,
             themeID: themeID,
             palette: palette,

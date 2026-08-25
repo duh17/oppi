@@ -1421,7 +1421,6 @@ struct FullScreenReviewCommentSelectionTests {
             isDone: false,
             finalContent: .markdown(content: nextMarkdown, filePath: nil)
         )
-        markdownView.debugFlushPendingMutableApplyForTesting()
         controller.view.layoutIfNeeded()
 
         let updatedText = timelineAllTextViews(in: markdownView)
