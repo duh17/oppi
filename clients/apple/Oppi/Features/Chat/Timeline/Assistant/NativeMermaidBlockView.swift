@@ -114,6 +114,8 @@ final class NativeMermaidBlockView: UIView {
 
     #if DEBUG
     private var debugRenderCount = 0
+    private var debugApplyAsDiagramCallCount = 0
+    private var debugInvalidateTimelineLayoutCount = 0
     #endif
 
     // MARK: - Init
@@ -180,8 +182,7 @@ final class NativeMermaidBlockView: UIView {
            naturalSize.height > 0 {
             updateDiagramHeight(
                 naturalSize: naturalSize,
-                availableWidth: bounds.width,
-                invalidateHostLayout: false
+                availableWidth: bounds.width
             )
         }
 
@@ -240,6 +241,9 @@ final class NativeMermaidBlockView: UIView {
         currentCode = code
         currentPalette = palette
         requiresExactRasterWidth = usesExactWidth
+        #if DEBUG
+        debugApplyAsDiagramCallCount += 1
+        #endif
         guard let generation = beginRasterRequest(request) else { return }
         #if DEBUG
         debugRenderCount += 1
@@ -280,6 +284,9 @@ final class NativeMermaidBlockView: UIView {
         diagramImageView.backgroundColor = UIColor(palette.bgHighlight)
         currentCode = code
         requiresExactRasterWidth = usesExactWidth
+        #if DEBUG
+        debugApplyAsDiagramCallCount += 1
+        #endif
         guard let generation = beginRasterRequest(request) else { return }
         #if DEBUG
         debugRenderCount += 1
@@ -401,12 +408,15 @@ final class NativeMermaidBlockView: UIView {
         renderTask = nil
 
         let availableWidth = bounds.width > 0 ? bounds.width : request.rasterWidth
-        updateDiagramHeight(
+        // Decide from the pre-swap state. An inactive 200pt default is not a
+        // displayed height, so first reveal still counts as a change.
+        let heightOrRevealChanged = updateDiagramHeight(
             naturalSize: naturalSize,
-            availableWidth: availableWidth,
-            invalidateHostLayout: invalidateHostLayout
+            availableWidth: availableWidth
         )
 
+        // Activate and swap before any force-invalidation so a collection
+        // self-size pass measures the diagram, not the code placeholder.
         diagramHeightConstraint?.isActive = true
         diagramImageView.backgroundColor = UIColor(palette.bgHighlight)
         diagramImageView.image = image
@@ -419,32 +429,36 @@ final class NativeMermaidBlockView: UIView {
         invalidateIntrinsicContentSize()
         setNeedsLayout()
         superview?.setNeedsLayout()
-        // Sync reader apply already runs inside a collection-view layout pass.
-        // Nested `layoutIfNeeded` re-enters `cellForItem` and overflows.
-        if invalidateHostLayout {
+        if invalidateHostLayout && heightOrRevealChanged {
             invalidateTimelineLayout()
         }
     }
 
+    @discardableResult
     private func updateDiagramHeight(
         naturalSize: CGSize,
-        availableWidth: CGFloat,
-        invalidateHostLayout: Bool
-    ) {
-        guard availableWidth > 0, naturalSize.width > 0, naturalSize.height > 0 else { return }
+        availableWidth: CGFloat
+    ) -> Bool {
+        guard availableWidth > 0, naturalSize.width > 0, naturalSize.height > 0 else {
+            return false
+        }
 
         let scale = min(1.0, availableWidth / naturalSize.width)
         let displayHeight = min(naturalSize.height * scale, Self.maxInlineHeight)
         let clampedHeight = max(1, displayHeight)
-
-        if abs((diagramHeightConstraint?.constant ?? 0) - clampedHeight) > 0.5 {
-            diagramHeightConstraint?.constant = clampedHeight
-            invalidateIntrinsicContentSize()
-            superview?.setNeedsLayout()
-            if invalidateHostLayout {
-                invalidateTimelineLayout()
-            }
+        let constraintIsActive = diagramHeightConstraint?.isActive == true
+        let heightUnchanged = abs((diagramHeightConstraint?.constant ?? 0) - clampedHeight) <= 0.5
+        // An inactive 200pt default is not a displayed height. First reveal
+        // and inactive constraints are height changes even when the constant
+        // already matches. Suppress only when the diagram is already on screen
+        // and the active height is unchanged.
+        guard !isShowingDiagram || !constraintIsActive || !heightUnchanged else {
+            return false
         }
+        diagramHeightConstraint?.constant = clampedHeight
+        invalidateIntrinsicContentSize()
+        superview?.setNeedsLayout()
+        return true
     }
 
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
@@ -491,6 +505,9 @@ final class NativeMermaidBlockView: UIView {
         // sizeThatFits / collection-view self-sizing pass. Soft invalidation
         // is skipped while detached from bottom and no-ops with no collection
         // view. Force-invalidate so both surfaces adopt the rendered height.
+        #if DEBUG
+        debugInvalidateTimelineLayoutCount += 1
+        #endif
         ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
@@ -545,6 +562,12 @@ extension NativeMermaidBlockView {
     var debugIsShowingDiagramForTesting: Bool { isShowingDiagram }
     var debugRasterWidthForTesting: CGFloat? { displayedRasterRequest?.rasterWidth }
     var debugRenderCountForTesting: Int { debugRenderCount }
+    var debugApplyAsDiagramCallCountForTesting: Int { debugApplyAsDiagramCallCount }
+    var debugInvalidateTimelineLayoutCountForTesting: Int { debugInvalidateTimelineLayoutCount }
     var debugRenderedImageForTesting: UIImage? { diagramImageView.image }
+    var debugDiagramHeightConstantForTesting: CGFloat? { diagramHeightConstraint?.constant }
+    var debugDiagramHeightConstraintIsActiveForTesting: Bool {
+        diagramHeightConstraint?.isActive == true
+    }
 }
 #endif

@@ -398,6 +398,7 @@
 		4D1D18C0DCA2A4E785CF7D40 /* ToolOutputStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC9DDA0AFDA32F4C2395E74F /* ToolOutputStore.swift */; };
 		4D227089BE22F03AB42A8A2A /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 409BCAFFFB583B408210E57E /* JetBrainsMono-Bold.ttf */; };
 		4D2E0171E212A8CCEB08D9E6 /* SessionScopedGitStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DDA46585AC22AC019611EEC /* SessionScopedGitStatus.swift */; };
+		4D8ABA0A1DF24D368D0A918B /* MarkdownStressCrashRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57EF67A46B1AFED31701EA8C /* MarkdownStressCrashRegressionTests.swift */; };
 		4DBE8489EC5065FBC589C865 /* OppiAppCacheLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0A577B2D90028AB1A708C8 /* OppiAppCacheLaunchTests.swift */; };
 		4E05D6008BAB8BDD5C8FC36A /* node-fs-web-fetch.md in Resources */ = {isa = PBXBuildFile; fileRef = 01C39E685F5E3D1DD7F56392 /* node-fs-web-fetch.md */; };
 		4E15EDFA6FC4C072990A0C92 /* GitStatusStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 486D30026B8971F04F44C098 /* GitStatusStoreTests.swift */; };
@@ -1782,6 +1783,7 @@
 		577CCB65C6CF16D1A88E5597 /* CodeGutterAlignmentHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeGutterAlignmentHarnessView.swift; sourceTree = "<group>"; };
 		578ACCCCD0E0D8E471654772 /* WorkspaceReviewFileDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceReviewFileDetailView.swift; sourceTree = "<group>"; };
 		579D62B4FDE02BFFB4A2E5B2 /* SugiyamaLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SugiyamaLayout.swift; sourceTree = "<group>"; };
+		57EF67A46B1AFED31701EA8C /* MarkdownStressCrashRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownStressCrashRegressionTests.swift; sourceTree = "<group>"; };
 		57F49C65D24FAC0EB9145592 /* WorkspaceFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFiles.swift; sourceTree = "<group>"; };
 		57FFB187680CC8DF92D2228A /* AskRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskRequest.swift; sourceTree = "<group>"; };
 		58532A7E2A60614AE6EB188A /* AssistantAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantAvatar.swift; sourceTree = "<group>"; };
@@ -3266,6 +3268,7 @@
 			children = (
 				CCE8110F4D7B8F371A869FF0 /* DocumentRenderCacheTests.swift */,
 				AFF7C0004B660C36F1A39721 /* MarkdownInlineVideoTests.swift */,
+				57EF67A46B1AFED31701EA8C /* MarkdownStressCrashRegressionTests.swift */,
 				1C2526925920C92F7FEF2A86 /* MarkdownTextTests.swift */,
 				FC55D2B1108CBDA3F960B296 /* NativeMarkdownImageViewSVGTests.swift */,
 				65AA5864947B95EB7DED7115 /* StreamFinishFormattingTests.swift */,
@@ -5529,6 +5532,7 @@
 				22907FB531C394C2DA157C71 /* MarkdownBlockSerializerTests.swift in Sources */,
 				3E053BC5F4E5A6168E4057AC /* MarkdownInlineVideoTests.swift in Sources */,
 				E82E73CD23EDA989413A923D /* MarkdownReaderRenderAheadContractTests.swift in Sources */,
+				4D8ABA0A1DF24D368D0A918B /* MarkdownStressCrashRegressionTests.swift in Sources */,
 				6C3E0A681E8466A443516CD8 /* MarkdownTableColumnLayoutTests.swift in Sources */,
 				A9A7340A043A2C76476A5846 /* MarkdownTextTests.swift in Sources */,
 				D31BE2F4DF7D0A59D5ABF962 /* MathLayoutTests.swift in Sources */,

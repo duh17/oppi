@@ -254,6 +254,10 @@ final class AssistantMarkdownSegmentApplier {
     /// markdown syntax and therefore do not need rendered-prefix validation.
     private var cachedStreamingSourceContent: String?
     private let chunkSettleAnimator: MarkdownChunkSettleAnimator
+    #if DEBUG
+    private(set) var debugInPlaceTableApplyCountForTesting = 0
+    private(set) var debugInPlaceMermaidApplyCountForTesting = 0
+    #endif
 
     /// Closure for fetching workspace files (for inline markdown images).
     /// Injected by the owning view chain, wrapping `APIClient` at the site
@@ -450,13 +454,25 @@ final class AssistantMarkdownSegmentApplier {
 
         let signatures = segments.map(SegmentSignature.init)
         let buildContext = SegmentRenderContext(config)
+        // One full-document fence scan per apply. Per-segment scans starve the
+        // 50ms streaming clock on mermaid-heavy documents.
+        let hasUnclosedCodeFence = AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
         if renderedBuildContext != buildContext {
-            rebuild(segments: segments, signatures: signatures, config: config)
+            rebuild(
+                segments: segments,
+                signatures: signatures,
+                config: config,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
+            )
             return
         }
 
         if signatures == renderedSegmentSignatures {
-            updateInPlace(segments: segments, config: config)
+            updateInPlace(
+                segments: segments,
+                config: config,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
+            )
         } else if config.isStreaming {
             // Streaming structural change: find the common prefix of segment
             // signatures and reuse existing views. Only rebuild the tail that
@@ -465,22 +481,34 @@ final class AssistantMarkdownSegmentApplier {
             incrementalRebuild(
                 segments: segments,
                 signatures: signatures,
-                config: config
+                config: config,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
             )
         } else {
             // Non-streaming structural change: full rebuild.
-            rebuild(segments: segments, signatures: signatures, config: config)
+            rebuild(
+                segments: segments,
+                signatures: signatures,
+                config: config,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
+            )
         }
     }
 
     private func rebuild(
         segments: [FlatSegment],
         signatures: [SegmentSignature],
-        config: AssistantMarkdownContentView.Configuration
+        config: AssistantMarkdownContentView.Configuration,
+        hasUnclosedCodeFence: Bool
     ) {
         clear()
 
-        appendSegmentViews(segments: segments, in: segments.indices, config: config)
+        appendSegmentViews(
+            segments: segments,
+            in: segments.indices,
+            config: config,
+            hasUnclosedCodeFence: hasUnclosedCodeFence
+        )
         renderedSegmentSignatures = signatures
         renderedBuildContext = SegmentRenderContext(config)
 
@@ -498,7 +526,8 @@ final class AssistantMarkdownSegmentApplier {
     private func appendSegmentViews(
         segments: [FlatSegment],
         in indices: Range<Array<FlatSegment>.Index>,
-        config: AssistantMarkdownContentView.Configuration
+        config: AssistantMarkdownContentView.Configuration,
+        hasUnclosedCodeFence: Bool
     ) {
         let palette = config.themeID.palette
         for index in indices {
@@ -507,7 +536,8 @@ final class AssistantMarkdownSegmentApplier {
                 at: index,
                 segmentCount: segments.count,
                 config: config,
-                palette: palette
+                palette: palette,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
             )
         }
     }
@@ -517,7 +547,8 @@ final class AssistantMarkdownSegmentApplier {
         at index: Int,
         segmentCount: Int,
         config: AssistantMarkdownContentView.Configuration,
-        palette: ThemePalette
+        palette: ThemePalette,
+        hasUnclosedCodeFence: Bool
     ) {
         switch segment {
         case .text(let attributed):
@@ -530,7 +561,12 @@ final class AssistantMarkdownSegmentApplier {
 
         case .codeBlock(let language, let code):
             let codeView = NativeCodeBlockView()
-            let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
+            let isOpen = isOpenStreamingCodeFence(
+                at: index,
+                segmentCount: segmentCount,
+                isStreaming: config.isStreaming,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
+            )
             codeView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
                 sourceContext: assistantCodeBlockSourceContext(
@@ -597,7 +633,12 @@ final class AssistantMarkdownSegmentApplier {
 
         case .mermaidDiagram(let code):
             let mermaidView = NativeMermaidBlockView()
-            let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
+            let isOpen = isOpenStreamingCodeFence(
+                at: index,
+                segmentCount: segmentCount,
+                isStreaming: config.isStreaming,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
+            )
             mermaidView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
                 sourceContext: assistantCodeBlockSourceContext(
@@ -618,7 +659,12 @@ final class AssistantMarkdownSegmentApplier {
 
         case .latexBlock(let code):
             let latexView = NativeLatexBlockView()
-            let isOpen = isOpenStreamingCodeFence(at: index, segmentCount: segmentCount, config: config)
+            let isOpen = isOpenStreamingCodeFence(
+                at: index,
+                segmentCount: segmentCount,
+                isStreaming: config.isStreaming,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
+            )
             latexView.configureReviewCommentSelection(
                 router: config.reviewCommentSelectionRouter,
                 sourceContext: assistantCodeBlockSourceContext(
@@ -642,11 +688,10 @@ final class AssistantMarkdownSegmentApplier {
     private func isOpenStreamingCodeFence(
         at index: Int,
         segmentCount: Int,
-        config: AssistantMarkdownContentView.Configuration
+        isStreaming: Bool,
+        hasUnclosedCodeFence: Bool
     ) -> Bool {
-        config.isStreaming
-            && index == segmentCount - 1
-            && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+        isStreaming && index == segmentCount - 1 && hasUnclosedCodeFence
     }
 
     /// Streaming-aware structural rebuild that reuses views for unchanged
@@ -656,7 +701,8 @@ final class AssistantMarkdownSegmentApplier {
     private func incrementalRebuild(
         segments: [FlatSegment],
         signatures: [SegmentSignature],
-        config: AssistantMarkdownContentView.Configuration
+        config: AssistantMarkdownContentView.Configuration,
+        hasUnclosedCodeFence: Bool
     ) {
         chunkSettleAnimator.cancelAndSnap()
         let oldSigs = renderedSegmentSignatures
@@ -670,7 +716,12 @@ final class AssistantMarkdownSegmentApplier {
 
         // If no common prefix, fall back to full rebuild.
         guard commonPrefix > 0 else {
-            rebuild(segments: segments, signatures: signatures, config: config)
+            rebuild(
+                segments: segments,
+                signatures: signatures,
+                config: config,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
+            )
             return
         }
 
@@ -708,7 +759,12 @@ final class AssistantMarkdownSegmentApplier {
         }
 
         // Build and append new tail views.
-        appendSegmentViews(segments: segments, in: commonPrefix ..< segments.count, config: config)
+        appendSegmentViews(
+            segments: segments,
+            in: commonPrefix ..< segments.count,
+            config: config,
+            hasUnclosedCodeFence: hasUnclosedCodeFence
+        )
 
         renderedSegmentSignatures = signatures
 
@@ -731,7 +787,8 @@ final class AssistantMarkdownSegmentApplier {
 
     private func updateInPlace(
         segments: [FlatSegment],
-        config: AssistantMarkdownContentView.Configuration
+        config: AssistantMarkdownContentView.Configuration,
+        hasUnclosedCodeFence: Bool
     ) {
         let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
 
@@ -748,10 +805,12 @@ final class AssistantMarkdownSegmentApplier {
         let palette = config.themeID.palette
 
         for (index, segment) in segments.enumerated() {
-            // During streaming, only the last text segment grows. All other
-            // segments are frozen by the incremental parser. Skip them to
-            // avoid expensive attributedText re-assignments and code block
-            // reconfigurations.
+            // During streaming, only the last segment can change. Frozen prefix
+            // tables, mermaid, LaTeX, images, and videos must not be re-applied
+            // on every 50ms flush.
+            if config.isStreaming && index != segments.count - 1 {
+                continue
+            }
             let isStreamingTail = config.isStreaming && index == lastTextIndex
 
             switch segment {
@@ -784,7 +843,7 @@ final class AssistantMarkdownSegmentApplier {
                 if let codeView = codeBlockViews[index] {
                     let isOpen = config.isStreaming
                         && index == segments.count - 1
-                        && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+                        && hasUnclosedCodeFence
                     if !config.isStreaming || isOpen {
                         codeView.configureReviewCommentSelection(
                             router: config.reviewCommentSelectionRouter,
@@ -806,6 +865,9 @@ final class AssistantMarkdownSegmentApplier {
 
             case .table(let headers, let rows):
                 if let tableView = tableViews[index] {
+                    #if DEBUG
+                    debugInPlaceTableApplyCountForTesting += 1
+                    #endif
                     tableView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
                         sourceContext: assistantTableSourceContext(
@@ -851,9 +913,12 @@ final class AssistantMarkdownSegmentApplier {
 
             case .mermaidDiagram(let code):
                 if let mermaidView = mermaidViews[index] {
+                    #if DEBUG
+                    debugInPlaceMermaidApplyCountForTesting += 1
+                    #endif
                     let isOpen = config.isStreaming
                         && index == segments.count - 1
-                        && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+                        && hasUnclosedCodeFence
                     mermaidView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
                         sourceContext: assistantCodeBlockSourceContext(
@@ -876,7 +941,7 @@ final class AssistantMarkdownSegmentApplier {
                 if let latexView = latexViews[index] {
                     let isOpen = config.isStreaming
                         && index == segments.count - 1
-                        && AssistantMarkdownSegmentSource.hasUnclosedCodeFence(config.content)
+                        && hasUnclosedCodeFence
                     latexView.configureReviewCommentSelection(
                         router: config.reviewCommentSelectionRouter,
                         sourceContext: assistantCodeBlockSourceContext(

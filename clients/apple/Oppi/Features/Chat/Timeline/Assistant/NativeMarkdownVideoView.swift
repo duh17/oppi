@@ -63,6 +63,9 @@ final class NativeMarkdownVideoView: UIView {
     /// Recycle / identity-change teardown. Do not call from `willMove(toSuperview:)`;
     /// AVKit detaches this view during fullscreen, PiP, and dismiss.
     func prepareForRemoval() {
+        resolutionTask?.cancel()
+        resolutionTask = nil
+        currentIdentity = nil
         removePlayer()
     }
 
@@ -120,6 +123,13 @@ final class NativeMarkdownVideoView: UIView {
             do {
                 let source = try await sourceProvider(embed)
                 guard let self, !Task.isCancelled, self.currentIdentity == identity else { return }
+                // Probes and parked cells may still be in a window. Store the
+                // resolved source only; setPlaybackVisible(true) owns host mount.
+                self.currentSource = source
+                guard !Task.isCancelled,
+                      self.currentIdentity == identity,
+                      self.isPlaybackVisible,
+                      self.window != nil else { return }
                 self.installPlayer(source: source, embed: embed)
             } catch {
                 guard let self, !Task.isCancelled, self.currentIdentity == identity else { return }
@@ -267,6 +277,15 @@ final class NativeMarkdownVideoView: UIView {
             return
         }
 
+        // Visibility reveal is the only deferred mount point. An already-true
+        // flag still has to install if a probe/async resolve stored a source.
+        if let source = currentSource, let embed = currentEmbed,
+           hostingController == nil, window != nil {
+            isPlaybackVisible = true
+            installPlayer(source: source, embed: embed)
+            return
+        }
+
         guard !isPlaybackVisible else { return }
         isPlaybackVisible = true
         playbackModel.setVisible(true)
@@ -392,6 +411,7 @@ extension NativeMarkdownVideoView {
     var debugIsStaticFallbackForTesting: Bool { isStaticFallback }
     var debugReservedHeightForTesting: CGFloat { reservedHeight }
     var debugHasPlayerForTesting: Bool { hostingController != nil }
+    var debugHasCurrentSourceForTesting: Bool { currentSource != nil }
     var debugIsPlaybackVisibleForTesting: Bool { isPlaybackVisible }
     var debugHasActivePlayerForTesting: Bool { playbackModel.player != nil }
     var debugHasCommittedRevealGeometryForTesting: Bool { hasCommittedRevealGeometry }
