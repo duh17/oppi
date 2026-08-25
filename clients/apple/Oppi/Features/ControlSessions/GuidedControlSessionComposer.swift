@@ -199,7 +199,7 @@ struct GuidedControlSessionComposer: View {
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var pendingRepoPointers: [PendingFileReference] = []
     @State private var selectedWorkspace: Workspace?
-    @State private var selectedModelId: String? = AppPreferences.QuickSession.lastModelId
+    @State private var selectedModelId: String?
     @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
     @State private var voiceInputManager: VoiceInputManager?
     @State private var streamingBehavior: StreamingBehavior = .followUp
@@ -216,8 +216,16 @@ struct GuidedControlSessionComposer: View {
         )
     }
 
+    private var modelPresentation: NewSessionModelPresentation {
+        NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: selectedModelId,
+            isAgent: false,
+            catalogModels: chatState.cachedModels
+        )
+    }
+
     private var effectiveModelId: String? {
-        selectedModelId ?? selectedWorkspace?.defaultModel
+        modelPresentation.requestModelId
     }
 
     private var isAvailable: Bool {
@@ -322,7 +330,7 @@ struct GuidedControlSessionComposer: View {
     private var sessionToolbar: some View {
         SessionToolbar(
             session: nil,
-            modelOverride: effectiveModelId,
+            modelOverride: effectiveModelId ?? modelPresentation.pillText,
             thinkingLevel: thinkingLevel,
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(
                 for: effectiveModelId,
@@ -388,7 +396,6 @@ struct GuidedControlSessionComposer: View {
     private func selectModel(_ model: ModelInfo) {
         let modelId = ModelSwitchPolicy.fullModelID(for: model)
         selectedModelId = modelId
-        AppPreferences.QuickSession.saveModelId(modelId)
         AppPreferences.RecentModels.record(modelId)
     }
 

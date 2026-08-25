@@ -9,7 +9,6 @@ struct CreateWorkspaceRequest: Encodable {
     var systemPrompt: String?
     var systemPromptMode: WorkspaceSystemPromptMode?
     var hostMount: String?
-    var defaultModel: String?
     var gitStatusEnabled: Bool?
     var tools: [String]? = nil
     var runtime: WorkspaceRuntime?
@@ -26,7 +25,6 @@ struct UpdateWorkspaceRequest {
         systemPrompt: JSONValue? = nil,
         systemPromptMode: WorkspaceSystemPromptMode? = nil,
         hostMount: JSONValue? = nil,
-        defaultModel: JSONValue? = nil,
         gitStatusEnabled: Bool? = nil,
         tools: [String]? = nil,
         sandboxConfig: JSONValue? = nil
@@ -50,9 +48,6 @@ struct UpdateWorkspaceRequest {
         }
         if let hostMount {
             body["hostMount"] = hostMount
-        }
-        if let defaultModel {
-            body["defaultModel"] = defaultModel
         }
         if let gitStatusEnabled {
             body["gitStatusEnabled"] = .bool(gitStatusEnabled)

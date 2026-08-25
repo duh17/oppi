@@ -73,8 +73,8 @@ export async function cmdWorkspace(
     if (mode === "update") {
       const reference = positional[0];
       if (!reference) throw new Error("workspace id or name is required");
-      const workspace = await resolveWorkspaceForCli(storage, reference);
       const definition = workspaceDefinitionFromFlags(flags, { requireFields: true });
+      const workspace = await resolveWorkspaceForCli(storage, reference);
       const result = await call<Record<string, unknown>>(
         `/workspaces/${encodeURIComponent(workspace.id)}`,
         {
@@ -125,7 +125,16 @@ function workspaceDefinitionFromFlags(
   flags: Record<string, string>,
   options: { requireFields?: boolean } = {},
 ): Record<string, unknown> {
+  const removedDefaultModelError =
+    "Workspace default models are no longer supported; remove --default-model/defaultModel and configure Pi's defaultProvider and defaultModel in ~/.pi/agent/settings.json.";
+  if (Object.hasOwn(flags, "default-model")) {
+    throw new Error(removedDefaultModelError);
+  }
+
   const definition = flags.definition ? parseJsonFile(flags.definition) : {};
+  if (Object.hasOwn(definition, "defaultModel")) {
+    throw new Error(removedDefaultModelError);
+  }
   applyStringFlag(definition, flags, "name", "name");
   applyStringFlag(definition, flags, "description", "description");
   if (Object.prototype.hasOwnProperty.call(flags, "icon")) {
@@ -133,7 +142,6 @@ function workspaceDefinitionFromFlags(
   }
   applyStringFlag(definition, flags, "system-prompt", "systemPrompt");
   applyStringFlag(definition, flags, "host-mount", "hostMount");
-  applyStringFlag(definition, flags, "default-model", "defaultModel");
   applyStringFlag(definition, flags, "runtime", "runtime");
   if (options.requireFields && Object.keys(definition).length === 0) {
     throw new Error("--definition or at least one workspace field flag is required");
@@ -185,7 +193,6 @@ function printWorkspaceDetails(
       ],
       ["Path", typeof workspace?.hostMount === "string" ? codeValue(workspace.hostMount) : ""],
       ["Runtime", typeof workspace?.runtime === "string" ? workspace.runtime : ""],
-      ["Default model", typeof workspace?.defaultModel === "string" ? workspace.defaultModel : ""],
     ]),
   );
 }

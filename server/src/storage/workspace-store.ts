@@ -135,7 +135,6 @@ export class WorkspaceStore {
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
       hostMount: normalizeHostMount(req.hostMount),
-      defaultModel: normalizeOptionalString(req.defaultModel),
       tools: normalizeTools(req.tools),
       gitStatusEnabled: req.gitStatusEnabled,
       runtime: req.runtime,
@@ -169,7 +168,6 @@ export class WorkspaceStore {
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
       hostMount: normalizeHostMount(raw.hostMount),
-      defaultModel: normalizeOptionalString(raw.defaultModel),
       tools: normalizeTools(raw.tools as string[] | undefined),
       gitStatusEnabled:
         typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
@@ -240,8 +238,6 @@ export class WorkspaceStore {
       workspace.systemPromptMode = normalizeSystemPromptMode(updates.systemPromptMode);
     if (updates.hostMount !== undefined)
       workspace.hostMount = normalizeHostMount(updates.hostMount);
-    if (updates.defaultModel !== undefined)
-      workspace.defaultModel = normalizeOptionalString(updates.defaultModel);
     if (updates.tools !== undefined) workspace.tools = normalizeTools(updates.tools);
     if (updates.gitStatusEnabled !== undefined)
       workspace.gitStatusEnabled = updates.gitStatusEnabled;

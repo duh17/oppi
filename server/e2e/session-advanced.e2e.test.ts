@@ -68,10 +68,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
   ): Promise<{ workspaceId: string; sessionId: string }> {
     const model = inject("e2eModel");
 
-    const wsRes = await api("POST", "/workspaces", deviceToken, {
-      name,
-      defaultModel: model,
-    });
+    const wsRes = await api("POST", "/workspaces", deviceToken, { name });
     expect(wsRes.status).toBe(201);
     const workspaceId = (wsRes.json!.workspace as Record<string, unknown>).id as string;
 
@@ -93,7 +90,6 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
 
     const wsRes = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-concurrent",
-      defaultModel: model,
     });
     const workspaceId = (wsRes.json!.workspace as Record<string, unknown>).id as string;
 

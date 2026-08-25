@@ -110,7 +110,7 @@ struct QuickSessionSheet: View {
     @State private var isLoadingWorktrees = false
     @State private var worktreeLoadGeneration: UInt64 = 0
     @State private var selectedServerId: String?
-    @State private var selectedModelId: String? = AppPreferences.QuickSession.lastModelId
+    @State private var selectedModelId: String?
     @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
     /// `nil` = plain Pi. Remembered last Agent is restored after agents load.
     @State private var selectedAgentId: String?
@@ -175,15 +175,19 @@ struct QuickSessionSheet: View {
         }
     }
 
-    /// Display model: last or current explicit selection wins, then the workspace default.
-    /// Session creation sends only the last/current explicit selection; server-side
-    /// resolution applies workspace defaults and Pi settings centrally.
-    /// With an Agent selected, only an explicit post-selection override is shown/sent.
+    /// Plain Pi and Agent launches send a model only after an explicit picker choice.
+    private var modelPresentation: NewSessionModelPresentation {
+        NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: selectedAgentId != nil
+                ? agentModelOverride
+                : selectedModelId,
+            isAgent: selectedAgentId != nil,
+            catalogModels: chatState.cachedModels
+        )
+    }
+
     private var effectiveModelId: String? {
-        if selectedAgentId != nil {
-            return agentModelOverride
-        }
-        return selectedModelId ?? selectedWorkspace?.defaultModel
+        modelPresentation.requestModelId
     }
 
     private var effectiveThinkingLevel: ThinkingLevel {
@@ -309,7 +313,7 @@ struct QuickSessionSheet: View {
                 fileSuggestions: [],
                 onFileSuggestionQuery: nil,
                 session: nil,
-                modelOverride: effectiveModelId,
+                modelOverride: effectiveModelId ?? modelPresentation.pillText,
                 thinkingLevel: effectiveThinkingLevel,
                 voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
@@ -456,7 +460,7 @@ struct QuickSessionSheet: View {
     private var sessionToolbar: some View {
         SessionToolbar(
             session: nil,
-            modelOverride: effectiveModelId,
+            modelOverride: effectiveModelId ?? modelPresentation.pillText,
             thinkingLevel: effectiveThinkingLevel,
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(
                 for: effectiveModelId,
@@ -473,7 +477,6 @@ struct QuickSessionSheet: View {
             agentModelOverride = modelId
         } else {
             selectedModelId = modelId
-            AppPreferences.QuickSession.saveModelId(modelId)
         }
         AppPreferences.RecentModels.record(modelId)
     }
@@ -1021,7 +1024,7 @@ struct QuickSessionSheet: View {
             return
         }
 
-        let modelId = selectedAgentId == nil ? selectedModelId : agentModelOverride
+        let modelId = effectiveModelId
         let thinking = thinkingLevel
         let agentThinking = agentThinkingOverride
         let submittedDraftRevision = persistQuickSessionDraft()?.revision
@@ -1070,7 +1073,6 @@ struct QuickSessionSheet: View {
                     session = response.session
                     autoSendMessage = plan.shouldAutoSend ? transportText : nil
                     autoSendAttachments = plan.shouldAutoSend ? attachments : nil
-                    AppPreferences.QuickSession.saveModelId(modelId)
                     AppPreferences.QuickSession.saveThinkingLevel(thinking)
 
                 case .agent(let agentId):

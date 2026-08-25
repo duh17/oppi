@@ -521,7 +521,7 @@ describe("oppi help", () => {
       },
       {
         args: ["workspace", "update", "--help"],
-        expected: ["Usage: oppi workspace update <workspace>", "--default-model <model>"],
+        expected: ["Usage: oppi workspace update <workspace>", "--runtime <host|sandbox>"],
       },
       {
         args: ["workspace", "delete", "--help"],
@@ -817,13 +817,17 @@ describe("oppi config", () => {
     run(["config", "set", "port", "9999"]);
     expect(run(["config", "get", "port"]).stdout.trim()).toContain("9999");
     run(["config", "set", "extensions", '{"voice":{"defaultVoiceId":"warm"}}']);
-    expect(run(["config", "get", "extensions"]).stdout.trim()).toContain('"defaultVoiceId": "warm"');
+    expect(run(["config", "get", "extensions"]).stdout.trim()).toContain(
+      '"defaultVoiceId": "warm"',
+    );
     run(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]);
     expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
     run(["config", "set", "oppiDocsPrompt.enabled", "false"]);
     expect(run(["config", "get", "oppiDocsPrompt.enabled"]).stdout.trim()).toBe("false");
     run(["config", "set", "runtimeEnv.TTS_BASE_URL", "http://127.0.0.1:7937"]);
-    expect(run(["config", "get", "runtimeEnv.TTS_BASE_URL"]).stdout.trim()).toBe("http://127.0.0.1:7937");
+    expect(run(["config", "get", "runtimeEnv.TTS_BASE_URL"]).stdout.trim()).toBe(
+      "http://127.0.0.1:7937",
+    );
   }, 45_000);
 
   it("config validate succeeds on valid config", () => {
@@ -934,7 +938,6 @@ describe("oppi local API commands", () => {
               id: "ws-created",
               name: body?.name ?? "Created",
               hostMount: body?.hostMount,
-              defaultModel: body?.defaultModel,
             },
           });
           return;
@@ -945,7 +948,6 @@ describe("oppi local API commands", () => {
               id: "ws-1",
               name: body?.name ?? "Oppi",
               hostMount: body?.hostMount ?? "/tmp/oppi",
-              defaultModel: body?.defaultModel,
             },
           });
           return;
@@ -1368,14 +1370,21 @@ describe("oppi local API commands", () => {
     const definitionPath = join(cliDir, "schedule.json");
     const workspaceDefinitionPath = join(cliDir, "workspace.json");
     const workspaceUpdatePath = join(cliDir, "workspace-update.json");
+    const removedWorkspaceDefaultCreatePath = join(cliDir, "workspace-default-create.json");
+    const removedWorkspaceDefaultUpdatePath = join(cliDir, "workspace-default-update.json");
     const agentDefinitionPath = join(cliDir, "agent.json");
     const agentUpdatePath = join(cliDir, "agent-update.json");
     writeFileSync(definitionPath, JSON.stringify({ name: "Updated" }));
+    writeFileSync(workspaceDefinitionPath, JSON.stringify({ description: "Created from JSON" }));
+    writeFileSync(workspaceUpdatePath, JSON.stringify({ description: "Updated from JSON" }));
     writeFileSync(
-      workspaceDefinitionPath,
-      JSON.stringify({ description: "Created from JSON", defaultModel: "workspace-model" }),
+      removedWorkspaceDefaultCreatePath,
+      JSON.stringify({ name: "Rejected", defaultModel: "openai/gpt-5.4" }),
     );
-    writeFileSync(workspaceUpdatePath, JSON.stringify({ defaultModel: "updated-model" }));
+    writeFileSync(
+      removedWorkspaceDefaultUpdatePath,
+      JSON.stringify({ defaultModel: "openai/gpt-5.4" }),
+    );
     writeFileSync(
       agentDefinitionPath,
       JSON.stringify({ description: "Reviews diffs", sessionDefaults: { model: "agent-model" } }),
@@ -1981,15 +1990,16 @@ describe("oppi local API commands", () => {
         name: "Created",
         description: "Created from JSON",
         hostMount: "/tmp/created",
-        defaultModel: "workspace-model",
       });
+      expect(workspaceCreateRequest?.body).not.toHaveProperty("defaultModel");
       const workspaceUpdateRequest = requests.find(
         (request) => request.method === "PUT" && request.path === "/workspaces/ws-1",
       );
       expect(workspaceUpdateRequest?.body).toMatchObject({
         name: "Updated Oppi",
-        defaultModel: "updated-model",
+        description: "Updated from JSON",
       });
+      expect(workspaceUpdateRequest?.body).not.toHaveProperty("defaultModel");
       const sessionCreateRequest = requests.find(
         (request) => request.method === "POST" && request.path === "/workspaces/ws-1/sessions",
       );
@@ -2113,6 +2123,40 @@ describe("oppi local API commands", () => {
             (request.body as { action?: { model?: null } }).action?.model === null,
         )?.body,
       ).toEqual({ action: { model: null } });
+
+      for (const args of [
+        [
+          "workspace",
+          "create",
+          "--name",
+          "Rejected",
+          "--default-model",
+          "openai/gpt-5.4",
+          "--json",
+        ],
+        ["workspace", "update", "ws-1", "--default-model", "openai/gpt-5.4", "--json"],
+        ["workspace", "create", "--definition", removedWorkspaceDefaultCreatePath, "--json"],
+        [
+          "workspace",
+          "update",
+          "ws-1",
+          "--definition",
+          removedWorkspaceDefaultUpdatePath,
+          "--json",
+        ],
+      ]) {
+        const before = requests.length;
+        const result = await runAsync(args, { OPPI_DATA_DIR: cliDir });
+        expect(result.exitCode, args.join(" ")).toBe(1);
+        expect(JSON.parse(result.stdout)).toEqual({
+          ok: false,
+          error: {
+            message:
+              "Workspace default models are no longer supported; remove --default-model/defaultModel and configure Pi's defaultProvider and defaultModel in ~/.pi/agent/settings.json.",
+          },
+        });
+        expect(requests, args.join(" ")).toHaveLength(before);
+      }
 
       for (const testCase of [
         {

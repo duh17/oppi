@@ -47,7 +47,7 @@ async function appleBootstrap(): Promise<void> {
   }
 
   await startServer();
-  const bootstrap = await bootstrapAppleE2E({ model: E2E_MODEL });
+  const bootstrap = await bootstrapAppleE2E();
   writeFileSync(
     stateFile,
     JSON.stringify({ mode: "apple", pid: process.pid } satisfies BootstrapState),

@@ -51,7 +51,6 @@ describe("E2E: Quick Session Send", { timeout: 300_000 }, () => {
     // Create workspace
     const wsRes = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-quick-send-workspace",
-      defaultModel: inject("e2eModel"),
     });
 
     expect(wsRes.status).toBe(201);

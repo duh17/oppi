@@ -528,7 +528,7 @@ describe("workspace prompt-template quick actions", () => {
       const startSession = vi.fn(async () => createdSession);
       const getActiveSession = vi.fn(() => createdSession);
       const createSession = vi.fn(() => createdSession);
-      const workspace = { ...makeWorkspace(repoDir), defaultModel: "ds4/deepseek-v4-flash" };
+      const workspace = makeWorkspace(repoDir);
 
       const ctx = makeQuickActionContext(repoDir, {
         storage: {
@@ -566,7 +566,7 @@ describe("workspace prompt-template quick actions", () => {
       expect(body.promptTemplateName).toBe("grill-me");
       expect(body.selectedPathCount).toBe(1);
       expect(body.session.id).toBe("new-session");
-      expect(createSession).toHaveBeenCalledWith(expect.any(String), "ds4/deepseek-v4-flash");
+      expect(createSession).toHaveBeenCalledWith(expect.any(String), undefined);
       expect(savedSession?.workspaceId).toBe("w1");
       expect(savedSession?.workspaceName).toBe("workspace");
       expect(startSession).toHaveBeenCalledWith(
@@ -600,7 +600,7 @@ describe("workspace prompt-template quick actions", () => {
         "utf8",
       );
 
-      const workspace = { ...makeWorkspace(repoDir), defaultModel: "ds4/deepseek-v4-flash" };
+      const workspace = makeWorkspace(repoDir);
       const worktree = createWorkspaceWorktree(
         workspace,
         { branch: "feature/explicit" },
@@ -687,7 +687,7 @@ describe("workspace prompt-template quick actions", () => {
         "utf8",
       );
 
-      const workspace = { ...makeWorkspace(repoDir), defaultModel: "ds4/deepseek-v4-flash" };
+      const workspace = makeWorkspace(repoDir);
       const worktree = listWorkspaceWorktrees(workspace).find((candidate) => !candidate.isMain);
       expect(worktree).toBeDefined();
 

@@ -26,7 +26,7 @@ Remote clients use authenticated HTTPS/WSS, including HTTPS through Tailscale.
 
 ### Model
 
-Oppi has no top-level server default chat model. New chat sessions use the shared model-selection behavior in [`model-selection.md`](./model-selection.md): explicit model, inherited or source model, workspace `defaultModel`, then Pi settings.
+Oppi does not own a default chat model. New chat sessions use the shared model-selection behavior in [`model-selection.md`](./model-selection.md): explicit model, inherited or source model, then Pi settings.
 
 Configure the machine-wide fallback in Pi settings, for example in `~/.pi/agent/settings.json`:
 
@@ -37,8 +37,6 @@ Configure the machine-wide fallback in Pi settings, for example in `~/.pi/agent/
   "defaultThinkingLevel": "xhigh"
 }
 ```
-
-Workspace defaults are stored on each workspace as `defaultModel` in canonical `"provider/model-id"` form.
 
 ### Session lifecycle
 

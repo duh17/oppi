@@ -52,6 +52,9 @@ import {
 } from "../session-attention.js";
 
 export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
+  const removedDefaultModelError =
+    "Workspace defaultModel is no longer supported; Pi settings own the default model. Configure defaultProvider and defaultModel in ~/.pi/agent/settings.json.";
+
   function systemPromptModeValidationError(mode: unknown): string | undefined {
     if (mode === undefined) {
       return undefined;
@@ -153,8 +156,22 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return { serverNow: nowMs, summaries };
   }
 
+  async function parseWorkspaceMutationBody<T>(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<T | null> {
+    const rawBody = await helpers.parseBody<unknown>(req);
+    if (!rejectNonObjectBody(rawBody, res)) return null;
+    if (Object.hasOwn(rawBody, "defaultModel")) {
+      helpers.error(res, 400, removedDefaultModelError);
+      return null;
+    }
+    return rawBody as T;
+  }
+
   async function handleCreateWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const body = await helpers.parseBody<CreateWorkspaceRequest>(req);
+    const body = await parseWorkspaceMutationBody<CreateWorkspaceRequest>(req, res);
+    if (!body) return;
 
     if (!body.name) {
       helpers.error(res, 400, "name required");
@@ -202,7 +219,8 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const body = await helpers.parseBody<UpdateWorkspaceRequest>(req);
+    const body = await parseWorkspaceMutationBody<UpdateWorkspaceRequest>(req, res);
+    if (!body) return;
 
     const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
     if (systemPromptModeError) {
@@ -898,7 +916,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const modelSelection = resolveInitialChatModel({
       sourceSessionModel: selectedSession?.model,
-      workspace,
     });
     const session = ctx.storage.createSession(launch.sessionName, modelSelection.model);
     session.workspaceId = workspace.id;

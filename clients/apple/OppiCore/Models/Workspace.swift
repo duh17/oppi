@@ -28,7 +28,6 @@ struct Workspace: Identifiable, Sendable, Equatable, Hashable {
     var systemPrompt: String?
     var systemPromptMode: WorkspaceSystemPromptMode = .append
     var hostMount: String?      // Host directory mounted as /work
-    var defaultModel: String?   // Optional default model for new sessions
 
     // Tool allowlist is only a sandbox VM security policy. Host runtime uses Pi defaults.
     var tools: [String]?
@@ -121,7 +120,7 @@ struct WorkspaceListSummary: Codable, Sendable, Equatable {
 extension Workspace: Codable {
     enum CodingKeys: String, CodingKey {
         case id, name, description, icon
-        case systemPrompt, systemPromptMode, hostMount, defaultModel
+        case systemPrompt, systemPromptMode, hostMount
         case tools
         case gitStatusEnabled
         case runtime, sandboxConfig
@@ -135,7 +134,6 @@ extension Workspace: Codable {
         description = try c.decodeIfPresent(String.self, forKey: .description)
         icon = try c.decodeIfPresent(IconChoice.self, forKey: .icon) ?? .defaultValue
         hostMount = try c.decodeIfPresent(String.self, forKey: .hostMount)
-        defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         systemPromptMode = try c.decodeIfPresent(WorkspaceSystemPromptMode.self, forKey: .systemPromptMode) ?? .append
         tools = try c.decodeIfPresent([String].self, forKey: .tools)
@@ -159,7 +157,6 @@ extension Workspace: Codable {
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encode(systemPromptMode, forKey: .systemPromptMode)
         try c.encodeIfPresent(hostMount, forKey: .hostMount)
-        try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
         try c.encodeIfPresent(tools, forKey: .tools)
         try c.encodeIfPresent(gitStatusEnabled, forKey: .gitStatusEnabled)
         try c.encodeIfPresent(runtime, forKey: .runtime)

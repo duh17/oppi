@@ -93,10 +93,30 @@ describe("resolveInitialScopedSessionPins", () => {
     ).toEqual({ thinkingLevel: "high" });
   });
 
-  it("seeds the first scoped model when session.model is unset", () => {
+  it("seeds the first scoped model when session.model and default are unset", () => {
     expect(
       resolveInitialScopedSessionPins({
         scopedModels: SCOPED,
+      }),
+    ).toEqual({ model: SONNET, thinkingLevel: "high" });
+  });
+
+  it("seeds the SettingsManager default when it is later in scopedModels", () => {
+    expect(
+      resolveInitialScopedSessionPins({
+        scopedModels: SCOPED,
+        defaultProvider: "anthropic",
+        defaultModel: "claude-opus-4-0",
+      }),
+    ).toEqual({ model: OPUS, thinkingLevel: "low" });
+  });
+
+  it("falls back to the first scoped model when the default is outside scope", () => {
+    expect(
+      resolveInitialScopedSessionPins({
+        scopedModels: SCOPED,
+        defaultProvider: "openai",
+        defaultModel: "gpt-5.4",
       }),
     ).toEqual({ model: SONNET, thinkingLevel: "high" });
   });

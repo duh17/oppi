@@ -1,10 +1,4 @@
-import type { Workspace } from "./types.js";
-
-export type InitialChatModelSource =
-  | "request"
-  | "sourceSession"
-  | "workspaceDefault"
-  | "piSettings";
+export type InitialChatModelSource = "request" | "sourceSession" | "piSettings";
 
 export interface InitialChatModelSelection {
   /** Canonical provider/model-id when Oppi chooses an explicit initial model. Undefined means defer to Pi settings/trace fallback. */
@@ -18,10 +12,6 @@ export interface InitialChatModelInput {
   requestModel?: string | null;
   /** Model inherited from an origin, selected, or fork source session. */
   sourceSessionModel?: string | null;
-  /** Workspace whose default should apply when no explicit/source model wins. */
-  workspace?: Pick<Workspace, "defaultModel"> | null;
-  /** Disable workspace defaults for flows where Pi should restore from an existing trace. */
-  includeWorkspaceDefault?: boolean;
 }
 
 export function normalizeInitialModelId(value: string | null | undefined): string | undefined {
@@ -33,9 +23,8 @@ export function normalizeInitialModelId(value: string | null | undefined): strin
 /**
  * Resolve the initial chat model for newly-created Oppi sessions.
  *
- * Oppi intentionally does not own a top-level server default model. When no
- * explicit, inherited, or workspace model applies, the model is left undefined
- * so the Pi SDK can use the normal Pi settings/trace/provider fallback.
+ * Oppi does not own a default model. When no explicit or inherited model applies,
+ * the model stays undefined so Pi can use its settings, trace, and provider fallback.
  */
 export function resolveInitialChatModel(input: InitialChatModelInput): InitialChatModelSelection {
   const requested = normalizeInitialModelId(input.requestModel);
@@ -43,11 +32,6 @@ export function resolveInitialChatModel(input: InitialChatModelInput): InitialCh
 
   const sourceSession = normalizeInitialModelId(input.sourceSessionModel);
   if (sourceSession) return { model: sourceSession, source: "sourceSession" };
-
-  if (input.includeWorkspaceDefault !== false) {
-    const workspaceDefault = normalizeInitialModelId(input.workspace?.defaultModel);
-    if (workspaceDefault) return { model: workspaceDefault, source: "workspaceDefault" };
-  }
 
   return { source: "piSettings" };
 }

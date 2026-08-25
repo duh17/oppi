@@ -16,12 +16,7 @@ export interface CreateWorkspaceRequest extends Omit<
   systemPromptMode?: WorkspaceSystemPromptMode;
 }
 
-type NullableWorkspaceUpdateKey =
-  | "description"
-  | "systemPrompt"
-  | "hostMount"
-  | "defaultModel"
-  | "sandboxConfig";
+type NullableWorkspaceUpdateKey = "description" | "systemPrompt" | "hostMount" | "sandboxConfig";
 
 export interface UpdateWorkspaceRequest extends Partial<
   Omit<WorkspaceMutableConfig, NullableWorkspaceUpdateKey>
@@ -34,6 +29,5 @@ export interface UpdateWorkspaceRequest extends Partial<
   icon?: WorkspaceMutableConfig["icon"];
   systemPrompt?: string | null;
   hostMount?: string | null;
-  defaultModel?: string | null;
   sandboxConfig?: WorkspaceSandboxConfig | null;
 }

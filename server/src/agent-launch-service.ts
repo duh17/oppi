@@ -270,14 +270,11 @@ export class AgentLaunchService {
     now: number,
   ): Session {
     const defaults = request.agent.sessionDefaults ?? {};
-    // A launch-level model is an explicit caller or saved-Agent choice. Workspace/Pi defaults
-    // remain fallback-capable only when no launch model was selected.
+    // A launch-level model is an explicit caller or saved-Agent choice. Pi owns
+    // default selection when no launch model was selected.
     const modelPolicy =
       request.modelPolicy ?? (normalizedText(defaults.model) ? "required" : undefined);
-    const modelSelection = resolveInitialChatModel({
-      requestModel: defaults.model,
-      workspace: request.target.workspace,
-    });
+    const modelSelection = resolveInitialChatModel({ requestModel: defaults.model });
     const sessionName = normalizedText(request.sessionName);
     const agentIcon = request.agentId ? request.agent.icon : undefined;
     const session: Session = idempotencyKey

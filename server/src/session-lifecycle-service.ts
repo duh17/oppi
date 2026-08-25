@@ -570,10 +570,8 @@ export class SessionLifecycleService {
 
     const modelSelection = resolveInitialChatModel({
       requestModel: params.model,
-      // Imports should preserve the source trace model when the client does not
-      // explicitly override it. Leaving the model undefined lets Pi restore it
-      // from the imported JSONL/session state.
-      includeWorkspaceDefault: false,
+      // Imports preserve the source trace model when the client does not
+      // explicitly override it. Undefined lets Pi restore the JSONL state.
     });
     if (!localHeader.sessionId) {
       throw new SessionLifecycleError("Cannot read session identity from file", 400);
@@ -649,7 +647,6 @@ export class SessionLifecycleService {
 
     const forkModelSelection = resolveInitialChatModel({
       sourceSessionModel: latestSource.model,
-      workspace: params.workspace,
     });
     const forkSession = this.deps.storage.createSession(forkName, forkModelSelection.model);
 

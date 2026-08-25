@@ -2480,7 +2480,22 @@ describe("SdkBackend.setModel", () => {
     expect(piSession.setModel).toHaveBeenCalledWith(model);
   });
 
-  it("accepts persist without passing a second argument to Pi 0.84.3 setModel", async () => {
+  it("keeps ordinary model selection session-only", async () => {
+    const model = {
+      provider: "omlx",
+      id: "gemma-4-31b-bf16",
+      name: "Gemma 4 31B",
+      contextWindow: 262_144,
+    };
+    const { backend, piSession } = makeSetModelHarness({ models: [model] });
+    piSession.model = model;
+
+    await backend.setModel("omlx/gemma-4-31b-bf16");
+
+    expect(piSession.setModel).toHaveBeenCalledWith(model);
+  });
+
+  it("persists the Pi global default only when requested", async () => {
     const model = {
       provider: "omlx",
       id: "gemma-4-31b-bf16",
@@ -2492,7 +2507,7 @@ describe("SdkBackend.setModel", () => {
 
     await backend.setModel("omlx/gemma-4-31b-bf16", { persist: true });
 
-    expect(piSession.setModel).toHaveBeenCalledWith(model);
+    expect(piSession.setModel).toHaveBeenCalledWith(model, { persist: true });
   });
 
   it("blocks prompt admission while a managed model mutation is active", async () => {

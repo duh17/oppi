@@ -1333,6 +1333,8 @@ export class SdkBackend {
         explicitThinkingLevel,
         requiredLaunchModel: session.launch?.modelPolicy === "required",
         isResume,
+        defaultProvider: settingsManager.getDefaultProvider(),
+        defaultModel: settingsManager.getDefaultModel(),
       });
       if (!session.thinkingLevel && scopedPins.thinkingLevel) {
         session.thinkingLevel = scopedPins.thinkingLevel;
@@ -1937,7 +1939,7 @@ export class SdkBackend {
 
   async setModel(
     modelId: string,
-    _options?: { persist?: boolean },
+    options?: { persist?: boolean },
   ): Promise<{
     success: boolean;
     provider?: string;
@@ -1959,9 +1961,11 @@ export class SdkBackend {
       }
 
       try {
-        // Pi 0.84.3 AgentSession.setModel always writes session + settings.
-        // Oppi still accepts persist on the command; it cannot stay session-only.
-        await this.piSession.setModel(resolution.candidate.model);
+        if (options?.persist === true) {
+          await this.piSession.setModel(resolution.candidate.model, { persist: true });
+        } else {
+          await this.piSession.setModel(resolution.candidate.model);
+        }
 
         const activeModel = this.piSession.model;
         return {

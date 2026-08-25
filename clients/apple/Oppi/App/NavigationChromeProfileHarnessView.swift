@@ -457,7 +457,6 @@ private struct NavigationChromeChatFilesReproHarnessView: View {
         icon: .symbol("square.grid.2x2"),
         systemPrompt: nil,
         hostMount: "/tmp/oppi-repro",
-        defaultModel: nil,
         tools: nil,
         gitStatusEnabled: false,
         runtime: .host,

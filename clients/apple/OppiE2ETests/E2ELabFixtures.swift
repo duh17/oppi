@@ -136,15 +136,11 @@ extension E2ETestCase {
     @discardableResult
     func createLabWorkspace(
         named name: String,
-        defaultModel: String? = nil,
         hostMount: String? = nil
     ) throws -> String {
         var body: [String: Any] = [
             "name": name,
         ]
-        if let defaultModel {
-            body["defaultModel"] = defaultModel
-        }
         if let hostMount {
             body["hostMount"] = hostMount
         }

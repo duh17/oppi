@@ -466,7 +466,6 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--description", value: "<text>", summary: "workspace description" },
       { name: "--icon", value: "<text>", summary: "SF Symbol name or emoji" },
       { name: "--system-prompt", value: "<text>", summary: "workspace system prompt text" },
-      { name: "--default-model", value: "<model>", summary: "default model for new sessions" },
       { name: "--runtime", value: "<host|sandbox>", summary: "workspace runtime mode" },
       { name: "--definition", value: "<file>", summary: "JSON CreateWorkspaceRequest fields" },
       { name: "--json", summary: "write the standard JSON envelope" },
@@ -491,12 +490,11 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--description", value: "<text>", summary: "workspace description" },
       { name: "--icon", value: "<text>", summary: "SF Symbol name or emoji" },
       { name: "--system-prompt", value: "<text>", summary: "workspace system prompt text" },
-      { name: "--default-model", value: "<model>", summary: "default model for new sessions" },
       { name: "--runtime", value: "<host|sandbox>", summary: "workspace runtime mode" },
       { name: "--definition", value: "<file>", summary: "JSON UpdateWorkspaceRequest fields" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
-    examples: [{ command: "oppi workspace update ws_123 --default-model openai/gpt-5.5 --json" }],
+    examples: [{ command: "oppi workspace update ws_123 --runtime sandbox --json" }],
   },
   {
     path: ["workspace", "delete"],
@@ -766,7 +764,7 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi schedule <subcommand> [flags]",
     description: [
       "A schedule stores a trigger plus a new-session or existing-session action.",
-      "New-session schedules can use workspace defaults or a saved Agent; manual and automatic runs keep history for inspection.",
+      "New-session schedules can use an explicit model or a saved Agent; manual and automatic runs keep history for inspection.",
     ],
     subcommands: [
       { name: "list", summary: "list schedules" },
@@ -900,7 +898,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--model", value: "<model>", summary: "update a new-session schedule model" },
       {
         name: "--clear-model",
-        summary: "remove the explicit new-session model so the Agent or workspace default applies",
+        summary: "remove the explicit new-session model so the Agent or Pi default applies",
       },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
@@ -1620,7 +1618,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--agent",
         value: "<agent>",
-        summary: "saved Agent id/name; omit or use workspace_default for workspace defaults",
+        summary: "saved Agent id/name; omit or use workspace_default for plain Pi",
       },
       {
         name: "--allow-nested-delegation",

@@ -761,6 +761,7 @@ struct WorkspaceCodableTests {
             "systemPrompt": "You are helpful",
             "systemPromptMode": "append",
             "hostMount": "/Users/me/workspace",
+            "defaultModel": "anthropic/claude-sonnet-4-0",
             "extensionMode": "explicit",
             "extensions": ["memory", "todos"],
             "createdAt": 1700000000000,
@@ -816,6 +817,7 @@ struct WorkspaceCodableTests {
         let encodedObject = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         #expect(encodedObject["skills"] == nil)
         #expect(encodedObject["extensions"] == nil)
+        #expect(encodedObject["defaultModel"] == nil)
         let decoded = try JSONDecoder().decode(Workspace.self, from: encoded)
         #expect(original == decoded)
     }

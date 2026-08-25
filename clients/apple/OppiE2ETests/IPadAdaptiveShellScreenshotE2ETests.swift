@@ -19,8 +19,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
     }
 
     override func seedE2EFixtures() throws {
-        let defaultModel = ProcessInfo.processInfo.environment["E2E_MODEL"] ?? "omlx/Qwen3.6-27B-8bit"
-        let workspaceId = try createLabWorkspace(named: anchorWorkspaceName, defaultModel: defaultModel)
+        let workspaceId = try createLabWorkspace(named: anchorWorkspaceName)
         try createLabSessions(count: 1, workspaceId: workspaceId, stopAfterCreate: false)
         try createLabSessions(count: 2, workspaceId: workspaceId, stopAfterCreate: true)
 

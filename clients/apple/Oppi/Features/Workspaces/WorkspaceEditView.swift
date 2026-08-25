@@ -51,18 +51,15 @@ enum WorkspacePiResourceScopePolicy {
 struct WorkspaceEditView: View {
     let workspace: Workspace
     private let previewAvailableExtensions: [ExtensionInfo]?
-    private let previewAvailableModels: [ModelInfo]?
     private let onSaved: (() -> Void)?
 
     init(
         workspace: Workspace,
         previewAvailableExtensions: [ExtensionInfo]? = nil,
-        previewAvailableModels: [ModelInfo]? = nil,
         onSaved: (() -> Void)? = nil
     ) {
         self.workspace = workspace
         self.previewAvailableExtensions = previewAvailableExtensions
-        self.previewAvailableModels = previewAvailableModels
         self.onSaved = onSaved
     }
 
@@ -94,7 +91,6 @@ struct WorkspaceEditView: View {
     @State private var isSaving = false
     @State private var isLaunchingOppi = false
     @State private var error: String?
-    @State private var availableModels: [ModelInfo] = []
     @State private var selectedSkillDetail: SkillDetailDestination?
     @State private var isShowingIconPicker = false
     @State private var isShowingSystemPromptEditor = false
@@ -423,9 +419,6 @@ struct WorkspaceEditView: View {
         .onDisappear {
             piResourceLoadGeneration += 1
         }
-        .task {
-            await loadModels()
-        }
         .task(id: hostMountLookupKey) {
             await validateHostMount()
         }
@@ -733,21 +726,6 @@ struct WorkspaceEditView: View {
             isCheckingHostMount = false
         } catch {
             self.error = "Create folder failed: \(error.localizedDescription)"
-        }
-    }
-
-    private func loadModels() async {
-        guard let api = apiClient else {
-            if let previewAvailableModels {
-                availableModels = previewAvailableModels
-            }
-            return
-        }
-
-        do {
-            availableModels = try await api.listModels()
-        } catch {
-            // Fall back to manual entry
         }
     }
 

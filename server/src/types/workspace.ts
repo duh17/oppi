@@ -21,7 +21,6 @@ export interface WorkspaceMutableConfig {
   systemPrompt?: string; // Workspace prompt text appended to the Pi prompt
   systemPromptMode: WorkspaceSystemPromptMode;
   hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
-  defaultModel?: string; // Optional default model for new sessions in this workspace
 
   // Tool allowlist is only a sandbox VM security policy. Host runtime uses Pi defaults.
   tools?: string[];

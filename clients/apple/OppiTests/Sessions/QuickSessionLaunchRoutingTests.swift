@@ -411,3 +411,70 @@ struct QuickSessionWorktreePickerPolicyTests {
         )
     }
 }
+
+@Suite("New session model presentation")
+struct NewSessionModelPresentationTests {
+    private let sonnet = ModelInfo(
+        id: "anthropic/claude-sonnet-4-0",
+        name: "Sonnet",
+        provider: "anthropic",
+        contextWindow: 200_000,
+        isDefault: true
+    )
+    private let opus = ModelInfo(
+        id: "anthropic/claude-opus-4-0",
+        name: "Opus",
+        provider: "anthropic",
+        contextWindow: 200_000
+    )
+
+    @Test func inheritedCatalogDefaultIsDisplayOnly() {
+        let presentation = NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: nil,
+            isAgent: false,
+            catalogModels: [opus, sonnet]
+        )
+
+        #expect(presentation.requestModelId == nil)
+        #expect(presentation.pillText == "Sonnet")
+        #expect(presentation.pillText != "default")
+        #expect(
+            NewSessionModelOverride(explicitlySelectedModelId: presentation.requestModelId)
+                .requestModelId == nil
+        )
+    }
+
+    @Test func pendingCatalogUsesModelNotDefault() {
+        let presentation = NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: nil,
+            isAgent: false,
+            catalogModels: []
+        )
+
+        #expect(presentation.requestModelId == nil)
+        #expect(presentation.pillText == "Model")
+        #expect(presentation.pillText != "default")
+    }
+
+    @Test func agentWithoutPickUsesAgentLabelNotCatalogStar() {
+        let presentation = NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: nil,
+            isAgent: true,
+            catalogModels: [sonnet]
+        )
+
+        #expect(presentation.requestModelId == nil)
+        #expect(presentation.pillText == "Agent")
+    }
+
+    @Test func explicitPickIsRequestAndPill() {
+        let presentation = NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: opus.id,
+            isAgent: false,
+            catalogModels: [opus, sonnet]
+        )
+
+        #expect(presentation.requestModelId == opus.id)
+        #expect(presentation.pillText == "Opus")
+    }
+}

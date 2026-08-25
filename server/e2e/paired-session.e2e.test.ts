@@ -98,7 +98,6 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
 
     const res = await api("POST", "/workspaces", deviceToken, {
       name: "e2e-session-workspace",
-      defaultModel: inject("e2eModel"),
     });
 
     expect(res.status).toBe(201);

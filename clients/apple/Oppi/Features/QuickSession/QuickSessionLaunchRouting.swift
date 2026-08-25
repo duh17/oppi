@@ -1,5 +1,48 @@
 import Foundation
 
+/// Request-boundary policy for composer launches. Only a model chosen in the
+/// current composer becomes an override; nil leaves selection to Pi settings.
+struct NewSessionModelOverride: Equatable, Sendable {
+    let requestModelId: String?
+
+    init(explicitlySelectedModelId: String?) {
+        let trimmed = explicitlySelectedModelId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        requestModelId = trimmed?.isEmpty == false ? trimmed : nil
+    }
+}
+
+/// Display vs request split for composer model pills. Catalog `isDefault` is
+/// inherited for the label only and never copied into the create payload.
+struct NewSessionModelPresentation: Equatable, Sendable {
+    let requestModelId: String?
+    let pillText: String
+
+    static func resolve(
+        explicitlySelectedModelId: String?,
+        isAgent: Bool,
+        catalogModels: [ModelInfo]
+    ) -> Self {
+        let requestModelId = NewSessionModelOverride(
+            explicitlySelectedModelId: explicitlySelectedModelId
+        ).requestModelId
+        if let requestModelId {
+            let name = catalogModels.first(where: { $0.id == requestModelId })?.name
+            return Self(
+                requestModelId: requestModelId,
+                pillText: name ?? shortModelName(requestModelId)
+            )
+        }
+        if isAgent {
+            return Self(requestModelId: nil, pillText: "Agent")
+        }
+        if let starred = catalogModels.first(where: \.isDefault) {
+            return Self(requestModelId: nil, pillText: starred.name)
+        }
+        return Self(requestModelId: nil, pillText: "Model")
+    }
+}
+
 /// Pure Quick Session start decision for plain Pi vs saved-Agent launch.
 enum QuickSessionLaunchMode: Equatable, Sendable {
     /// Create an empty workspace session, then optionally auto-send through chat.

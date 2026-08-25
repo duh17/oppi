@@ -42,11 +42,24 @@ function scopedEntryMatches(
   return requested === canonical || requested === entry.model.id;
 }
 
+function scopedDefaultMatch<TModel extends { provider: string; id: string }>(
+  scoped: Array<{ model: TModel; thinkingLevel?: ThinkingLevel }>,
+  defaultProvider: string | undefined,
+  defaultModel: string | undefined,
+): { model: TModel; thinkingLevel?: ThinkingLevel } | undefined {
+  const modelId = defaultModel?.trim();
+  if (!modelId) return undefined;
+  const provider = defaultProvider?.trim();
+  const resolved = provider ? { provider, id: modelId } : undefined;
+  return scoped.find((entry) => scopedEntryMatches(entry, resolved, modelId));
+}
+
 /**
  * Pi's createAgentSession calls findInitialModel with scopedModels:[] whenever
  * options.model is set, and Oppi usually passes session.model. Apply the
- * matching scoped thinking pin on new session create, and seed the first scoped
- * model when session.model is unset.
+ * matching scoped thinking pin on new session create, and when session.model is
+ * unset seed the SettingsManager default if it is in scopedModels, otherwise the
+ * first scoped model.
  *
  * Explicit session/launch thinking, required launch models, and resumed
  * transcripts stay as-is.
@@ -60,6 +73,8 @@ export function resolveInitialScopedSessionPins<
   explicitThinkingLevel?: string;
   requiredLaunchModel?: boolean;
   isResume?: boolean;
+  defaultProvider?: string;
+  defaultModel?: string;
 }): {
   model?: TModel;
   thinkingLevel?: ThinkingLevel;
@@ -79,7 +94,9 @@ export function resolveInitialScopedSessionPins<
     !input.isResume &&
     scoped.length > 0
   ) {
-    model = scoped[0].model;
+    model =
+      scopedDefaultMatch(scoped, input.defaultProvider, input.defaultModel)?.model ??
+      scoped[0].model;
   }
 
   let thinkingLevel = explicitThinking;

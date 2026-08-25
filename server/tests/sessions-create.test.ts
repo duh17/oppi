@@ -797,14 +797,6 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, "custom-model");
   });
 
-  it("uses workspace default model when request omits model", async () => {
-    const mock = createMockContext(makeWorkspace({ defaultModel: "openai-codex/gpt-5.4" }));
-
-    await dispatchCreate(mock, { prompt: "hello" });
-
-    expect(mock.storage.createSession).toHaveBeenCalledWith(undefined, "openai-codex/gpt-5.4");
-  });
-
   it("omits model when request does not specify one so Pi settings choose", async () => {
     const mock = createMockContext();
 

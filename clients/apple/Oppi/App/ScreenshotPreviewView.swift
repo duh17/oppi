@@ -1755,12 +1755,6 @@ private struct WorkspaceEditPreview: View {
         ExtensionInfo(name: "todos", path: "~/.pi/agent/extensions/todos", kind: "file", source: "pi"),
     ]
 
-    private static let mockModels: [ModelInfo] = [
-        ModelInfo(id: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "Anthropic", contextWindow: 200_000),
-        ModelInfo(id: "openai/gpt-4.1", name: "GPT-4.1", provider: "OpenAI", contextWindow: 128_000),
-        ModelInfo(id: "openai/o4-mini", name: "o4-mini", provider: "OpenAI", contextWindow: 200_000),
-    ]
-
     private static let mockWorkspace = Workspace(
         id: "preview-ws",
         name: "oppi-dev",
@@ -1777,8 +1771,7 @@ private struct WorkspaceEditPreview: View {
         NavigationStack {
             WorkspaceEditView(
                 workspace: Self.mockWorkspace,
-                previewAvailableExtensions: Self.mockExtensions,
-                previewAvailableModels: Self.mockModels
+                previewAvailableExtensions: Self.mockExtensions
             )
         }
         .environment(connection)

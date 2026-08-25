@@ -89,7 +89,6 @@ describe("Storage.createWorkspace", () => {
         systemPrompt: "Be helpful",
         systemPromptMode: "append",
         hostMount: "~/workspace/oppi",
-        defaultModel: "anthropic/claude-sonnet-4-0",
       }),
     );
 
@@ -99,7 +98,6 @@ describe("Storage.createWorkspace", () => {
     expect(ws.systemPrompt).toBe("Be helpful");
     expect(ws.systemPromptMode).toBe("append");
     expect(ws.hostMount).toBe("~/workspace/oppi");
-    expect(ws.defaultModel).toBe("anthropic/claude-sonnet-4-0");
   });
 
   it("trims hostMount and treats blank values as unset", () => {
@@ -184,6 +182,22 @@ describe("Storage.getWorkspace", () => {
     const loaded = storage.getWorkspace(ws.id);
     expect(loaded).toBeDefined();
     expect(loaded!.runtime).toBeUndefined();
+  });
+
+  it("ignores stored defaultModel keys and removes them on the next save", () => {
+    const ws = storage.createWorkspace(createReq());
+    const path = join(dataDir, "workspaces", `${ws.id}.json`);
+    const raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    raw.defaultModel = "anthropic/claude-sonnet-4-0";
+    writeFileSync(path, JSON.stringify(raw));
+
+    const loaded = storage.getWorkspace(ws.id);
+    expect(loaded).toBeDefined();
+    expect("defaultModel" in loaded!).toBe(false);
+
+    storage.updateWorkspace(ws.id, { description: "resaved" });
+    const resaved = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    expect(resaved.defaultModel).toBeUndefined();
   });
 });
 
@@ -339,13 +353,18 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.hostMount).toBe("~/workspace/kypu");
   });
 
-  it("updates defaultModel", () => {
+  it("ignores defaultModel in untyped updates", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, {
       defaultModel: "anthropic/claude-opus-4-6",
-    });
+    } as never);
+    const raw = JSON.parse(
+      readFileSync(join(dataDir, "workspaces", `${ws.id}.json`), "utf-8"),
+    ) as Record<string, unknown>;
 
-    expect(updated!.defaultModel).toBe("anthropic/claude-opus-4-6");
+    expect(updated).toBeDefined();
+    expect("defaultModel" in updated!).toBe(false);
+    expect(raw.defaultModel).toBeUndefined();
   });
 
   it("updates multiple fields at once", () => {

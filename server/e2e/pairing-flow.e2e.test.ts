@@ -204,7 +204,6 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
 
       const res = await api("POST", "/workspaces", deviceToken, {
         name: "e2e-pairing-workspace",
-        defaultModel: inject("e2eModel"),
       });
 
       expect(res.status).toBe(201);

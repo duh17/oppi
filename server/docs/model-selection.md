@@ -18,10 +18,7 @@ One shared helper, `resolveInitialChatModel`, resolves the initial model for new
 
 1. Explicit request model.
 2. Source session model, when the flow has an origin, selected session, or fork source.
-3. Workspace `defaultModel`.
-4. No Oppi model. Pi chooses from its settings, existing trace metadata, provider defaults, or first available model.
-
-Model IDs stored in Oppi workspace defaults should use canonical `provider/model-id` form, such as `ds4/deepseek-v4-flash`.
+3. No Oppi model. Pi chooses from its settings, existing trace metadata, provider defaults, or first available model.
 
 Before submitting a request, the Oppi CLI resolves `--model` for `session create` and new-session `schedule create` through the server `/models` catalog. The catalog is filtered by Pi `enabledModels`, accepts fuzzy text such as `sonnet`, prefers subscription/OAuth-backed matches over API-key matches, and sends the canonical `provider/model-id` to the server. `--model` can include an optional `:thinking` suffix such as `sonnet:high`. An explicit `--thinking` value wins over that suffix. If no match exists, the CLI error lists the exact available model IDs so an agent can retry with a valid value.
 
@@ -29,11 +26,12 @@ Before submitting a request, the Oppi CLI resolves `--model` for `session create
 
 ## Flow notes
 
-- Workspace “New Session” uses an explicit request model, then the workspace default, then Pi settings.
-- The Quick Session sheet sends the last or current explicit quick-session model when present. Otherwise, the server applies the workspace default, then Pi settings. The sheet displays workspace defaults but does not send them as client overrides.
-- Quick-action sessions inherit the selected or source session model when available. Otherwise, they use the workspace default, then Pi settings.
-- Fork sessions preserve the source session model before they fall back to workspace or Pi defaults.
-- Local session imports intentionally skip the workspace default unless the client passes an explicit model. This lets Pi restore the imported trace’s original model.
+- Workspace “New Session” sends a model only when the caller explicitly selects one. Otherwise, Pi settings choose it.
+- Quick and Guided Control sessions start without a model override unless the user chooses one in the current composer.
+- Quick-action sessions inherit the selected or source session model when available. Otherwise, Pi settings choose it.
+- Fork sessions preserve the source session model before they fall back to Pi settings.
+- Local session imports use an explicit request model when present. Otherwise, Pi restores the imported trace’s original model.
+- A normal model-picker row changes only the active session. The star selects the same model and persists it as Pi's global default.
 
 ## Non-goals
 

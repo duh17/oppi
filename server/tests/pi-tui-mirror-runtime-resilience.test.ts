@@ -125,7 +125,6 @@ function makeHarness(root: string) {
       systemPrompt?: string;
       systemPromptMode?: "append";
       hostMount?: string;
-      defaultModel?: string;
       tools?: string[];
       extensions?: string[];
       gitStatusEnabled?: boolean;
@@ -141,7 +140,6 @@ function makeHarness(root: string) {
         systemPrompt: request.systemPrompt,
         systemPromptMode: request.systemPromptMode ?? "append",
         hostMount: request.hostMount,
-        defaultModel: request.defaultModel,
         tools: request.tools,
         extensions: request.extensions,
         gitStatusEnabled: request.gitStatusEnabled,

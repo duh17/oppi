@@ -145,7 +145,6 @@ async function createFixture(agent: HttpsAgent): Promise<Fixture> {
         hostMount: workspaceDir,
         runtime: "host",
         systemPromptMode: "append",
-        defaultModel: "stub/deterministic",
       }),
     ),
   });

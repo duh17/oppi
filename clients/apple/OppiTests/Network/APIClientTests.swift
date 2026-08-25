@@ -659,6 +659,58 @@ struct APIClientTests {
         #expect(response.session.ephemeral == true)
     }
 
+    @Test(arguments: [Optional<String>.none, .some("openai-codex/gpt-5.6-sol")])
+    @MainActor
+    func quickAndGuidedLaunchesOnlyEncodeExplicitModel(selectedModelId: String?) async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let modelOverride = NewSessionModelOverride(
+            explicitlySelectedModelId: selectedModelId
+        )
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "POST")
+            #expect(request.url?.path == "/workspaces/w1/sessions")
+            let body = try #require(
+                JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
+            )
+            #expect(body.keys.contains("model") == (selectedModelId != nil))
+            #expect(body["model"] as? String == selectedModelId)
+            return self.mockResponse(json: """
+            {"session":{"id":"new","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}
+            """)
+        }
+
+        _ = try await client.createWorkspaceSession(
+            workspaceId: "w1",
+            model: modelOverride.requestModelId
+        )
+
+        let guidedLaunch = GuidedControlSessionAtomicLaunch.make(
+            domain: .agents,
+            intent: .create,
+            targetId: nil,
+            targetName: nil,
+            targetPath: nil,
+            workspaceId: "w1",
+            workspaceName: "Workspace",
+            sourceDraftText: "Create an agent",
+            cleanRequest: "Create an agent",
+            sessionName: "Create Agent",
+            model: modelOverride.requestModelId,
+            thinking: .medium,
+            requestId: "guided-model-policy",
+            comments: nil
+        )
+        let guidedBody = try #require(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(guidedLaunch.request)
+            ) as? [String: Any]
+        )
+        #expect(guidedBody.keys.contains("model") == (selectedModelId != nil))
+        #expect(guidedBody["model"] as? String == selectedModelId)
+    }
+
     @Test func createWorkspaceSessionEncodesWorktreeId() async throws {
         let client = makeClient()
         defer { cleanup() }

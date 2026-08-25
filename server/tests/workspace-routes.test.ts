@@ -885,6 +885,40 @@ describe("workspaces module", () => {
     }
   });
 
+  it.each([
+    { method: "POST", path: "/workspaces", body: { name: "Test", defaultModel: "openai/gpt-5.4" } },
+    { method: "PUT", path: "/workspaces/ws-1", body: { defaultModel: "openai/gpt-5.4" } },
+  ] as const)("rejects removed defaultModel on $method $path", async ({ method, path, body }) => {
+    const createWorkspace = vi.fn();
+    const updateWorkspace = vi.fn();
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        createWorkspace,
+        updateWorkspace,
+      },
+    } as unknown as RouteContext;
+    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+
+    const handled = await dispatch({
+      method,
+      path,
+      url: new URL(`http://localhost${path}`),
+      req: makeRequest(body) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({
+      error:
+        "Workspace defaultModel is no longer supported; Pi settings own the default model. Configure defaultProvider and defaultModel in ~/.pi/agent/settings.json.",
+    });
+    expect(createWorkspace).not.toHaveBeenCalled();
+    expect(updateWorkspace).not.toHaveBeenCalled();
+  });
+
   it("validates name on POST /workspaces", async () => {
     const ctx = {} as unknown as RouteContext;
 

@@ -47,7 +47,6 @@ function makeCoordinator(
     persistSessionNow: vi.fn(),
     broadcast,
     applyPiStateSnapshot: vi.fn(() => false),
-    persistWorkspaceLastUsedModel: vi.fn(),
     getContextWindowResolver: vi.fn(() => null),
     reloadRuntimeConfig: options.reloadRuntimeConfig,
   });
@@ -56,6 +55,30 @@ function makeCoordinator(
 }
 
 describe("SessionCommandCoordinator", () => {
+  it.each([
+    { persist: undefined, expectedOptions: undefined },
+    { persist: false, expectedOptions: undefined },
+    { persist: true, expectedOptions: { persist: true } },
+  ])("routes set_model persistence intent to the SDK backend", async ({ persist, expectedOptions }) => {
+    const setModel = vi.fn(async () => ({ success: true as const }));
+    const { coordinator } = makeCoordinator({} as AgentSession, {
+      sdkBackend: { setModel },
+    });
+
+    await coordinator.sendCommandAsync("s1", {
+      type: "set_model",
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      ...(persist !== undefined ? { persist } : {}),
+    });
+
+    if (expectedOptions) {
+      expect(setModel).toHaveBeenCalledWith("openai-codex/gpt-5.6-sol", expectedOptions);
+    } else {
+      expect(setModel).toHaveBeenCalledWith("openai-codex/gpt-5.6-sol", undefined);
+    }
+  });
+
   it("allows reload and refreshes runtime config before SDK resources", async () => {
     const calls: string[] = [];
     const reloadResources = vi.fn(async (reloadConfig?: () => void) => {

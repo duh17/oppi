@@ -290,14 +290,6 @@ struct QuickSessionTests {
         #expect(AppPreferences.QuickSession.defaultWorkspaceId == nil)
     }
 
-    @Test func modelIdRoundTrip() {
-        AppPreferences.QuickSession.saveModelId("openai-codex/gpt-5.4")
-        #expect(AppPreferences.QuickSession.lastModelId == "openai-codex/gpt-5.4")
-
-        AppPreferences.QuickSession.saveModelId(nil)
-        #expect(AppPreferences.QuickSession.lastModelId == nil)
-    }
-
     @Test func thinkingLevelRoundTrip() {
         AppPreferences.QuickSession.saveThinkingLevel(.high)
         #expect(AppPreferences.QuickSession.lastThinkingLevel == .high)

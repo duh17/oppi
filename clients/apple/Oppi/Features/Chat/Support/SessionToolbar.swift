@@ -21,7 +21,7 @@ struct SessionToolbar: View {
     }
 
     private var modelDisplay: String {
-        guard let model = effectiveModel else { return "default" }
+        guard let model = effectiveModel else { return "Model" }
         return shortModelName(model)
     }
 

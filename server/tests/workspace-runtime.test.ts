@@ -104,7 +104,6 @@ describe("resolveRuntimeLimits", () => {
       port: 7749,
       host: "0.0.0.0",
       dataDir: "/tmp",
-      defaultModel: "sonnet",
     } as ServerConfig;
 
     const limits = resolveRuntimeLimits(config);
@@ -120,7 +119,6 @@ describe("resolveRuntimeLimits", () => {
       port: 7749,
       host: "0.0.0.0",
       dataDir: "/tmp",
-      defaultModel: "sonnet",
       maxSessionsPerWorkspace: 5,
       maxSessionsGlobal: 10,
       sessionIdleTimeoutMs: 30_000,

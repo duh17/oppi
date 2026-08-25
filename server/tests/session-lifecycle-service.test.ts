@@ -248,20 +248,20 @@ function makeService(
 
 describe("SessionLifecycleService", () => {
   describe("createWorkspaceSession", () => {
-    it("creates promptless managed sessions with workspace defaults and thinking state", async () => {
+    it("creates promptless managed sessions with Pi defaults and explicit thinking state", async () => {
       const createdSession = makeSession({ id: "created-1" });
       const { service, createSession, saveSession, startSession, sendPrompt } = makeService({
         forkSession: createdSession,
       });
 
       const result = await service.createWorkspaceSession({
-        workspace: makeWorkspace({ name: "Project", defaultModel: "openai/gpt-5.4" }),
+        workspace: makeWorkspace({ name: "Project" }),
         name: "New session",
         thinking: "high",
         ephemeral: true,
       });
 
-      expect(createSession).toHaveBeenCalledWith("New session", "openai/gpt-5.4");
+      expect(createSession).toHaveBeenCalledWith("New session", undefined);
       expect(saveSession).toHaveBeenCalledTimes(2);
       expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
         id: "created-1",
@@ -1326,18 +1326,18 @@ describe("SessionLifecycleService", () => {
       expect(result.session).toMatchObject({ id: "fork-1", contextWindow: 200_000 });
     });
 
-    it("uses requested fork names and workspace default model when the source has no model", async () => {
+    it("uses requested fork names and defers to Pi when the source has no model", async () => {
       const sourceSession = makeSession({ id: "source-1", piSessionFile: "/tmp/current.jsonl" });
       const { service, createSession } = makeService();
 
       await service.forkSession({
-        workspace: makeWorkspace({ defaultModel: "openai/gpt-5.4" }),
+        workspace: makeWorkspace(),
         sourceSession,
         entryId: "entry-user-1",
         name: "  Custom fork name  ",
       });
 
-      expect(createSession).toHaveBeenCalledWith("Custom fork name", "openai/gpt-5.4");
+      expect(createSession).toHaveBeenCalledWith("Custom fork name", undefined);
     });
 
     it("returns a typed conflict error when the source has no trace file", async () => {

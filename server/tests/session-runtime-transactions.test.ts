@@ -11,7 +11,6 @@ const TEST_CONFIG: ServerConfig = {
   port: 7749,
   host: "127.0.0.1",
   dataDir: "/tmp/oppi-runtime-transaction-tests",
-  defaultModel: "anthropic/claude-sonnet-4-0",
 };
 
 function deferred<T = void>(): {

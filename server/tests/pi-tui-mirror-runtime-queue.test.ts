@@ -82,7 +82,6 @@ function makeRuntime(
       systemPrompt?: string;
       systemPromptMode?: "append";
       hostMount?: string;
-      defaultModel?: string;
       tools?: string[];
       extensions?: string[];
       gitStatusEnabled?: boolean;
@@ -98,7 +97,6 @@ function makeRuntime(
         systemPrompt: req.systemPrompt,
         systemPromptMode: req.systemPromptMode ?? "append",
         hostMount: req.hostMount,
-        defaultModel: req.defaultModel,
         tools: req.tools,
         extensions: req.extensions,
         gitStatusEnabled: req.gitStatusEnabled,
