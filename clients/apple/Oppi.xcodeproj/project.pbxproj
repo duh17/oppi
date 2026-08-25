@@ -69,6 +69,7 @@
 		0E7055AE0B174FE46077CAC8 /* WorkspaceHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 665B0A72A85F2881EDAE397D /* WorkspaceHomeView.swift */; };
 		0E8059FE9636BE583FFFCD1F /* DragSelectStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3557FB778ED29765D9132B0 /* DragSelectStateTests.swift */; };
 		0EBFF0DE0146702B9CD7787F /* ServerExtensionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3056042B5C522D6DFB2071 /* ServerExtensionsView.swift */; };
+		0EC7788CAAFECC09057F04D1 /* MarkdownStressFixtureDisplayMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2A0260EABFFFD41FF5505F9 /* MarkdownStressFixtureDisplayMathTests.swift */; };
 		0F21191C5E40C144B6A6BF43 /* ServerConnection+Fork.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55B6D4F64D991B9284C7BAEA /* ServerConnection+Fork.swift */; };
 		0F441199DC1F07E4AACD01B9 /* MermaidTimelineParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F2C7B35E4D10AD812AAEDC /* MermaidTimelineParser.swift */; };
 		0F5ABF80C18CAAF58B878F81 /* SessionGridRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE25252168CB4CBF38E786AB /* SessionGridRenderer.swift */; };
@@ -197,6 +198,7 @@
 		24360F75C737525A25D75CEA /* WriteToolAutoFollowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C70D77F07E2BCC2E53C2B05 /* WriteToolAutoFollowTests.swift */; };
 		24628CF38DDB908B2FDE219B /* MacSessionMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 895EFC0B5E5A5531AB13BB70 /* MacSessionMonitorTests.swift */; };
 		2469CFD0E12747E431B66BB8 /* ServerConnectionStreamRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31456ABCE06DA1891B293399 /* ServerConnectionStreamRecoveryTests.swift */; };
+		248AE6396AB124EC9F540352 /* TeXMathParserStressFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66111CF82B640AAD1A629998 /* TeXMathParserStressFixtureTests.swift */; };
 		24CC03B84ADF8F5BC5B4AC33 /* MermaidSequenceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1E894886D53C5996B0BF12 /* MermaidSequenceRenderer.swift */; };
 		24ED7A2FB5D86A8D45045359 /* MonaspaceNeon-SemiBold.otf in Resources */ = {isa = PBXBuildFile; fileRef = 5E829C3D83F6B0A5FF9C27ED /* MonaspaceNeon-SemiBold.otf */; };
 		250244A2726D540CB8B88374 /* NotificationNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545698598C85EA57EFA8FCAC /* NotificationNames.swift */; };
@@ -1830,6 +1832,7 @@
 		6598CC67F49112C7E21F80C8 /* FullScreenCodeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenCodeSupport.swift; sourceTree = "<group>"; };
 		659EF17BE18B69E61B6F55A7 /* ChatInputBarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatInputBarTests.swift; sourceTree = "<group>"; };
 		65AA5864947B95EB7DED7115 /* StreamFinishFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamFinishFormattingTests.swift; sourceTree = "<group>"; };
+		66111CF82B640AAD1A629998 /* TeXMathParserStressFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXMathParserStressFixtureTests.swift; sourceTree = "<group>"; };
 		665B0A72A85F2881EDAE397D /* WorkspaceHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceHomeView.swift; sourceTree = "<group>"; };
 		6698289848C2AE90BD46FBA3 /* NavigationSwipeGesturePolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationSwipeGesturePolicyTests.swift; sourceTree = "<group>"; };
 		66FF391C8FD9D17F3CD14300 /* TimelineScrollCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineScrollCoordinator.swift; sourceTree = "<group>"; };
@@ -2092,6 +2095,7 @@
 		A1C0B572906E01F931C647C4 /* AssistantMarkdownSegmentApplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownSegmentApplier.swift; sourceTree = "<group>"; };
 		A1ED3C9F68D3430013C7359E /* ToolRowContentViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowContentViewTests.swift; sourceTree = "<group>"; };
 		A258A67AF49D572F6ACDA472 /* MermaidGanttParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGanttParser.swift; sourceTree = "<group>"; };
+		A2A0260EABFFFD41FF5505F9 /* MarkdownStressFixtureDisplayMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownStressFixtureDisplayMathTests.swift; sourceTree = "<group>"; };
 		A2F279BD3C0388350AEE583E /* BackgroundKeepAlive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundKeepAlive.swift; sourceTree = "<group>"; };
 		A33BAE1F8B89F619822BFF46 /* AssistantMarkdownSegmentSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownSegmentSource.swift; sourceTree = "<group>"; };
 		A378BABF8302362035E9A41F /* ServerInfoVersionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerInfoVersionTests.swift; sourceTree = "<group>"; };
@@ -3269,6 +3273,7 @@
 				CCE8110F4D7B8F371A869FF0 /* DocumentRenderCacheTests.swift */,
 				AFF7C0004B660C36F1A39721 /* MarkdownInlineVideoTests.swift */,
 				57EF67A46B1AFED31701EA8C /* MarkdownStressCrashRegressionTests.swift */,
+				A2A0260EABFFFD41FF5505F9 /* MarkdownStressFixtureDisplayMathTests.swift */,
 				1C2526925920C92F7FEF2A86 /* MarkdownTextTests.swift */,
 				FC55D2B1108CBDA3F960B296 /* NativeMarkdownImageViewSVGTests.swift */,
 				65AA5864947B95EB7DED7115 /* StreamFinishFormattingTests.swift */,
@@ -4493,6 +4498,7 @@
 				1358580A5B9010D99DE78FFA /* MathLayoutTests.swift */,
 				3792E8E3EC34593F7D500E32 /* TeXMathParserConformanceTests.swift */,
 				07A87D190D85C01709A795EF /* TeXMathParserErrorRecoveryTests.swift */,
+				66111CF82B640AAD1A629998 /* TeXMathParserStressFixtureTests.swift */,
 			);
 			path = LaTeX;
 			sourceTree = "<group>";
@@ -5533,6 +5539,7 @@
 				3E053BC5F4E5A6168E4057AC /* MarkdownInlineVideoTests.swift in Sources */,
 				E82E73CD23EDA989413A923D /* MarkdownReaderRenderAheadContractTests.swift in Sources */,
 				4D8ABA0A1DF24D368D0A918B /* MarkdownStressCrashRegressionTests.swift in Sources */,
+				0EC7788CAAFECC09057F04D1 /* MarkdownStressFixtureDisplayMathTests.swift in Sources */,
 				6C3E0A681E8466A443516CD8 /* MarkdownTableColumnLayoutTests.swift in Sources */,
 				A9A7340A043A2C76476A5846 /* MarkdownTextTests.swift in Sources */,
 				D31BE2F4DF7D0A59D5ABF962 /* MathLayoutTests.swift in Sources */,
@@ -5675,6 +5682,7 @@
 				FEAD1D89D26316308BA9F66E /* TableColumnAlignmentTests.swift in Sources */,
 				C7970FEE38143C98440703E4 /* TeXMathParserConformanceTests.swift in Sources */,
 				CF2AA293981200543601BC47 /* TeXMathParserErrorRecoveryTests.swift in Sources */,
+				248AE6396AB124EC9F540352 /* TeXMathParserStressFixtureTests.swift in Sources */,
 				6C66614BE567CB71E57BCEE1 /* TelemetryModeTests.swift in Sources */,
 				8DFE48AA4B811729E87C8CD2 /* TestDoubles.swift in Sources */,
 				134DCAD79BC2E886E2AB9C3A /* TestEventPipeline.swift in Sources */,

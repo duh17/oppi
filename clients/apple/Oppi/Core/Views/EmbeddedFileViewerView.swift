@@ -1,5 +1,32 @@
 import SwiftUI
 
+/// Viewport captured when a linked markdown reader is covered by another file.
+///
+/// Restore key is the reader's file path so a sibling file in the same
+/// destination cannot inherit the offset. A later laid-out `.top` replaces a
+/// stored mid-document intent; unlaid-out remakes must not emit `.top`.
+struct FullScreenMarkdownViewportRestoreState: Equatable {
+    private var intentsByFilePath: [String: FullScreenMarkdownViewportIntent] = [:]
+
+    static func key(filePath: String) -> String {
+        filePath
+    }
+
+    subscript(filePath: String) -> FullScreenMarkdownViewportIntent? {
+        get { intentsByFilePath[Self.key(filePath: filePath)] }
+        set { intentsByFilePath[Self.key(filePath: filePath)] = newValue }
+    }
+}
+
+extension Binding where Value == FullScreenMarkdownViewportRestoreState {
+    func intent(for filePath: String) -> Binding<FullScreenMarkdownViewportIntent?> {
+        Binding<FullScreenMarkdownViewportIntent?>(
+            get: { wrappedValue[filePath] },
+            set: { wrappedValue[filePath] = $0 }
+        )
+    }
+}
+
 /// Embeds ``FullScreenCodeViewController`` inside a SwiftUI NavigationStack.
 ///
 /// The UIKit view controller provides its own internal `UINavigationController`
@@ -36,6 +63,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var showsNavigationChrome = true
     var backSwipeAction: (@MainActor @Sendable () -> Void)?
     var navigationActions: [FullScreenViewerNavigationAction] = []
+    var markdownViewportIntent: Binding<FullScreenMarkdownViewportIntent?>? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -60,13 +88,18 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
             let backSwipeAction = backSwipeAction
             presentationMode = .contentOnly(onBackSwipe: { backSwipeAction?() ?? dismissAction() })
         }
+        let viewportBinding = markdownViewportIntent
         return FullScreenCodeViewController(
             content: content,
             presentationMode: presentationMode,
             reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
             lineAnchor: lineAnchor,
             lineAnchorNotice: lineAnchorNotice,
-            navigationActions: navigationActions
+            navigationActions: navigationActions,
+            markdownViewportIntent: viewportBinding?.wrappedValue,
+            onMarkdownViewportIntentChange: { intent in
+                viewportBinding?.wrappedValue = intent
+            }
         )
     }
 

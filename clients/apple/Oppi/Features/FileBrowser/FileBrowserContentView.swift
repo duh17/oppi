@@ -7,6 +7,21 @@ enum FileBrowserContentChromeMode {
     case treePane
 }
 
+/// Compact tree NavigationLink and tree-pane selectedFileContent must pass
+/// the same path-keyed restore store as WorkspaceLinkedFileDestinationView.
+enum FileBrowserMarkdownViewportRestoreHost: String, CaseIterable, Sendable {
+    case workspaceLinkedDestination
+    case treePaneSelectedFile
+    case compactNavigationLink
+
+    var suppliesKeyedRestoreStore: Bool {
+        switch self {
+        case .workspaceLinkedDestination, .treePaneSelectedFile, .compactNavigationLink:
+            return true
+        }
+    }
+}
+
 enum FileBrowserContentSource: Equatable {
     case workspaceFile
     case hostFile
@@ -101,6 +116,24 @@ struct FileBrowserContentView: View {
     var onBackNavigation: (() -> Void)?
     var lineAnchor: SourceLineAnchor?
     var onLineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
+    var markdownViewportRestore: Binding<FullScreenMarkdownViewportRestoreState>? = nil
+
+    static func restoreStore(
+        for host: FileBrowserMarkdownViewportRestoreHost,
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> Binding<FullScreenMarkdownViewportRestoreState>? {
+        host.suppliesKeyedRestoreStore ? store : nil
+    }
+
+#if DEBUG
+    var debugHasMarkdownViewportRestoreForTesting: Bool {
+        markdownViewportRestore != nil
+    }
+
+    var debugMarkdownViewportRestoreForTesting: Binding<FullScreenMarkdownViewportRestoreState>? {
+        markdownViewportRestore
+    }
+#endif
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
@@ -229,7 +262,8 @@ struct FileBrowserContentView: View {
                     lineAnchor: activeSelection == nil ? lineAnchor : nil,
                     lineAnchorNotice: onLineAnchorNotice,
                     showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
-                    backSwipeAction: navigateBackToFileList
+                    backSwipeAction: navigateBackToFileList,
+                    markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath)
                 )
                 .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
             } else {

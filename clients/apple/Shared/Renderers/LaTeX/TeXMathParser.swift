@@ -204,9 +204,32 @@ private enum TeXMathValidator {
                         after: commandEnd,
                         append: append
                     )
-                } else if MathSymbolTable.lookup(command) == nil,
+                } else if !isSupportedExtraCommand(command),
+                          MathSymbolTable.lookup(command) == nil,
                           MathSymbolTable.escapedLiteral(for: command) == nil {
                     append(.unsupportedCommand(command))
+                }
+
+                if command == "boxed" {
+                    validateArguments(
+                        command: command,
+                        count: 1,
+                        source: source,
+                        after: commandEnd,
+                        append: append
+                    )
+                } else if command == "operatorname" {
+                    var argumentStart = skipWhitespace(in: source, from: commandEnd)
+                    if argumentStart < source.endIndex, source[argumentStart] == "*" {
+                        argumentStart = source.index(after: argumentStart)
+                    }
+                    validateArguments(
+                        command: command,
+                        count: 1,
+                        source: source,
+                        after: argumentStart,
+                        append: append
+                    )
                 }
 
                 switch MathSymbolTable.lookup(command) {
@@ -532,6 +555,13 @@ private enum TeXMathValidator {
     private static func isSupportedEnvironment(_ name: String) -> Bool {
         MatrixStyle(rawValue: name) != nil || rowEnvironments.contains(name)
     }
+
+    /// Commands used by the markdown stress fixture that the renderer can
+    /// accept without adding a second math engine. `\mid` is a relation,
+    /// `\boxed` wraps one argument, and `\operatorname*` is an upright name.
+    private static func isSupportedExtraCommand(_ name: String) -> Bool {
+        name == "mid" || name == "boxed" || name == "operatorname"
+    }
 }
 
 // MARK: - Token
@@ -777,6 +807,10 @@ private struct ParserState {
             return .text(literal)
         }
 
+        if let extra = parseExtraCommand(name) {
+            return extra
+        }
+
         guard let result = MathSymbolTable.lookup(name) else {
             // Unknown command — skip it and return as a variable
             pos += 1
@@ -840,7 +874,28 @@ private struct ParserState {
         }
     }
 
-    // MARK: Group
+    /// Accept fixture commands the symbol table does not yet name.
+    /// Keep rendering on existing AST cases so layout stays unchanged.
+    mutating func parseExtraCommand(_ name: String) -> MathNode? {
+        switch name {
+        case "mid":
+            pos += 1
+            return .variable("|")
+        case "boxed":
+            pos += 1
+            return .group(parseBraceArg())
+        case "operatorname":
+            pos += 1
+            if case .literal("*") = peek() {
+                pos += 1
+            }
+            return .font(.roman, body: parseBraceArg())
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Group
 
     mutating func parseGroup() -> MathNode? {
         guard expect(.openBrace) else { return nil }

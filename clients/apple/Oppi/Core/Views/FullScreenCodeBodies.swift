@@ -1890,6 +1890,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var lineAnchorFocusTask: Task<Void, Never>?
     private var lineAnchorFocusPending = false
     private var pendingMutableTransitionViewportIntent: FullScreenMarkdownViewportIntent?
+    /// False from `restoreViewportAfterMutableTransition` until the async
+    /// explicit-focus write runs, or the user takes the viewport. Offset 0
+    /// before that write is not a settled `.top`.
+    private var markdownViewportRestoreSettled = true
 
     private struct AsyncMarkdownBuild: Sendable {
         let build: FlatSegment.BuildResult
@@ -2204,8 +2208,15 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// against its final render-ahead geometry without animation.
     func restoreViewportAfterMutableTransition(_ intent: FullScreenMarkdownViewportIntent) {
         pendingMutableTransitionViewportIntent = intent
+        markdownViewportRestoreSettled = false
         setNeedsLayout()
         applyPendingMutableTransitionViewportIntentIfReady()
+    }
+
+    /// Visible so a remake torn down before the async restore write can refuse
+    /// to capture offset 0 as `.top`.
+    var hasSettledMarkdownViewportRestore: Bool {
+        markdownViewportRestoreSettled
     }
 
     private func applyPendingMutableTransitionViewportIntentIfReady() {
@@ -2219,7 +2230,13 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             guard let self else { return nil }
             self.layoutIfNeeded()
             self.collectionView.layoutIfNeeded()
+            self.markdownViewportRestoreSettled = true
             return self.offsetY(forMutableTransition: intent)
+        }
+        // `scheduleExplicitFocus` no-ops when a gesture already owns the
+        // viewport. The user's offset is then the settled position.
+        if viewportOwner.isInteracting {
+            markdownViewportRestoreSettled = true
         }
     }
 
@@ -3509,6 +3526,25 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         captureViewportAnchor()?.id
     }
 
+    /// Capture the current reader position for a temporary navigation push.
+    /// The segment anchor keeps the same paragraph visible when the reader is
+    /// rebuilt; the absolute offset remains a safe fallback during partial
+    /// render settlement.
+    func currentViewportIntent() -> FullScreenMarkdownViewportIntent {
+        let visibleAnchor = captureViewportAnchor().map {
+            FullScreenMarkdownViewportAnchor(
+                segmentID: $0.id,
+                offsetInItem: $0.offsetInItem,
+                absoluteOffset: collectionView.contentOffset.y
+            )
+        }
+        return .capturing(
+            scrollView: collectionView,
+            followsTail: viewportOwner.followsTail,
+            visibleAnchor: visibleAnchor
+        )
+    }
+
     private func restoreViewportAnchor(_ anchor: ViewportAnchor) {
         guard let item = renderedSegmentIDs.firstIndex(of: anchor.id),
               itemHeights.indices.contains(item) else { return }
@@ -3580,6 +3616,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func beginViewportInteraction() {
+        markdownViewportRestoreSettled = true
         viewportOwner.touchDown()
         lineAnchorFocusTask?.cancel()
         lineAnchorFocusTask = nil

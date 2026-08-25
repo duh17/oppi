@@ -189,6 +189,7 @@ struct FileBrowserView: View {
     @State private var searchText = ""
     @State private var fuzzyResults: [FuzzyMatch.ScoredPath] = []
     @State private var selectedFile: FileBrowserSelection?
+    @State private var markdownViewportRestore = FullScreenMarkdownViewportRestoreState()
     @State private var isTreeOverlayVisible = true
     @State private var activeLayout: FileBrowserAdaptiveLayout = .compact
     @State private var treeDirectoryPath: String?
@@ -388,17 +389,9 @@ struct FileBrowserView: View {
     @ViewBuilder
     private var selectedFileContent: some View {
         if let activeSelection = selectedFile {
-            FileBrowserContentView(
-                workspaceId: workspaceId,
-                worktreeId: worktreeId,
-                serverId: serverId,
-                filePath: activeSelection.path,
-                fileName: activeSelection.name,
-                fileSize: activeSelection.size,
-                chromeMode: .treePane,
-                navigationContext: currentFileNavigationContext,
-                onNavigationSelectionChange: { selectedFile = $0 },
-                onBackNavigation: clearSelectedFileForBackNavigation
+            treePaneSelectedFileContent(
+                for: activeSelection,
+                store: $markdownViewportRestore
             )
         } else {
             ContentUnavailableView {
@@ -921,15 +914,12 @@ struct FileBrowserView: View {
             }
         } else {
             NavigationLink {
-                FileBrowserContentView(
-                    workspaceId: workspaceId,
-                    worktreeId: worktreeId,
-                    serverId: serverId,
-                    filePath: path,
-                    fileName: name,
-                    fileSize: size,
-                    chromeMode: contentChromeMode,
-                    navigationContext: navigationContext
+                compactNavigationFileContent(
+                    path: path,
+                    name: name,
+                    size: size,
+                    navigationContext: navigationContext,
+                    store: $markdownViewportRestore
                 )
             } label: {
                 compactListRowContent { label() }
@@ -963,6 +953,51 @@ struct FileBrowserView: View {
     }
 
     // MARK: - Helpers
+
+    private func treePaneSelectedFileContent(
+        for selection: FileBrowserSelection,
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> FileBrowserContentView {
+        FileBrowserContentView(
+            workspaceId: workspaceId,
+            worktreeId: worktreeId,
+            serverId: serverId,
+            filePath: selection.path,
+            fileName: selection.name,
+            fileSize: selection.size,
+            chromeMode: .treePane,
+            navigationContext: currentFileNavigationContext,
+            onNavigationSelectionChange: { selectedFile = $0 },
+            onBackNavigation: clearSelectedFileForBackNavigation,
+            markdownViewportRestore: FileBrowserContentView.restoreStore(
+                for: .treePaneSelectedFile,
+                store: store
+            )
+        )
+    }
+
+    private func compactNavigationFileContent(
+        path: String,
+        name: String,
+        size: Int?,
+        navigationContext: FileBrowserNavigationContext?,
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> FileBrowserContentView {
+        FileBrowserContentView(
+            workspaceId: workspaceId,
+            worktreeId: worktreeId,
+            serverId: serverId,
+            filePath: path,
+            fileName: name,
+            fileSize: size,
+            chromeMode: contentChromeMode,
+            navigationContext: navigationContext,
+            markdownViewportRestore: FileBrowserContentView.restoreStore(
+                for: .compactNavigationLink,
+                store: store
+            )
+        )
+    }
 
     private func selectFile(path: String, name: String, size: Int?) {
         selectedFile = FileBrowserSelection(path: path, name: name, size: size)
@@ -1277,3 +1312,29 @@ private struct SearchResultFileName: View {
         return result
     }
 }
+
+#if DEBUG
+extension FileBrowserView {
+    func debugTreePaneSelectedFileContentForTesting(
+        selection: FileBrowserSelection,
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> FileBrowserContentView {
+        treePaneSelectedFileContent(for: selection, store: store)
+    }
+
+    func debugCompactNavigationFileContentForTesting(
+        path: String,
+        name: String,
+        size: Int?,
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> FileBrowserContentView {
+        compactNavigationFileContent(
+            path: path,
+            name: name,
+            size: size,
+            navigationContext: nil,
+            store: store
+        )
+    }
+}
+#endif

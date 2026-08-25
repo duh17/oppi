@@ -76,6 +76,8 @@ final class FullScreenCodeViewController: UIViewController {
     private let content: FullScreenCodeContent
     private let presentationMode: PresentationMode
     private let reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    private var pendingMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
+    private let onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)?
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     private var lineAnchorNoticeDelivered = false
@@ -110,7 +112,9 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSourceLabel: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
-        navigationActions: [FullScreenViewerNavigationAction] = []
+        navigationActions: [FullScreenViewerNavigationAction] = [],
+        markdownViewportIntent: FullScreenMarkdownViewportIntent? = nil,
+        onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)? = nil
     ) {
         self.content = content
         self.presentationMode = presentationMode
@@ -123,6 +127,8 @@ final class FullScreenCodeViewController: UIViewController {
         self.lineAnchor = lineAnchor
         self.lineAnchorNotice = lineAnchorNotice
         self.navigationActions = navigationActions
+        self.pendingMarkdownViewportIntent = markdownViewportIntent
+        self.onMarkdownViewportIntentChange = onMarkdownViewportIntentChange
         self.navigationActionPresentation = navigationActions.map(\.presentation)
         super.init(nibName: nil, bundle: nil)
     }
@@ -199,6 +205,15 @@ final class FullScreenCodeViewController: UIViewController {
         NotificationCenter.default.removeObserver(self, name: .oppiThemeDidChange, object: nil)
     }
 
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        guard let intent = currentMarkdownViewportIntent() else { return }
+        // Unlaid-out remakes and remakes whose stored restore has not settled
+        // return nil above. A settled, laid-out reader at the title records
+        // `.top` and replaces a stored mid-document restore.
+        onMarkdownViewportIntentChange?(intent)
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -454,7 +469,25 @@ final class FullScreenCodeViewController: UIViewController {
 
         default:
             let presentation = makePresentation()
-            installBodyView(makeBodyView(for: presentation.bodyContent, themeID: bodyThemeID), on: viewController)
+            installBodyView(
+                makeBodyView(
+                    for: presentation.bodyContent,
+                    themeID: bodyThemeID,
+                    focusLineAnchor: shouldFocusLineAnchorWhileRestoring
+                ),
+                on: viewController
+            )
+        }
+    }
+
+    /// A captured mid-document viewport wins over the original wiki line
+    /// anchor when the same markdown file is rebuilt after a linked-file push.
+    private var shouldFocusLineAnchorWhileRestoring: Bool {
+        switch pendingMarkdownViewportIntent {
+        case nil, .top:
+            return true
+        case .tail, .detached:
+            return false
         }
     }
 
@@ -474,7 +507,61 @@ final class FullScreenCodeViewController: UIViewController {
         if let floatingViewingOptionsButton {
             viewController.view.bringSubviewToFront(floatingViewingOptionsButton)
         }
+        restorePendingMarkdownViewportIfNeeded(in: bodyView)
         scheduleLineAnchorNotice()
+    }
+
+    private func currentMarkdownViewportIntent() -> FullScreenMarkdownViewportIntent? {
+        // A remake can take one layout pass at offset 0 before the stored
+        // restore write runs. That looks like `.top` and must not replace the
+        // stored mid-document intent.
+        if !hasSettledMarkdownViewportRestore {
+            return nil
+        }
+        let intent: FullScreenMarkdownViewportIntent
+        switch installedBodyView {
+        case let body as NativeFullScreenMarkdownBody:
+            intent = body.currentViewportIntent()
+        case let body as NativeMutableFullScreenMarkdownBody:
+            intent = body.currentViewportIntent()
+        default:
+            return nil
+        }
+        // Offset 0 before the first layout is indistinguishable from `.top`.
+        if intent == .top, !hasLaidOutMarkdownViewport {
+            return nil
+        }
+        return intent
+    }
+
+    private var hasSettledMarkdownViewportRestore: Bool {
+        switch installedBodyView {
+        case let body as NativeFullScreenMarkdownBody:
+            return body.hasSettledMarkdownViewportRestore
+        default:
+            return true
+        }
+    }
+
+    private var hasLaidOutMarkdownViewport: Bool {
+        guard let body = installedBodyView else { return false }
+        return descendantViews(of: UIScrollView.self, in: body).contains { scrollView in
+            scrollView.bounds.height > 0 && scrollView.contentSize.height > 0
+        }
+    }
+
+    private func restorePendingMarkdownViewportIfNeeded(in body: UIView) {
+        guard let intent = pendingMarkdownViewportIntent else { return }
+        switch body {
+        case let body as NativeFullScreenMarkdownBody:
+            pendingMarkdownViewportIntent = nil
+            body.restoreViewportAfterMutableTransition(intent)
+        case let body as NativeMutableFullScreenMarkdownBody:
+            pendingMarkdownViewportIntent = nil
+            body.restoreMutableViewport(intent)
+        default:
+            break
+        }
     }
 
     private func scheduleLineAnchorNotice() {

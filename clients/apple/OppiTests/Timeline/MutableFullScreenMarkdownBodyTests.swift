@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -142,6 +143,300 @@ struct MutableFullScreenMarkdownBodyTests {
         collection.layoutIfNeeded()
         #expect(collection.contentOffset.y > 28)
         #expect(maximumOffsetY(collection) - collection.contentOffset.y > 28)
+    }
+
+    @Test("markdown viewport restore is keyed by file path")
+    func markdownViewportRestoreIsKeyedByFilePath() {
+        #expect(FullScreenMarkdownViewportRestoreState.key(filePath: "docs/README.md") == "docs/README.md")
+
+        var store = FullScreenMarkdownViewportRestoreState()
+        let detached = FullScreenMarkdownViewportIntent.detached(
+            FullScreenMarkdownViewportAnchor(
+                segmentID: nil,
+                offsetInItem: 12,
+                absoluteOffset: 240
+            )
+        )
+        store["docs/README.md"] = detached
+
+        #expect(store["docs/README.md"] == detached)
+        #expect(store["docs/other.md"] == nil)
+
+        store["docs/README.md"] = .top
+        store["docs/other.md"] = detached
+
+        #expect(store["docs/README.md"] == .top)
+        #expect(store["docs/other.md"] == detached)
+    }
+
+    @Test("unlaid-out remake top does not clobber a stored mid-document intent")
+    func unlaidOutRemakeTopDoesNotClobberStoredMidDocumentIntent() {
+        let filePath = ".pi/markdown-rendering-stress-test.md"
+        var store = FullScreenMarkdownViewportRestoreState()
+        let detached = FullScreenMarkdownViewportIntent.detached(
+            FullScreenMarkdownViewportAnchor(
+                segmentID: nil,
+                offsetInItem: 18,
+                absoluteOffset: 640
+            )
+        )
+        store[filePath] = detached
+
+        let remake = FullScreenCodeViewController(
+            content: .markdown(content: "# Stress\n\nParagraph", filePath: filePath),
+            presentationMode: .embedded(onDismiss: {}),
+            markdownViewportIntent: store[filePath],
+            onMarkdownViewportIntentChange: { store[filePath] = $0 }
+        )
+        remake.loadViewIfNeeded()
+        #expect(remake.installedBodyViewForTesting is NativeFullScreenMarkdownBody)
+        remake.viewWillDisappear(false)
+
+        #expect(store[filePath] == detached)
+        #expect(store[filePath] != .top)
+    }
+
+    @Test("unsettled laid-out remake does not clobber a stored mid-document intent")
+    func unsettledLaidOutRemakeDoesNotClobberStoredMidDocumentIntent() async throws {
+        let content = tallMarkdown(paragraphs: 48)
+        let filePath = "docs/README.md"
+        var store = FullScreenMarkdownViewportRestoreState()
+        let detached = FullScreenMarkdownViewportIntent.detached(
+            FullScreenMarkdownViewportAnchor(
+                segmentID: nil,
+                offsetInItem: 18,
+                absoluteOffset: 640
+            )
+        )
+        store[filePath] = detached
+
+        let fixture = attachMarkdownController(
+            content: content,
+            filePath: filePath,
+            intent: store[filePath],
+            onIntentChange: { store[filePath] = $0 }
+        )
+        defer { fixture.window.isHidden = true }
+
+        let body = try #require(
+            fixture.controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody
+        )
+        // One layout pass can size the collection view at offset 0 before
+        // `scheduleExplicitFocus` applies the stored mid-document restore.
+        fixture.controller.viewWillDisappear(false)
+        #expect(store[filePath] == detached)
+        #expect(store[filePath] != .top)
+
+        await body.debugWaitForDocumentPreparationForTesting()
+        let settled = await waitForMainActorCondition(timeout: .seconds(2)) {
+            fixture.controller.view.layoutIfNeeded()
+            return body.currentViewportIntent() != .top
+        }
+        #expect(settled)
+
+        let collection = try #require(
+            timelineFirstView(ofType: UICollectionView.self, in: body)
+        )
+        collection.setContentOffset(
+            CGPoint(x: collection.contentOffset.x, y: -collection.adjustedContentInset.top),
+            animated: false
+        )
+        fixture.controller.view.layoutIfNeeded()
+        #expect(body.currentViewportIntent() == .top)
+
+        fixture.controller.viewWillDisappear(false)
+        #expect(store[filePath] == .top)
+    }
+
+    @Test("laid-out top replaces a stored mid-document restore")
+    func laidOutTopReplacesStoredMidDocumentIntent() async throws {
+        let content = tallMarkdown(paragraphs: 48)
+        let filePath = "docs/README.md"
+        var store = FullScreenMarkdownViewportRestoreState()
+
+        let fixture = attachMarkdownController(
+            content: content,
+            filePath: filePath,
+            intent: store[filePath],
+            onIntentChange: { store[filePath] = $0 }
+        )
+        defer { fixture.window.isHidden = true }
+
+        let body = try #require(
+            fixture.controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody
+        )
+        await body.debugWaitForDocumentPreparationForTesting()
+        fixture.controller.view.layoutIfNeeded()
+        body.debugScrollItemIntoViewForTesting(
+            max(0, body.debugRenderedSegmentCountForTesting / 2)
+        )
+        fixture.controller.view.layoutIfNeeded()
+
+        #expect(body.currentViewportIntent() != .top)
+        fixture.controller.viewWillDisappear(false)
+        #expect(store[filePath] != nil)
+        #expect(store[filePath] != .top)
+
+        let collection = try #require(
+            timelineFirstView(ofType: UICollectionView.self, in: body)
+        )
+        collection.setContentOffset(
+            CGPoint(x: collection.contentOffset.x, y: -collection.adjustedContentInset.top),
+            animated: false
+        )
+        fixture.controller.view.layoutIfNeeded()
+        #expect(body.currentViewportIntent() == .top)
+
+        fixture.controller.viewWillDisappear(false)
+        #expect(store[filePath] == .top)
+    }
+
+    @Test("file browser and destination hosts wire the keyed markdown restore store")
+    func fileBrowserAndDestinationHostsWireKeyedMarkdownViewportRestore() throws {
+        var store = FullScreenMarkdownViewportRestoreState()
+        let binding = Binding(
+            get: { store },
+            set: { store = $0 }
+        )
+        let filePath = ".pi/markdown-rendering-stress-test.md"
+        let fileName = "markdown-rendering-stress-test.md"
+        let detached = FullScreenMarkdownViewportIntent.detached(
+            FullScreenMarkdownViewportAnchor(
+                segmentID: nil,
+                offsetInItem: 18,
+                absoluteOffset: 640
+            )
+        )
+        let browser = FileBrowserView(workspaceId: "workspace-1", initialPath: "")
+        let workspaceDestination = WorkspaceLinkedFileDestinationView(
+            target: .workspaceFile(
+                serverId: "server-1",
+                workspaceId: "workspace-1",
+                path: filePath,
+                fileName: fileName
+            )
+        )
+        let hostDestination = WorkspaceLinkedFileDestinationView(
+            target: .hostFile(
+                serverId: "server-1",
+                workspaceId: "workspace-1",
+                path: filePath,
+                fileName: fileName
+            )
+        )
+        let contents: [(String, FileBrowserContentView)] = [
+            (
+                "treePaneSelectedFile",
+                browser.debugTreePaneSelectedFileContentForTesting(
+                    selection: FileBrowserSelection(path: filePath, name: fileName, size: nil),
+                    store: binding
+                )
+            ),
+            (
+                "compactNavigationLink",
+                browser.debugCompactNavigationFileContentForTesting(
+                    path: filePath,
+                    name: fileName,
+                    size: nil,
+                    store: binding
+                )
+            ),
+            (
+                "workspaceLinkedDestination.workspaceFile",
+                workspaceDestination.debugWorkspaceFileContentForTesting(store: binding)
+            ),
+            (
+                "workspaceLinkedDestination.hostFile",
+                hostDestination.debugHostFileContentForTesting(store: binding)
+            ),
+        ]
+
+        for (name, content) in contents {
+            store = FullScreenMarkdownViewportRestoreState()
+            #expect(
+                content.debugHasMarkdownViewportRestoreForTesting,
+                "\(name) dropped the restore store"
+            )
+            let restore = try #require(
+                content.debugMarkdownViewportRestoreForTesting,
+                "\(name) dropped the restore store"
+            )
+            restore.wrappedValue[filePath] = detached
+            #expect(
+                store[filePath] == detached,
+                "\(name) did not write through the host store"
+            )
+            restore.wrappedValue[filePath] = .top
+            #expect(
+                store[filePath] == .top,
+                "\(name) blocked a laid-out top from replacing the stored intent"
+            )
+        }
+    }
+
+    @Test("Markdown reader restores its viewport after a linked-file push rebuild")
+    func markdownReaderRestoresViewportAfterLinkedFilePushRebuild() async throws {
+        let content = tallMarkdown(paragraphs: 48)
+        let filePath = "docs/README.md"
+        var store = FullScreenMarkdownViewportRestoreState()
+
+        let first = attachMarkdownController(
+            content: content,
+            filePath: filePath,
+            intent: store[filePath],
+            onIntentChange: { store[filePath] = $0 }
+        )
+        defer { first.window.isHidden = true }
+
+        let firstBody = try #require(
+            first.controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody
+        )
+        await firstBody.debugWaitForDocumentPreparationForTesting()
+        first.controller.view.layoutIfNeeded()
+        firstBody.debugScrollItemIntoViewForTesting(
+            max(0, firstBody.debugRenderedSegmentCountForTesting / 2)
+        )
+        first.controller.view.layoutIfNeeded()
+
+        let firstCollection = try #require(
+            timelineFirstView(ofType: UICollectionView.self, in: firstBody)
+        )
+        let detachedY = firstCollection.contentOffset.y
+        #expect(detachedY > 28)
+        #expect(firstBody.currentViewportIntent() != .top)
+
+        first.controller.viewWillDisappear(false)
+        #expect(store[filePath] != nil)
+        #expect(store[filePath] != .top)
+        #expect(store["docs/other.md"] == nil)
+
+        let second = attachMarkdownController(
+            content: content,
+            filePath: filePath,
+            intent: store[filePath]
+        )
+        defer { second.window.isHidden = true }
+
+        let secondBody = try #require(
+            second.controller.installedBodyViewForTesting as? NativeFullScreenMarkdownBody
+        )
+        await secondBody.debugWaitForDocumentPreparationForTesting()
+        second.controller.view.layoutIfNeeded()
+
+        let restored = await waitForMainActorCondition(timeout: .seconds(2)) {
+            second.controller.view.layoutIfNeeded()
+            guard let collection = timelineFirstView(
+                ofType: UICollectionView.self,
+                in: secondBody
+            ) else { return false }
+            return abs(collection.contentOffset.y - detachedY) < 2
+        }
+        let secondCollection = try #require(
+            timelineFirstView(ofType: UICollectionView.self, in: secondBody)
+        )
+        #expect(restored)
+        #expect(abs(secondCollection.contentOffset.y - detachedY) < 2)
+        #expect(secondCollection.contentOffset.y > 28)
     }
 
     @Test("already-completed thinking opens directly in immutable Markdown")
@@ -709,6 +1004,26 @@ struct MutableFullScreenMarkdownBodyTests {
         controller.view.frame = CGRect(x: 0, y: 0, width: 393, height: 844)
         controller.view.layoutIfNeeded()
         return controller
+    }
+
+    private func attachMarkdownController(
+        content: String,
+        filePath: String,
+        intent: FullScreenMarkdownViewportIntent? = nil,
+        onIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)? = nil
+    ) -> (controller: FullScreenCodeViewController, window: UIWindow) {
+        let controller = FullScreenCodeViewController(
+            content: .markdown(content: content, filePath: filePath),
+            presentationMode: .embedded(onDismiss: {}),
+            markdownViewportIntent: intent,
+            onMarkdownViewportIntentChange: onIntentChange
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.frame = window.bounds
+        controller.view.layoutIfNeeded()
+        return (controller, window)
     }
 
     private func makeBody(content: String) -> NativeMutableFullScreenMarkdownBody {

@@ -311,33 +311,27 @@ struct WorkspaceLinkedFileDestinationView: View {
     let target: WorkspaceLinkedFileNavTarget
 
     @State private var scopedConnection: ServerConnection?
+    @State private var markdownViewportRestore = FullScreenMarkdownViewportRestoreState()
 
     var body: some View {
         Group {
             if let connection = scopedConnection {
                 switch target.kind {
                 case .workspaceFile(let path, let fileName):
-                    FileBrowserContentView(
-                        workspaceId: target.workspaceId,
-                        worktreeId: target.worktreeId,
-                        serverId: target.serverId,
-                        filePath: path,
+                    workspaceFileContent(
+                        path: path,
                         fileName: fileName,
                         workspaceRuntime: connection.workspaceStore.workspaces.first(where: { $0.id == target.workspaceId })?.runtime,
-                        navigationContext: target.navigationContext,
-                        lineAnchor: target.lineAnchor,
-                        onLineAnchorNotice: { connection.extensionToast = $0 }
+                        onLineAnchorNotice: { connection.extensionToast = $0 },
+                        store: $markdownViewportRestore
                     )
                     .withServerScopedEnvironment(connection)
                 case .hostFile(let path, let fileName):
-                    FileBrowserContentView(
-                        workspaceId: target.workspaceId,
-                        serverId: target.serverId,
-                        filePath: path,
+                    hostFileContent(
+                        path: path,
                         fileName: fileName,
-                        source: .hostFile,
-                        lineAnchor: target.lineAnchor,
-                        onLineAnchorNotice: { connection.extensionToast = $0 }
+                        onLineAnchorNotice: { connection.extensionToast = $0 },
+                        store: $markdownViewportRestore
                     )
                     .withServerScopedEnvironment(connection)
                 }
@@ -350,7 +344,85 @@ struct WorkspaceLinkedFileDestinationView: View {
             scopedConnection = coordinator.connection(for: target.serverId)
         }
     }
+
+    private func workspaceFileContent(
+        path: String,
+        fileName: String,
+        workspaceRuntime: WorkspaceRuntime?,
+        onLineAnchorNotice: (@MainActor @Sendable (String) -> Void)?,
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> FileBrowserContentView {
+        FileBrowserContentView(
+            workspaceId: target.workspaceId,
+            worktreeId: target.worktreeId,
+            serverId: target.serverId,
+            filePath: path,
+            fileName: fileName,
+            workspaceRuntime: workspaceRuntime,
+            navigationContext: target.navigationContext,
+            lineAnchor: target.lineAnchor,
+            onLineAnchorNotice: onLineAnchorNotice,
+            markdownViewportRestore: FileBrowserContentView.restoreStore(
+                for: .workspaceLinkedDestination,
+                store: store
+            )
+        )
+    }
+
+    private func hostFileContent(
+        path: String,
+        fileName: String,
+        onLineAnchorNotice: (@MainActor @Sendable (String) -> Void)?,
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> FileBrowserContentView {
+        FileBrowserContentView(
+            workspaceId: target.workspaceId,
+            serverId: target.serverId,
+            filePath: path,
+            fileName: fileName,
+            source: .hostFile,
+            lineAnchor: target.lineAnchor,
+            onLineAnchorNotice: onLineAnchorNotice,
+            markdownViewportRestore: FileBrowserContentView.restoreStore(
+                for: .workspaceLinkedDestination,
+                store: store
+            )
+        )
+    }
 }
+
+#if DEBUG
+extension WorkspaceLinkedFileDestinationView {
+    func debugWorkspaceFileContentForTesting(
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> FileBrowserContentView {
+        guard case .workspaceFile(let path, let fileName) = target.kind else {
+            preconditionFailure("debugWorkspaceFileContentForTesting requires a workspace file target")
+        }
+        return workspaceFileContent(
+            path: path,
+            fileName: fileName,
+            workspaceRuntime: nil,
+            onLineAnchorNotice: nil,
+            store: store
+        )
+    }
+
+    func debugHostFileContentForTesting(
+        store: Binding<FullScreenMarkdownViewportRestoreState>
+    ) -> FileBrowserContentView {
+        guard case .hostFile(let path, let fileName) = target.kind else {
+            preconditionFailure("debugHostFileContentForTesting requires a host file target")
+        }
+        return hostFileContent(
+            path: path,
+            fileName: fileName,
+            onLineAnchorNotice: nil,
+            store: store
+        )
+    }
+}
+#endif
 
 extension View {
     func withServerScopedEnvironment(_ connection: ServerConnection) -> some View {
