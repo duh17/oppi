@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 import WebKit
 
@@ -150,10 +149,9 @@ enum HostFilePreviewPolicy {
 
 /// Single canonical UIView for rendering HTML strings via WKWebView.
 ///
-/// Used directly by UIKit callers (FullScreenCodeViewController) and wrapped
-/// by ``HTMLWebView`` for SwiftUI embedding. All WKWebView configuration,
-/// navigation blocking, popup blocking, and process termination recovery
-/// live here — no duplication.
+/// Used directly by UIKit callers. All WKWebView configuration, navigation
+/// blocking, popup blocking, and process termination recovery live here — no
+/// duplication.
 ///
 /// Defers `loadHTMLString` until the view has a window AND a non-zero frame.
 /// Checks both `didMoveToWindow` and `layoutSubviews` — whichever fires last
@@ -314,25 +312,5 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         contentTracker.markProcessTerminated()
         flushIfReady()
-    }
-}
-
-// MARK: - HTMLWebView (SwiftUI wrapper)
-
-/// SwiftUI wrapper around ``HTMLRenderView``.
-///
-/// Thin UIViewRepresentable — all WKWebView logic lives in HTMLRenderView.
-struct HTMLWebView: UIViewRepresentable {
-    let htmlString: String
-    let baseFileName: String
-    var reviewCommentHandler: ((String, UIViewController?) -> Void)?
-
-    func makeUIView(context: Context) -> HTMLRenderView {
-        HTMLRenderView(htmlString: htmlString, reviewCommentHandler: reviewCommentHandler)
-    }
-
-    func updateUIView(_ view: HTMLRenderView, context: Context) {
-        view.updateReviewCommentHandler(reviewCommentHandler)
-        view.load(htmlString)
     }
 }
