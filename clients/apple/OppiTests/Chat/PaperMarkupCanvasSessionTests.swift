@@ -573,6 +573,163 @@ struct PaperMarkupCanvasSessionTests {
         #expect(viewer.didDismissAfterCanvasDeliveryForTesting == false)
     }
 
+    @Test("SVG present captures origin destination and refuses later rediscovery")
+    func svgPresentCapturesOriginAndRefusesLaterRediscovery() throws {
+        ComposerCanvasActiveDestination.resetForTesting()
+        defer { ComposerCanvasActiveDestination.resetForTesting() }
+        var acceptedCount = 0
+        let destination = ComposerCanvasDestination(sessionId: "chat-origin") { _, _ in
+            acceptedCount += 1
+            return true
+        }
+        let presenter = UIViewController()
+        presenter.composerCanvasDestination = destination
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = presenter
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        presenter.loadViewIfNeeded()
+
+        FullScreenImageDataPreviewPresenter.present(
+            data: Data("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"></svg>".utf8),
+            mimeType: "image/svg+xml",
+            title: "Preview",
+            from: presenter
+        )
+
+        presenter.composerCanvasDestination = nil
+
+        let navigation = try #require(presenter.presentedViewController as? UINavigationController)
+        let viewer = try #require(navigation.viewControllers.first as? FullScreenImageDataPreviewViewController)
+        let host = viewer.makeAnnotateHostForTesting()
+        #expect(host.destinationSessionIdForTesting == "chat-origin")
+
+        let (image, pngData) = try makePNG()
+        let outcome = host.completeAddToChatForTesting(
+            attachment: PaperMarkupCanvasSession.makePendingImageAttachment(
+                pngData: pngData,
+                image: image
+            ),
+            recognizedText: "note"
+        )
+
+        #expect(outcome == .accepted)
+        #expect(acceptedCount == 1)
+        #expect(host.didDismissForTesting)
+    }
+
+    @Test("SVG missing destination still fail-closed off-chat")
+    func svgMissingDestinationStillFailClosedOffChat() throws {
+        ComposerCanvasActiveDestination.resetForTesting()
+        defer { ComposerCanvasActiveDestination.resetForTesting() }
+        let presenter = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = presenter
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        presenter.loadViewIfNeeded()
+
+        FullScreenImageDataPreviewPresenter.present(
+            data: Data("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"></svg>".utf8),
+            mimeType: "image/svg+xml",
+            title: "Preview",
+            from: presenter
+        )
+
+        presenter.composerCanvasDestination = ComposerCanvasDestination(sessionId: "late-chat") { _, _ in
+            true
+        }
+
+        let navigation = try #require(presenter.presentedViewController as? UINavigationController)
+        let viewer = try #require(navigation.viewControllers.first as? FullScreenImageDataPreviewViewController)
+        let host = viewer.makeAnnotateHostForTesting()
+        let (image, pngData) = try makePNG()
+        let outcome = host.completeAddToChatForTesting(
+            attachment: PaperMarkupCanvasSession.makePendingImageAttachment(
+                pngData: pngData,
+                image: image
+            ),
+            recognizedText: "note"
+        )
+
+        #expect(outcome == .missingDestination)
+        #expect(host.didDismissForTesting == false)
+        #expect(host.lastFailureMessageForTesting == PaperMarkupCanvasSession.AddToChatFailure.missingDestinationMessage)
+    }
+
+    @Test("HTML present captures origin destination and refuses later rediscovery")
+    func htmlPresentCapturesOriginAndRefusesLaterRediscovery() throws {
+        ComposerCanvasActiveDestination.resetForTesting()
+        defer { ComposerCanvasActiveDestination.resetForTesting() }
+        var acceptedCount = 0
+        let destination = ComposerCanvasDestination(sessionId: "chat-origin") { _, _ in
+            acceptedCount += 1
+            return true
+        }
+        let presenter = UIViewController()
+        presenter.composerCanvasDestination = destination
+        let sourceView = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
+        presenter.view.addSubview(sourceView)
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = presenter
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        presenter.loadViewIfNeeded()
+
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            .html(content: "<p>hello</p>", filePath: "note.html"),
+            from: sourceView
+        )
+
+        presenter.composerCanvasDestination = nil
+
+        let viewer = try #require(presenter.presentedViewController as? FullScreenCodeViewController)
+        let host = viewer.makeAnnotateHostForTesting()
+        #expect(host.destinationSessionIdForTesting == "chat-origin")
+
+        let (image, pngData) = try makePNG()
+        let outcome = host.completeAddToChatForTesting(
+            attachment: PaperMarkupCanvasSession.makePendingImageAttachment(
+                pngData: pngData,
+                image: image
+            ),
+            recognizedText: "note"
+        )
+
+        #expect(outcome == .accepted)
+        #expect(acceptedCount == 1)
+        #expect(host.didDismissForTesting)
+    }
+
+    @Test("HTML annotate does not steal a live chat destination")
+    func htmlAnnotateDoesNotStealLiveChatDestination() throws {
+        ComposerCanvasActiveDestination.resetForTesting()
+        defer { ComposerCanvasActiveDestination.resetForTesting() }
+
+        let controller = FullScreenCodeViewController(
+            content: .html(content: "<p>hello</p>", filePath: "note.html")
+        )
+        ComposerCanvasActiveDestination.push(
+            ComposerCanvasDestination(sessionId: "other-chat") { _, _ in true }
+        )
+
+        let host = controller.makeAnnotateHostForTesting()
+        let (image, pngData) = try makePNG()
+        let outcome = host.completeAddToChatForTesting(
+            attachment: PaperMarkupCanvasSession.makePendingImageAttachment(
+                pngData: pngData,
+                image: image
+            ),
+            recognizedText: "note"
+        )
+
+        #expect(outcome == .missingDestination)
+        #expect(host.didDismissForTesting == false)
+        #expect(host.lastFailureMessageForTesting == PaperMarkupCanvasSession.AddToChatFailure.missingDestinationMessage)
+    }
+
     @Test("pending composer annotate uses full image bytes not the strip thumbnail")
     func pendingComposerAnnotateUsesFullImageBytesNotStripThumbnail() throws {
         let full = try makePNG()
@@ -650,6 +807,56 @@ struct PaperMarkupCanvasSessionTests {
         #expect(ComposerCanvasActiveDestination.current == nil)
     }
 
+    @Test("visible chat destination keeps one owner when the same session rebuilds")
+    func visibleChatDestinationKeepsOneOwnerWhenTheSameSessionRebuilds() {
+        ComposerCanvasActiveDestination.resetForTesting()
+        defer { ComposerCanvasActiveDestination.resetForTesting() }
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let anchor = ComposerCanvasDestinationAnchorController()
+        host.addChild(anchor)
+        host.view.addSubview(anchor.view)
+        anchor.didMove(toParent: host)
+        anchor.viewDidAppear(false)
+
+        var firstCount = 0
+        var secondCount = 0
+        let first = ComposerCanvasDestination(sessionId: "session-a") { _, _ in
+            firstCount += 1
+            return true
+        }
+        anchor.destination = first
+        let owned = ComposerCanvasActiveDestination.current
+
+        let second = ComposerCanvasDestination(sessionId: "session-a") { _, _ in
+            secondCount += 1
+            return true
+        }
+        anchor.destination = second
+
+        #expect(ComposerCanvasActiveDestination.current === owned)
+        #expect(ComposerCanvasActiveDestination.current?.sessionId == "session-a")
+
+        let attachment = PaperMarkupCanvasSession.makePendingImageAttachment(
+            pngData: Data([0x89, 0x50, 0x4E, 0x47]),
+            image: makeImage(width: 8, height: 8)
+        )
+        let outcome = ComposerCanvasDelivery.deliver(
+            attachment: attachment,
+            recognizedText: "note",
+            to: ComposerCanvasActiveDestination.current
+        )
+
+        #expect(outcome == .accepted)
+        #expect(firstCount == 0)
+        #expect(secondCount == 1)
+    }
+
     @Test("timeline attachment presentFullScreenImage uses the visible chat destination")
     func timelineAttachmentPresentFullScreenImageUsesVisibleChatDestination() throws {
         ComposerCanvasActiveDestination.resetForTesting()
@@ -675,6 +882,53 @@ struct PaperMarkupCanvasSessionTests {
 
         let navigation = try #require(presenter.presentedViewController as? UINavigationController)
         let viewer = try #require(navigation.viewControllers.first as? FullScreenImageViewController)
+        let host = viewer.makeAnnotateHostForTesting()
+        #expect(host.destinationSessionIdForTesting == "timeline-chat")
+
+        let (image, pngData) = try makePNG()
+        let outcome = host.completeAddToChatForTesting(
+            attachment: PaperMarkupCanvasSession.makePendingImageAttachment(
+                pngData: pngData,
+                image: image
+            ),
+            recognizedText: "note"
+        )
+
+        #expect(outcome == .accepted)
+        #expect(acceptedCount == 1)
+    }
+
+    @Test("diagram present uses the visible chat destination and refuses later rediscovery")
+    func diagramPresentUsesVisibleChatDestinationAndRefusesLaterRediscovery() throws {
+        ComposerCanvasActiveDestination.resetForTesting()
+        defer { ComposerCanvasActiveDestination.resetForTesting() }
+
+        var acceptedCount = 0
+        let destination = ComposerCanvasDestination(sessionId: "timeline-chat") { _, _ in
+            acceptedCount += 1
+            return true
+        }
+        ComposerCanvasActiveDestination.push(destination)
+
+        let presenter = UIViewController()
+        let sourceView = UIView(frame: CGRect(x: 0, y: 0, width: 80, height: 80))
+        presenter.view.addSubview(sourceView)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = presenter
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        presenter.loadViewIfNeeded()
+
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            .mermaid(content: "graph TD; A-->B", filePath: nil),
+            from: sourceView
+        )
+
+        ComposerCanvasActiveDestination.push(
+            ComposerCanvasDestination(sessionId: "later-chat") { _, _ in true }
+        )
+
+        let viewer = try #require(presenter.presentedViewController as? FullScreenCodeViewController)
         let host = viewer.makeAnnotateHostForTesting()
         #expect(host.destinationSessionIdForTesting == "timeline-chat")
 

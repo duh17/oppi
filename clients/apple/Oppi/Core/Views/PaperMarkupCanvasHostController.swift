@@ -6,7 +6,6 @@ import UIKit
 /// Full-screen PaperKit markup host shared by the composer and viewers.
 final class PaperMarkupCanvasHostController: UIViewController {
     private let background: PaperMarkupCanvasSession.Background
-    private let onAddToChat: ((PendingAttachment, String) -> Bool)?
     private let onCancel: (() -> Void)?
     private let destination: ComposerCanvasDestination?
     private let onDeliveryAccepted: (() -> Void)?
@@ -91,9 +90,17 @@ final class PaperMarkupCanvasHostController: UIViewController {
         onDeliveryAccepted: (() -> Void)? = nil
     ) {
         self.background = background
-        self.onAddToChat = onAddToChat
         self.onCancel = onCancel
-        self.destination = destination
+        if let destination {
+            self.destination = destination
+        } else if let onAddToChat {
+            self.destination = ComposerCanvasDestination(sessionId: "composer-cover") {
+                attachment, recognizedText in
+                onAddToChat(attachment, recognizedText)
+            }
+        } else {
+            self.destination = nil
+        }
         self.onDeliveryAccepted = onDeliveryAccepted
         self.supportedFeatureSet = PaperMarkupCanvasSession.markupFeatureSet(for: background)
         if case .image(let image) = background {
@@ -447,14 +454,6 @@ final class PaperMarkupCanvasHostController: UIViewController {
         recognizedText: String
     ) -> PaperMarkupCanvasSession.AddToChatDeliveryOutcome {
         guard !Task.isCancelled, !isDismissed else { return .rejected }
-        if let onAddToChat {
-            if onAddToChat(attachment, recognizedText) {
-                dismissCanvasAfterAcceptedDelivery()
-                return .accepted
-            }
-            presentAddToChatFailure(PaperMarkupCanvasSession.AddToChatFailure.destinationRejectedMessage)
-            return .rejected
-        }
         let outcome = ComposerCanvasDelivery.deliver(
             attachment: attachment,
             recognizedText: recognizedText,

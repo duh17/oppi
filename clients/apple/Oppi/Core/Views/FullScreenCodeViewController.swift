@@ -100,6 +100,8 @@ final class FullScreenCodeViewController: UIViewController {
     private var appliedThemeID: ThemeID?
     private var annotateButton: UIBarButtonItem?
     private var isSnapshotting = false
+    private let addToChatDestination: ComposerCanvasDestination?
+    private(set) var didDismissAfterCanvasDeliveryForTesting = false
 
     private var bodyThemeID: ThemeID {
         appliedThemeID ?? ThemeRuntimeState.currentThemeID()
@@ -116,7 +118,8 @@ final class FullScreenCodeViewController: UIViewController {
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
         navigationActions: [FullScreenViewerNavigationAction] = [],
         markdownViewportIntent: FullScreenMarkdownViewportIntent? = nil,
-        onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)? = nil
+        onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)? = nil,
+        addToChatDestination: ComposerCanvasDestination? = nil
     ) {
         self.content = content
         self.presentationMode = presentationMode
@@ -132,6 +135,7 @@ final class FullScreenCodeViewController: UIViewController {
         self.pendingMarkdownViewportIntent = markdownViewportIntent
         self.onMarkdownViewportIntentChange = onMarkdownViewportIntentChange
         self.navigationActionPresentation = navigationActions.map(\.presentation)
+        self.addToChatDestination = addToChatDestination
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -171,7 +175,8 @@ final class FullScreenCodeViewController: UIViewController {
                     router: reviewCommentSelectionRouter,
                     sessionId: reviewCommentSessionId,
                     sourceLabel: reviewCommentSourceLabel
-                )
+                ),
+            addToChatDestination: capturedAddToChatDestination(from: presenter)
         )
         FullScreenViewerPresentationPolicy.configureLargePresentation(
             controller,
@@ -180,6 +185,21 @@ final class FullScreenCodeViewController: UIViewController {
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID()
             .preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true)
+    }
+
+    /// Capture origin at present time. Nested viewers inherit the parent
+    /// viewer's destination, including nil, so later chats cannot steal it.
+    static func capturedAddToChatDestination(
+        from presenter: UIViewController
+    ) -> ComposerCanvasDestination? {
+        if let code = presenter as? FullScreenCodeViewController {
+            return code.addToChatDestination
+        }
+        if let navigation = presenter as? UINavigationController,
+           let code = navigation.viewControllers.compactMap({ $0 as? FullScreenCodeViewController }).last {
+            return code.addToChatDestination
+        }
+        return ComposerCanvasDestinationResolver.resolve(from: presenter)
     }
 
     private var allowsFocusedVisualPreview: Bool {
@@ -1581,12 +1601,20 @@ final class FullScreenCodeViewController: UIViewController {
                 PaperMarkupCanvasHostController.present(
                     background: .image(PaperMarkupCanvasSession.copiedImage(from: image)),
                     from: self,
-                    destination: ComposerCanvasDestinationResolver.resolve(from: self)
+                    destination: addToChatDestination,
+                    onDeliveryAccepted: { [weak self] in
+                        self?.handleAnnotateDeliveryAccepted()
+                    }
                 )
             } catch {
                 presentPaperMarkupSnapshotFailure(error)
             }
         }
+    }
+
+    private func handleAnnotateDeliveryAccepted() {
+        didDismissAfterCanvasDeliveryForTesting = true
+        presentingViewController?.dismiss(animated: true)
     }
 
     private var isHTMLRenderReady: Bool {
@@ -1991,6 +2019,16 @@ extension FullScreenCodeViewController {
 
     var annotateSourceForTesting: PaperMarkupCanvasSession.AnnotateSource {
         PaperMarkupCanvasSession.annotateSource(for: .html)
+    }
+
+    func makeAnnotateHostForTesting() -> PaperMarkupCanvasHostController {
+        PaperMarkupCanvasHostController.makeFullScreenController(
+            background: .blank,
+            destination: addToChatDestination,
+            onDeliveryAccepted: { [weak self] in
+                self?.handleAnnotateDeliveryAccepted()
+            }
+        )
     }
 
     var isShowingSnapshotProgressForTesting: Bool { isSnapshotting }

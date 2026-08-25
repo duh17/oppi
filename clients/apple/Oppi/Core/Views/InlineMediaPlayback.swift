@@ -711,6 +711,9 @@ enum FullScreenImageDataPreviewPresenter {
     }
 
     static func present(data: Data, mimeType: String?, title: String = "Preview", from presenter: UIViewController) {
+        // Resolve before presenting. The sheet's later presenter chain is not
+        // a reliable path back to the chat composer destination.
+        let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
         ImagePreviewPresentationCoordinator.present(
             FullScreenImageDataPreviewViewController.makeSlideDownController(
                 data: data,
@@ -718,7 +721,8 @@ enum FullScreenImageDataPreviewPresenter {
                 title: title,
                 prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(
                     for: presenter.traitCollection
-                )
+                ),
+                addToChatDestination: destination
             ),
             from: presenter
         )
@@ -740,17 +744,25 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     private let data: Data
     private let mimeType: String?
     private let previewTitle: String
+    private let addToChatDestination: ComposerCanvasDestination?
     private let palette: ThemePalette
     private let scrollView = UIScrollView()
     private let containerView = AnimatedImageWebContainerView()
     private var swipeDismissHandler: HorizontalBackSwipeGestureInstaller?
     private var annotateButton: UIBarButtonItem?
     private var isSnapshotting = false
+    private(set) var didDismissAfterCanvasDeliveryForTesting = false
 
-    init(data: Data, mimeType: String?, title: String) {
+    init(
+        data: Data,
+        mimeType: String?,
+        title: String,
+        addToChatDestination: ComposerCanvasDestination? = nil
+    ) {
         self.data = data
         self.mimeType = mimeType
         self.previewTitle = title
+        self.addToChatDestination = addToChatDestination
         self.palette = ThemeRuntimeState.currentThemeID().palette
         super.init(nibName: nil, bundle: nil)
     }
@@ -871,7 +883,10 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
                 PaperMarkupCanvasHostController.present(
                     background: .image(PaperMarkupCanvasSession.copiedImage(from: image)),
                     from: self,
-                    destination: ComposerCanvasDestinationResolver.resolve(from: self)
+                    destination: addToChatDestination,
+                    onDeliveryAccepted: { [weak self] in
+                        self?.handleAnnotateDeliveryAccepted()
+                    }
                 )
             } catch {
                 presentPaperMarkupSnapshotFailure(error)
@@ -885,6 +900,21 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
 
     var annotateSourceForTesting: PaperMarkupCanvasSession.AnnotateSource {
         PaperMarkupCanvasSession.annotateSource(for: .svg)
+    }
+
+    func makeAnnotateHostForTesting() -> PaperMarkupCanvasHostController {
+        PaperMarkupCanvasHostController.makeFullScreenController(
+            background: .blank,
+            destination: addToChatDestination,
+            onDeliveryAccepted: { [weak self] in
+                self?.handleAnnotateDeliveryAccepted()
+            }
+        )
+    }
+
+    private func handleAnnotateDeliveryAccepted() {
+        didDismissAfterCanvasDeliveryForTesting = true
+        presentingViewController?.dismiss(animated: true)
     }
 
     var isShowingSnapshotProgressForTesting: Bool { isSnapshotting }
@@ -919,10 +949,16 @@ extension FullScreenImageDataPreviewViewController {
         data: Data,
         mimeType: String?,
         title: String,
-        prefersFullScreenOverlay: Bool = false
+        prefersFullScreenOverlay: Bool = false,
+        addToChatDestination: ComposerCanvasDestination? = nil
     ) -> UIViewController {
         let themeID = ThemeRuntimeState.currentThemeID()
-        let viewer = FullScreenImageDataPreviewViewController(data: data, mimeType: mimeType, title: title)
+        let viewer = FullScreenImageDataPreviewViewController(
+            data: data,
+            mimeType: mimeType,
+            title: title,
+            addToChatDestination: addToChatDestination
+        )
         let navigation = ImagePreviewNavigationController(rootViewController: viewer)
         navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
 

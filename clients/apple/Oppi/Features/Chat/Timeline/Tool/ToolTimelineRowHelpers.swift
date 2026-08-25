@@ -162,7 +162,10 @@ enum ToolTimelineRowPresentationHelpers {
                     router: reviewCommentSelectionRouter,
                     sessionId: reviewCommentSessionId,
                     sourceLabel: reviewCommentSourceLabel
-                )
+                ),
+            addToChatDestination: FullScreenCodeViewController.capturedAddToChatDestination(
+                from: presenter
+            )
         )
         FullScreenViewerPresentationPolicy.configureLargePresentation(
             controller,

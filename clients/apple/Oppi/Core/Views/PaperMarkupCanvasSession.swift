@@ -330,7 +330,7 @@ enum PaperMarkupCanvasViewport {
 @MainActor
 final class ComposerCanvasDestination {
     let sessionId: String
-    private let acceptHandler: (PendingAttachment, String) -> Bool
+    private var acceptHandler: (PendingAttachment, String) -> Bool
 
     init(sessionId: String, accept: @escaping (PendingAttachment, String) -> Bool) {
         self.sessionId = sessionId
@@ -340,6 +340,12 @@ final class ComposerCanvasDestination {
     @discardableResult
     func accept(attachment: PendingAttachment, recognizedText: String) -> Bool {
         acceptHandler(attachment, recognizedText)
+    }
+
+    /// SwiftUI chat rebuilds a new destination object each body. Keep one
+    /// owner for that session and only refresh the accept handler.
+    func adoptAcceptHandler(from other: ComposerCanvasDestination) {
+        acceptHandler = other.acceptHandler
     }
 }
 
@@ -442,12 +448,24 @@ extension UIViewController {
 }
 
 final class ComposerCanvasDestinationAnchorController: UIViewController {
+    private var storedDestination: ComposerCanvasDestination?
+
     var destination: ComposerCanvasDestination? {
-        didSet {
-            if oldValue !== destination {
-                if let oldValue {
+        get { storedDestination }
+        set {
+            if let current = storedDestination,
+               let next = newValue,
+               current.sessionId == next.sessionId {
+                current.adoptAcceptHandler(from: next)
+                install()
+                publishIfVisible()
+                return
+            }
+            if storedDestination !== newValue {
+                if let oldValue = storedDestination {
                     ComposerCanvasActiveDestination.pop(oldValue)
                 }
+                storedDestination = newValue
             }
             install()
             publishIfVisible()
