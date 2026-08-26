@@ -83,6 +83,14 @@ struct ScreenshotPreviewView: View {
             MermaidFullscreenPreview()
         case "mermaid-responsive-routing":
             MermaidResponsiveRoutingPreview()
+        case "fullscreen-mermaid":
+            FullscreenMermaidChromePreview()
+        case "fullscreen-image":
+            FullscreenImageChromePreview()
+        case "fullscreen-html":
+            FullscreenHTMLChromePreview()
+        case "fullscreen-svg":
+            FullscreenSVGChromePreview()
         case "ask-card":
             AskCardPreview()
         case "ask-card-multiselect-long":
@@ -500,6 +508,84 @@ private struct MermaidFullscreenPreview: View {
         FullScreenCodeView(content: .mermaid(content: Self.source, filePath: "asr.mmd"))
             .preferredColorScheme(themeID == .light ? .light : .dark)
             .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+// MARK: - Fullscreen Chrome Previews
+
+private struct FullscreenMermaidChromePreview: View {
+    var body: some View {
+        FullScreenCodeView(
+            content: .mermaid(
+                content: """
+                flowchart TD
+                    Inspect[Inspect diagram] --> Annotate[Annotate]
+                    Annotate --> Share[Share]
+                """,
+                filePath: "flow.mmd"
+            )
+        )
+        .ignoresSafeArea()
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+private struct FullscreenHTMLChromePreview: View {
+    var body: some View {
+        FullScreenCodeView(
+            content: .html(
+                content: "<h1>Note</h1><p>Annotate this page.</p>",
+                filePath: "note.html"
+            )
+        )
+        .ignoresSafeArea()
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+private struct FullscreenSVGChromePreview: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        let svg = Data("""
+        <svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+          <rect width="200" height="200" fill="#1a9b9b"/>
+          <circle cx="100" cy="100" r="60" fill="white"/>
+        </svg>
+        """.utf8)
+        let viewer = FullScreenImageDataPreviewViewController(
+            data: svg,
+            mimeType: "image/svg+xml",
+            title: "Preview"
+        )
+        let navigation = UINavigationController(rootViewController: viewer)
+        navigation.view.backgroundColor = UIColor(ThemeRuntimeState.currentThemeID().palette.bgDark)
+        navigation.view.accessibilityIdentifier = "screenshot.ready"
+        return navigation
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+}
+
+private struct FullscreenImageChromePreview: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        let image = Self.makePreviewImage()
+        let viewer = FullScreenImageViewController(image: image)
+        let navigation = UINavigationController(rootViewController: viewer)
+        navigation.view.backgroundColor = UIColor(ThemeRuntimeState.currentThemeID().palette.bgDark)
+        navigation.view.accessibilityIdentifier = "screenshot.ready"
+        return navigation
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+
+    private static func makePreviewImage() -> UIImage {
+        let size = CGSize(width: 800, height: 600)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.white.setFill()
+            UIBezierPath(ovalIn: CGRect(x: 250, y: 150, width: 300, height: 300)).fill()
+        }
     }
 }
 

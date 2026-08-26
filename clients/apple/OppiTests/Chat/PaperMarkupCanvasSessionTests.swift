@@ -121,14 +121,19 @@ struct PaperMarkupCanvasSessionTests {
     func fullscreenImageViewerExposesAnnotateNextToShareAndSave() throws {
         let viewController = FullScreenImageViewController(image: try makePNG().0)
         viewController.loadViewIfNeeded()
+        viewController.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        viewController.view.layoutIfNeeded()
 
-        let toolbar = try #require(firstSubview(ofType: UIToolbar.self, in: viewController.view))
-        let identifiers = (toolbar.items ?? []).compactMap(\.accessibilityIdentifier)
+        let annotate = try #require(viewController.floatingAnnotateButtonForTesting)
+        #expect(annotate.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.imageViewerIdentifier)
+        #expect(annotate.accessibilityLabel == "Annotate")
+        #expect(annotate.frame.midX < viewController.view.bounds.midX)
+        #expect(annotate.frame.midY > viewController.view.bounds.midY)
 
-        #expect(identifiers.contains(PaperMarkupCanvasSession.AnnotateAction.imageViewerIdentifier))
-        #expect(
-            (toolbar.items ?? []).contains { $0.accessibilityLabel == "Annotate" }
-        )
+        let rightItems = viewController.navigationItem.rightBarButtonItems ?? []
+        #expect(rightItems.contains { $0.accessibilityLabel == "Share" })
+        #expect(rightItems.contains { $0.accessibilityLabel == "Save" })
+        #expect(firstSubview(ofType: UIToolbar.self, in: viewController.view) == nil)
     }
 
     @Test("image annotate opens the shared markup host with a copy of the current image")
@@ -162,16 +167,28 @@ struct PaperMarkupCanvasSessionTests {
             title: "Preview"
         )
         let navigation = UINavigationController(rootViewController: controller)
+        navigation.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         navigation.loadViewIfNeeded()
         controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
 
-        let annotate = try #require(
-            controller.navigationItem.rightBarButtonItems?.first {
-                $0.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.dataViewerIdentifier
-            }
-        )
+        let annotate = try #require(controller.floatingAnnotateButtonForTesting)
+        #expect(annotate.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.dataViewerIdentifier)
         #expect(annotate.accessibilityLabel == "Annotate")
+        #expect(controller.navigationItem.rightBarButtonItems?.isEmpty ?? true)
         #expect(controller.annotateSourceForTesting == PaperMarkupCanvasSession.AnnotateSource.renderedSnapshot)
+        #expect(annotate.frame.midX < controller.view.bounds.midX)
+        #expect(annotate.frame.midY > controller.view.bounds.midY)
+        #expect(controller.view.subviews.last === annotate)
+        controller.markRenderReadyForTesting()
+        let hitPoint = annotate.convert(
+            CGPoint(x: annotate.bounds.midX, y: annotate.bounds.midY),
+            to: controller.view
+        )
+        let hit = controller.view.hitTest(hitPoint, with: nil)
+        #expect(hit === annotate || (hit?.isDescendant(of: annotate) ?? false))
     }
 
     @Test("HTML viewer exposes Annotate and snapshots the rendered view")
@@ -184,13 +201,50 @@ struct PaperMarkupCanvasSessionTests {
 
         let navigation = try #require(controller.children.first as? UINavigationController)
         let contentController = try #require(navigation.topViewController)
-        let annotate = contentController.navigationItem.rightBarButtonItems?.first {
-            $0.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier
-        }
-
+        let annotate = controller.floatingAnnotateButtonForTesting
+        #expect(annotate?.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier)
         #expect(annotate?.accessibilityLabel == "Annotate")
+        #expect(
+            contentController.navigationItem.rightBarButtonItems?.contains {
+                $0.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier
+            } != true
+        )
         #expect(controller.installedBodyViewForTesting is HTMLRenderView)
         #expect(controller.annotateSourceForTesting == PaperMarkupCanvasSession.AnnotateSource.renderedSnapshot)
+    }
+
+    @Test("mermaid viewer keeps Share top-right and Annotate bottom-left of Reader")
+    func mermaidViewerKeepsShareTopRightAndAnnotateBottomLeftOfReader() throws {
+        let controller = FullScreenCodeViewController(
+            content: .mermaid(content: "flowchart TD; A-->B", filePath: "flow.mmd")
+        )
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+
+        let navigation = try #require(controller.children.first as? UINavigationController)
+        let contentController = try #require(navigation.topViewController)
+        #expect(
+            contentController.navigationItem.rightBarButtonItems?.contains {
+                $0.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier
+            } != true
+        )
+        #expect(controller.shareableContentForTesting != nil)
+
+        let annotateFrame = try #require(controller.floatingAnnotateButtonFrameForTesting)
+        let readerFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
+        #expect(annotateFrame.midX < controller.view.bounds.midX)
+        #expect(readerFrame.midX > controller.view.bounds.midX)
+        #expect(annotateFrame.maxX < readerFrame.minX)
+        #expect(abs(annotateFrame.midY - readerFrame.midY) <= 1)
+        #expect(controller.floatingAnnotateButtonForTesting?.accessibilityIdentifier
+            == PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier)
+
+        controller.toggleSourceForTesting()
+        controller.view.layoutIfNeeded()
+        #expect(controller.floatingAnnotateButtonForTesting == nil)
+        #expect(controller.hasFloatingViewingOptionsButtonForTesting)
     }
 
     @Test("Add to Chat delivers only to the origin destination")
@@ -363,11 +417,8 @@ struct PaperMarkupCanvasSessionTests {
         navigation.loadViewIfNeeded()
         controller.loadViewIfNeeded()
 
-        let annotate = try #require(
-            controller.navigationItem.rightBarButtonItems?.first {
-                $0.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.dataViewerIdentifier
-            }
-        )
+        let annotate = try #require(controller.floatingAnnotateButtonForTesting)
+        #expect(annotate.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.dataViewerIdentifier)
         #expect(annotate.isEnabled == false)
 
         controller.markRenderReadyForTesting()
@@ -385,11 +436,8 @@ struct PaperMarkupCanvasSessionTests {
 
         let navigation = try #require(controller.children.first as? UINavigationController)
         let contentController = try #require(navigation.topViewController)
-        let annotate = try #require(
-            contentController.navigationItem.rightBarButtonItems?.first {
-                $0.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier
-            }
-        )
+        let annotate = try #require(controller.floatingAnnotateButtonForTesting)
+        #expect(annotate.accessibilityIdentifier == PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier)
         #expect(annotate.isEnabled == false)
 
         controller.markRenderReadyForTesting()

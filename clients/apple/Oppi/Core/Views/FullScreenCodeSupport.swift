@@ -9,7 +9,16 @@ import UIKit
 /// Liquid Glass pills (the iOS 26 default when no custom
 /// `UINavigationBarAppearance` is set).
 ///
-/// The convention:
+/// Regions:
+/// 1. Top leading: Done / Back.
+/// 2. Top trailing: Share (when present), Save (when present), Copy, Source,
+///    and extra document actions. Share stays in this bar on every viewer.
+/// 3. Bottom leading: Annotate as a floating glass control when the viewer
+///    can annotate. Do not put Annotate in the top bar.
+/// 4. Bottom trailing: Viewing Options / Reader as a floating glass control.
+///    Do not cover it with Annotate or a bottom toolbar.
+///
+/// Layout rules:
 /// 1. Do NOT set a custom `UINavigationBarAppearance` on the content VC.
 /// 2. Pin the body view's top to `view.topAnchor` (not `safeAreaLayoutGuide`).
 /// 3. Do NOT set a `titleView` — only left/right bar button items.
@@ -22,8 +31,8 @@ import UIKit
 /// 2. Pin content to `safeAreaLayoutGuide.topAnchor`
 /// 3. Optionally restore `titleView`
 ///
-/// Both ``FullScreenCodeViewController`` and ``FullScreenImageViewController``
-/// follow this pattern.
+/// ``FullScreenCodeViewController``, ``FullScreenImageViewController``, and
+/// ``FullScreenImageDataPreviewViewController`` follow this pattern.
 enum FullScreenViewerChrome {
     // Marker enum — the convention is documented above.
     // Grep for `FullScreenViewerChrome` to find all adopters.
@@ -31,6 +40,7 @@ enum FullScreenViewerChrome {
 
 enum FullScreenFloatingControlChrome {
     static let bottomPadding: CGFloat = 22
+    static let leadingPadding: CGFloat = 16
     static let trailingPadding: CGFloat = 16
     static let controlSize: CGFloat = 56
     static let groupedButtonSize: CGFloat = 36
@@ -50,6 +60,67 @@ enum FullScreenFloatingControlChrome {
             ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
         )
         config.baseForegroundColor = UIColor(palette.fg)
+    }
+
+    static func makeStandaloneButton(
+        systemImage: String,
+        accessibilityLabel: String,
+        accessibilityIdentifier: String? = nil,
+        accessibilityHint: String? = nil,
+        palette: ThemePalette
+    ) -> UIButton {
+        var config = UIButton.Configuration.glass()
+        config.image = UIImage(systemName: systemImage)
+        config.preferredSymbolConfigurationForImage = .init(
+            pointSize: symbolPointSize,
+            weight: .semibold
+        )
+        let contentPadding = standaloneContentPadding
+        config.contentInsets = NSDirectionalEdgeInsets(
+            top: contentPadding,
+            leading: contentPadding,
+            bottom: contentPadding,
+            trailing: contentPadding
+        )
+        applyGlassBackground(to: &config, palette: palette)
+
+        let button = UIButton(configuration: config)
+        button.accessibilityLabel = accessibilityLabel
+        button.accessibilityIdentifier = accessibilityIdentifier
+        button.accessibilityHint = accessibilityHint
+        return button
+    }
+
+    static func updateStandaloneButton(_ button: UIButton, palette: ThemePalette) {
+        var config = button.configuration ?? .plain()
+        applyGlassBackground(to: &config, palette: palette)
+        button.configuration = config
+    }
+
+    static func pinStandaloneButton(
+        _ button: UIButton,
+        to view: UIView,
+        leading: Bool
+    ) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        let horizontal = leading
+            ? button.leadingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                constant: leadingPadding
+            )
+            : button.trailingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                constant: -trailingPadding
+            )
+        NSLayoutConstraint.activate([
+            horizontal,
+            button.bottomAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                constant: -bottomPadding
+            ),
+            button.widthAnchor.constraint(equalToConstant: controlSize),
+            button.heightAnchor.constraint(equalToConstant: controlSize),
+        ])
     }
 }
 

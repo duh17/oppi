@@ -749,7 +749,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     private let scrollView = UIScrollView()
     private let containerView = AnimatedImageWebContainerView()
     private var swipeDismissHandler: HorizontalBackSwipeGestureInstaller?
-    private var annotateButton: UIBarButtonItem?
+    private var annotateButton: UIButton?
     private var isSnapshotting = false
     private(set) var didDismissAfterCanvasDeliveryForTesting = false
 
@@ -778,6 +778,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
         setupSwipeDismiss()
         setupScrollView()
         setupPreviewView()
+        setupFloatingAnnotateButton()
         setupDoubleTap()
         loadPreview()
     }
@@ -794,20 +795,28 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
             palette: palette,
             accessibilityIdentifier: "fullscreen-image-data.dismiss"
         )
-        let annotate = UIBarButtonItem(
-            image: UIImage(systemName: PaperMarkupCanvasSession.AnnotateAction.systemImage),
-            style: .plain,
-            target: self,
-            action: #selector(annotateTapped)
-        )
-        annotate.accessibilityLabel = PaperMarkupCanvasSession.AnnotateAction.title
-        annotate.accessibilityIdentifier = PaperMarkupCanvasSession.AnnotateAction.dataViewerIdentifier
-        annotate.tintColor = UIColor(palette.cyan)
-        annotateButton = annotate
-        navigationItem.rightBarButtonItem = annotate
         containerView.onRenderStateChange = { [weak self] in
             self?.updateAnnotateAvailability()
         }
+    }
+
+    private func setupFloatingAnnotateButton() {
+        if let annotateButton {
+            FullScreenFloatingControlChrome.updateStandaloneButton(annotateButton, palette: palette)
+            updateAnnotateAvailability()
+            return
+        }
+        let button = FullScreenFloatingControlChrome.makeStandaloneButton(
+            systemImage: PaperMarkupCanvasSession.AnnotateAction.systemImage,
+            accessibilityLabel: PaperMarkupCanvasSession.AnnotateAction.title,
+            accessibilityIdentifier: PaperMarkupCanvasSession.AnnotateAction.dataViewerIdentifier,
+            palette: palette
+        )
+        button.addTarget(self, action: #selector(annotateTapped), for: .touchUpInside)
+        annotateButton = button
+        view.addSubview(button)
+        FullScreenFloatingControlChrome.pinStandaloneButton(button, to: view, leading: true)
+        view.bringSubviewToFront(button)
         updateAnnotateAvailability()
     }
 
@@ -900,6 +909,10 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
 
     var annotateSourceForTesting: PaperMarkupCanvasSession.AnnotateSource {
         PaperMarkupCanvasSession.annotateSource(for: .svg)
+    }
+
+    var floatingAnnotateButtonForTesting: UIButton? {
+        annotateButton
     }
 
     func makeAnnotateHostForTesting() -> PaperMarkupCanvasHostController {

@@ -98,7 +98,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var liveSourceMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
     private var lastNavigationPresentation: NavigationPresentation?
     private var appliedThemeID: ThemeID?
-    private var annotateButton: UIBarButtonItem?
+    private var annotateButton: UIButton?
     private var isSnapshotting = false
     private let addToChatDestination: ComposerCanvasDestination?
     private(set) var didDismissAfterCanvasDeliveryForTesting = false
@@ -529,6 +529,9 @@ final class FullScreenCodeViewController: UIViewController {
         if let floatingViewingOptionsButton {
             viewController.view.bringSubviewToFront(floatingViewingOptionsButton)
         }
+        if let annotateButton {
+            viewController.view.bringSubviewToFront(annotateButton)
+        }
         if let htmlView = bodyView as? HTMLRenderView {
             htmlView.onRenderStateChange = { [weak self] in
                 self?.updateAnnotateAvailability()
@@ -654,6 +657,7 @@ final class FullScreenCodeViewController: UIViewController {
                 presentation: presentation,
                 palette: palette
             )
+            configureFloatingAnnotateButton(on: viewController, palette: palette)
             updateAnnotateAvailability()
             return
         }
@@ -691,28 +695,13 @@ final class FullScreenCodeViewController: UIViewController {
             rightItems.append(toggle)
         }
 
-        if canAnnotateRenderedContent {
-            let annotate = UIBarButtonItem(
-                image: UIImage(systemName: PaperMarkupCanvasSession.AnnotateAction.systemImage),
-                style: .plain,
-                target: self,
-                action: #selector(annotateRenderedViewTapped)
-            )
-            annotate.accessibilityLabel = PaperMarkupCanvasSession.AnnotateAction.title
-            annotate.accessibilityIdentifier = PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier
-            annotate.tintColor = UIColor(palette.cyan)
-            annotateButton = annotate
-            rightItems.append(annotate)
-        } else {
-            annotateButton = nil
-        }
-
         viewController.navigationItem.rightBarButtonItems = rightItems
         configureFloatingViewingOptionsButton(
             on: viewController,
             presentation: presentation,
             palette: palette
         )
+        configureFloatingAnnotateButton(on: viewController, palette: palette)
         updateAnnotateAvailability()
     }
 
@@ -805,6 +794,35 @@ final class FullScreenCodeViewController: UIViewController {
         button.accessibilityValue = String(
             localized: "Text size \(Int(round(preferences.textScale * 100))) percent"
         )
+    }
+
+    private func configureFloatingAnnotateButton(
+        on viewController: UIViewController,
+        palette: ThemePalette
+    ) {
+        guard canAnnotateRenderedContent else {
+            annotateButton?.removeFromSuperview()
+            annotateButton = nil
+            return
+        }
+
+        let button: UIButton
+        if let existing = annotateButton {
+            button = existing
+            FullScreenFloatingControlChrome.updateStandaloneButton(button, palette: palette)
+        } else {
+            button = FullScreenFloatingControlChrome.makeStandaloneButton(
+                systemImage: PaperMarkupCanvasSession.AnnotateAction.systemImage,
+                accessibilityLabel: PaperMarkupCanvasSession.AnnotateAction.title,
+                accessibilityIdentifier: PaperMarkupCanvasSession.AnnotateAction.htmlViewerIdentifier,
+                palette: palette
+            )
+            button.addTarget(self, action: #selector(annotateRenderedViewTapped), for: .touchUpInside)
+            annotateButton = button
+            viewController.view.addSubview(button)
+            FullScreenFloatingControlChrome.pinStandaloneButton(button, to: viewController.view, leading: true)
+        }
+        viewController.view.bringSubviewToFront(button)
     }
 
     private func makePresentation() -> Presentation {
@@ -1968,6 +1986,17 @@ extension FullScreenCodeViewController {
 
     var floatingViewingOptionsButtonFrameForTesting: CGRect? {
         guard let button = floatingViewingOptionsButton,
+              let superview = button.superview else { return nil }
+        superview.layoutIfNeeded()
+        return view.convert(button.frame, from: superview)
+    }
+
+    var floatingAnnotateButtonForTesting: UIButton? {
+        annotateButton
+    }
+
+    var floatingAnnotateButtonFrameForTesting: CGRect? {
+        guard let button = annotateButton,
               let superview = button.superview else { return nil }
         superview.layoutIfNeeded()
         return view.convert(button.frame, from: superview)

@@ -119,9 +119,10 @@ struct UserTimelineRowContentTests {
         let navAppearance = navigation.navigationBar.standardAppearance
         #expect(navAppearance.backgroundColor == nil, "Liquid Glass nav bar should not set explicit backgroundColor")
 
-        let toolbar = try #require(firstSubview(ofType: UIToolbar.self, in: viewController.view))
-        #expect(color(toolbar.tintColor, approximatelyEquals: UIColor(palette.cyan)))
-        #expect(color(toolbar.standardAppearance.backgroundColor, approximatelyEquals: UIColor(palette.bgHighlight)))
+        let rightItems = viewController.navigationItem.rightBarButtonItems ?? []
+        #expect(rightItems.contains { $0.accessibilityLabel == "Share" })
+        #expect(rightItems.contains { $0.accessibilityLabel == "Save" })
+        #expect(firstSubview(ofType: UIToolbar.self, in: viewController.view) == nil)
     }
 
     @MainActor

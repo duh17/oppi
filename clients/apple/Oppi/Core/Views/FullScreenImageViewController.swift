@@ -9,9 +9,9 @@ final class FullScreenImageViewController: UIViewController {
     private let addToChatDestination: ComposerCanvasDestination?
     private var palette: ThemePalette
     private let scrollView = UIScrollView()
-    private let toolbar = UIToolbar()
     private let imageView: UIImageView
     private var swipeDismissHandler: HorizontalBackSwipeGestureInstaller?
+    private var annotateButton: UIButton?
     private var savedFeedbackLabel: UILabel?
     private(set) var didDismissAfterCanvasDeliveryForTesting = false
 
@@ -46,7 +46,7 @@ final class FullScreenImageViewController: UIViewController {
         setupImageView()
         setupConstraints()
         setupDoubleTap()
-        setupBottomToolbar()
+        setupFloatingAnnotateButton()
     }
 
     // MARK: - Setup
@@ -59,6 +59,25 @@ final class FullScreenImageViewController: UIViewController {
             palette: palette,
             accessibilityIdentifier: "fullscreen-image.dismiss"
         )
+
+        let shareButton = UIBarButtonItem(
+            image: UIImage(systemName: "square.and.arrow.up"),
+            style: .plain,
+            target: self,
+            action: #selector(shareTapped)
+        )
+        shareButton.accessibilityLabel = "Share"
+        shareButton.tintColor = UIColor(palette.fgDim)
+        let saveButton = UIBarButtonItem(
+            image: UIImage(systemName: "square.and.arrow.down"),
+            style: .plain,
+            target: self,
+            action: #selector(saveTapped(_:))
+        )
+        saveButton.accessibilityLabel = "Save"
+        saveButton.tintColor = UIColor(palette.fgDim)
+        // Share is the trailing-most action in this bar.
+        navigationItem.rightBarButtonItems = [shareButton, saveButton]
 
         // No custom UINavigationBarAppearance — iOS 26 Liquid Glass renders
         // bar items as floating glass pills. See FullScreenViewerChrome.
@@ -119,53 +138,22 @@ final class FullScreenImageViewController: UIViewController {
         DoubleTapZoom.install(on: scrollView, target: self, action: #selector(handleDoubleTap(_:)))
     }
 
-    private func setupBottomToolbar() {
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
-        applyToolbarTheme()
-
-        view.addSubview(toolbar)
-
-        NSLayoutConstraint.activate([
-            toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            toolbar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-        ])
-
-        let shareButton = UIBarButtonItem(
-            image: UIImage(systemName: "square.and.arrow.up"),
-            style: .plain,
-            target: self,
-            action: #selector(shareTapped)
+    private func setupFloatingAnnotateButton() {
+        if let annotateButton {
+            FullScreenFloatingControlChrome.updateStandaloneButton(annotateButton, palette: palette)
+            return
+        }
+        let button = FullScreenFloatingControlChrome.makeStandaloneButton(
+            systemImage: PaperMarkupCanvasSession.AnnotateAction.systemImage,
+            accessibilityLabel: PaperMarkupCanvasSession.AnnotateAction.title,
+            accessibilityIdentifier: PaperMarkupCanvasSession.AnnotateAction.imageViewerIdentifier,
+            palette: palette
         )
-        shareButton.accessibilityLabel = "Share"
-        let flexSpace = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-        let annotateButton = UIBarButtonItem(
-            image: UIImage(systemName: PaperMarkupCanvasSession.AnnotateAction.systemImage),
-            style: .plain,
-            target: self,
-            action: #selector(annotateTapped)
-        )
-        annotateButton.accessibilityLabel = PaperMarkupCanvasSession.AnnotateAction.title
-        annotateButton.accessibilityIdentifier = PaperMarkupCanvasSession.AnnotateAction.imageViewerIdentifier
-        let saveButton = UIBarButtonItem(
-            image: UIImage(systemName: "square.and.arrow.down"),
-            style: .plain,
-            target: self,
-            action: #selector(saveTapped(_:))
-        )
-        saveButton.accessibilityLabel = "Save"
-        toolbar.items = [shareButton, flexSpace, annotateButton, flexSpace, saveButton]
-    }
-
-    private func applyToolbarTheme() {
-        toolbar.tintColor = UIColor(palette.cyan)
-        let appearance = UIToolbarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(palette.bgHighlight)
-        appearance.shadowColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        toolbar.standardAppearance = appearance
-        toolbar.scrollEdgeAppearance = appearance
-        toolbar.compactAppearance = appearance
+        button.addTarget(self, action: #selector(annotateTapped), for: .touchUpInside)
+        annotateButton = button
+        view.addSubview(button)
+        FullScreenFloatingControlChrome.pinStandaloneButton(button, to: view, leading: true)
+        view.bringSubviewToFront(button)
     }
 
     @objc private func handleThemeChangeNotification(_: Notification) {
@@ -177,8 +165,8 @@ final class FullScreenImageViewController: UIViewController {
         navigationController?.view.backgroundColor = UIColor(palette.bgDark)
         view.backgroundColor = UIColor(palette.bgDark)
         scrollView.backgroundColor = UIColor(palette.bgDark)
-        applyToolbarTheme()
         setupNavigationChrome()
+        setupFloatingAnnotateButton()
 
         if let savedFeedbackLabel {
             savedFeedbackLabel.textColor = UIColor(palette.fg)
@@ -277,7 +265,12 @@ final class FullScreenImageViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -56),
+            label.bottomAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                constant: -(FullScreenFloatingControlChrome.bottomPadding
+                    + FullScreenFloatingControlChrome.controlSize
+                    + 8)
+            ),
             label.widthAnchor.constraint(equalToConstant: 80),
             label.heightAnchor.constraint(equalToConstant: 32),
         ])
@@ -307,6 +300,10 @@ extension FullScreenImageViewController {
 
     func debugAnnotateForTesting() {
         presentAnnotate()
+    }
+
+    var floatingAnnotateButtonForTesting: UIButton? {
+        annotateButton
     }
 }
 #endif
