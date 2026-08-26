@@ -25,6 +25,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
     private var copiedBackgroundImage: UIImage?
     private var progressOverlay: UIView?
     private var shouldFailNextExportForTesting = false
+    private var isRestoringInkingTool = false
     private var shouldHoldNextExportForTesting = false
     private var exportHoldForTesting: CheckedContinuation<Void, Never>?
     private var exportStartedHoldForTesting: CheckedContinuation<Void, Never>?
@@ -80,6 +81,14 @@ final class PaperMarkupCanvasHostController: UIViewController {
 
     var toolPickerColorUserInterfaceStyleForTesting: UIUserInterfaceStyle? {
         toolPicker?.colorUserInterfaceStyle
+    }
+
+    var toolPickerStateAutosaveNameForTesting: String? {
+        toolPicker?.stateAutosaveName
+    }
+
+    var drawingToolColorForTesting: UIColor? {
+        (paperViewController?.drawingTool as? PKInkingTool)?.color
     }
 
     init(
@@ -177,6 +186,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
         updatePaperBottomInset()
         view.layoutIfNeeded()
         applyInitialFitIfNeeded(ignorePickerVisibility: true)
+        restorePersistedInkingTool()
         if !didApplyInitialFit {
             paperViewController?.view.isHidden = false
         }
@@ -222,6 +232,16 @@ final class PaperMarkupCanvasHostController: UIViewController {
         canApplyInitialFit = true
         updatePaperBottomInset()
         applyInitialFitIfNeeded(ignorePickerVisibility: true)
+    }
+
+    func debugSelectInkingColorForTesting(_ color: UIColor) {
+        guard let picker = toolPicker else { return }
+        let current = picker.selectedTool as? PKInkingTool
+        picker.selectedTool = PKInkingTool(
+            current?.inkType ?? .pen,
+            color: color,
+            width: current?.width ?? PKInkingTool.InkType.pen.defaultWidth
+        )
     }
 
     func debugFinishHeldExportForTesting() async {
@@ -330,6 +350,32 @@ final class PaperMarkupCanvasHostController: UIViewController {
         return insertButton
     }
 
+    private func applySelectedDrawingTool() {
+        guard !isRestoringInkingTool,
+              let paper = paperViewController,
+              let picker = toolPicker
+        else { return }
+        paper.drawingTool = PaperMarkupCanvasSession.drawingTool(from: picker)
+    }
+
+    private func persistSelectedInkingTool() {
+        guard !isRestoringInkingTool,
+              let picker = toolPicker,
+              let inking = PaperMarkupCanvasSession.drawingTool(from: picker) as? PKInkingTool
+        else { return }
+        PaperMarkupCanvasSession.LastInkingTool.save(inking)
+    }
+
+    private func restorePersistedInkingTool() {
+        guard let picker = toolPicker,
+              let tool = PaperMarkupCanvasSession.LastInkingTool.load()
+        else { return }
+        isRestoringInkingTool = true
+        picker.selectedTool = tool
+        paperViewController?.drawingTool = tool
+        isRestoringInkingTool = false
+    }
+
     private func setupPaperView() {
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0, paperViewController == nil else { return }
@@ -363,6 +409,8 @@ final class PaperMarkupCanvasHostController: UIViewController {
         picker.accessoryItem = makeInsertButton(palette: ThemeRuntimeState.currentThemeID().palette)
         // Keep picked ink colors literal. Dark-mode inversion turns white into black.
         picker.colorUserInterfaceStyle = .light
+        // Restore after the color style so saved colors stay literal.
+        picker.stateAutosaveName = PaperMarkupCanvasSession.toolPickerStateAutosaveName
         paper.pencilKitResponderState.activeToolPicker = picker
         paper.pencilKitResponderState.toolPickerVisibility = .visible
         toolPicker = picker
@@ -381,6 +429,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
         ])
         paper.didMove(toParent: self)
         paperViewController = paper
+        restorePersistedInkingTool()
         canApplyInitialFit = true
         updatePaperBottomInset()
         applyInitialFitIfNeeded(ignorePickerVisibility: true)
@@ -737,6 +786,16 @@ extension PaperMarkupCanvasHostController: PKToolPickerObserver {
         updatePaperBottomInset()
         view.layoutIfNeeded()
         applyInitialFitIfNeeded()
+    }
+
+    func toolPickerSelectedToolDidChange(_ toolPicker: PKToolPicker) {
+        applySelectedDrawingTool()
+        persistSelectedInkingTool()
+    }
+
+    func toolPickerSelectedToolItemDidChange(_ toolPicker: PKToolPicker) {
+        applySelectedDrawingTool()
+        persistSelectedInkingTool()
     }
 }
 

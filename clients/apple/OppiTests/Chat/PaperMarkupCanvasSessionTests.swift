@@ -1,4 +1,5 @@
 import PaperKit
+import PencilKit
 import Testing
 import UIKit
 @testable import Oppi
@@ -1154,6 +1155,78 @@ struct PaperMarkupCanvasSessionTests {
         #expect((presentedInsert?.preferredContentSize.height ?? 0) < 500)
     }
 
+    @Test("last inking tool payload round-trips color and width")
+    func lastInkingToolPayloadRoundTripsColorAndWidth() throws {
+        let green = UIColor(red: 0.12, green: 0.84, blue: 0.27, alpha: 1)
+        let payload = try #require(
+            PaperMarkupCanvasSession.LastInkingTool.payload(
+                from: PKInkingTool(.pen, color: green, width: 7)
+            )
+        )
+        let saved = try #require(PaperMarkupCanvasSession.LastInkingTool.tool(from: payload))
+        #expect(saved.inkType == .pen)
+        #expect(saved.width == 7)
+        #expect(rgbaMatches(saved.color, green))
+
+        PaperMarkupCanvasSession.LastInkingTool.resetForTesting()
+        defer { PaperMarkupCanvasSession.LastInkingTool.resetForTesting() }
+        PaperMarkupCanvasSession.LastInkingTool.save(saved)
+        let loaded = try #require(PaperMarkupCanvasSession.LastInkingTool.load())
+        #expect(loaded.inkType == .pen)
+        #expect(loaded.width == 7)
+        #expect(rgbaMatches(loaded.color, green))
+    }
+
+    @Test("tool picker persists state and applies selected ink to PaperKit")
+    func toolPickerPersistsStateAndAppliesSelectedInkToPaperKit() throws {
+        PaperMarkupCanvasSession.LastInkingTool.resetForTesting()
+        defer { PaperMarkupCanvasSession.LastInkingTool.resetForTesting() }
+
+        let green = UIColor(red: 0.12, green: 0.84, blue: 0.27, alpha: 1)
+        let item = PKToolPickerInkingItem(
+            type: .pen,
+            color: green,
+            width: PKInkingTool.InkType.pen.defaultWidth
+        )
+        let fromItem = try #require(PaperMarkupCanvasSession.drawingTool(from: item) as? PKInkingTool)
+        #expect(rgbaMatches(fromItem.color, green))
+
+        let host = presentedCanvasHost()
+        defer { host.view.window?.isHidden = true }
+
+        #expect(
+            host.toolPickerStateAutosaveNameForTesting
+                == PaperMarkupCanvasSession.toolPickerStateAutosaveName
+        )
+        #expect(host.toolPickerColorUserInterfaceStyleForTesting == .light)
+
+        host.debugSelectInkingColorForTesting(green)
+        let applied = try #require(host.drawingToolColorForTesting)
+        #expect(rgbaMatches(applied, green))
+        let persisted = try #require(PaperMarkupCanvasSession.LastInkingTool.load())
+        #expect(persisted.inkType == .pen)
+        #expect(rgbaMatches(persisted.color, green))
+    }
+
+    @Test("second canvas host restores the saved ink color")
+    func secondCanvasHostRestoresTheSavedInkColor() throws {
+        PaperMarkupCanvasSession.LastInkingTool.resetForTesting()
+        defer { PaperMarkupCanvasSession.LastInkingTool.resetForTesting() }
+
+        let green = UIColor(red: 0.12, green: 0.84, blue: 0.27, alpha: 1)
+        let first = presentedCanvasHost()
+        first.debugSelectInkingColorForTesting(green)
+        let persisted = try #require(PaperMarkupCanvasSession.LastInkingTool.load())
+        #expect(persisted.inkType == .pen)
+        #expect(rgbaMatches(persisted.color, green))
+        first.view.window?.isHidden = true
+
+        let second = presentedCanvasHost()
+        defer { second.view.window?.isHidden = true }
+        let restored = try #require(second.drawingToolColorForTesting)
+        #expect(rgbaMatches(restored, green))
+    }
+
     @Test("export failure keeps the canvas and shows an actionable error")
     func exportFailureKeepsCanvasAndShowsActionableError() async {
         let destination = ComposerCanvasDestination(sessionId: "session-origin") { _, _ in true }
@@ -1191,6 +1264,28 @@ struct PaperMarkupCanvasSessionTests {
             UIColor.systemBlue.setFill()
             context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         }
+    }
+
+    private func presentedCanvasHost() -> PaperMarkupCanvasHostController {
+        let host = PaperMarkupCanvasHostController(background: .blank)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UINavigationController(rootViewController: host)
+        window.makeKeyAndVisible()
+        host.loadViewIfNeeded()
+        host.view.layoutIfNeeded()
+        return host
+    }
+
+    private func rgbaMatches(_ lhs: UIColor, _ rhs: UIColor) -> Bool {
+        var lhsR: CGFloat = 0, lhsG: CGFloat = 0, lhsB: CGFloat = 0, lhsA: CGFloat = 0
+        var rhsR: CGFloat = 0, rhsG: CGFloat = 0, rhsB: CGFloat = 0, rhsA: CGFloat = 0
+        guard lhs.getRed(&lhsR, green: &lhsG, blue: &lhsB, alpha: &lhsA),
+              rhs.getRed(&rhsR, green: &rhsG, blue: &rhsB, alpha: &rhsA)
+        else { return false }
+        return abs(lhsR - rhsR) < 0.02
+            && abs(lhsG - rhsG) < 0.02
+            && abs(lhsB - rhsB) < 0.02
+            && abs(lhsA - rhsA) < 0.02
     }
 
     private func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {

@@ -1,5 +1,6 @@
 import Foundation
 import PaperKit
+import PencilKit
 import UIKit
 
 /// Shared PaperKit markup contract used by the composer and full-screen viewers.
@@ -70,6 +71,89 @@ enum PaperMarkupCanvasSession {
     ]
 
     static let writesBackToSourceFile = false
+
+    /// PencilKit persists selected tool, color, and width under this name.
+    static let toolPickerStateAutosaveName = "oppi.canvas.tool-picker"
+
+    static func drawingTool(from selectedItem: PKToolPickerItem) -> (any PKTool)? {
+        if let inking = selectedItem as? PKToolPickerInkingItem {
+            return inking.inkingTool
+        }
+        return selectedItem.tool
+    }
+
+    static func drawingTool(from picker: PKToolPicker) -> any PKTool {
+        // `selectedTool` carries the color we restore. `selectedToolItem` on a
+        // fresh picker can still hold the theme default pen.
+        if let inking = picker.selectedTool as? PKInkingTool {
+            return inking
+        }
+        if let item = picker.selectedToolItem as? PKToolPickerInkingItem {
+            return item.inkingTool
+        }
+        return picker.selectedToolItem.tool ?? picker.selectedTool
+    }
+
+    /// PencilKit's `stateAutosaveName` does not restore ink color onto a new
+    /// PaperKit picker. Keep the last inking tool ourselves and apply it.
+    enum LastInkingTool {
+        static let defaultsKey = "oppi.canvas.last-inking-tool"
+
+        static func save(_ tool: PKInkingTool, defaults: UserDefaults = .standard) {
+            guard let payload = payload(from: tool) else { return }
+            defaults.set(payload, forKey: defaultsKey)
+        }
+
+        static func load(defaults: UserDefaults = .standard) -> PKInkingTool? {
+            guard let payload = defaults.dictionary(forKey: defaultsKey) else { return nil }
+            return tool(from: payload)
+        }
+
+        static func resetForTesting(defaults: UserDefaults = .standard) {
+            defaults.removeObject(forKey: defaultsKey)
+        }
+
+        static func payload(from tool: PKInkingTool) -> [String: Any]? {
+            var red: CGFloat = 0
+            var green: CGFloat = 0
+            var blue: CGFloat = 0
+            var alpha: CGFloat = 0
+            let color = PKInkingTool.convertColor(tool.color, from: .light, to: .light)
+            guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+                return nil
+            }
+            return [
+                "inkType": tool.inkType.rawValue,
+                "red": Double(red),
+                "green": Double(green),
+                "blue": Double(blue),
+                "alpha": Double(alpha),
+                "width": Double(tool.width),
+            ]
+        }
+
+        static func tool(from payload: [String: Any]) -> PKInkingTool? {
+            guard let inkTypeRaw = payload["inkType"] as? String,
+                  let inkType = PKInkingTool.InkType(rawValue: inkTypeRaw),
+                  let red = double(payload["red"]),
+                  let green = double(payload["green"]),
+                  let blue = double(payload["blue"]),
+                  let alpha = double(payload["alpha"]),
+                  let width = double(payload["width"])
+            else { return nil }
+            return PKInkingTool(
+                inkType,
+                color: UIColor(red: red, green: green, blue: blue, alpha: alpha),
+                width: width
+            )
+        }
+
+        private static func double(_ value: Any?) -> Double? {
+            if let value = value as? Double { return value }
+            if let value = value as? NSNumber { return value.doubleValue }
+            return nil
+        }
+    }
 
     enum AddToChatDeliveryOutcome: Equatable {
         case accepted
