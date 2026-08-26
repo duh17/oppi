@@ -7,6 +7,7 @@ import SwiftUI
 struct SessionToolbar: View {
     let session: Session?
     var modelOverride: String? = nil
+    var providerOverride: String? = nil
     let thinkingLevel: ThinkingLevel
     var supportedThinkingLevels: [ThinkingLevel] = ThinkingLevel.allCases
     let onModelTap: () -> Void
@@ -26,6 +27,10 @@ struct SessionToolbar: View {
     }
 
     private var modelProvider: String? {
+        let override = providerOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let override, !override.isEmpty {
+            return override
+        }
         guard let model = effectiveModel else { return nil }
         return providerFromModel(model)
     }

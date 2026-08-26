@@ -436,12 +436,37 @@ struct NewSessionModelPresentationTests {
         )
 
         #expect(presentation.requestModelId == nil)
-        #expect(presentation.pillText == "Sonnet")
+        #expect(presentation.pillText == sonnet.id)
+        #expect(presentation.pillText != sonnet.name)
+        #expect(shortModelName(presentation.pillText) == "sonnet-4-0")
+        #expect(presentation.pillProvider == "anthropic")
         #expect(presentation.pillText != "default")
         #expect(
             NewSessionModelOverride(explicitlySelectedModelId: presentation.requestModelId)
                 .requestModelId == nil
         )
+    }
+
+    @Test func inheritedCatalogDefaultUsesModelIdNotPrettyName() {
+        let grok = ModelInfo(
+            id: "xai/grok-4.6",
+            name: "Grok 4.6",
+            provider: "xai",
+            contextWindow: 256_000,
+            isDefault: true
+        )
+        let presentation = NewSessionModelPresentation.resolve(
+            explicitlySelectedModelId: nil,
+            isAgent: false,
+            catalogModels: [grok]
+        )
+
+        #expect(presentation.requestModelId == nil)
+        #expect(presentation.pillText == grok.id)
+        #expect(presentation.pillText != grok.name)
+        #expect(shortModelName(presentation.pillText) == "grok-4.6")
+        #expect(presentation.pillProvider == "xai")
+        #expect(providerFromModel(presentation.pillText) == "xai")
     }
 
     @Test func pendingCatalogUsesModelNotDefault() {
@@ -453,6 +478,7 @@ struct NewSessionModelPresentationTests {
 
         #expect(presentation.requestModelId == nil)
         #expect(presentation.pillText == "Model")
+        #expect(presentation.pillProvider == nil)
         #expect(presentation.pillText != "default")
     }
 
@@ -465,6 +491,7 @@ struct NewSessionModelPresentationTests {
 
         #expect(presentation.requestModelId == nil)
         #expect(presentation.pillText == "Agent")
+        #expect(presentation.pillProvider == nil)
     }
 
     @Test func explicitPickIsRequestAndPill() {
@@ -475,6 +502,9 @@ struct NewSessionModelPresentationTests {
         )
 
         #expect(presentation.requestModelId == opus.id)
-        #expect(presentation.pillText == "Opus")
+        #expect(presentation.pillText == opus.id)
+        #expect(presentation.pillText != opus.name)
+        #expect(shortModelName(presentation.pillText) == "opus-4-0")
+        #expect(presentation.pillProvider == "anthropic")
     }
 }

@@ -331,6 +331,7 @@ struct GuidedControlSessionComposer: View {
         SessionToolbar(
             session: nil,
             modelOverride: effectiveModelId ?? modelPresentation.pillText,
+            providerOverride: modelPresentation.pillProvider,
             thinkingLevel: thinkingLevel,
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(
                 for: effectiveModelId,

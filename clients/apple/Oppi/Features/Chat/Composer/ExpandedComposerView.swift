@@ -39,6 +39,7 @@ struct ExpandedComposerView: View {
     let onFileSuggestionQuery: ((String?) -> Void)?
     let session: Session?
     var modelOverride: String? = nil
+    var providerOverride: String? = nil
     let thinkingLevel: ThinkingLevel
     var voiceInputManager: VoiceInputManager?
     var onPrepareVoiceInput: ((VoiceInputManager) async throws -> Void)? = nil
@@ -360,6 +361,7 @@ struct ExpandedComposerView: View {
                         SessionToolbar(
                             session: session,
                             modelOverride: modelOverride,
+                            providerOverride: providerOverride,
                             thinkingLevel: thinkingLevel,
                             supportedThinkingLevels: supportedThinkingLevels,
                             onModelTap: onModelTap,

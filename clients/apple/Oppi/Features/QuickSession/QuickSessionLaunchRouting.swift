@@ -14,9 +14,13 @@ struct NewSessionModelOverride: Equatable, Sendable {
 
 /// Display vs request split for composer model pills. Catalog `isDefault` is
 /// inherited for the label only and never copied into the create payload.
+/// `pillText` is the raw model id so SessionToolbar can show the same short
+/// id as session rows (`grok-4.6`), not the catalog pretty name.
 struct NewSessionModelPresentation: Equatable, Sendable {
     let requestModelId: String?
     let pillText: String
+    /// Catalog provider for the pill icon when the id has no `provider/` prefix.
+    let pillProvider: String?
 
     static func resolve(
         explicitlySelectedModelId: String?,
@@ -27,19 +31,30 @@ struct NewSessionModelPresentation: Equatable, Sendable {
             explicitlySelectedModelId: explicitlySelectedModelId
         ).requestModelId
         if let requestModelId {
-            let name = catalogModels.first(where: { $0.id == requestModelId })?.name
+            let catalog = catalogModels.first(where: { $0.id == requestModelId })
             return Self(
                 requestModelId: requestModelId,
-                pillText: name ?? shortModelName(requestModelId)
+                pillText: requestModelId,
+                pillProvider: Self.displayProvider(catalog?.provider)
+                    ?? providerFromModel(requestModelId)
             )
         }
         if isAgent {
-            return Self(requestModelId: nil, pillText: "Agent")
+            return Self(requestModelId: nil, pillText: "Agent", pillProvider: nil)
         }
         if let starred = catalogModels.first(where: \.isDefault) {
-            return Self(requestModelId: nil, pillText: starred.name)
+            return Self(
+                requestModelId: nil,
+                pillText: starred.id,
+                pillProvider: Self.displayProvider(starred.provider)
+            )
         }
-        return Self(requestModelId: nil, pillText: "Model")
+        return Self(requestModelId: nil, pillText: "Model", pillProvider: nil)
+    }
+
+    private static func displayProvider(_ provider: String?) -> String? {
+        let trimmed = provider?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

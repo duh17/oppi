@@ -314,6 +314,7 @@ struct QuickSessionSheet: View {
                 onFileSuggestionQuery: nil,
                 session: nil,
                 modelOverride: effectiveModelId ?? modelPresentation.pillText,
+                providerOverride: modelPresentation.pillProvider,
                 thinkingLevel: effectiveThinkingLevel,
                 voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
@@ -461,6 +462,7 @@ struct QuickSessionSheet: View {
         SessionToolbar(
             session: nil,
             modelOverride: effectiveModelId ?? modelPresentation.pillText,
+            providerOverride: modelPresentation.pillProvider,
             thinkingLevel: effectiveThinkingLevel,
             supportedThinkingLevels: ThinkingLevelMenuSource.levels(
                 for: effectiveModelId,
