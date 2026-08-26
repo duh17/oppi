@@ -936,7 +936,7 @@ struct ChatView: View {
                     onExpand: presentComposer,
                     externalFocusRequestID: composerExternalFocusRequestID,
                     appliesOuterPadding: true,
-                    alwaysShowActionRow: true,
+                    alwaysShowActionRow: false,
                     allowsExpansion: composerAskRequest == nil,
                     actionRow: {
                         composerActionRow

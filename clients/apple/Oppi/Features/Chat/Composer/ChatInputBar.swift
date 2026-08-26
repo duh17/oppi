@@ -565,7 +565,7 @@ struct ChatInputBar<ActionRow: View>: View {
                 .transition(ThemeMotion.move(edge: .bottom, reduceMotion: reduceMotion))
             }
         }
-        .frame(minHeight: 88)
+        .frame(minHeight: showsComposerActionRow ? 88 : 52)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(alignment: .topTrailing) {
@@ -967,15 +967,14 @@ struct ChatInputBar<ActionRow: View>: View {
 
     static func shouldShowComposerActionRow(
         alwaysShowActionRow: Bool,
-        isBusy: Bool,
+        isBusy _: Bool,
         isInputFocused: Bool,
-        isKeyboardSuppressed: Bool,
+        isKeyboardSuppressed _: Bool,
         hasAttachments: Bool,
         hasRepoPointers: Bool
     ) -> Bool {
         alwaysShowActionRow
-            || isBusy
-            || (isInputFocused && !isKeyboardSuppressed)
+            || isInputFocused
             || hasAttachments
             || hasRepoPointers
     }

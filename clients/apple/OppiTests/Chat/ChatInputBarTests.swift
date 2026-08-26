@@ -20,9 +20,9 @@ struct ChatInputBarTests {
         #expect(ChatInputBar<EmptyView>.allowKeyboardRestoreOnTap(voiceState: .error("boom")))
     }
 
-    @Test("Suppressed dictation focus does not expand composer action row")
-    func suppressedDictationFocusDoesNotExpandActionRow() {
-        #expect(!ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+    @Test("Dictation focus expands composer action row")
+    func dictationFocusExpandsActionRow() {
+        #expect(ChatInputBar<EmptyView>.shouldShowComposerActionRow(
             alwaysShowActionRow: false,
             isBusy: false,
             isInputFocused: true,
@@ -44,8 +44,8 @@ struct ChatInputBarTests {
         ))
     }
 
-    @Test("Unfocused composer keeps action row available while busy")
-    func unfocusedComposerKeepsActionRowVisibleWhenBusy() {
+    @Test("Unfocused composer hides plus model and thinking pills")
+    func unfocusedComposerHidesActionRowEvenWhenBusy() {
         #expect(!ChatInputBar<EmptyView>.shouldShowComposerActionRow(
             alwaysShowActionRow: false,
             isBusy: false,
@@ -54,7 +54,7 @@ struct ChatInputBarTests {
             hasAttachments: false,
             hasRepoPointers: false
         ))
-        #expect(ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+        #expect(!ChatInputBar<EmptyView>.shouldShowComposerActionRow(
             alwaysShowActionRow: false,
             isBusy: true,
             isInputFocused: false,
