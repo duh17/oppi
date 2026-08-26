@@ -48,6 +48,38 @@ struct ModelColorHelpersTests {
         #expect(abs(b.hue - c.hue) >= 0.02)
     }
 
+    @Test func grokModelsUseThemeAdaptiveMonochrome() {
+        let dark = resolvedHSBA(modelColor("xai/grok-4.6"), style: .dark)
+        let light = resolvedHSBA(modelColor("xai/grok-4.6"), style: .light)
+
+        #expect(dark.saturation < 0.08)
+        #expect(light.saturation < 0.08)
+        #expect(dark.brightness >= 0.88)
+        #expect(light.brightness <= 0.22)
+        #expect(dark.brightness > light.brightness + 0.5)
+    }
+
+    @Test func grokModelColorIgnoresProviderAndTimestamp() {
+        let direct = resolvedUIColor(modelColor("xai/grok-4.6"), style: .dark)
+        let openRouter = resolvedUIColor(modelColor("openrouter/x-ai/grok-4.6"), style: .dark)
+        let timestamped = resolvedUIColor(modelColor("xai/grok-4.6-20260301"), style: .dark)
+
+        #expect(direct == openRouter)
+        #expect(direct == timestamped)
+    }
+
+    @Test func grokFamiliesAndVersionsUseDifferentGraySteps() {
+        let flagshipDark = resolvedHSBA(modelColor("xai/grok-4.6"), style: .dark)
+        let olderDark = resolvedHSBA(modelColor("xai/grok-4.5"), style: .dark)
+        let codeDark = resolvedHSBA(modelColor("xai/grok-code-fast-1"), style: .dark)
+        let flagshipLight = resolvedHSBA(modelColor("xai/grok-4.6"), style: .light)
+        let olderLight = resolvedHSBA(modelColor("xai/grok-4.5"), style: .light)
+
+        #expect(flagshipDark.brightness > olderDark.brightness)
+        #expect(abs(flagshipDark.brightness - codeDark.brightness) >= 0.06)
+        #expect(flagshipLight.brightness < olderLight.brightness)
+    }
+
     @Test func providerLogoAssetNamesIncludeOmlx() {
         #expect(providerLogoAssetName("omlx") == "provider-omlx")
         #expect(ProviderIcon.logoAssetName(for: "omlx") == "provider-omlx")
@@ -174,5 +206,13 @@ struct ModelColorHelpersTests {
         let resolved = color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
         #expect(resolved)
         return HSBA(hue: hue, saturation: saturation, brightness: brightness, alpha: alpha)
+    }
+
+    private func resolvedUIColor(_ color: Color, style: UIUserInterfaceStyle) -> UIColor {
+        UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
+    }
+
+    private func resolvedHSBA(_ color: Color, style: UIUserInterfaceStyle) -> HSBA {
+        hsba(resolvedUIColor(color, style: style))
     }
 }

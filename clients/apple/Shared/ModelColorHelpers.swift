@@ -473,12 +473,19 @@ extension Array where Element == AggregatedStatsModel {
 /// The base hue comes from the stable model family. Version numbers increase
 /// saturation/brightness so newer stable versions read a bit louder without any
 /// manual per-release updates. Provider does not affect the color.
+///
+/// Grok/xAI is the exception: the vendor mark is monochrome, so those models
+/// stay gray and flip with the theme — near-white on dark, near-black on light.
 func modelColor(_ model: String) -> Color {
     let identity = modelDisplayIdentity(model)
     let normalized = identity.normalizedModelID
 
     guard !normalized.isEmpty, normalized != "unknown", normalized != "other" else {
         return .secondary
+    }
+
+    if normalized.contains("grok") {
+        return grokModelColor(normalizedModelID: normalized)
     }
 
     let familyKey = modelFamilyKey(from: normalized)
@@ -770,6 +777,88 @@ private func modelFamilyKey(from normalizedModelID: String) -> String {
     return family.joined(separator: "-")
 }
 
+/// xAI's mark is black/white. Flagship Grok sits nearest the extreme; other
+/// families step toward mid-gray. Newer versions move a bit closer to white
+/// on dark themes and black on light themes.
+private func grokModelColor(normalizedModelID: String) -> Color {
+    let familyKey = modelFamilyKey(from: normalizedModelID)
+    let familyStep = grokFamilyShadeStep(for: familyKey)
+    let versionOffset = grokVersionBrightnessOffset(for: normalizedModelID)
+    let variantOffset = grokVariantBrightnessOffset(for: normalizedModelID)
+
+    let darkBrightness = clamp(
+        0.82 + versionOffset + variantOffset - familyStep,
+        lower: 0.64,
+        upper: 0.98
+    )
+    let lightBrightness = clamp(
+        0.22 - versionOffset - variantOffset + familyStep,
+        lower: 0.08,
+        upper: 0.40
+    )
+
+    return themeAdaptiveGray(darkBrightness: darkBrightness, lightBrightness: lightBrightness)
+}
+
+private func grokFamilyShadeStep(for familyKey: String) -> Double {
+    if familyKey == "grok" {
+        return 0
+    }
+    if familyKey.contains("code") {
+        return 0.10
+    }
+    if familyKey.contains("vision") || familyKey.contains("image") || familyKey.contains("imagine") {
+        return 0.16
+    }
+
+    let bucket = Int(stableHash(familyKey) % 3)
+    return 0.08 + (Double(bucket) * 0.04)
+}
+
+private func grokVersionBrightnessOffset(for normalizedModelID: String) -> Double {
+    let components = modelVersionComponents(from: normalizedModelID)
+    var offset = 0.0
+    if components.indices.contains(0) {
+        offset += Double(min(components[0], 9)) * 0.006
+    }
+    if components.indices.contains(1) {
+        offset += Double(min(components[1], 9)) * 0.018
+    }
+    if components.indices.contains(2) {
+        offset += Double(min(components[2], 9)) * 0.008
+    }
+    return min(0.16, offset)
+}
+
+private func grokVariantBrightnessOffset(for normalizedModelID: String) -> Double {
+    let tokens = Set(normalizedModelID.split(separator: "-").map(String.init))
+    var offset = 0.0
+    if !tokens.isDisjoint(with: ["mini", "nano", "lite", "flash", "small", "fast"]) {
+        offset -= 0.06
+    }
+    if !tokens.isDisjoint(with: ["pro", "max", "ultra"]) {
+        offset += 0.02
+    }
+    return offset
+}
+
+private func themeAdaptiveGray(darkBrightness: Double, lightBrightness: Double) -> Color {
+    #if canImport(UIKit)
+    return Color(uiColor: UIColor { traits in
+        let brightness = traits.userInterfaceStyle == .light ? lightBrightness : darkBrightness
+        return UIColor(hue: 0, saturation: 0, brightness: brightness, alpha: 1)
+    })
+    #elseif canImport(AppKit)
+    return Color(nsColor: NSColor(name: nil) { appearance in
+        let isLight = appearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua
+        let brightness = isLight ? lightBrightness : darkBrightness
+        return NSColor(calibratedHue: 0, saturation: 0, brightness: brightness, alpha: 1)
+    })
+    #else
+    return Color(hue: 0, saturation: 0, brightness: darkBrightness)
+    #endif
+}
+
 private func baseHue(for familyKey: String, normalizedModelID: String) -> Double {
     if normalizedModelID.hasPrefix("gpt") || normalizedModelID.hasPrefix("o1") || normalizedModelID.hasPrefix("o3") || normalizedModelID.hasPrefix("o4") || normalizedModelID.contains("codex") {
         return 0.36
@@ -788,9 +877,6 @@ private func baseHue(for familyKey: String, normalizedModelID: String) -> Double
     }
     if normalizedModelID.contains("glm") {
         return 0.52
-    }
-    if normalizedModelID.contains("grok") {
-        return 0.14
     }
     if normalizedModelID.contains("mistral") || normalizedModelID.contains("magistral") {
         return 0.0
