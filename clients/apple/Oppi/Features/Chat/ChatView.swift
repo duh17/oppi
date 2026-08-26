@@ -687,7 +687,8 @@ struct ChatView: View {
                             attachment: attachment,
                             recognizedText: recognizedText
                         )
-                    }
+                    },
+                    reviewCommentSelectionRouter: reviewCommentSelectionRouter
                 )
             }
             .onChange(of: chatState.extensionEditorTextUpdate?.revision) { _, _ in

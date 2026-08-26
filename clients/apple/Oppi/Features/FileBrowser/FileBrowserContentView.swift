@@ -117,6 +117,7 @@ struct FileBrowserContentView: View {
     var lineAnchor: SourceLineAnchor?
     var onLineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     var markdownViewportRestore: Binding<FullScreenMarkdownViewportRestoreState>? = nil
+    var addToChatDestination: ComposerCanvasDestination? = nil
 
     static func restoreStore(
         for host: FileBrowserMarkdownViewportRestoreHost,
@@ -259,11 +260,13 @@ struct FileBrowserContentView: View {
             if shouldUseEmbeddedFileViewer {
                 EmbeddedFileViewerView(
                     content: fullScreenContent(text: text),
+                    reviewCommentSessionId: sessionId,
                     lineAnchor: activeSelection == nil ? lineAnchor : nil,
                     lineAnchorNotice: onLineAnchorNotice,
                     showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
                     backSwipeAction: navigateBackToFileList,
-                    markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath)
+                    markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath),
+                    addToChatDestination: addToChatDestination
                 )
                 .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
             } else {

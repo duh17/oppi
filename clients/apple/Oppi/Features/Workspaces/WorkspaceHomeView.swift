@@ -108,6 +108,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
     let kind: WorkspaceLinkedFileKind
     let navigationContext: FileBrowserNavigationContext?
     let lineAnchor: SourceLineAnchor?
+    let sourceSessionId: String?
 
     init(
         serverId: String,
@@ -115,7 +116,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         worktreeId: String? = nil,
         kind: WorkspaceLinkedFileKind,
         navigationContext: FileBrowserNavigationContext? = nil,
-        lineAnchor: SourceLineAnchor? = nil
+        lineAnchor: SourceLineAnchor? = nil,
+        sourceSessionId: String? = nil
     ) {
         self.serverId = serverId
         self.workspaceId = workspaceId
@@ -123,6 +125,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         self.kind = kind
         self.navigationContext = navigationContext
         self.lineAnchor = lineAnchor
+        self.sourceSessionId = sourceSessionId
     }
 
     static func workspaceFile(
@@ -132,7 +135,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         path: String,
         fileName: String? = nil,
         navigationContext: FileBrowserNavigationContext? = nil,
-        lineAnchor: SourceLineAnchor? = nil
+        lineAnchor: SourceLineAnchor? = nil,
+        sourceSessionId: String? = nil
     ) -> WorkspaceLinkedFileNavTarget {
         let resolvedFileName: String
         if let fileName, !fileName.isEmpty {
@@ -147,7 +151,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             worktreeId: worktreeId,
             kind: .workspaceFile(path: path, fileName: resolvedFileName),
             navigationContext: navigationContext,
-            lineAnchor: lineAnchor
+            lineAnchor: lineAnchor,
+            sourceSessionId: sourceSessionId
         )
     }
 
@@ -156,7 +161,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         workspaceId: String,
         path: String,
         fileName: String? = nil,
-        lineAnchor: SourceLineAnchor? = nil
+        lineAnchor: SourceLineAnchor? = nil,
+        sourceSessionId: String? = nil
     ) -> WorkspaceLinkedFileNavTarget {
         let resolvedFileName: String
         if let fileName, !fileName.isEmpty {
@@ -169,7 +175,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             serverId: serverId,
             workspaceId: workspaceId,
             kind: .hostFile(path: path, fileName: resolvedFileName),
-            lineAnchor: lineAnchor
+            lineAnchor: lineAnchor,
+            sourceSessionId: sourceSessionId
         )
     }
 }
@@ -325,6 +332,7 @@ struct WorkspaceLinkedFileDestinationView: View {
                         onLineAnchorNotice: { connection.extensionToast = $0 },
                         store: $markdownViewportRestore
                     )
+                    .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
                     .withServerScopedEnvironment(connection)
                 case .hostFile(let path, let fileName):
                     hostFileContent(
@@ -333,16 +341,33 @@ struct WorkspaceLinkedFileDestinationView: View {
                         onLineAnchorNotice: { connection.extensionToast = $0 },
                         store: $markdownViewportRestore
                     )
+                    .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
                     .withServerScopedEnvironment(connection)
                 }
             } else {
                 ProgressView("Connecting…")
             }
         }
+        .background {
+            if let addToChatDestination {
+                ComposerCanvasDestinationAnchor(destination: addToChatDestination)
+            }
+        }
         .task(id: target.serverId) {
             guard await coordinator.switchToServerReady(target.serverId) else { return }
             scopedConnection = coordinator.connection(for: target.serverId)
         }
+    }
+
+    private var reviewCommentSelectionScope: ReviewCommentSelectionScope? {
+        Self.reviewCommentSelectionScope(sourceSessionId: target.sourceSessionId)
+    }
+
+    private var addToChatDestination: ComposerCanvasDestination? {
+        Self.capturedAddToChatDestination(
+            sourceSessionId: target.sourceSessionId,
+            current: ComposerCanvasActiveDestination.current
+        )
     }
 
     private func workspaceFileContent(
@@ -358,6 +383,7 @@ struct WorkspaceLinkedFileDestinationView: View {
             serverId: target.serverId,
             filePath: path,
             fileName: fileName,
+            sessionId: target.sourceSessionId,
             workspaceRuntime: workspaceRuntime,
             navigationContext: target.navigationContext,
             lineAnchor: target.lineAnchor,
@@ -365,7 +391,8 @@ struct WorkspaceLinkedFileDestinationView: View {
             markdownViewportRestore: FileBrowserContentView.restoreStore(
                 for: .workspaceLinkedDestination,
                 store: store
-            )
+            ),
+            addToChatDestination: addToChatDestination
         )
     }
 
@@ -381,13 +408,35 @@ struct WorkspaceLinkedFileDestinationView: View {
             filePath: path,
             fileName: fileName,
             source: .hostFile,
+            sessionId: target.sourceSessionId,
             lineAnchor: target.lineAnchor,
             onLineAnchorNotice: onLineAnchorNotice,
             markdownViewportRestore: FileBrowserContentView.restoreStore(
                 for: .workspaceLinkedDestination,
                 store: store
-            )
+            ),
+            addToChatDestination: addToChatDestination
         )
+    }
+}
+
+extension WorkspaceLinkedFileDestinationView {
+    static func reviewCommentSelectionScope(sourceSessionId: String?) -> ReviewCommentSelectionScope? {
+        guard let sourceSessionId,
+              let router = ReviewCommentSelectionActiveRouter.router(for: sourceSessionId) else {
+            return nil
+        }
+        return .activeSession(router)
+    }
+
+    static func capturedAddToChatDestination(
+        sourceSessionId: String?,
+        current: ComposerCanvasDestination?
+    ) -> ComposerCanvasDestination? {
+        guard let sourceSessionId, let current, current.sessionId == sourceSessionId else {
+            return nil
+        }
+        return current
     }
 }
 

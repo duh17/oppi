@@ -758,10 +758,12 @@ struct ComposerAttachmentPill: View {
 
 struct ComposerCanvasDestinationAnchor: UIViewControllerRepresentable {
     let destination: ComposerCanvasDestination
+    var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
 
     func makeUIViewController(context: Context) -> ComposerCanvasDestinationAnchorController {
         let controller = ComposerCanvasDestinationAnchorController()
         controller.destination = destination
+        controller.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         return controller
     }
 
@@ -770,6 +772,7 @@ struct ComposerCanvasDestinationAnchor: UIViewControllerRepresentable {
         context: Context
     ) {
         uiViewController.destination = destination
+        uiViewController.reviewCommentSelectionRouter = reviewCommentSelectionRouter
     }
 }
 

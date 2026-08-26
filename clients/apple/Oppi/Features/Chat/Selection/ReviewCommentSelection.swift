@@ -65,6 +65,37 @@ final class ReviewCommentSelectionRouter {
     }
 }
 
+/// Session-keyed live ChatView routers. Covering a chat must not unregister;
+/// drop the entry only when that chat is removed or replaced.
+@MainActor
+enum ReviewCommentSelectionActiveRouter {
+    private static var routersBySessionId: [String: ReviewCommentSelectionRouter] = [:]
+
+    static func router(for sessionId: String) -> ReviewCommentSelectionRouter? {
+        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return routersBySessionId[trimmed]
+    }
+
+    static func register(_ router: ReviewCommentSelectionRouter, sessionId: String) {
+        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        routersBySessionId[trimmed] = router
+    }
+
+    static func unregister(_ router: ReviewCommentSelectionRouter, sessionId: String) {
+        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if routersBySessionId[trimmed] === router {
+            routersBySessionId.removeValue(forKey: trimmed)
+        }
+    }
+
+    static func resetForTesting() {
+        routersBySessionId.removeAll()
+    }
+}
+
 enum ReviewCommentSurfaceKind: Equatable {
     case assistantProse
     case userMessage

@@ -449,6 +449,7 @@ extension UIViewController {
 
 final class ComposerCanvasDestinationAnchorController: UIViewController {
     private var storedDestination: ComposerCanvasDestination?
+    private var storedReviewCommentRouter: ReviewCommentSelectionRouter?
 
     var destination: ComposerCanvasDestination? {
         get { storedDestination }
@@ -459,36 +460,61 @@ final class ComposerCanvasDestinationAnchorController: UIViewController {
                 current.adoptAcceptHandler(from: next)
                 install()
                 publishIfVisible()
+                publishReviewCommentRouter()
                 return
             }
             if storedDestination !== newValue {
                 if let oldValue = storedDestination {
                     ComposerCanvasActiveDestination.pop(oldValue)
+                    unregisterReviewCommentRouter(sessionId: oldValue.sessionId)
                 }
                 storedDestination = newValue
             }
             install()
             publishIfVisible()
+            publishReviewCommentRouter()
+        }
+    }
+
+    var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? {
+        get { storedReviewCommentRouter }
+        set {
+            if storedReviewCommentRouter !== newValue {
+                if let oldRouter = storedReviewCommentRouter,
+                   let sessionId = storedDestination?.sessionId {
+                    ReviewCommentSelectionActiveRouter.unregister(oldRouter, sessionId: sessionId)
+                }
+                storedReviewCommentRouter = newValue
+            }
+            publishReviewCommentRouter()
         }
     }
 
     override func didMove(toParent parent: UIViewController?) {
         super.didMove(toParent: parent)
+        if parent == nil {
+            if let destination {
+                ComposerCanvasActiveDestination.pop(destination)
+            }
+            unregisterReviewCommentRouter(sessionId: storedDestination?.sessionId)
+            return
+        }
         install()
         publishIfVisible()
+        publishReviewCommentRouter()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         install()
         publishIfVisible()
+        publishReviewCommentRouter()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        if let destination {
-            ComposerCanvasActiveDestination.pop(destination)
-        }
+        // Covering the chat (wiki-link push) must leave Add to Chat wired.
+        // Pop only when this chat is actually removed or replaced.
     }
 
     private func install() {
@@ -499,5 +525,16 @@ final class ComposerCanvasDestinationAnchorController: UIViewController {
     private func publishIfVisible() {
         guard viewIfLoaded?.window != nil, let destination else { return }
         ComposerCanvasActiveDestination.push(destination)
+    }
+
+    private func publishReviewCommentRouter() {
+        guard let sessionId = storedDestination?.sessionId,
+              let router = storedReviewCommentRouter else { return }
+        ReviewCommentSelectionActiveRouter.register(router, sessionId: sessionId)
+    }
+
+    private func unregisterReviewCommentRouter(sessionId: String?) {
+        guard let sessionId, let router = storedReviewCommentRouter else { return }
+        ReviewCommentSelectionActiveRouter.unregister(router, sessionId: sessionId)
     }
 }

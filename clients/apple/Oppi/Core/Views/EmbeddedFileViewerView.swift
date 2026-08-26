@@ -64,6 +64,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var backSwipeAction: (@MainActor @Sendable () -> Void)?
     var navigationActions: [FullScreenViewerNavigationAction] = []
     var markdownViewportIntent: Binding<FullScreenMarkdownViewportIntent?>? = nil
+    var addToChatDestination: ComposerCanvasDestination? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -99,7 +100,8 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
             markdownViewportIntent: viewportBinding?.wrappedValue,
             onMarkdownViewportIntentChange: { intent in
                 viewportBinding?.wrappedValue = intent
-            }
+            },
+            addToChatDestination: addToChatDestination
         )
     }
 
@@ -110,4 +112,21 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
         uiViewController.setNavigationActions(navigationActions)
         uiViewController.applyThemeIfNeeded(themeID)
     }
+
+#if DEBUG
+    func debugMakeControllerForTesting() -> FullScreenCodeViewController {
+        FullScreenCodeViewController(
+            content: content,
+            presentationMode: showsNavigationChrome
+                ? .embedded(onDismiss: {})
+                : .contentOnly(onBackSwipe: {}),
+            reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
+            lineAnchor: lineAnchor,
+            lineAnchorNotice: lineAnchorNotice,
+            navigationActions: navigationActions,
+            markdownViewportIntent: markdownViewportIntent?.wrappedValue,
+            addToChatDestination: addToChatDestination
+        )
+    }
+#endif
 }

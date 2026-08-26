@@ -778,7 +778,7 @@ struct PaperMarkupCanvasSessionTests {
         #expect(pending.first?.id == next.id)
     }
 
-    @Test("visible chat destination updates from session A to B and clears on disappear")
+    @Test("visible chat destination updates from session A to B and survives cover")
     func visibleChatDestinationUpdatesFromAToBAndClearsOnDisappear() {
         ComposerCanvasActiveDestination.resetForTesting()
         defer { ComposerCanvasActiveDestination.resetForTesting() }
@@ -803,7 +803,61 @@ struct PaperMarkupCanvasSessionTests {
         anchor.destination = second
         #expect(ComposerCanvasActiveDestination.current?.sessionId == "session-b")
 
+        // Covering the chat (wiki-link push) must not drop Add to Chat.
         anchor.viewDidDisappear(false)
+        #expect(ComposerCanvasActiveDestination.current?.sessionId == "session-b")
+    }
+
+    @Test("visible chat destination pops only when the chat is removed")
+    func visibleChatDestinationPopsOnlyWhenChatIsRemoved() {
+        ComposerCanvasActiveDestination.resetForTesting()
+        defer { ComposerCanvasActiveDestination.resetForTesting() }
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let anchor = ComposerCanvasDestinationAnchorController()
+        host.addChild(anchor)
+        host.view.addSubview(anchor.view)
+        anchor.didMove(toParent: host)
+        anchor.viewDidAppear(false)
+        anchor.destination = ComposerCanvasDestination(sessionId: "session-a") { _, _ in true }
+        #expect(ComposerCanvasActiveDestination.current?.sessionId == "session-a")
+
+        anchor.viewDidDisappear(false)
+        #expect(ComposerCanvasActiveDestination.current?.sessionId == "session-a")
+
+        anchor.willMove(toParent: nil)
+        anchor.view.removeFromSuperview()
+        anchor.removeFromParent()
+        #expect(ComposerCanvasActiveDestination.current == nil)
+    }
+
+    @Test("visible chat destination pops while still in the window")
+    func visibleChatDestinationPopsWhileStillInTheWindow() {
+        ComposerCanvasActiveDestination.resetForTesting()
+        defer { ComposerCanvasActiveDestination.resetForTesting() }
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let anchor = ComposerCanvasDestinationAnchorController()
+        host.addChild(anchor)
+        host.view.addSubview(anchor.view)
+        anchor.didMove(toParent: host)
+        anchor.viewDidAppear(false)
+        anchor.destination = ComposerCanvasDestination(sessionId: "session-a") { _, _ in true }
+        #expect(ComposerCanvasActiveDestination.current?.sessionId == "session-a")
+
+        anchor.willMove(toParent: nil)
+        anchor.removeFromParent()
+        #expect(anchor.view.window != nil)
         #expect(ComposerCanvasActiveDestination.current == nil)
     }
 

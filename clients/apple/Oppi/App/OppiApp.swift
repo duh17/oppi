@@ -1054,7 +1054,8 @@ struct OppiApp: App {
                     workspaceId: file.workspaceID,
                     worktreeId: file.worktreeID,
                     path: file.path,
-                    lineAnchor: reference.lineAnchor
+                    lineAnchor: reference.lineAnchor,
+                    sourceSessionId: reference.sourceSessionID
                 ),
                 workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
                 sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
@@ -1094,7 +1095,8 @@ struct OppiApp: App {
                     serverId: file.serverID,
                     workspaceId: reference.workspaceID ?? "",
                     path: file.path,
-                    lineAnchor: reference.lineAnchor
+                    lineAnchor: reference.lineAnchor,
+                    sourceSessionId: reference.sourceSessionID
                 ),
                 sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
                     reference.sourceServerID.map { sourceServerID in
