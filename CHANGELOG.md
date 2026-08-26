@@ -38,38 +38,44 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.1` build `46`, unpublished `oppi-server@0.47.0` with bundled Pi runtime `0.84.3`, and unpublished `oppi-mirror@0.47.0`.
+Target: iOS `1.1.2` build `47`, unpublished `oppi-server@0.47.3` with bundled Pi runtime `0.84.3`, and unpublished `oppi-mirror@0.47.3`.
 
 ### Added
 
-- **Client:** The model picker star saves that model as the Pi global default. Tapping a row still switches only the current session.
-- **Client:** The thinking popover can save the current level as default. Picking a level stays session-only.
-- **Client:** Session search lives in the bottom toolbar. Quick Session can pick a worktree, and `/` autocompletes workspace prompts and Skills before the session exists.
-- **Client/Server:** Skill Edit uses the guided composer. Wiki links can open host files the server can already read and focus line anchors.
-- **Client:** Double-tap zooms diagrams and images. Settings includes Privacy Policy and Support pages.
-- **Server:** `oppi quota` prints provider usage windows. Session and Agent create accept Pi tool and thinking flags.
-- **Server:** Allowlisted sandbox Oppi can spawn and steer sessions only in that workspace. Guest `ls` hides secret names.
-- **Server:** Clean, already-merged Oppi worktree removes skip the approval prompt under confirmDestructiveOnly.
+- **Client:** Oppi-backed wiki video embeds play inline at 16:9.
+- **Client:** Compact mode keeps live work condensed into compact strips for a quieter timeline.
+- **Client:** Composer Canvas and Annotate use PaperKit and attach a PNG to the originating chat.
+- **Client:** Mermaid diagrams are more polished: they use the app theme, render clearer nodes, and cover more graph types, including top-down timelines, horizontal XY charts, gitGraph, quadrant, sankey, kanban, and journey.
+- **Client/Server:** Tokyo Night and Rosé Pine ship as importable server themes.
+- **Client/Server:** Model Providers show remaining percent and pace.
+- **Server:** `oppi session list` can filter by activity time. `oppi session wait` polls until idle or attention and can print a compact still-waiting summary.
+- **Client:** The composer keeps queued photos and files.
+- **Server:** Sandbox sessions can mount a guest `.pi` overlay and keep selected host extension tools on first boot or a recycled VM.
 
 ### Changed
 
-- **Client:** Thinking menus list only the current model's supported levels. Failed compaction shows the error instead of looking cancelled.
-- **Compatibility:** Build 46 requires `oppi-server@0.47.0` and `oppi-mirror@0.47.0`.
-- **Client/Server:** Pairing uses a per-device key and short-lived HTTPS token. Iroh pairing is gone; re-pair over HTTPS or Tailscale if there is no HTTPS endpoint.
-- **Client/Server:** Public session identity is Pi `Session.id` only.
-- **Server:** Bundled Pi runtime packages move from `0.84.2` to `0.84.3`.
-- **Mirror:** The extension connects over the owner Unix socket. Slash input from Oppi expands as Pi commands.
+- **Compatibility:** Build 47 requires unpublished `oppi-server@0.47.3` and `oppi-mirror@0.47.3`. npm `latest` is still `0.47.2`. Bundled and installed Pi is `0.84.3`.
+- **Client:** Markdown rendering and streaming are refactored for better performance and stability. Live documents settle on one streaming clock and keep your place when a document finishes.
+- **Client:** Model and thinking defaults use Pi 0.84.3. The picker star saves the Pi global default. A row tap stays on the current session. Thinking menus list the current model's supported levels and can Save as Default. The default composer and Quick Session pill show the catalog model id and provider icon.
+- **Client:** Full-screen diffs were consolidated onto one word-level highlighter so completed views show changed words consistently.
+- **Client:** Appearance retints more surfaces when Light/Dark changes.
+- **Server:** Bundled Pi runtime packages move from `0.84.2` to `0.84.3` in lockfile, package manifests, and installed `node_modules`.
 
 ### Fixed
 
-- **Client:** TestFlight Build 45 could crash shortly after launch when MetricKit delivered a nested diagnostic.
-- **Client:** Wrapped Markdown tables no longer paint later rows over earlier cells.
-- **Client:** Chat Files → Changed uses the same header search as All.
-- **Client:** A ready session no longer opens empty when a web-search snippet cuts a UTF-16 surrogate pair.
+- **Client:** Compact inbox still scrolls while the sidebar is revealing.
+- **Client:** Wiki table links open, and the chat back stack returns to the prior offset.
+- **Client:** Wiki-linked files keep Comment and Annotate, and Annotate attaches a PNG to the source chat.
+- **Client:** Large Org files virtualize instead of freezing the reader.
+- **Client:** Inline LaTeX keeps escaped underscores and common TeX delimiter / iff aliases.
+- **Client:** Access-token renewal keeps the same connection. The focused chat recovers its session stream and shows recovering when that stream is down.
+- **Client:** Assistant history uses Pi entry ids to reduce duplicate rows.
 
 ### Removed
 
-- **Client/Server:** Iroh pairing and the public `piSessionId` dual-ID path.
+- **Client:** Nearby-Mac pairing is gone from onboarding.
+- **Client/Server:** The default Oppi agent and Oppi wrapper extension are gone. Control uses ordinary Pi and the `oppi` CLI.
+- **Client:** Quick Session last-model memory and workspace default-model settings. New sessions use the Pi default.
 
 ## [0.46.0] - 2026-08-10
 

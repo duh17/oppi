@@ -469,18 +469,18 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "workspace-edit-skills")
     }
 
-    func testWhatsNewBuild46LightScreenshot() throws {
+    func testWhatsNewBuild47LightScreenshot() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(screen: "whats-new-build46-light", reduceMotion: true)
-        assertWhatsNewBuild46Content()
-        saveScreenshot(name: "whats-new-build46-light")
+        launchPreview(screen: "whats-new-build47-light", reduceMotion: true)
+        assertWhatsNewBuild47Content()
+        saveScreenshot(name: "whats-new-build47-light")
     }
 
-    func testWhatsNewBuild46DarkScreenshot() throws {
+    func testWhatsNewBuild47DarkScreenshot() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(screen: "whats-new-build46-dark", reduceMotion: true)
-        assertWhatsNewBuild46Content()
-        saveScreenshot(name: "whats-new-build46-dark")
+        launchPreview(screen: "whats-new-build47-dark", reduceMotion: true)
+        assertWhatsNewBuild47Content()
+        saveScreenshot(name: "whats-new-build47-dark")
     }
 
     func testModelProvidersQuotaInlinePreview() throws {
@@ -1417,7 +1417,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         )
     }
 
-    private func assertWhatsNewBuild46Content() {
+    private func assertWhatsNewBuild47Content() {
         // The launch arguments request reduced motion; this extra settle makes
         // the artifact safe even on simulators that ignore that preference.
         sleep(1)
@@ -1427,38 +1427,43 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 5), "What’s New title not visible")
         XCTAssertTrue(caption.waitForExistence(timeout: 5), "Build caption not visible")
         XCTAssertEqual(title.label, "What’s New in Oppi")
-        XCTAssertEqual(caption.label, "Version 1.1.1")
+        XCTAssertEqual(caption.label, "Version 1.1.2")
 
         let expectedFeatures = [
             (
-                id: "device-https",
-                title: "Pair over HTTPS or Tailscale",
-                description: "Iroh is gone. Pair again if there is no HTTPS endpoint."
+                id: "hardened-markdown",
+                title: "Hardened Markdown",
+                description: "Rendering and streaming are refactored, with fewer crash risks."
             ),
             (
-                id: "session-search",
-                title: "Search from the bottom bar",
-                description: "Matches stay in a flat Results list, not hidden inside day groups."
+                id: "native-mermaid",
+                title: "More polished Mermaid diagrams",
+                description: "Diagrams use the app theme, render clearer nodes, and cover more graph types."
             ),
             (
-                id: "wiki-links",
-                title: "Wiki links open cited lines",
-                description: "Tap a cited line or range, or a host-file link the server can already read."
+                id: "inline-wiki-video",
+                title: "Inline wiki videos",
+                description: "Oppi-backed videos play in the chat timeline."
             ),
             (
-                id: "quick-session",
-                title: "Quick Session worktrees",
-                description: "Pick a worktree, then type / to autocomplete prompts and Skills."
+                id: "compact-mode",
+                title: "Compact mode",
+                description: "Live work stays condensed into compact strips for a quieter timeline."
             ),
             (
-                id: "skill-edit",
-                title: "Skill Edit uses the composer",
-                description: "Change a Skill through the guided composer."
+                id: "paperkit-canvas",
+                title: "Canvas and Annotate",
+                description: "Sketch or mark up from chat. Add to Chat attaches a PNG to this chat."
             ),
             (
-                id: "provider-quotas",
-                title: "OpenCode Go quotas",
-                description: "Model Providers shows OpenCode Go usage next to Codex and xAI."
+                id: "importable-themes",
+                title: "Tokyo Night and Rosé Pine",
+                description: "Import these server themes. They are not built-in iOS presets."
+            ),
+            (
+                id: "quota-pace",
+                title: "Quota remaining and pace",
+                description: "Model Providers show remaining percent and burn pace, not only used."
             ),
         ]
 

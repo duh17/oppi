@@ -78,56 +78,56 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Build 46 · Changes since Build 45
+    /// Build 47 · Changes since Build 46
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "device-https",
-            icon: "lock.iphone",
-            iconColor: .themeGreen,
-            title: String(localized: "Pair over HTTPS or Tailscale"),
-            description: String(localized: "Iroh is gone. Pair again if there is no HTTPS endpoint.")
-        ),
-        WhatsNewFeature(
-            id: "session-search",
-            icon: "magnifyingglass",
+            id: "hardened-markdown",
+            icon: "doc.richtext",
             iconColor: .themeBlue,
-            title: String(localized: "Search from the bottom bar"),
-            description: String(localized: "Matches stay in a flat Results list, not hidden inside day groups.")
+            title: String(localized: "Hardened Markdown"),
+            description: String(localized: "Rendering and streaming are refactored, with fewer crash risks.")
         ),
         WhatsNewFeature(
-            id: "wiki-links",
-            icon: "link",
+            id: "native-mermaid",
+            icon: "point.3.connected.trianglepath.dotted",
             iconColor: .themeCyan,
-            title: String(localized: "Wiki links open cited lines"),
-            description: String(localized: "Tap a cited line or range, or a host-file link the server can already read.")
+            title: String(localized: "More polished Mermaid diagrams"),
+            description: String(localized: "Diagrams use the app theme, render clearer nodes, and cover more graph types.")
         ),
         WhatsNewFeature(
-            id: "quick-session",
-            icon: "plus.circle",
+            id: "inline-wiki-video",
+            icon: "play.rectangle",
             iconColor: .themeOrange,
-            title: String(localized: "Quick Session worktrees"),
-            description: String(localized: "Pick a worktree, then type / to autocomplete prompts and Skills.")
+            title: String(localized: "Inline wiki videos"),
+            description: String(localized: "Oppi-backed videos play in the chat timeline.")
         ),
         WhatsNewFeature(
-            id: "skill-edit",
-            icon: "book.closed",
-            iconColor: .themePurple,
-            title: String(localized: "Skill Edit uses the composer"),
-            description: String(localized: "Change a Skill through the guided composer.")
-        ),
-        WhatsNewFeature(
-            id: "provider-quotas",
-            icon: "cpu",
-            iconColor: .themeBlue,
-            title: String(localized: "OpenCode Go quotas"),
-            description: String(localized: "Model Providers shows OpenCode Go usage next to Codex and xAI.")
-        ),
-        WhatsNewFeature(
-            id: "chat-reliability",
-            icon: "arrow.triangle.2.circlepath",
+            id: "compact-mode",
+            icon: "rectangle.split.1x2",
             iconColor: .themeGreen,
-            title: String(localized: "Chat and timeline stay steady"),
-            description: String(localized: "Rows hold position in live updates; recovery avoids duplicate or empty rows where supported, while cached inbox/session state stays visible through brief HTTPS transitions.")
+            title: String(localized: "Compact mode"),
+            description: String(localized: "Live work stays condensed into compact strips for a quieter timeline.")
+        ),
+        WhatsNewFeature(
+            id: "paperkit-canvas",
+            icon: "pencil.and.outline",
+            iconColor: .themePurple,
+            title: String(localized: "Canvas and Annotate"),
+            description: String(localized: "Sketch or mark up from chat. Add to Chat attaches a PNG to this chat.")
+        ),
+        WhatsNewFeature(
+            id: "importable-themes",
+            icon: "paintpalette",
+            iconColor: .themeOrange,
+            title: String(localized: "Tokyo Night and Rosé Pine"),
+            description: String(localized: "Import these server themes. They are not built-in iOS presets.")
+        ),
+        WhatsNewFeature(
+            id: "quota-pace",
+            icon: "gauge.with.dots.needle.67percent",
+            iconColor: .themeBlue,
+            title: String(localized: "Quota remaining and pace"),
+            description: String(localized: "Model Providers show remaining percent and burn pace, not only used.")
         ),
     ]
 
