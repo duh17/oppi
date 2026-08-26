@@ -173,6 +173,27 @@ struct LiveStreamingPresentationTests {
         apply("Hello world", isStreaming: false, to: activeApplier)
         #expect(activeDriver.cancelCount == 1)
         #expect(activeApplier.debugActiveChunkRangeForTesting == nil)
+        #expect(activeApplier.debugRenderingAlphaForTesting(at: 5) == nil)
+    }
+
+    @Test("cancelled fade paints full color before dropping the overlay")
+    func cancelledFadePaintsFullColorBeforeDroppingOverlay() throws {
+        let animationDriver = MarkdownChunkSettleAnimationDriverSpy()
+        let applier = makeMarkdownApplier(
+            motionAllowed: { true },
+            animationDriver: animationDriver
+        )
+
+        apply("Hello", isStreaming: true, to: applier)
+        apply("Hello world", isStreaming: true, to: applier)
+        animationDriver.advance(to: 0.35)
+        let fadedAlpha = try #require(applier.debugRenderingAlphaForTesting(at: 5))
+        #expect(fadedAlpha > 0 && fadedAlpha < 1)
+
+        apply("Hello worlds", isStreaming: true, to: applier)
+        let snapAlpha = try #require(applier.debugCancelSnapAlphaForTesting)
+        #expect(snapAlpha > 0.99, "cancel must paint the previous chunk at full color before removing the overlay")
+        #expect(applier.debugRenderingAlphaForTesting(at: 5) == nil)
     }
 
     private func makeMarkdownApplier(

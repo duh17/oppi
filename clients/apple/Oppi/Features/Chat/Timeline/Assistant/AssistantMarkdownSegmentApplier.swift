@@ -108,6 +108,10 @@ private final class MarkdownChunkSettleAnimator {
     private let animationDriver: MarkdownChunkSettleAnimationDriver
     private weak var activeTextView: UITextView?
     private var activeRange: NSRange?
+    private var activeColorRuns: [ColorRun] = []
+    #if DEBUG
+    private(set) var lastCancelSnapAlphaForTesting: CGFloat?
+    #endif
 
     init(
         motionAllowed: @escaping @MainActor @Sendable () -> Bool,
@@ -141,25 +145,23 @@ private final class MarkdownChunkSettleAnimator {
         layoutManager.addRenderingAttribute(.foregroundColor, value: UIColor.clear, for: textRange)
         activeTextView = textView
         activeRange = range
+        activeColorRuns = colorRuns
 
         animationDriver.start(
             duration: Self.duration,
             update: { [weak self, weak textView] progress in
                 guard let self, let textView, self.activeTextView === textView,
-                      self.activeRange == range,
-                      let layoutManager = textView.textLayoutManager else { return }
-                for run in colorRuns {
-                    guard let runRange = Self.textRange(run.range, in: layoutManager) else { continue }
-                    let color = run.color.withAlphaComponent(run.color.cgColor.alpha * progress)
-                    layoutManager.addRenderingAttribute(.foregroundColor, value: color, for: runRange)
-                }
+                      self.activeRange == range else { return }
+                self.paintActiveRuns(progress: progress, in: textView)
             },
             completion: { [weak self, weak textView] in
                 guard let self, let textView, self.activeTextView === textView,
                       self.activeRange == range else { return }
+                self.paintActiveRuns(progress: 1, in: textView)
                 self.removeRenderingOverride(range, from: textView)
                 self.activeTextView = nil
                 self.activeRange = nil
+                self.activeColorRuns = []
             }
         )
     }
@@ -168,16 +170,38 @@ private final class MarkdownChunkSettleAnimator {
         guard let range = activeRange else { return }
         animationDriver.cancel()
         if let textView = activeTextView {
+            // Removing the overlay does not rebuild already-drawn fragments.
+            // Paint the document color at full alpha first so cancelled chunks
+            // cannot stay on the last faded frame.
+            paintActiveRuns(progress: 1, in: textView)
+            #if DEBUG
+            lastCancelSnapAlphaForTesting = renderingAlphaForTesting(at: range.location)
+            #endif
             removeRenderingOverride(range, from: textView)
         }
         activeTextView = nil
         activeRange = nil
+        activeColorRuns = []
+    }
+
+    private func paintActiveRuns(progress: CGFloat, in textView: UITextView) {
+        guard let layoutManager = textView.textLayoutManager else { return }
+        for run in activeColorRuns {
+            guard let runRange = Self.textRange(run.range, in: layoutManager) else { continue }
+            let color = run.color.withAlphaComponent(run.color.cgColor.alpha * progress)
+            layoutManager.addRenderingAttribute(.foregroundColor, value: color, for: runRange)
+        }
     }
 
     private func removeRenderingOverride(_ range: NSRange, from textView: UITextView) {
-        guard let layoutManager = textView.textLayoutManager,
-              let textRange = Self.textRange(range, in: layoutManager) else { return }
+        guard let layoutManager = textView.textLayoutManager else { return }
+        // Rendering attributes only apply on the next fragment layout. Removing
+        // the overlay without invalidating leaves the last faded glyphs on screen.
+        let textRange = Self.textRange(range, in: layoutManager) ?? layoutManager.documentRange
         layoutManager.removeRenderingAttribute(.foregroundColor, for: textRange)
+        layoutManager.invalidateLayout(for: textRange)
+        layoutManager.ensureLayout(for: textRange)
+        textView.setNeedsDisplay()
     }
 
     private static func textRange(
@@ -1229,6 +1253,10 @@ extension AssistantMarkdownSegmentApplier {
 
     func debugRenderingAlphaForTesting(at offset: Int) -> CGFloat? {
         chunkSettleAnimator.renderingAlphaForTesting(at: offset)
+    }
+
+    var debugCancelSnapAlphaForTesting: CGFloat? {
+        chunkSettleAnimator.lastCancelSnapAlphaForTesting
     }
 }
 #endif
