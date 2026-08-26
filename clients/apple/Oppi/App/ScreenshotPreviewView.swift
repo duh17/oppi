@@ -79,6 +79,8 @@ struct ScreenshotPreviewView: View {
             LatexRenderingPreview()
         case "mermaid-rendering":
             MermaidRenderingPreview()
+        case "mermaid-fullscreen":
+            MermaidFullscreenPreview()
         case "mermaid-responsive-routing":
             MermaidResponsiveRoutingPreview()
         case "ask-card":
@@ -246,6 +248,22 @@ private struct MermaidRenderingPreview: View {
     }
 
     private static let diagrams: [Diagram] = [
+        Diagram(
+            id: "state-fanout",
+            heading: "State fan-out",
+            markdown: #"""
+            ```mermaid
+            stateDiagram-v2
+                [*] --> Unset : no asr.backend
+                Unset --> ModuleReady : backend=module and model on disk
+                Unset --> HttpReady : backend=http and endpoint null or /transcribe
+                Unset --> ModuleMissing : backend=module, no model
+                HttpReady --> PhoneOn : identity.dictationStream
+                ModuleReady --> PhoneOn : identity.dictationStream
+                ModuleMissing --> PhoneOff : iOS on-device only
+            ```
+            """#
+        ),
         Diagram(
             id: "flowchart-labels",
             heading: "Flowchart labels",
@@ -451,6 +469,37 @@ private struct MermaidRenderingPreview: View {
         .background(Color.themeBg.ignoresSafeArea())
         .preferredColorScheme(themeID == .light ? .light : .dark)
         .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+// MARK: - Mermaid Fullscreen Preview
+
+/// Production full-screen mermaid viewer at iPhone width, including fit-to-width zoom.
+private struct MermaidFullscreenPreview: View {
+    private static let source = """
+        stateDiagram-v2
+            [*] --> Unset : no asr.backend
+            Unset --> ModuleReady : backend=module and model on disk
+            Unset --> HttpReady : backend=http and endpoint null or /transcribe
+            Unset --> ModuleMissing : backend=module, no model
+            HttpReady --> PhoneOn : identity.dictationStream
+            ModuleReady --> PhoneOn : identity.dictationStream
+            ModuleMissing --> PhoneOff : iOS on-device only
+        """
+
+    private let themeID: ThemeID
+
+    init() {
+        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light"
+            ? .light
+            : .dark
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
+    var body: some View {
+        FullScreenCodeView(content: .mermaid(content: Self.source, filePath: "asr.mmd"))
+            .preferredColorScheme(themeID == .light ? .light : .dark)
+            .accessibilityIdentifier("screenshot.ready")
     }
 }
 

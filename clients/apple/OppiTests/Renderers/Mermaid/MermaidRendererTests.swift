@@ -787,18 +787,116 @@ struct MermaidRendererTests {
         #expect(layout.edgeStyles[layout.edgeKeys[2]] == .thick)
     }
 
-    @Test func longOuterEdgeLabelExpandsBounds() {
-        let diagram = parser.parse("""
-            flowchart TB
-                A[Alpha] -->|This is a deliberately very long outer edge label that must not clip| B[Beta]
-            """)
-        let layout = renderer.layout(diagram, configuration: config)
+    @Test func longOuterEdgeLabelWrapsAndGrowsRankGap() {
+        let rawLabel = "This is a deliberately very long outer edge label that must not clip"
+        let unlabeled = renderer.layout(
+            parser.parse("""
+                flowchart TB
+                    A[Alpha] --> B[Beta]
+            """),
+            configuration: config
+        )
+        let layout = renderer.layout(
+            parser.parse("""
+                flowchart TB
+                    A[Alpha] -->|This is a deliberately very long outer edge label that must not clip| B[Beta]
+            """),
+            configuration: config
+        )
+        let stored = layout.edgeLabels["A->B"] ?? ""
+        let unlabeledA = unlabeled.graphResult.nodePositions["A"]!
+        let unlabeledB = unlabeled.graphResult.nodePositions["B"]!
+        let labeledA = layout.graphResult.nodePositions["A"]!
+        let labeledB = layout.graphResult.nodePositions["B"]!
+        let unlabeledGap = unlabeledB.minY - unlabeledA.maxY
+        let labeledGap = labeledB.minY - labeledA.maxY
+        let wrappedSize = measuredEdgeLabel(stored, fontSize: config.fontSize)
+        let rawSize = measuredEdgeLabel(rawLabel, fontSize: config.fontSize)
         let nodeWidth = layout.graphResult.nodePositions.values
             .reduce(CGRect.null) { $0.union($1) }
             .width
+        let unlabeledBox = renderer.boundingBox(unlabeled)
         let box = renderer.boundingBox(layout)
 
-        #expect(box.width > nodeWidth + 200)
+        #expect(stored.contains("\n"), "Long edge labels should wrap, stored=\(stored)")
+        #expect(wrappedSize.width < rawSize.width)
+        #expect(wrappedSize.height > rawSize.height)
+        #expect(labeledGap > unlabeledGap)
+        #expect(labeledGap + 0.5 >= wrappedSize.height)
+        #expect(box.height > unlabeledBox.height)
+        #expect(box.width < nodeWidth + 200)
+        assertEveryPathClearsOtherLabelsAndArrowheads(layout, expectedLabelCount: 1)
+    }
+
+    @Test func labeledFanOutWrapsAndReservesCorridor() {
+        let unlabeled = renderer.layout(
+            parser.parse("""
+                flowchart TD
+                    Unset[Unset] --> ModuleReady[ModuleReady]
+                    Unset --> HttpReady[HttpReady]
+                    Unset --> ModuleMissing[ModuleMissing]
+            """),
+            configuration: config
+        )
+        let layout = renderer.layout(
+            parser.parse("""
+                flowchart TD
+                    Unset[Unset] -->|backend=module and model on disk| ModuleReady[ModuleReady]
+                    Unset -->|backend=http and endpoint null or /transcribe| HttpReady[HttpReady]
+                    Unset -->|backend=module, no model| ModuleMissing[ModuleMissing]
+            """),
+            configuration: config
+        )
+        let readyLabel = layout.edgeLabels["Unset->ModuleReady"] ?? ""
+        let httpLabel = layout.edgeLabels["Unset->HttpReady"] ?? ""
+        #expect(readyLabel.contains("\n"), "Fan-out labels should wrap, stored=\(readyLabel)")
+        #expect(httpLabel.contains("\n"), "Fan-out labels should wrap, stored=\(httpLabel)")
+
+        let unlabeledSource = unlabeled.graphResult.nodePositions["Unset"]!
+        let unlabeledReady = unlabeled.graphResult.nodePositions["ModuleReady"]!
+        let unlabeledHttp = unlabeled.graphResult.nodePositions["HttpReady"]!
+        let unlabeledMissing = unlabeled.graphResult.nodePositions["ModuleMissing"]!
+        let source = layout.graphResult.nodePositions["Unset"]!
+        let ready = layout.graphResult.nodePositions["ModuleReady"]!
+        let http = layout.graphResult.nodePositions["HttpReady"]!
+        let missing = layout.graphResult.nodePositions["ModuleMissing"]!
+
+        let unlabeledRankGap = min(unlabeledReady.minY, unlabeledHttp.minY, unlabeledMissing.minY)
+            - unlabeledSource.maxY
+        let labeledRankGap = min(ready.minY, http.minY, missing.minY) - source.maxY
+        #expect(labeledRankGap > unlabeledRankGap)
+
+        let unlabeledSiblingGap = siblingGap(unlabeledReady, unlabeledHttp, unlabeledMissing)
+        let labeledSiblingGap = siblingGap(ready, http, missing)
+        #expect(labeledSiblingGap > unlabeledSiblingGap)
+
+        let children = [ready, http, missing]
+        for child in children {
+            #expect(source.maxY < child.minY)
+        }
+        assertEveryPathClearsOtherLabelsAndArrowheads(layout, expectedLabelCount: 3)
+    }
+
+    @Test func stateFanOutLongLabelsWrapAndClearNodes() {
+        let layout = renderer.layout(
+            parser.parse("""
+                stateDiagram-v2
+                    [*] --> Unset : no asr.backend
+                    Unset --> ModuleReady : backend=module and model on disk
+                    Unset --> HttpReady : backend=http and endpoint null or /transcribe
+                    Unset --> ModuleMissing : backend=module, no model
+                    HttpReady --> PhoneOn : identity.dictationStream
+                    ModuleReady --> PhoneOn : identity.dictationStream
+                    ModuleMissing --> PhoneOff : iOS on-device only
+            """),
+            configuration: config
+        )
+        let labels = Set(layout.edgeLabels.values)
+        #expect(labels.contains { $0.contains("backend=module and model") && $0.contains("\n") })
+        #expect(labels.contains { $0.contains("backend=http") && $0.contains("\n") })
+        #expect(layout.graphResult.nodePositions["Unset"] != nil)
+        #expect(layout.graphResult.nodePositions["ModuleReady"] != nil)
+        assertEveryPathClearsOtherLabelsAndArrowheads(layout)
     }
 
     // MARK: - Render output
@@ -1108,6 +1206,17 @@ struct MermaidRendererTests {
         return [range.lowerBound, range.upperBound]
     }
 
+    private func measuredEdgeLabel(_ text: String, fontSize: CGFloat) -> CGSize {
+        let labelFontSize = fontSize * 0.85
+        let font = CTFontCreateWithName("Helvetica" as CFString, labelFontSize, nil)
+        return MermaidTextUtils.measureText(text, font: font, fontSize: labelFontSize)
+    }
+
+    private func siblingGap(_ first: CGRect, _ second: CGRect, _ third: CGRect) -> CGFloat {
+        let rects = [first, second, third].sorted { $0.midX < $1.midX }
+        return min(rects[1].minX - rects[0].maxX, rects[2].minX - rects[1].maxX)
+    }
+
     private struct EdgeDecoration {
         let path: GraphLayoutEdgePath
         let label: String?
@@ -1213,10 +1322,10 @@ struct MermaidRendererTests {
         fontSize: CGFloat,
         among others: [GraphLayoutEdgePath]
     ) -> CGRect {
-        let anchor = labelAnchor(on: path, fontSize: fontSize, among: others)
         let labelFontSize = fontSize * 0.85
         let font = CTFontCreateWithName("Helvetica" as CFString, labelFontSize, nil)
         let textSize = MermaidTextUtils.measureText(text, font: font, fontSize: labelFontSize)
+        let anchor = labelAnchor(on: path, fontSize: fontSize, textSize: textSize, among: others)
         return CGRect(
             x: anchor.x - textSize.width / 2 - 3,
             y: anchor.y - textSize.height / 2 - 2,
@@ -1228,6 +1337,7 @@ struct MermaidRendererTests {
     private func labelAnchor(
         on path: GraphLayoutEdgePath,
         fontSize: CGFloat,
+        textSize: CGSize,
         among others: [GraphLayoutEdgePath]
     ) -> CGPoint {
         let points = path.points
@@ -1237,7 +1347,7 @@ struct MermaidRendererTests {
         let lastDX = tip.x - prev.x
         let lastDY = tip.y - prev.y
         let lastLen = hypot(lastDX, lastDY)
-        let inset = max(fontSize * 1.7, 22)
+        let inset = max(fontSize * 1.7, 22, textSize.height / 2 + fontSize * 0.6 + 4)
         let peers = others.filter {
             $0.from != path.from || $0.to != path.to || $0.points != path.points
         }

@@ -273,12 +273,33 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         // Map direction.
         let direction = graphLayoutDirection(for: flowchart.direction)
 
+        // Wrap first so reserved rank/sibling space matches the strings we store.
+        var wrappedEdgeLabels: [Int: String] = [:]
+        var labeledEnds: [(from: String, to: String, label: String)] = []
+        for (index, pair) in zip(flowchart.edges, layoutEdgeSpecs).enumerated() {
+            let (edge, spec) = pair
+            guard let label = edge.label, !label.isEmpty else { continue }
+            let wrapped = wrapFlowEdgeLabel(label, fontSize: fontSize)
+            wrappedEdgeLabels[index] = wrapped
+            labeledEnds.append((spec.from, spec.to, wrapped))
+        }
+        let reservedRank = reservedRankLabelSpace(
+            labels: labeledEnds.map(\.label),
+            direction: direction,
+            fontSize: fontSize
+        )
+        let reservedSibling = reservedSiblingLabelSpace(
+            labeledEnds,
+            direction: direction,
+            fontSize: fontSize
+        )
+
         let input = GraphLayoutInput(
             nodes: layoutNodes,
             edges: layoutEdges,
             direction: direction,
-            nodeSpacing: fontSize * 3,
-            rankSpacing: fontSize * 4
+            nodeSpacing: fontSize * 3 + reservedSibling,
+            rankSpacing: fontSize * 4 + reservedRank
         )
 
         let positionedGraphResult: GraphLayoutResult
@@ -296,7 +317,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 layoutEdges: layoutEdges,
                 direction: direction,
                 fontSize: fontSize,
-                maxWidth: configuration.maxWidth
+                maxWidth: configuration.maxWidth,
+                reservedSibling: reservedSibling,
+                reservedRank: reservedRank
             )
         }
         let subgraphFrames = makeSubgraphFrameMap(
@@ -338,7 +361,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             let baseKey = "\(spec.from)->\(spec.to)"
             let key = uniqueEdgeKey(baseKey, index: index)
             edgeKeys.append(key)
-            if let label = edge.label {
+            if let label = wrappedEdgeLabels[index] {
                 edgeLabels[key] = label
                 edgeLabels[baseKey] = edgeLabels[baseKey] ?? label
             }
@@ -495,6 +518,70 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         "\(baseKey)#\(index)"
     }
 
+    /// Modest wrap budget so long labels break into a few lines instead of stretching the canvas.
+    private func flowEdgeLabelWrapBudget(fontSize: CGFloat) -> CGFloat {
+        fontSize * 12
+    }
+
+    private func flowEdgeLabelFont(fontSize: CGFloat) -> (CTFont, CGFloat) {
+        let labelFontSize = fontSize * 0.85
+        return (CTFontCreateWithName("Helvetica" as CFString, labelFontSize, nil), labelFontSize)
+    }
+
+    private func wrapFlowEdgeLabel(_ label: String, fontSize: CGFloat) -> String {
+        let (font, labelFontSize) = flowEdgeLabelFont(fontSize: fontSize)
+        return MermaidTextUtils.wrapText(
+            label,
+            maxWidth: flowEdgeLabelWrapBudget(fontSize: fontSize),
+            font: font,
+            fontSize: labelFontSize
+        )
+    }
+
+    /// Extra rank gap so wrapped midpoint labels sit in the corridor, not on nodes.
+    private func reservedRankLabelSpace(
+        labels: [String],
+        direction: GraphLayoutDirection,
+        fontSize: CGFloat
+    ) -> CGFloat {
+        let (font, labelFontSize) = flowEdgeLabelFont(fontSize: fontSize)
+        let isHorizontal = direction == .leftToRight || direction == .rightToLeft
+        var extra: CGFloat = 0
+        for label in labels {
+            let size = MermaidTextUtils.measureText(label, font: font, fontSize: labelFontSize)
+            let alongRank = isHorizontal ? size.width : size.height
+            extra = max(extra, alongRank + fontSize * 0.5)
+        }
+        return extra
+    }
+
+    /// Extra sibling gap so same-rank fan-out/fan-in labels can occupy separate lanes.
+    private func reservedSiblingLabelSpace(
+        _ labeledEdges: [(from: String, to: String, label: String)],
+        direction: GraphLayoutDirection,
+        fontSize: CGFloat
+    ) -> CGFloat {
+        let (font, labelFontSize) = flowEdgeLabelFont(fontSize: fontSize)
+        let isHorizontal = direction == .leftToRight || direction == .rightToLeft
+        let padding = fontSize * 0.5
+        var extra: CGFloat = 0
+        var byFrom: [String: [String]] = [:]
+        var byTo: [String: [String]] = [:]
+        for edge in labeledEdges {
+            byFrom[edge.from, default: []].append(edge.label)
+            byTo[edge.to, default: []].append(edge.label)
+        }
+        for group in Array(byFrom.values) + Array(byTo.values) where group.count >= 2 {
+            let crosses = group.map { label -> CGFloat in
+                let size = MermaidTextUtils.measureText(label, font: font, fontSize: labelFontSize)
+                return isHorizontal ? size.height : size.width
+            }
+            guard let maxCross = crosses.max() else { continue }
+            extra = max(extra, maxCross * 0.5 + padding)
+        }
+        return extra
+    }
+
     private func allNodeIds(in subgraph: FlowSubgraph) -> [String] {
         subgraph.nodeIds + subgraph.subgraphs.flatMap(allNodeIds(in:))
     }
@@ -523,6 +610,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         direction: GraphLayoutDirection,
         fontSize: CGFloat,
         maxWidth: CGFloat,
+        reservedSibling: CGFloat = 0,
+        reservedRank: CGFloat = 0,
         directionEligibilityFlowchart: FlowchartDiagram? = nil
     ) -> GraphLayoutResult {
         let eligibilityFlowchart = directionEligibilityFlowchart ?? flowchart
@@ -562,8 +651,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     nodes: localNodes,
                     edges: localEdges,
                     direction: localDirection,
-                    nodeSpacing: fontSize * 3,
-                    rankSpacing: fontSize * 4,
+                    nodeSpacing: fontSize * 3 + reservedSibling,
+                    rankSpacing: fontSize * 4 + reservedRank,
                     maxWidth: maxWidth
                 )
             } else {
@@ -587,6 +676,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     direction: localDirection,
                     fontSize: fontSize,
                     maxWidth: maxWidth,
+                    reservedSibling: reservedSibling,
+                    reservedRank: reservedRank,
                     directionEligibilityFlowchart: eligibilityFlowchart
                 )
             }
@@ -624,8 +715,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             nodes: unitNodes,
             edges: unitEdges,
             direction: direction,
-            nodeSpacing: fontSize * 4,
-            rankSpacing: fontSize * 5
+            nodeSpacing: fontSize * 4 + reservedSibling,
+            rankSpacing: fontSize * 5 + reservedRank
         ))
 
         var positions: [String: CGRect] = [:]
@@ -783,14 +874,23 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         }
 
         let edgeDirections = edges.map(direction(for:))
-        let edgeLabels = flowchart.edges.map(\.label)
+        let edgeLabels = flowchart.edges.map { edge -> String? in
+            guard let label = edge.label, !label.isEmpty else { return nil }
+            return wrapFlowEdgeLabel(label, fontSize: fontSize)
+        }
+        let (labelFont, labelFontSize) = flowEdgeLabelFont(fontSize: fontSize)
+        let maxLabelHeight = edgeLabels.compactMap { label -> CGFloat? in
+            guard let label else { return nil }
+            return MermaidTextUtils.measureText(label, font: labelFont, fontSize: labelFontSize).height
+        }.max() ?? 0
         let sharedTrunks = makeSharedTrunkPaths(
             edges: edges,
             positions: positions,
             edgeDirections: edgeDirections,
             nodeShapes: nodeShapes,
             clearance: clearance,
-            fontSize: fontSize
+            fontSize: fontSize,
+            minUniqueStub: maxLabelHeight + fontSize * 0.6 + 8
         )
 
         for (index, edge) in edges.enumerated() {
@@ -934,12 +1034,13 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         edgeDirections: [GraphLayoutDirection],
         nodeShapes: [String: FlowNodeShape],
         clearance: CGFloat,
-        fontSize: CGFloat
+        fontSize: CGFloat,
+        minUniqueStub: CGFloat = 0
     ) -> [Int: [CGPoint]] {
         var assigned: [Int: [CGPoint]] = [:]
         let sharedStub = max(10, clearance * 2)
-        // Unique stubs must fit label height plus arrowhead without reaching the bus.
-        let uniqueStub = max(sharedStub, fontSize * 2.8, 38)
+        // Unique stubs must fit wrapped label height plus arrowhead without reaching the bus.
+        let uniqueStub = max(sharedStub, fontSize * 2.8, 38, minUniqueStub)
         let corridorThreshold = max(36, clearance * 6)
 
         func isHorizontal(_ direction: GraphLayoutDirection) -> Bool {
@@ -2989,7 +3090,6 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         among others: [GraphLayoutEdgePath]
     ) -> EdgeLabelLayout? {
         guard path.points.count >= 2 else { return nil }
-        let anchor = edgeLabelAnchor(on: path, fontSize: fontSize, among: others)
         let labelFontSize = fontSize * 0.85
         let font = CTFontCreateWithName("Helvetica" as CFString, labelFontSize, nil)
         let textSize = MermaidTextUtils.measureText(
@@ -2997,6 +3097,12 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             font: font,
             fontSize: labelFontSize,
             isMarkdown: isMarkdown
+        )
+        let anchor = edgeLabelAnchor(
+            on: path,
+            fontSize: fontSize,
+            textSize: textSize,
+            among: others
         )
         return EdgeLabelLayout(
             rect: CGRect(
@@ -3016,6 +3122,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     private func edgeLabelAnchor(
         on path: GraphLayoutEdgePath,
         fontSize: CGFloat,
+        textSize: CGSize,
         among others: [GraphLayoutEdgePath]
     ) -> CGPoint {
         let points = path.points
@@ -3024,7 +3131,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let lastDX = tip.x - prev.x
         let lastDY = tip.y - prev.y
         let lastLen = hypot(lastDX, lastDY)
-        let inset = max(fontSize * 1.7, 22)
+        let inset = max(fontSize * 1.7, 22, textSize.height / 2 + fontSize * 0.6 + 4)
         let peers = others.filter {
             $0.from != path.from || $0.to != path.to || $0.points != path.points
         }
