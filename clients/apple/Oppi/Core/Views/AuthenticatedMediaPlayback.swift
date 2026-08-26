@@ -803,9 +803,20 @@ final class AuthenticatedMediaPlaybackSession {
         timeControlObservation = nil
         bufferEmptyObservation?.invalidate()
         bufferEmptyObservation = nil
-        player.pause()
+        Self.stop(player)
         asset.resourceLoader.setDelegate(nil, queue: nil)
         loader.cancelAll()
+    }
+
+    deinit {
+        Self.stop(player)
+        loader.cancelAll()
+    }
+
+    /// Pause and drop the item so AVKit cannot keep playing after the host is gone.
+    nonisolated private static func stop(_ player: AVPlayer) {
+        player.pause()
+        player.replaceCurrentItem(with: nil)
     }
 }
 

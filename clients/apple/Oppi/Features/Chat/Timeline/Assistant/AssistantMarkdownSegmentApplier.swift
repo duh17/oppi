@@ -305,6 +305,13 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
+    func stopVideoPlayback() {
+        videoPlaybackVisible = false
+        for view in videoViews.values {
+            view.prepareForRemoval()
+        }
+    }
+
     /// Attached to each image view before `apply` so a cache hit can publish
     /// its reserved height without `forceInvalidate` from inside `cellForItemAt`.
     var onImageDisplayHeightChange: ((CGFloat) -> Void)?

@@ -326,6 +326,10 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
     func setMarkdownVideoPlaybackVisible(_ visible: Bool) {
         markdownView.setVideoPlaybackVisible(visible)
     }
+
+    func prepareMarkdownVideosForRemoval() {
+        markdownView.stopMarkdownVideoPlayback()
+    }
 }
 
 #if DEBUG

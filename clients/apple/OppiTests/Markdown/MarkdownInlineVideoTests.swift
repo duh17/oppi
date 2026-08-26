@@ -185,6 +185,69 @@ struct MarkdownInlineVideoTests {
         #expect(!stillAttached.shouldTeardown)
     }
 
+    @Test("fullscreen dismiss resumes only while the inline host is still attached")
+    func fullscreenResumePolicyStopsDetachedAudio() {
+        #expect(MediaPlaybackFullScreenResumePolicy.shouldResumePlayback(
+            cancelled: false,
+            isPlayingNow: true,
+            hostIsAttached: true
+        ))
+        #expect(!MediaPlaybackFullScreenResumePolicy.shouldResumePlayback(
+            cancelled: false,
+            isPlayingNow: true,
+            hostIsAttached: false
+        ))
+        #expect(!MediaPlaybackFullScreenResumePolicy.shouldResumePlayback(
+            cancelled: true,
+            isPlayingNow: true,
+            hostIsAttached: true
+        ))
+        #expect(!MediaPlaybackFullScreenResumePolicy.shouldResumePlayback(
+            cancelled: false,
+            isPlayingNow: false,
+            hostIsAttached: true
+        ))
+        #expect(MediaPlaybackFullScreenResumePolicy.shouldPausePlayback(
+            cancelled: false,
+            hostIsAttached: false
+        ))
+        #expect(!MediaPlaybackFullScreenResumePolicy.shouldPausePlayback(
+            cancelled: true,
+            hostIsAttached: false
+        ))
+        #expect(!MediaPlaybackFullScreenResumePolicy.shouldPausePlayback(
+            cancelled: false,
+            hostIsAttached: true
+        ))
+    }
+
+    @MainActor
+    @Test("teardown drops the player item so a later play cannot leak audio")
+    func teardownDropsPlayerItemSoLaterPlayCannotLeakAudio() {
+        let session = AuthenticatedMediaPlaybackSession(source: dummyMediaSource())
+        let player = session.player
+        #expect(player.currentItem != nil)
+        session.teardown()
+        #expect(player.currentItem == nil)
+        player.play()
+        // play() can still flip rate on an empty AVPlayer; no item means no audio.
+        #expect(player.currentItem == nil)
+    }
+
+    @MainActor
+    @Test("prepareForRemoval stops a fullscreen-owned player")
+    func prepareForRemovalStopsFullscreenOwnedPlayer() {
+        let video = NativeMarkdownVideoView()
+        let model = video.debugPlaybackModelForTesting
+        let player = model.debugInstallStandalonePlayerForTesting()
+        model.setFullScreen(true)
+        model.handleDisappear()
+        #expect(model.player === player)
+        video.prepareForRemoval()
+        #expect(model.player == nil)
+        #expect(player !== model.player)
+    }
+
     @MainActor
     @Test("assistant timeline mounts the native video segment")
     func assistantTimelineIntegration() throws {

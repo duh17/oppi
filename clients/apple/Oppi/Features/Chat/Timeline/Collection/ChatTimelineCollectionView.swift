@@ -170,6 +170,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         context.coordinator.apply(configuration: configuration, to: collectionView)
     }
 
+    static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Controller) {
+        coordinator.stopMarkdownVideoPlayback(in: collectionView)
+    }
+
     func makeCoordinator() -> Controller {
         Controller()
     }
@@ -1166,6 +1170,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ofType: AssistantTimelineRowContentView.self,
                 in: cell.contentView
             )?.setMarkdownVideoPlaybackVisible(false)
+        }
+
+        func stopMarkdownVideoPlayback(in collectionView: UICollectionView) {
+            for cell in collectionView.visibleCells {
+                Self.firstSubview(
+                    ofType: AssistantTimelineRowContentView.self,
+                    in: cell.contentView
+                )?.prepareMarkdownVideosForRemoval()
+            }
         }
 
         func collectionView(

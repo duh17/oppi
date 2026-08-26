@@ -1120,6 +1120,27 @@ struct DataImagePreviewView: View {
 
 /// AVKit's transition completion is MainActor-isolated; the delegate method is
 /// not. This box lets the completion call back without a sendability error.
+enum MediaPlaybackFullScreenResumePolicy {
+    /// AVKit pauses on dismiss. Resume only when the inline host is still
+    /// attached; a detached or cancelled player must not keep playing audio.
+    static func shouldResumePlayback(
+        cancelled: Bool,
+        isPlayingNow: Bool,
+        hostIsAttached: Bool
+    ) -> Bool {
+        !cancelled && isPlayingNow && hostIsAttached
+    }
+
+    /// Committed dismiss with a detached host must stop audio even if AVKit
+    /// never paused and teardown is waiting on a later hide.
+    static func shouldPausePlayback(
+        cancelled: Bool,
+        hostIsAttached: Bool
+    ) -> Bool {
+        !cancelled && !hostIsAttached
+    }
+}
+
 struct FullScreenEndHandoff: @unchecked Sendable {
     let onDidEnd: ((Bool) -> Void)?
     let onTransitionFinished: (() -> Void)?
@@ -1129,8 +1150,17 @@ struct FullScreenEndHandoff: @unchecked Sendable {
             onTransitionFinished?()
             onDidEnd?(hostIsAttached)
         }
-        if isPlayingNow {
+        if MediaPlaybackFullScreenResumePolicy.shouldResumePlayback(
+            cancelled: cancelled,
+            isPlayingNow: isPlayingNow,
+            hostIsAttached: hostIsAttached
+        ) {
             player?.play()
+        } else if MediaPlaybackFullScreenResumePolicy.shouldPausePlayback(
+            cancelled: cancelled,
+            hostIsAttached: hostIsAttached
+        ) {
+            player?.pause()
         }
     }
 }

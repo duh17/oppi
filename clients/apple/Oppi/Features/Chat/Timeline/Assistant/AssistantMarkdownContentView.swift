@@ -255,6 +255,10 @@ final class AssistantMarkdownContentView: UIView {
         segmentApplier.setVideoPlaybackVisible(visible)
     }
 
+    func stopMarkdownVideoPlayback() {
+        segmentApplier.stopVideoPlayback()
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
