@@ -82,6 +82,37 @@ struct AgentManagementPresentationTests {
         #expect(save.persisted == ["read"])
     }
 
+    @Test func piToolsBackSaveUsesExactSelectionCapturedAtLeaveEvenIfLaterStateResetsToInherit() {
+        let builtIn = [
+            ServerToolSummary(name: "read", defaultEnabled: true),
+            ServerToolSummary(name: "bash", defaultEnabled: true),
+            ServerToolSummary(name: "grep", defaultEnabled: false),
+        ]
+
+        let payload = AgentManagementPresentation.piToolsSavePayload(
+            leaveHasLoadedTools: true,
+            leaveMode: .exact,
+            leaveSelectedNames: ["grep"],
+            laterHasLoadedTools: false,
+            laterMode: .inherit,
+            laterSelectedNames: [],
+            builtInTools: builtIn
+        )
+
+        #expect(payload == .write(["grep"]))
+        #expect(
+            AgentManagementPresentation.piToolsSavePayload(
+                leaveHasLoadedTools: true,
+                leaveMode: .inherit,
+                leaveSelectedNames: ["read", "bash"],
+                laterHasLoadedTools: true,
+                laterMode: .exact,
+                laterSelectedNames: ["grep"],
+                builtInTools: builtIn
+            ) == .write(nil)
+        )
+    }
+
     @Test func piToolsSummaryTreatsOmittedDefaultToolsAsPiStandard() {
         #expect(AgentManagementPresentation.piToolsSummary(defaultTools: nil) == "Pi standard")
         #expect(AgentManagementPresentation.piToolsSummary(defaultTools: []) == "None")

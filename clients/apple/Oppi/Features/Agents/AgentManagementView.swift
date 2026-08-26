@@ -60,6 +60,8 @@ enum AgentManagementPresentation {
             self.persisted = persisted
         }
 
+        private(set) var pendingDesired: [String]?
+
         /// Returns true when the caller should run the save loop.
         mutating func requestSave() -> Bool {
             if isSaving {
@@ -69,6 +71,12 @@ enum AgentManagementPresentation {
             isSaving = true
             hasQueuedSave = false
             return true
+        }
+
+        /// Captures the latest leave-time payload, then requests the save loop.
+        mutating func requestSave(desired next: [String]?) -> Bool {
+            pendingDesired = next
+            return requestSave()
         }
 
         /// Call after a write or unchanged skip. Returns true to continue with the latest desired value.
@@ -86,6 +94,30 @@ enum AgentManagementPresentation {
             hasQueuedSave = false
             isSaving = false
         }
+    }
+
+    enum PiToolsSavePayload: Equatable {
+        /// Tools never loaded; do not PUT.
+        case skip
+        /// PUT this defaultTools value. `nil` writes JSON null (Pi defaults).
+        case write([String]?)
+    }
+
+    /// PUT body after leaving Pi Tools. Uses the Back-time selection, not later view state.
+    static func piToolsSavePayload(
+        leaveHasLoadedTools: Bool,
+        leaveMode: AgentToolSelectionMode,
+        leaveSelectedNames: Set<String>,
+        laterHasLoadedTools _: Bool,
+        laterMode _: AgentToolSelectionMode,
+        laterSelectedNames _: Set<String>,
+        builtInTools: [ServerToolSummary]
+    ) -> PiToolsSavePayload {
+        guard leaveHasLoadedTools else { return .skip }
+        let desired: [String]? = leaveMode == .exact
+            ? piExactToolNames(selectedNames: leaveSelectedNames, builtInTools: builtInTools)
+            : nil
+        return .write(desired)
     }
 
     static func piToolsSummary(defaultTools: [String]?) -> String {
@@ -355,7 +387,20 @@ struct PiAgentDetailView: View {
                         inheritFooter: AgentManagementPresentation.piToolsInheritFooter,
                         exactFooter: AgentManagementPresentation.piToolsExactFooter
                     )
-                    .onDisappear { Task { await saveToolsIfNeeded() } }
+                    .onDisappear {
+                        let leaveHasLoadedTools = hasLoadedTools
+                        let leaveMode = toolSelectionMode
+                        let leaveSelectedNames = selectedToolNames
+                        let leaveBuiltInTools = builtInTools
+                        Task {
+                            await saveToolsIfNeeded(
+                                leaveHasLoadedTools: leaveHasLoadedTools,
+                                leaveMode: leaveMode,
+                                leaveSelectedNames: leaveSelectedNames,
+                                leaveBuiltInTools: leaveBuiltInTools
+                            )
+                        }
+                    }
                 } label: {
                     LabeledContent("Tools", value: AgentManagementPresentation.piToolsSummary(defaultTools: defaultTools))
                 }
@@ -487,22 +532,27 @@ struct PiAgentDetailView: View {
         hasLoadedTools = true
     }
 
-    private func desiredDefaultTools() -> [String]? {
-        toolSelectionMode == .exact
-            ? AgentManagementPresentation.piExactToolNames(
-                selectedNames: selectedToolNames,
-                builtInTools: builtInTools
-            )
-            : nil
-    }
-
     @MainActor
-    private func saveToolsIfNeeded() async {
-        guard hasLoadedTools, let apiClient else { return }
-        guard toolsSave.requestSave() else { return }
+    private func saveToolsIfNeeded(
+        leaveHasLoadedTools: Bool,
+        leaveMode: AgentToolSelectionMode,
+        leaveSelectedNames: Set<String>,
+        leaveBuiltInTools: [ServerToolSummary]
+    ) async {
+        let action = AgentManagementPresentation.piToolsSavePayload(
+            leaveHasLoadedTools: leaveHasLoadedTools,
+            leaveMode: leaveMode,
+            leaveSelectedNames: leaveSelectedNames,
+            laterHasLoadedTools: hasLoadedTools,
+            laterMode: toolSelectionMode,
+            laterSelectedNames: selectedToolNames,
+            builtInTools: leaveBuiltInTools
+        )
+        guard case .write(let desired) = action, let apiClient else { return }
+        guard toolsSave.requestSave(desired: desired) else { return }
 
         while true {
-            let next = desiredDefaultTools()
+            let next = toolsSave.pendingDesired
             if next == toolsSave.persisted {
                 let persisted = toolsSave.persisted
                 if !toolsSave.finishAttempt(persisted: persisted) { return }
