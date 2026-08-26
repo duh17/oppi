@@ -12,6 +12,7 @@ struct PaperMarkupCanvasSessionTests {
 
         #expect(titles == ["Photo Library", "Camera", "Choose File", "Canvas"])
         #expect(PaperMarkupCanvasSession.attachmentMenuItems.contains(.canvas))
+        #expect(ComposerShared.attachmentMenuOrder == .priority)
     }
 
     @Test("Add to Chat yields a PNG pending image and prepends recognized text")

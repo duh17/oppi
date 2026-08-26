@@ -433,6 +433,9 @@ struct ExpandedComposerView: View {
             }
             .frame(width: 32, height: 32)
         }
+        .menuOrder(ComposerShared.attachmentMenuOrder)
+        .accessibilityIdentifier("expanded.attach")
+        .accessibilityLabel("Add attachment")
         .photosPicker(
             isPresented: $showPhotoPicker,
             selection: $photoSelection,

@@ -120,6 +120,11 @@ enum ComposerShared {
 
     // MARK: - Image Handling
 
+    /// Keep the first attach action nearest the plus.
+    /// `MenuOrder.automatic` is `.priority` in the chat bar but `.fixed`
+    /// inside the scrollable quick-session overlay, which inverted the same list.
+    static let attachmentMenuOrder: MenuOrder = .priority
+
     @ViewBuilder
     static func attachmentMenuButtons(
         showPhotoPicker: Binding<Bool>,

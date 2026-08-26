@@ -611,6 +611,9 @@ struct ChatInputBar<ActionRow: View>: View {
                 .padding(.vertical, 6)
                 .glassEffect(.regular, in: Capsule())
         }
+        .menuOrder(ComposerShared.attachmentMenuOrder)
+        .accessibilityIdentifier("chat.attach")
+        .accessibilityLabel("Add attachment")
         .photosPicker(
             isPresented: $showPhotoPicker,
             selection: $photoSelection,
