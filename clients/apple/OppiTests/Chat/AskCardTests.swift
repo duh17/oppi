@@ -144,6 +144,17 @@ struct AskCardTests {
         #expect(display.commandPreview == nil)
     }
 
+    // MARK: - Option Row Density
+
+    @Test("Inline and expanded option padding keeps wrapping text inside the rounded fill")
+    func optionRowPaddingKeepsWrappingTextInsideRoundedFill() {
+        let densities: [AskOptionChoiceRow.Density] = [.inline, .expanded]
+        for density in densities {
+            #expect(density.verticalPadding >= density.cornerRadius)
+            #expect(density.horizontalPadding >= density.cornerRadius)
+        }
+    }
+
     // MARK: - Selection Mode
 
     @Test("Multi-select questions expose explicit selection mode hint")

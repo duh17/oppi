@@ -150,7 +150,7 @@ struct AskOptionChoiceRow: View {
 
         var verticalPadding: CGFloat {
             switch self {
-            case .inline: return 10
+            case .inline: return 12
             case .expanded: return 14
             }
         }
@@ -213,6 +213,7 @@ struct AskOptionChoiceRow: View {
             isSelected ? theme.accent.blue.opacity(0.15) : theme.bg.highlight,
             in: RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous)
         )
+        .clipShape(RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous)
                 .stroke(

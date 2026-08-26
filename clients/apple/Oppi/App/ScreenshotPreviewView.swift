@@ -1567,7 +1567,7 @@ private enum AskCardPreviewFixture {
                     AskOption(
                         value: "offline_maps_gpx",
                         label: "Offline maps/GPX loaded on phone/GPS with route, waypoints, and alternate descent cached",
-                        description: "CalTopo or Gaia route opens in airplane mode; phone/GPS battery plan tested."
+                        description: "CalTopo or Gaia route opens in airplane mode; phone/GPS battery plan tested so this last description line fills the option row width."
                     ),
                     AskOption(
                         value: "weather_window",
