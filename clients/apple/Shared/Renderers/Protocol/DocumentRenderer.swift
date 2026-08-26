@@ -94,6 +94,19 @@ struct RenderTheme: Sendable {
     let accentRed: CGColor
     let accentYellow: CGColor
 
+    /// Stable cycle for multi-series mermaid ink. Renderers must not invent hues.
+    var diagramAccents: [CGColor] {
+        [accentBlue, accentGreen, accentOrange, accentPurple, accentRed, accentYellow, accentCyan]
+    }
+
+    /// Every token a mermaid renderer may paint, including syntax-mapped inks.
+    var paletteInks: [CGColor] {
+        [
+            foreground, foregroundDim, background, backgroundDark, comment,
+            keyword, string, number, function, type, link, heading,
+        ] + diagramAccents
+    }
+
     /// Neutral fallback for tests and platforms without theme context.
     static let fallback = RenderTheme(
         foreground: CGColor(gray: 0.9, alpha: 1),

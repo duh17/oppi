@@ -154,6 +154,249 @@ struct MermaidPerfBench {
                 SQLite
     """
 
+    private static let typicalPie = """
+    pie title Pets
+        \"Dogs\" : 386
+        \"Cats\" : 85
+        \"Rats\" : 15
+    """
+
+    private static let largerPie = """
+    pie showData title Slice mix
+        \"A\" : 10
+        \"B\" : 20
+        \"C\" : 15
+        \"D\" : 8
+        \"E\" : 12
+        \"F\" : 9
+        \"G\" : 6
+        \"H\" : 4
+    """
+
+    private static let typicalTimeline = """
+    timeline
+        title Shipping
+        2024 : Design : Build
+        2025 : Test : Ship
+    """
+
+    private static let largerTimeline = """
+    timeline
+        title Releases
+        2022 : Prototype
+        2023 : Alpha : Beta
+        2024 : RC : 1.0 : 1.1
+        2025 : 1.2 : 1.3 : 2.0
+        2026 : Native mermaid : Five families
+    """
+
+    private static let typicalClass = """
+    classDiagram
+        Animal <|-- Duck
+        Animal <|-- Fish
+        Animal : +int age
+        Duck : +swim()
+    """
+
+    private static let largerClass = """
+    classDiagram
+        class Session {
+            +String id
+            +start()
+            +stop()
+        }
+        class Workspace {
+            +String path
+        }
+        class Agent {
+            +run()
+        }
+        Session --> Workspace : uses
+        Session --> Agent : owns
+        Agent --> Workspace : reads
+        class Tool {
+            +name: String
+            +call()
+        }
+        Agent --> Tool : invokes
+    """
+
+    private static let typicalER = """
+    erDiagram
+        CUSTOMER ||--o{ ORDER : places
+        ORDER ||--|{ LINE-ITEM : contains
+    """
+
+    private static let largerER = """
+    erDiagram
+        CUSTOMER ||--o{ ORDER : places
+        CUSTOMER {
+            string name
+            string email
+        }
+        ORDER ||--|{ LINE-ITEM : contains
+        ORDER {
+            int id
+            date created
+        }
+        PRODUCT ||--o{ LINE-ITEM : listed
+        PRODUCT {
+            string sku
+            float price
+        }
+    """
+
+    private static let typicalState = """
+    stateDiagram-v2
+        [*] --> Ready
+        Ready --> Running
+        Running --> Ready
+        Running --> [*]
+    """
+
+    private static let largerState = """
+    stateDiagram-v2
+        [*] --> Idle
+        Idle --> Connecting
+        Connecting --> Ready
+        Ready --> Streaming
+        Streaming --> Ready
+        Streaming --> Error
+        Error --> Idle
+        Ready --> [*]
+    """
+
+    private static let typicalXY = """
+    xychart-beta
+        title Score
+        x-axis [A, B, C, D]
+        y-axis 0 --> 10
+        bar [2, 4, 6, 8]
+        line [3, 5, 7, 9]
+    """
+
+    private static let largerXY = """
+    xychart-beta
+        title Sprint burn
+        x-axis [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        y-axis "n" 0 --> 20
+        bar [12, 11, 10, 9, 8, 6, 5, 3, 2, 1]
+        line [12, 11, 10, 9, 8, 7, 6, 4, 3, 1]
+    """
+
+    private static let typicalGitGraph = """
+    gitGraph
+        commit id: \"a\"
+        commit id: \"b\"
+        branch develop
+        commit id: \"c\"
+        checkout main
+        merge develop
+    """
+
+    private static let largerGitGraph = """
+    gitGraph
+        commit id: \"init\"
+        branch develop
+        commit id: \"wip\"
+        commit id: \"fix\" type: HIGHLIGHT
+        checkout main
+        commit id: \"docs\"
+        merge develop id: \"m\" tag: \"v1\"
+        branch release
+        commit id: \"rc\"
+        checkout main
+        cherry-pick id: \"fix\"
+    """
+
+    private static let typicalQuadrant = """
+    quadrantChart
+        title Reach
+        x-axis Low --> High
+        y-axis Low --> High
+        Campaign A: [0.3, 0.6]
+        Campaign B: [0.7, 0.2]
+    """
+
+    private static let largerQuadrant = """
+    quadrantChart
+        title Reach and engagement of campaigns
+        x-axis Low Reach --> High Reach
+        y-axis Low Engagement --> High Engagement
+        quadrant-1 Expand
+        quadrant-2 Promote
+        quadrant-3 Re-evaluate
+        quadrant-4 Improve
+        A: [0.3, 0.6]
+        B: [0.45, 0.23]
+        C: [0.57, 0.69]
+        D: [0.78, 0.34]
+        E: [0.40, 0.34]
+        F: [0.35, 0.78]
+    """
+
+    private static let typicalSankey = """
+    sankey
+        A,B,20
+        B,C,12
+        B,D,8
+    """
+
+    private static let largerSankey = """
+    sankey-beta
+        Rendered,Flowchart,10
+        Rendered,Sequence,8
+        Rendered,Other native,12
+        Fallback,Journey,2
+        Fallback,C4,5
+        Other native,Pie,3
+        Other native,Gantt,3
+        Other native,Mindmap,3
+        Other native,XY,3
+    """
+
+    private static let typicalKanban = """
+    kanban
+        todo[Todo]
+            t1[Parse]
+        doing[Doing]
+            t2[Render]
+    """
+
+    private static let largerKanban = """
+    kanban
+        backlog[Backlog]
+            t1[Collect types]@{ ticket: MD-1, priority: 'High', assigned: 'Chen' }
+            t2[Check fallback]@{ ticket: MD-2 }
+        doing[In progress]
+            t3[Steer-test]@{ assigned: 'Chen' }
+        review[Review]
+            t4[Pinch zoom]
+        done[Done]
+            t5[Install]@{ ticket: MD-0, priority: 'Low' }
+    """
+
+    private static let typicalJourney = """
+    journey
+        title Day
+        section Work
+            Make tea: 5: Me
+            Do work: 3: Me, Cat
+    """
+
+    private static let largerJourney = """
+    journey
+        title My working day
+        section Go to work
+            Make tea: 5: Me
+            Go upstairs: 3: Me
+            Do work: 1: Me, Cat
+        section Go home
+            Go downstairs: 5: Me
+            Sit down: 5: Me
+            Sleep: 4: Me
+    """
+
     // MARK: - Parse-only benchmarks
 
     @Test("Parse — small flowchart (5 nodes)")
@@ -316,6 +559,184 @@ struct MermaidPerfBench {
             prefix: "mermaid",
             label: "mindmap_15n",
             totalBudgetUs: 5000
+        )
+    }
+
+    // MARK: - Remaining native families (typical parse + larger pipeline)
+
+    @Test("Parse — typical pie")
+    func parseTypicalPie() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalPie, prefix: "mermaid",
+            label: "pie_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger pie")
+    func pipelineLargerPie() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerPie,
+            config: config, prefix: "mermaid", label: "pie_larger", totalBudgetUs: 5000
+        )
+    }
+
+    @Test("Parse — typical timeline")
+    func parseTypicalTimeline() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalTimeline, prefix: "mermaid",
+            label: "timeline_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger timeline")
+    func pipelineLargerTimeline() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerTimeline,
+            config: config, prefix: "mermaid", label: "timeline_larger", totalBudgetUs: 5000
+        )
+    }
+
+    @Test("Parse — typical class")
+    func parseTypicalClass() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalClass, prefix: "mermaid",
+            label: "class_typical", budgetUs: 1000
+        )
+    }
+
+    @Test("Pipeline — larger class")
+    func pipelineLargerClass() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerClass,
+            config: config, prefix: "mermaid", label: "class_larger", totalBudgetUs: 10000
+        )
+    }
+
+    @Test("Parse — typical er")
+    func parseTypicalER() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalER, prefix: "mermaid",
+            label: "er_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger er")
+    func pipelineLargerER() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerER,
+            config: config, prefix: "mermaid", label: "er_larger", totalBudgetUs: 10000
+        )
+    }
+
+    @Test("Parse — typical state")
+    func parseTypicalState() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalState, prefix: "mermaid",
+            label: "state_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger state")
+    func pipelineLargerState() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerState,
+            config: config, prefix: "mermaid", label: "state_larger", totalBudgetUs: 10000
+        )
+    }
+
+    @Test("Parse — typical xychart")
+    func parseTypicalXY() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalXY, prefix: "mermaid",
+            label: "xychart_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger xychart")
+    func pipelineLargerXY() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerXY,
+            config: config, prefix: "mermaid", label: "xychart_larger", totalBudgetUs: 5000
+        )
+    }
+
+    @Test("Parse — typical gitGraph")
+    func parseTypicalGitGraph() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalGitGraph, prefix: "mermaid",
+            label: "gitgraph_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger gitGraph")
+    func pipelineLargerGitGraph() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerGitGraph,
+            config: config, prefix: "mermaid", label: "gitgraph_larger", totalBudgetUs: 5000
+        )
+    }
+
+    @Test("Parse — typical quadrantChart")
+    func parseTypicalQuadrant() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalQuadrant, prefix: "mermaid",
+            label: "quadrant_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger quadrantChart")
+    func pipelineLargerQuadrant() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerQuadrant,
+            config: config, prefix: "mermaid", label: "quadrant_larger", totalBudgetUs: 5000
+        )
+    }
+
+    @Test("Parse — typical sankey")
+    func parseTypicalSankey() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalSankey, prefix: "mermaid",
+            label: "sankey_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger sankey")
+    func pipelineLargerSankey() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerSankey,
+            config: config, prefix: "mermaid", label: "sankey_larger", totalBudgetUs: 5000
+        )
+    }
+
+    @Test("Parse — typical kanban")
+    func parseTypicalKanban() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalKanban, prefix: "mermaid",
+            label: "kanban_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger kanban")
+    func pipelineLargerKanban() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerKanban,
+            config: config, prefix: "mermaid", label: "kanban_larger", totalBudgetUs: 5000
+        )
+    }
+
+    @Test("Parse — typical journey")
+    func parseTypicalJourney() {
+        RendererTestSupport.benchParse(
+            parser: parser, input: Self.typicalJourney, prefix: "mermaid",
+            label: "journey_typical", budgetUs: 500
+        )
+    }
+
+    @Test("Pipeline — larger journey")
+    func pipelineLargerJourney() {
+        RendererTestSupport.benchParseAndRender(
+            parser: parser, renderer: renderer, input: Self.largerJourney,
+            config: config, prefix: "mermaid", label: "journey_larger", totalBudgetUs: 5000
         )
     }
 }

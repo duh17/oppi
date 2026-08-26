@@ -14,7 +14,7 @@ struct MermaidParser: DocumentParser, Sendable {
         let stripped = lines.map { stripComment($0) }
         let frontmatter = parseFrontmatterOptions(in: stripped)
 
-        // Find first non-blank line to detect diagram type, skipping optional Mermaid YAML frontmatter.
+        // Find first non-blank, non-`%%` line to detect diagram type, skipping optional Mermaid YAML frontmatter.
         guard let firstIndex = firstDiagramLineIndex(in: stripped),
               let header = parseHeader(stripped[firstIndex].trimmingCharacters(in: .whitespaces))
         else {
@@ -64,6 +64,28 @@ struct MermaidParser: DocumentParser, Sendable {
             let body = Array(stripped[firstIndex...])
             let diagram = MermaidXYChartParser.parse(lines: body)
             return .xyChart(diagram)
+        case .gitGraph:
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidGitGraphParser.parse(lines: body, options: frontmatter.gitGraph)
+            return .gitGraph(diagram)
+        case .quadrantChart:
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidQuadrantParser.parse(lines: body)
+            return .quadrantChart(diagram)
+        case .sankey:
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidSankeyParser.parse(lines: body, options: frontmatter.sankey)
+            return .sankey(diagram)
+        case .kanban:
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidKanbanParser.parse(
+                lines: body, ticketBaseUrl: frontmatter.kanbanTicketBaseUrl
+            )
+            return .kanban(diagram)
+        case .journey:
+            let body = Array(stripped[firstIndex...])
+            let diagram = MermaidJourneyParser.parse(lines: body)
+            return .journey(diagram)
         case .unknown(let name):
             return .unsupported(type: name)
         }
@@ -74,14 +96,21 @@ struct MermaidParser: DocumentParser, Sendable {
     private struct FrontmatterOptions {
         var gantt = MermaidGanttParser.Options()
         var mindmap = MermaidMindmapParser.Options()
+        var gitGraph = GitGraphOptions()
+        var sankey = SankeyOptions()
+        var kanbanTicketBaseUrl: String?
     }
 
     private func parseFrontmatterOptions(in lines: [String]) -> FrontmatterOptions {
         var options = FrontmatterOptions()
+        applyInitDirectives(in: lines, to: &options)
         guard let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
               lines[first].trimmingCharacters(in: .whitespaces) == "---",
               let closing = lines[(first + 1)...].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" })
         else { return options }
+
+        let yaml = parseIndentedYAML(Array(lines[(first + 1)..<closing]))
+        applyYAML(yaml, to: &options)
 
         for line in lines[(first + 1)..<closing] {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -97,8 +126,240 @@ struct MermaidParser: DocumentParser, Sendable {
         return options
     }
 
+    private struct YAMLMap {
+        var scalars: [String: String] = [:]
+        var children: [String: YAMLMap] = [:]
+    }
+
+    /// Indent-based YAML subset for Mermaid frontmatter `config:` blocks.
+    private func parseIndentedYAML(_ lines: [String]) -> YAMLMap {
+        parseYAMLByPath(lines)
+    }
+
+    private func parseYAMLByPath(_ lines: [String]) -> YAMLMap {
+        var root = YAMLMap()
+        var path: [(indent: Int, key: String)] = []
+
+        func indent(of line: String) -> Int {
+            var count = 0
+            for character in line {
+                if character == " " { count += 1 }
+                else if character == "\t" { count += 4 }
+                else { break }
+            }
+            return count
+        }
+
+        func unquote(_ raw: String) -> String {
+            var trimmed = raw.trimmingCharacters(in: .whitespaces)
+            if (trimmed.first == "\"" || trimmed.first == "'"),
+               trimmed.count >= 2,
+               trimmed.last == trimmed.first {
+                trimmed = String(trimmed.dropFirst().dropLast())
+            }
+            return trimmed
+        }
+
+        for raw in lines {
+            if raw.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+            let level = indent(of: raw)
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            guard let colon = trimmed.firstIndex(of: ":") else { continue }
+            let key = String(trimmed[..<colon]).trimmingCharacters(in: .whitespaces).lowercased()
+            guard !key.isEmpty else { continue }
+            let value = unquote(String(trimmed[trimmed.index(after: colon)...]))
+            while let last = path.last, last.indent >= level {
+                path.removeLast()
+            }
+            if value.isEmpty {
+                path.append((level, key))
+                setChild(&root, path: path.map(\.key))
+            } else {
+                setScalar(&root, path: path.map(\.key), key: key, value: value)
+            }
+        }
+        return root
+    }
+
+    private func setChild(_ root: inout YAMLMap, path: [String]) {
+        guard let first = path.first else { return }
+        if path.count == 1 {
+            if root.children[first] == nil { root.children[first] = YAMLMap() }
+            return
+        }
+        var child = root.children[first] ?? YAMLMap()
+        setChild(&child, path: Array(path.dropFirst()))
+        root.children[first] = child
+    }
+
+    private func setScalar(_ root: inout YAMLMap, path: [String], key: String, value: String) {
+        if path.isEmpty {
+            root.scalars[key] = value
+            return
+        }
+        guard let first = path.first else { return }
+        var child = root.children[first] ?? YAMLMap()
+        setScalar(&child, path: Array(path.dropFirst()), key: key, value: value)
+        root.children[first] = child
+    }
+
+    private func applyYAML(_ yaml: YAMLMap, to options: inout FrontmatterOptions) {
+        let config = yaml.children["config"] ?? yaml
+        if let git = config.children["gitgraph"] {
+            applyGitGraphScalars(git.scalars, to: &options.gitGraph)
+        }
+        if let sankey = config.children["sankey"] {
+            if let alignment = sankey.scalars["nodealignment"] {
+                options.sankey.nodeAlignment = MermaidSankeyParser.alignment(from: alignment)
+            }
+            if let width = sankey.scalars["nodewidth"], let value = Double(width) {
+                options.sankey.nodeWidth = value
+            }
+            if let padding = sankey.scalars["nodepadding"], let value = Double(padding) {
+                options.sankey.nodePadding = value
+            }
+        }
+        if let kanban = config.children["kanban"],
+           let url = kanban.scalars["ticketbaseurl"], !url.isEmpty {
+            options.kanbanTicketBaseUrl = url
+        }
+    }
+
+    private func applyGitGraphScalars(_ scalars: [String: String], to options: inout GitGraphOptions) {
+        if let value = boolScalar(scalars["showbranches"]) { options.showBranches = value }
+        if let value = boolScalar(scalars["showcommitlabel"]) { options.showCommitLabel = value }
+        if let value = scalars["mainbranchname"], !value.isEmpty { options.mainBranchName = value }
+        if let value = scalars["mainbranchorder"], let number = Int(value) {
+            options.mainBranchOrder = number
+        }
+        if let value = boolScalar(scalars["rotatecommitlabel"]) { options.rotateCommitLabel = value }
+        if let value = boolScalar(scalars["parallelcommits"]) { options.parallelCommits = value }
+    }
+
+    private func boolScalar(_ raw: String?) -> Bool? {
+        guard let raw else { return nil }
+        switch raw.lowercased() {
+        case "true", "yes", "1": return true
+        case "false", "no", "0": return false
+        default: return nil
+        }
+    }
+
+    /// `%%{init: { ... }}%%` — layout keys only. Theme colors are ignored.
+    private func applyInitDirectives(in lines: [String], to options: inout FrontmatterOptions) {
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("%%{") else { continue }
+            let inner: String
+            if let close = trimmed.range(of: "}%%") {
+                inner = String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 3)..<close.lowerBound])
+            } else {
+                inner = String(trimmed.dropFirst(3))
+            }
+            if let git = object(named: "gitGraph", in: inner)
+                ?? object(named: "gitgraph", in: inner) {
+                applyGitGraphScalars(scalarMap(git), to: &options.gitGraph)
+            }
+            if let sankey = object(named: "sankey", in: inner) {
+                let scalars = scalarMap(sankey)
+                if let alignment = scalars["nodealignment"] {
+                    options.sankey.nodeAlignment = MermaidSankeyParser.alignment(from: alignment)
+                }
+                if let width = scalars["nodewidth"], let value = Double(width) {
+                    options.sankey.nodeWidth = value
+                }
+                if let padding = scalars["nodepadding"], let value = Double(padding) {
+                    options.sankey.nodePadding = value
+                }
+            }
+            if let kanban = object(named: "kanban", in: inner) {
+                let scalars = scalarMap(kanban)
+                if let url = scalars["ticketbaseurl"], !url.isEmpty {
+                    options.kanbanTicketBaseUrl = url
+                }
+            }
+        }
+    }
+
+    private func object(named name: String, in text: String) -> String? {
+        let pattern = #"['"]?"# + NSRegularExpression.escapedPattern(for: name) + #"['"]?\s*:\s*\{"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return nil
+        }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              let start = Range(match.range, in: text),
+              let brace = text[start].firstIndex(of: "{")
+        else { return nil }
+        return matchingBraceContents(in: String(text[brace...]))
+    }
+
+    private func matchingBraceContents(in text: String) -> String? {
+        guard text.first == "{" else { return nil }
+        var depth = 0
+        var index = text.startIndex
+        var inString: Character?
+        var escaped = false
+        while index < text.endIndex {
+            let character = text[index]
+            if let quote = inString {
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == quote {
+                    inString = nil
+                }
+            } else if character == "\"" || character == "'" {
+                inString = character
+            } else if character == "{" {
+                depth += 1
+            } else if character == "}" {
+                depth -= 1
+                if depth == 0 {
+                    let innerStart = text.index(after: text.startIndex)
+                    return String(text[innerStart..<index])
+                }
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    private func scalarMap(_ object: String) -> [String: String] {
+        var result: [String: String] = [:]
+        let pattern = #"['"]?([A-Za-z0-9_]+)['"]?\s*:\s*('([^']*)'|"([^"]*)"|[^,}\s]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return result }
+        let range = NSRange(object.startIndex..., in: object)
+        for match in regex.matches(in: object, range: range) {
+            guard let keyRange = Range(match.range(at: 1), in: object) else { continue }
+            let key = String(object[keyRange]).lowercased()
+            let value: String
+            if let r = Range(match.range(at: 3), in: object), match.range(at: 3).location != NSNotFound {
+                value = String(object[r])
+            } else if let r = Range(match.range(at: 4), in: object), match.range(at: 4).location != NSNotFound {
+                value = String(object[r])
+            } else if match.numberOfRanges > 2, let r = Range(match.range(at: 2), in: object) {
+                value = String(object[r]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            } else {
+                continue
+            }
+            result[key] = value
+        }
+        return result
+    }
+
+    /// Skip blanks and `%%` comments / `%%{init}` directives when locating the type header.
     private func firstDiagramLineIndex(in lines: [String]) -> Int? {
-        guard let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
+        func nextContentIndex(from start: Int) -> Int? {
+            guard start < lines.count else { return nil }
+            return lines[start...].firstIndex { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                return !trimmed.isEmpty && !trimmed.hasPrefix("%%")
+            }
+        }
+
+        guard let first = nextContentIndex(from: 0) else {
             return nil
         }
 
@@ -110,7 +371,7 @@ struct MermaidParser: DocumentParser, Sendable {
             return first
         }
 
-        return lines[(closing + 1)...].firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+        return nextContentIndex(from: closing + 1)
     }
 
     private enum DiagramType {
@@ -124,6 +385,11 @@ struct MermaidParser: DocumentParser, Sendable {
         case classDiagram
         case erDiagram
         case xyChart
+        case gitGraph
+        case quadrantChart
+        case sankey
+        case kanban
+        case journey
         case unknown(String)
     }
 
@@ -134,7 +400,10 @@ struct MermaidParser: DocumentParser, Sendable {
 
     private func parseHeader(_ line: String) -> Header? {
         let tokens = line.split(separator: " ", maxSplits: 1).map(String.init)
-        guard let keyword = tokens.first?.lowercased() else { return nil }
+        guard var keyword = tokens.first?.lowercased() else { return nil }
+        if keyword.hasSuffix(":") {
+            keyword = String(keyword.dropLast())
+        }
 
         switch keyword {
         case "flowchart", "graph":
@@ -163,6 +432,16 @@ struct MermaidParser: DocumentParser, Sendable {
             return Header(type: .erDiagram, direction: nil)
         case "xychart", "xychart-beta":
             return Header(type: .xyChart, direction: nil)
+        case "gitgraph":
+            return Header(type: .gitGraph, direction: nil)
+        case "quadrantchart":
+            return Header(type: .quadrantChart, direction: nil)
+        case "sankey", "sankey-beta":
+            return Header(type: .sankey, direction: nil)
+        case "kanban":
+            return Header(type: .kanban, direction: nil)
+        case "journey":
+            return Header(type: .journey, direction: nil)
         default:
             return Header(type: .unknown(tokens.first ?? keyword), direction: nil)
         }
@@ -189,6 +468,10 @@ struct MermaidParser: DocumentParser, Sendable {
         for i in 0 ..< chars.count {
             if chars[i] == "\"" { inDoubleQuote.toggle() }
             if !inDoubleQuote, i + 1 < chars.count, chars[i] == "%", chars[i + 1] == "%" {
+                // Keep `%%{init: ...}%%` so layout config can be read.
+                if i + 2 < chars.count, chars[i + 2] == "{" {
+                    continue
+                }
                 return String(chars[0 ..< i])
             }
         }
@@ -227,6 +510,8 @@ struct MermaidParser: DocumentParser, Sendable {
         for stmt in statements {
             let trimmed = stmt.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty { continue }
+            // Kept `%%{init}` lines must not tokenize into phantom nodes.
+            if trimmed.hasPrefix("%%") { continue }
 
             // subgraph
             if let sg = parseSubgraphStart(trimmed) {

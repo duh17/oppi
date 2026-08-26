@@ -4,12 +4,12 @@ Synthetic fixture for Oppi markdown + Mermaid steer-testing. No real session, us
 
 Open this file in the document viewer, then scroll every section. Tap each diagram for fullscreen zoom. Switch **Rendered / Source** on a `.mmd` open if you extract a fence.
 
-Expected Oppi native render today: **flowchart / graph**, **sequence**, **class**, **state**, **ER**, **gantt**, **pie**, **mindmap**, **timeline**, **xychart**. Everything else should fall back to a highlighted code block or “unsupported diagram type”, not crash or show raw fence markers.
+Expected Oppi native render today: **flowchart / graph**, **sequence**, **class**, **state**, **ER**, **gantt**, **pie**, **mindmap**, **timeline**, **xychart**, **journey**, **quadrantChart**, **gitGraph**, **sankey**, **kanban**. Everything else should fall back to a highlighted code block or “unsupported diagram type”, not crash or show raw fence markers.
 
 | Band | Types |
 | --- | --- |
-| Native | flowchart, graph, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, pie, mindmap, timeline, xychart |
-| Official fallback | journey, quadrantChart, requirementDiagram, gitGraph, C4*, zenuml, sankey, block, packet, kanban, architecture, radar, treemap |
+| Native | flowchart, graph, sequenceDiagram, classDiagram, stateDiagram, erDiagram, gantt, pie, mindmap, timeline, xychart, journey, quadrantChart, gitGraph, sankey, kanban |
+| Official fallback | requirementDiagram, C4*, zenuml, block, packet, architecture, radar, treemap |
 | Experimental / demo | info, ishikawa, railroad, treeView, usecase, venn, wardley, eventModeling |
 | Error | empty, unknown keyword, broken syntax |
 
@@ -598,7 +598,7 @@ xychart
 
 ## 14. User journey
 
-Expected: unsupported fallback.
+Expected: native.
 
 ```mermaid
 journey
@@ -616,7 +616,7 @@ journey
 
 ## 15. Quadrant
 
-Expected: unsupported fallback.
+Expected: native.
 
 ```mermaid
 quadrantChart
@@ -678,7 +678,7 @@ requirementDiagram
 
 ## 17. Git graph
 
-Expected: unsupported fallback.
+Expected: native.
 
 ```mermaid
 gitGraph
@@ -777,7 +777,7 @@ zenuml
 
 ## 20. Sankey
 
-Expected: unsupported fallback.
+Expected: native.
 
 ```mermaid
 sankey-beta
@@ -850,7 +850,7 @@ packet
 
 ## 23. Kanban
 
-Expected: unsupported fallback.
+Expected: native.
 
 ```mermaid
 ---

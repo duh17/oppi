@@ -19,6 +19,11 @@ struct MermaidThemeContractTests {
         case classDiagram
         case erDiagram
         case xyChart
+        case gitGraph
+        case quadrantChart
+        case sankey
+        case kanban
+        case journey
     }
 
     private static let fixtures: [NativeDiagramKind: String] = [
@@ -32,6 +37,11 @@ struct MermaidThemeContractTests {
         .classDiagram: "classDiagram\n Animal <|-- Cat",
         .erDiagram: "erDiagram\n CUSTOMER ||--o{ ORDER : places",
         .xyChart: "xychart-beta\n x-axis [A, B]\n y-axis 0 --> 10\n line [2, 8]",
+        .gitGraph: "gitGraph\n commit id: \"a\"\n commit id: \"b\"",
+        .quadrantChart: "quadrantChart\n title Reach\n x-axis Low --> High\n y-axis Low --> High\n Campaign A: [0.3, 0.6]",
+        .sankey: "sankey\n A,B,4\n B,C,2",
+        .kanban: "kanban\n todo[Todo]\n  task1[Ship it]",
+        .journey: "journey\n title Day\n section Work\n  Make tea: 5: Me",
     ]
 
     @Test func registryCoversEveryNativeDiagramKind() throws {
@@ -60,6 +70,37 @@ struct MermaidThemeContractTests {
                 #expect(
                     corner.allSatisfy { $0 == 0 },
                     "\(kind.rawValue) paints the containing surface's canvas (corner bytes \(corner))"
+                )
+            }
+        }
+    }
+
+    @Test func everyNativeDiagramInkStaysInsideTheThemePalette() throws {
+        let parser = MermaidParser()
+        let renderer = MermaidRenderer()
+
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            let config = RenderConfiguration(
+                fontSize: 14,
+                maxWidth: 360,
+                theme: palette.renderTheme,
+                displayMode: .document
+            )
+            let surface = UIColor(palette.bgHighlight).cgColor
+
+            for kind in NativeDiagramKind.allCases {
+                let source = try #require(Self.fixtures[kind])
+                let layout = renderer.layout(parser.parse(source), configuration: config)
+                let bitmap = try #require(rasterize(layout, renderer: renderer, background: surface))
+                let foreign = bitmap.foreignInkRatio(
+                    surface: surface,
+                    theme: palette.renderTheme
+                )
+                let percent = (foreign * 1000).rounded() / 10
+                #expect(
+                    foreign < 0.02,
+                    "\(kind.rawValue) painted non-theme ink on \(themeID.rawValue) (\(percent)%)"
                 )
             }
         }
@@ -359,6 +400,11 @@ struct MermaidThemeContractTests {
         case .classDiagram: .classDiagram
         case .erDiagram: .erDiagram
         case .xyChart: .xyChart
+        case .gitGraph: .gitGraph
+        case .quadrantChart: .quadrantChart
+        case .sankey: .sankey
+        case .kanban: .kanban
+        case .journey: .journey
         case .unsupported: nil
         }
     }
@@ -440,6 +486,81 @@ struct MermaidThemeContractTests {
                 }
             }
             return maximum
+        }
+
+        /// Share of sampled opaque pixels that are not a theme ink or a blend
+        /// of two theme/surface inks. Author `style` hex is out of scope;
+        /// these fixtures never set it.
+        func foreignInkRatio(surface: CGColor, theme: RenderTheme) -> Double {
+            var allowed = theme.paletteInks.compactMap(sRGB)
+            if let surfaceRGB = sRGB(surface) {
+                allowed.append(surfaceRGB)
+            }
+            var foreign = 0
+            var sampled = 0
+            for y in stride(from: 0, to: height, by: 2) {
+                for x in stride(from: 0, to: width, by: 2) {
+                    let sample = pixel(x: x, y: y)
+                    guard sample.count == 4, sample[3] > 8 else { continue }
+                    sampled += 1
+                    if !isThemeInk(sample, allowed: allowed) {
+                        foreign += 1
+                    }
+                }
+            }
+            return sampled == 0 ? 1 : Double(foreign) / Double(sampled)
+        }
+
+        private func isThemeInk(_ pixel: [UInt8], allowed: [(CGFloat, CGFloat, CGFloat)]) -> Bool {
+            let sample = (
+                CGFloat(pixel[0]) / 255,
+                CGFloat(pixel[1]) / 255,
+                CGFloat(pixel[2]) / 255
+            )
+            let slop: CGFloat = 0.09
+            if allowed.contains(where: { distance(sample, $0) <= slop }) {
+                return true
+            }
+            for i in allowed.indices {
+                for j in allowed.indices where j > i {
+                    if distanceToSegment(sample, allowed[i], allowed[j]) <= slop {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
+        private func sRGB(_ color: CGColor) -> (CGFloat, CGFloat, CGFloat)? {
+            guard
+                let space = CGColorSpace(name: CGColorSpace.sRGB),
+                let converted = color.converted(to: space, intent: .defaultIntent, options: nil),
+                let c = converted.components, c.count >= 3
+            else { return nil }
+            return (c[0], c[1], c[2])
+        }
+
+        private func distance(
+            _ a: (CGFloat, CGFloat, CGFloat),
+            _ b: (CGFloat, CGFloat, CGFloat)
+        ) -> CGFloat {
+            let dr = a.0 - b.0
+            let dg = a.1 - b.1
+            let db = a.2 - b.2
+            return (dr * dr + dg * dg + db * db).squareRoot()
+        }
+
+        private func distanceToSegment(
+            _ p: (CGFloat, CGFloat, CGFloat),
+            _ a: (CGFloat, CGFloat, CGFloat),
+            _ b: (CGFloat, CGFloat, CGFloat)
+        ) -> CGFloat {
+            let ab = (b.0 - a.0, b.1 - a.1, b.2 - a.2)
+            let ap = (p.0 - a.0, p.1 - a.1, p.2 - a.2)
+            let denom = ab.0 * ab.0 + ab.1 * ab.1 + ab.2 * ab.2
+            guard denom > 0.0001 else { return distance(p, a) }
+            let t = min(1, max(0, (ap.0 * ab.0 + ap.1 * ab.1 + ap.2 * ab.2) / denom))
+            return distance(p, (a.0 + ab.0 * t, a.1 + ab.1 * t, a.2 + ab.2 * t))
         }
 
         private func pixel(x: Int, y: Int) -> [UInt8] {

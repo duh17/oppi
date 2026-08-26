@@ -14,6 +14,11 @@ enum MermaidDiagram: Equatable, Sendable {
     case classDiagram(ClassDiagram)
     case erDiagram(ERDiagram)
     case xyChart(XYChartDiagram)
+    case gitGraph(GitGraphDiagram)
+    case quadrantChart(QuadrantChartDiagram)
+    case sankey(SankeyDiagram)
+    case kanban(KanbanDiagram)
+    case journey(JourneyDiagram)
     case unsupported(type: String)
 }
 
@@ -106,6 +111,308 @@ struct XYChartSeries: Equatable, Sendable {
 enum XYChartSeriesKind: Equatable, Sendable {
     case bar
     case line
+}
+
+// MARK: - Git graph types
+
+/// Official `gitGraph` orientation from the header (`LR:` / `TB:` / `BT:`).
+/// Leftover tokens stay `.unsupported` so the renderer fails visibly.
+enum GitGraphOrientation: Equatable, Sendable {
+    case lr
+    case tb
+    case bt
+    case unsupported(String)
+}
+
+/// Visual commit style. Merge may override the default double-circle with
+/// `type: NORMAL` / `REVERSE` / `HIGHLIGHT`.
+enum GitGraphCommitStyle: Equatable, Sendable {
+    case normal
+    case reverse
+    case highlight
+    case merge
+    case cherryPick
+}
+
+struct GitGraphOptions: Equatable, Sendable {
+    var showBranches: Bool
+    var showCommitLabel: Bool
+    var mainBranchName: String
+    var mainBranchOrder: Int
+    var rotateCommitLabel: Bool
+    var parallelCommits: Bool
+
+    init(
+        showBranches: Bool = true,
+        showCommitLabel: Bool = true,
+        mainBranchName: String = "main",
+        mainBranchOrder: Int = 0,
+        rotateCommitLabel: Bool = true,
+        parallelCommits: Bool = false
+    ) {
+        self.showBranches = showBranches
+        self.showCommitLabel = showCommitLabel
+        self.mainBranchName = mainBranchName
+        self.mainBranchOrder = mainBranchOrder
+        self.rotateCommitLabel = rotateCommitLabel
+        self.parallelCommits = parallelCommits
+    }
+}
+
+struct GitGraphBranch: Equatable, Sendable {
+    let name: String
+    let order: Int?
+}
+
+struct GitGraphCommit: Equatable, Sendable {
+    let id: String
+    let style: GitGraphCommitStyle
+    let tag: String?
+    let branch: String
+    let parents: [String]
+    let seq: Int
+    let cherrySourceId: String?
+    let cherryParentId: String?
+    let isMerge: Bool
+
+    init(
+        id: String,
+        style: GitGraphCommitStyle,
+        tag: String?,
+        branch: String,
+        parents: [String],
+        seq: Int,
+        cherrySourceId: String? = nil,
+        cherryParentId: String? = nil,
+        isMerge: Bool = false
+    ) {
+        self.id = id
+        self.style = style
+        self.tag = tag
+        self.branch = branch
+        self.parents = parents
+        self.seq = seq
+        self.cherrySourceId = cherrySourceId
+        self.cherryParentId = cherryParentId
+        self.isMerge = isMerge
+    }
+}
+
+/// Simulated gitGraph after walking official commands.
+///
+/// Spec: https://mermaid.js.org/syntax/gitgraph.html
+struct GitGraphDiagram: Equatable, Sendable {
+    let orientation: GitGraphOrientation
+    let options: GitGraphOptions
+    let branches: [GitGraphBranch]
+    let commits: [GitGraphCommit]
+    /// First illegal command, if any. Renderer shows a placeholder.
+    let error: String?
+
+    init(
+        orientation: GitGraphOrientation,
+        options: GitGraphOptions,
+        branches: [GitGraphBranch],
+        commits: [GitGraphCommit],
+        error: String? = nil
+    ) {
+        self.orientation = orientation
+        self.options = options
+        self.branches = branches
+        self.commits = commits
+        self.error = error
+    }
+
+    static let empty = Self(
+        orientation: .lr,
+        options: GitGraphOptions(),
+        branches: [],
+        commits: [],
+        error: nil
+    )
+}
+
+// MARK: - Quadrant chart types
+
+/// Spec: https://mermaid.js.org/syntax/quadrantChart.html
+struct QuadrantChartDiagram: Equatable, Sendable {
+    let title: String?
+    let xAxisLeft: String?
+    let xAxisRight: String?
+    let yAxisBottom: String?
+    let yAxisTop: String?
+    let quadrant1: String?
+    let quadrant2: String?
+    let quadrant3: String?
+    let quadrant4: String?
+    let points: [QuadrantChartPoint]
+
+    init(
+        title: String?,
+        xAxisLeft: String?,
+        xAxisRight: String?,
+        yAxisBottom: String?,
+        yAxisTop: String?,
+        quadrant1: String?,
+        quadrant2: String?,
+        quadrant3: String?,
+        quadrant4: String?,
+        points: [QuadrantChartPoint]
+    ) {
+        self.title = title
+        self.xAxisLeft = xAxisLeft
+        self.xAxisRight = xAxisRight
+        self.yAxisBottom = yAxisBottom
+        self.yAxisTop = yAxisTop
+        self.quadrant1 = quadrant1
+        self.quadrant2 = quadrant2
+        self.quadrant3 = quadrant3
+        self.quadrant4 = quadrant4
+        self.points = points
+    }
+
+    var isEmpty: Bool {
+        title == nil
+            && xAxisLeft == nil && xAxisRight == nil
+            && yAxisBottom == nil && yAxisTop == nil
+            && quadrant1 == nil && quadrant2 == nil
+            && quadrant3 == nil && quadrant4 == nil
+            && points.isEmpty
+    }
+
+    static let empty = Self(
+        title: nil,
+        xAxisLeft: nil,
+        xAxisRight: nil,
+        yAxisBottom: nil,
+        yAxisTop: nil,
+        quadrant1: nil,
+        quadrant2: nil,
+        quadrant3: nil,
+        quadrant4: nil,
+        points: []
+    )
+}
+
+struct QuadrantChartPoint: Equatable, Sendable {
+    let name: String
+    /// Official range is 0...1. Parser stores the raw number.
+    let x: Double
+    let y: Double
+}
+
+// MARK: - Sankey types
+
+/// Spec: https://mermaid.js.org/syntax/sankey.html
+enum SankeyNodeAlignment: Equatable, Sendable {
+    case justify
+    case center
+    case left
+    case right
+    case unsupported(String)
+}
+
+struct SankeyOptions: Equatable, Sendable {
+    var nodeAlignment: SankeyNodeAlignment
+    var nodeWidth: Double
+    var nodePadding: Double
+
+    init(
+        nodeAlignment: SankeyNodeAlignment = .justify,
+        nodeWidth: Double = 10,
+        nodePadding: Double = 12
+    ) {
+        self.nodeAlignment = nodeAlignment
+        self.nodeWidth = nodeWidth
+        self.nodePadding = nodePadding
+    }
+}
+
+struct SankeyLink: Equatable, Sendable {
+    let source: String
+    let target: String
+    let value: Double
+}
+
+struct SankeyDiagram: Equatable, Sendable {
+    let links: [SankeyLink]
+    let options: SankeyOptions
+
+    init(links: [SankeyLink], options: SankeyOptions = SankeyOptions()) {
+        self.links = links
+        self.options = options
+    }
+
+    static let empty = Self(links: [], options: SankeyOptions())
+}
+
+// MARK: - Kanban types
+
+/// Official priority values from https://mermaid.js.org/syntax/kanban.html
+enum KanbanPriority: Equatable, Sendable {
+    case veryHigh
+    case high
+    case low
+    case veryLow
+    case unsupported(String)
+}
+
+struct KanbanTask: Equatable, Sendable {
+    let id: String
+    let description: String
+    let assigned: String?
+    let ticket: String?
+    /// `ticketBaseUrl` with `#TICKET#` replaced. Nil when no ticket or no base URL.
+    let ticketURL: String?
+    let priority: KanbanPriority?
+}
+
+struct KanbanColumn: Equatable, Sendable {
+    let id: String
+    let title: String
+    let tasks: [KanbanTask]
+}
+
+struct KanbanDiagram: Equatable, Sendable {
+    let columns: [KanbanColumn]
+    let ticketBaseUrl: String?
+
+    init(columns: [KanbanColumn], ticketBaseUrl: String? = nil) {
+        self.columns = columns
+        self.ticketBaseUrl = ticketBaseUrl
+    }
+
+    static let empty = Self(columns: [], ticketBaseUrl: nil)
+}
+
+// MARK: - Journey types
+
+/// Spec: https://mermaid.js.org/syntax/userJourney.html
+struct JourneyTask: Equatable, Sendable {
+    let name: String
+    /// Official score is 1...5 inclusive.
+    let score: Int
+    let actors: [String]
+}
+
+struct JourneySection: Equatable, Sendable {
+    let name: String
+    let tasks: [JourneyTask]
+}
+
+struct JourneyDiagram: Equatable, Sendable {
+    let title: String?
+    let sections: [JourneySection]
+    /// Leftover illegal tokens (score outside 1...5, etc.).
+    let error: String?
+
+    init(title: String?, sections: [JourneySection], error: String? = nil) {
+        self.title = title
+        self.sections = sections
+        self.error = error
+    }
+
+    static let empty = Self(title: nil, sections: [], error: nil)
 }
 
 // MARK: - State diagram types

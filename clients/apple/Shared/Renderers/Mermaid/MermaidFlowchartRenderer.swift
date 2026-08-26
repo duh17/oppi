@@ -42,6 +42,40 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let customDraw: (@Sendable (CGContext, CGPoint) -> Void)?
         /// Total size for custom-drawn diagrams.
         let customSize: CGSize?
+
+        /// Shared bag for dedicated renderers (pie, xy, gitGraph, …).
+        static func custom(
+            size: CGSize,
+            nodePositions: [String: CGRect],
+            nodeLabels: [String: String],
+            configuration: RenderConfiguration,
+            edgePaths: [GraphLayoutEdgePath] = [],
+            draw: @escaping @Sendable (CGContext, CGPoint) -> Void
+        ) -> FlowchartLayout {
+            FlowchartLayout(
+                graphResult: GraphLayoutResult(
+                    nodePositions: nodePositions, edgePaths: edgePaths, totalSize: size
+                ),
+                flowchart: .empty,
+                subgraphFrames: [:],
+                nodeLabels: nodeLabels,
+                nodeShapes: [:],
+                edgeLabels: [:],
+                edgeStyles: [:],
+                edgeIds: [:],
+                edgeKeys: [],
+                edgeStyleDirectives: [:],
+                edgeEndpointSubgraphs: [:],
+                classDefs: [:],
+                styleDirectives: [:],
+                fontSize: configuration.fontSize,
+                theme: configuration.theme,
+                isPlaceholder: false,
+                placeholderText: nil,
+                customDraw: draw,
+                customSize: size
+            )
+        }
     }
 
     typealias LayoutResult = FlowchartLayout
@@ -76,6 +110,16 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             return MermaidERRenderer.layout(diagram, configuration: configuration)
         case .xyChart(let diagram):
             return MermaidXYChartRenderer.layout(diagram, configuration: configuration)
+        case .gitGraph(let diagram):
+            return MermaidGitGraphRenderer.layout(diagram, configuration: configuration)
+        case .quadrantChart(let diagram):
+            return MermaidQuadrantRenderer.layout(diagram, configuration: configuration)
+        case .sankey(let diagram):
+            return MermaidSankeyRenderer.layout(diagram, configuration: configuration)
+        case .kanban(let diagram):
+            return MermaidKanbanRenderer.layout(diagram, configuration: configuration)
+        case .journey(let diagram):
+            return MermaidJourneyRenderer.layout(diagram, configuration: configuration)
         case .unsupported(let type):
             return placeholderLayout(
                 text: "Unsupported diagram type: \(type)",

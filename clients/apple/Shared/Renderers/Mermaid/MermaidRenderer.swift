@@ -36,6 +36,16 @@ struct MermaidRenderer: GraphicalDocumentRenderer, Sendable {
             return MermaidERRenderer.layout(diagram, configuration: configuration)
         case .xyChart(let diagram):
             return MermaidXYChartRenderer.layout(diagram, configuration: configuration)
+        case .gitGraph(let diagram):
+            return MermaidGitGraphRenderer.layout(diagram, configuration: configuration)
+        case .quadrantChart(let diagram):
+            return MermaidQuadrantRenderer.layout(diagram, configuration: configuration)
+        case .sankey(let diagram):
+            return MermaidSankeyRenderer.layout(diagram, configuration: configuration)
+        case .kanban(let diagram):
+            return MermaidKanbanRenderer.layout(diagram, configuration: configuration)
+        case .journey(let diagram):
+            return MermaidJourneyRenderer.layout(diagram, configuration: configuration)
         case .unsupported(let type):
             return flowchartRenderer.placeholderLayout(
                 text: "Unsupported diagram type: \(type)",

@@ -940,6 +940,11 @@ final class ScreenshotPreviewUITests: XCTestCase {
             ("XY", "xy"),
             ("Class", "class"),
             ("ER", "er"),
+            ("Git graph", "gitgraph"),
+            ("Quadrant", "quadrant"),
+            ("Sankey", "sankey"),
+            ("Kanban", "kanban"),
+            ("Journey", "journey"),
         ]
 
         for colorScheme in ["dark", "light"] {

@@ -1019,10 +1019,10 @@ struct MermaidRendererTests {
     }
 
     @Test func unsupportedDiagramPlaceholder() {
-        let diagram = parser.parse("journey\n    title Test")
+        let diagram = parser.parse("requirementDiagram\n    requirement login_req {\n        id: 1\n    }")
         let layout = renderer.layout(diagram, configuration: config)
         #expect(layout.isPlaceholder)
-        #expect(layout.placeholderText?.contains("journey") == true)
+        #expect(layout.placeholderText?.contains("requirementDiagram") == true)
     }
 
     // MARK: - Pie / timeline / class / ER dispatch

@@ -439,6 +439,95 @@ private struct MermaidRenderingPreview: View {
             ```
             """#
         ),
+        Diagram(
+            id: "gitgraph",
+            heading: "Git graph",
+            markdown: #"""
+            ```mermaid
+            gitGraph
+              commit id: "init"
+              commit id: "docs" tag: "v0.1"
+              branch develop
+              checkout develop
+              commit id: "wip"
+              commit id: "fix" type: HIGHLIGHT
+              commit id: "chore" type: REVERSE
+              checkout main
+              merge develop id: "merge" tag: "v1.0"
+              commit id: "release"
+              cherry-pick id: "fix"
+            ```
+            """#
+        ),
+        Diagram(
+            id: "quadrant",
+            heading: "Quadrant",
+            markdown: #"""
+            ```mermaid
+            quadrantChart
+              title Reach and engagement of campaigns
+              x-axis Low Reach --> High Reach
+              y-axis Low Engagement --> High Engagement
+              quadrant-1 We should expand
+              quadrant-2 Need to promote
+              quadrant-3 Re-evaluate
+              quadrant-4 May be improved
+              Campaign A: [0.3, 0.6]
+              Campaign B: [0.45, 0.23]
+              Campaign C: [0.57, 0.69]
+              Campaign D: [0.78, 0.34]
+            ```
+            """#
+        ),
+        Diagram(
+            id: "sankey",
+            heading: "Sankey",
+            markdown: #"""
+            ```mermaid
+            sankey-beta
+              Rendered,Flowchart,10
+              Rendered,Sequence,8
+              Rendered,Other native,12
+              Fallback,Journey,2
+              Fallback,Kanban,3
+              Other native,Pie,3
+              Other native,Gantt,3
+            ```
+            """#
+        ),
+        Diagram(
+            id: "kanban",
+            heading: "Kanban",
+            markdown: #"""
+            ```mermaid
+            kanban
+              backlog[Backlog]
+                task1[Collect every diagram type]@{ ticket: MD-1, priority: 'Very High', assigned: 'Chen' }
+                task2[Check native vs fallback]@{ ticket: MD-2, priority: 'High' }
+              doing[In progress]
+                task3[Steer-test on Duh Ifone]@{ ticket: MD-3, assigned: 'Chen' }
+              done[Done]
+                task5[Install Release build]@{ ticket: MD-0, priority: 'Low' }
+            ```
+            """#
+        ),
+        Diagram(
+            id: "journey",
+            heading: "Journey",
+            markdown: #"""
+            ```mermaid
+            journey
+              title My working day
+              section Go to work
+                Make tea: 5: Me
+                Go upstairs: 3: Me
+                Do work: 1: Me, Cat
+              section Go home
+                Go downstairs: 5: Me
+                Sit down: 5: Me
+            ```
+            """#
+        ),
     ]
 
     private let themeID: ThemeID

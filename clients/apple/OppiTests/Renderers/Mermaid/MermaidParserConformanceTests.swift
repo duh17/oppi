@@ -58,13 +58,51 @@ struct MermaidParserConformanceTests {
         }
     }
 
-    @Test func detectsUnsupportedType() {
+    @Test func detectsJourneyType() {
         let result = parser.parse("journey\n    title A Journey")
+        guard case .journey = result else {
+            Issue.record("Expected journey diagram, got \(result)")
+            return
+        }
+    }
+
+    @Test func leadingInitDirectiveDoesNotBecomeFlowchartHeader() {
+        let input = """
+        %%{init: {"theme": "forest"}}%%
+        flowchart LR
+          A --> B
+        """
+        let result = parser.parse(input)
+        guard case .flowchart(let diagram) = result else {
+            Issue.record("Expected flowchart, got \(result)")
+            return
+        }
+        #expect(diagram.direction == .LR)
+        #expect(diagram.nodes.count == 2)
+        #expect(diagram.edges.count == 1)
+    }
+
+    @Test func leadingInitDirectiveDoesNotBecomeGitGraphHeader() {
+        let input = """
+        %%{init: {"theme": "forest"}}%%
+        gitGraph
+          commit id: "a"
+        """
+        let result = parser.parse(input)
+        guard case .gitGraph(let diagram) = result else {
+            Issue.record("Expected gitGraph, got \(result)")
+            return
+        }
+        #expect(diagram.commits.contains { $0.id == "a" })
+    }
+
+    @Test func detectsUnsupportedType() {
+        let result = parser.parse("requirementDiagram\n    requirement login_req {\n        id: 1\n    }")
         guard case .unsupported(let type) = result else {
             Issue.record("Expected unsupported diagram type")
             return
         }
-        #expect(type == "journey")
+        #expect(type == "requirementDiagram")
     }
 
     @Test func parsesGanttType() {
@@ -451,6 +489,26 @@ struct MermaidParserConformanceTests {
         let result = parser.parse(input)
         guard case .flowchart(let d) = result else { Issue.record("Expected flowchart"); return }
         #expect(d.edges.count == 1)
+    }
+
+    @Test func midBodyDirectiveCommentsAreNotPhantomNodes() {
+        let input = """
+        flowchart LR
+          A --> B
+          %% a regular comment
+          %%{init: {"theme": "forest"}}%%
+          C --> D
+        """
+        let result = parser.parse(input)
+        guard case .flowchart(let diagram) = result else {
+            Issue.record("Expected flowchart, got \(result)")
+            return
+        }
+        #expect(Set(diagram.nodes.map(\.id)) == ["A", "B", "C", "D"])
+        #expect(diagram.edges.count == 2)
+        #expect(!diagram.nodes.contains { $0.id.localizedCaseInsensitiveContains("init") })
+        #expect(!diagram.nodes.contains { $0.id.localizedCaseInsensitiveContains("theme") })
+        #expect(!diagram.nodes.contains { $0.id.localizedCaseInsensitiveContains("forest") })
     }
 
     // MARK: - Semicolons
