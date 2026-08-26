@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
 import { AgentConfigurationError } from "../src/agent-launch-errors.js";
-import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import { openDatabase } from "../src/sqlite-compat.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
@@ -319,14 +318,7 @@ describe("agent routes", () => {
       );
       expect(listRes.statusCode).toBe(200);
       expect(JSON.parse(listRes.body).agents).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: DEFAULT_AGENT_ID,
-            name: "Oppi",
-            status: "active",
-          }),
-          expect.objectContaining({ id: agent.id, name: "Reviewer", status: "active" }),
-        ]),
+        [expect.objectContaining({ id: agent.id, name: "Reviewer", status: "active" })],
       );
 
       const launchRes = makeResponse();
@@ -390,12 +382,7 @@ describe("agent routes", () => {
         res: listRes as never,
       });
       expect(JSON.parse(listRes.body).agents).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: DEFAULT_AGENT_ID,
-            name: "Oppi",
-            status: "active",
-          }),
+        [
           expect.objectContaining({
             id: created.id,
             name: "Reviewer",
@@ -405,7 +392,7 @@ describe("agent routes", () => {
             },
             status: "active",
           }),
-        ]),
+        ],
       );
 
       const getRes = makeResponse();
@@ -830,241 +817,6 @@ describe("agent routes", () => {
       expect(JSON.parse(clearRes.body).agent.definition.icon).toEqual({ kind: "default" });
     } finally {
       store.close();
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("resolves only the oppi alias and id for the shipped identity", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-alias-routes-"));
-    try {
-      const store = new AgentDefinitionStore(dataDir);
-      const ctx = {
-        storage: {
-          getAgentDefinitionStore: () => store,
-        },
-      } as unknown as RouteContext;
-      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
-
-      for (const reference of ["oppi", "oppi-default-agent"]) {
-        const res = makeResponse();
-        await dispatch({
-          method: "GET",
-          path: `/agents/${reference}`,
-          url: new URL(`http://localhost/agents/${reference}`),
-          req: {} as never,
-          res: res as never,
-        });
-        expect(res.statusCode).toBe(200);
-        expect(JSON.parse(res.body).agent).toMatchObject({ id: DEFAULT_AGENT_ID });
-      }
-
-      // The old `default` alias was removed; it must not resolve to the identity.
-      const defaultRes = makeResponse();
-      await dispatch({
-        method: "GET",
-        path: "/agents/default",
-        url: new URL("http://localhost/agents/default"),
-        req: {} as never,
-        res: defaultRes as never,
-      });
-      expect(defaultRes.statusCode).toBe(404);
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("seeds an overwriteable default Agent identity and can reset customization", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-routes-"));
-    try {
-      const store = new AgentDefinitionStore(dataDir);
-      const ctx = {
-        storage: {
-          getAgentDefinitionStore: () => store,
-        },
-      } as unknown as RouteContext;
-      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
-
-      const getRes = makeResponse();
-      await dispatch({
-        method: "GET",
-        path: "/agents/oppi",
-        url: new URL("http://localhost/agents/oppi"),
-        req: {} as never,
-        res: getRes as never,
-      });
-      expect(getRes.statusCode).toBe(200);
-      expect(JSON.parse(getRes.body).agent).toMatchObject({
-        id: DEFAULT_AGENT_ID,
-        name: "Oppi",
-        status: "active",
-        definition: {
-          name: "Oppi",
-          description: expect.stringContaining("Manage Oppi"),
-          resources: { noContextFiles: true },
-          sessionDefaults: {
-            noTools: "builtin",
-            tools: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
-          },
-        },
-      });
-
-      const updateRes = makeResponse();
-      await dispatch({
-        method: "PATCH",
-        path: "/agents/oppi",
-        url: new URL("http://localhost/agents/oppi"),
-        req: makeRequest({
-          name: "Home Agent",
-          icon: { kind: "emoji", value: "🏠" },
-          description: "Coordinates Oppi from the app home screen",
-          instructions: { mode: "append", text: "Prefer short status summaries." },
-          sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "high" },
-        }) as never,
-        res: updateRes as never,
-      });
-      expect(updateRes.statusCode).toBe(200);
-      const updated = JSON.parse(updateRes.body).agent;
-      expect(updated).toMatchObject({
-        id: DEFAULT_AGENT_ID,
-        name: "Oppi",
-        version: 2,
-        definition: {
-          name: "Oppi",
-          icon: { kind: "emoji", value: "🏠" },
-          description: "Coordinates Oppi from the app home screen",
-          instructions: { mode: "append", text: "Prefer short status summaries." },
-          resources: { noContextFiles: true },
-          sessionDefaults: {
-            model: "openai-codex/gpt-5.5",
-            thinkingLevel: "high",
-            noTools: "builtin",
-            tools: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
-          },
-        },
-      });
-
-      const rejectRes = makeResponse();
-      await dispatch({
-        method: "PATCH",
-        path: "/agents/oppi",
-        url: new URL("http://localhost/agents/oppi"),
-        req: makeRequest({ sessionDefaults: { tools: ["bash"] } }) as never,
-        res: rejectRes as never,
-      });
-      expect(rejectRes.statusCode).toBe(400);
-      expect(JSON.parse(rejectRes.body).error).toContain("sessionDefaults.tools");
-
-      const launchOverrideRes = makeResponse();
-      await dispatch({
-        method: "POST",
-        path: "/agents/oppi/sessions",
-        url: new URL("http://localhost/agents/oppi/sessions"),
-        req: makeRequest({
-          prompt: { text: "Run safely" },
-          target: { workspaceId: "ws-1" },
-          overrides: { tools: ["bash"] },
-        }) as never,
-        res: launchOverrideRes as never,
-      });
-      expect(launchOverrideRes.statusCode).toBe(400);
-      expect(JSON.parse(launchOverrideRes.body).error).toBe(
-        "Oppi launch overrides cannot change tools",
-      );
-
-      const resetRes = makeResponse();
-      await dispatch({
-        method: "DELETE",
-        path: "/agents/oppi/customization",
-        url: new URL("http://localhost/agents/oppi/customization"),
-        req: {} as never,
-        res: resetRes as never,
-      });
-      expect(resetRes.statusCode).toBe(200);
-      expect(JSON.parse(resetRes.body).agent).toMatchObject({
-        id: DEFAULT_AGENT_ID,
-        name: "Oppi",
-        version: 3,
-        definition: {
-          name: "Oppi",
-          resources: { noContextFiles: true },
-          sessionDefaults: {
-            noTools: "builtin",
-            tools: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
-          },
-        },
-      });
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("accepts the native Oppi agent edit body without resources on its canonical route", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-native-route-"));
-    const store = new AgentDefinitionStore(dataDir);
-    try {
-      const dispatch = createAgentRoutes(
-        { storage: { getAgentDefinitionStore: () => store } } as unknown as RouteContext,
-        createRouteHelpers(),
-      );
-      const res = makeResponse();
-
-      await dispatch({
-        method: "PATCH",
-        path: `/agents/${DEFAULT_AGENT_ID}`,
-        url: new URL(`http://localhost/agents/${DEFAULT_AGENT_ID}`),
-        req: makeRequest({
-          name: "Home Agent",
-          description: null,
-          instructions: null,
-          sessionDefaults: { model: "openai/gpt-5.6", thinkingLevel: "high" },
-        }) as never,
-        res: res as never,
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.body).agent).toMatchObject({
-        id: DEFAULT_AGENT_ID,
-        name: "Oppi",
-        definition: {
-          name: "Oppi",
-          resources: { noContextFiles: true },
-          sessionDefaults: {
-            model: "openai/gpt-5.6",
-            thinkingLevel: "high",
-            noTools: "builtin",
-            tools: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
-          },
-        },
-      });
-    } finally {
-      store.close();
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not archive the reserved default Agent identity", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-default-agent-archive-routes-"));
-    try {
-      const store = new AgentDefinitionStore(dataDir);
-      const ctx = {
-        storage: {
-          getAgentDefinitionStore: () => store,
-        },
-      } as unknown as RouteContext;
-      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
-
-      const res = makeResponse();
-      await dispatch({
-        method: "DELETE",
-        path: "/agents/oppi",
-        url: new URL("http://localhost/agents/oppi"),
-        req: {} as never,
-        res: res as never,
-      });
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body).error).toContain("cannot be archived");
-      expect(store.getAgent(DEFAULT_AGENT_ID)).toMatchObject({ status: "active" });
-    } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
@@ -1608,7 +1360,7 @@ describe("agent routes", () => {
     }
   });
 
-  it("rejects public Agent definitions that use reserved default identity names", async () => {
+  it("treats Oppi names as ordinary user-saved Agent names", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-reserved-name-routes-"));
     try {
       const store = new AgentDefinitionStore(dataDir);
@@ -1627,8 +1379,8 @@ describe("agent routes", () => {
         req: makeRequest({ name: "Oppi" }) as never,
         res: defaultNameRes as unknown as ServerResponse,
       });
-      expect(defaultNameRes.statusCode).toBe(400);
-      expect(JSON.parse(defaultNameRes.body).error).toContain("reserved");
+      expect(defaultNameRes.statusCode).toBe(201);
+      expect(JSON.parse(defaultNameRes.body).agent.name).toBe("Oppi");
 
       const aliasRes = makeResponse();
       await dispatch({
@@ -1638,8 +1390,8 @@ describe("agent routes", () => {
         req: makeRequest({ name: "oppi" }) as never,
         res: aliasRes as unknown as ServerResponse,
       });
-      expect(aliasRes.statusCode).toBe(400);
-      expect(JSON.parse(aliasRes.body).error).toContain("reserved");
+      expect(aliasRes.statusCode).toBe(201);
+      expect(JSON.parse(aliasRes.body).agent.name).toBe("oppi");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

@@ -16,6 +16,60 @@ final class ScreenshotPreviewUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testAgentsPinsOfficialPiRowBeforeSavedAgents() throws {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "agents-pi-row", reduceMotion: true)
+
+        let pi = app.descendants(matching: .any)["agents.row.pi"]
+        let saved = app.staticTexts["agents.row.saved-reviewer"]
+        XCTAssertTrue(pi.waitForExistence(timeout: 5))
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        XCTAssertTrue(pi.isHittable, "Pi row must be visibly readable")
+        XCTAssertTrue(saved.isHittable, "Saved Agent row must be visibly readable")
+        XCTAssertTrue(pi.frame.minY < saved.frame.minY, "Pi must be the first Agents row")
+        XCTAssertTrue(pi.label.contains("Official Pi avatar"))
+        XCTAssertTrue(pi.label.contains("Global Pi configuration"))
+        saveScreenshot(name: "agents-official-pi-row")
+
+        pi.tap()
+        let identity = app.descendants(matching: .any)["agents.pi.identity"]
+        XCTAssertTrue(identity.waitForExistence(timeout: 5), "Pi detail identity did not render")
+        XCTAssertTrue(
+            app.navigationBars["Pi"].waitForExistence(timeout: 5),
+            "Pi detail navigation did not settle"
+        )
+        XCTAssertTrue(identity.isHittable, "Pi detail identity must be visibly readable")
+        XCTAssertTrue(identity.label.contains("Official Pi avatar"))
+        XCTAssertFalse(identity.label.contains("Ordinary upstream Pi"))
+        let systemPromptPath = app.descendants(matching: .any)["agents.pi.systemPromptPath"]
+        XCTAssertTrue(
+            systemPromptPath.waitForExistence(timeout: 5),
+            "Pi detail must expose the global SYSTEM.md path"
+        )
+        XCTAssertTrue(systemPromptPath.label.contains("~/.pi/agent/SYSTEM.md"))
+        XCTAssertTrue(systemPromptPath.isHittable, "SYSTEM.md path must be visibly readable")
+        let systemPrompt = app.descendants(matching: .any)["agents.pi.systemPrompt"]
+        XCTAssertTrue(
+            systemPrompt.waitForExistence(timeout: 5),
+            "Pi detail must show the live or default system prompt"
+        )
+        let defaultInUse = "Pi default in use until SYSTEM.md exists"
+        let promptValue = systemPrompt.value as? String
+        XCTAssertTrue(
+            systemPrompt.label.contains(defaultInUse) || (promptValue?.contains(defaultInUse) ?? false),
+            "Screenshot Pi detail shows the default prompt label without a live SYSTEM.md"
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["agents.pi.tools"].waitForExistence(timeout: 5),
+            "Pi detail must expose the built-in Tools picker"
+        )
+        XCTAssertTrue(
+            app.buttons["agents.pi.editSystemPrompt"].waitForExistence(timeout: 5),
+            "Pi detail must expose the Edit SYSTEM.md with Pi action"
+        )
+        saveScreenshot(name: "agents-official-pi-detail")
+    }
+
     func testAgentIconCriticalJourneyPreview() throws {
         XCUIDevice.shared.orientation = .portrait
         launchPreview(screen: "agent-icons")

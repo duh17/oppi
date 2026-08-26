@@ -33,10 +33,6 @@ struct ScreenshotPreviewView: View {
             ServerResourcesScreenshotPreview(screen: .extensions)
         case "server-resources-cached-offline":
             ServerResourcesScreenshotPreview(screen: .cachedOffline)
-        case "server-resources-oppi":
-            ServerResourcesScreenshotPreview(screen: .oppi)
-        case "server-resources-oppi-pending":
-            ServerResourcesScreenshotPreview(screen: .oppiPending)
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
         case "inbox-provider-setup-empty":
@@ -45,6 +41,8 @@ struct ScreenshotPreviewView: View {
             InboxProviderSetupPreview(showsSessions: true)
         case "agent-icons":
             AgentIconProofPreview()
+        case "agents-pi-row":
+            AgentManagementPiProofPreview()
         case "agent-icon-title-bar-stress":
             AgentIconTitleBarStressPreview()
         case "agent-icons-save-failure":

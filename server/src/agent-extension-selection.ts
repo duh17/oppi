@@ -33,10 +33,6 @@ export async function resolveSelectedAgentExtensionPaths(
   const selectedPaths: string[] = [];
   const unavailableExtensions: string[] = [];
   for (const extensionId of new Set(extensionIds)) {
-    if (extensionId === "oppi") {
-      unavailableExtensions.push("oppi (managed by server policy)");
-      continue;
-    }
     const path = pathsById.get(extensionId);
     if (!path) {
       unavailableExtensions.push(extensionId);

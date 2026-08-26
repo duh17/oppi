@@ -404,6 +404,53 @@ private enum AgentIconProofSaveError: LocalizedError {
 
 /// Isolated assistant-avatar sheet proof. It keeps persistence outside the
 /// fixture so Cancel can prove that an invalid draft never changes the avatar.
+struct AgentManagementPiProofPreview: View {
+    @State private var themeStore = ThemeStore()
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    NavigationLink {
+                        PiAgentDetailView()
+                    } label: {
+                        PiAgentSummaryRow()
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Pi, Official Pi avatar, Global Pi configuration")
+                    .accessibilityIdentifier("agents.row.pi")
+
+                    Label("Reviewer", systemImage: "person.crop.circle")
+                        .accessibilityIdentifier("agents.row.saved-reviewer")
+                } header: {
+                    Text("Agents")
+                } footer: {
+                    Text("Pi uses the server's global Pi configuration. Saved Agents add reusable instructions, resources, and session defaults.")
+                }
+            }
+            .navigationTitle("Agents")
+            .navigationBarTitleDisplayMode(.inline)
+            .themedListSurface()
+        }
+        .environment(themeStore)
+        .environment(\.theme, themeStore.appTheme)
+        .environment(\.themeID, themeStore.activeThemeID)
+        .tint(.themeBlue)
+        .preferredColorScheme(themeStore.preferredColorScheme)
+        .onAppear(perform: syncSystemColorScheme)
+        .onChange(of: colorScheme) { _, _ in
+            syncSystemColorScheme()
+        }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private func syncSystemColorScheme() {
+        guard themeStore.mode == .system else { return }
+        themeStore.updateSystemColorScheme(colorScheme)
+    }
+}
+
 struct AssistantAvatarPickerProofPreview: View {
     @State private var avatar: AssistantAvatar = .piText
     @State private var isShowingPicker = false

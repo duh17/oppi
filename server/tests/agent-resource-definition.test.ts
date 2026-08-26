@@ -8,6 +8,18 @@ import { AgentDefinitionStore, validateAgentDefinition } from "../src/agent-defi
 import { openDatabase } from "../src/sqlite-compat.js";
 
 describe("saved Agent resource definitions", () => {
+  it("starts with no saved Agents in a fresh store", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-definition-fresh-"));
+    const store = new AgentDefinitionStore(dataDir);
+
+    try {
+      expect(store.listAgents()).toEqual([]);
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves inherit versus exact-empty resource selection", () => {
     expect(validateAgentDefinition({ name: "Inherited" }).resources).toBeUndefined();
     expect(

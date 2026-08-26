@@ -16,9 +16,7 @@ This is not a general Pi extension-authoring guide. For pi package layout, lifec
 
 Pi owns ordinary skills and extensions. Normal Oppi-managed sessions resolve them for the session cwd through Pi's resource system; there is no `workspace.extensions` allowlist. Installing or running Oppi does not write `~/.pi/agent/settings.json`, run `pi install`, or enable anything in standalone Pi.
 
-Oppi has one explicit server-owned exception: the built-in **Oppi** extension. It is pathless, off by default, and is not a Pi package or a row in Pi's filesystem resource settings. When enabled, it adds only the allowlisted `oppi` tool to ordinary non-sandbox Oppi-managed sessions. Sandbox sessions never receive or reserve this built-in tool. It never adds structured `ask`.
-
-The shipped Oppi agent is separate. Its isolated control identity always has server-managed `oppi`, structured `ask`, and Pi's stock `read`, `edit`, `write`, `grep`, `find`, and `ls`, while disabling `bash`, user/project extensions, skills, prompt templates, and context files. Only the `oppi` tool uses the saved Oppi approval policy. Stock filesystem tools follow host process permissions: absolute paths are not constrained by Skill catalog metadata, and file mutations execute directly, bypassing Oppi approval and revision checks. The system prompt stays minimal and discovers CLI detail through `oppi help`.
+Oppi does not register a server-owned extension or tool. Managed workspace sessions and workspace-less Pi Control sessions use Pi's normal global and cwd-scoped configuration. This includes `SYSTEM.md`, `APPEND_SYSTEM.md`, settings, tools, Skills, prompt templates, and Extensions. A Pi extension can still register a tool named `oppi`, but Oppi does not reserve or manage that name.
 
 ## Server Skills and Extensions
 
@@ -26,33 +24,19 @@ Use the server's **Skills** and **Extensions** destinations to inspect and chang
 
 The catalog is intentionally global and has no `cwd` parameter. It lists Pi-native user candidates from `~/.pi/agent`, `~/.agents/skills`, configured user settings, and configured packages. It does not install packages while listing. Provenance and enabled state come from Pi. Normal resource IDs are opaque path-derived identifiers, so a moved resource can receive a new ID.
 
-Extensions list **Oppi** first. Its row has stable id `oppi`, built-in provenance, no filesystem `path`, and no removal action. It starts disabled. Its server-scoped configuration contains the Oppi tool availability, approval policy, a mobile output guide toggle, and a revision; updates use that revision to prevent stale client writes. The mobile output guide is independent of tool availability and is off by default.
-
-### Oppi approval policies
-
-- **Confirm destructive only** (default): reads and allowlisted non-destructive changes run directly; delete, remove, and archive actions require approval.
-- **Confirm all changes**: reads run directly; every allowlisted mutation requires approval.
-- **Read only**: allowlisted reads run directly; mutations fail with a deterministic read-only error and never open an approval prompt.
-
-The command allowlist is an application capability boundary, not a copy of every CLI command. It covers bounded JSON operations on Oppi-managed application state: `status`, `quota`, `models`, `workspace`, `worktree`, `agent`, `session`, `schedule`, and `config` (`show`/`get`/`validate` read; `set` is a mutation). Host lifecycle and credential operations (`init`, `serve`, `start`, `pair`, `server`, `token`, and `update`), host diagnostics/version output, and root aliases remain excluded. Operator-facing config detail lives in [server-configuration.md](server-configuration.md). In the built-in agent tool, choose the smallest session disclosure step: `session list` for orientation, `session inspect --view summary` for current progress, `session inspect --view response` for only the latest response, `session inspect --view outline` for history, and bounded `messages`/`tools`/`trace-page`/`tool-output` reads only when the outline leaves a question. Use bounded `session wait <id...>` for monitoring, including `--all`. Defaults poll every 2s and may record a compact heartbeat every 60s; `--poll`/`--interval` and `--summary-every` override, and `--summary-every 0` disables heartbeats. Root and allowlisted-command help are available.
-
-Unknown commands, unsupported subcommands, and file-backed mutation bodies are denied. `--prompt @-` and `--text @-` are read from stdin and inlined into the approved argument snapshot before policy evaluation. Inline prompt, system-prompt, message, definition, file-content, answer, and response bodies are redacted from rejected command summaries. The approval boundary uses normalized immutable input, so the approved command is the command executed.
-
-The CLI produces both outputs for an allowlisted Oppi call: its redacted JSON envelope is model-facing content, and its complete ANSI human output is the expanded terminal result. The tool wrapper places the complete shell-quoted invocation before that result, so the expanded row reads like a normal terminal transcript without shortening inline prompts or other arguments.
-
 ### Mobile output guide
 
-Enable **Mobile Output Guide** under **Extensions → Oppi** to tell agents which links and rich content Oppi can render in new and explicitly reloaded Oppi-managed host and sandbox sessions. The capability guide covers real workspace and owner-host wiki links with uppercase one-based anchors, inline images and SVG, inline `![[video]]` for existing Oppi-backed files, fenced Mermaid flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, and xyChart diagrams, LaTeX, session deep links, and viewers for recognized documents and media. Other Mermaid types stay source. `[[video]]` remains an ordinary file link. Remote URLs, HTML `<video>`, and attachment IDs are not embeds. It does not prescribe response style, fabricate paths, or expose secrets. Oppi does not send viewport dimensions, and active sessions are not reloaded automatically.
+Enable **Mobile Output Guide** under **Server Detail → Configuration** to tell agents which links and rich content Oppi can render in new and explicitly reloaded managed host, sandbox, and Pi Control sessions. The capability guide covers real workspace and owner-host wiki links with uppercase one-based anchors, inline images and SVG, inline `![[video]]` for existing Oppi-backed files, fenced Mermaid flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, and xyChart diagrams, LaTeX, session deep links, and viewers for recognized documents and media. Other Mermaid types stay source. `[[video]]` remains an ordinary file link. Remote URLs, HTML `<video>`, and attachment IDs are not embeds. It does not prescribe response style, fabricate paths, or expose secrets. Oppi does not send viewport dimensions, and active sessions are not reloaded automatically.
 
-The setting does not affect terminal-owned Mirror sessions or isolated Oppi control/default-Agent sessions. Saved Agent and workspace instructions remain in their existing precedence order. Non-text wiki-link icons are not part of this setting.
+The setting does not affect terminal-owned Mirror sessions. Saved Agent and workspace instructions remain in their existing precedence order. Non-text wiki-link icons are not part of this setting. A global `SYSTEM.md` replacement does not suppress the guide because the guide is an Oppi append capability.
 
 ### When a change takes effect
 
-New ordinary Oppi-managed sessions use the latest saved Oppi configuration. An active managed session keeps its existing extension runtime until `/reload` rebuilds it through Pi's full `AgentSession.reload()` lifecycle; reload applies the current enablement, policy, and mobile output guide before the next turn. A disabled configuration registers no `oppi` tool.
+New managed sessions use the latest Mobile Output Guide setting. An active managed session keeps its current prompt resources until `/reload` rebuilds it through Pi's full `AgentSession.reload()` lifecycle. Reload applies the current guide before the next turn.
 
 The server-wide model picker and provider-auth list rescan global/user provider extensions when `~/.pi/agent/settings.json` changes, when files under `extensions/` change (including one nested directory level such as `foo/index.ts`), when npm/git package metadata changes, or immediately after an extension is enabled or disabled. A server restart is not required for those catalog updates. The rescan never runs `npm install` or `git clone`; a package listed in settings but not already installed stays out of the picker until it is installed some other way. Active sessions still keep their own model runtime until `/reload` or a new session.
 
-The built-in setting does not modify standalone Pi or terminal-owned mirrored sessions. A stopped disconnected mirror session evaluates the current setting only if it is explicitly promoted to Oppi-managed ownership. The dedicated Oppi control identity remains separate, always receives the tool, and uses the saved approval policy regardless of the ordinary-session enablement setting.
+The setting does not modify standalone Pi or terminal-owned mirrored sessions. A stopped disconnected mirror session evaluates the current guide only if it is explicitly promoted to Oppi-managed ownership.
 
 For ordinary Pi extensions, disabled rows are still visible in the server catalog. Pi does not execute disabled extension factories merely to manufacture diagnostics or contributed capabilities, so disabled rows can honestly show discovery state without a speculative load error. Enabled extensions can report Pi loader diagnostics and contributed tools or commands when Pi provides them.
 
@@ -121,7 +105,7 @@ Oppi keeps Pi's extension system and adds these rules:
 
 1. **Cwd-scoped Pi resource resolution** for host sessions. User settings, project settings, installed packages, and auto-discovered extension directories remain the source of truth.
 2. **Pi resource toggles** from the workspace editor. The editor writes Pi resource settings (`+` / `-` entries) for skills and extensions; it does not write a workspace-level extension allowlist.
-3. **A server-scoped built-in Oppi extension**, configured separately from Pi resources and disabled until the server owner enables it.
+3. **A server-scoped Mobile Output Guide**, appended to managed sessions when enabled under Server Detail.
 4. **Mobile UI compatibility** for most standard extension input, confirm, ask, and approval UI calls.
 5. **Stored attachment helpers** for tool-generated files through documented Oppi context helpers such as `ctx.attachments.addFile()`.
 
@@ -272,7 +256,7 @@ The behavior is the same shape for Oppi-owned sessions and mirrored terminal ses
 
 ## How extension loading works
 
-At session startup, Oppi begins with pi's normal extension sources for the session working directory. An enabled built-in Oppi extension is added separately only for ordinary Oppi-managed sessions; it is not a Pi resource source.
+At session startup, Oppi uses Pi's normal extension sources for the session working directory. Oppi does not add a server-owned extension.
 
 Pi's normal sources are:
 
@@ -288,11 +272,11 @@ Pi resolves the resources for the session cwd. The picker starts with those reso
 
 Enable/disable writes only match Pi-resolved resources. A direct-scan entry that Pi's resolver cannot match can appear in the picker but fail with `Pi resource not found for cwd` if toggled.
 
-Oppi loads Pi-resolved extensions without injecting an extra Ask tool into ordinary workspace sessions. Install or enable a Pi extension named `ask` when a normal workspace Agent needs it. The shipped Oppi agent has its own server-managed `ask` registration because its isolated runtime intentionally disables normal extension discovery.
+Oppi loads Pi-resolved extensions without injecting an extra Ask tool. Install or enable a Pi extension named `ask` when a workspace or Pi Control session needs it.
 
 ## Reload behavior
 
-`/reload` rebuilds an active Oppi-managed session through Pi's full `AgentSession.reload()` lifecycle. It reloads host Pi extensions, skills, prompts, and themes, and applies the current server-owned Oppi enablement and approval snapshot before the next turn. Terminal-owned mirrored sessions keep terminal ownership and are not changed by this server setting.
+`/reload` rebuilds an active Oppi-managed session through Pi's full `AgentSession.reload()` lifecycle. It reloads host Pi extensions, skills, prompts, themes, system-prompt files, and the current Mobile Output Guide setting before the next turn. Terminal-owned mirrored sessions keep terminal ownership and are not changed by this server setting.
 
 ## Pi resource toggle behavior
 

@@ -6,16 +6,6 @@ import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "./ic
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { isThinkingLevel } from "./thinking-levels.js";
 import type { AgentDefinition } from "./agent-launch-service.js";
-import {
-  DEFAULT_AGENT_DEFAULT_NAME,
-  DEFAULT_AGENT_ID,
-  DEFAULT_AGENT_DEFINITION,
-  applyDefaultAgentSafetyDefaults,
-  assertDefaultAgentCustomizationPatch,
-  isDefaultAgentId,
-  isDefaultAgentReference,
-  isDefaultAgentReservedName,
-} from "./default-agent.js";
 
 export type AgentDefinitionStatus = "active" | "archived";
 
@@ -136,7 +126,6 @@ export class AgentDefinitionStore {
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
     this.migrateStoredIconChoices();
-    this.ensureDefaultAgent();
   }
 
   close(): void {
@@ -146,9 +135,6 @@ export class AgentDefinitionStore {
   createAgent(input: unknown, now = Date.now()): StoredAgentDefinition {
     const definition = validateAgentDefinition(input);
     this.assertIconAssetExists(definition);
-    if (isDefaultAgentReservedName(definition.name)) {
-      throw new Error(`${DEFAULT_AGENT_DEFAULT_NAME} is reserved for the default Agent identity`);
-    }
     const agent: StoredAgentDefinition = {
       id: generateId(8),
       name: definition.name,
@@ -199,16 +185,7 @@ export class AgentDefinitionStore {
       if (expectedVersion !== undefined && currentAgent.version !== expectedVersion) {
         throw new AgentVersionConflictError(expectedVersion, currentAgent.version);
       }
-      if (!isDefaultAgentId(currentAgent.id) && wouldUseDefaultAgentReservedName(patch)) {
-        throw new Error(`${DEFAULT_AGENT_DEFAULT_NAME} is reserved for the default Agent identity`);
-      }
-      if (isDefaultAgentId(currentAgent.id)) {
-        assertDefaultAgentCustomizationPatch(patch);
-      }
-      const mergedDefinition = validateAgentDefinitionUpdate(currentAgent.definition, patch);
-      const nextDefinition = isDefaultAgentId(currentAgent.id)
-        ? applyDefaultAgentSafetyDefaults(mergedDefinition)
-        : mergedDefinition;
+      const nextDefinition = validateAgentDefinitionUpdate(currentAgent.definition, patch);
       this.assertIconAssetExists(nextDefinition);
       const nextVersion = currentAgent.version + 1;
       let updated: StoredAgentDefinition | undefined;
@@ -251,7 +228,7 @@ export class AgentDefinitionStore {
 
   archiveAgent(agentId: string, now = Date.now()): StoredAgentDefinition | undefined {
     const current = this.getAgent(agentId);
-    if (!current || isDefaultAgentId(current.id)) return undefined;
+    if (!current) return undefined;
     this.db
       .prepare(
         `UPDATE agent_definitions
@@ -269,33 +246,6 @@ export class AgentDefinitionStore {
     return row ? agentFromRow(row) : undefined;
   }
 
-  resetDefaultAgent(now = Date.now()): StoredAgentDefinition {
-    const current = this.getAgent(DEFAULT_AGENT_ID);
-    if (!current) {
-      this.ensureDefaultAgent(now);
-      return this.getAgent(DEFAULT_AGENT_ID) as StoredAgentDefinition;
-    }
-
-    const nextVersion = current.version + 1;
-    this.db.transaction(() => {
-      this.db
-        .prepare(
-          `UPDATE agent_definitions
-           SET name = ?, status = 'active', version = ?, definition_json = ?, updated_at = ?, archived_at = NULL
-           WHERE id = ?`,
-        )
-        .run(
-          DEFAULT_AGENT_DEFINITION.name,
-          nextVersion,
-          JSON.stringify(DEFAULT_AGENT_DEFINITION),
-          now,
-          DEFAULT_AGENT_ID,
-        );
-      this.insertAgentVersion(DEFAULT_AGENT_ID, nextVersion, DEFAULT_AGENT_DEFINITION, now);
-    })();
-    return this.getAgent(DEFAULT_AGENT_ID) as StoredAgentDefinition;
-  }
-
   getAgentVersion(agentId: string, version: number): StoredAgentDefinitionVersion | undefined {
     if (!Number.isInteger(version) || version < 1) return undefined;
     const row = this.db
@@ -307,9 +257,6 @@ export class AgentDefinitionStore {
   resolveAgent(reference: string): StoredAgentDefinition | undefined {
     const trimmed = reference.trim();
     if (!trimmed) return undefined;
-    if (isDefaultAgentReference(trimmed)) {
-      return this.getAgent(DEFAULT_AGENT_ID);
-    }
     const direct = this.getAgent(trimmed);
     if (direct) return direct;
     const rows = this.db
@@ -407,67 +354,6 @@ export class AgentDefinitionStore {
       INSERT OR IGNORE INTO agent_definition_versions (id, version, definition_json, created_at)
         SELECT id, version, definition_json, updated_at FROM agent_definitions;
     `);
-  }
-
-  private ensureDefaultAgent(now = Date.now()): void {
-    const existing = this.getAgent(DEFAULT_AGENT_ID);
-    if (!existing) {
-      this.db.transaction(() => {
-        this.db
-          .prepare(
-            `INSERT INTO agent_definitions
-             (id, name, status, version, definition_json, created_at, updated_at, archived_at)
-             VALUES (?, ?, 'active', 1, ?, ?, ?, NULL)`,
-          )
-          .run(
-            DEFAULT_AGENT_ID,
-            DEFAULT_AGENT_DEFINITION.name,
-            JSON.stringify(DEFAULT_AGENT_DEFINITION),
-            now,
-            now,
-          );
-        this.insertAgentVersion(DEFAULT_AGENT_ID, 1, DEFAULT_AGENT_DEFINITION, now);
-      })();
-      return;
-    }
-
-    const safeDefinition = applyDefaultAgentSafetyDefaults(existing.definition);
-    const needsSafetyRepair =
-      JSON.stringify(safeDefinition) !== JSON.stringify(existing.definition);
-    if (needsSafetyRepair) {
-      // A stale reserved identity may contain obsolete authority-bearing fields.
-      // Reconcile it from shipped defaults, carrying only the user's icon choice.
-      const repairedDefinition: AgentDefinition = {
-        ...DEFAULT_AGENT_DEFINITION,
-        ...(existing.definition.icon !== undefined ? { icon: existing.definition.icon } : {}),
-      };
-      const nextVersion = existing.version + 1;
-      this.db.transaction(() => {
-        this.db
-          .prepare(
-            `UPDATE agent_definitions
-             SET name = ?, status = 'active', version = ?, definition_json = ?, updated_at = ?, archived_at = NULL
-             WHERE id = ?`,
-          )
-          .run(
-            repairedDefinition.name,
-            nextVersion,
-            JSON.stringify(repairedDefinition),
-            now,
-            existing.id,
-          );
-        this.insertAgentVersion(existing.id, nextVersion, repairedDefinition, now);
-      })();
-      return;
-    }
-
-    this.db
-      .prepare(
-        `UPDATE agent_definitions
-         SET name = ?, status = 'active', definition_json = ?, archived_at = NULL
-         WHERE id = ?`,
-      )
-      .run(safeDefinition.name, JSON.stringify(safeDefinition), existing.id);
   }
 
   private insertAgentVersion(
@@ -597,12 +483,6 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
   if (isRecord(merged.launchConstraints)) removeNullValues(merged.launchConstraints);
 
   return merged as unknown as AgentDefinition;
-}
-
-function wouldUseDefaultAgentReservedName(patch: unknown): boolean {
-  return (
-    isRecord(patch) && typeof patch.name === "string" && isDefaultAgentReservedName(patch.name)
-  );
 }
 
 function removeNullValues(record: Record<string, unknown>): void {

@@ -32,7 +32,7 @@ extension APIClient {
         return try JSONDecoder().decode(ServerSkillSummary.self, from: data)
     }
 
-    /// Lists server-global extensions and the atomic built-in Oppi configuration snapshot.
+    /// Lists server-global Pi extensions and their contributed tools.
     func listServerExtensions() async throws -> ServerExtensionCatalog {
         let data = try await get(url: serverResourceURL(pathSegments: ["extensions"]))
         return try JSONDecoder().decode(ServerExtensionCatalog.self, from: data)
@@ -60,28 +60,22 @@ extension APIClient {
         return try JSONDecoder().decode(ServerExtensionSummary.self, from: data)
     }
 
-    func getOppiExtensionConfiguration() async throws -> OppiExtensionConfiguration {
-        let data = try await get(url: oppiConfigurationURL())
-        return try JSONDecoder().decode(OppiExtensionConfiguration.self, from: data)
+    func getPiSystemPrompt() async throws -> PiSystemPromptSnapshot {
+        let data = try await get(url: serverResourceURL(pathSegments: ["pi", "system-prompt"]))
+        return try JSONDecoder().decode(PiSystemPromptSnapshot.self, from: data)
     }
 
-    /// Replaces the complete revisioned Oppi configuration in one compare-and-swap request.
-    func setOppiExtensionConfiguration(
-        enabled: Bool,
-        approvalPolicy: OppiApprovalPolicy,
-        mobileOutputGuideEnabled: Bool? = nil,
-        baseRevision: Int
-    ) async throws -> OppiExtensionConfiguration {
+    func getPiDefaultTools() async throws -> PiDefaultToolsSnapshot {
+        let data = try await get(url: serverResourceURL(pathSegments: ["pi", "default-tools"]))
+        return try JSONDecoder().decode(PiDefaultToolsSnapshot.self, from: data)
+    }
+
+    func setPiDefaultTools(_ defaultTools: [String]?) async throws -> PiDefaultToolsSnapshot {
         let data = try await put(
-            url: oppiConfigurationURL(),
-            body: OppiConfigurationRequest(
-                enabled: enabled,
-                approvalPolicy: approvalPolicy,
-                mobileOutputGuideEnabled: mobileOutputGuideEnabled,
-                baseRevision: baseRevision
-            )
+            url: serverResourceURL(pathSegments: ["pi", "default-tools"]),
+            body: PiDefaultToolsRequest(defaultTools: defaultTools)
         )
-        return try JSONDecoder().decode(OppiExtensionConfiguration.self, from: data)
+        return try JSONDecoder().decode(PiDefaultToolsSnapshot.self, from: data)
     }
 
     private func serverResourceURL(
@@ -94,33 +88,46 @@ extension APIClient {
         )
     }
 
-    private func oppiConfigurationURL() throws -> URL {
-        try makeURL(pathSegments: ["server", "extensions", "oppi", "config"])
+    func getMobileOutputGuideConfiguration() async throws -> MobileOutputGuideConfiguration {
+        let data = try await get(url: mobileOutputGuideURL())
+        return try JSONDecoder().decode(MobileOutputGuideConfiguration.self, from: data)
+    }
+
+    func setMobileOutputGuideConfiguration(
+        enabled: Bool,
+        baseRevision: Int
+    ) async throws -> MobileOutputGuideConfiguration {
+        let data = try await put(
+            url: mobileOutputGuideURL(),
+            body: MobileOutputGuideRequest(enabled: enabled, baseRevision: baseRevision)
+        )
+        return try JSONDecoder().decode(MobileOutputGuideConfiguration.self, from: data)
+    }
+
+    private func mobileOutputGuideURL() throws -> URL {
+        try makeURL(pathSegments: ["server", "mobile-output-guide"])
     }
 
     private struct ResourceEnabledRequest: Encodable {
         let enabled: Bool
     }
 
-    private struct OppiConfigurationRequest: Encodable {
+    private struct MobileOutputGuideRequest: Encodable {
         let enabled: Bool
-        let approvalPolicy: OppiApprovalPolicy
-        let mobileOutputGuideEnabled: Bool?
         let baseRevision: Int
+    }
 
-        private enum CodingKeys: String, CodingKey {
-            case enabled
-            case approvalPolicy
-            case mobileOutputGuideEnabled
-            case baseRevision
-        }
+    private struct PiDefaultToolsRequest: Encodable {
+        let defaultTools: [String]?
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(enabled, forKey: .enabled)
-            try container.encode(approvalPolicy, forKey: .approvalPolicy)
-            try container.encodeIfPresent(mobileOutputGuideEnabled, forKey: .mobileOutputGuideEnabled)
-            try container.encode(baseRevision, forKey: .baseRevision)
+            try container.encode(defaultTools, forKey: .defaultTools)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case defaultTools
         }
     }
+
 }

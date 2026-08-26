@@ -112,10 +112,8 @@ export function validateCwdAlignment(sessionCwd: string, workspaceHostMount: str
 }
 
 /**
- * Control-session Pi artifacts must never appear as importable local TUI rows.
- * Matches the real data-dir control cwd and the legacy display-label path
- * (`.../Oppi Control`) created before control sessions stopped persisting that
- * label as SessionManager cwd.
+ * Control-session Pi artifacts under the current data-dir control-session root
+ * must never appear as importable local TUI rows.
  */
 export function isControlSessionLocalArtifact(
   sessionCwd: string,
@@ -123,16 +121,11 @@ export function isControlSessionLocalArtifact(
 ): boolean {
   const trimmed = sessionCwd.trim();
   if (!trimmed) return false;
-  if (trimmed === "Oppi Control") return true;
-
-  const resolvedCwd = resolve(trimmed.replace(/^~/, homedir()));
-  if (resolvedCwd.split(/[\\/]/).at(-1) === "Oppi Control") {
-    return true;
-  }
 
   const dataDir = options.dataDir?.trim();
   if (!dataDir) return false;
 
+  const resolvedCwd = resolve(trimmed.replace(/^~/, homedir()));
   const controlRoot = resolve(dataDir.replace(/^~/, homedir()), "control-sessions");
   return resolvedCwd === controlRoot || resolvedCwd.startsWith(`${controlRoot}/`);
 }

@@ -128,13 +128,6 @@ describe("validateCwdAlignment", () => {
 });
 
 describe("isControlSessionLocalArtifact", () => {
-  it("matches the display-only Oppi Control label and legacy workspace-relative path", () => {
-    expect(isControlSessionLocalArtifact("Oppi Control")).toBe(true);
-    expect(
-      isControlSessionLocalArtifact("/Users/chen/workspace/oppi/server/Oppi Control"),
-    ).toBe(true);
-  });
-
   it("matches the real data-dir control cwd tree", () => {
     const dataDir = "/Users/chen/.config/oppi";
     expect(

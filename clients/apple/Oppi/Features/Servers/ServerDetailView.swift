@@ -9,6 +9,28 @@ enum ServerDetailPresentation {
     case modelProviders
 }
 
+enum ServerDetailMobileOutputGuideState: Equatable {
+    case loading
+    case available(enabled: Bool, revision: Int, error: String?)
+    case failed(String)
+
+    static func resolve(
+        configuration: MobileOutputGuideConfiguration?,
+        isLoading: Bool,
+        error: String?
+    ) -> Self {
+        if let configuration {
+            return .available(
+                enabled: configuration.enabled,
+                revision: configuration.revision,
+                error: error
+            )
+        }
+        if isLoading { return .loading }
+        return .failed(error ?? "Mobile Output Guide setting is unavailable")
+    }
+}
+
 struct ServerDetailView: View {
     let server: PairedServer
     var presentation: ServerDetailPresentation = .details
@@ -22,6 +44,10 @@ struct ServerDetailView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var showRemoveConfirmation = false
+    @State private var mobileOutputGuide: MobileOutputGuideConfiguration?
+    @State private var isLoadingMobileOutputGuide = false
+    @State private var isSavingMobileOutputGuide = false
+    @State private var mobileOutputGuideError: String?
 
     @State private var providerStatuses: [ProviderAuthProviderStatus] = []
     @State private var providerSetupState: ProviderSetupState = .unknown
@@ -103,6 +129,8 @@ struct ServerDetailView: View {
                         }
                     }
                     .accessibilityIdentifier("server.modelProviders.open")
+
+                    mobileOutputGuideControl
                 }
 
                 Section {
@@ -241,6 +269,64 @@ struct ServerDetailView: View {
 
     private var providerConfigurationSummaryStyle: ThemeShapeStyle {
         providerSetupState == .needsConfiguration ? .themeOrange : .themeComment
+    }
+
+    @ViewBuilder
+    private var mobileOutputGuideControl: some View {
+        switch ServerDetailMobileOutputGuideState.resolve(
+            configuration: mobileOutputGuide,
+            isLoading: isLoadingMobileOutputGuide,
+            error: mobileOutputGuideError
+        ) {
+        case .loading:
+            HStack {
+                Text("Mobile Output Guide")
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
+            }
+            .accessibilityIdentifier("server.mobileOutputGuide.loading")
+        case .available(let enabled, _, let error):
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle(
+                    "Mobile Output Guide",
+                    isOn: Binding(
+                        get: { enabled },
+                        set: { newValue in
+                            Task { await setMobileOutputGuide(newValue) }
+                        }
+                    )
+                )
+                .disabled(isSavingMobileOutputGuide)
+                .accessibilityIdentifier("server.mobileOutputGuide.enabled")
+                Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.themeOrange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("server.mobileOutputGuide.error")
+                }
+            }
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Mobile Output Guide unavailable", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.themeOrange)
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+                Button("Retry") {
+                    Task {
+                        guard let api = await prepareAPIClient() else { return }
+                        await loadMobileOutputGuide(api: api)
+                    }
+                }
+            }
+            .accessibilityIdentifier("server.mobileOutputGuide.error")
+        }
     }
 
     private func providerQuota(for provider: ProviderAuthProviderStatus) -> ProviderQuota? {
@@ -651,7 +737,9 @@ struct ServerDetailView: View {
             self.error = error.localizedDescription
         }
 
-        await loadProviderConfiguration(api: api)
+        async let providers: () = loadProviderConfiguration(api: api)
+        async let guide: () = loadMobileOutputGuide(api: api)
+        _ = await (providers, guide)
         isLoading = false
     }
 
@@ -691,6 +779,36 @@ struct ServerDetailView: View {
         }
 
         providerQuotas = await quotas
+    }
+
+    private func loadMobileOutputGuide(api: APIClient) async {
+        isLoadingMobileOutputGuide = mobileOutputGuide == nil
+        defer { isLoadingMobileOutputGuide = false }
+        do {
+            mobileOutputGuide = try await api.getMobileOutputGuideConfiguration()
+            mobileOutputGuideError = nil
+        } catch {
+            mobileOutputGuideError = error.localizedDescription
+        }
+    }
+
+    private func setMobileOutputGuide(_ enabled: Bool) async {
+        guard let current = mobileOutputGuide,
+              let api = await prepareAPIClient() else { return }
+        isSavingMobileOutputGuide = true
+        defer { isSavingMobileOutputGuide = false }
+        do {
+            mobileOutputGuide = try await api.setMobileOutputGuideConfiguration(
+                enabled: enabled,
+                baseRevision: current.revision
+            )
+            mobileOutputGuideError = nil
+        } catch let APIError.codedServer(status, _, code)
+            where status == 409 && code == "revision_conflict" {
+            await loadMobileOutputGuide(api: api)
+        } catch {
+            mobileOutputGuideError = error.localizedDescription
+        }
     }
 
     private func loadProviderQuotas(api: APIClient) async -> ProviderQuotasInfo? {

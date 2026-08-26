@@ -15,7 +15,6 @@ const SERVER_TYPES_CONTRACT_BARREL_PREFIX = "./types/";
 const SERVER_SESSION_FACADE_FILE = "server/src/sessions.ts";
 const SERVER_MIRROR_SESSION_RESUME_FILE = "server/src/mirror-session-resume.ts";
 const SERVER_CLI_APP_STATE_API_FIRST_FILES = new Set([
-  "server/src/default-agent-tool.ts",
   "server/src/cli/local-api-client.ts",
   "server/src/cli/resources.ts",
 ]);

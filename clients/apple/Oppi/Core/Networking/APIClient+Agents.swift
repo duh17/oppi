@@ -109,22 +109,18 @@ extension APIClient {
                 name: name,
                 description: description,
                 instructions: instructions,
-                // The server-owned Oppi agent accepts only identity,
-                // instructions, and session-default customization fields.
-                resources: agentId == "oppi-default-agent"
-                    ? nil
-                    : .init(skillPaths: skillPaths, extensionIds: extensionIds),
+                resources: .init(skillPaths: skillPaths, extensionIds: extensionIds),
                 sessionDefaults: .init(
                     model: model,
                     thinkingLevel: thinkingLevel,
-                    includesToolPolicy: agentId != "oppi-default-agent",
+                    includesToolPolicy: true,
                     tools: tools,
                     excludeTools: excludeTools,
                     noTools: noTools
                 ),
                 launchConstraints: launchConstraints,
-                includesLaunchConstraints: agentId != "oppi-default-agent"
-                    && (launchConstraints != nil || previouslyHadLaunchConstraints)
+                includesLaunchConstraints: launchConstraints != nil
+                    || previouslyHadLaunchConstraints
             )
         )
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent

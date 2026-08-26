@@ -99,7 +99,7 @@ struct SessionRowPresentationBuilderTests {
         let summary = try JSONDecoder().decode(SessionSummary.self, from: data)
         let presentation = SessionRowPresentationBuilder.make(
             session: session,
-            workspaceContext: session.control == nil ? nil : "Oppi Control"
+            workspaceContext: session.control == nil ? nil : "Pi Control"
         )
 
         #expect(session.workspaceId == nil)
@@ -108,8 +108,8 @@ struct SessionRowPresentationBuilderTests {
         #expect(summary.session.control == session.control)
         #expect(SessionInboxSessionRouting.routeScope(for: session) == .control)
         #expect(SessionRouteScope.control.composerDraftScopeID == "__oppi_control__")
-        #expect(SessionInboxSessionRouting.allSessionsContext(for: session, workspaceName: nil) == "Oppi Control")
-        #expect(presentation.workspaceContext == "Oppi Control")
+        #expect(SessionInboxSessionRouting.allSessionsContext(for: session, workspaceName: nil) == "Pi Control")
+        #expect(presentation.workspaceContext == "Pi Control")
 
         let roundTrip = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(session))
         #expect(roundTrip == session)

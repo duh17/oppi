@@ -172,8 +172,8 @@ enum GuidedControlSessionComposerReviewComments {
 /// Quick Session-style intake for server-scoped Agent, Schedule, and Skill control sessions.
 ///
 /// The selected workspace is prompt context only. Control sessions intentionally
-/// remain workspace-less so the Oppi agent can inspect and mutate server-owned
-/// definitions through its restricted `oppi` CLI tool.
+/// remain workspace-less so Pi can inspect and mutate server-owned
+/// definitions with ordinary host tools, including `bash` and the installed `oppi` CLI.
 struct GuidedControlSessionComposer: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerConnection.self) private var connection

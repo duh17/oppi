@@ -63,7 +63,7 @@ type SessionCliOutput = (data: Record<string, unknown>, human: () => void) => vo
 export interface SessionCliCallerContext {
   /** Immutable for one in-process command; shell callers continue using the environment fallback. */
   callerSessionId?: string;
-  /** Present only for sandbox-scoped Oppi tool calls. */
+  /** Present only for sandbox-scoped Oppi CLI calls. */
   sandboxScope?: SandboxOppiScope;
   /** Cancels long-running in-process session commands such as wait polling. */
   signal?: AbortSignal;

@@ -259,43 +259,6 @@ struct AgentScheduleAPIClientTests {
         )
     }
 
-    @Test func nativeDefaultAgentUpdateOmitsForbiddenResourcesOnCanonicalRoute() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        TestURLProtocol.handler = { request in
-            #expect(request.httpMethod == "PATCH")
-            #expect(request.url?.path == "/agents/oppi-default-agent")
-            let json = try #require(
-                JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
-            )
-            #expect(json["resources"] == nil)
-            #expect(json["launchConstraints"] == nil)
-            #expect(json["name"] as? String == "Home Agent")
-            #expect(json["description"] is NSNull)
-            #expect(json["instructions"] is NSNull)
-            let defaults = try #require(json["sessionDefaults"] as? [String: Any])
-            #expect(Set(defaults.keys) == ["model", "thinkingLevel"])
-            return mockResponse(json: """
-            {"agent":{"id":"oppi-default-agent","name":"Home Agent","status":"active","version":2,"definition":{"name":"Home Agent","resources":{"noContextFiles":true}},"createdAt":1000,"updatedAt":2000}}
-            """)
-        }
-
-        let updated = try await client.updateAgentNative(
-            agentId: "oppi-default-agent",
-            name: "Home Agent",
-            description: nil,
-            instructions: nil,
-            model: "openai/gpt-5.6",
-            thinkingLevel: .high,
-            skillPaths: nil,
-            extensionIds: nil
-        )
-
-        #expect(updated.id == "oppi-default-agent")
-        #expect(updated.definition.resources?.noContextFiles == true)
-    }
-
     @Test func agentLaunchDecodesActionableConfigurationFailure() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -632,7 +595,7 @@ struct AgentScheduleAPIClientTests {
             #expect(body.prompt?.contains("--definition-json") == true)
             #expect(body.launchIdempotencyKey == "control-revision-request-1")
             return mockResponse(status: 201, json: """
-            {"session":{"id":"control-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1","targetName":"Reviewer"}},"prompted":true}
+            {"session":{"id":"control-1","name":"Pi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1","targetName":"Reviewer"}},"prompted":true}
             """)
         }
 
@@ -669,7 +632,7 @@ struct AgentScheduleAPIClientTests {
             #expect(json["prompt"] == nil)
             #expect(json["launchIdempotencyKey"] as? String == "control-create-request-1")
             return mockResponse(status: 201, json: """
-            {"session":{"id":"control-1","name":"Oppi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1"}}}
+            {"session":{"id":"control-1","name":"Pi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1"}}}
             """)
         }
 

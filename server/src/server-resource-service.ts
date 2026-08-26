@@ -22,13 +22,17 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
-  type OppiExtensionSettingsReader,
-  type OppiExtensionSettingsSnapshot,
-} from "./oppi-extension-settings.js";
-import {
   canonicalServerResourcePath as canonicalPath,
   serverResourceId as resourceId,
 } from "./server-resource-id.js";
+import {
+  PiGlobalConfigError,
+  readPiDefaultTools,
+  readPiSystemPrompt,
+  writePiDefaultTools,
+  type PiDefaultToolsSnapshot,
+  type PiSystemPromptSnapshot,
+} from "./pi-global-config.js";
 import {
   listSkillFiles,
   readSkillFile as readContainedSkillFile,
@@ -104,7 +108,6 @@ export interface ServerExtensionDetail {
 export interface ServerResourceServiceOptions {
   dataDir: string;
   agentDir: string;
-  oppiSettings: OppiExtensionSettingsReader;
 }
 
 interface ResolutionContext {
@@ -156,14 +159,12 @@ export class ServerResourceService {
   private readonly dataDir: string;
   private readonly agentDir: string;
   private readonly catalogCwd: string;
-  private readonly oppiSettings: OppiExtensionSettingsReader;
   private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(options: ServerResourceServiceOptions) {
     this.dataDir = resolve(options.dataDir);
     this.agentDir = resolve(options.agentDir);
     this.catalogCwd = join(this.dataDir, "resource-catalog-cwd");
-    this.oppiSettings = options.oppiSettings;
   }
 
   async listSkills(): Promise<{ skills: ServerSkillSummary[] }> {
@@ -174,14 +175,11 @@ export class ServerResourceService {
   async listExtensions(): Promise<{
     extensions: ServerExtensionSummary[];
     builtInTools: ServerToolSummary[];
-    oppiConfiguration: OppiExtensionSettingsSnapshot;
   }> {
-    const configuration = this.oppiSettings.get();
-    const entries = await this.buildExtensionCatalog(await this.resolveContext(), configuration);
+    const entries = await this.buildExtensionCatalog(await this.resolveContext());
     return {
       extensions: entries.map((entry) => copyExtensionSummary(entry.summary)),
       builtInTools: builtInToolSummaries(this.catalogCwd),
-      oppiConfiguration: configuration,
     };
   }
 
@@ -229,16 +227,14 @@ export class ServerResourceService {
 
   /** Inspect tools only after a user explicitly selects an Extension for an Agent. */
   async inspectAgentExtensionTools(id: string): Promise<ServerExtensionDetail> {
-    if (id === "oppi") throw new ServerResourceNotFoundError("extension");
     return this.extensionDetail(id, true);
   }
 
   private async extensionDetail(id: string, inspectTools: boolean): Promise<ServerExtensionDetail> {
-    const configuration = this.oppiSettings.get();
     const context = await this.resolveContext();
-    if (id !== "oppi") this.findResourceById("extension", context.extensions, id);
+    this.findResourceById("extension", context.extensions, id);
     const inspectToolIds = inspectTools ? new Set([id]) : new Set<string>();
-    const entry = (await this.buildExtensionCatalog(context, configuration, inspectToolIds)).find(
+    const entry = (await this.buildExtensionCatalog(context, inspectToolIds)).find(
       (candidate) => candidate.summary.id === id,
     );
     if (!entry) throw new ServerResourceNotFoundError("extension");
@@ -268,22 +264,39 @@ export class ServerResourceService {
     });
   }
 
-  async setExtensionEnabled(id: string, enabled: boolean): Promise<ServerExtensionSummary> {
-    if (id === "oppi") {
-      throw new ServerResourceServiceError(
-        "The built-in Oppi extension is configured through full-snapshot settings",
-      );
+  async getPiSystemPrompt(): Promise<PiSystemPromptSnapshot> {
+    try {
+      return readPiSystemPrompt(this.agentDir);
+    } catch (cause: unknown) {
+      throw mapPiGlobalConfigError(cause);
     }
+  }
+
+  async getPiDefaultTools(): Promise<PiDefaultToolsSnapshot> {
+    try {
+      return readPiDefaultTools(this.agentDir);
+    } catch (cause: unknown) {
+      throw mapPiGlobalConfigError(cause);
+    }
+  }
+
+  async setPiDefaultTools(defaultTools: string[] | null): Promise<PiDefaultToolsSnapshot> {
+    return this.withMutationLock(async () => {
+      try {
+        return writePiDefaultTools(this.agentDir, defaultTools);
+      } catch (cause: unknown) {
+        throw mapPiGlobalConfigError(cause);
+      }
+    });
+  }
+
+  async setExtensionEnabled(id: string, enabled: boolean): Promise<ServerExtensionSummary> {
     return this.withMutationLock(async () => {
       const context = await this.resolveContext();
       const resource = this.findResourceById("extension", context.extensions, id);
       this.writeResourceEnabled(context, resource, "extensions", enabled);
       await this.finishSettingsWrite(context.settingsManager);
-      const configuration = this.oppiSettings.get();
-      const authoritative = await this.buildExtensionCatalog(
-        await this.resolveContext(),
-        configuration,
-      );
+      const authoritative = await this.buildExtensionCatalog(await this.resolveContext());
       const current = authoritative.find((entry) => entry.summary.id === id);
       if (!current) throw new ServerResourceNotFoundError("extension");
       return copyExtensionSummary(current.summary);
@@ -401,7 +414,6 @@ export class ServerResourceService {
 
   private async buildExtensionCatalog(
     context: ResolutionContext,
-    configuration: OppiExtensionSettingsSnapshot,
     inspectToolIds: ReadonlySet<string> = new Set(),
   ): Promise<ExtensionCatalogEntry[]> {
     const resourcesByCanonicalPath = new Map<
@@ -499,22 +511,7 @@ export class ServerResourceService {
       return { resource, canonicalPath: path, summary };
     });
     normal.sort((a, b) => compareSummaries(a.summary, b.summary));
-
-    const oppiLoadError = this.oppiSettings.getLoadError();
-    const oppi: ExtensionCatalogEntry = {
-      summary: {
-        id: "oppi",
-        name: "Oppi",
-        description: "Server-owned Oppi command extension",
-        kind: "builtIn",
-        provenance: { kind: "builtIn", label: "Built-in extension" },
-        state: oppiLoadError ? "error" : configuration.enabled ? "on" : "off",
-        ...(oppiLoadError ? { loadError: boundMessage(oppiLoadError) } : {}),
-        warnings: [],
-        isRemovable: false,
-      },
-    };
-    return [oppi, ...normal];
+    return normal;
   }
 
   private findResourceById(
@@ -813,6 +810,16 @@ function settingsEntryMatchesResource(
     (basename(resourcePath) === "index.ts" || basename(resourcePath) === "index.js") &&
     dirname(resourcePath) === entryPath
   );
+}
+
+function mapPiGlobalConfigError(cause: unknown): Error {
+  if (cause instanceof PiGlobalConfigError) {
+    if (cause.code === "validation") {
+      return new ServerResourceValidationError(cause.message, { cause });
+    }
+    return new ServerResourceServiceError(cause.message, { cause });
+  }
+  return cause instanceof Error ? cause : new ServerResourceServiceError(String(cause));
 }
 
 function toPosixPath(path: string): string {

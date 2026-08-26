@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
-import type { OppiExtensionSettingsSnapshot } from "../src/oppi-extension-settings.js";
+import type { MobileOutputGuideSettingsSnapshot } from "../src/mobile-output-guide-settings.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionStartCoordinator, type SessionStartCoordinatorDeps } from "../src/session-start.js";
 import type { Storage } from "../src/storage.js";
@@ -53,13 +52,8 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     getSession: vi.fn(() => session),
     listSessions: vi.fn(() => [session]),
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
-    getOppiExtensionSettings: vi.fn(
-      (): OppiExtensionSettingsSnapshot => ({
-        enabled: false,
-        approvalPolicy: "confirmDestructiveOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 0,
-      }),
+    getMobileOutputGuideSettings: vi.fn(
+      (): MobileOutputGuideSettingsSnapshot => ({ enabled: false, revision: 0 }),
     ),
   } as unknown as Storage;
 
@@ -116,25 +110,20 @@ describe("SessionStartCoordinator status persistence", () => {
     });
   });
 
-  it("passes one atomic current-settings reader to managed backend construction", async () => {
+  it("passes one atomic Mobile Output Guide reader to managed backend construction", async () => {
     const session = makeSession({ status: "ready" });
     const deps = makeDeps(session);
-    const latest: OppiExtensionSettingsSnapshot = {
-      enabled: true,
-      approvalPolicy: "readOnly",
-      mobileOutputGuideEnabled: false,
-      revision: 8,
-    };
-    const getOppiExtensionSettings = vi.fn(() => latest);
-    Object.assign(deps.storage, { getOppiExtensionSettings });
+    const latest: MobileOutputGuideSettingsSnapshot = { enabled: true, revision: 8 };
+    const getMobileOutputGuideSettings = vi.fn(() => latest);
+    Object.assign(deps.storage, { getMobileOutputGuideSettings });
     const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);
 
     await new SessionStartCoordinator(deps).startSessionInner("key", session.id, makeWorkspace());
 
     const config = createSpy.mock.calls.at(-1)?.[0];
-    expect(config?.getOppiExtensionSettings).toBeTypeOf("function");
-    expect(config?.getOppiExtensionSettings?.()).toBe(latest);
-    expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
+    expect(config?.getMobileOutputGuideSettings).toBeTypeOf("function");
+    expect(config?.getMobileOutputGuideSettings?.()).toBe(latest);
+    expect(getMobileOutputGuideSettings).toHaveBeenCalledOnce();
   });
 
   it("uses the saved Agent definition version recorded on the session", async () => {
@@ -170,49 +159,6 @@ describe("SessionStartCoordinator status persistence", () => {
     expect(createSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         agentDefinition: expect.objectContaining({ name: "Reviewer v1" }),
-      }),
-    );
-  });
-
-  it("applies Oppi agent safety defaults to recorded Agent versions", async () => {
-    const session = makeSession({
-      status: "ready",
-      launch: {
-        status: "accepted",
-        source: "agent",
-        agentId: DEFAULT_AGENT_ID,
-        agentVersion: 2,
-        requestedAt: 1,
-      },
-    });
-    const deps = makeDeps(session);
-    const getAgentVersion = vi.fn(() => ({
-      id: DEFAULT_AGENT_ID,
-      version: 2,
-      definition: {
-        name: "oppi-default-agent",
-        resources: { noContextFiles: true, extensionIds: ["oppi"] },
-        sessionDefaults: { excludeTools: ["write", "bash"] },
-      },
-      createdAt: 1,
-    }));
-    const getAgent = vi.fn();
-    Object.assign(deps.storage, {
-      getAgentDefinitionStore: () => ({ getAgentVersion, getAgent }),
-    });
-    const createSpy = vi.spyOn(SdkBackend, "create").mockResolvedValue({} as SdkBackend);
-
-    await new SessionStartCoordinator(deps).startSessionInner("key", session.id, makeWorkspace());
-
-    expect(createSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentDefinition: expect.objectContaining({
-          resources: { noContextFiles: true },
-          sessionDefaults: {
-            noTools: "builtin",
-            tools: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
-          },
-        }),
       }),
     );
   });

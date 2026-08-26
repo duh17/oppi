@@ -277,7 +277,7 @@ enum ResourceReferenceMatch: Hashable, Sendable {
     var choiceLabel: String {
         switch self {
         case .session(let session):
-            let workspace = session.workspaceName ?? "Oppi Control"
+            let workspace = session.workspaceName ?? "Pi Control"
             return "Session: \(session.displayName) — \(workspace) on \(serverLabel(name: session.serverName, id: session.serverID))"
         case .workspaceFile(let file):
             let fileName = (file.path as NSString).lastPathComponent

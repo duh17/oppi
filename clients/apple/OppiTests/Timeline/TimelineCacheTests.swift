@@ -157,27 +157,27 @@ struct TimelineCacheTests {
         defer { try? fileManager.removeItem(at: base) }
 
         let cache = TimelineCache(rootURL: root)
+        let studioSavedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let miniSavedAt = Date(timeIntervalSince1970: 1_700_000_001)
         let studio = ServerResourceCatalogSnapshot(
             skills: [],
             extensions: [],
-            oppiConfiguration: OppiExtensionConfiguration(
-                enabled: true,
-                approvalPolicy: .confirmAllChanges,
-                mobileOutputGuideEnabled: false,
-                revision: 4
-            ),
-            savedAt: Date(timeIntervalSince1970: 1_700_000_000)
+            builtInTools: [],
+            savedAt: studioSavedAt,
+            skillsLoaded: true,
+            extensionsLoaded: true,
+            skillsSavedAt: studioSavedAt,
+            extensionsSavedAt: studioSavedAt
         )
         let mini = ServerResourceCatalogSnapshot(
             skills: [],
             extensions: [],
-            oppiConfiguration: OppiExtensionConfiguration(
-                enabled: false,
-                approvalPolicy: .readOnly,
-                mobileOutputGuideEnabled: false,
-                revision: 9
-            ),
-            savedAt: Date(timeIntervalSince1970: 1_700_000_001)
+            builtInTools: [],
+            savedAt: miniSavedAt,
+            skillsLoaded: true,
+            extensionsLoaded: true,
+            skillsSavedAt: miniSavedAt,
+            extensionsSavedAt: miniSavedAt
         )
 
         await cache.saveServerResourceCatalog(studio, serverId: "sha256:studio")
@@ -199,13 +199,12 @@ struct TimelineCacheTests {
         let partial = ServerResourceCatalogSnapshot(
             skills: [],
             extensions: [],
-            oppiConfiguration: nil,
+            builtInTools: [],
             savedAt: savedAt,
             skillsLoaded: true,
             extensionsLoaded: false,
             skillsSavedAt: savedAt,
-            extensionsSavedAt: nil,
-            oppiRequiresAuthoritativeRefresh: false
+            extensionsSavedAt: nil
         )
 
         await cache.saveServerResourceCatalog(partial, serverId: "sha256:partial")
@@ -216,76 +215,6 @@ struct TimelineCacheTests {
         #expect(loaded?.extensionsLoaded == false)
         #expect(loaded?.skillsSavedAt == savedAt)
         #expect(loaded?.extensionsSavedAt == nil)
-        #expect(loaded?.oppiConfiguration == nil)
-        #expect(loaded?.oppiRequiresAuthoritativeRefresh == false)
-    }
-
-    @Test func resourceCatalogRoundTripPreservesAuthoritativeOppiRefreshLockout() async throws {
-        let fileManager = FileManager.default
-        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
-        let root = base.appending(path: "root")
-        defer { try? fileManager.removeItem(at: base) }
-
-        let savedAt = Date(timeIntervalSince1970: 1_700_000_015)
-        let cache = TimelineCache(rootURL: root)
-        let locked = ServerResourceCatalogSnapshot(
-            skills: [],
-            extensions: [],
-            oppiConfiguration: OppiExtensionConfiguration(
-                enabled: false,
-                approvalPolicy: .confirmDestructiveOnly,
-                mobileOutputGuideEnabled: false,
-                revision: 5
-            ),
-            savedAt: savedAt,
-            skillsLoaded: false,
-            extensionsLoaded: true,
-            skillsSavedAt: nil,
-            extensionsSavedAt: savedAt,
-            oppiRequiresAuthoritativeRefresh: true
-        )
-
-        await cache.saveServerResourceCatalog(locked, serverId: "sha256:locked")
-
-        #expect(await cache.loadServerResourceCatalog(serverId: "sha256:locked") == locked)
-        #expect(
-            await cache.loadServerResourceCatalog(serverId: "sha256:locked")?
-                .oppiRequiresAuthoritativeRefresh == true
-        )
-    }
-
-    @Test func resourceCatalogDecodesExistingCompleteSnapshotAsBothHalvesLoaded() async throws {
-        let fileManager = FileManager.default
-        let base = fileManager.temporaryDirectory.appending(path: "timeline-cache-tests-\(UUID().uuidString)")
-        let root = base.appending(path: "root")
-        let serverDirectory = root.appending(path: "servers/sha256:existing", directoryHint: .isDirectory)
-        let catalogURL = serverDirectory.appending(path: "resource-catalog.json")
-        defer { try? fileManager.removeItem(at: base) }
-
-        let savedAt = Date(timeIntervalSince1970: 1_700_000_020)
-        let legacy = ExistingCompleteResourceSnapshot(
-            skills: [],
-            extensions: [],
-            oppiConfiguration: OppiExtensionConfiguration(
-                enabled: false,
-                approvalPolicy: .confirmDestructiveOnly,
-                mobileOutputGuideEnabled: false,
-                revision: 3
-            ),
-            savedAt: savedAt
-        )
-        let cache = TimelineCache(rootURL: root)
-        try fileManager.createDirectory(at: serverDirectory, withIntermediateDirectories: true)
-        try JSONEncoder().encode(legacy).write(to: catalogURL, options: .atomic)
-
-        let loaded = await cache.loadServerResourceCatalog(serverId: "sha256:existing")
-
-        #expect(loaded?.skillsLoaded == true)
-        #expect(loaded?.extensionsLoaded == true)
-        #expect(loaded?.skillsSavedAt == savedAt)
-        #expect(loaded?.extensionsSavedAt == savedAt)
-        #expect(loaded?.oppiConfiguration == legacy.oppiConfiguration)
-        #expect(loaded?.oppiRequiresAuthoritativeRefresh == false)
     }
 
     @Test func traceNamespacingIsolatesServersWithIdenticalSessionIds() async throws {
@@ -471,11 +400,4 @@ struct TimelineCacheTests {
             thinking: nil
         )
     }
-}
-
-private struct ExistingCompleteResourceSnapshot: Encodable {
-    let skills: [ServerSkillSummary]
-    let extensions: [ServerExtensionSummary]
-    let oppiConfiguration: OppiExtensionConfiguration
-    let savedAt: Date
 }

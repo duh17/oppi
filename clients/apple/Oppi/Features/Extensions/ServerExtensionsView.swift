@@ -111,7 +111,7 @@ struct ServerExtensionsView: View {
                         ContentUnavailableView(
                             "No Pi Extensions Found",
                             systemImage: "puzzlepiece.extension",
-                            description: Text("Oppi is available above as a built-in extension.")
+                            description: Text("Configure Pi extensions in ~/.pi/agent/extensions or Pi user settings.")
                         )
                         .listRowBackground(theme.bg.primary)
                     }

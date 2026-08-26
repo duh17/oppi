@@ -33,46 +33,6 @@ struct ServerResourceModelTests {
         #expect(detail.files == ["SKILL.md", "references/checklist.md"])
     }
 
-    @Test func decodesPathlessBuiltInOppiExtensionAndExactApprovalPolicies() throws {
-        let catalog = try JSONDecoder().decode(ServerExtensionCatalog.self, from: Data("""
-        {
-          "extensions": [{
-            "id": "oppi",
-            "name": "Oppi",
-            "description": "Server-owned controls.",
-            "kind": "builtIn",
-            "provenance": { "kind": "builtIn", "label": "Built-in extension" },
-            "state": "off",
-            "warnings": [],
-            "isRemovable": false
-          }],
-          "oppiConfiguration": {
-            "enabled": false,
-            "approvalPolicy": "confirmDestructiveOnly",
-            "revision": 0
-          }
-        }
-        """.utf8))
-
-        let oppi = try #require(catalog.extensions.first)
-        #expect(oppi.id == "oppi")
-        #expect(oppi.path == nil)
-        #expect(oppi.packageName == nil)
-        #expect(oppi.kind == .builtIn)
-        #expect(oppi.provenance.kind == .builtIn)
-        #expect(oppi.isRemovable == false)
-        #expect(catalog.oppiConfiguration == OppiExtensionConfiguration(
-            enabled: false,
-            approvalPolicy: .confirmDestructiveOnly,
-            revision: 0
-        ))
-
-        for rawPolicy in ["confirmDestructiveOnly", "confirmAllChanges", "readOnly"] {
-            let policy = try JSONDecoder().decode(OppiApprovalPolicy.self, from: Data("\"\(rawPolicy)\"".utf8))
-            #expect(policy.rawValue == rawPolicy)
-        }
-    }
-
     @Test func unknownProvenanceDoesNotDiscardTheRestOfTheCatalog() throws {
         let catalog = try JSONDecoder().decode(ServerSkillsCatalog.self, from: Data("""
         {
@@ -111,7 +71,7 @@ struct ServerResourceModelTests {
         {"skills":[{"id":"skill_package","name":"Review tools","description":"Package skill.","provenance":{"kind":"package","label":"npm:@scope/review-tools@1.2.3"},"packageName":"@scope/review-tools","state":"enabled","warnings":[],"editable":false}]}
         """.utf8))
         let extensions = try JSONDecoder().decode(ServerExtensionCatalog.self, from: Data("""
-        {"extensions":[{"id":"extension_package","name":"Review extension","kind":"package","provenance":{"kind":"package","label":"npm:@scope/review-tools@1.2.3"},"packageName":"@scope/review-tools","state":"on","warnings":[],"isRemovable":false}],"oppiConfiguration":{"enabled":false,"approvalPolicy":"confirmDestructiveOnly","revision":0}}
+        {"extensions":[{"id":"extension_package","name":"Review extension","kind":"package","provenance":{"kind":"package","label":"npm:@scope/review-tools@1.2.3"},"packageName":"@scope/review-tools","state":"on","warnings":[],"isRemovable":false}],"builtInTools":[]}
         """.utf8))
 
         let skill = try #require(skills.skills.first)
@@ -150,5 +110,22 @@ struct ServerResourceModelTests {
         #expect(detail.summary.state == .error)
         #expect(detail.contributedTools == ["review"])
         #expect(detail.contributedCommands == ["/review"])
+    }
+
+    @Test func decodesPiSystemPromptAndNullableDefaultTools() throws {
+        let filePrompt = try JSONDecoder().decode(PiSystemPromptSnapshot.self, from: Data("""
+        {"source":"file","path":"~/.pi/agent/SYSTEM.md","resolvedPath":"/tmp/SYSTEM.md","content":"# Live"}
+        """.utf8))
+        let defaultPrompt = try JSONDecoder().decode(PiSystemPromptSnapshot.self, from: Data("""
+        {"source":"default","path":"~/.pi/agent/SYSTEM.md","content":"You are an expert coding assistant operating inside pi"}
+        """.utf8))
+        let inherited = try JSONDecoder().decode(PiDefaultToolsSnapshot.self, from: Data(#"{"defaultTools":null}"#.utf8))
+        let exact = try JSONDecoder().decode(PiDefaultToolsSnapshot.self, from: Data(#"{"defaultTools":[]}"#.utf8))
+
+        #expect(filePrompt.source == .file)
+        #expect(filePrompt.resolvedPath == "/tmp/SYSTEM.md")
+        #expect(defaultPrompt.source == .default)
+        #expect(inherited.defaultTools == nil)
+        #expect(exact.defaultTools == [])
     }
 }

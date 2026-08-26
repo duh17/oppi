@@ -15,7 +15,6 @@ import {
   type AgentDefinitionStore,
   type StoredAgentDefinition,
 } from "../agent-definitions.js";
-import { isDefaultAgentId } from "../default-agent.js";
 import { iconAssetId } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
@@ -110,10 +109,6 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     if (method === "DELETE") {
       const agent = resolveAgent(reference, res);
       if (!agent) return true;
-      if (isDefaultAgentId(agent.id)) {
-        helpers.error(res, 400, "Oppi identity cannot be archived; reset customization instead");
-        return true;
-      }
       const archived = agentStore().archiveAgent(agent.id);
       if (!archived) {
         helpers.error(res, 404, "Agent not found");
@@ -124,23 +119,6 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
 
     return false;
-  }
-
-  async function handleAgentCustomization(
-    reference: string,
-    method: string,
-    res: ServerResponse,
-  ): Promise<boolean> {
-    if (method !== "DELETE") return false;
-    const agent = resolveAgent(reference, res);
-    if (!agent) return true;
-    if (!isDefaultAgentId(agent.id)) {
-      helpers.error(res, 404, "Oppi customization not found");
-      return true;
-    }
-    const reset = agentStore().resetDefaultAgent();
-    helpers.json(res, { agent: serializeAgent(reset) });
-    return true;
   }
 
   async function handleAgentSession(
@@ -165,10 +143,6 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       );
       if (delegationFieldError) {
         helpers.error(res, 400, delegationFieldError);
-        return true;
-      }
-      if (isDefaultAgentId(agent.id) && hasToolPolicyOverride(body.overrides)) {
-        helpers.error(res, 400, "Oppi launch overrides cannot change tools");
         return true;
       }
       const parsedPrompt = parsePrompt(body.prompt);
@@ -363,11 +337,6 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       return handleAgentCollection(method, url, req, res);
     }
 
-    const customizationMatch = path.match(/^\/agents\/([^/]+)\/customization$/);
-    if (customizationMatch?.[1]) {
-      return handleAgentCustomization(decodeURIComponent(customizationMatch[1]), method, res);
-    }
-
     const sessionMatch = path.match(/^\/agents\/([^/]+)\/sessions$/);
     if (sessionMatch?.[1]) {
       return handleAgentSession(decodeURIComponent(sessionMatch[1]), method, req, res);
@@ -544,13 +513,6 @@ function invalidDelegationFields(
     return "allowNestedDelegation must be a boolean";
   }
   return undefined;
-}
-
-function hasToolPolicyOverride(overrides: CreateAgentSessionRequest["overrides"]): boolean {
-  return (
-    isRecord(overrides) &&
-    ["tools", "excludeTools", "noTools"].some((key) => Object.hasOwn(overrides, key))
-  );
 }
 
 function applyOverrides(

@@ -44,7 +44,7 @@ Oppi renders extension prompts, confirmations, editor requests, status, and widg
 
 The Workspaces tab opens **All Sessions** for the active server. It keeps **Your Turn** and **Working** at the top, groups recent stopped sessions by day, and shows each workspace name. Use the sidebar or drawer to manage saved Agents and schedules, collapse the workspace list, open App Settings, or browse a workspace's sessions, files, and settings.
 
-The create and edit sheets for Agents, schedules, and workspaces can open an **Oppi Control** session. Oppi Control uses a normal timeline and the Default Agent. Describe the change, review the proposed `oppi` command, and approve the configuration change before Oppi applies it. You can also use the forms in the same sheets.
+The create and edit sheets for Agents, schedules, workspaces, and Skills can open a **Pi Control** session. Pi Control is ordinary Pi with global settings, tools, Skills, Extensions, `SYSTEM.md`, and `APPEND_SYSTEM.md`. It runs with the server host user's permissions and can use the installed `oppi` CLI through `bash`. You can also use the native forms in the same sheets.
 
 **Quick Session** starts a session without opening a workspace first. Launch it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The Shortcuts **New Session** action can add optional text and one image to the composer.
 

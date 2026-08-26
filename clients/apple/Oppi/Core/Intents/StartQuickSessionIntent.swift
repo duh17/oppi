@@ -34,7 +34,7 @@ enum QuickSessionIntentPayloadError: LocalizedError, Equatable {
 struct StartQuickSessionIntent: AppIntent {
     static let title: LocalizedStringResource = "New Session"
     // periphery:ignore
-    static let description: IntentDescription = "Start a new Oppi agent session"
+    static let description: IntentDescription = "Start a new Pi session in Oppi"
     static var supportedModes: IntentModes { .foreground(.immediate) }
 #if compiler(>=6.4)
     @available(iOS 27.0, *)

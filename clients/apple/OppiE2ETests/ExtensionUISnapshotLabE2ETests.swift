@@ -237,88 +237,87 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         try captureNormalTimelineWidgetSurface(sessionId: sessionId)
     }
 
-    func testDefaultAgentOppiToolPresentationScreenshots() throws {
+    func testStructuredToolMarkdownPresentationScreenshots() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
         let sessionId = waitForFocusedSessionId(timeout: 20)
-        let toolId = "default-agent-oppi-search-e2e"
+        let toolId = "structured-cli-history-e2e"
+        let command = "git log --oneline --max-count=2"
         let readableOutput = """
-        # Oppi session search
+        # Repository history
 
         ## Command
 
-        `oppi session search workspace search --workspace oppi`
+        `git log --oneline --max-count=2`
 
-        ## Search results (2)
+        ## Recent commits (2)
 
-        ### Workspace search polish
+        ### Add structured output fixture
 
-        Make Oppi tool rows readable for humans.
+        Keep generic CLI tool rows readable for humans.
 
-        `sess-alpha` · workspace `oppi` · rank 0.93
+        `a1b2c3d` · branch `main`
 
-        ### Oppi agent tools
+        ### Extend markdown rendering coverage
 
-        Avoid opaque args arrays in timeline rows.
+        Avoid opaque argument objects in timeline rows.
 
-        `sess-beta` · workspace `oppi` · rank 0.81
+        `e4f5a6b` · branch `main`
         """
 
         try sendHarnessMessage(sessionId: sessionId, ["type": "agent_start"])
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "tool_start",
-            "tool": "oppi",
+            "tool": "bash",
             "toolCallId": toolId,
-            "args": [
-                "args": ["session", "search", "workspace", "search", "--workspace", "oppi"],
-            ],
+            "args": ["command": command],
             "callSegments": [
-                ["text": "oppi ", "style": "bold"],
-                ["text": "session search", "style": "accent"],
-                ["text": " · workspace search", "style": "muted"],
+                ["text": "bash ", "style": "bold"],
+                ["text": "git log", "style": "accent"],
+                ["text": " · recent commits", "style": "muted"],
             ],
         ])
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "tool_output",
             "toolCallId": toolId,
-            "output": "{\"ok\":true,\"data\":{\"total_results\":2}}",
+            "output": "a1b2c3d Add structured output fixture\ne4f5a6b Extend markdown rendering coverage",
         ])
         try sendHarnessMessage(sessionId: sessionId, [
             "type": "tool_end",
-            "tool": "oppi",
+            "tool": "bash",
             "toolCallId": toolId,
             "details": [
-                "args": ["session", "search", "workspace", "search", "--workspace", "oppi"],
+                "command": command,
                 "kind": "read",
-                "data": ["total_results": 2],
+                "data": ["commit_count": 2],
                 "expandedText": readableOutput,
                 "presentationFormat": "markdown",
             ],
             "resultSegments": [
-                ["text": "2 results", "style": "success"],
+                ["text": "2 commits", "style": "success"],
             ],
         ])
         try sendHarnessMessage(sessionId: sessionId, ["type": "agent_end"])
 
         let toolRow = app.descendants(matching: .any)["chat.timeline.row.\(toolId)"]
-        XCTAssertTrue(toolRow.waitForExistence(timeout: 15), "Oppi tool row did not appear")
-        waitForText("session search", timeout: 10)
-        waitForText("2 results", timeout: 10)
-        try saveLabScreenshot(name: "default-agent-oppi-tool-collapsed-e2e")
+        XCTAssertTrue(toolRow.waitForExistence(timeout: 15), "Structured tool row did not appear")
+        waitForText("git log", timeout: 10)
+        waitForText("2 commits", timeout: 10)
+        try saveLabScreenshot(name: "structured-tool-markdown-collapsed-e2e")
 
         toolRow.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.50)).tap()
-        waitForText("Workspace search polish", timeout: 15)
-        try saveLabScreenshot(name: "default-agent-oppi-tool-expanded-e2e")
+        waitForText("Add structured output fixture", timeout: 15)
+        try saveLabScreenshot(name: "structured-tool-markdown-expanded-e2e")
 
         let markdownViewport = app.collectionViews["chat.timeline.row.\(toolId).markdownViewport"].firstMatch
-        XCTAssertTrue(markdownViewport.waitForExistence(timeout: 10), "Oppi markdown viewport did not appear")
+        XCTAssertTrue(markdownViewport.waitForExistence(timeout: 10), "Markdown viewport did not appear")
         markdownViewport.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.45)).doubleTap()
         let fullScreenBody = app.collectionViews["full-screen.markdown.body"].firstMatch
-        XCTAssertTrue(fullScreenBody.waitForExistence(timeout: 15), "Oppi full-screen output did not open")
+        XCTAssertTrue(fullScreenBody.waitForExistence(timeout: 15), "Full-screen output did not open")
         for expectedText in [
-            "oppi session search workspace search",
-            "Search results (2)",
-            "Oppi agent tools",
+            "git log --oneline --max-count=2",
+            "Recent commits (2)",
+            "Extend markdown rendering coverage",
         ] {
             let predicate = NSPredicate(
                 format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
@@ -328,10 +327,10 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             let match = fullScreenBody.descendants(matching: .any).matching(predicate).firstMatch
             XCTAssertTrue(
                 match.waitForExistence(timeout: 10),
-                "Full-screen Oppi output did not contain: \(expectedText)"
+                "Full-screen output did not contain: \(expectedText)"
             )
         }
-        try saveLabScreenshot(name: "default-agent-oppi-tool-full-screen-e2e")
+        try saveLabScreenshot(name: "structured-tool-markdown-full-screen-e2e")
     }
 
     func testExtensionUIResponseActions() throws {

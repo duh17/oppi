@@ -189,23 +189,13 @@ describe("SessionMessageQueueCoordinator reload quiescing", () => {
     const snapshotReadEntered = deferred<void>();
     const snapshotRead = vi.fn(() => {
       snapshotReadEntered.resolve();
-      return {
-        enabled: true,
-        approvalPolicy: "readOnly" as const,
-        mobileOutputGuideEnabled: false,
-        revision: 2,
-      };
+      return { enabled: true, revision: 2 };
     });
     Object.assign(harness.backend as unknown as Record<string, unknown>, {
-      oppiSettingsHolder: {
-        snapshot: {
-          enabled: true,
-          approvalPolicy: "confirmDestructiveOnly" as const,
-          mobileOutputGuideEnabled: false,
-          revision: 1,
-        },
+      mobileOutputGuideSettingsHolder: {
+        snapshot: { enabled: false, revision: 1 },
       },
-      getOppiExtensionSettings: snapshotRead,
+      getMobileOutputGuideSettings: snapshotRead,
     });
 
     const replacement = harness.backend.replaceQueuedModelTurns({

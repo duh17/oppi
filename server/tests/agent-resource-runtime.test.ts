@@ -6,7 +6,6 @@ import type { ResourceLoader } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../src/agent-launch-service.js";
-import { freezeOppiExtensionSettingsSnapshot } from "../src/oppi-extension-settings.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import type { Session, Workspace } from "../src/types.js";
@@ -361,11 +360,6 @@ describe.sequential("saved Agent exact resource selection", () => {
             extensionIds: [serverResourceId("extension", selectedExtension)],
           },
         },
-        getOppiExtensionSettings: () =>
-          freezeOppiExtensionSettingsSnapshot({
-            enabled: true,
-            approvalPolicy: "readOnly",
-          }),
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
@@ -421,22 +415,13 @@ describe.sequential("saved Agent exact resource selection", () => {
           name: "All Tools Missing",
           resources: { skillPaths: [], extensionIds: [] },
         },
-        // Match the real launch path, where the Oppi tool extension is enabled
-        // and the reserved `oppi` tool keeps the session runnable.
-        getOppiExtensionSettings: () =>
-          freezeOppiExtensionSettingsSnapshot({
-            enabled: true,
-            approvalPolicy: "readOnly",
-          }),
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
 
       const activeToolNames = backend.session.agent.state.tools.map((tool) => tool.name);
       expect(activeToolNames).not.toContain("request_feedback");
-      // The ordinary managed runtime always reserves the `oppi` tool, so the
-      // session never ends up with a dead allowlist.
-      expect(activeToolNames).toContain("oppi");
+      expect(activeToolNames).not.toContain("oppi");
       expect(session.warnings).toHaveLength(1);
       expect(session.warnings?.[0]).toContain(
         "Every configured Agent tool is unavailable and was dropped from this session: request_feedback",
@@ -511,6 +496,34 @@ describe.sequential("saved Agent exact resource selection", () => {
       else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
       rmSync(cwd, { recursive: true, force: true });
       rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats oppi like any unavailable selected Extension ID", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-unavailable-extension-"));
+    try {
+      await expect(
+        SdkBackend.create({
+          session: makeSession(),
+          workspace: {
+            id: "workspace-1",
+            name: "Unavailable Extension Test",
+            runtime: "host",
+            hostMount: cwd,
+          } as Workspace,
+          agentDefinition: {
+            name: "Unavailable Extension",
+            resources: { skillPaths: [], extensionIds: ["oppi"] },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        }),
+      ).rejects.toMatchObject({
+        message: "Selected Agent Extension is unavailable: oppi",
+        details: { unavailableExtensions: ["oppi"] },
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
     }
   });
 

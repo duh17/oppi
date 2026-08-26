@@ -168,7 +168,7 @@ enum SessionInboxSessionRouting {
     }
 
     static func allSessionsContext(for session: Session, workspaceName: String?) -> String? {
-        if session.control != nil { return "Oppi Control" }
+        if session.control != nil { return "Pi Control" }
         return session.workspaceName ?? workspaceName
     }
 }

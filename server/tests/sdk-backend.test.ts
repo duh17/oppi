@@ -29,9 +29,7 @@ import {
   OPPI_CALLER_SESSION_ID_ENV,
 } from "../src/session-caller-identity.js";
 import type { AgentDefinition } from "../src/agent-launch-service.js";
-import { DEFAULT_AGENT_DEFINITION, DEFAULT_AGENT_ID } from "../src/default-agent.js";
-import type { OppiExtensionSettingsSnapshot } from "../src/oppi-extension-settings.js";
-import { OPPI_EXTENSION_READ_ONLY_ERROR } from "../src/oppi-tool-extension.js";
+import type { MobileOutputGuideSettingsSnapshot } from "../src/mobile-output-guide-settings.js";
 import { buildMobileOutputGuide } from "../src/oppi-docs.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
@@ -56,7 +54,7 @@ describe("resolveSdkSessionCwd", () => {
       expect(cwd).toBe(join(dataDir, "control-sessions", "cwd"));
       expect(lstatSync(cwd).isDirectory()).toBe(true);
       expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
-      expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Oppi Control");
+      expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Pi Control");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -187,157 +185,103 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe("SdkBackend control sessions", () => {
-  it("reloads the saved policy for a control runtime without enablement gating", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-policy-reload-"));
+  it("loads ordinary global Pi configuration and appends the mobile output guide", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-pi-runtime-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-control-pi-agent-dir-"));
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    writeFileSync(join(agentDir, "SYSTEM.md"), "Global Pi replacement prompt");
+    writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "Global Pi append prompt");
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(agentDir, "extensions", "control-test.js"),
+      "export default function (pi) { pi.registerTool({ name: 'global_control_tool', label: 'Global', description: 'Global test tool', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }) }); }\n",
+    );
     const session = makeSession({
       workspaceId: undefined,
       control: { domain: "agents", intent: "revise" },
     });
-    let snapshot: OppiExtensionSettingsSnapshot = {
-      enabled: false,
-      approvalPolicy: "readOnly",
-      mobileOutputGuideEnabled: false,
-      revision: 1,
-    };
-    const getOppiExtensionSettings = vi.fn(() => snapshot);
+    let snapshot: MobileOutputGuideSettingsSnapshot = { enabled: true, revision: 1 };
+    const getMobileOutputGuideSettings = vi.fn(() => snapshot);
     let backend: SdkBackend | undefined;
 
     try {
       backend = await SdkBackend.create({
         session,
         dataDir,
-        agentDefinition: DEFAULT_AGENT_DEFINITION,
-        getOppiExtensionSettings,
+        getMobileOutputGuideSettings,
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
-      const firstTool = backend.session.getToolDefinition("oppi");
-      expect(firstTool).toBeDefined();
-      await expect(
-        firstTool!.execute(
-          "control-read-only",
-          { args: ["workspace", "delete", "ws-1"] },
-          undefined,
-          undefined,
-          { hasUI: true, ui: { confirm: vi.fn(async () => true) } } as never,
-        ),
-      ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
 
-      snapshot = {
-        enabled: false,
-        approvalPolicy: "confirmAllChanges",
-        mobileOutputGuideEnabled: false,
-        revision: 2,
-      };
+      expect(backend.session.resourceLoader.getSystemPrompt()).toBe("Global Pi replacement prompt");
+      expect(backend.session.resourceLoader.getAppendSystemPrompt()).toEqual(
+        expect.arrayContaining(["Global Pi append prompt", buildMobileOutputGuide()]),
+      );
+      expect(backend.session.getToolDefinition("bash")).toBeDefined();
+      expect(backend.session.getToolDefinition("global_control_tool")).toBeDefined();
+      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
+      expect(backend.session.getToolDefinition("ask")).toBeUndefined();
+
+      snapshot = { enabled: false, revision: 2 };
       await backend.reloadResources();
-      const confirm = vi.fn(async () => false);
-      const secondTool = backend.session.getToolDefinition("oppi");
-      await expect(
-        secondTool!.execute(
-          "control-confirm-all",
-          { args: ["workspace", "delete", "ws-1"] },
-          undefined,
-          undefined,
-          { hasUI: true, ui: { confirm } } as never,
-        ),
-      ).resolves.toMatchObject({ details: { cancelled: true, reason: "declined" } });
-      expect(confirm).toHaveBeenCalledOnce();
-      expect(getOppiExtensionSettings).toHaveBeenCalled();
+      expect(backend.session.resourceLoader.getAppendSystemPrompt()).toContain(
+        "Global Pi append prompt",
+      );
+      expect(backend.session.resourceLoader.getAppendSystemPrompt()).not.toContain(
+        buildMobileOutputGuide(),
+      );
+      expect(getMobileOutputGuideSettings).toHaveBeenCalled();
     } finally {
       await backend?.dispose();
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
       rmSync(dataDir, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
-  it("reopens an Oppi agent control session through its private cwd", async () => {
+  it("reopens a current Pi Control session through its private cwd", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-reopen-"));
     const session = makeSession({
       workspaceId: undefined,
       control: { domain: "schedules", intent: "revise" },
+      launch: {
+        source: "human",
+        target: { server: true, displayCwd: "Pi Control" },
+        status: "accepted",
+        requestedAt: 1,
+      },
     });
     let first: SdkBackend | undefined;
     let reopened: SdkBackend | undefined;
-    const getOppiExtensionSettings = vi.fn(() => ({
-      enabled: false,
-      approvalPolicy: "readOnly" as const,
-      mobileOutputGuideEnabled: false,
-      revision: 1,
-    }));
 
     try {
       const controlCwd = join(dataDir, "control-sessions", "cwd");
       first = await SdkBackend.create({
         session,
         dataDir,
-        agentDefinition: DEFAULT_AGENT_DEFINITION,
-        getOppiExtensionSettings,
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
       expect(first.session.sessionManager.getCwd()).toBe(controlCwd);
-      expect(first.session.getActiveToolNames()).toEqual([
-        "oppi",
-        "ask",
-        "read",
-        "edit",
-        "write",
-        "grep",
-        "find",
-        "ls",
-      ]);
-      for (const name of ["write", "grep", "find", "ls"]) {
-        expect(first.session.getToolDefinition(name)).toBeDefined();
-      }
-      expect(first.session.getToolDefinition("bash")).toBeUndefined();
-
-      const selectedHostFile = join(dataDir, "selected-skill.md");
-      writeFileSync(selectedHostFile, "before\n");
-      const read = first.session.getToolDefinition("read");
-      const edit = first.session.getToolDefinition("edit");
-      const readResult = await read!.execute(
-        "stock-read",
-        { path: selectedHostFile },
-        undefined,
-        undefined,
-        {} as never,
-      );
-      expect(readResult.content).toEqual([
-        expect.objectContaining({ type: "text", text: expect.stringContaining("before") }),
-      ]);
-      await edit!.execute(
-        "stock-edit",
-        { path: selectedHostFile, edits: [{ oldText: "before", newText: "after" }] },
-        undefined,
-        undefined,
-        {} as never,
-      );
-      expect(readFileSync(selectedHostFile, "utf8")).toBe("after\n");
+      expect(first.session.getToolDefinition("bash")).toBeDefined();
+      expect(first.session.getToolDefinition("oppi")).toBeUndefined();
       expect(session.piSessionFile).toBeDefined();
-      expect(session.piSessionFile).not.toContain("Oppi Control");
-      expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Oppi Control");
-      const oppi = first.session.getToolDefinition("oppi");
-      await expect(
-        oppi!.execute(
-          "self-stop",
-          { args: ["session", "stop", session.id] },
-          undefined,
-          undefined,
-          { hasUI: true, ui: { confirm: vi.fn(async () => true) } } as never,
-        ),
-      ).rejects.toThrow(`Cannot target the calling Oppi session (${session.id})`);
+      expect(session.piSessionFile).not.toContain("Pi Control");
+      expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Pi Control");
 
       await first.dispose();
       reopened = await SdkBackend.create({
         session,
         dataDir,
-        agentDefinition: DEFAULT_AGENT_DEFINITION,
-        getOppiExtensionSettings,
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
 
       expect(reopened.session.sessionManager.getCwd()).toBe(controlCwd);
-      expect(getOppiExtensionSettings).toHaveBeenCalledTimes(2);
+      expect(reopened.session.getToolDefinition("bash")).toBeDefined();
     } finally {
       await reopened?.dispose();
       await first?.dispose();
@@ -402,12 +346,7 @@ describe("SdkBackend sandbox", () => {
         onEvent: vi.fn(),
         onEnd: vi.fn(),
         skillPaths: [skillDir],
-        getOppiExtensionSettings: vi.fn(() => ({
-          enabled: true,
-          approvalPolicy: "confirmDestructiveOnly",
-          mobileOutputGuideEnabled: true,
-          revision: 7,
-        })),
+        getMobileOutputGuideSettings: vi.fn(() => ({ enabled: true, revision: 7 })),
       });
 
       expect(backend.session.resourceLoader.getAppendSystemPrompt()).toContain(
@@ -539,20 +478,10 @@ describe("SdkBackend sandbox", () => {
     }
   });
 
-  it.each([
-    { name: "default tools", tools: undefined },
-    { name: "explicit allowlist", tools: { allowed: ["read"] } },
-    { name: "noTools all", tools: { noTools: "all" as const } },
-    { name: "explicit Oppi exclusion", tools: { excluded: ["oppi", "bash"] } },
-  ])("never injects or reserves Oppi for sandbox $name", async ({ tools }) => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-oppi-eligibility-"));
+  it("drops any unavailable saved Agent allowlist entry", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-stale-agent-tool-"));
     const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
-    const execResult = {
-      exitCode: 0,
-      stdout: "",
-      stdoutBuffer: Buffer.alloc(0),
-      ok: true,
-    };
+    const execResult = { exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0), ok: true };
     const vm = {
       fs: {
         access: vi.fn(async () => undefined),
@@ -568,112 +497,31 @@ describe("SdkBackend sandbox", () => {
     const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
     const previousManager = sdkBackendType._gondolinManager;
     sdkBackendType._gondolinManager = manager;
-    const getOppiExtensionSettings = vi.fn(
-      (): OppiExtensionSettingsSnapshot => ({
-        enabled: true,
-        approvalPolicy: "confirmDestructiveOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 9,
-      }),
-    );
     let backend: SdkBackend | undefined;
 
     try {
+      const session = makeSession({
+        ephemeral: true,
+        launch: { status: "launching", requestedAt: 1, tools: { allowed: ["read", "missing_tool"] } },
+      });
       backend = await SdkBackend.create({
-        session: makeSession({
-          ephemeral: true,
-          ...(tools ? { launch: { status: "launching", requestedAt: 1, tools } } : {}),
-        }),
+        session,
         workspace: {
           id: "w1",
-          name: "Sandbox Oppi eligibility",
-          runtime: "sandbox",
-          hostMount: cwd,
-          extensions: [],
-        } as Workspace,
-        getOppiExtensionSettings,
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
-
-      expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
-      expect(
-        backend.session.resourceLoader
-          .getExtensions()
-          .extensions.some((extension) => extension.path === "<inline:oppi>"),
-      ).toBe(false);
-      expect(backend.session.resourceLoader.getAppendSystemPrompt()).not.toContain(
-        buildMobileOutputGuide(),
-      );
-      expect(backend.session.getActiveToolNames()).not.toContain("oppi");
-    } finally {
-      await backend?.dispose();
-      sdkBackendType._gondolinManager = previousManager;
-      qemuSpy.mockRestore();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("injects sandbox-scoped Oppi when the Agent allowlists it", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-oppi-allowlist-"));
-    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
-    const execResult = {
-      exitCode: 0,
-      stdout: "",
-      stdoutBuffer: Buffer.alloc(0),
-      ok: true,
-    };
-    const vm = {
-      fs: {
-        access: vi.fn(async () => undefined),
-        mkdir: vi.fn(async () => undefined),
-        readFile: vi.fn(async () => Buffer.alloc(0)),
-        writeFile: vi.fn(async () => undefined),
-      },
-      exec: vi.fn(() =>
-        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
-      ),
-    };
-    const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
-    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
-    const previousManager = sdkBackendType._gondolinManager;
-    sdkBackendType._gondolinManager = manager;
-    let backend: SdkBackend | undefined;
-
-    try {
-      backend = await SdkBackend.create({
-        session: makeSession({
-          ephemeral: true,
-          launch: {
-            status: "launching",
-            requestedAt: 1,
-            tools: { allowed: ["read", "oppi"] },
-          },
-        }),
-        workspace: {
-          id: "MGXU8ses",
-          name: "deep-research",
+          name: "Sandbox stale Oppi",
           runtime: "sandbox",
           hostMount: cwd,
           extensions: [],
         } as Workspace,
         agentDefinition: {
-          name: "Deep Research",
-          sessionDefaults: { tools: ["read", "oppi"] },
+          name: "Sandbox",
+          sessionDefaults: { tools: ["read", "missing_tool"] },
         },
-        getOppiExtensionSettings: vi.fn(() => ({
-          enabled: true,
-          approvalPolicy: "confirmDestructiveOnly" as const,
-          mobileOutputGuideEnabled: false,
-          revision: 1,
-        })),
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
-
-      expect(backend.session.getActiveToolNames()).toContain("oppi");
-      const oppi = backend.session.getToolDefinition("oppi");
-      expect(oppi?.description).toContain("sandbox-scoped");
+      expect(backend.session.getToolDefinition("missing_tool")).toBeUndefined();
+      expect(session.warnings?.join(" ")).toContain("missing_tool");
     } finally {
       await backend?.dispose();
       sdkBackendType._gondolinManager = previousManager;
@@ -1316,26 +1164,17 @@ describe("SdkBackend host extensions", () => {
     return resourceLoader.getExtensions().extensions.flatMap((ext) => [...ext.commands.keys()]);
   }
 
-  it("keeps the stable named Oppi factory honest while disabled", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-inline-disabled-"));
-    const getOppiExtensionSettings = vi.fn(
-      (): OppiExtensionSettingsSnapshot => ({
-        enabled: false,
-        approvalPolicy: "confirmDestructiveOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 0,
-      }),
-    );
+  it("never registers a server-owned Oppi tool in an ordinary host session", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-no-managed-tool-"));
     const backend = await SdkBackend.create({
       session: makeSession({ ephemeral: true }),
-      workspace: { id: "w1", name: "Disabled Oppi", runtime: "host", hostMount: cwd } as Workspace,
-      getOppiExtensionSettings,
+      workspace: { id: "w1", name: "Ordinary Pi", runtime: "host", hostMount: cwd } as Workspace,
       onEvent: vi.fn(),
       onEnd: vi.fn(),
     });
 
     try {
-      expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
+      expect(backend.session.getToolDefinition("bash")).toBeDefined();
       expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
       expect(
         backend.session.resourceLoader
@@ -1348,99 +1187,10 @@ describe("SdkBackend host extensions", () => {
     }
   });
 
-  it("registers only Oppi from one named ordinary factory while enabled", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-inline-enabled-"));
-    const getOppiExtensionSettings = vi.fn(
-      (): OppiExtensionSettingsSnapshot => ({
-        enabled: true,
-        approvalPolicy: "confirmDestructiveOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 1,
-      }),
-    );
-    const backend = await SdkBackend.create({
-      session: makeSession({ ephemeral: true }),
-      workspace: { id: "w1", name: "Enabled Oppi", runtime: "host", hostMount: cwd } as Workspace,
-      getOppiExtensionSettings,
-      onEvent: vi.fn(),
-      onEnd: vi.fn(),
-    });
-
-    try {
-      const inlineOppi = backend.session.resourceLoader
-        .getExtensions()
-        .extensions.filter((extension) => extension.path === "<inline:oppi>");
-      expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
-      expect(inlineOppi).toHaveLength(1);
-      expect([...inlineOppi[0]!.tools.keys()]).toEqual(["oppi"]);
-      expect(backend.session.getToolDefinition("oppi")).toBeDefined();
-    } finally {
-      await backend.dispose();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    {
-      name: "explicit allowlist",
-      tools: { allowed: ["read"] },
-      present: ["read", "oppi"],
-      absent: ["bash", "edit", "write"],
-    },
-    {
-      name: "noTools all",
-      tools: { noTools: "all" as const },
-      present: ["oppi"],
-      absent: ["read", "bash", "edit", "write"],
-    },
-    {
-      name: "explicit Oppi exclusion",
-      tools: { excluded: ["oppi", "bash"] },
-      present: ["read", "edit", "write", "oppi"],
-      absent: ["bash"],
-    },
-  ])("reserves only oppi across $name", async ({ tools, present, absent }) => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-tool-reservation-"));
-    const backend = await SdkBackend.create({
-      session: makeSession({
-        ephemeral: true,
-        launch: { status: "launching", requestedAt: 1, tools },
-      }),
-      workspace: {
-        id: "w1",
-        name: "Tool reservation",
-        runtime: "host",
-        hostMount: cwd,
-      } as Workspace,
-      getOppiExtensionSettings: () => ({
-        enabled: true,
-        approvalPolicy: "confirmDestructiveOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 2,
-      }),
-      onEvent: vi.fn(),
-      onEnd: vi.fn(),
-    });
-
-    try {
-      const active = backend.session.getActiveToolNames();
-      for (const name of present) expect(active).toContain(name);
-      for (const name of absent) expect(active).not.toContain(name);
-    } finally {
-      await backend.dispose();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("reloads the mobile guide with live settings independently of Oppi tool enablement", async () => {
+  it("reloads the Mobile Output Guide for an ordinary managed workspace session", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-mobile-guide-reload-"));
-    let snapshot: OppiExtensionSettingsSnapshot = {
-      enabled: false,
-      approvalPolicy: "confirmDestructiveOnly",
-      mobileOutputGuideEnabled: false,
-      revision: 0,
-    };
-    const getOppiExtensionSettings = vi.fn(() => snapshot);
+    let snapshot: MobileOutputGuideSettingsSnapshot = { enabled: false, revision: 0 };
+    const getMobileOutputGuideSettings = vi.fn(() => snapshot);
     const backend = await SdkBackend.create({
       session: makeSession({ ephemeral: true }),
       workspace: {
@@ -1449,167 +1199,24 @@ describe("SdkBackend host extensions", () => {
         runtime: "host",
         hostMount: cwd,
       } as Workspace,
-      getOppiExtensionSettings,
+      getMobileOutputGuideSettings,
       onEvent: vi.fn(),
       onEnd: vi.fn(),
     });
 
     try {
-      const loader = (
-        backend as unknown as {
-          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
-        }
-      ).runtime.services.resourceLoader;
+      const loader = backend.session.resourceLoader;
       expect(loader.getAppendSystemPrompt()).not.toContain(buildMobileOutputGuide());
-      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
 
-      snapshot = { ...snapshot, mobileOutputGuideEnabled: true, revision: 1 };
+      snapshot = { enabled: true, revision: 1 };
       await backend.reloadResources();
       expect(loader.getAppendSystemPrompt()).toContain(buildMobileOutputGuide());
-      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
 
-      snapshot = { ...snapshot, mobileOutputGuideEnabled: false, revision: 2 };
+      snapshot = { enabled: false, revision: 2 };
       await backend.reloadResources();
       expect(loader.getAppendSystemPrompt()).not.toContain(buildMobileOutputGuide());
+      expect(getMobileOutputGuideSettings).toHaveBeenCalledTimes(3);
     } finally {
-      await backend.dispose();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("applies enablement and immutable policy snapshots across Pi reloads", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-settings-reload-"));
-    let snapshot: OppiExtensionSettingsSnapshot = {
-      enabled: false,
-      approvalPolicy: "confirmDestructiveOnly",
-      mobileOutputGuideEnabled: false,
-      revision: 0,
-    };
-    const getOppiExtensionSettings = vi.fn(() => snapshot);
-    const backend = await SdkBackend.create({
-      session: makeSession({ ephemeral: true }),
-      workspace: {
-        id: "w1",
-        name: "Settings reload",
-        runtime: "host",
-        hostMount: cwd,
-      } as Workspace,
-      getOppiExtensionSettings,
-      onEvent: vi.fn(),
-      onEnd: vi.fn(),
-    });
-
-    try {
-      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
-
-      snapshot = {
-        enabled: true,
-        approvalPolicy: "confirmAllChanges",
-        mobileOutputGuideEnabled: false,
-        revision: 1,
-      };
-      await backend.reloadResources();
-      const oldTool = backend.session.getToolDefinition("oppi");
-      expect(oldTool).toBeDefined();
-
-      snapshot = {
-        enabled: true,
-        approvalPolicy: "readOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 2,
-      };
-      await backend.reloadResources();
-      const newTool = backend.session.getToolDefinition("oppi");
-      expect(newTool).toBeDefined();
-
-      const oldConfirm = vi.fn(async () => false);
-      await expect(
-        oldTool!.execute(
-          "old-policy",
-          { args: ["workspace", "delete", "workspace-1"] },
-          undefined,
-          undefined,
-          { hasUI: true, ui: { confirm: oldConfirm }, cwd } as never,
-        ),
-      ).resolves.toMatchObject({ details: { cancelled: true, reason: "declined" } });
-      expect(oldConfirm).toHaveBeenCalledOnce();
-
-      const newConfirm = vi.fn(async () => false);
-      await expect(
-        newTool!.execute(
-          "new-policy",
-          { args: ["workspace", "delete", "workspace-1"] },
-          undefined,
-          undefined,
-          { hasUI: true, ui: { confirm: newConfirm }, cwd } as never,
-        ),
-      ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
-      expect(newConfirm).not.toHaveBeenCalled();
-
-      snapshot = {
-        enabled: false,
-        approvalPolicy: "readOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 3,
-      };
-      await backend.reloadResources();
-      expect(backend.session.getToolDefinition("oppi")).toBeUndefined();
-      expect(
-        backend.session.resourceLoader
-          .getExtensions()
-          .extensions.some((extension) => extension.path === "<inline:oppi>"),
-      ).toBe(false);
-      expect(getOppiExtensionSettings).toHaveBeenCalledTimes(4);
-    } finally {
-      await backend.dispose();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it("reads settings before Pi shutdown and restores the holder when reload fails", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-settings-reload-failure-"));
-    const initial: OppiExtensionSettingsSnapshot = {
-      enabled: true,
-      approvalPolicy: "confirmAllChanges",
-      mobileOutputGuideEnabled: false,
-      revision: 1,
-    };
-    let snapshot = initial;
-    let readFailure: Error | undefined;
-    const getOppiExtensionSettings = vi.fn(() => {
-      if (readFailure) throw readFailure;
-      return snapshot;
-    });
-    const backend = await SdkBackend.create({
-      session: makeSession({ ephemeral: true }),
-      workspace: { id: "w1", name: "Reload failure", runtime: "host", hostMount: cwd } as Workspace,
-      getOppiExtensionSettings,
-      onEvent: vi.fn(),
-      onEnd: vi.fn(),
-    });
-    const reload = vi.spyOn(backend.session, "reload");
-
-    try {
-      readFailure = new Error("settings unavailable");
-      await expect(backend.reloadResources()).rejects.toThrow("settings unavailable");
-      expect(reload).not.toHaveBeenCalled();
-      expect(backend.session.getToolDefinition("oppi")).toBeDefined();
-
-      readFailure = undefined;
-      snapshot = {
-        enabled: true,
-        approvalPolicy: "readOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 2,
-      };
-      reload.mockRejectedValueOnce(new Error("Pi loader failed"));
-      await expect(backend.reloadResources()).rejects.toThrow("Pi loader failed");
-      expect(
-        (backend as unknown as { oppiSettingsHolder: { snapshot: OppiExtensionSettingsSnapshot } })
-          .oppiSettingsHolder.snapshot,
-      ).toEqual(initial);
-    } finally {
-      reload.mockRestore();
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -2068,87 +1675,6 @@ export default function (pi) {
 });
 
 describe("SdkBackend saved Agent definitions", () => {
-  it("registers the exact isolated control tool set without project leakage", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-default-agent-runtime-"));
-    mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
-    writeFileSync(
-      join(cwd, ".pi", "extensions", "extra.ts"),
-      `export default function(pi) { pi.registerTool({ name: "extra_tool", label: "Extra", description: "Should not load", parameters: { type: "object", properties: {}, additionalProperties: false }, async execute() { return { content: [{ type: "text", text: "extra" }], details: {} }; } }); }`,
-    );
-
-    const getOppiExtensionSettings = vi.fn(() => ({
-      enabled: false,
-      approvalPolicy: "readOnly" as const,
-      mobileOutputGuideEnabled: false,
-      revision: 99,
-    }));
-    const backend = await SdkBackend.create({
-      session: makeSession({
-        launch: {
-          status: "launching",
-          requestedAt: 1,
-          agentId: DEFAULT_AGENT_ID,
-          tools: { allowed: ["bash", "oppi"], noTools: "all" },
-        },
-      }),
-      workspace: {
-        id: "w1",
-        name: "Oppi Agent Runtime Test",
-        runtime: "host",
-        hostMount: cwd,
-      } as Workspace,
-      agentDefinition: DEFAULT_AGENT_DEFINITION,
-      getOppiExtensionSettings,
-      onEvent: vi.fn(),
-      onEnd: vi.fn(),
-    });
-
-    try {
-      const resourceLoader = (
-        backend as unknown as {
-          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
-        }
-      ).runtime.services.resourceLoader;
-      const extensions = resourceLoader.getExtensions().extensions;
-
-      expect(
-        extensions.some(
-          (ext) => ext.path.startsWith("<inline:") && ext.tools.has("oppi") && ext.tools.has("ask"),
-        ),
-      ).toBe(true);
-      expect(extensions.some((ext) => ext.tools.has("extra_tool"))).toBe(false);
-      expect(backend.session.getActiveToolNames()).toEqual([
-        "oppi",
-        "ask",
-        "read",
-        "edit",
-        "write",
-        "grep",
-        "find",
-        "ls",
-      ]);
-      expect(backend.session.getToolDefinition("extra_tool")).toBeUndefined();
-      expect(backend.session.getToolDefinition("bash")).toBeUndefined();
-      expect(getOppiExtensionSettings).toHaveBeenCalledOnce();
-
-      const confirm = vi.fn(async () => false);
-      const oppi = backend.session.getToolDefinition("oppi");
-      await expect(
-        oppi!.execute(
-          "control-policy",
-          { args: ["workspace", "create", "--name", "Needs confirmation"] },
-          undefined,
-          undefined,
-          { hasUI: true, ui: { confirm }, cwd } as never,
-        ),
-      ).rejects.toThrow(OPPI_EXTENSION_READ_ONLY_ERROR);
-      expect(confirm).not.toHaveBeenCalled();
-    } finally {
-      await backend.dispose();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
   it("injects saved Agent instructions, virtual context files, skill paths, and tool defaults into the runtime", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-definition-runtime-"));
     const skillDir = join(cwd, "agent-skills", "agent-review");

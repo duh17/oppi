@@ -20,8 +20,6 @@ oppi config set --help
 - Unknown keys are ignored on startup and reported by `oppi config validate`.
 - Many keys need a **server restart** before they take effect (`asr`, `tls`, `port`, `host`, `runtimeEnv`).
 
-From the Oppi agent tool, the same commands are available under the approval policy. Prefer `config get` / `config show` before `config set`.
-
 ## Dictation (ASR / STT)
 
 Dictation needs a speech-to-text backend URL:
@@ -65,8 +63,8 @@ Use `oppi config get runtimeEnv` and `oppi config get extensions.voice` to inspe
 
 Server-global Skills and Extensions are managed from the Apple app (**Skills** / **Extensions** destinations) and follow Pi user-scope resource rules. Read [extensions.md](extensions.md) for:
 
-- the built-in **Oppi** extension (`oppi` tool) and approval policies
-- how ordinary sessions discover Pi extensions
+- how managed sessions discover Pi extensions
+- the server-scoped Mobile Output Guide
 - native extension UI expectations
 
 Useful companion docs:
@@ -96,7 +94,7 @@ oppi server restart
 # or stop/start a foreground `oppi serve`
 ```
 
-`oppi server restart` is operator-only. The Oppi agent tool can change config values but cannot restart the server; tell the user when a restart is required.
+`oppi server restart` is operator-only. A Pi Control session runs with host-user authority, so inspect the current state before changing configuration and tell the user when a restart is required.
 
 ## What not to put in config
 

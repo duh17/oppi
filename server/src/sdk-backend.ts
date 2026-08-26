@@ -20,7 +20,6 @@ import {
   createReadToolDefinition,
   createWriteToolDefinition,
   createEditToolDefinition,
-  createGrepToolDefinition,
   createFindToolDefinition,
   createLsToolDefinition,
   type AgentSession,
@@ -28,7 +27,6 @@ import {
   type AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionContext,
-  type InlineExtension,
   type ResourceDiagnostic,
   type Skill,
   type ToolDefinition,
@@ -49,12 +47,6 @@ import {
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { CacheMissModelPriceSource } from "./cache-miss.js";
 import {
-  DEFAULT_AGENT_TOOL_NAMES,
-  buildDefaultAgentSystemPrompt,
-  isDefaultAgentId,
-} from "./default-agent.js";
-
-import {
   modelCandidatesFromRegistry,
   modelUnavailableMessage,
   RequiredModelUnavailableError,
@@ -62,15 +54,13 @@ import {
   stripModelThinkingLevel,
 } from "./model-resolution.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
-import { createDefaultAgentExtensionFactory } from "./default-agent-tool.js";
 import { applyPendingProviderRegistrations } from "./extension-model-discovery.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import {
-  DEFAULT_OPPI_EXTENSION_SETTINGS,
-  freezeOppiExtensionSettingsSnapshot,
-  type OppiExtensionSettingsSnapshot,
-} from "./oppi-extension-settings.js";
-import { createOppiToolExtensionFactory } from "./oppi-tool-extension.js";
+  DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
+  freezeMobileOutputGuideSettingsSnapshot,
+  type MobileOutputGuideSettingsSnapshot,
+} from "./mobile-output-guide-settings.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -79,11 +69,7 @@ import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
-import {
-  buildMobileOutputGuide,
-  buildOppiSystemPromptAppend,
-  getOppiDocsPath,
-} from "./oppi-docs.js";
+import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount, VmSecretDefinition } from "./gondolin-manager.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
@@ -230,7 +216,7 @@ export function resolveSdkSessionDisplayCwd(
   options: { dataDir?: string } = {},
 ): string {
   if (session && isDeclaredControlSession(session)) {
-    return "Oppi Control";
+    return "Pi Control";
   }
   if (workspace?.runtime === "sandbox") {
     return resolveSandboxGuestCwd(workspace);
@@ -438,12 +424,12 @@ export interface SdkBackendConfig {
   agentDefinition?: AgentDefinition;
   /** Server settings that affect Oppi-owned SDK sessions. */
   serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
-  /** Reads one atomic built-in Oppi settings snapshot for each ordinary runtime rebuild. */
-  getOppiExtensionSettings?: () => OppiExtensionSettingsSnapshot;
+  /** Reads one atomic Mobile Output Guide snapshot for each managed runtime rebuild. */
+  getMobileOutputGuideSettings?: () => MobileOutputGuideSettingsSnapshot;
 }
 
-type OppiExtensionSettingsHolder = {
-  snapshot: OppiExtensionSettingsSnapshot;
+type MobileOutputGuideSettingsHolder = {
+  snapshot: MobileOutputGuideSettingsSnapshot;
 };
 
 type QueuedModelTurnInput = {
@@ -592,33 +578,6 @@ function recordDroppedAgentToolsWarning(
   });
 }
 
-function sandboxAgentAllowlistsOppi(
-  agentDefinition: AgentDefinition | undefined,
-  session: Session,
-): boolean {
-  const launchAllowed = session.launch?.tools?.allowed;
-  if (launchAllowed) return launchAllowed.includes("oppi");
-  return agentDefinition?.sessionDefaults?.tools?.includes("oppi") === true;
-}
-
-function reserveOppiToolPolicy(options: {
-  allowed?: readonly string[];
-  excluded?: readonly string[];
-  noTools?: "all" | "builtin";
-}): { allowed?: string[]; excluded?: string[]; noTools?: "all" | "builtin" } {
-  const allowed = options.allowed
-    ? [...new Set([...options.allowed, "oppi"])]
-    : options.noTools === "all"
-      ? ["oppi"]
-      : undefined;
-  const excluded = options.excluded?.filter((name) => name !== "oppi");
-  return {
-    ...(allowed ? { allowed } : {}),
-    ...(excluded && excluded.length > 0 ? { excluded } : {}),
-    ...(options.noTools ? { noTools: options.noTools } : {}),
-  };
-}
-
 const log = createLogger({ base: { component: "sdk_backend" } });
 
 function syncSessionIdentityFromManager(session: Session, manager: PiSessionManager): void {
@@ -694,8 +653,8 @@ export class SdkBackend {
   private readonly sessionManagerDisplayCwd?: string;
   private readonly oppiSessionId: string;
   private readonly dataDir?: string;
-  private readonly oppiSettingsHolder?: OppiExtensionSettingsHolder;
-  private readonly getOppiExtensionSettings?: () => OppiExtensionSettingsSnapshot;
+  private readonly mobileOutputGuideSettingsHolder?: MobileOutputGuideSettingsHolder;
+  private readonly getMobileOutputGuideSettings?: () => MobileOutputGuideSettingsSnapshot;
   private readonly assertSelectedResourcesAvailableBeforeReload?: () => void;
   private readonly consumeSelectedResourceReloadError?: () => Error | undefined;
   private selectedResourceInvariantError?: string;
@@ -712,9 +671,9 @@ export class SdkBackend {
     oppiSessionId: string,
     dataDir?: string,
     cwdOverrides?: { displayCwd?: string },
-    oppiRuntimeSettings?: {
-      holder: OppiExtensionSettingsHolder;
-      get: () => OppiExtensionSettingsSnapshot;
+    mobileOutputGuideRuntimeSettings?: {
+      holder: MobileOutputGuideSettingsHolder;
+      get: () => MobileOutputGuideSettingsSnapshot;
     },
     assertSelectedResourcesAvailableBeforeReload?: () => void,
     consumeSelectedResourceReloadError?: () => Error | undefined,
@@ -723,8 +682,8 @@ export class SdkBackend {
     this.emitEvent = emitEvent;
     this.oppiSessionId = oppiSessionId;
     this.dataDir = dataDir;
-    this.oppiSettingsHolder = oppiRuntimeSettings?.holder;
-    this.getOppiExtensionSettings = oppiRuntimeSettings?.get;
+    this.mobileOutputGuideSettingsHolder = mobileOutputGuideRuntimeSettings?.holder;
+    this.getMobileOutputGuideSettings = mobileOutputGuideRuntimeSettings?.get;
     this.assertSelectedResourcesAvailableBeforeReload =
       assertSelectedResourcesAvailableBeforeReload;
     this.consumeSelectedResourceReloadError = consumeSelectedResourceReloadError;
@@ -789,8 +748,8 @@ export class SdkBackend {
     const sandboxMode = workspace?.runtime === "sandbox";
     // Sandboxes persist a guest/display cwd in Pi session state and need a real
     // host path only for Pi's existence check. Control sessions are not a guest
-    // filesystem: "Oppi Control" is Oppi UI metadata only. Persisting that label
-    // as SessionManager cwd materializes JSONLs under process.cwd()/Oppi Control
+    // filesystem: "Pi Control" is display metadata only. Persisting that label
+    // as SessionManager cwd materializes JSONLs under process.cwd()/Pi Control
     // and leaks them into workspace importable-local discovery.
     const piSessionCwd = sandboxMode ? displayCwd : initialHostCwd;
     const cwdExistsOverride = sandboxMode ? initialHostCwd : piSessionCwd;
@@ -807,61 +766,12 @@ export class SdkBackend {
     syncSessionIdentityFromManager(session, initialSessionManager);
 
     const agentDefinition = config.agentDefinition;
-    const isDefaultAgentSession = isDefaultAgentId(session.launch?.agentId ?? "");
-    const isolatedControlRuntime = isDeclaredControlSession(session) || isDefaultAgentSession;
-    const controlToolRuntime = isolatedControlRuntime && !sandboxMode;
-    const isOppiOwnedSession = (session.runtime ?? "oppi") !== "pi-tui";
-    const ordinaryManagedRuntime = !sandboxMode && isOppiOwnedSession && !isolatedControlRuntime;
-    const ordinaryManagedSession = isOppiOwnedSession && !isolatedControlRuntime;
-    const settingsManagedRuntime = ordinaryManagedSession || controlToolRuntime;
-    const getOppiExtensionSettings =
-      config.getOppiExtensionSettings ?? (() => DEFAULT_OPPI_EXTENSION_SETTINGS);
-    const oppiSettingsHolder: OppiExtensionSettingsHolder = {
-      snapshot: DEFAULT_OPPI_EXTENSION_SETTINGS,
+    const managedSession = (session.runtime ?? "oppi") !== "pi-tui";
+    const getMobileOutputGuideSettings =
+      config.getMobileOutputGuideSettings ?? (() => DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS);
+    const mobileOutputGuideSettingsHolder: MobileOutputGuideSettingsHolder = {
+      snapshot: DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
     };
-    const controlPolicySnapshot = {
-      get approvalPolicy() {
-        return oppiSettingsHolder.snapshot.approvalPolicy;
-      },
-    };
-    const sandboxOppiRequested =
-      sandboxMode &&
-      isOppiOwnedSession &&
-      !isolatedControlRuntime &&
-      sandboxAgentAllowlistsOppi(agentDefinition, session);
-    const ordinaryOppiExtension: InlineExtension | undefined = ordinaryManagedRuntime
-      ? {
-          name: "oppi",
-          factory: (pi) => {
-            const snapshot = oppiSettingsHolder.snapshot;
-            if (!snapshot.enabled) return;
-            return createOppiToolExtensionFactory({
-              ...(config.dataDir !== undefined ? { dataDir: config.dataDir } : {}),
-              policySnapshot: snapshot,
-              identity: "ordinary",
-              callerSessionId: session.id,
-            })(pi);
-          },
-        }
-      : sandboxOppiRequested && workspace
-        ? {
-            name: "oppi",
-            factory: (pi) => {
-              const snapshot = oppiSettingsHolder.snapshot;
-              if (!snapshot.enabled) return;
-              return createOppiToolExtensionFactory({
-                ...(config.dataDir !== undefined ? { dataDir: config.dataDir } : {}),
-                policySnapshot: snapshot,
-                identity: "sandbox",
-                callerSessionId: session.id,
-                sandboxScope: {
-                  workspaceId: workspace.id,
-                  ...(workspace.name ? { workspaceName: workspace.name } : {}),
-                },
-              })(pi);
-            },
-          }
-        : undefined;
     let assertSelectedResourcesAvailableBeforeReload: (() => void) | undefined;
     let consumeSelectedResourceReloadError: (() => Error | undefined) | undefined;
     const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async ({
@@ -870,9 +780,9 @@ export class SdkBackend {
       sessionManager,
       sessionStartEvent,
     }) => {
-      if (settingsManagedRuntime) {
-        oppiSettingsHolder.snapshot = freezeOppiExtensionSettingsSnapshot(
-          getOppiExtensionSettings(),
+      if (managedSession) {
+        mobileOutputGuideSettingsHolder.snapshot = freezeMobileOutputGuideSettingsSnapshot(
+          getMobileOutputGuideSettings(),
         );
       }
       const hostCwd = sandboxMode ? initialHostCwd : cwd;
@@ -890,14 +800,12 @@ export class SdkBackend {
         modelsPath: join(runtimeAgentDir, "models.json"),
       });
       const settingsManager = SettingsManager.create(hostCwd, runtimeAgentDir);
-      const selectedAgentExtensionPaths = isolatedControlRuntime
-        ? undefined
-        : await resolveSelectedAgentExtensionPaths(
-            selectedAgentExtensionIds,
-            hostCwd,
-            runtimeAgentDir,
-            settingsManager,
-          );
+      const selectedAgentExtensionPaths = await resolveSelectedAgentExtensionPaths(
+        selectedAgentExtensionIds,
+        hostCwd,
+        runtimeAgentDir,
+        settingsManager,
+      );
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
@@ -905,14 +813,13 @@ export class SdkBackend {
       //
       // The resource loader is reused by AgentSession.reload(). Build the
       // append list through a callback so the guide follows the frozen live
-      // Oppi settings snapshot on every reload, rather than the snapshot that
+      // server setting on every reload, rather than the snapshot that
       // happened to exist when this loader was constructed.
       const staticAppendSystemPrompt = buildSdkAppendSystemPrompt(workspace, {
-        // Control sessions embed the docs pointer in their minimal system prompt.
         includeOppiDocsHint:
-          !sandboxMode && ordinaryManagedSession && isOppiDocsPromptEnabled(config.serverConfig),
+          !sandboxMode && managedSession && isOppiDocsPromptEnabled(config.serverConfig),
         includeOppiCliHint:
-          !sandboxMode && ordinaryManagedSession && isOppiCliPromptEnabled(config.serverConfig),
+          !sandboxMode && managedSession && isOppiCliPromptEnabled(config.serverConfig),
         includeMobileOutputGuide: false,
       });
       const buildCurrentAppendSystemPrompt = (base: string[]): string[] => {
@@ -923,29 +830,11 @@ export class SdkBackend {
           return staticAppendSystemPrompt ? [...staticAppendSystemPrompt] : [...base];
         }
 
-        // When Oppi supplies the base list, rebuild it on every reload so the
-        // live settings snapshot controls guide inclusion. Otherwise retain
-        // Pi's discovered append-prompt file and add the guide after it.
-        const prompts = staticAppendSystemPrompt
-          ? (buildSdkAppendSystemPrompt(workspace, {
-              includeOppiDocsHint:
-                !sandboxMode &&
-                ordinaryManagedSession &&
-                isOppiDocsPromptEnabled(config.serverConfig),
-              includeOppiCliHint:
-                !sandboxMode &&
-                ordinaryManagedSession &&
-                isOppiCliPromptEnabled(config.serverConfig),
-              includeMobileOutputGuide:
-                ordinaryManagedSession &&
-                oppiSettingsHolder.snapshot.mobileOutputGuideEnabled === true,
-            }) ?? [])
-          : [...base];
-        if (
-          !staticAppendSystemPrompt &&
-          ordinaryManagedSession &&
-          oppiSettingsHolder.snapshot.mobileOutputGuideEnabled === true
-        ) {
+        // Preserve Pi's discovered APPEND_SYSTEM.md, then add Oppi-owned
+        // append capabilities. A global SYSTEM.md replacement remains the base
+        // system prompt and does not suppress these append-only additions.
+        const prompts = [...base, ...(staticAppendSystemPrompt ?? [])];
+        if (managedSession && mobileOutputGuideSettingsHolder.snapshot.enabled) {
           prompts.push(buildMobileOutputGuide());
         }
         if (agentDefinition?.instructions?.mode === "append") {
@@ -982,69 +871,20 @@ export class SdkBackend {
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
-        ...(staticAppendSystemPrompt ? { appendSystemPrompt: staticAppendSystemPrompt } : {}),
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
-        extensionFactories: [
-          createLifecycleJournalExtension(sessionManager),
-          ...(controlToolRuntime
-            ? [
-                createDefaultAgentExtensionFactory({
-                  dataDir: config.dataDir,
-                  callerSessionId: session.id,
-                  policySnapshot: controlPolicySnapshot,
-                }),
-              ]
-            : ordinaryOppiExtension
-              ? [ordinaryOppiExtension]
-              : []),
-        ],
-        ...(ordinaryManagedRuntime || sandboxOppiRequested
-          ? {
-              extensionsOverride: (base) =>
-                oppiSettingsHolder.snapshot.enabled
-                  ? base
-                  : {
-                      ...base,
-                      extensions: base.extensions.filter(
-                        (extension) => extension.path !== "<inline:oppi>",
-                      ),
-                    },
-            }
-          : {}),
-        ...(isolatedControlRuntime
+        extensionFactories: [createLifecycleJournalExtension(sessionManager)],
+        ...(selectedAgentSkillPaths !== undefined
+          ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
+          : config.skillPaths
+            ? { additionalSkillPaths: config.skillPaths }
+            : {}),
+        ...(selectedAgentExtensionPaths !== undefined
           ? {
               noExtensions: true,
-              noSkills: true,
-              noPromptTemplates: true,
-            }
-          : {
-              ...(selectedAgentSkillPaths !== undefined
-                ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
-                : config.skillPaths
-                  ? { additionalSkillPaths: config.skillPaths }
-                  : {}),
-              ...(selectedAgentExtensionPaths !== undefined
-                ? {
-                    noExtensions: true,
-                    additionalExtensionPaths: selectedAgentExtensionPaths,
-                  }
-                : {}),
-            }),
-        ...(isolatedControlRuntime || agentDefinition?.resources?.noContextFiles
-          ? { noContextFiles: true }
-          : {}),
-        // Control sessions use a Pi-style minimal prompt. Agent replace/append
-        // instructions still win when present.
-        ...(controlToolRuntime && agentDefinition?.instructions?.mode !== "replace"
-          ? {
-              systemPrompt: buildDefaultAgentSystemPrompt({
-                includeDocs: isOppiDocsPromptEnabled(config.serverConfig),
-                ...(isOppiDocsPromptEnabled(config.serverConfig)
-                  ? { docsPath: getOppiDocsPath() }
-                  : {}),
-              }),
+              additionalExtensionPaths: selectedAgentExtensionPaths,
             }
           : {}),
+        ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
           ? { systemPromptOverride: () => agentDefinition.instructions?.text }
           : {}),
@@ -1183,17 +1023,6 @@ export class SdkBackend {
         }
       }
 
-      const controlTools = controlToolRuntime
-        ? [
-            createReadToolDefinition(sessionCwd),
-            createEditToolDefinition(sessionCwd),
-            createWriteToolDefinition(sessionCwd),
-            createGrepToolDefinition(sessionCwd),
-            createFindToolDefinition(sessionCwd),
-            createLsToolDefinition(sessionCwd),
-          ]
-        : undefined;
-
       // Sandbox mode: create tools backed by Gondolin micro-VM
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let sandboxTools: any[] | undefined;
@@ -1281,27 +1110,19 @@ export class SdkBackend {
             noTools: agentDefinition.sessionDefaults.noTools,
           }
         : undefined;
-      const launchToolPolicy = controlToolRuntime
-        ? { allowed: [...DEFAULT_AGENT_TOOL_NAMES], noTools: "builtin" as const }
-        : (session.launch?.tools ?? agentDefaultToolPolicy);
+      const launchToolPolicy = session.launch?.tools ?? agentDefaultToolPolicy;
       const configuredToolPolicy = {
         allowed: launchToolPolicy?.allowed ?? workspaceTools,
         excluded: launchToolPolicy?.excluded,
         noTools: launchToolPolicy?.noTools ?? (sandboxTools ? ("builtin" as const) : undefined),
       };
-      const reservedToolPolicy =
-        ordinaryManagedRuntime || sandboxOppiRequested
-          ? reserveOppiToolPolicy(configuredToolPolicy)
-          : configuredToolPolicy;
       const sandboxAllowlist = sandboxTools
-        ? intersectSandboxToolAllowlist(
-            reservedToolPolicy.allowed,
-            reservedToolPolicy.allowed?.includes("oppi") ? ["oppi"] : [],
-            { keepHostExtensionTools: Boolean(launchToolPolicy?.allowed) },
-          )
-        : { allowed: reservedToolPolicy.allowed, dropped: [] };
+        ? intersectSandboxToolAllowlist(configuredToolPolicy.allowed, [], {
+            keepHostExtensionTools: Boolean(launchToolPolicy?.allowed),
+          })
+        : { allowed: configuredToolPolicy.allowed, dropped: [] };
       const effectiveToolPolicy = {
-        ...reservedToolPolicy,
+        ...configuredToolPolicy,
         ...(sandboxAllowlist.allowed ? { allowed: sandboxAllowlist.allowed } : {}),
       };
       const scoped = await resolveEnabledScopedModels(
@@ -1353,7 +1174,7 @@ export class SdkBackend {
         resourceLoader: loader,
         sessionStartEvent,
         ...(scoped.scopedModels ? { scopedModels: scoped.scopedModels } : {}),
-        ...(controlTools || sandboxTools ? { customTools: controlTools ?? sandboxTools } : {}),
+        ...(sandboxTools ? { customTools: sandboxTools } : {}),
         ...(effectiveToolPolicy.noTools ? { noTools: effectiveToolPolicy.noTools } : {}),
         ...(effectiveToolPolicy.allowed ? { tools: effectiveToolPolicy.allowed } : {}),
         ...(effectiveToolPolicy.excluded ? { excludeTools: effectiveToolPolicy.excluded } : {}),
@@ -1403,10 +1224,10 @@ export class SdkBackend {
       session.id,
       config.dataDir,
       sandboxMode ? { displayCwd } : undefined,
-      settingsManagedRuntime
+      managedSession
         ? {
-            holder: oppiSettingsHolder,
-            get: getOppiExtensionSettings,
+            holder: mobileOutputGuideSettingsHolder,
+            get: getMobileOutputGuideSettings,
           }
         : undefined,
       () => assertSelectedResourcesAvailableBeforeReload?.(),
@@ -1580,13 +1401,13 @@ export class SdkBackend {
       }
       reloadRuntimeConfig?.();
 
-      const holder = this.oppiSettingsHolder;
-      const getSettings = this.getOppiExtensionSettings;
+      const holder = this.mobileOutputGuideSettingsHolder;
+      const getSettings = this.getMobileOutputGuideSettings;
       const previousSnapshot = holder?.snapshot;
       if (holder && getSettings) {
-        // Read before Pi emits session_shutdown so provider/storage failures leave
-        // the old extension runner and its captured policy untouched.
-        holder.snapshot = freezeOppiExtensionSettingsSnapshot(getSettings());
+        // Read before Pi emits session_shutdown so storage failures leave the
+        // current runtime and its guide snapshot untouched.
+        holder.snapshot = freezeMobileOutputGuideSettingsSnapshot(getSettings());
       }
 
       try {

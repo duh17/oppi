@@ -109,17 +109,6 @@ function createMockContext(workspace?: Workspace): MockRouteContext {
   const storage = {
     getDataDir: vi.fn().mockReturnValue("/tmp/oppi-routes-sessions-create-tests"),
     getWorkspace: vi.fn().mockReturnValue(ws),
-    getAgentDefinitionStore: vi.fn().mockReturnValue({
-      getAgent: vi.fn().mockReturnValue({
-        id: "oppi-default-agent",
-        name: "Oppi",
-        status: "active",
-        version: 3,
-        definition: { name: "Oppi", icon: { kind: "symbol", name: "sparkles" } },
-        createdAt: 1,
-        updatedAt: 1,
-      }),
-    }),
     createSession: vi.fn().mockImplementation(
       (name?: string, model?: string, options?: { id?: string }) =>
         makeSession({
@@ -309,9 +298,7 @@ describe("POST /control-sessions", () => {
           thinkingLevel: "high",
           control: { domain: "schedules", intent: "create" },
           launch: {
-            agentId: "oppi-default-agent",
-            agentVersion: 3,
-            agentIcon: { kind: "symbol", name: "sparkles" },
+            target: { server: true, displayCwd: "Pi Control" },
           },
         },
       },

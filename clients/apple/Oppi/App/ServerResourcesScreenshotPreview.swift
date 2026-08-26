@@ -2,15 +2,12 @@
 import SwiftUI
 
 /// Screenshot-only fixtures for server-scoped resource states that are unsafe or
-/// unavailable to seed in the paired E2E server. The E2E journey separately
-/// proves the real temporary-server Oppi configuration mutation.
+/// unavailable to seed in the paired E2E server.
 struct ServerResourcesScreenshotPreview: View {
     enum Screen {
         case skills
         case extensions
         case cachedOffline
-        case oppi
-        case oppiPending
     }
 
     let screen: Screen
@@ -23,10 +20,6 @@ struct ServerResourcesScreenshotPreview: View {
             ResourceCatalogPreview(kind: .extensions, cachedOffline: false)
         case .cachedOffline:
             ResourceCatalogPreview(kind: .extensions, cachedOffline: true)
-        case .oppi:
-            OppiConfigurationPreview(isPending: false)
-        case .oppiPending:
-            OppiConfigurationPreview(isPending: true)
         }
     }
 }
@@ -115,13 +108,6 @@ private struct ResourceCatalogPreview: View {
 
     @ViewBuilder
     private var extensionSections: some View {
-        Section("Built-in") {
-            catalogRow(
-                id: "serverResources.extensions.oppi",
-                title: "Oppi", subtitle: "Server-owned Oppi command extension.",
-                provenance: "Built-in extension", state: "On", isError: false
-            )
-        }
         Section("Needs Attention") {
             catalogRow(
                 id: "serverResources.extensions.error",
@@ -179,111 +165,4 @@ private struct ResourceCatalogPreview: View {
     }
 }
 
-private struct OppiConfigurationPreview: View {
-    let isPending: Bool
-    @State private var enabled = true
-    @State private var policy: OppiApprovalPolicy = .confirmDestructiveOnly
-    @State private var saved = false
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Oppi")
-                            .font(.title2.weight(.bold))
-                            .foregroundStyle(.themeFg)
-                        Text("Built-in extension")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.themeComment)
-                        Text("Lets Pi inspect and manage this Oppi server with the allowlisted oppi tool.")
-                            .font(.body)
-                            .foregroundStyle(.themeComment)
-                    }
-                    .accessibilityIdentifier("serverResources.oppi.identity")
-                }
-
-                Section("Availability") {
-                    Toggle("Enable Oppi Extension", isOn: $enabled)
-                        .disabled(isPending)
-                        .accessibilityLabel("Enable Oppi extension on Preview Server")
-                        .accessibilityIdentifier("extensions.oppi.enabled")
-                    Text("Adds the oppi tool to new non-sandbox Pi sessions managed by this server. It does not change sandbox, standalone, or terminal-owned Pi sessions.")
-                        .font(.footnote)
-                        .foregroundStyle(.themeComment)
-                }
-
-                Section("Approval Behavior") {
-                    approvalChoice(.confirmDestructiveOnly)
-                    approvalChoice(.confirmAllChanges)
-                    approvalChoice(.readOnly)
-                    Text("Selected: \(OppiApprovalPolicyPresentation(policy).title)")
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(.themeBlue)
-                        .accessibilityIdentifier("serverResources.oppi.selectedPolicy")
-
-                    if isPending {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Saving approval behavior…")
-                        }
-                        .font(.footnote)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("serverResources.oppi.pending")
-                    }
-                }
-
-                Section {
-                    Text(saved ? "Saved on Preview Server. New sessions use this setting. Reload an active session to apply it now." : "New sessions use this setting. Reload an active session to apply it now.")
-                        .font(.footnote)
-                        .foregroundStyle(saved ? .themeGreen : .themeComment)
-                        .accessibilityIdentifier("extensions.oppi.savedMessage")
-                }
-            }
-            .listStyle(.insetGrouped)
-            .themedListSurface()
-            .navigationTitle("Oppi")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .accessibilityIdentifier("screenshot.ready")
-    }
-
-    private func approvalChoice(_ candidate: OppiApprovalPolicy) -> some View {
-        let presentation = OppiApprovalPolicyPresentation(candidate)
-        let selected = policy == candidate
-        return Button {
-            guard !isPending else { return }
-            policy = candidate
-            saved = true
-        } label: {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(presentation.title)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                    Text(presentation.consequence)
-                        .font(.footnote)
-                        .foregroundStyle(.themeComment)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(.themeBlue)
-                        .accessibilityHidden(true)
-                }
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled || isPending)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(presentation.accessibilityLabel)
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityIdentifier("extensions.oppi.policy.\(candidate.rawValue)")
-    }
-}
 #endif

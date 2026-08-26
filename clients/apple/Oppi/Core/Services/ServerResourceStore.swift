@@ -5,120 +5,11 @@ struct ServerResourceCatalogSnapshot: Codable, Sendable, Equatable {
     let skills: [ServerSkillSummary]
     let extensions: [ServerExtensionSummary]
     let builtInTools: [ServerToolSummary]
-    let oppiConfiguration: OppiExtensionConfiguration?
     let savedAt: Date
     let skillsLoaded: Bool
     let extensionsLoaded: Bool
     let skillsSavedAt: Date?
     let extensionsSavedAt: Date?
-    /// A retained Oppi revision is display-only until a full Extensions refresh succeeds.
-    let oppiRequiresAuthoritativeRefresh: Bool
-
-    /// Source-compatible complete snapshot initializer and legacy cache shape.
-    init(
-        skills: [ServerSkillSummary],
-        extensions: [ServerExtensionSummary],
-        oppiConfiguration: OppiExtensionConfiguration,
-        savedAt: Date
-    ) {
-        self.init(
-            skills: skills,
-            extensions: extensions,
-            builtInTools: [],
-            oppiConfiguration: oppiConfiguration,
-            savedAt: savedAt,
-            skillsLoaded: true,
-            extensionsLoaded: true,
-            skillsSavedAt: savedAt,
-            extensionsSavedAt: savedAt,
-            oppiRequiresAuthoritativeRefresh: false
-        )
-    }
-
-    init(
-        skills: [ServerSkillSummary],
-        extensions: [ServerExtensionSummary],
-        builtInTools: [ServerToolSummary] = [],
-        oppiConfiguration: OppiExtensionConfiguration?,
-        savedAt: Date,
-        skillsLoaded: Bool,
-        extensionsLoaded: Bool,
-        skillsSavedAt: Date?,
-        extensionsSavedAt: Date?,
-        oppiRequiresAuthoritativeRefresh: Bool = false
-    ) {
-        self.skills = skills
-        self.extensions = extensions
-        self.builtInTools = builtInTools
-        self.oppiConfiguration = oppiConfiguration
-        self.savedAt = savedAt
-        self.skillsLoaded = skillsLoaded
-        self.extensionsLoaded = extensionsLoaded && oppiConfiguration != nil
-        self.skillsSavedAt = skillsLoaded ? skillsSavedAt : nil
-        self.extensionsSavedAt = self.extensionsLoaded ? extensionsSavedAt : nil
-        self.oppiRequiresAuthoritativeRefresh = oppiRequiresAuthoritativeRefresh
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case skills
-        case extensions
-        case builtInTools
-        case oppiConfiguration
-        case savedAt
-        case skillsLoaded
-        case extensionsLoaded
-        case skillsSavedAt
-        case extensionsSavedAt
-        case oppiRequiresAuthoritativeRefresh
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let skills = try container.decode([ServerSkillSummary].self, forKey: .skills)
-        let extensions = try container.decode([ServerExtensionSummary].self, forKey: .extensions)
-        let builtInTools = try container.decodeIfPresent(
-            [ServerToolSummary].self,
-            forKey: .builtInTools
-        ) ?? []
-        let configuration = try container.decodeIfPresent(
-            OppiExtensionConfiguration.self,
-            forKey: .oppiConfiguration
-        )
-        let savedAt = try container.decode(Date.self, forKey: .savedAt)
-        let skillsLoaded = try container.decodeIfPresent(Bool.self, forKey: .skillsLoaded) ?? true
-        let extensionsLoaded = try container.decodeIfPresent(Bool.self, forKey: .extensionsLoaded) ?? true
-        self.init(
-            skills: skills,
-            extensions: extensions,
-            builtInTools: builtInTools,
-            oppiConfiguration: configuration,
-            savedAt: savedAt,
-            skillsLoaded: skillsLoaded,
-            extensionsLoaded: extensionsLoaded,
-            skillsSavedAt: try container.decodeIfPresent(Date.self, forKey: .skillsSavedAt)
-                ?? (skillsLoaded ? savedAt : nil),
-            extensionsSavedAt: try container.decodeIfPresent(Date.self, forKey: .extensionsSavedAt)
-                ?? (extensionsLoaded ? savedAt : nil),
-            oppiRequiresAuthoritativeRefresh: try container.decodeIfPresent(
-                Bool.self,
-                forKey: .oppiRequiresAuthoritativeRefresh
-            ) ?? false
-        )
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(skills, forKey: .skills)
-        try container.encode(extensions, forKey: .extensions)
-        try container.encode(builtInTools, forKey: .builtInTools)
-        try container.encodeIfPresent(oppiConfiguration, forKey: .oppiConfiguration)
-        try container.encode(savedAt, forKey: .savedAt)
-        try container.encode(skillsLoaded, forKey: .skillsLoaded)
-        try container.encode(extensionsLoaded, forKey: .extensionsLoaded)
-        try container.encodeIfPresent(skillsSavedAt, forKey: .skillsSavedAt)
-        try container.encodeIfPresent(extensionsSavedAt, forKey: .extensionsSavedAt)
-        try container.encode(oppiRequiresAuthoritativeRefresh, forKey: .oppiRequiresAuthoritativeRefresh)
-    }
 }
 
 enum ServerResourceCatalogKind: Hashable, Sendable {
@@ -129,9 +20,6 @@ enum ServerResourceCatalogKind: Hashable, Sendable {
 enum ServerResourceMutationKey: Hashable, Sendable {
     case skill(String)
     case normalExtension(String)
-    case oppiEnabled
-    case oppiApprovalPolicy
-    case oppiMobileOutputGuide
 }
 
 /// Independent, server-scoped state for global Pi Skills and Extensions.
@@ -145,17 +33,11 @@ final class ServerResourceStore {
     typealias ExtensionsRequest = @MainActor () async throws -> ServerExtensionCatalog
     typealias SkillMutationRequest = @MainActor (String, Bool) async throws -> ServerSkillSummary
     typealias ExtensionMutationRequest = @MainActor (String, Bool) async throws -> ServerExtensionSummary
-    /// Writes one complete Oppi configuration snapshot. A nil guide means the
-    /// server does not advertise this capability, so APIClient omits that field.
-    typealias OppiMutationRequest = @MainActor (Bool, OppiApprovalPolicy, Bool?, Int) async throws -> OppiExtensionConfiguration
-    typealias OppiConfigurationRequest = @MainActor () async throws -> OppiExtensionConfiguration
 
     private struct Partition {
         var skills: [ServerSkillSummary] = []
         var extensions: [ServerExtensionSummary] = []
         var builtInTools: [ServerToolSummary] = []
-        var authoritativeOppiConfiguration: OppiExtensionConfiguration?
-        var desiredOppiConfiguration: OppiExtensionConfiguration?
         var skillsLoaded = false
         var extensionsLoaded = false
         var skillsSync = ServerSyncState()
@@ -171,15 +53,6 @@ final class ServerResourceStore {
         var normalResourceVersions: [ServerResourceMutationKey: UInt64] = [:]
         var skillsGeneration: UInt64 = 0
         var extensionsGeneration: UInt64 = 0
-        /// Full-CAS intent and settlement ordering; refresh never advances this version.
-        var oppiOrderingVersion: UInt64 = 0
-        var oppiWriteInFlight = false
-        /// One writer owns an entire drain, so later interleaved setting
-        /// changes cannot switch the closure used by a recursive write.
-        var oppiWriteRequest: OppiMutationRequest?
-        var oppiFetchAuthoritative: OppiConfigurationRequest?
-        /// A 409 made the retained revision untrustworthy and the authoritative refetch failed.
-        var oppiRequiresAuthoritativeRefresh = false
     }
 
     private let cache: TimelineCache
@@ -214,11 +87,6 @@ final class ServerResourceStore {
         partitions[serverId]?.builtInTools ?? []
     }
 
-    func oppiConfiguration(forServer serverId: String) -> OppiExtensionConfiguration? {
-        let partition = partitions[serverId]
-        return partition?.desiredOppiConfiguration ?? partition?.authoritativeOppiConfiguration
-    }
-
     func hasLoadedSkills(forServer serverId: String) -> Bool {
         partitions[serverId]?.skillsLoaded ?? false
     }
@@ -245,7 +113,6 @@ final class ServerResourceStore {
         case .extensions:
             return partition?.extensionsLoaded == true
                 && partition?.extensionsSync.lastSyncFailed != true
-                && partition?.oppiRequiresAuthoritativeRefresh != true
         }
     }
 
@@ -255,10 +122,6 @@ final class ServerResourceStore {
 
     func mutationError(for key: ServerResourceMutationKey, serverId: String) -> String? {
         partitions[serverId]?.errors[key]
-    }
-
-    func requiresAuthoritativeOppiRefresh(forServer serverId: String) -> Bool {
-        partitions[serverId]?.oppiRequiresAuthoritativeRefresh ?? false
     }
 
     // MARK: - Loading
@@ -285,7 +148,6 @@ final class ServerResourceStore {
         )
         let skillsStartVersions = partitions[serverId]?.normalResourceVersions ?? [:]
         let extensionsStartVersions = partitions[serverId]?.normalResourceVersions ?? [:]
-        let oppiStartVersion = partitions[serverId]?.oppiOrderingVersion ?? 0
         update(serverId) {
             $0.skillsSync.markSyncStarted()
             $0.extensionsSync.markSyncStarted()
@@ -304,12 +166,7 @@ final class ServerResourceStore {
                     $0.skillsSync = skillsSyncBeforeRefresh
                 }
                 if $0.extensionsGeneration == extensionsGeneration {
-                    $0.extensionsSync = Self.syncStateAfterCancellation(
-                        capturedStableState: extensionsSyncBeforeRefresh,
-                        currentState: $0.extensionsSync,
-                        capturedOrderingVersion: oppiStartVersion,
-                        currentOrderingVersion: $0.oppiOrderingVersion
-                    )
+                    $0.extensionsSync = extensionsSyncBeforeRefresh
                 }
             }
             return
@@ -347,33 +204,15 @@ final class ServerResourceStore {
         case .success(let catalog):
             if partitions[serverId]?.extensionsGeneration == extensionsGeneration {
                 update(serverId) {
-                    let preserveOppi = Self.shouldPreserveOppiDuringRefresh(
-                        $0,
-                        startVersion: oppiStartVersion
-                    )
                     let mergedExtensions = Self.mergeRefreshedExtensions(
                         catalog.extensions,
                         into: $0,
-                        startVersions: extensionsStartVersions,
-                        preserveOppi: preserveOppi
+                        startVersions: extensionsStartVersions
                     )
                     $0.extensions = mergedExtensions
                     $0.builtInTools = catalog.builtInTools
                     $0.extensionsLoaded = true
-                    if !preserveOppi {
-                        $0.authoritativeOppiConfiguration = catalog.oppiConfiguration
-                        $0.desiredOppiConfiguration = catalog.oppiConfiguration
-                        $0.oppiRequiresAuthoritativeRefresh = false
-                        $0.errors.removeValue(forKey: .oppiEnabled)
-                        $0.errors.removeValue(forKey: .oppiApprovalPolicy)
-                        $0.errors.removeValue(forKey: .oppiMobileOutputGuide)
-                    }
-                    if $0.oppiRequiresAuthoritativeRefresh {
-                        $0.extensionsSync.markSyncFailed()
-                    } else {
-                        $0.extensionsSync.markSyncSucceeded(at: now())
-                    }
-                    Self.applyOppiState(to: &$0)
+                    $0.extensionsSync.markSyncSucceeded(at: now())
                 }
                 shouldSaveCache = true
             }
@@ -381,12 +220,7 @@ final class ServerResourceStore {
             if partitions[serverId]?.extensionsGeneration == extensionsGeneration {
                 update(serverId) {
                     if Self.isCancellation(error) {
-                        $0.extensionsSync = Self.syncStateAfterCancellation(
-                            capturedStableState: extensionsSyncBeforeRefresh,
-                            currentState: $0.extensionsSync,
-                            capturedOrderingVersion: oppiStartVersion,
-                            currentOrderingVersion: $0.oppiOrderingVersion
-                        )
+                        $0.extensionsSync = extensionsSyncBeforeRefresh
                     } else {
                         $0.extensionsSync.markSyncFailed()
                     }
@@ -457,8 +291,7 @@ final class ServerResourceStore {
     ) async {
         let key = ServerResourceMutationKey.normalExtension(id)
         guard mutationsAllowed(for: .extensions, serverId: serverId),
-              let previous = extensions(forServer: serverId).first(where: { $0.id == id }),
-              !previous.isBuiltInOppi else {
+              let previous = extensions(forServer: serverId).first(where: { $0.id == id }) else {
             setUnavailableMutationError(key, serverId: serverId)
             return
         }
@@ -490,119 +323,6 @@ final class ServerResourceStore {
         )
     }
 
-    // MARK: - Oppi atomic configuration
-
-    func setOppiEnabled(
-        _ enabled: Bool,
-        serverId: String,
-        request: @escaping OppiMutationRequest,
-        fetchAuthoritative: @escaping OppiConfigurationRequest
-    ) async {
-        await queueOppiChange(
-            key: .oppiEnabled,
-            serverId: serverId,
-            request: request,
-            fetchAuthoritative: fetchAuthoritative
-        ) { configuration in
-            OppiExtensionConfiguration(
-                enabled: enabled,
-                approvalPolicy: configuration.approvalPolicy,
-                mobileOutputGuideEnabled: configuration.mobileOutputGuideEnabled,
-                revision: configuration.revision
-            )
-        }
-    }
-
-    func setOppiEnabled(_ enabled: Bool, serverId: String, api: APIClient) async {
-        await setOppiEnabled(
-            enabled,
-            serverId: serverId,
-            request: { enabled, policy, guide, revision in
-                try await api.setOppiExtensionConfiguration(
-                    enabled: enabled,
-                    approvalPolicy: policy,
-                    mobileOutputGuideEnabled: guide,
-                    baseRevision: revision
-                )
-            },
-            fetchAuthoritative: { try await api.getOppiExtensionConfiguration() }
-        )
-    }
-
-    func setOppiApprovalPolicy(
-        _ policy: OppiApprovalPolicy,
-        serverId: String,
-        request: @escaping OppiMutationRequest,
-        fetchAuthoritative: @escaping OppiConfigurationRequest
-    ) async {
-        await queueOppiChange(
-            key: .oppiApprovalPolicy,
-            serverId: serverId,
-            request: request,
-            fetchAuthoritative: fetchAuthoritative
-        ) { configuration in
-            OppiExtensionConfiguration(
-                enabled: configuration.enabled,
-                approvalPolicy: policy,
-                mobileOutputGuideEnabled: configuration.mobileOutputGuideEnabled,
-                revision: configuration.revision
-            )
-        }
-    }
-
-    func setOppiApprovalPolicy(_ policy: OppiApprovalPolicy, serverId: String, api: APIClient) async {
-        await setOppiApprovalPolicy(
-            policy,
-            serverId: serverId,
-            request: { enabled, policy, guide, revision in
-                try await api.setOppiExtensionConfiguration(
-                    enabled: enabled,
-                    approvalPolicy: policy,
-                    mobileOutputGuideEnabled: guide,
-                    baseRevision: revision
-                )
-            },
-            fetchAuthoritative: { try await api.getOppiExtensionConfiguration() }
-        )
-    }
-
-    func setOppiMobileOutputGuide(
-        _ enabled: Bool,
-        serverId: String,
-        request: @escaping OppiMutationRequest,
-        fetchAuthoritative: @escaping OppiConfigurationRequest
-    ) async {
-        await queueOppiChange(
-            key: .oppiMobileOutputGuide,
-            serverId: serverId,
-            request: request,
-            fetchAuthoritative: fetchAuthoritative
-        ) { configuration in
-            OppiExtensionConfiguration(
-                enabled: configuration.enabled,
-                approvalPolicy: configuration.approvalPolicy,
-                mobileOutputGuideEnabled: enabled,
-                revision: configuration.revision
-            )
-        }
-    }
-
-    func setOppiMobileOutputGuide(_ enabled: Bool, serverId: String, api: APIClient) async {
-        await setOppiMobileOutputGuide(
-            enabled,
-            serverId: serverId,
-            request: { enabled, policy, guide, revision in
-                try await api.setOppiExtensionConfiguration(
-                    enabled: enabled,
-                    approvalPolicy: policy,
-                    mobileOutputGuideEnabled: guide,
-                    baseRevision: revision
-                )
-            },
-            fetchAuthoritative: { try await api.getOppiExtensionConfiguration() }
-        )
-    }
-
     // MARK: - Test and composition helpers
 
     func replaceSkills(_ skills: [ServerSkillSummary], serverId: String) {
@@ -619,22 +339,16 @@ final class ServerResourceStore {
     func replaceExtensions(
         _ extensions: [ServerExtensionSummary],
         builtInTools: [ServerToolSummary] = [],
-        oppiConfiguration: OppiExtensionConfiguration,
         serverId: String
     ) {
         update(serverId) {
             $0.extensions = extensions
             $0.builtInTools = builtInTools
             $0.extensionsLoaded = true
-            for resource in extensions where !resource.isBuiltInOppi {
+            for resource in $0.extensions {
                 Self.advanceNormalResourceVersion(.normalExtension(resource.id), in: &$0)
             }
             $0.extensionsSync.markSyncSucceeded(at: now())
-            $0.authoritativeOppiConfiguration = oppiConfiguration
-            $0.desiredOppiConfiguration = oppiConfiguration
-            $0.oppiRequiresAuthoritativeRefresh = false
-            $0.oppiOrderingVersion &+= 1
-            Self.applyOppiState(to: &$0)
         }
     }
 
@@ -655,22 +369,13 @@ final class ServerResourceStore {
                     $0.skillsSync.markSyncSucceeded(at: savedAt)
                 }
             }
-            if !$0.extensionsLoaded,
-               snapshot.extensionsLoaded,
-               let configuration = snapshot.oppiConfiguration {
+            if !$0.extensionsLoaded, snapshot.extensionsLoaded {
                 $0.extensions = snapshot.extensions
                 $0.builtInTools = snapshot.builtInTools
                 $0.extensionsLoaded = true
-                $0.authoritativeOppiConfiguration = configuration
-                $0.desiredOppiConfiguration = configuration
                 if let savedAt = snapshot.extensionsSavedAt {
                     $0.extensionsSync.markSyncSucceeded(at: savedAt)
                 }
-                $0.oppiRequiresAuthoritativeRefresh = snapshot.oppiRequiresAuthoritativeRefresh
-                if $0.oppiRequiresAuthoritativeRefresh {
-                    $0.extensionsSync.markSyncFailed()
-                }
-                Self.applyOppiState(to: &$0)
             }
         }
     }
@@ -709,26 +414,12 @@ final class ServerResourceStore {
                 currentExtensions.append(authoritative)
             }
         }
-        if let configuration = partition.authoritativeOppiConfiguration,
-           let index = currentExtensions.firstIndex(where: \.isBuiltInOppi) {
-            currentExtensions[index] = Self.extension(
-                currentExtensions[index],
-                state: configuration.enabled ? .on : .off
-            )
-        }
         let hasCurrentExtensions = partition.extensionsLoaded
-            && partition.authoritativeOppiConfiguration != nil
         let extensionsLoaded = hasCurrentExtensions || existing?.extensionsLoaded == true
         let cachedExtensions = hasCurrentExtensions ? currentExtensions : (existing?.extensions ?? [])
-        let cachedConfiguration = hasCurrentExtensions
-            ? partition.authoritativeOppiConfiguration
-            : existing?.oppiConfiguration
         let extensionsSavedAt = hasCurrentExtensions
             ? (partition.extensionsSync.lastSuccessfulSyncAt ?? existing?.extensionsSavedAt ?? now())
             : existing?.extensionsSavedAt
-        let requiresAuthoritativeOppiRefresh = hasCurrentExtensions
-            ? partition.oppiRequiresAuthoritativeRefresh
-            : (existing?.oppiRequiresAuthoritativeRefresh ?? false)
 
         guard skillsLoaded || extensionsLoaded else { return }
         let savedAt = now()
@@ -739,13 +430,11 @@ final class ServerResourceStore {
                 builtInTools: hasCurrentExtensions
                     ? partition.builtInTools
                     : (existing?.builtInTools ?? []),
-                oppiConfiguration: cachedConfiguration,
                 savedAt: savedAt,
                 skillsLoaded: skillsLoaded,
                 extensionsLoaded: extensionsLoaded,
                 skillsSavedAt: skillsSavedAt,
-                extensionsSavedAt: extensionsSavedAt,
-                oppiRequiresAuthoritativeRefresh: requiresAuthoritativeOppiRefresh
+                extensionsSavedAt: extensionsSavedAt
             ),
             serverId: serverId
         )
@@ -811,155 +500,6 @@ final class ServerResourceStore {
         await saveCacheSnapshot(serverId: serverId)
     }
 
-    private func queueOppiChange(
-        key: ServerResourceMutationKey,
-        serverId: String,
-        request: @escaping OppiMutationRequest,
-        fetchAuthoritative: @escaping OppiConfigurationRequest,
-        change: (OppiExtensionConfiguration) -> OppiExtensionConfiguration
-    ) async {
-        guard mutationsAllowed(for: .extensions, serverId: serverId),
-              let configuration = oppiConfiguration(forServer: serverId) else {
-            return
-        }
-
-        let desiredConfiguration = change(configuration)
-        guard !Self.sameOppiValues(desiredConfiguration, configuration) else {
-            return
-        }
-
-        update(serverId) {
-            $0.desiredOppiConfiguration = desiredConfiguration
-            $0.pendingMutations.insert(key)
-            $0.errors.removeValue(forKey: key)
-            $0.oppiOrderingVersion &+= 1
-            // Keep one canonical writer for the whole drain. Later setting
-            // changes must not make recursive writes use a partial closure.
-            $0.oppiWriteRequest = $0.oppiWriteRequest ?? request
-            $0.oppiFetchAuthoritative = $0.oppiFetchAuthoritative ?? fetchAuthoritative
-            Self.applyOppiState(to: &$0)
-        }
-        await drainOppiWriteQueue(serverId: serverId)
-    }
-
-    private func drainOppiWriteQueue(serverId: String) async {
-        guard let partition = partitions[serverId], !partition.oppiWriteInFlight,
-              let authoritative = partition.authoritativeOppiConfiguration,
-              let desired = partition.desiredOppiConfiguration,
-              let request = partition.oppiWriteRequest,
-              let fetchAuthoritative = partition.oppiFetchAuthoritative,
-              !Self.sameOppiValues(desired, authoritative) else {
-            return
-        }
-
-        update(serverId) { $0.oppiWriteInFlight = true }
-        let result = await Self.capture {
-            // Every drain step uses this same full-snapshot writer. In
-            // particular, a guide-only or policy-only write must preserve all
-            // current desired fields while an earlier write is in flight.
-            try await request(
-                desired.enabled,
-                desired.approvalPolicy,
-                desired.mobileOutputGuideEnabled,
-                authoritative.revision
-            )
-        }
-
-        switch result {
-        case .success(let response):
-            var shouldContinue = false
-            update(serverId) { partition in
-                partition.oppiWriteInFlight = false
-                partition.authoritativeOppiConfiguration = response
-                partition.oppiOrderingVersion &+= 1
-                if partition.desiredOppiConfiguration?.enabled == response.enabled {
-                    partition.pendingMutations.remove(.oppiEnabled)
-                    partition.errors.removeValue(forKey: .oppiEnabled)
-                }
-                if partition.desiredOppiConfiguration?.approvalPolicy == response.approvalPolicy {
-                    partition.pendingMutations.remove(.oppiApprovalPolicy)
-                    partition.errors.removeValue(forKey: .oppiApprovalPolicy)
-                }
-                if partition.desiredOppiConfiguration?.mobileOutputGuideEnabled == response.mobileOutputGuideEnabled {
-                    partition.pendingMutations.remove(.oppiMobileOutputGuide)
-                    partition.errors.removeValue(forKey: .oppiMobileOutputGuide)
-                }
-                // Only a setting changed while this write was in flight earns
-                // another round trip. A server that answers an unchanged intent
-                // with different values has normalized them, so rewriting the
-                // same snapshot could never converge.
-                if let currentDesired = partition.desiredOppiConfiguration,
-                   !Self.sameOppiValues(currentDesired, response),
-                   !Self.sameOppiValues(currentDesired, desired) {
-                    shouldContinue = true
-                } else {
-                    let oppiKeys: Set<ServerResourceMutationKey> = [
-                        .oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide,
-                    ]
-                    partition.desiredOppiConfiguration = response
-                    for key in partition.pendingMutations.intersection(oppiKeys) {
-                        partition.errors[key] = "The server saved a different value for this setting."
-                    }
-                    partition.pendingMutations.subtract(oppiKeys)
-                    partition.oppiWriteRequest = nil
-                    partition.oppiFetchAuthoritative = nil
-                }
-                Self.applyOppiState(to: &partition)
-            }
-            await saveCacheSnapshot(serverId: serverId)
-            if shouldContinue {
-                await drainOppiWriteQueue(serverId: serverId)
-            }
-
-        case .failure(let error):
-            if Self.isRevisionConflict(error) {
-                let refreshed = await Self.capture(fetchAuthoritative)
-                update(serverId) { partition in
-                    partition.oppiWriteInFlight = false
-                    let pending = partition.pendingMutations.intersection([.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
-                    let errorMessage: String
-                    switch refreshed {
-                    case .success(let configuration):
-                        partition.authoritativeOppiConfiguration = configuration
-                        partition.desiredOppiConfiguration = configuration
-                        partition.oppiRequiresAuthoritativeRefresh = false
-                        errorMessage = "Oppi setting changed elsewhere on the server."
-                    case .failure(let refreshError):
-                        partition.desiredOppiConfiguration = partition.authoritativeOppiConfiguration
-                        partition.oppiRequiresAuthoritativeRefresh = true
-                        partition.extensionsSync.markSyncFailed()
-                        errorMessage = "Oppi setting changed elsewhere on the server. Couldn’t refresh the current setting: \(Self.errorText(refreshError))"
-                    }
-                    partition.oppiOrderingVersion &+= 1
-                    partition.pendingMutations.subtract([.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
-                    for key in pending {
-                        partition.errors[key] = errorMessage
-                    }
-                    partition.oppiWriteRequest = nil
-                    partition.oppiFetchAuthoritative = nil
-                    Self.applyOppiState(to: &partition)
-                }
-                await saveCacheSnapshot(serverId: serverId)
-                return
-            }
-
-            update(serverId) { partition in
-                partition.oppiWriteInFlight = false
-                partition.desiredOppiConfiguration = partition.authoritativeOppiConfiguration
-                partition.oppiOrderingVersion &+= 1
-                let pending = partition.pendingMutations.intersection([.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
-                partition.pendingMutations.subtract([.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
-                for key in pending {
-                    partition.errors[key] = Self.errorText(error)
-                }
-                partition.oppiWriteRequest = nil
-                partition.oppiFetchAuthoritative = nil
-                Self.applyOppiState(to: &partition)
-            }
-            await saveCacheSnapshot(serverId: serverId)
-        }
-    }
-
     private func beginMutation(_ key: ServerResourceMutationKey, serverId: String) -> UInt64 {
         var generation: UInt64 = 0
         update(serverId) {
@@ -1014,18 +554,6 @@ final class ServerResourceStore {
         return stable
     }
 
-    private static func syncStateAfterCancellation(
-        capturedStableState: ServerSyncState,
-        currentState: ServerSyncState,
-        capturedOrderingVersion: UInt64,
-        currentOrderingVersion: UInt64
-    ) -> ServerSyncState {
-        guard currentOrderingVersion == capturedOrderingVersion else {
-            return stableSyncState(currentState)
-        }
-        return capturedStableState
-    }
-
     private static func capture<T>(_ operation: @escaping @MainActor () async throws -> T) async -> Result<T, Error> {
         do {
             return .success(try await operation())
@@ -1066,39 +594,26 @@ final class ServerResourceStore {
     private static func mergeRefreshedExtensions(
         _ refreshed: [ServerExtensionSummary],
         into partition: Partition,
-        startVersions: [ServerResourceMutationKey: UInt64],
-        preserveOppi: Bool
+        startVersions: [ServerResourceMutationKey: UInt64]
     ) -> [ServerExtensionSummary] {
         let currentByID = Dictionary(uniqueKeysWithValues: partition.extensions.map { ($0.id, $0) })
         var refreshedIDs = Set<String>()
         var merged = refreshed.map { resource in
             refreshedIDs.insert(resource.id)
-            let preserve: Bool
-            if resource.isBuiltInOppi {
-                preserve = preserveOppi
-            } else {
-                preserve = shouldPreserveNormalResource(
-                    .normalExtension(resource.id),
-                    in: partition,
-                    startVersions: startVersions
-                )
+            let key = ServerResourceMutationKey.normalExtension(resource.id)
+            guard shouldPreserveNormalResource(
+                key,
+                in: partition,
+                startVersions: startVersions
+            ) else {
+                return resource
             }
-            guard preserve else { return resource }
             return currentByID[resource.id] ?? resource
         }
 
         for current in partition.extensions where !refreshedIDs.contains(current.id) {
-            let preserve: Bool
-            if current.isBuiltInOppi {
-                preserve = preserveOppi
-            } else {
-                preserve = shouldPreserveNormalResource(
-                    .normalExtension(current.id),
-                    in: partition,
-                    startVersions: startVersions
-                )
-            }
-            if preserve {
+            let key = ServerResourceMutationKey.normalExtension(current.id)
+            if shouldPreserveNormalResource(key, in: partition, startVersions: startVersions) {
                 merged.append(current)
             }
         }
@@ -1112,15 +627,6 @@ final class ServerResourceStore {
     ) -> Bool {
         partition.pendingMutations.contains(key)
             || partition.normalResourceVersions[key, default: 0] != startVersions[key, default: 0]
-    }
-
-    private static func shouldPreserveOppiDuringRefresh(
-        _ partition: Partition,
-        startVersion: UInt64
-    ) -> Bool {
-        partition.oppiWriteInFlight
-            || !partition.pendingMutations.isDisjoint(with: [.oppiEnabled, .oppiApprovalPolicy, .oppiMobileOutputGuide])
-            || partition.oppiOrderingVersion != startVersion
     }
 
     private static func advanceNormalResourceVersion(
@@ -1163,26 +669,6 @@ final class ServerResourceStore {
         )
     }
 
-    private static func applyOppiState(to partition: inout Partition) {
-        guard let configuration = partition.desiredOppiConfiguration ?? partition.authoritativeOppiConfiguration,
-              let index = partition.extensions.firstIndex(where: \.isBuiltInOppi) else {
-            return
-        }
-        partition.extensions[index] = Self.extension(
-            partition.extensions[index],
-            state: configuration.enabled ? .on : .off
-        )
-    }
-
-    private static func sameOppiValues(
-        _ lhs: OppiExtensionConfiguration,
-        _ rhs: OppiExtensionConfiguration
-    ) -> Bool {
-        lhs.enabled == rhs.enabled
-            && lhs.approvalPolicy == rhs.approvalPolicy
-            && lhs.mobileOutputGuideEnabled == rhs.mobileOutputGuideEnabled
-    }
-
     private static func errorText(_ error: Error) -> String {
         let text = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? "The server could not save this setting." : text
@@ -1199,14 +685,4 @@ final class ServerResourceStore {
         return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
-    private static func isRevisionConflict(_ error: Error) -> Bool {
-        // The server tags the CAS conflict body with code "revision_conflict",
-        // so APIClient.checkStatus surfaces it as codedServer, not server.
-        switch error {
-        case APIError.server(let status, _), APIError.codedServer(let status, _, _):
-            return status == 409
-        default:
-            return false
-        }
-    }
 }

@@ -99,26 +99,25 @@ struct ServerResourceAPIClientTests {
                 #expect(request.url?.path == "/server/resources/extensions")
                 #expect(request.url?.query == nil)
                 return mockResponse(json: """
-                {"extensions":[{"id":"oppi","name":"Oppi","description":"Server-owned controls.","kind":"builtIn","provenance":{"kind":"builtIn","label":"Built-in extension"},"state":"off","warnings":[],"isRemovable":false}],"builtInTools":[{"name":"read","description":"Read files","defaultEnabled":true},{"name":"grep","description":"Search files","defaultEnabled":false}],"oppiConfiguration":{"enabled":false,"approvalPolicy":"confirmDestructiveOnly","revision":0}}
+                {"extensions":[{"id":"extension_abc","name":"Review","kind":"file","provenance":{"kind":"userSettings","label":"Pi user settings"},"state":"on","warnings":[],"isRemovable":false}],"builtInTools":[{"name":"read","description":"Read files","defaultEnabled":true},{"name":"grep","description":"Search files","defaultEnabled":false}]}
                 """)
             }
 
             #expect(request.httpMethod == "GET")
-            #expect(request.url?.path == "/server/resources/extensions/oppi")
+            #expect(request.url?.path == "/server/resources/extensions/extension_abc")
             return mockResponse(json: """
-            {"summary":{"id":"oppi","name":"Oppi","description":"Server-owned controls.","kind":"builtIn","provenance":{"kind":"builtIn","label":"Built-in extension"},"state":"off","warnings":[],"isRemovable":false,"contributedTools":["oppi"]},"contributedTools":["oppi"],"contributedToolDetails":[{"name":"oppi","description":"Manage Oppi"}]}
+            {"summary":{"id":"extension_abc","name":"Review","kind":"file","provenance":{"kind":"userSettings","label":"Pi user settings"},"state":"on","warnings":[],"isRemovable":false,"contributedTools":["review"]},"contributedTools":["review"],"contributedToolDetails":[{"name":"review","description":"Review changes"}]}
             """)
         }
 
         let catalog = try await client.listServerExtensions()
-        let detail = try await client.getServerExtension(id: "oppi")
+        let detail = try await client.getServerExtension(id: "extension_abc")
 
-        #expect(catalog.extensions.first?.path == nil)
-        #expect(catalog.oppiConfiguration.revision == 0)
+        #expect(catalog.extensions.map(\.id) == ["extension_abc"])
         #expect(catalog.builtInTools.map(\.name) == ["read", "grep"])
         #expect(catalog.builtInTools.first?.defaultEnabled == true)
-        #expect(detail.summary.kind == .builtIn)
-        #expect(detail.contributedToolDetails?.first?.description == "Manage Oppi")
+        #expect(detail.summary.kind == .file)
+        #expect(detail.contributedToolDetails?.first?.description == "Review changes")
     }
 
     @Test func agentToolInspectionUsesExplicitExtensionDetailQuery() async throws {
@@ -138,75 +137,104 @@ struct ServerResourceAPIClientTests {
         #expect(detail.contributedTools == ["search"])
     }
 
-    @Test func oppiConfigurationPutUsesFullCASBodyAndDecodesAuthoritativeResponse() async throws {
+    @Test func mobileOutputGuideUsesDedicatedCASRoute() async throws {
         let client = makeClient()
         defer { TestURLProtocol.handler = nil }
+        var requestCount = 0
 
         TestURLProtocol.handler = { request in
+            requestCount += 1
+            #expect(request.url?.path == "/server/mobile-output-guide")
+            if requestCount == 1 {
+                #expect(request.httpMethod == "GET")
+                return mockResponse(json: #"{"enabled":false,"revision":7}"#)
+            }
+
             #expect(request.httpMethod == "PUT")
-            #expect(request.url?.path == "/server/extensions/oppi/config")
-            let body = try JSONDecoder().decode(OppiConfigurationRequest.self, from: requestBodyData(request))
+            let body = try JSONDecoder().decode(MobileOutputGuideRequest.self, from: requestBodyData(request))
             #expect(body.enabled)
-            #expect(body.approvalPolicy == .confirmAllChanges)
-            #expect(body.mobileOutputGuideEnabled == true)
             #expect(body.baseRevision == 7)
-            return mockResponse(json: """
-            {"enabled":true,"approvalPolicy":"confirmAllChanges","mobileOutputGuideEnabled":true,"revision":8}
-            """)
+            return mockResponse(json: #"{"enabled":true,"revision":8}"#)
         }
 
-        let configuration = try await client.setOppiExtensionConfiguration(
+        let current = try await client.getMobileOutputGuideConfiguration()
+        let updated = try await client.setMobileOutputGuideConfiguration(
             enabled: true,
-            approvalPolicy: .confirmAllChanges,
-            mobileOutputGuideEnabled: true,
-            baseRevision: 7
+            baseRevision: current.revision
         )
 
-        #expect(configuration == OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .confirmAllChanges,
-            mobileOutputGuideEnabled: true,
-            revision: 8
-        ))
+        #expect(current == MobileOutputGuideConfiguration(enabled: false, revision: 7))
+        #expect(updated == MobileOutputGuideConfiguration(enabled: true, revision: 8))
+        #expect(requestCount == 2)
     }
 
-    @Test func oppiConfigurationGetUsesDedicatedRoute() async throws {
+    @Test func piSystemPromptAndDefaultToolsUseGlobalResourceRoutes() async throws {
         let client = makeClient()
         defer { TestURLProtocol.handler = nil }
+        var requestCount = 0
 
         TestURLProtocol.handler = { request in
-            #expect(request.httpMethod == "GET")
-            #expect(request.url?.path == "/server/extensions/oppi/config")
-            return mockResponse(json: #"{"enabled":false,"approvalPolicy":"readOnly","revision":12}"#)
+            requestCount += 1
+            if requestCount == 1 {
+                #expect(request.httpMethod == "GET")
+                #expect(request.url?.path == "/server/resources/pi/system-prompt")
+                #expect(request.url?.query == nil)
+                return mockResponse(json: """
+                {"source":"file","path":"~/.pi/agent/SYSTEM.md","resolvedPath":"/Users/test/.pi/agent/SYSTEM.md","content":"# Custom"}
+                """)
+            }
+            if requestCount == 2 {
+                #expect(request.httpMethod == "GET")
+                #expect(request.url?.path == "/server/resources/pi/default-tools")
+                return mockResponse(json: #"{"defaultTools":null}"#)
+            }
+            if requestCount == 3 {
+                #expect(request.httpMethod == "PUT")
+                #expect(request.url?.path == "/server/resources/pi/default-tools")
+                let body = try JSONDecoder().decode(PiDefaultToolsRequest.self, from: requestBodyData(request))
+                #expect(body.defaultTools == ["read", "grep"])
+                return mockResponse(json: #"{"defaultTools":["read","grep"]}"#)
+            }
+
+            #expect(request.httpMethod == "PUT")
+            let body = try JSONDecoder().decode(PiDefaultToolsRequest.self, from: requestBodyData(request))
+            #expect(body.defaultTools == nil)
+            let object = try JSONSerialization.jsonObject(with: requestBodyData(request))
+            let json = try #require(object as? [String: Any])
+            #expect(json["defaultTools"] is NSNull)
+            return mockResponse(json: #"{"defaultTools":null}"#)
         }
 
-        let configuration = try await client.getOppiExtensionConfiguration()
+        let prompt = try await client.getPiSystemPrompt()
+        let inherited = try await client.getPiDefaultTools()
+        let exact = try await client.setPiDefaultTools(["read", "grep"])
+        let omitted = try await client.setPiDefaultTools(nil)
 
-        #expect(configuration.approvalPolicy == .readOnly)
-        #expect(configuration.revision == 12)
+        #expect(prompt.source == .file)
+        #expect(prompt.path == "~/.pi/agent/SYSTEM.md")
+        #expect(prompt.content == "# Custom")
+        #expect(inherited.defaultTools == nil)
+        #expect(exact.defaultTools == ["read", "grep"])
+        #expect(omitted.defaultTools == nil)
+        #expect(requestCount == 4)
     }
 
-    @Test func revisionConflictUsesExistingAPIErrorConvention() async throws {
+    @Test func mobileOutputGuideRevisionConflictUsesExistingAPIErrorConvention() async throws {
         let client = makeClient()
         defer { TestURLProtocol.handler = nil }
 
         TestURLProtocol.handler = { _ in
             mockResponse(status: 409, json: """
-            {"error":"Oppi extension configuration changed","code":"revision_conflict","current":{"enabled":false,"approvalPolicy":"readOnly","revision":8}}
+            {"error":"Mobile Output Guide setting changed","code":"revision_conflict","current":{"enabled":false,"revision":8}}
             """)
         }
 
         do {
-            _ = try await client.setOppiExtensionConfiguration(
-                enabled: true,
-                approvalPolicy: .confirmAllChanges,
-                mobileOutputGuideEnabled: false,
-                baseRevision: 7
-            )
+            _ = try await client.setMobileOutputGuideConfiguration(enabled: true, baseRevision: 7)
             Issue.record("Expected revision conflict")
         } catch let APIError.codedServer(status, message, code) {
             #expect(status == 409)
-            #expect(message == "Oppi extension configuration changed")
+            #expect(message == "Mobile Output Guide setting changed")
             #expect(code == "revision_conflict")
         }
     }
@@ -215,11 +243,13 @@ struct ServerResourceAPIClientTests {
         let enabled: Bool
     }
 
-    private struct OppiConfigurationRequest: Decodable {
+    private struct MobileOutputGuideRequest: Decodable {
         let enabled: Bool
-        let approvalPolicy: OppiApprovalPolicy
-        let mobileOutputGuideEnabled: Bool?
         let baseRevision: Int
+    }
+
+    private struct PiDefaultToolsRequest: Decodable {
+        let defaultTools: [String]?
     }
 
     private func makeClient() -> APIClient {

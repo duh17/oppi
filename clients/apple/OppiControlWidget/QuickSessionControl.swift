@@ -21,6 +21,6 @@ struct QuickSessionControl: ControlWidget {
             }
         }
         .displayName("New Session")
-        .description("Start a new Oppi agent session.")
+        .description("Start a new Pi session in Oppi.")
     }
 }

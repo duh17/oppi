@@ -191,11 +191,6 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
         self.contributedTools = contributedTools
         self.contributedToolDetails = contributedToolDetails
     }
-
-    /// The built-in identity is a server contract, not a display-name or path heuristic.
-    var isBuiltInOppi: Bool {
-        id == "oppi" && kind == .builtIn && provenance.kind == .builtIn
-    }
 }
 
 struct ServerExtensionDetail: Codable, Sendable, Equatable {
@@ -217,76 +212,48 @@ struct ServerExtensionDetail: Codable, Sendable, Equatable {
     }
 }
 
-enum OppiApprovalPolicy: String, Codable, Sendable, Equatable {
-    case confirmDestructiveOnly
-    case confirmAllChanges
-    case readOnly
+struct MobileOutputGuideConfiguration: Codable, Sendable, Equatable {
+    let enabled: Bool
+    let revision: Int
 }
 
-struct OppiExtensionConfiguration: Codable, Sendable, Equatable {
-    let enabled: Bool
-    let approvalPolicy: OppiApprovalPolicy
-    /// Nil means the connected server does not advertise the mobile output guide capability.
-    let mobileOutputGuideEnabled: Bool?
-    let revision: Int
+struct PiSystemPromptSnapshot: Codable, Sendable, Equatable {
+    enum Source: String, Codable, Sendable, Equatable {
+        case file
+        case `default`
+        case unknown
 
-    private enum CodingKeys: String, CodingKey {
-        case enabled
-        case approvalPolicy
-        case mobileOutputGuideEnabled
-        case revision
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let rawValue = try container.decode(String.self)
+            self = Self(rawValue: rawValue) ?? .unknown
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
     }
 
-    init(
-        enabled: Bool,
-        approvalPolicy: OppiApprovalPolicy,
-        mobileOutputGuideEnabled: Bool? = nil,
-        revision: Int
-    ) {
-        self.enabled = enabled
-        self.approvalPolicy = approvalPolicy
-        self.mobileOutputGuideEnabled = mobileOutputGuideEnabled
-        self.revision = revision
-    }
+    let source: Source
+    let path: String
+    let resolvedPath: String?
+    let content: String
+}
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.enabled = try container.decode(Bool.self, forKey: .enabled)
-        self.approvalPolicy = try container.decode(OppiApprovalPolicy.self, forKey: .approvalPolicy)
-        self.mobileOutputGuideEnabled = try container.decodeIfPresent(Bool.self, forKey: .mobileOutputGuideEnabled)
-        self.revision = try container.decode(Int.self, forKey: .revision)
-    }
+struct PiDefaultToolsSnapshot: Codable, Sendable, Equatable {
+    let defaultTools: [String]?
 }
 
 struct ServerExtensionCatalog: Codable, Sendable, Equatable {
     let extensions: [ServerExtensionSummary]
     let builtInTools: [ServerToolSummary]
-    let oppiConfiguration: OppiExtensionConfiguration
 
     init(
         extensions: [ServerExtensionSummary],
-        builtInTools: [ServerToolSummary] = [],
-        oppiConfiguration: OppiExtensionConfiguration
+        builtInTools: [ServerToolSummary] = []
     ) {
         self.extensions = extensions
         self.builtInTools = builtInTools
-        self.oppiConfiguration = oppiConfiguration
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case extensions, builtInTools, oppiConfiguration
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        extensions = try container.decode([ServerExtensionSummary].self, forKey: .extensions)
-        builtInTools = try container.decodeIfPresent(
-            [ServerToolSummary].self,
-            forKey: .builtInTools
-        ) ?? []
-        oppiConfiguration = try container.decode(
-            OppiExtensionConfiguration.self,
-            forKey: .oppiConfiguration
-        )
     }
 }

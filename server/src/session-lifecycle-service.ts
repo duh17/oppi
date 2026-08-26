@@ -11,7 +11,6 @@ import {
 } from "./agent-launch-service.js";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
-import { DEFAULT_AGENT_ID, DEFAULT_AGENT_TOOL_NAMES } from "./default-agent.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import { mintSessionId } from "./id.js";
@@ -105,7 +104,6 @@ export interface SessionLifecycleServiceDeps {
     | "getDataDir"
     | "getSession"
     | "getWorkspace"
-    | "getAgentDefinitionStore"
     | "findSessionByLaunchIdempotencyKey"
     | "listSessions"
     | "saveSession"
@@ -230,12 +228,7 @@ export class SessionLifecycleService {
       const existing = this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey);
       if (existing) return this.existingControlLaunch(existing, params.prompt);
     }
-    const defaultAgent = this.deps.storage.getAgentDefinitionStore().getAgent(DEFAULT_AGENT_ID);
-    if (!defaultAgent) {
-      throw new SessionLifecycleError("Oppi agent is unavailable", 500);
-    }
-    const defaultAgentIcon = defaultAgent.definition.icon;
-    const sessionName = params.name?.trim() || "Oppi Control";
+    const sessionName = params.name?.trim() || "Pi Control";
     const session: Session = idempotencyKey
       ? {
           id: mintSessionId(),
@@ -258,11 +251,7 @@ export class SessionLifecycleService {
     if (params.thinking) session.thinkingLevel = params.thinking;
     session.launch = {
       source: "human",
-      agentId: DEFAULT_AGENT_ID,
-      agentVersion: defaultAgent.version,
-      ...(defaultAgentIcon ? { agentIcon: defaultAgentIcon } : {}),
-      target: { server: true, displayCwd: "Oppi Control" },
-      tools: { allowed: [...DEFAULT_AGENT_TOOL_NAMES], noTools: "builtin" },
+      target: { server: true, displayCwd: "Pi Control" },
       ...(requestedModel ? { model: requestedModel, modelPolicy: "required" } : {}),
       status: "launching",
       requestedAt: now,

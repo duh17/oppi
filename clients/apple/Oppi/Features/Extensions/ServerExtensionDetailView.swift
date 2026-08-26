@@ -31,14 +31,9 @@ struct ServerExtensionDetailScopedDestinationView: View {
 
     var body: some View {
         Group {
-            if let scopedConnection, let summary {
-                if summary.isBuiltInOppi {
-                    OppiExtensionDetailView(target: target)
-                        .withServerScopedEnvironment(scopedConnection)
-                } else {
-                    ServerExtensionDetailView(target: target, initialDetail: resolvedDetail)
-                        .withServerScopedEnvironment(scopedConnection)
-                }
+            if let scopedConnection, summary != nil {
+                ServerExtensionDetailView(target: target, initialDetail: resolvedDetail)
+                    .withServerScopedEnvironment(scopedConnection)
             } else if let resolutionError {
                 ContentUnavailableView(
                     "Extension Unavailable",

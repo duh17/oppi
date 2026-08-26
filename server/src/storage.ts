@@ -39,10 +39,10 @@ import {
   IconAssetStore,
   type IconAssetRecord,
 } from "./storage/icon-asset-store.js";
-import { OppiExtensionSettingsStore } from "./storage/oppi-extension-settings-store.js";
+import { MobileOutputGuideSettingsStore } from "./storage/mobile-output-guide-settings-store.js";
 import { SessionSqliteStore } from "./storage/session-sqlite-store.js";
 import { WorkspaceStore } from "./storage/workspace-store.js";
-import type { OppiExtensionSettingsSnapshot } from "./oppi-extension-settings.js";
+import type { MobileOutputGuideSettingsSnapshot } from "./mobile-output-guide-settings.js";
 import type {
   CreateWorkspaceRequest,
   ServerConfig,
@@ -97,7 +97,7 @@ export class Storage {
   private readonly deviceAuthStore: DeviceAuthStore;
   private readonly sessionStore: SessionSqliteStore;
   private readonly iconAssetStore: IconAssetStore;
-  private readonly oppiExtensionSettingsStore: OppiExtensionSettingsStore;
+  private readonly mobileOutputGuideSettingsStore: MobileOutputGuideSettingsStore;
   private readonly agentDefinitionStore: AgentDefinitionStore;
   private readonly scheduleStore: AgentScheduleStore;
   private readonly workspaceStore: WorkspaceStore;
@@ -108,7 +108,9 @@ export class Storage {
     this.deviceAuthStore = new DeviceAuthStore(this.configStore);
     this.sessionStore = new SessionSqliteStore(this.configStore.getDataDir());
     this.iconAssetStore = new IconAssetStore(this.configStore.getDataDir());
-    this.oppiExtensionSettingsStore = new OppiExtensionSettingsStore(this.configStore.getDataDir());
+    this.mobileOutputGuideSettingsStore = new MobileOutputGuideSettingsStore(
+      this.configStore.getDataDir(),
+    );
     this.agentDefinitionStore = new AgentDefinitionStore(
       this.configStore.getDataDir(),
       undefined,
@@ -257,21 +259,21 @@ export class Storage {
     this.configStore.updateConfig(updates);
   }
 
-  // ─── Built-in Oppi extension settings ───
+  // ─── Mobile Output Guide settings ───
 
-  getOppiExtensionSettings(): OppiExtensionSettingsSnapshot {
-    return this.oppiExtensionSettingsStore.get();
+  getMobileOutputGuideSettings(): MobileOutputGuideSettingsSnapshot {
+    return this.mobileOutputGuideSettingsStore.get();
   }
 
-  getOppiExtensionSettingsLoadError(): string | undefined {
-    return this.oppiExtensionSettingsStore.getLoadError();
+  getMobileOutputGuideSettingsLoadError(): string | undefined {
+    return this.mobileOutputGuideSettingsStore.getLoadError();
   }
 
-  replaceOppiExtensionSettings(
+  replaceMobileOutputGuideSettings(
     baseRevision: unknown,
     desired: unknown,
-  ): ReturnType<OppiExtensionSettingsStore["replace"]> {
-    return this.oppiExtensionSettingsStore.replace(baseRevision, desired);
+  ): ReturnType<MobileOutputGuideSettingsStore["replace"]> {
+    return this.mobileOutputGuideSettingsStore.replace(baseRevision, desired);
   }
 
   // ─── Pairing / auth / push tokens ───

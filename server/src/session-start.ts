@@ -1,5 +1,4 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
-import { applyDefaultAgentSafetyDefaults, isDefaultAgentId } from "./default-agent.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
 import {
@@ -60,7 +59,7 @@ export class SessionStartCoordinator {
           onEvent: (event) => this.deps.onPiEvent(key, event),
           onEnd: (reason) => this.deps.onSessionEnd(key, reason),
           dataDir: this.deps.storage.getDataDir(),
-          getOppiExtensionSettings: () => this.deps.storage.getOppiExtensionSettings(),
+          getMobileOutputGuideSettings: () => this.deps.storage.getMobileOutputGuideSettings(),
           metrics: this.deps.metrics,
           serverConfig: this.deps.config,
         });
@@ -108,9 +107,7 @@ export class SessionStartCoordinator {
       definition = store.getAgentVersion(agentId, agentVersion)?.definition;
     }
     definition = definition ?? store.getAgent(agentId)?.definition;
-    return definition && isDefaultAgentId(agentId)
-      ? applyDefaultAgentSafetyDefaults(definition)
-      : definition;
+    return definition;
   }
 
   buildWorkspaceIdentity(session: Session, workspace?: Workspace): WorkspaceSessionIdentity {

@@ -1186,56 +1186,31 @@ describe("server resource API", () => {
     expect(extensions.status).toBe(200);
     const body = (await extensions.json()) as {
       extensions: Array<{ id: string; kind: string; path?: string }>;
-      oppiConfiguration: {
-        enabled: boolean;
-        approvalPolicy: string;
-        mobileOutputGuideEnabled: boolean;
-        revision: number;
-      };
     };
-    expect(body.extensions[0]).toMatchObject({ id: "oppi", kind: "builtIn" });
-    expect(body.extensions[0]).not.toHaveProperty("path");
-    expect(body.oppiConfiguration).toEqual({
-      enabled: false,
-      approvalPolicy: "confirmDestructiveOnly",
-      mobileOutputGuideEnabled: false,
-      revision: 0,
-    });
+    expect(body.extensions.some((extension) => extension.id === "oppi")).toBe(false);
   });
 
-  it("replaces the full Oppi configuration and returns a stale-write conflict", async () => {
-    const current = await get("/server/extensions/oppi/config");
+  it("replaces the Mobile Output Guide setting and returns a stale-write conflict", async () => {
+    const current = await get("/server/mobile-output-guide");
     expect(current.status).toBe(200);
     const before = (await current.json()) as { revision: number };
 
-    const updated = await put("/server/extensions/oppi/config", {
+    const updated = await put("/server/mobile-output-guide", {
       enabled: true,
-      approvalPolicy: "readOnly",
       baseRevision: before.revision,
     });
     expect(updated.status).toBe(200);
-    expect(await updated.json()).toEqual({
-      enabled: true,
-      approvalPolicy: "readOnly",
-      mobileOutputGuideEnabled: false,
-      revision: before.revision + 1,
-    });
+    expect(await updated.json()).toEqual({ enabled: true, revision: before.revision + 1 });
 
-    const stale = await put("/server/extensions/oppi/config", {
+    const stale = await put("/server/mobile-output-guide", {
       enabled: false,
-      approvalPolicy: "confirmAllChanges",
       baseRevision: before.revision,
     });
     expect(stale.status).toBe(409);
     expect(await stale.json()).toEqual({
-      error: "Oppi extension configuration changed",
+      error: "Mobile Output Guide setting changed",
       code: "revision_conflict",
-      current: {
-        enabled: true,
-        approvalPolicy: "readOnly",
-        mobileOutputGuideEnabled: false,
-        revision: before.revision + 1,
-      },
+      current: { enabled: true, revision: before.revision + 1 },
     });
   });
 

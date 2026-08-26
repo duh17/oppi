@@ -51,50 +51,27 @@ function makeRoutes() {
     readSkillFile: vi.fn(async () => "notes"),
     readSkillFileSnapshot: vi.fn(async () => ({ content: "notes", revision: FILE_REVISION })),
     setSkillEnabled: vi.fn(async () => ({ ...skill, state: "disabled" as const })),
-    listExtensions: vi.fn(async () => ({
-      extensions: [
-        {
-          id: "oppi",
-          name: "Oppi",
-          description: "Server-owned Oppi command extension",
-          kind: "builtIn" as const,
-          provenance: { kind: "builtIn" as const, label: "Built-in extension" },
-          state: "off" as const,
-          warnings: [],
-          isRemovable: false as const,
-        },
-        extension,
-      ],
-      oppiConfiguration: {
-        enabled: false,
-        approvalPolicy: "confirmDestructiveOnly" as const,
-        mobileOutputGuideEnabled: false,
-        revision: 0,
-      },
-    })),
+    listExtensions: vi.fn(async () => ({ extensions: [extension], builtInTools: [] })),
     getExtensionDetail: vi.fn(async () => ({ summary: extension })),
     inspectAgentExtensionTools: vi.fn(async () => ({
       summary: extension,
       contributedTools: ["review"],
     })),
     setExtensionEnabled: vi.fn(async () => ({ ...extension, state: "off" as const })),
+    getPiSystemPrompt: vi.fn(async () => ({
+      source: "default" as const,
+      path: "~/.pi/agent/SYSTEM.md",
+      content: "You are an expert coding assistant operating inside pi",
+    })),
+    getPiDefaultTools: vi.fn(async () => ({ defaultTools: null })),
+    setPiDefaultTools: vi.fn(async (defaultTools: string[] | null) => ({ defaultTools })),
   };
   const refreshModelCatalog = vi.fn(async () => undefined);
   const storage = {
-    getOppiExtensionSettings: vi.fn(() => ({
-      enabled: false,
-      approvalPolicy: "confirmDestructiveOnly" as const,
-      mobileOutputGuideEnabled: false,
-      revision: 0,
-    })),
-    replaceOppiExtensionSettings: vi.fn(() => ({
+    getMobileOutputGuideSettings: vi.fn(() => ({ enabled: false, revision: 0 })),
+    replaceMobileOutputGuideSettings: vi.fn(() => ({
       ok: true as const,
-      current: {
-        enabled: true,
-        approvalPolicy: "readOnly" as const,
-        mobileOutputGuideEnabled: false,
-        revision: 1,
-      },
+      current: { enabled: true, revision: 1 },
     })),
   };
   return {
@@ -143,16 +120,16 @@ describe("server resource routes", () => {
     serverResources.setExtensionEnabled.mockRejectedValueOnce(
       new Error(`write failed for ${sensitiveContext}`),
     );
-    storage.replaceOppiExtensionSettings.mockImplementationOnce(() => {
+    storage.replaceMobileOutputGuideSettings.mockImplementationOnce(() => {
       throw new Error(`fsync failed for ${sensitiveContext}`);
     });
-    storage.replaceOppiExtensionSettings.mockImplementationOnce(() => {
+    storage.replaceMobileOutputGuideSettings.mockImplementationOnce(() => {
       throw new Error(`rename failed for ${sensitiveContext}`);
     });
-    storage.replaceOppiExtensionSettings.mockReturnValueOnce({
+    storage.replaceMobileOutputGuideSettings.mockReturnValueOnce({
       ok: false,
       reason: "revision_conflict",
-      current: { enabled: false, approvalPolicy: "readOnly", revision: 2 },
+      current: { enabled: false, revision: 2 },
     });
     serverResources.getExtensionDetail.mockRejectedValueOnce(
       new ServerResourceNotFoundError("extension"),
@@ -181,8 +158,8 @@ describe("server resource routes", () => {
         await dispatch(
           routes,
           "PUT",
-          "/server/extensions/oppi/config",
-          jsonRequest({ enabled: true, approvalPolicy: "readOnly", baseRevision: 0 }),
+          "/server/mobile-output-guide",
+          jsonRequest({ enabled: true, baseRevision: 0 }),
         )
       ).statusCode,
     ).toBe(500);
@@ -191,8 +168,8 @@ describe("server resource routes", () => {
         await dispatch(
           routes,
           "PUT",
-          "/server/extensions/oppi/config",
-          jsonRequest({ enabled: true, approvalPolicy: "readOnly", baseRevision: 0 }),
+          "/server/mobile-output-guide",
+          jsonRequest({ enabled: true, baseRevision: 0 }),
         )
       ).statusCode,
     ).toBe(500);
@@ -201,8 +178,8 @@ describe("server resource routes", () => {
         await dispatch(
           routes,
           "PUT",
-          "/server/extensions/oppi/config",
-          jsonRequest({ enabled: true, approvalPolicy: "readOnly", baseRevision: 0 }),
+          "/server/mobile-output-guide",
+          jsonRequest({ enabled: true, baseRevision: 0 }),
         )
       ).statusCode,
     ).toBe(409);
@@ -266,8 +243,8 @@ describe("server resource routes", () => {
         level: "error",
         event: "server_resources.route_failed",
         component: "route_server_resources",
-        operation: "oppi_persistence",
-        resourceKind: "oppi_configuration",
+        operation: "guide_persistence",
+        resourceKind: "mobile_output_guide",
         category: "fsync_failed",
         message: "settings fsync failed",
       },
@@ -275,8 +252,8 @@ describe("server resource routes", () => {
         level: "error",
         event: "server_resources.route_failed",
         component: "route_server_resources",
-        operation: "oppi_persistence",
-        resourceKind: "oppi_configuration",
+        operation: "guide_persistence",
+        resourceKind: "mobile_output_guide",
         category: "rename_failed",
         message: "settings rename failed",
       },
@@ -284,8 +261,8 @@ describe("server resource routes", () => {
         level: "info",
         event: "server_resources.route_rejected",
         component: "route_server_resources",
-        operation: "oppi_persistence",
-        resourceKind: "oppi_configuration",
+        operation: "guide_persistence",
+        resourceKind: "mobile_output_guide",
         category: "conflict",
         message: "settings revision conflict",
       },
@@ -362,27 +339,16 @@ describe("server resource routes", () => {
     expect(serverResources.setSkillEnabled).toHaveBeenCalledWith(skill.id, false);
   });
 
-  it("serves Oppi first, only mutates normal extensions, and uses direct details", async () => {
+  it("serves and mutates only discovered Pi extensions", async () => {
     const { routes, serverResources, refreshModelCatalog } = makeRoutes();
 
     const list = await dispatch(routes, "GET", "/server/resources/extensions");
     expect(list.statusCode).toBe(200);
-    expect(JSON.parse(list.body).extensions[0]).toMatchObject({ id: "oppi", kind: "builtIn" });
-    expect(JSON.parse(list.body).extensions[0]).not.toHaveProperty("path");
+    expect(JSON.parse(list.body)).toEqual({ extensions: [extension], builtInTools: [] });
 
     const detail = await dispatch(routes, "GET", `/server/resources/extensions/${extension.id}`);
     expect(detail.statusCode).toBe(200);
     expect(JSON.parse(detail.body)).toEqual({ summary: extension });
-    expect(serverResources.inspectAgentExtensionTools).not.toHaveBeenCalled();
-
-    const agentTools = await dispatch(
-      routes,
-      "GET",
-      `/server/resources/extensions/${extension.id}?agentTools=true`,
-    );
-    expect(agentTools.statusCode).toBe(200);
-    expect(JSON.parse(agentTools.body).contributedTools).toEqual(["review"]);
-    expect(serverResources.inspectAgentExtensionTools).toHaveBeenCalledWith(extension.id);
 
     const enabled = await dispatch(
       routes,
@@ -391,109 +357,47 @@ describe("server resource routes", () => {
       jsonRequest({ enabled: false }),
     );
     expect(enabled.statusCode).toBe(200);
-    expect(JSON.parse(enabled.body)).toEqual({ ...extension, state: "off" });
     expect(serverResources.setExtensionEnabled).toHaveBeenCalledWith(extension.id, false);
     expect(refreshModelCatalog).toHaveBeenCalledWith({ force: true });
 
-    const builtInMutation = await dispatch(
-      routes,
-      "PUT",
-      "/server/resources/extensions/oppi/enabled",
-      jsonRequest({ enabled: true }),
+    expect((await dispatch(routes, "GET", "/server/resources/extensions/oppi")).statusCode).toBe(
+      400,
     );
-    expect(builtInMutation.statusCode).toBe(400);
-    expect(serverResources.setExtensionEnabled).not.toHaveBeenCalledWith("oppi", true);
   });
 
-  it("gets and CAS-replaces the full Oppi configuration", async () => {
+  it("gets and CAS-replaces the Mobile Output Guide setting", async () => {
     const { routes, storage } = makeRoutes();
 
-    const get = await dispatch(routes, "GET", "/server/extensions/oppi/config");
+    const get = await dispatch(routes, "GET", "/server/mobile-output-guide");
     expect(get.statusCode).toBe(200);
-    expect(JSON.parse(get.body)).toEqual({
-      enabled: false,
-      approvalPolicy: "confirmDestructiveOnly",
-      mobileOutputGuideEnabled: false,
-      revision: 0,
-    });
+    expect(JSON.parse(get.body)).toEqual({ enabled: false, revision: 0 });
 
     const put = await dispatch(
       routes,
       "PUT",
-      "/server/extensions/oppi/config",
-      jsonRequest({ enabled: true, approvalPolicy: "readOnly", baseRevision: 0 }),
+      "/server/mobile-output-guide",
+      jsonRequest({ enabled: true, baseRevision: 0 }),
     );
     expect(put.statusCode).toBe(200);
-    expect(JSON.parse(put.body)).toEqual({
-      enabled: true,
-      approvalPolicy: "readOnly",
-      mobileOutputGuideEnabled: false,
-      revision: 1,
-    });
-    expect(storage.replaceOppiExtensionSettings).toHaveBeenCalledWith(0, {
-      enabled: true,
-      approvalPolicy: "readOnly",
-    });
+    expect(JSON.parse(put.body)).toEqual({ enabled: true, revision: 1 });
+    expect(storage.replaceMobileOutputGuideSettings).toHaveBeenCalledWith(0, { enabled: true });
 
-    storage.replaceOppiExtensionSettings.mockReturnValueOnce({
-      ok: true,
-      current: {
-        enabled: true,
-        approvalPolicy: "readOnly",
-        mobileOutputGuideEnabled: true,
-        revision: 2,
-      },
-    });
-    const guidePut = await dispatch(
-      routes,
-      "PUT",
-      "/server/extensions/oppi/config",
-      jsonRequest({
-        enabled: true,
-        approvalPolicy: "readOnly",
-        mobileOutputGuideEnabled: true,
-        baseRevision: 1,
-      }),
-    );
-    expect(guidePut.statusCode).toBe(200);
-    expect(JSON.parse(guidePut.body)).toEqual({
-      enabled: true,
-      approvalPolicy: "readOnly",
-      mobileOutputGuideEnabled: true,
-      revision: 2,
-    });
-    expect(storage.replaceOppiExtensionSettings).toHaveBeenCalledWith(1, {
-      enabled: true,
-      approvalPolicy: "readOnly",
-      mobileOutputGuideEnabled: true,
-    });
-
-    storage.replaceOppiExtensionSettings.mockReturnValueOnce({
+    storage.replaceMobileOutputGuideSettings.mockReturnValueOnce({
       ok: false,
       reason: "revision_conflict",
-      current: {
-        enabled: false,
-        approvalPolicy: "readOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 3,
-      },
+      current: { enabled: false, revision: 2 },
     });
     const conflict = await dispatch(
       routes,
       "PUT",
-      "/server/extensions/oppi/config",
-      jsonRequest({ enabled: true, approvalPolicy: "readOnly", baseRevision: 2 }),
+      "/server/mobile-output-guide",
+      jsonRequest({ enabled: false, baseRevision: 1 }),
     );
     expect(conflict.statusCode).toBe(409);
     expect(JSON.parse(conflict.body)).toEqual({
-      error: "Oppi extension configuration changed",
+      error: "Mobile Output Guide setting changed",
       code: "revision_conflict",
-      current: {
-        enabled: false,
-        approvalPolicy: "readOnly",
-        mobileOutputGuideEnabled: false,
-        revision: 3,
-      },
+      current: { enabled: false, revision: 2 },
     });
   });
 
@@ -520,7 +424,7 @@ describe("server resource routes", () => {
       },
       {
         method: "PUT",
-        path: "/server/extensions/oppi/config",
+        path: "/server/mobile-output-guide",
         request: jsonRequest({ enabled: true, approvalPolicy: "wrong", baseRevision: 0 }),
       },
     ];
@@ -534,6 +438,80 @@ describe("server resource routes", () => {
     const missing = await dispatch(routes, "GET", `/server/resources/skills/${skill.id}`);
     expect(missing.statusCode).toBe(404);
     expect(JSON.parse(missing.body)).toEqual({ error: "Skill not found" });
+  });
+
+  it("gets Pi system prompt and defaultTools, and writes only defaultTools", async () => {
+    const { routes, serverResources } = makeRoutes();
+
+    const prompt = await dispatch(routes, "GET", "/server/resources/pi/system-prompt");
+    expect(prompt.statusCode).toBe(200);
+    expect(JSON.parse(prompt.body)).toEqual({
+      source: "default",
+      path: "~/.pi/agent/SYSTEM.md",
+      content: "You are an expert coding assistant operating inside pi",
+    });
+
+    const tools = await dispatch(routes, "GET", "/server/resources/pi/default-tools");
+    expect(tools.statusCode).toBe(200);
+    expect(JSON.parse(tools.body)).toEqual({ defaultTools: null });
+
+    const put = await dispatch(
+      routes,
+      "PUT",
+      "/server/resources/pi/default-tools",
+      jsonRequest({ defaultTools: ["read", "grep"] }),
+    );
+    expect(put.statusCode).toBe(200);
+    expect(JSON.parse(put.body)).toEqual({ defaultTools: ["read", "grep"] });
+    expect(serverResources.setPiDefaultTools).toHaveBeenCalledWith(["read", "grep"]);
+
+    const inherit = await dispatch(
+      routes,
+      "PUT",
+      "/server/resources/pi/default-tools",
+      jsonRequest({ defaultTools: null }),
+    );
+    expect(inherit.statusCode).toBe(200);
+    expect(JSON.parse(inherit.body)).toEqual({ defaultTools: null });
+    expect(serverResources.setPiDefaultTools).toHaveBeenCalledWith(null);
+
+    const empty = await dispatch(
+      routes,
+      "PUT",
+      "/server/resources/pi/default-tools",
+      jsonRequest({ defaultTools: [] }),
+    );
+    expect(empty.statusCode).toBe(200);
+    expect(JSON.parse(empty.body)).toEqual({ defaultTools: [] });
+  });
+
+  it("rejects invalid Pi defaultTools bodies and unexpected query parameters", async () => {
+    const { routes } = makeRoutes();
+    const cases: Array<{ method: string; path: string; request?: IncomingMessage }> = [
+      { method: "GET", path: "/server/resources/pi/system-prompt?cwd=%2Fworkspace" },
+      { method: "GET", path: "/server/resources/pi/default-tools?unexpected=1" },
+      {
+        method: "PUT",
+        path: "/server/resources/pi/default-tools",
+        request: jsonRequest({ defaultTools: ["read"], extra: true }),
+      },
+      {
+        method: "PUT",
+        path: "/server/resources/pi/default-tools",
+        request: jsonRequest({ tools: ["read"] }),
+      },
+      {
+        method: "PUT",
+        path: "/server/resources/pi/default-tools",
+        request: jsonRequest({ defaultTools: ["read"] }, "text/plain"),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const response = await dispatch(routes, testCase.method, testCase.path, testCase.request);
+      expect(response.statusCode, `${testCase.method} ${testCase.path}`).toBe(400);
+      expect(JSON.parse(response.body).error).toBeTypeOf("string");
+    }
   });
 
   it("does not handle similarly named or unsupported routes", async () => {

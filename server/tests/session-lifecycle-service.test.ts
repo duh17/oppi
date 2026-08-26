@@ -18,8 +18,6 @@ vi.mock("../src/sdk-backend.js", async (importOriginal) => {
 
 import { requiredModelLaunchFailureMessage } from "../src/agent-launch-service.js";
 import { RuntimeDisconnectedError } from "../src/agent-runtime-transport.js";
-import { AgentDefinitionStore } from "../src/agent-definitions.js";
-import { DEFAULT_AGENT_ID } from "../src/default-agent.js";
 import {
   SessionLifecycleError,
   SessionLifecycleService,
@@ -66,7 +64,6 @@ function makeService(
     startSessionError?: Error;
     workspace?: Workspace;
     dataDir?: string;
-    agentDefinitionStore?: AgentDefinitionStore;
     onStartSession?: () => void;
     saveSessionErrorAtCall?: number;
     sendPromptHandler?: () => Promise<void>;
@@ -96,8 +93,9 @@ function makeService(
 } {
   const createSession = vi.fn(
     (name?: string, model?: string, createOptions?: { id?: string }) =>
-      options.forkSession ??
-      makeSession({ id: createOptions?.id ?? "fork-1", name, model }),
+      options.forkSession
+        ? { ...options.forkSession, name, model }
+        : makeSession({ id: createOptions?.id ?? "fork-1", name, model }),
   );
   const deleteSession = vi.fn(() => true);
   const deleteSearchIndexSession = vi.fn();
@@ -191,19 +189,6 @@ function makeService(
       saveSession,
       findSessionByLaunchIdempotencyKey,
       claimSessionLaunchRecovery,
-      getAgentDefinitionStore: () =>
-        options.agentDefinitionStore ??
-        ({
-          getAgent: () => ({
-            id: DEFAULT_AGENT_ID,
-            name: "Oppi",
-            status: "active",
-            version: 1,
-            definition: { name: "Oppi" },
-            createdAt: 1,
-            updatedAt: 1,
-          }),
-        } as AgentDefinitionStore),
     },
     sessions: { runCommand, sendPrompt, startSession, stopSession },
     sessionRuntimes: {
@@ -466,7 +451,7 @@ describe("SessionLifecycleService", () => {
   });
 
   describe("createControlSession", () => {
-    it("creates a workspace-less Oppi agent session and dispatches its starter prompt", async () => {
+    it("creates a workspace-less ordinary Pi session and dispatches its starter prompt", async () => {
       const createdSession = makeSession({ id: "control-1", workspaceId: undefined });
       const { service, createSession, saveSession, startSession, sendPrompt } = makeService({
         forkSession: createdSession,
@@ -496,13 +481,7 @@ describe("SessionLifecycleService", () => {
         },
         launch: {
           source: "human",
-          agentId: "oppi-default-agent",
-          agentVersion: 1,
-          target: { server: true, displayCwd: "Oppi Control" },
-          tools: {
-            allowed: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
-            noTools: "builtin",
-          },
+          target: { server: true, displayCwd: "Pi Control" },
         },
       });
       expect(startSession).toHaveBeenCalledWith("control-1", undefined);
@@ -513,9 +492,14 @@ describe("SessionLifecycleService", () => {
       });
       expect(result.session).toMatchObject({
         id: "control-1",
+        name: "Revise Release Reviewer",
         workspaceId: undefined,
         contextWindow: 200_000,
       });
+      expect(result.session.launch).not.toHaveProperty("agentId");
+      expect(result.session.launch).not.toHaveProperty("agentVersion");
+      expect(result.session.launch).not.toHaveProperty("agentIcon");
+      expect(result.session.launch).not.toHaveProperty("tools");
       expect(result.prompted).toBe(true);
     });
 
@@ -527,13 +511,8 @@ describe("SessionLifecycleService", () => {
         control: { domain: "skills", intent: "revise", targetId: "skill-1" },
         launch: {
           source: "human",
-          agentId: DEFAULT_AGENT_ID,
           idempotencyKey: "control-launch-1",
-          target: { server: true, displayCwd: "Oppi Control" },
-          tools: {
-            allowed: ["oppi", "ask", "read", "edit", "write", "grep", "find", "ls"],
-            noTools: "builtin",
-          },
+          target: { server: true, displayCwd: "Pi Control" },
           status: "failed",
           requestedAt: 1,
           completedAt: 2,
@@ -632,9 +611,8 @@ describe("SessionLifecycleService", () => {
         control: { domain: "agents", intent: "create" },
         launch: {
           source: "human",
-          agentId: DEFAULT_AGENT_ID,
           idempotencyKey: "control-in-progress-key",
-          target: { server: true, displayCwd: "Oppi Control" },
+          target: { server: true, displayCwd: "Pi Control" },
           status: "launching",
           requestedAt: 1,
           lease: { owner: "other-process", acquiredAt: Date.now(), expiresAt: Date.now() + 60_000 },
@@ -663,9 +641,8 @@ describe("SessionLifecycleService", () => {
         control: { domain: "agents", intent: "create" },
         launch: {
           source: "human",
-          agentId: DEFAULT_AGENT_ID,
           idempotencyKey: "control-cas-lost-key",
-          target: { server: true, displayCwd: "Oppi Control" },
+          target: { server: true, displayCwd: "Pi Control" },
           status: "failed",
           requestedAt: 1,
           completedAt: 2,
@@ -704,9 +681,8 @@ describe("SessionLifecycleService", () => {
         control: { domain: "skills", intent: "revise", targetId: "skill-1" },
         launch: {
           source: "human",
-          agentId: DEFAULT_AGENT_ID,
           idempotencyKey: "control-contended-key",
-          target: { server: true, displayCwd: "Oppi Control" },
+          target: { server: true, displayCwd: "Pi Control" },
           status: "failed",
           requestedAt: 1,
           completedAt: 2,
@@ -778,38 +754,20 @@ describe("SessionLifecycleService", () => {
       });
     });
 
-    it("snapshots customized Oppi agent presentation through lifecycle and summary", async () => {
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-agent-presentation-"));
-      const agentDefinitionStore = new AgentDefinitionStore(dataDir);
-      try {
-        const customized = agentDefinitionStore.updateAgent(DEFAULT_AGENT_ID, {
-          icon: { kind: "emoji", value: "🏠" },
-        });
-        expect(customized?.version).toBe(2);
+    it("projects Control Pi without a saved Agent identity", async () => {
+      const { service } = makeService({
+        forkSession: makeSession({ id: "control-pi", workspaceId: undefined }),
+      });
+      const result = await service.createControlSession({
+        control: { domain: "agents", intent: "create" },
+      });
+      const summary = buildSessionSummary(result.session);
 
-        const { service } = makeService({
-          dataDir,
-          agentDefinitionStore,
-          forkSession: makeSession({ id: "control-agent-icon", workspaceId: undefined }),
-        });
-        const result = await service.createControlSession({
-          control: { domain: "agents", intent: "create" },
-        });
-        const summary = buildSessionSummary(result.session);
-
-        expect(result.session.launch).toMatchObject({
-          agentId: DEFAULT_AGENT_ID,
-          agentVersion: 2,
-          agentIcon: { kind: "emoji", value: "🏠" },
-        });
-        expect(summary).toMatchObject({
-          agentId: DEFAULT_AGENT_ID,
-          agentIcon: { kind: "emoji", value: "🏠" },
-        });
-      } finally {
-        agentDefinitionStore.close();
-        rmSync(dataDir, { recursive: true, force: true });
-      }
+      expect(result.session.name).toBe("Pi Control");
+      expect(result.session.launch?.target.displayCwd).toBe("Pi Control");
+      expect(result.session.launch?.agentId).toBeUndefined();
+      expect(summary.agentId).toBeUndefined();
+      expect(summary.agentIcon).toBeUndefined();
     });
 
     it("resumes declared control sessions without a workspace", async () => {
@@ -881,13 +839,13 @@ describe("SessionLifecycleService", () => {
         piSessionFile: "/tmp/stopped-mirror.jsonl",
       });
       const started = makeSession({ runtime: "oppi", status: "ready" });
-      let currentSettings = { enabled: false, approvalPolicy: "confirmDestructiveOnly" as const };
+      let currentSettings = { enabled: false };
       const settingsReadAtManagedConstruction = vi.fn(() => currentSettings);
       const { service, startSession, saveSession } = makeService({
         started,
         onStartSession: settingsReadAtManagedConstruction,
       });
-      currentSettings = { enabled: true, approvalPolicy: "confirmDestructiveOnly" };
+      currentSettings = { enabled: true };
 
       const result = await service.resumeWorkspaceSession({
         session: mirrorSession,
@@ -904,10 +862,7 @@ describe("SessionLifecycleService", () => {
         }),
       );
       expect(startSession).toHaveBeenCalledWith("sess-1", expect.objectContaining({ id: "ws-1" }));
-      expect(settingsReadAtManagedConstruction).toHaveReturnedWith({
-        enabled: true,
-        approvalPolicy: "confirmDestructiveOnly",
-      });
+      expect(settingsReadAtManagedConstruction).toHaveReturnedWith({ enabled: true });
       expect(result).toMatchObject({ owner: "oppi", startedSession: true });
       expect(result.session).toMatchObject({ runtime: "oppi", status: "ready" });
     });
@@ -1240,12 +1195,12 @@ describe("SessionLifecycleService", () => {
       }
     });
 
-    it("rejects legacy control-session Pi JSONLs", async () => {
+    it("rejects current control-session Pi JSONLs", async () => {
       const piSessionsRoot = getPiSessionsRoot();
       mkdirSync(piSessionsRoot, { recursive: true });
       const piSessionDir = mkdtempSync(join(piSessionsRoot, "oppi-lifecycle-control-import-"));
-      const workspaceDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-workspace-"));
-      const controlCwd = join(workspaceDir, "server", "Oppi Control");
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-data-"));
+      const controlCwd = join(dataDir, "control-sessions", "control-1");
       const jsonlPath = join(piSessionDir, "session.jsonl");
       writeFileSync(
         jsonlPath,
@@ -1259,12 +1214,12 @@ describe("SessionLifecycleService", () => {
           "",
         ].join("\n"),
       );
-      const { service, createSession } = makeService();
+      const { service, createSession } = makeService({ dataDir });
 
       try {
         await expect(
           service.importLocalSession({
-            workspace: makeWorkspace({ name: "Project", hostMount: workspaceDir }),
+            workspace: makeWorkspace({ name: "Project", hostMount: dataDir }),
             piSessionFile: jsonlPath,
           }),
         ).rejects.toMatchObject({
@@ -1274,7 +1229,7 @@ describe("SessionLifecycleService", () => {
         expect(createSession).not.toHaveBeenCalled();
       } finally {
         rmSync(piSessionDir, { recursive: true, force: true });
-        rmSync(workspaceDir, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
       }
     });
   });

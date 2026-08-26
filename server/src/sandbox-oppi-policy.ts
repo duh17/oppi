@@ -1,5 +1,5 @@
 /**
- * Sandbox Oppi tool surface: same workspace only.
+ * Sandbox-scoped Oppi CLI surface: same workspace only.
  *
  * A sandbox session may orchestrate children inside its own sandbox
  * workspace. It must not create host workspaces, edit Agents, touch

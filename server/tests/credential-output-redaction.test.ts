@@ -1,16 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { captureCliOutput, writeJsonEnvelope } from "../src/cli/output.js";
-import { runCli } from "../src/cli/runner.js";
-import { createOppiToolExtensionFactory } from "../src/oppi-tool-extension.js";
 import { redactCredentialString, redactCredentialValue } from "../src/credential-redaction.js";
-
-vi.mock("../src/cli/runner.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/cli/runner.js")>();
-  return { ...actual, runCli: vi.fn() };
-});
-
-const canonicalRun = vi.mocked(runCli);
 
 const secrets = {
   owner: "sk_owner-output-fixture-secret",
@@ -36,10 +27,6 @@ function expectNoFixtureCredentials(value: unknown): void {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   for (const secret of Object.values(secrets)) expect(text).not.toContain(secret);
 }
-
-afterEach(() => {
-  canonicalRun.mockReset();
-});
 
 describe("credential output redaction", () => {
   it("redacts credential-bearing values while preserving collection counts", () => {
@@ -92,43 +79,4 @@ describe("credential output redaction", () => {
     });
   });
 
-  it("keeps credential redaction at the thin wrapper output boundary", async () => {
-    const redactedJson =
-      JSON.stringify({ ok: true, data: redactCredentialValue(credentialPayload) }) + "\n";
-    const redactedHuman = `\u001b[31m${redactCredentialString(JSON.stringify(credentialPayload))}\u001b[0m\n`;
-    canonicalRun.mockResolvedValueOnce({
-      ok: true,
-      exitCode: 0,
-      stdout: redactedJson,
-      humanOutput: redactedHuman,
-      json: JSON.parse(redactedJson),
-    });
-
-    const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
-    createOppiToolExtensionFactory({
-      identity: "ordinary",
-      callerSessionId: "caller",
-      policySnapshot: { approvalPolicy: "confirmDestructiveOnly" },
-    })({
-      on: () => undefined,
-      registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) =>
-        tools.set(tool.name, tool),
-    } as never);
-
-    const result = await tools
-      .get("oppi")!
-      .execute("call-redaction", { args: ["workspace", "list"] }, undefined, undefined, {
-        hasUI: false,
-        ui: {},
-      });
-
-    expectNoFixtureCredentials(result);
-    expect(result).toMatchObject({
-      content: [{ text: redactedJson }],
-      details: {
-        expandedText: `$ oppi workspace list\n\n${redactedHuman}`,
-        presentationFormat: "terminal",
-      },
-    });
-  });
 });

@@ -1,5 +1,106 @@
 import SwiftUI
 
+enum AgentManagementRow: Equatable, Identifiable {
+    case pi
+    case saved(AgentDefinitionSummary)
+
+    var id: String {
+        switch self {
+        case .pi: "pi"
+        case .saved(let agent): "saved:\(agent.id)"
+        }
+    }
+
+    var agentId: String? {
+        guard case .saved(let agent) = self else { return nil }
+        return agent.id
+    }
+
+    var name: String {
+        switch self {
+        case .pi: "Pi"
+        case .saved(let agent): agent.name
+        }
+    }
+}
+
+enum AgentManagementPresentation {
+    static let piAvatar = AssistantAvatar.officialPi
+    static let globalSystemPromptPath = "~/.pi/agent/SYSTEM.md"
+    static let piIdentityAccessibilityLabel = "Pi, Official Pi avatar"
+    static let piDefaultPromptInUseLabel = "Pi default in use until SYSTEM.md exists"
+    static let piStandardToolsSummary = "Pi standard"
+    static let piToolsInheritFooter =
+        "Uses Pi's standard built-in tools. Extension tools stay enabled."
+    static let piToolsExactFooter =
+        "Only the selected built-in tools are available. Extension tools stay enabled."
+
+    static func rows(savedAgents: [AgentDefinitionSummary]) -> [AgentManagementRow] {
+        [.pi] + savedAgents.map(AgentManagementRow.saved)
+    }
+
+    static func piPromptIsReviewable(_ source: PiSystemPromptSnapshot.Source) -> Bool {
+        source == .file
+    }
+
+    static func piSystemPromptAccessibilityLabel(source: PiSystemPromptSnapshot.Source) -> String {
+        source == .file ? "Read and comment on SYSTEM.md" : piDefaultPromptInUseLabel
+    }
+
+    static func piSystemPromptAccessibilityValue(source: PiSystemPromptSnapshot.Source) -> String? {
+        source == .file ? nil : piDefaultPromptInUseLabel
+    }
+
+    struct PiToolsSaveCoordinator: Equatable {
+        var persisted: [String]?
+        private(set) var isSaving = false
+        private var hasQueuedSave = false
+
+        init(persisted: [String]? = nil) {
+            self.persisted = persisted
+        }
+
+        /// Returns true when the caller should run the save loop.
+        mutating func requestSave() -> Bool {
+            if isSaving {
+                hasQueuedSave = true
+                return false
+            }
+            isSaving = true
+            hasQueuedSave = false
+            return true
+        }
+
+        /// Call after a write or unchanged skip. Returns true to continue with the latest desired value.
+        mutating func finishAttempt(persisted next: [String]?) -> Bool {
+            persisted = next
+            if hasQueuedSave {
+                hasQueuedSave = false
+                return true
+            }
+            isSaving = false
+            return false
+        }
+
+        mutating func fail() {
+            hasQueuedSave = false
+            isSaving = false
+        }
+    }
+
+    static func piToolsSummary(defaultTools: [String]?) -> String {
+        guard let defaultTools else { return piStandardToolsSummary }
+        return defaultTools.isEmpty ? "None" : defaultTools.joined(separator: ", ")
+    }
+
+    static func piExactToolNames(
+        selectedNames: Set<String>,
+        builtInTools: [ServerToolSummary]
+    ) -> [String] {
+        builtInTools.map(\.name).filter { selectedNames.contains($0) }
+    }
+}
+
 struct UseOppiSessionRow: View {
     let supportingText: String?
     let isLoading: Bool
@@ -46,20 +147,17 @@ struct AgentManagementView: View {
 
     var body: some View {
         List {
-            if isLoading && agents.isEmpty {
-                ProgressView("Loading agents…")
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .themedListRowBackground()
-            } else if agents.isEmpty {
-                ContentUnavailableView(
-                    "No Agents",
-                    systemImage: "person.crop.circle.badge.plus",
-                    description: Text("Describe the Agent you need below. Oppi will clarify its behavior before creating it.")
-                )
-                .themedListRowBackground()
-            } else {
-                Section {
-                    ForEach(agents) { agent in
+            Section {
+                ForEach(AgentManagementPresentation.rows(savedAgents: agents)) { row in
+                    switch row {
+                    case .pi:
+                        NavigationLink {
+                            PiAgentDetailView()
+                        } label: {
+                            PiAgentSummaryRow()
+                        }
+                        .accessibilityIdentifier("agents.row.pi")
+                    case .saved(let agent):
                         NavigationLink {
                             AgentDetailView(agentId: agent.id) { updated in
                                 guard let index = agents.firstIndex(where: { $0.id == updated.id }) else {
@@ -83,11 +181,16 @@ struct AgentManagementView: View {
                         }
                         .accessibilityIdentifier("agents.row.\(agent.id)")
                     }
-                } header: {
-                    Text("Agents")
-                } footer: {
-                    Text("An Agent stores reusable instructions, resources, and Pi session defaults. Workspaces and worktrees are selected when a session starts.")
                 }
+
+                if isLoading && agents.isEmpty {
+                    ProgressView("Loading saved Agents…")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+            } header: {
+                Text("Agents")
+            } footer: {
+                Text("Pi uses the server's global Pi configuration. Saved Agents add reusable instructions, resources, and session defaults.")
             }
         }
         .navigationTitle("Agents")
@@ -127,6 +230,296 @@ struct AgentManagementView: View {
             error = nil
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+}
+
+struct PiAgentSummaryRow: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            AssistantAvatarPreview(
+                avatar: AgentManagementPresentation.piAvatar,
+                sessionId: "pi-agent-row",
+                size: 30
+            )
+            .padding(4)
+            .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Pi")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("Global Pi configuration")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct PiAgentDetailView: View {
+    @Environment(\.apiClient) private var apiClient
+
+    @State private var isShowingSystemPromptSession = false
+    @State private var isShowingFilePromptReview = false
+    @State private var isShowingDefaultPrompt = false
+    @State private var prompt: PiSystemPromptSnapshot?
+    @State private var defaultTools: [String]?
+    @State private var builtInTools: [ServerToolSummary] = []
+    @State private var toolSelectionMode: AgentToolSelectionMode = .inherit
+    @State private var selectedToolNames: Set<String> = []
+    @State private var hasLoadedTools = false
+    @State private var toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator()
+    @State private var isLoading = false
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            Section {
+                HStack(spacing: 14) {
+                    AssistantAvatarPreview(
+                        avatar: AgentManagementPresentation.piAvatar,
+                        sessionId: "pi-agent-detail",
+                        size: 44
+                    )
+                    .padding(6)
+                    .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 14))
+                    Text("Pi")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.themeFg)
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(AgentManagementPresentation.piIdentityAccessibilityLabel)
+                .accessibilityIdentifier("agents.pi.identity")
+            }
+
+            Section("System Prompt") {
+                LabeledContent("File") {
+                    Text(AgentManagementPresentation.globalSystemPromptPath)
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("agents.pi.systemPromptPath")
+                }
+
+                Button {
+                    openPrompt()
+                } label: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let content = prompt?.content, !content.isEmpty {
+                            Text(content)
+                                .foregroundStyle(.themeFg)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if isLoading {
+                            ProgressView("Loading prompt…")
+                        }
+
+                        if usesDefaultPrompt {
+                            Text(AgentManagementPresentation.piDefaultPromptInUseLabel)
+                                .font(.caption)
+                                .foregroundStyle(.themeComment)
+                        } else {
+                            Label("Read and comment", systemImage: "arrow.up.left.and.arrow.down.right")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.themeBlue)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    AgentManagementPresentation.piSystemPromptAccessibilityLabel(
+                        source: prompt?.source ?? .default
+                    )
+                )
+                .accessibilityValue(
+                    AgentManagementPresentation.piSystemPromptAccessibilityValue(
+                        source: prompt?.source ?? .default
+                    ) ?? ""
+                )
+                .accessibilityIdentifier("agents.pi.systemPrompt")
+            }
+
+            Section {
+                NavigationLink {
+                    AgentToolSelectionView(
+                        mode: $toolSelectionMode,
+                        selectedNames: $selectedToolNames,
+                        builtInTools: builtInTools,
+                        defaultSelection: defaultBuiltInSelection,
+                        title: "Pi Tools",
+                        inheritFooter: AgentManagementPresentation.piToolsInheritFooter,
+                        exactFooter: AgentManagementPresentation.piToolsExactFooter
+                    )
+                    .onDisappear { Task { await saveToolsIfNeeded() } }
+                } label: {
+                    LabeledContent("Tools", value: AgentManagementPresentation.piToolsSummary(defaultTools: defaultTools))
+                }
+                .accessibilityIdentifier("agents.pi.tools")
+            } footer: {
+                Text("Chooses Pi's built-in tools. Extension tools stay enabled.")
+            }
+
+            Section {
+                Button {
+                    isShowingSystemPromptSession = true
+                } label: {
+                    Label("Edit SYSTEM.md with Pi", systemImage: "text.bubble")
+                }
+                .accessibilityIdentifier("agents.pi.editSystemPrompt")
+            } footer: {
+                Text("Opens a Pi Control session so Pi can inspect, create, or edit the global file. Pi is not stored as a saved Agent.")
+            }
+        }
+        .navigationTitle("Pi")
+        .navigationBarTitleDisplayMode(.inline)
+        .themedListSurface()
+        .task { await load() }
+        .refreshable { await load() }
+        .onChange(of: toolSelectionMode) { _, _ in
+            syncDisplayedDefaultTools()
+        }
+        .onChange(of: selectedToolNames) { _, _ in
+            syncDisplayedDefaultTools()
+        }
+        .sheet(isPresented: $isShowingSystemPromptSession) {
+            GuidedControlSessionSheet(
+                domain: .agents,
+                intent: .revise,
+                targetName: "Pi global configuration",
+                initialRequest: "Inspect ~/.pi/agent/SYSTEM.md and help me create or edit Pi's global system prompt. Explain that SYSTEM.md replaces Pi's default system prompt and APPEND_SYSTEM.md appends to it before making changes.",
+                allowsEmptyRequest: false,
+                placeholder: "Describe how Pi's global system prompt should change…"
+            )
+        }
+        .sheet(isPresented: $isShowingFilePromptReview) {
+            if let prompt, let resolvedPath = prompt.resolvedPath {
+                ReviewableControlMarkdownView(
+                    content: prompt.content,
+                    domain: .agents,
+                    targetId: "pi",
+                    targetName: "Pi",
+                    sourceLabel: "SYSTEM.md",
+                    sourcePath: resolvedPath
+                )
+            }
+        }
+        .fullScreenCover(isPresented: $isShowingDefaultPrompt) {
+            EmbeddedFileViewerView(
+                content: .fromText(
+                    prompt?.content ?? "",
+                    filePath: "Pi-default-system-prompt.md"
+                )
+            )
+            .ignoresSafeArea(edges: .top)
+        }
+        .alert("Pi", isPresented: Binding(
+            get: { error != nil },
+            set: { if !$0 { error = nil } }
+        )) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: {
+            Text(error ?? "")
+        }
+    }
+
+    private var usesDefaultPrompt: Bool {
+        prompt?.source != .file
+    }
+
+    private var defaultBuiltInSelection: Set<String> {
+        Set(builtInTools.filter { $0.defaultEnabled == true }.map(\.name))
+    }
+
+    private func openPrompt() {
+        if AgentManagementPresentation.piPromptIsReviewable(prompt?.source ?? .default) {
+            isShowingFilePromptReview = true
+        } else if prompt?.content != nil {
+            isShowingDefaultPrompt = true
+        }
+    }
+
+    private func syncDisplayedDefaultTools() {
+        guard hasLoadedTools else { return }
+        defaultTools = toolSelectionMode == .exact
+            ? AgentManagementPresentation.piExactToolNames(
+                selectedNames: selectedToolNames,
+                builtInTools: builtInTools
+            )
+            : nil
+    }
+
+    @MainActor
+    private func load() async {
+        guard let apiClient else { return }
+
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            async let fetchedPrompt = apiClient.getPiSystemPrompt()
+            async let fetchedTools = apiClient.getPiDefaultTools()
+            async let fetchedCatalog = apiClient.listServerExtensions()
+            let (resolvedPrompt, resolvedTools, catalog) = try await (fetchedPrompt, fetchedTools, fetchedCatalog)
+            prompt = resolvedPrompt
+            builtInTools = catalog.builtInTools
+            applyLoadedDefaultTools(resolvedTools.defaultTools)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func applyLoadedDefaultTools(_ loaded: [String]?) {
+        toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator(persisted: loaded)
+        defaultTools = loaded
+        if let loaded {
+            toolSelectionMode = .exact
+            selectedToolNames = Set(loaded)
+        } else {
+            toolSelectionMode = .inherit
+            selectedToolNames = defaultBuiltInSelection
+        }
+        hasLoadedTools = true
+    }
+
+    private func desiredDefaultTools() -> [String]? {
+        toolSelectionMode == .exact
+            ? AgentManagementPresentation.piExactToolNames(
+                selectedNames: selectedToolNames,
+                builtInTools: builtInTools
+            )
+            : nil
+    }
+
+    @MainActor
+    private func saveToolsIfNeeded() async {
+        guard hasLoadedTools, let apiClient else { return }
+        guard toolsSave.requestSave() else { return }
+
+        while true {
+            let next = desiredDefaultTools()
+            if next == toolsSave.persisted {
+                let persisted = toolsSave.persisted
+                if !toolsSave.finishAttempt(persisted: persisted) { return }
+                continue
+            }
+            do {
+                let saved = try await apiClient.setPiDefaultTools(next)
+                defaultTools = saved.defaultTools
+                error = nil
+                if !toolsSave.finishAttempt(persisted: saved.defaultTools) { return }
+            } catch {
+                let persisted = toolsSave.persisted
+                toolsSave.fail()
+                applyLoadedDefaultTools(persisted)
+                self.error = error.localizedDescription
+                return
+            }
         }
     }
 }
@@ -571,9 +964,7 @@ private struct AgentDetailView: View {
             hasLoaded: connection.serverResourceStore.hasLoadedExtensions(forServer: serverId),
             isSyncing: isLoadingResources || sync.isSyncing,
             lastSyncFailed: sync.lastSyncFailed,
-            hasRows: !connection.serverResourceStore.extensions(forServer: serverId).filter {
-                !$0.isBuiltInOppi
-            }.isEmpty
+            hasRows: !connection.serverResourceStore.extensions(forServer: serverId).isEmpty
         )
     }
 

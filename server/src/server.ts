@@ -460,10 +460,6 @@ export class Server {
     this.serverResources = new ServerResourceService({
       dataDir,
       agentDir: getAgentDir(),
-      oppiSettings: {
-        get: () => this.storage.getOppiExtensionSettings(),
-        getLoadError: () => this.storage.getOppiExtensionSettingsLoadError(),
-      },
     });
     // Server operational metrics collector (event-driven latencies, counts).
     this.opsMetrics = new ServerMetricCollector(

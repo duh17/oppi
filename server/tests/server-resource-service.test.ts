@@ -14,7 +14,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ServerResourceService } from "../src/server-resource-service.js";
 import { readSkillFileSnapshot } from "../src/skill-files.js";
-import { OppiExtensionSettingsStore } from "../src/storage/oppi-extension-settings-store.js";
 
 interface Fixture {
   root: string;
@@ -59,7 +58,6 @@ function makeService(fixture: Fixture): ServerResourceService {
   return new ServerResourceService({
     dataDir: fixture.dataDir,
     agentDir: fixture.agentDir,
-    oppiSettings: new OppiExtensionSettingsStore(fixture.dataDir),
   });
 }
 
@@ -118,7 +116,7 @@ describe("contained Skill file race safety", () => {
 });
 
 describe("ServerResourceService catalogs", () => {
-  it("projects only user-scope Pi candidates, preserves disabled rows, and keeps Oppi first", async () => {
+  it("projects only user-scope Pi candidates and preserves disabled rows without a synthetic Oppi extension", async () => {
     const fixture = makeFixture();
     writeSkill(join(fixture.agentDir, "skills"), "global-skill", "Global skill");
     writeSkill(
@@ -156,22 +154,7 @@ describe("ServerResourceService catalogs", () => {
     expect(skillsResult.skills.map((skill) => skill.name)).not.toContain("project-leak");
     expect(skillsResult.skills[0]?.id).toMatch(/^skill_[a-f0-9]{64}$/);
 
-    expect(extensionsResult.extensions[0]).toEqual(
-      expect.objectContaining({
-        id: "oppi",
-        name: "Oppi",
-        kind: "builtIn",
-        state: "off",
-        isRemovable: false,
-      }),
-    );
-    expect(extensionsResult.extensions[0]).not.toHaveProperty("path");
-    expect(extensionsResult.oppiConfiguration).toEqual({
-      enabled: false,
-      approvalPolicy: "confirmDestructiveOnly",
-      mobileOutputGuideEnabled: false,
-      revision: 0,
-    });
+    expect(extensionsResult.extensions.some((extension) => extension.id === "oppi")).toBe(false);
     expect(
       extensionsResult.extensions.find((extension) => extension.name === "disabled")?.state,
     ).toBe("off");
@@ -311,18 +294,6 @@ describe("ServerResourceService catalogs", () => {
     expect(existsSync(missingPackage)).toBe(false);
   });
 
-  it("surfaces malformed Oppi settings as a bounded built-in load error", async () => {
-    const fixture = makeFixture();
-    mkdirSync(join(fixture.dataDir, "extensions"), { recursive: true });
-    writeFileSync(join(fixture.dataDir, "extensions", "oppi.json"), "{" + "x".repeat(10_000));
-
-    const result = await makeService(fixture).listExtensions();
-    const oppi = result.extensions[0];
-
-    expect(oppi?.state).toBe("error");
-    expect(oppi?.loadError?.length).toBeLessThanOrEqual(2048);
-    expect(result.oppiConfiguration.enabled).toBe(false);
-  });
 });
 
 describe("ServerResourceService mutations and skill details", () => {
@@ -512,9 +483,7 @@ describe("ServerResourceService mutations and skill details", () => {
     mkdirSync(agentExtensions, { recursive: true });
     symlinkSync(packagedExtension, join(agentExtensions, "extension-alias.js"));
 
-    const listed = (await makeService(fixture).listExtensions()).extensions.filter(
-      (extension) => extension.id !== "oppi",
-    );
+    const listed = (await makeService(fixture).listExtensions()).extensions;
 
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toMatch(/^extension_[a-f0-9]{64}$/);

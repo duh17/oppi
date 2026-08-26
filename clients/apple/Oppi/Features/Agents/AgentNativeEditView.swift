@@ -1,6 +1,6 @@
 import SwiftUI
 
-private enum AgentToolSelectionMode: String, CaseIterable {
+enum AgentToolSelectionMode: String, CaseIterable {
     case inherit
     case exact
     case existingPolicy
@@ -14,7 +14,7 @@ private enum AgentToolSelectionMode: String, CaseIterable {
     }
 }
 
-private struct AgentExtensionToolGroup: Identifiable {
+struct AgentExtensionToolGroup: Identifiable {
     let id: String
     let name: String
     let tools: [ServerToolSummary]
@@ -171,7 +171,6 @@ struct AgentNativeEditView: View {
     }
 
     private var canSaveResourceSelections: Bool {
-        guard agent.id != "oppi-default-agent" else { return true }
         let skillsAllowed = skillSelectionMode != .exact
             || AgentResourceCatalogState.isExactSelectionSaveAllowed(
                 initialSelectionWasInherited: agent.definition.resources?.skillPaths == nil,
@@ -186,7 +185,7 @@ struct AgentNativeEditView: View {
     }
 
     private var canSaveToolSelection: Bool {
-        guard agent.id != "oppi-default-agent", toolSelectionMode == .exact else { return true }
+        guard toolSelectionMode == .exact else { return true }
         return agent.definition.sessionDefaults?.tools != nil || !availableBuiltInTools.isEmpty
     }
 
@@ -255,142 +254,125 @@ struct AgentNativeEditView: View {
                     }
                     .accessibilityIdentifier("agent.nativeEdit.thinking")
 
-                    if agent.id == "oppi-default-agent" {
-                        LabeledContent("Tools", value: "Managed by Oppi")
-                            .foregroundStyle(.themeComment)
-                            .accessibilityHint("Oppi controls the tools for its built-in Agent")
-                    } else {
-                        NavigationLink {
-                            AgentToolSelectionView(
-                                mode: $toolSelectionMode,
-                                selectedNames: $selectedToolNames,
-                                builtInTools: availableBuiltInTools,
-                                extensionGroups: effectiveExtensionToolGroups,
-                                unavailableNames: unavailableSelectedToolNames,
-                                defaultSelection: effectiveDefaultToolNames,
-                                existingPolicySummary: existingToolPolicySummary,
-                                isLoadingExtensionTools: isLoadingExtensionTools
-                            )
-                        } label: {
-                            LabeledContent("Tools", value: toolSelectionSummary)
-                        }
-                        .accessibilityIdentifier("agent.nativeEdit.tools")
+                    NavigationLink {
+                        AgentToolSelectionView(
+                            mode: $toolSelectionMode,
+                            selectedNames: $selectedToolNames,
+                            builtInTools: availableBuiltInTools,
+                            extensionGroups: effectiveExtensionToolGroups,
+                            unavailableNames: unavailableSelectedToolNames,
+                            defaultSelection: effectiveDefaultToolNames,
+                            existingPolicySummary: existingToolPolicySummary,
+                            isLoadingExtensionTools: isLoadingExtensionTools
+                        )
+                    } label: {
+                        LabeledContent("Tools", value: toolSelectionSummary)
                     }
+                    .accessibilityIdentifier("agent.nativeEdit.tools")
                 }
 
                 Section {
-                    if agent.id == "oppi-default-agent" {
-                        Label(
-                            "Oppi resources are controlled by Oppi server policy.",
-                            systemImage: "lock.shield"
-                        )
-                        .font(.subheadline)
-                        .foregroundStyle(.themeComment)
-                    } else {
-                        Picker("Skills", selection: $skillSelectionMode) {
-                            ForEach(AgentResourceSelectionMode.allCases, id: \.self) { mode in
-                                Text(mode.title).tag(mode)
-                            }
+                    Picker("Skills", selection: $skillSelectionMode) {
+                        ForEach(AgentResourceSelectionMode.allCases, id: \.self) { mode in
+                            Text(mode.title).tag(mode)
                         }
-                        .accessibilityIdentifier("agent.nativeEdit.skillMode")
+                    }
+                    .accessibilityIdentifier("agent.nativeEdit.skillMode")
 
-                        if skillSelectionMode == .exact {
-                            NavigationLink {
-                                AgentSkillSelectionView(
-                                    skills: availableSkills,
-                                    selectedPaths: $selectedSkillPaths,
-                                    catalogState: skillCatalogState
-                                )
-                            } label: {
-                                LabeledContent("Selected Skills", value: selectionCount(selectedSkillPaths.count))
-                            }
-                            .accessibilityIdentifier("agent.nativeEdit.skills")
+                    if skillSelectionMode == .exact {
+                        NavigationLink {
+                            AgentSkillSelectionView(
+                                skills: availableSkills,
+                                selectedPaths: $selectedSkillPaths,
+                                catalogState: skillCatalogState
+                            )
+                        } label: {
+                            LabeledContent("Selected Skills", value: selectionCount(selectedSkillPaths.count))
                         }
+                        .accessibilityIdentifier("agent.nativeEdit.skills")
+                    }
 
-                        Picker("Extensions", selection: $extensionSelectionMode) {
-                            ForEach(AgentResourceSelectionMode.allCases, id: \.self) { mode in
-                                Text(mode.title).tag(mode)
-                            }
+                    Picker("Extensions", selection: $extensionSelectionMode) {
+                        ForEach(AgentResourceSelectionMode.allCases, id: \.self) { mode in
+                            Text(mode.title).tag(mode)
                         }
-                        .accessibilityIdentifier("agent.nativeEdit.extensionMode")
+                    }
+                    .accessibilityIdentifier("agent.nativeEdit.extensionMode")
 
-                        if extensionSelectionMode == .exact {
-                            NavigationLink {
-                                AgentExtensionSelectionView(
-                                    extensions: availableExtensions,
-                                    selectedIds: $selectedExtensionIds,
-                                    catalogState: extensionCatalogState
-                                )
-                            } label: {
-                                LabeledContent(
-                                    "Selected Extensions",
-                                    value: selectionCount(selectedExtensionIds.count)
-                                )
-                            }
-                            .accessibilityIdentifier("agent.nativeEdit.extensions")
+                    if extensionSelectionMode == .exact {
+                        NavigationLink {
+                            AgentExtensionSelectionView(
+                                extensions: availableExtensions,
+                                selectedIds: $selectedExtensionIds,
+                                catalogState: extensionCatalogState
+                            )
+                        } label: {
+                            LabeledContent(
+                                "Selected Extensions",
+                                value: selectionCount(selectedExtensionIds.count)
+                            )
                         }
+                        .accessibilityIdentifier("agent.nativeEdit.extensions")
+                    }
 
-                        if isLoadingResources {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("Refreshing discovered resources…")
-                                    .font(.caption)
-                                    .foregroundStyle(.themeComment)
-                            }
-                        }
-
-                        if let message = skillCatalogState.statusMessage(for: "Skills") {
-                            Label(message, systemImage: "exclamationmark.triangle")
+                    if isLoadingResources {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Refreshing discovered resources…")
                                 .font(.caption)
-                                .foregroundStyle(.themeOrange)
+                                .foregroundStyle(.themeComment)
                         }
-                        if let message = extensionCatalogState.statusMessage(for: "Extensions") {
-                            Label(message, systemImage: "exclamationmark.triangle")
-                                .font(.caption)
-                                .foregroundStyle(.themeOrange)
-                        }
+                    }
+
+                    if let message = skillCatalogState.statusMessage(for: "Skills") {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.themeOrange)
+                    }
+                    if let message = extensionCatalogState.statusMessage(for: "Extensions") {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.themeOrange)
                     }
                 } header: {
                     Text("Resources")
                 } footer: {
-                    Text("Inherit follows normal Pi discovery. Exact selection can be empty to give this Agent no Skills or optional Extensions. Exact selections explicitly override server discovery, including resources currently Disabled or Off, for this Agent only. Oppi's built-in session extension is controlled separately by server policy.")
+                    Text("Inherit follows normal Pi discovery. Exact selection can be empty to give this Agent no Skills or optional Extensions. Exact selections explicitly override server discovery, including resources currently Disabled or Off, for this Agent only.")
                 }
 
-                if agent.id != "oppi-default-agent" {
-                    Section {
-                        Picker("Runtime", selection: $requiredRuntime) {
-                            Text("Any runtime").tag(WorkspaceRuntime?.none)
-                            Text("Host").tag(Optional(WorkspaceRuntime.host))
-                            Text("Sandbox").tag(Optional(WorkspaceRuntime.sandbox))
-                        }
-                        .accessibilityIdentifier("agent.nativeEdit.requiredRuntime")
-
-                        Picker("Workspaces", selection: $workspaceConstraintMode) {
-                            Text("Any workspace").tag(AgentResourceSelectionMode.inherit)
-                            Text("Allowed list").tag(AgentResourceSelectionMode.exact)
-                        }
-                        .accessibilityIdentifier("agent.nativeEdit.workspaceMode")
-
-                        if workspaceConstraintMode == .exact {
-                            NavigationLink {
-                                AgentWorkspaceSelectionView(
-                                    workspaces: workspaceStore.workspaces,
-                                    selectedIds: $selectedAllowedWorkspaceIds,
-                                    requiredRuntime: requiredRuntime
-                                )
-                            } label: {
-                                LabeledContent(
-                                    "Allowed Workspaces",
-                                    value: selectionCount(selectedAllowedWorkspaceIds.count)
-                                )
-                            }
-                            .accessibilityIdentifier("agent.nativeEdit.workspaces")
-                        }
-                    } header: {
-                        Text("Launch Constraints")
-                    } footer: {
-                        Text("Only compatible workspaces appear when this Agent starts. The server enforces the same restrictions for API and scheduled launches.")
+                Section {
+                    Picker("Runtime", selection: $requiredRuntime) {
+                        Text("Any runtime").tag(WorkspaceRuntime?.none)
+                        Text("Host").tag(Optional(WorkspaceRuntime.host))
+                        Text("Sandbox").tag(Optional(WorkspaceRuntime.sandbox))
                     }
+                    .accessibilityIdentifier("agent.nativeEdit.requiredRuntime")
+
+                    Picker("Workspaces", selection: $workspaceConstraintMode) {
+                        Text("Any workspace").tag(AgentResourceSelectionMode.inherit)
+                        Text("Allowed list").tag(AgentResourceSelectionMode.exact)
+                    }
+                    .accessibilityIdentifier("agent.nativeEdit.workspaceMode")
+
+                    if workspaceConstraintMode == .exact {
+                        NavigationLink {
+                            AgentWorkspaceSelectionView(
+                                workspaces: workspaceStore.workspaces,
+                                selectedIds: $selectedAllowedWorkspaceIds,
+                                requiredRuntime: requiredRuntime
+                            )
+                        } label: {
+                            LabeledContent(
+                                "Allowed Workspaces",
+                                value: selectionCount(selectedAllowedWorkspaceIds.count)
+                            )
+                        }
+                        .accessibilityIdentifier("agent.nativeEdit.workspaces")
+                    }
+                } header: {
+                    Text("Launch Constraints")
+                } footer: {
+                    Text("Only compatible workspaces appear when this Agent starts. The server enforces the same restrictions for API and scheduled launches.")
                 }
 
                 if let error {
@@ -443,9 +425,7 @@ struct AgentNativeEditView: View {
 
     private var availableExtensions: [ServerExtensionSummary] {
         guard let serverId = connection.currentServerId else { return [] }
-        return connection.serverResourceStore.extensions(forServer: serverId).filter {
-            !$0.isBuiltInOppi
-        }
+        return connection.serverResourceStore.extensions(forServer: serverId)
     }
 
     private var effectiveExtensionToolGroups: [AgentExtensionToolGroup] {
@@ -476,7 +456,6 @@ struct AgentNativeEditView: View {
     private var unavailableSelectedToolNames: [String] {
         selectedToolNames
             .subtracting(knownToolNames)
-            .subtracting(["oppi"])
             .sorted()
     }
 
@@ -608,8 +587,7 @@ struct AgentNativeEditView: View {
             case .inherit:
                 toolPolicy = (nil, nil, nil)
             case .exact:
-                let reserved = Set(originalDefaults?.tools ?? []).intersection(["oppi"])
-                toolPolicy = (selectedToolNames.union(reserved).sorted(), nil, nil)
+                toolPolicy = (selectedToolNames.sorted(), nil, nil)
             case .existingPolicy:
                 toolPolicy = (
                     originalDefaults?.tools,
@@ -720,7 +698,7 @@ private struct AgentWorkspaceSelectionView: View {
     }
 }
 
-private struct AgentToolSelectionView: View {
+struct AgentToolSelectionView: View {
     @Binding var mode: AgentToolSelectionMode
     @Binding var selectedNames: Set<String>
     let builtInTools: [ServerToolSummary]
@@ -729,6 +707,12 @@ private struct AgentToolSelectionView: View {
     let defaultSelection: Set<String>
     let existingPolicySummary: String?
     let isLoadingExtensionTools: Bool
+    var title = "Agent Tools"
+    var inheritFooter =
+        "Uses Pi's default coding tools and tools from effective extensions. Future extension tools follow discovery automatically."
+    var exactFooter =
+        "Only selected names are available. This freezes both built-in and extension tools until the Agent is edited again."
+    var showsExtensionTools = true
 
     private var selectableModes: [AgentToolSelectionMode] {
         existingPolicySummary == nil
@@ -764,9 +748,9 @@ private struct AgentToolSelectionView: View {
             } footer: {
                 switch mode {
                 case .inherit:
-                    Text("Uses Pi's default coding tools and tools from effective extensions. Future extension tools follow discovery automatically.")
+                    Text(inheritFooter)
                 case .exact:
-                    Text("Only selected names are available. This freezes both built-in and extension tools until the Agent is edited again.")
+                    Text(exactFooter)
                 case .existingPolicy:
                     Text("This Agent uses \(existingPolicySummary ?? "an existing tool policy"). Choose another mode to replace it.")
                 }
@@ -788,16 +772,18 @@ private struct AgentToolSelectionView: View {
                     }
                 }
 
-                if isLoadingExtensionTools {
+                if showsExtensionTools, isLoadingExtensionTools {
                     Section {
                         ProgressView("Loading selected extension tools…")
                     }
                 }
 
-                ForEach(extensionGroups) { group in
-                    Section(group.name) {
-                        ForEach(group.tools) { tool in
-                            toolButton(tool, source: group.name, canAdd: true)
+                if showsExtensionTools {
+                    ForEach(extensionGroups) { group in
+                        Section(group.name) {
+                            ForEach(group.tools) { tool in
+                                toolButton(tool, source: group.name, canAdd: true)
+                            }
                         }
                     }
                 }
@@ -822,7 +808,7 @@ private struct AgentToolSelectionView: View {
                 }
             }
         }
-        .navigationTitle("Agent Tools")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
         .toolbar {
@@ -889,6 +875,33 @@ private struct AgentToolSelectionView: View {
         ].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier("agent.nativeEdit.tool.\(tool.name)")
+    }
+}
+
+extension AgentToolSelectionView {
+    init(
+        mode: Binding<AgentToolSelectionMode>,
+        selectedNames: Binding<Set<String>>,
+        builtInTools: [ServerToolSummary],
+        defaultSelection: Set<String>,
+        title: String,
+        inheritFooter: String,
+        exactFooter: String
+    ) {
+        self.init(
+            mode: mode,
+            selectedNames: selectedNames,
+            builtInTools: builtInTools,
+            extensionGroups: [],
+            unavailableNames: [],
+            defaultSelection: defaultSelection,
+            existingPolicySummary: nil,
+            isLoadingExtensionTools: false,
+            title: title,
+            inheritFooter: inheritFooter,
+            exactFooter: exactFooter,
+            showsExtensionTools: false
+        )
     }
 }
 

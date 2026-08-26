@@ -1,7 +1,5 @@
 import Foundation
-import SwiftUI
 import Testing
-import UIKit
 @testable import Oppi
 
 @Suite("Server resource store", .serialized)
@@ -59,7 +57,7 @@ struct ServerResourceStoreTests {
         await store.load(
             serverId: "server-a",
             fetchSkills: { [] },
-            fetchExtensions: { ServerExtensionCatalog(extensions: [], oppiConfiguration: disabledOppi) }
+            fetchExtensions: { ServerExtensionCatalog(extensions: []) }
         )
 
         #expect(store.hasLoadedSkills(forServer: "server-a"))
@@ -92,7 +90,7 @@ struct ServerResourceStoreTests {
                 fetchExtensions: {
                     await extensionsGate.suspend()
                     try Task.checkCancellation()
-                    return self.oppiCatalog(configuration: self.disabledOppi)
+                    return self.extensionCatalog()
                 }
             )
         }
@@ -135,7 +133,7 @@ struct ServerResourceStoreTests {
                 fetchExtensions: {
                     await extensionsGate.suspend()
                     try Task.checkCancellation()
-                    return self.oppiCatalog(configuration: self.disabledOppi)
+                    return self.extensionCatalog()
                 }
             )
         }
@@ -218,8 +216,7 @@ struct ServerResourceStoreTests {
                 let cache = makeCache()
                 let expected = cacheState.snapshot(
                     skills: [skill(id: "cached-skill", state: .disabled)],
-                    extensions: [extensionSummary(id: "cached-extension")],
-                    configuration: disabledOppi
+                    extensions: [extensionSummary(id: "cached-extension")]
                 )
                 if let expected {
                     await cache.saveServerResourceCatalog(expected, serverId: "server-a")
@@ -240,7 +237,7 @@ struct ServerResourceStoreTests {
                         },
                         fetchExtensions: {
                             await firstExtensionsGate.suspend()
-                            return self.oppiCatalog(configuration: self.disabledOppi)
+                            return self.extensionCatalog()
                         }
                     )
                 }
@@ -300,7 +297,7 @@ struct ServerResourceStoreTests {
         let cachedExtension = extensionSummary(id: "cached-extension")
         let store = ServerResourceStore(cache: makeCache(), now: { fixedNow })
         store.replaceSkills([], serverId: "server-a")
-        store.replaceExtensions([cachedExtension], oppiConfiguration: disabledOppi, serverId: "server-a")
+        store.replaceExtensions([cachedExtension], serverId: "server-a")
 
         await store.load(
             serverId: "server-a",
@@ -352,7 +349,7 @@ struct ServerResourceStoreTests {
         await store.load(
             serverId: "server-a",
             fetchSkills: { throw URLError(.cannotConnectToHost) },
-            fetchExtensions: { self.oppiCatalog(configuration: self.disabledOppi) }
+            fetchExtensions: { self.extensionCatalog() }
         )
 
         #expect(!store.hasLoadedSkills(forServer: "server-a"))
@@ -367,38 +364,11 @@ struct ServerResourceStoreTests {
 
         #expect(!relaunched.hasLoadedSkills(forServer: "server-a"))
         #expect(relaunched.hasLoadedExtensions(forServer: "server-a"))
-        #expect(relaunched.extensions(forServer: "server-a").map(\.id) == ["oppi"])
-        #expect(relaunched.oppiConfiguration(forServer: "server-a") == disabledOppi)
+        #expect(relaunched.extensions(forServer: "server-a").map(\.id) == ["catalog-extension"])
         #expect(relaunched.syncState(for: .extensions, serverId: "server-a").lastSuccessfulSyncAt == fixedNow)
         #expect(relaunched.syncState(for: .extensions, serverId: "server-a").lastSyncFailed)
         #expect(relaunched.syncState(for: .skills, serverId: "server-a").lastSyncFailed)
         #expect(!relaunched.mutationsAllowed(for: .skills, serverId: "server-a"))
-    }
-
-    @Test func cachedOfflineOppiPolicyActivationDoesNotStartOrReportAMutation() async {
-        let store = configuredOppiStore()
-        await store.load(
-            serverId: "server-a",
-            fetchSkills: { [] },
-            fetchExtensions: { throw APIError.server(status: 503, message: "Extensions unavailable") }
-        )
-        var requestCount = 0
-
-        await store.setOppiApprovalPolicy(
-            .readOnly,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                requestCount += 1
-                return OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, mobileOutputGuideEnabled: false, revision: 2)
-            },
-            fetchAuthoritative: { self.disabledOppi }
-        )
-
-        #expect(!store.mutationsAllowed(for: .extensions, serverId: "server-a"))
-        #expect(requestCount == 0)
-        #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
-        #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-        #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a") == nil)
     }
 
     @Test func optimisticSkillToggleRetainsPackageMetadataAcrossPendingSuccessAndPresentation() async throws {
@@ -459,12 +429,8 @@ struct ServerResourceStoreTests {
             path: privatePath
         )
         let mutationGate = SuspensionGate()
-        let store = configuredOppiStore()
-        store.replaceExtensions(
-            [extensionSummary(id: "oppi", state: .off, kind: .builtIn), cached],
-            oppiConfiguration: disabledOppi,
-            serverId: "server-a"
-        )
+        let store = configuredStore(skills: [])
+        store.replaceExtensions([cached], serverId: "server-a")
 
         let mutation = Task { @MainActor in
             await store.setExtensionEnabled(
@@ -521,7 +487,7 @@ struct ServerResourceStoreTests {
         let first = extensionSummary(id: "first", state: .off)
         let second = extensionSummary(id: "second", state: .on)
         let store = ServerResourceStore(cache: makeCache(), now: { fixedNow })
-        store.replaceExtensions([first, second], oppiConfiguration: disabledOppi, serverId: "server-a")
+        store.replaceExtensions([first, second], serverId: "server-a")
         let authoritative = extensionSummary(id: "first", state: .on, name: "Renamed by server")
 
         await store.setExtensionEnabled(
@@ -550,7 +516,7 @@ struct ServerResourceStoreTests {
                     await refreshGate.suspend()
                     return [original]
                 },
-                fetchExtensions: { self.oppiCatalog(configuration: self.disabledOppi) }
+                fetchExtensions: { self.extensionCatalog() }
             )
         }
         await refreshGate.waitUntilSuspended()
@@ -597,7 +563,7 @@ struct ServerResourceStoreTests {
         await store.load(
             serverId: "server-a",
             fetchSkills: { [refreshed] },
-            fetchExtensions: { self.oppiCatalog(configuration: self.disabledOppi) }
+            fetchExtensions: { self.extensionCatalog() }
         )
 
         #expect(store.skills(forServer: "server-a") == [refreshed])
@@ -680,910 +646,8 @@ struct ServerResourceStoreTests {
         #expect(store.mutationError(for: .skill(original.id), serverId: "server-a") == nil)
     }
 
-    @Test func selectingAlreadyAuthoritativeOppiPolicyIsATrueNoOp() async {
-        let store = configuredOppiStore()
-        var requestCount = 0
-
-        await store.setOppiApprovalPolicy(
-            .confirmDestructiveOnly,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                requestCount += 1
-                return self.disabledOppi
-            },
-            fetchAuthoritative: { self.disabledOppi }
-        )
-
-        #expect(requestCount == 0)
-        #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
-        #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-        #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a") == nil)
-    }
-
-    @Test func rapidOppiChangesSerializeFullSnapshotsAndAdvanceRevision() async {
-        let gate = OppiWriteGate(responses: [
-            OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, mobileOutputGuideEnabled: false, revision: 2),
-            OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, mobileOutputGuideEnabled: false, revision: 3),
-        ])
-        let store = configuredOppiStore()
-
-        let first = Task { @MainActor in
-            await store.setOppiEnabled(
-                true,
-                serverId: "server-a",
-                request: { enabled, policy, guide, revision in
-                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-                },
-                fetchAuthoritative: { try await gate.fetchAuthoritative() }
-            )
-        }
-        await gate.waitForFirstWrite()
-
-        await store.setOppiApprovalPolicy(
-            .confirmAllChanges,
-            serverId: "server-a",
-            request: { enabled, policy, guide, revision in
-                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-            },
-            fetchAuthoritative: { try await gate.fetchAuthoritative() }
-        )
-        #expect(store.oppiConfiguration(forServer: "server-a")?.approvalPolicy == .confirmAllChanges)
-        #expect(store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-
-        await gate.releaseFirstWrite()
-        await first.value
-
-        #expect(await gate.calls() == [
-            .init(enabled: true, policy: .confirmDestructiveOnly, guide: false, revision: 1),
-            .init(enabled: true, policy: .confirmAllChanges, guide: false, revision: 2),
-        ])
-        #expect(store.oppiConfiguration(forServer: "server-a") == OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .confirmAllChanges,
-            mobileOutputGuideEnabled: false,
-            revision: 3
-        ))
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-    }
-
-    @Test func rapidEnableThenGuideChangesSerializeOneFullSnapshotWriter() async {
-        await runRapidMixedOppiChange(guideFirst: false)
-    }
-
-    @Test func rapidGuideThenEnableChangesSerializeOneFullSnapshotWriter() async {
-        await runRapidMixedOppiChange(guideFirst: true)
-    }
-
-    @Test func failedMobileOutputGuideWriteRollsBackToLastAuthoritativeConfiguration() async {
-        let store = configuredOppiStore()
-
-        await store.setOppiMobileOutputGuide(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                throw APIError.server(status: 500, message: "Persistence failed")
-            },
-            fetchAuthoritative: { self.disabledOppi }
-        )
-
-        #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
-        #expect(store.mutationError(for: .oppiMobileOutputGuide, serverId: "server-a") == "Persistence failed")
-        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
-    }
-
-    @Test func mobileOutputGuideConflictAdoptsAuthoritativeConfiguration() async {
-        let store = configuredOppiStore()
-        let current = OppiExtensionConfiguration(
-            enabled: false,
-            approvalPolicy: .readOnly,
-            mobileOutputGuideEnabled: false,
-            revision: 7
-        )
-
-        await store.setOppiMobileOutputGuide(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                // APIClient surfaces the server's coded 409 body as codedServer.
-                throw APIError.codedServer(
-                    status: 409,
-                    message: "Oppi extension configuration changed",
-                    code: "revision_conflict"
-                )
-            },
-            fetchAuthoritative: { current }
-        )
-
-        #expect(store.oppiConfiguration(forServer: "server-a") == current)
-        #expect(store.mutationError(for: .oppiMobileOutputGuide, serverId: "server-a")?.contains("changed elsewhere") == true)
-        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
-    }
-
-    @Test func oldRefreshDuringRapidOppiChangesCannotDiscardWriteResponseOrReuseStaleRevision() async {
-        let gate = OppiWriteGate(responses: [
-            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, mobileOutputGuideEnabled: false, revision: 2)),
-            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, mobileOutputGuideEnabled: false, revision: 3)),
-        ])
-        let refreshGate = SuspensionGate()
-        let store = configuredOppiStore()
-
-        let enable = Task { @MainActor in
-            await store.setOppiEnabled(
-                true,
-                serverId: "server-a",
-                request: { enabled, policy, guide, revision in
-                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-                },
-                fetchAuthoritative: { try await gate.fetchAuthoritative() }
-            )
-        }
-        await gate.waitForFirstWrite()
-        await store.setOppiApprovalPolicy(
-            .confirmAllChanges,
-            serverId: "server-a",
-            request: { enabled, policy, guide, revision in
-                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-            },
-            fetchAuthoritative: { try await gate.fetchAuthoritative() }
-        )
-
-        let refresh = Task { @MainActor in
-            await store.load(
-                serverId: "server-a",
-                fetchSkills: { [] },
-                fetchExtensions: {
-                    await refreshGate.suspend()
-                    return self.oppiCatalog(configuration: self.disabledOppi)
-                }
-            )
-        }
-        await refreshGate.waitUntilSuspended()
-        await refreshGate.release()
-        await refresh.value
-        await gate.releaseFirstWrite()
-        await enable.value
-
-        #expect(await gate.calls() == [
-            .init(enabled: true, policy: .confirmDestructiveOnly, guide: false, revision: 1),
-            .init(enabled: true, policy: .confirmAllChanges, guide: false, revision: 2),
-        ])
-        #expect(store.oppiConfiguration(forServer: "server-a") == OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .confirmAllChanges,
-            mobileOutputGuideEnabled: false,
-            revision: 3
-        ))
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a") == nil)
-        #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a") == nil)
-    }
-
-    @Test func newValueRefreshDuringRapidOppiChangesCannotAdvanceCASBasePastWriteResponse() async {
-        let gate = OppiWriteGate(responses: [
-            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmDestructiveOnly, mobileOutputGuideEnabled: false, revision: 3)),
-            .success(OppiExtensionConfiguration(enabled: true, approvalPolicy: .confirmAllChanges, mobileOutputGuideEnabled: false, revision: 4)),
-        ])
-        let refreshGate = SuspensionGate()
-        let store = configuredOppiStore()
-
-        let enable = Task { @MainActor in
-            await store.setOppiEnabled(
-                true,
-                serverId: "server-a",
-                request: { enabled, policy, guide, revision in
-                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-                },
-                fetchAuthoritative: { try await gate.fetchAuthoritative() }
-            )
-        }
-        await gate.waitForFirstWrite()
-        await store.setOppiApprovalPolicy(
-            .confirmAllChanges,
-            serverId: "server-a",
-            request: { enabled, policy, guide, revision in
-                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-            },
-            fetchAuthoritative: { try await gate.fetchAuthoritative() }
-        )
-
-        let refreshSnapshot = OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .confirmDestructiveOnly,
-            revision: 2
-        )
-        let refresh = Task { @MainActor in
-            await store.load(
-                serverId: "server-a",
-                fetchSkills: { [] },
-                fetchExtensions: {
-                    await refreshGate.suspend()
-                    return self.oppiCatalog(configuration: refreshSnapshot)
-                }
-            )
-        }
-        await refreshGate.waitUntilSuspended()
-        await refreshGate.release()
-        await refresh.value
-        await gate.releaseFirstWrite()
-        await enable.value
-
-        #expect(await gate.calls().map(\.revision) == [1, 3])
-        #expect(store.oppiConfiguration(forServer: "server-a")?.revision == 4)
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-    }
-
-    @Test func refreshDuringFailedRapidOppiChangeDoesNotSendQueuedStaleWrite() async {
-        let gate = OppiWriteGate(responses: [.failure(status: 500, message: "Persistence failed")])
-        let refreshGate = SuspensionGate()
-        let store = configuredOppiStore()
-
-        let enable = Task { @MainActor in
-            await store.setOppiEnabled(
-                true,
-                serverId: "server-a",
-                request: { enabled, policy, guide, revision in
-                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-                },
-                fetchAuthoritative: { try await gate.fetchAuthoritative() }
-            )
-        }
-        await gate.waitForFirstWrite()
-        await store.setOppiApprovalPolicy(
-            .confirmAllChanges,
-            serverId: "server-a",
-            request: { enabled, policy, guide, revision in
-                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-            },
-            fetchAuthoritative: { try await gate.fetchAuthoritative() }
-        )
-
-        let refresh = Task { @MainActor in
-            await store.load(
-                serverId: "server-a",
-                fetchSkills: { [] },
-                fetchExtensions: {
-                    await refreshGate.suspend()
-                    return self.oppiCatalog(configuration: OppiExtensionConfiguration(
-                        enabled: true,
-                        approvalPolicy: .confirmDestructiveOnly,
-                        revision: 2
-                    ))
-                }
-            )
-        }
-        await refreshGate.waitUntilSuspended()
-        await refreshGate.release()
-        await refresh.value
-        await gate.releaseFirstWrite()
-        await enable.value
-
-        #expect(await gate.calls().count == 1)
-        #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a") == "Persistence failed")
-        #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a") == "Persistence failed")
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-    }
-
-    @Test func refreshDuringConflictingRapidOppiChangeAdoptsConflictFetchWithoutDuplicatePut() async {
-        let conflict = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, mobileOutputGuideEnabled: false, revision: 7)
-        let gate = OppiWriteGate(
-            responses: [.failure(status: 409, message: "Oppi extension configuration changed")],
-            authoritative: conflict
-        )
-        let refreshGate = SuspensionGate()
-        let store = configuredOppiStore()
-
-        let enable = Task { @MainActor in
-            await store.setOppiEnabled(
-                true,
-                serverId: "server-a",
-                request: { enabled, policy, guide, revision in
-                    try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-                },
-                fetchAuthoritative: { try await gate.fetchAuthoritative() }
-            )
-        }
-        await gate.waitForFirstWrite()
-        await store.setOppiApprovalPolicy(
-            .confirmAllChanges,
-            serverId: "server-a",
-            request: { enabled, policy, guide, revision in
-                try await gate.write(enabled: enabled, policy: policy, guide: guide, revision: revision)
-            },
-            fetchAuthoritative: { try await gate.fetchAuthoritative() }
-        )
-
-        let refresh = Task { @MainActor in
-            await store.load(
-                serverId: "server-a",
-                fetchSkills: { [] },
-                fetchExtensions: {
-                    await refreshGate.suspend()
-                    return self.oppiCatalog(configuration: self.disabledOppi)
-                }
-            )
-        }
-        await refreshGate.waitUntilSuspended()
-        await refreshGate.release()
-        await refresh.value
-        await gate.releaseFirstWrite()
-        await enable.value
-
-        #expect(await gate.calls().count == 1)
-        #expect(await gate.fetchCount() == 1)
-        #expect(store.oppiConfiguration(forServer: "server-a") == conflict)
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a")?.contains("changed elsewhere") == true)
-        #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a")?.contains("changed elsewhere") == true)
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-    }
-
-    @Test func successfulOppiMutationWritesAuthoritativeSnapshotThroughToCache() async {
-        let cache = makeCache()
-        let store = configuredOppiStore(cache: cache)
-        let authoritative = OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .confirmDestructiveOnly,
-            revision: 2
-        )
-
-        await store.setOppiEnabled(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in authoritative },
-            fetchAuthoritative: { authoritative }
-        )
-
-        let relaunched = ServerResourceStore(cache: cache, now: { fixedNow })
-        await relaunched.load(
-            serverId: "server-a",
-            fetchSkills: { throw APIError.server(status: 503, message: "Offline") },
-            fetchExtensions: { throw APIError.server(status: 503, message: "Offline") }
-        )
-
-        #expect(relaunched.oppiConfiguration(forServer: "server-a") == authoritative)
-        #expect(relaunched.extensions(forServer: "server-a").first(where: \.isBuiltInOppi)?.state == .on)
-    }
-
-    @Test func serverNormalizedOppiResponseSettlesWithoutRewritingTheSameSnapshot() async {
-        // A server that does not advertise the mobile output guide answers with
-        // a nil guide, so its response can never equal the requested snapshot.
-        let normalized = OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .confirmDestructiveOnly,
-            revision: 2
-        )
-        let store = configuredOppiStore()
-        var writes = 0
-
-        await store.setOppiEnabled(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                writes += 1
-                guard writes == 1 else {
-                    throw APIError.server(status: 500, message: "Rewrote an unchanged intent")
-                }
-                return normalized
-            },
-            fetchAuthoritative: { normalized }
-        )
-
-        #expect(writes == 1)
-        #expect(store.oppiConfiguration(forServer: "server-a") == normalized)
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a") == nil)
-        #expect(store.extensions(forServer: "server-a").first(where: \.isBuiltInOppi)?.state == .on)
-    }
-
-    @Test func oppiValueTheServerRefusesSettlesOnItsAnswerAndReportsTheOverride() async {
-        let refused = OppiExtensionConfiguration(
-            enabled: false,
-            approvalPolicy: .confirmDestructiveOnly,
-            mobileOutputGuideEnabled: false,
-            revision: 2
-        )
-        let store = configuredOppiStore()
-        var writes = 0
-
-        await store.setOppiMobileOutputGuide(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                writes += 1
-                guard writes == 1 else {
-                    throw APIError.server(status: 500, message: "Rewrote an unchanged intent")
-                }
-                return refused
-            },
-            fetchAuthoritative: { refused }
-        )
-
-        #expect(writes == 1)
-        #expect(store.oppiConfiguration(forServer: "server-a") == refused)
-        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
-        #expect(store.mutationError(for: .oppiMobileOutputGuide, serverId: "server-a") != nil)
-    }
-
-    @Test func failedOppiWriteRollsBackToLastAuthoritativeConfiguration() async {
-        let store = configuredOppiStore()
-
-        await store.setOppiEnabled(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in throw APIError.server(status: 500, message: "Persistence failed") },
-            fetchAuthoritative: { disabledOppi }
-        )
-
-        #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a") == "Persistence failed")
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-    }
-
-    @Test func conflictAdoptsAuthoritativeConfigurationAndClearsQueuedIntent() async {
-        let store = configuredOppiStore()
-        let current = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, mobileOutputGuideEnabled: false, revision: 7)
-
-        await store.setOppiEnabled(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in throw APIError.server(status: 409, message: "Oppi extension configuration changed") },
-            fetchAuthoritative: { current }
-        )
-
-        #expect(store.oppiConfiguration(forServer: "server-a") == current)
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a")?.contains("changed elsewhere") == true)
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-    }
-
-    @Test func failedConflictRefetchKeepsLastTrustworthyConfigOfflineUntilRefreshRecovers() async {
-        let writeGate = SuspensionGate()
-        let store = configuredOppiStore()
-        var writeRevisions: [Int] = []
-
-        let enabledMutation = Task { @MainActor in
-            await store.setOppiEnabled(
-                true,
-                serverId: "server-a",
-                request: { _, _, _, revision in
-                    writeRevisions.append(revision)
-                    await writeGate.suspend()
-                    throw APIError.server(status: 409, message: "Oppi extension configuration changed")
-                },
-                fetchAuthoritative: {
-                    throw APIError.server(status: 503, message: "Authoritative refetch unavailable")
-                }
-            )
-        }
-        await writeGate.waitUntilSuspended()
-
-        await store.setOppiApprovalPolicy(
-            .confirmAllChanges,
-            serverId: "server-a",
-            request: { _, _, _, revision in
-                writeRevisions.append(revision)
-                return self.disabledOppi
-            },
-            fetchAuthoritative: { self.disabledOppi }
-        )
-        await writeGate.release()
-        await enabledMutation.value
-
-        #expect(writeRevisions == [1])
-        #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
-        #expect(store.syncState(for: .extensions, serverId: "server-a").lastSyncFailed)
-        #expect(!store.mutationsAllowed(for: .extensions, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiApprovalPolicy, serverId: "server-a"))
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a")?.contains("changed elsewhere") == true)
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a")?.contains("Authoritative refetch unavailable") == true)
-        #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a")?.contains("changed elsewhere") == true)
-        #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a")?.contains("Authoritative refetch unavailable") == true)
-
-        let recovered = OppiExtensionConfiguration(enabled: false, approvalPolicy: .readOnly, mobileOutputGuideEnabled: false, revision: 8)
-        await store.load(
-            serverId: "server-a",
-            fetchSkills: { [] },
-            fetchExtensions: { self.oppiCatalog(configuration: recovered) }
-        )
-
-        #expect(store.oppiConfiguration(forServer: "server-a") == recovered)
-        #expect(!store.syncState(for: .extensions, serverId: "server-a").lastSyncFailed)
-        #expect(store.mutationsAllowed(for: .extensions, serverId: "server-a"))
-        #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a") == nil)
-        #expect(store.mutationError(for: .oppiApprovalPolicy, serverId: "server-a") == nil)
-    }
-
-    @Test func failedConflictRefetchPersistsLockoutAndRelaunchKeepsDisplayedConfigurationReadOnly() async throws {
-        let cache = makeCache()
-        let normalExtension = extensionSummary(id: "normal-extension", state: .on)
-        let store = configuredStore(cache: cache, skills: [skill(id: "skill", state: .enabled)])
-        store.replaceExtensions(
-            [extensionSummary(id: "oppi", state: .off, kind: .builtIn), normalExtension],
-            oppiConfiguration: disabledOppi,
-            serverId: "server-a"
-        )
-
-        await store.setOppiEnabled(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                throw APIError.server(status: 409, message: "Oppi extension configuration changed")
-            },
-            fetchAuthoritative: {
-                throw APIError.server(status: 503, message: "Authoritative refetch unavailable")
-            }
-        )
-
-        let lockedSnapshot = try #require(await cache.loadServerResourceCatalog(serverId: "server-a"))
-        #expect(lockedSnapshot.oppiRequiresAuthoritativeRefresh)
-        #expect(lockedSnapshot.oppiConfiguration == disabledOppi)
-
-        let relaunched = ServerResourceStore(cache: cache, now: { fixedNow })
-        var refreshAttempts = 0
-        await relaunched.load(
-            serverId: "server-a",
-            fetchSkills: {
-                refreshAttempts += 1
-                throw CancellationError()
-            },
-            fetchExtensions: {
-                refreshAttempts += 1
-                throw CancellationError()
-            }
-        )
-
-        #expect(refreshAttempts == 2)
-        #expect(relaunched.hasLoadedExtensions(forServer: "server-a"))
-        #expect(relaunched.extensions(forServer: "server-a").map(\.id) == ["oppi", "normal-extension"])
-        #expect(relaunched.oppiConfiguration(forServer: "server-a") == disabledOppi)
-        #expect(relaunched.syncState(for: .extensions, serverId: "server-a").lastSyncFailed)
-        #expect(relaunched.requiresAuthoritativeOppiRefresh(forServer: "server-a"))
-        #expect(!relaunched.mutationsAllowed(for: .extensions, serverId: "server-a"))
-
-        var mutationRequests = 0
-        await relaunched.setExtensionEnabled(
-            id: normalExtension.id,
-            enabled: false,
-            serverId: "server-a",
-            request: { _, _ in
-                mutationRequests += 1
-                return normalExtension
-            }
-        )
-        await relaunched.setOppiEnabled(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                mutationRequests += 1
-                return self.disabledOppi
-            },
-            fetchAuthoritative: { self.disabledOppi }
-        )
-        await relaunched.setOppiApprovalPolicy(
-            .readOnly,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                mutationRequests += 1
-                return self.disabledOppi
-            },
-            fetchAuthoritative: { self.disabledOppi }
-        )
-
-        #expect(mutationRequests == 0)
-        #expect(await cache.loadServerResourceCatalog(serverId: "server-a")?.oppiRequiresAuthoritativeRefresh == true)
-    }
-
-    @Test func successfulAuthoritativeRefreshClearsAndPersistsRelaunchedLockoutWhileCancellationDoesNot() async throws {
-        let cache = makeCache()
-        let locked = ServerResourceCatalogSnapshot(
-            skills: [],
-            extensions: [extensionSummary(id: "oppi", state: .off, kind: .builtIn)],
-            oppiConfiguration: disabledOppi,
-            savedAt: fixedNow,
-            skillsLoaded: false,
-            extensionsLoaded: true,
-            skillsSavedAt: nil,
-            extensionsSavedAt: fixedNow,
-            oppiRequiresAuthoritativeRefresh: true
-        )
-        await cache.saveServerResourceCatalog(locked, serverId: "server-a")
-        let store = ServerResourceStore(cache: cache, now: { fixedNow })
-
-        await store.load(
-            serverId: "server-a",
-            fetchSkills: { throw URLError(.cancelled) },
-            fetchExtensions: { throw URLError(.cancelled) }
-        )
-
-        #expect(store.requiresAuthoritativeOppiRefresh(forServer: "server-a"))
-        #expect(!store.mutationsAllowed(for: .extensions, serverId: "server-a"))
-        #expect(await cache.loadServerResourceCatalog(serverId: "server-a") == locked)
-
-        let recovered = OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .readOnly,
-            revision: 8
-        )
-        await store.load(
-            serverId: "server-a",
-            fetchSkills: { [] },
-            fetchExtensions: { self.oppiCatalog(configuration: recovered) }
-        )
-
-        #expect(!store.requiresAuthoritativeOppiRefresh(forServer: "server-a"))
-        #expect(store.oppiConfiguration(forServer: "server-a") == recovered)
-        #expect(store.mutationsAllowed(for: .extensions, serverId: "server-a"))
-        #expect(await cache.loadServerResourceCatalog(serverId: "server-a")?.oppiRequiresAuthoritativeRefresh == false)
-
-        let relaunched = ServerResourceStore(cache: cache, now: { fixedNow })
-        await relaunched.load(
-            serverId: "server-a",
-            fetchSkills: { throw CancellationError() },
-            fetchExtensions: { throw CancellationError() }
-        )
-        #expect(!relaunched.requiresAuthoritativeOppiRefresh(forServer: "server-a"))
-        #expect(relaunched.oppiConfiguration(forServer: "server-a") == recovered)
-        #expect(relaunched.mutationsAllowed(for: .extensions, serverId: "server-a"))
-    }
-
-    @Test func oppiDetailRefreshesCachedConfigurationWhenAuthoritativeRefreshIsRequired() {
-        #expect(!oppiDetailShouldRefresh(
-            configuration: disabledOppi,
-            requiresAuthoritativeRefresh: false
-        ))
-        #expect(oppiDetailShouldRefresh(
-            configuration: disabledOppi,
-            requiresAuthoritativeRefresh: true
-        ))
-        #expect(oppiDetailShouldRefresh(
-            configuration: nil,
-            requiresAuthoritativeRefresh: false
-        ))
-    }
-
-    @Test func refreshCancellationCannotEraseNewerFailedConflictRecovery() async {
-        for cancellation in RefreshCancellationRepresentation.allCases {
-            let cache = makeCache()
-            let extensionGate = SuspensionGate()
-            let store = configuredOppiStore(cache: cache)
-
-            let refresh = Task { @MainActor in
-                await store.load(
-                    serverId: "server-a",
-                    fetchSkills: { [] },
-                    fetchExtensions: {
-                        await extensionGate.suspend()
-                        return try cancellation.raise() as ServerExtensionCatalog
-                    }
-                )
-            }
-            await extensionGate.waitUntilSuspended()
-
-            await store.setOppiEnabled(
-                true,
-                serverId: "server-a",
-                request: { _, _, _, _ in
-                    throw APIError.server(status: 409, message: "Oppi extension configuration changed")
-                },
-                fetchAuthoritative: {
-                    throw APIError.server(status: 503, message: "Authoritative refetch unavailable")
-                }
-            )
-
-            #expect(store.requiresAuthoritativeOppiRefresh(forServer: "server-a"))
-            #expect(store.syncState(for: .extensions, serverId: "server-a").lastSyncFailed)
-            #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a")?.contains("changed elsewhere") == true)
-
-            if cancellation == .cancelledTask {
-                refresh.cancel()
-            }
-            await extensionGate.release()
-            await refresh.value
-
-            let extensionsSync = store.syncState(for: .extensions, serverId: "server-a")
-            #expect(!extensionsSync.isSyncing)
-            #expect(extensionsSync.lastSyncFailed)
-            #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
-            #expect(store.requiresAuthoritativeOppiRefresh(forServer: "server-a"))
-            #expect(!store.mutationsAllowed(for: .extensions, serverId: "server-a"))
-            #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a")?.contains("changed elsewhere") == true)
-            #expect(store.mutationError(for: .oppiEnabled, serverId: "server-a")?.contains("Authoritative refetch unavailable") == true)
-            #expect(await cache.loadServerResourceCatalog(serverId: "server-a")?.oppiRequiresAuthoritativeRefresh == true)
-        }
-    }
-
-    @Test func refreshStartedBeforeFailedConflictRefetchCannotReenableStaleConfiguration() async {
-        let refreshGate = SuspensionGate()
-        let store = configuredOppiStore()
-        let staleRefresh = OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .confirmAllChanges,
-            revision: 2
-        )
-
-        let refresh = Task { @MainActor in
-            await store.load(
-                serverId: "server-a",
-                fetchSkills: { [] },
-                fetchExtensions: {
-                    await refreshGate.suspend()
-                    return self.oppiCatalog(configuration: staleRefresh)
-                }
-            )
-        }
-        await refreshGate.waitUntilSuspended()
-
-        await store.setOppiEnabled(
-            true,
-            serverId: "server-a",
-            request: { _, _, _, _ in
-                throw APIError.server(status: 409, message: "Oppi extension configuration changed")
-            },
-            fetchAuthoritative: {
-                throw APIError.server(status: 503, message: "Authoritative refetch unavailable")
-            }
-        )
-        await refreshGate.release()
-        await refresh.value
-
-        #expect(store.oppiConfiguration(forServer: "server-a") == disabledOppi)
-        #expect(store.syncState(for: .extensions, serverId: "server-a").lastSyncFailed)
-        #expect(!store.mutationsAllowed(for: .extensions, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-    }
-
-    @Test func oppiSettingsUseTwoAccessibleNativeSwitchesWith44PointTargets() throws {
-        let store = configuredOppiStore()
-        let controller = UIHostingController(rootView:
-            NavigationStack {
-                OppiExtensionDetailView(target: ServerResourceDetailNavTarget(
-                    serverId: "server-a",
-                    kind: .extension,
-                    resourceId: "oppi"
-                ))
-            }
-            .environment(store)
-            .environment(ServerStore())
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-
-        let switches = accessibleSubviews(in: controller.view).compactMap { $0 as? UISwitch }
-        #expect(switches.count == 2)
-        #expect(Set(switches.compactMap(\.accessibilityIdentifier)) == [
-            "extensions.oppi.enabled",
-            "extensions.oppi.mobileOutputGuide",
-        ])
-        for nativeSwitch in switches {
-            #expect(nativeSwitch.isAccessibilityElement)
-            #expect(nativeSwitch.accessibilityFrame.height >= 44)
-            #expect(nativeSwitch.superview is UIControl)
-            #expect(nativeSwitch.superview?.bounds.height ?? 0 >= 44)
-        }
-    }
-
-    private func runRapidMixedOppiChange(guideFirst: Bool) async {
-        let firstResponse = guideFirst
-            ? OppiExtensionConfiguration(
-                enabled: false,
-                approvalPolicy: .confirmDestructiveOnly,
-                mobileOutputGuideEnabled: true,
-                revision: 2
-            )
-            : OppiExtensionConfiguration(
-                enabled: true,
-                approvalPolicy: .confirmDestructiveOnly,
-                mobileOutputGuideEnabled: false,
-                revision: 2
-            )
-        let finalResponse = OppiExtensionConfiguration(
-            enabled: true,
-            approvalPolicy: .confirmDestructiveOnly,
-            mobileOutputGuideEnabled: true,
-            revision: 3
-        )
-        let gate = OppiWriteGate(responses: [firstResponse, finalResponse])
-        let store = configuredOppiStore()
-        let first = Task { @MainActor in
-            if guideFirst {
-                await store.setOppiMobileOutputGuide(
-                    true,
-                    serverId: "server-a",
-                    request: { enabled, policy, guide, revision in
-                        try await gate.write(
-                            enabled: enabled,
-                            policy: policy,
-                            guide: guide,
-                            revision: revision
-                        )
-                    },
-                    fetchAuthoritative: { try await gate.fetchAuthoritative() }
-                )
-            } else {
-                await store.setOppiEnabled(
-                    true,
-                    serverId: "server-a",
-                    request: { enabled, policy, guide, revision in
-                        try await gate.write(
-                            enabled: enabled,
-                            policy: policy,
-                            guide: guide,
-                            revision: revision
-                        )
-                    },
-                    fetchAuthoritative: { try await gate.fetchAuthoritative() }
-                )
-            }
-        }
-        await gate.waitForFirstWrite()
-
-        if guideFirst {
-            await store.setOppiEnabled(
-                true,
-                serverId: "server-a",
-                request: { enabled, policy, guide, revision in
-                    try await gate.write(
-                        enabled: enabled,
-                        policy: policy,
-                        guide: guide,
-                        revision: revision
-                    )
-                },
-                fetchAuthoritative: { try await gate.fetchAuthoritative() }
-            )
-        } else {
-            await store.setOppiMobileOutputGuide(
-                true,
-                serverId: "server-a",
-                request: { enabled, policy, guide, revision in
-                    try await gate.write(
-                        enabled: enabled,
-                        policy: policy,
-                        guide: guide,
-                        revision: revision
-                    )
-                },
-                fetchAuthoritative: { try await gate.fetchAuthoritative() }
-            )
-        }
-        await gate.releaseFirstWrite()
-        await first.value
-
-        #expect(await gate.calls() == [
-            .init(
-                enabled: !guideFirst,
-                policy: .confirmDestructiveOnly,
-                guide: guideFirst,
-                revision: 1
-            ),
-            .init(enabled: true, policy: .confirmDestructiveOnly, guide: true, revision: 2),
-        ])
-        #expect(store.oppiConfiguration(forServer: "server-a") == finalResponse)
-        #expect(!store.isMutationPending(.oppiEnabled, serverId: "server-a"))
-        #expect(!store.isMutationPending(.oppiMobileOutputGuide, serverId: "server-a"))
-    }
-
     private var fixedNow: Date {
         Date(timeIntervalSince1970: 1_700_000_000)
-    }
-
-    private var disabledOppi: OppiExtensionConfiguration {
-        OppiExtensionConfiguration(enabled: false, approvalPolicy: .confirmDestructiveOnly, mobileOutputGuideEnabled: false, revision: 1)
-    }
-
-    private func configuredOppiStore(cache: TimelineCache? = nil) -> ServerResourceStore {
-        configuredStore(cache: cache ?? makeCache(), skills: [])
     }
 
     private func configuredStore(
@@ -1592,23 +656,12 @@ struct ServerResourceStoreTests {
     ) -> ServerResourceStore {
         let store = ServerResourceStore(cache: cache ?? makeCache(), now: { fixedNow })
         store.replaceSkills(skills, serverId: "server-a")
-        store.replaceExtensions(
-            [extensionSummary(id: "oppi", state: .off, kind: .builtIn)],
-            oppiConfiguration: disabledOppi,
-            serverId: "server-a"
-        )
+        store.replaceExtensions([], serverId: "server-a")
         return store
     }
 
-    private func oppiCatalog(configuration: OppiExtensionConfiguration) -> ServerExtensionCatalog {
-        ServerExtensionCatalog(
-            extensions: [extensionSummary(
-                id: "oppi",
-                state: configuration.enabled ? .on : .off,
-                kind: .builtIn
-            )],
-            oppiConfiguration: configuration
-        )
+    private func extensionCatalog() -> ServerExtensionCatalog {
+        ServerExtensionCatalog(extensions: [extensionSummary(id: "catalog-extension")])
     }
 
     private func makeCache() -> TimelineCache {
@@ -1622,8 +675,12 @@ struct ServerResourceStoreTests {
         ServerResourceCatalogSnapshot(
             skills: skills,
             extensions: extensions,
-            oppiConfiguration: disabledOppi,
-            savedAt: fixedNow
+            builtInTools: [],
+            savedAt: fixedNow,
+            skillsLoaded: true,
+            extensionsLoaded: true,
+            skillsSavedAt: fixedNow,
+            extensionsSavedAt: fixedNow
         )
     }
 
@@ -1675,21 +732,6 @@ struct ServerResourceStoreTests {
     }
 }
 
-@MainActor
-private func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
-    if let match = root as? T { return match }
-    for child in root.subviews {
-        if let match = firstSubview(ofType: type, in: child) { return match }
-    }
-    return nil
-}
-
-@MainActor
-private func accessibleSubviews(in root: UIView) -> [UIView] {
-    let children = root.subviews.flatMap { accessibleSubviews(in: $0) }
-    return (root.isAccessibilityElement ? [root] : []) + children
-}
-
 private enum RefreshCacheState: CaseIterable {
     case cold
     case partial
@@ -1697,8 +739,7 @@ private enum RefreshCacheState: CaseIterable {
 
     func snapshot(
         skills: [ServerSkillSummary],
-        extensions: [ServerExtensionSummary],
-        configuration: OppiExtensionConfiguration
+        extensions: [ServerExtensionSummary]
     ) -> ServerResourceCatalogSnapshot? {
         let skillsSavedAt = Date(timeIntervalSince1970: 1_699_999_900)
         let extensionsSavedAt = Date(timeIntervalSince1970: 1_699_999_950)
@@ -1709,25 +750,23 @@ private enum RefreshCacheState: CaseIterable {
             return ServerResourceCatalogSnapshot(
                 skills: skills,
                 extensions: [],
-                oppiConfiguration: nil,
+                builtInTools: [],
                 savedAt: skillsSavedAt,
                 skillsLoaded: true,
                 extensionsLoaded: false,
                 skillsSavedAt: skillsSavedAt,
-                extensionsSavedAt: nil,
-                oppiRequiresAuthoritativeRefresh: false
+                extensionsSavedAt: nil
             )
         case .full:
             return ServerResourceCatalogSnapshot(
                 skills: skills,
                 extensions: extensions,
-                oppiConfiguration: configuration,
+                builtInTools: [],
                 savedAt: extensionsSavedAt,
                 skillsLoaded: true,
                 extensionsLoaded: true,
                 skillsSavedAt: skillsSavedAt,
-                extensionsSavedAt: extensionsSavedAt,
-                oppiRequiresAuthoritativeRefresh: false
+                extensionsSavedAt: extensionsSavedAt
             )
         }
     }
@@ -1799,94 +838,5 @@ private actor CompletionSignal {
     func wait() async {
         guard !completed else { return }
         await withCheckedContinuation { waiters.append($0) }
-    }
-}
-
-private actor OppiWriteGate {
-    enum Response: Sendable {
-        case success(OppiExtensionConfiguration)
-        case failure(status: Int, message: String)
-    }
-
-    struct Call: Equatable, Sendable {
-        let enabled: Bool
-        let policy: OppiApprovalPolicy
-        let guide: Bool?
-        let revision: Int
-    }
-
-    private var responses: [Response]
-    private let authoritative: OppiExtensionConfiguration
-    private var recordedCalls: [Call] = []
-    private var authoritativeFetchCount = 0
-    private var firstWriteWaiters: [CheckedContinuation<Void, Never>] = []
-    private var firstWriteRelease: CheckedContinuation<Void, Never>?
-
-    init(
-        responses: [OppiExtensionConfiguration],
-        authoritative: OppiExtensionConfiguration = OppiExtensionConfiguration(
-            enabled: false,
-            approvalPolicy: .readOnly,
-            revision: 0
-        )
-    ) {
-        self.responses = responses.map(Response.success)
-        self.authoritative = authoritative
-    }
-
-    init(
-        responses: [Response],
-        authoritative: OppiExtensionConfiguration = OppiExtensionConfiguration(
-            enabled: false,
-            approvalPolicy: .readOnly,
-            revision: 0
-        )
-    ) {
-        self.responses = responses
-        self.authoritative = authoritative
-    }
-
-    func write(
-        enabled: Bool,
-        policy: OppiApprovalPolicy,
-        guide: Bool?,
-        revision: Int
-    ) async throws -> OppiExtensionConfiguration {
-        recordedCalls.append(Call(enabled: enabled, policy: policy, guide: guide, revision: revision))
-        if recordedCalls.count == 1 {
-            let waiters = firstWriteWaiters
-            firstWriteWaiters.removeAll()
-            waiters.forEach { $0.resume() }
-            await withCheckedContinuation { firstWriteRelease = $0 }
-        }
-        switch responses.removeFirst() {
-        case .success(let configuration):
-            return configuration
-        case .failure(let status, let message):
-            throw APIError.server(status: status, message: message)
-        }
-    }
-
-    func fetchAuthoritative() -> OppiExtensionConfiguration {
-        authoritativeFetchCount += 1
-        return authoritative
-    }
-
-    func waitForFirstWrite() async {
-        guard recordedCalls.isEmpty else { return }
-        await withCheckedContinuation { firstWriteWaiters.append($0) }
-    }
-
-    func releaseFirstWrite() {
-        firstWriteRelease?.resume()
-        firstWriteRelease = nil
-    }
-
-    func calls() -> [Call] {
-        recordedCalls
-    }
-
-    func fetchCount() -> Int {
-        authoritativeFetchCount
     }
 }

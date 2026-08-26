@@ -11,7 +11,6 @@ struct ServerExtensionListPresentationTests {
             extensionRow(id: "enabled", name: "Alpha", state: .on),
             extensionRow(id: "broken", name: "Broken", state: .error, loadError: "Import failed"),
             extensionRow(id: "other-built-in", name: "Another", kind: .builtIn, state: .on),
-            extensionRow(id: "oppi", name: "Oppi", kind: .builtIn, state: .off),
         ]
 
         let presentation = ServerExtensionListPresentation(extensions: rows, query: "")
@@ -22,7 +21,7 @@ struct ServerExtensionListPresentationTests {
             .enabledPiExtensions,
             .disabledPiExtensions,
         ])
-        #expect(presentation.sections[0].extensions.map(\.id) == ["oppi", "other-built-in"])
+        #expect(presentation.sections[0].extensions.map(\.id) == ["other-built-in"])
         #expect(presentation.sections[1].extensions.map(\.id) == ["broken"])
         #expect(presentation.sections[2].extensions.map(\.id) == ["enabled"])
         #expect(presentation.sections[3].extensions.map(\.id) == ["disabled"])
@@ -49,16 +48,8 @@ struct ServerExtensionListPresentationTests {
         #expect(ServerExtensionListPresentation.accessibilityLabel(for: resource) == "Review tools, @scope/review-tools, Configured package source, On")
     }
 
-    @Test func pathlessSemanticOppiIsRecognizedWithoutNameBranching() {
-        let semanticOppi = extensionRow(id: "oppi", name: "Localized title", kind: .builtIn, state: .off)
-        let sameNameButNormal = extensionRow(id: "normal", name: "Oppi", kind: .file, state: .on)
-
-        #expect(ServerExtensionListPresentation.detailKind(for: semanticOppi) == .oppi)
-        #expect(ServerExtensionListPresentation.detailKind(for: sameNameButNormal) == .generic)
-    }
-
     @Test func noPiExtensionsAndFilteredNoResultsRemainDistinct() {
-        let builtIn = extensionRow(id: "oppi", name: "Oppi", kind: .builtIn, state: .off)
+        let builtIn = extensionRow(id: "built-in", name: "Built-in", kind: .builtIn, state: .off)
 
         let unfiltered = ServerExtensionListPresentation(extensions: [builtIn], query: "")
         let filtered = ServerExtensionListPresentation(extensions: [builtIn], query: "missing")
@@ -66,45 +57,6 @@ struct ServerExtensionListPresentationTests {
         #expect(unfiltered.hasNoPiExtensions)
         #expect(!unfiltered.isFilteredNoResults)
         #expect(filtered.isFilteredNoResults)
-    }
-
-    @Test func offlineOrPendingOppiApprovalChoicesAreUnavailable() {
-        #expect(!oppiApprovalPolicyChoicesAreAvailable(
-            oppiIsEnabled: true,
-            extensionsMutationsAllowed: false
-        ))
-        #expect(!oppiApprovalPolicyChoicesAreAvailable(
-            oppiIsEnabled: true,
-            extensionsMutationsAllowed: true,
-            anySettingPending: true
-        ))
-        #expect(!oppiApprovalPolicyChoicesAreAvailable(
-            oppiIsEnabled: false,
-            extensionsMutationsAllowed: true
-        ))
-        #expect(oppiApprovalPolicyChoicesAreAvailable(
-            oppiIsEnabled: true,
-            extensionsMutationsAllowed: true
-        ))
-    }
-
-    @Test func allOppiSettingControlsDisableWhileAnySettingWriteIsPending() {
-        #expect(!oppiSettingsControlsAreAvailable(
-            extensionsMutationsAllowed: true,
-            anySettingPending: true
-        ))
-        #expect(oppiSettingsControlsAreAvailable(
-            extensionsMutationsAllowed: true,
-            anySettingPending: false
-        ))
-    }
-
-    @Test func approvalChoicesExposeExactConsequenceCopyAndSavedMessage() {
-        #expect(OppiApprovalPolicyPresentation(.confirmDestructiveOnly).title == "Confirm destructive only")
-        #expect(OppiApprovalPolicyPresentation(.confirmDestructiveOnly).consequence == "Reads run immediately. Create, update, send, stop, resume, fork, run, and pause actions run without approval. Delete, remove, and archive actions require explicit approval.")
-        #expect(OppiApprovalPolicyPresentation(.confirmAllChanges).consequence == "Reads run immediately. Every mutation requires explicit approval.")
-        #expect(OppiApprovalPolicyPresentation(.readOnly).consequence == "Only allowlisted read commands are available. Mutation requests fail with a read-only error and do not open an approval prompt.")
-        #expect(OppiApprovalPolicyPresentation.savedMessage(serverName: "mac-studio") == "Saved on mac-studio. New sessions use this setting. Reload an active session to apply it now.")
     }
 
     @Test func rowAccessibilityIncludesNameProvenanceAndState() {

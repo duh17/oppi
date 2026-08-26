@@ -159,9 +159,6 @@ export async function cmdSchedule(
     }
 
     if (mode === "create") {
-      if (flags["server-default-agent"] === "true") {
-        throw new Error("Server default Agent schedules are not implemented yet");
-      }
       const prompt = flags.prompt;
       if (!prompt?.trim()) throw new Error("--prompt is required");
       const name = flags.name || `Schedule ${new Date().toISOString()}`;

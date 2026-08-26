@@ -6,7 +6,6 @@ import {
   ServerResourceValidationError,
 } from "../server-resource-service.js";
 import { createLogger } from "../logger.js";
-import type { OppiApprovalPolicy } from "../oppi-extension-settings.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
@@ -15,8 +14,8 @@ const SKILL_ID = /^skill_[a-f0-9]{64}$/;
 const EXTENSION_ID = /^extension_[a-f0-9]{64}$/;
 const log = createLogger({ base: { component: "route_server_resources" } });
 
-type ResourceOperation = "catalog" | "detail" | "file" | "mutation" | "oppi_persistence";
-type ResourceKind = "skill" | "extension" | "oppi_configuration";
+type ResourceOperation = "catalog" | "detail" | "file" | "mutation" | "guide_persistence";
+type ResourceKind = "skill" | "extension" | "mobile_output_guide" | "pi_config";
 type ErrorCategory =
   | "conflict"
   | "fsync_failed"
@@ -106,18 +105,30 @@ async function parseJsonObject(
   return body;
 }
 
-function isApprovalPolicy(value: unknown): value is OppiApprovalPolicy {
+function isBaseRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isDefaultToolsValue(value: unknown): value is string[] | null {
   return (
-    value === "confirmDestructiveOnly" || value === "confirmAllChanges" || value === "readOnly"
+    value === null || (Array.isArray(value) && value.every((entry) => typeof entry === "string"))
   );
 }
 
-function isOptionalBoolean(value: unknown): value is boolean | undefined {
-  return value === undefined || typeof value === "boolean";
-}
-
-function isBaseRevision(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+function errorForPiConfig(
+  res: ServerResponse,
+  helpers: RouteHelpers,
+  operation: Extract<ResourceOperation, "catalog" | "mutation">,
+  cause: unknown,
+): void {
+  if (cause instanceof ServerResourceValidationError) {
+    logRouteRejected(operation, "pi_config", "validation");
+    helpers.error(res, 400, cause.message);
+    return;
+  }
+  logRouteFailure(operation, "pi_config", cause);
+  const action = operation === "mutation" ? "update" : "load";
+  helpers.error(res, 500, `Unable to ${action} Pi configuration`);
 }
 
 function errorForResource(
@@ -331,10 +342,6 @@ export function createServerResourceRoutes(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (id === "oppi") {
-      error(res, helpers, "The built-in Oppi extension uses its configuration endpoint");
-      return;
-    }
     let body: Record<string, unknown> | undefined;
     try {
       body = await parseJsonObject(req, helpers, ["enabled"]);
@@ -364,70 +371,91 @@ export function createServerResourceRoutes(
     }
   }
 
-  function getOppiConfiguration(url: URL, res: ServerResponse): void {
+  async function getPiSystemPrompt(url: URL, res: ServerResponse): Promise<void> {
     if (!hasNoQuery(url)) {
       error(res, helpers, "This server-global route does not accept query parameters");
       return;
     }
-    helpers.json(res, ctx.storage.getOppiExtensionSettings());
+    try {
+      helpers.json(res, await ctx.serverResources.getPiSystemPrompt());
+    } catch (cause: unknown) {
+      errorForPiConfig(res, helpers, "catalog", cause);
+    }
   }
 
-  async function replaceOppiConfiguration(
+  async function getPiDefaultTools(url: URL, res: ServerResponse): Promise<void> {
+    if (!hasNoQuery(url)) {
+      error(res, helpers, "This server-global route does not accept query parameters");
+      return;
+    }
+    try {
+      helpers.json(res, await ctx.serverResources.getPiDefaultTools());
+    } catch (cause: unknown) {
+      errorForPiConfig(res, helpers, "catalog", cause);
+    }
+  }
+
+  async function replacePiDefaultTools(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body: Record<string, unknown> | undefined;
+    try {
+      body = await parseJsonObject(req, helpers, ["defaultTools"]);
+    } catch {
+      logRouteRejected("mutation", "pi_config", "validation");
+      error(res, helpers, "Request body must be valid JSON within 16 KiB");
+      return;
+    }
+    if (!body || !isDefaultToolsValue(body.defaultTools)) {
+      logRouteRejected("mutation", "pi_config", "validation");
+      error(res, helpers, "Request body must be exactly { defaultTools: string[] | null }");
+      return;
+    }
+    try {
+      helpers.json(res, await ctx.serverResources.setPiDefaultTools(body.defaultTools));
+    } catch (cause: unknown) {
+      errorForPiConfig(res, helpers, "mutation", cause);
+    }
+  }
+
+  function getMobileOutputGuide(url: URL, res: ServerResponse): void {
+    if (!hasNoQuery(url)) {
+      error(res, helpers, "This server-global route does not accept query parameters");
+      return;
+    }
+    helpers.json(res, ctx.storage.getMobileOutputGuideSettings());
+  }
+
+  async function replaceMobileOutputGuide(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     let body: Record<string, unknown> | undefined;
     try {
-      if (acceptsJson(req)) {
-        const parsed = await helpers.parseBody<unknown>(req, { maxBytes: MAX_REQUEST_BODY_BYTES });
-        if (
-          isRecord(parsed) &&
-          (hasExactKeys(parsed, ["enabled", "approvalPolicy", "baseRevision"]) ||
-            hasExactKeys(parsed, [
-              "enabled",
-              "approvalPolicy",
-              "baseRevision",
-              "mobileOutputGuideEnabled",
-            ]))
-        ) {
-          body = parsed;
-        }
-      }
+      body = await parseJsonObject(req, helpers, ["enabled", "baseRevision"]);
     } catch {
-      logRouteRejected("oppi_persistence", "oppi_configuration", "validation");
+      logRouteRejected("guide_persistence", "mobile_output_guide", "validation");
       error(res, helpers, "Request body must be valid JSON within 16 KiB");
       return;
     }
-    if (
-      !body ||
-      typeof body.enabled !== "boolean" ||
-      !isApprovalPolicy(body.approvalPolicy) ||
-      !isBaseRevision(body.baseRevision) ||
-      !isOptionalBoolean(body.mobileOutputGuideEnabled)
-    ) {
-      logRouteRejected("oppi_persistence", "oppi_configuration", "validation");
+    if (!body || typeof body.enabled !== "boolean" || !isBaseRevision(body.baseRevision)) {
+      logRouteRejected("guide_persistence", "mobile_output_guide", "validation");
       error(
         res,
         helpers,
-        "Request body must include enabled, approvalPolicy, and a non-negative baseRevision",
+        "Request body must be exactly { enabled: boolean, baseRevision: number }",
       );
       return;
     }
 
     try {
-      const result = ctx.storage.replaceOppiExtensionSettings(body.baseRevision, {
+      const result = ctx.storage.replaceMobileOutputGuideSettings(body.baseRevision, {
         enabled: body.enabled,
-        approvalPolicy: body.approvalPolicy,
-        ...(body.mobileOutputGuideEnabled !== undefined
-          ? { mobileOutputGuideEnabled: body.mobileOutputGuideEnabled }
-          : {}),
       });
       if (!result.ok) {
-        logRouteRejected("oppi_persistence", "oppi_configuration", "conflict");
+        logRouteRejected("guide_persistence", "mobile_output_guide", "conflict");
         helpers.json(
           res,
           {
-            error: "Oppi extension configuration changed",
+            error: "Mobile Output Guide setting changed",
             code: "revision_conflict",
             current: result.current,
           },
@@ -437,8 +465,8 @@ export function createServerResourceRoutes(
       }
       helpers.json(res, result.current);
     } catch (cause: unknown) {
-      logRouteFailure("oppi_persistence", "oppi_configuration", cause);
-      helpers.error(res, 500, "Unable to update Oppi extension configuration");
+      logRouteFailure("guide_persistence", "mobile_output_guide", cause);
+      helpers.error(res, 500, "Unable to update Mobile Output Guide setting");
     }
   }
 
@@ -451,9 +479,19 @@ export function createServerResourceRoutes(
       await listExtensions(url, res);
       return true;
     }
-    if (path === "/server/extensions/oppi/config") {
-      if (method === "GET") getOppiConfiguration(url, res);
-      else if (method === "PUT") await replaceOppiConfiguration(req, res);
+    if (path === "/server/resources/pi/system-prompt" && method === "GET") {
+      await getPiSystemPrompt(url, res);
+      return true;
+    }
+    if (path === "/server/resources/pi/default-tools") {
+      if (method === "GET") await getPiDefaultTools(url, res);
+      else if (method === "PUT") await replacePiDefaultTools(req, res);
+      else return false;
+      return true;
+    }
+    if (path === "/server/mobile-output-guide") {
+      if (method === "GET") getMobileOutputGuide(url, res);
+      else if (method === "PUT") await replaceMobileOutputGuide(req, res);
       else return false;
       return true;
     }
@@ -483,7 +521,7 @@ export function createServerResourceRoutes(
     const extensionEnabledMatch = path.match(/^\/server\/resources\/extensions\/([^/]+)\/enabled$/);
     if (extensionEnabledMatch && method === "PUT") {
       const id = decodeSegment(extensionEnabledMatch[1]);
-      if (!id || (id !== "oppi" && !EXTENSION_ID.test(id))) {
+      if (!id || !EXTENSION_ID.test(id)) {
         error(res, helpers, "Invalid extension identifier");
       } else {
         await setExtensionEnabled(id, req, res);
@@ -493,7 +531,7 @@ export function createServerResourceRoutes(
     const extensionDetailMatch = path.match(/^\/server\/resources\/extensions\/([^/]+)$/);
     if (extensionDetailMatch && method === "GET") {
       const id = decodeSegment(extensionDetailMatch[1]);
-      if (!id || (id !== "oppi" && !EXTENSION_ID.test(id))) {
+      if (!id || !EXTENSION_ID.test(id)) {
         error(res, helpers, "Invalid extension identifier");
       } else {
         await extensionDetail(id, url, res);

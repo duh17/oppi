@@ -1398,7 +1398,6 @@ const HELP_TOPICS: HelpTopic[] = [
       "resources.extensionIds and resources.skillPaths are exact selections; omitting them inherits normal Pi discovery.",
       "sessionDefaults.tools is an allowlist of real tool names that must exist at launch; stale names are dropped from the session with a warning instead of failing the launch.",
       "Use 'oppi session create --agent <agent> --workspace <workspace> --prompt <text>' to launch a saved Agent.",
-      "Server-default Agent launches and self-management extensions are separate from public saved Agent definitions.",
     ],
     examples: [
       { command: "oppi agent create --name Reviewer --definition ./agent.json --json" },

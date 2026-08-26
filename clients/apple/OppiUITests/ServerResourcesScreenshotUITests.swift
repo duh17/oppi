@@ -24,27 +24,8 @@ final class ServerResourcesScreenshotUITests: XCTestCase {
         launchPreview(screen: "server-resources-extensions")
         XCTAssertTrue(app.navigationBars["Extensions"].waitForExistence(timeout: 5))
         assertServerScope()
-        XCTAssertTrue(app.descendants(matching: .any)["serverResources.extensions.oppi"].label.contains("Built-in extension"))
         XCTAssertTrue(app.descendants(matching: .any)["serverResources.extensions.error"].label.contains("Error"))
         saveScreenshot(name: "server-resources-extensions-normal")
-
-        app.terminate()
-        launchPreview(screen: "server-resources-oppi")
-        let readOnly = oppiPolicyButton(titled: "Read only")
-        XCTAssertTrue(readOnly.waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["serverResources.oppi.selectedPolicy"].label, "Selected: Confirm destructive only")
-        readOnly.tap()
-        XCTAssertEqual(app.staticTexts["serverResources.oppi.selectedPolicy"].label, "Selected: Read only")
-        let savedMessage = app.descendants(matching: .any)["extensions.oppi.savedMessage"]
-        if !savedMessage.waitForExistence(timeout: 2) {
-            app.swipeUp()
-        }
-        XCTAssertTrue(
-            savedMessage.waitForExistence(timeout: 5)
-                && savedMessage.label.contains("Saved on Preview Server"),
-            "Saved/apply copy did not render after an approval policy selection"
-        )
-        saveScreenshot(name: "server-resources-oppi-normal")
     }
 
     func testServerResourcesOfflineAndPendingPreviews() throws {
@@ -52,17 +33,6 @@ final class ServerResourcesScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Extensions"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["serverResources.cachedWarning"].waitForExistence(timeout: 5))
         saveScreenshot(name: "server-resources-cached-offline")
-
-        app.terminate()
-        launchPreview(screen: "server-resources-oppi-pending")
-        XCTAssertTrue(app.descendants(matching: .any)["serverResources.oppi.pending"].waitForExistence(timeout: 5))
-        XCTAssertFalse(oppiPolicyButton(titled: "Read only").isEnabled)
-        saveScreenshot(name: "server-resources-oppi-pending")
-
-    }
-
-    private func oppiPolicyButton(titled title: String) -> XCUIElement {
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
     }
 
     private func assertServerScope() {

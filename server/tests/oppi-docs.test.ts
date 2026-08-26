@@ -111,12 +111,7 @@ describe("Oppi documentation prompt hint", () => {
         name: "Replacement Agent",
         instructions: { mode: "replace", text: "Saved-Agent replacement authority." },
       },
-      getOppiExtensionSettings: () => ({
-        enabled: false,
-        approvalPolicy: "confirmDestructiveOnly",
-        mobileOutputGuideEnabled: true,
-        revision: 1,
-      }),
+      getMobileOutputGuideSettings: () => ({ enabled: true, revision: 1 }),
       onEvent: () => {},
       onEnd: () => {},
     });
