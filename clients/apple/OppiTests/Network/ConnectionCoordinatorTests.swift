@@ -53,6 +53,22 @@ struct ConnectionCoordinatorTests {
         #expect(result == false)
     }
 
+    @Test func restoreActiveServerSwitchesWithoutWaitingForHTTPS() {
+        let (coordinator, _) = makeCoordinator()
+        let serverA = makeServer(id: "sha256:restore-a", name: "Server A")
+        let serverB = makeServer(id: "sha256:restore-b", name: "Server B")
+        coordinator.serverStore.addOrUpdate(serverA)
+        coordinator.serverStore.addOrUpdate(serverB)
+        coordinator.activatePairedServerShell(serverA)
+        coordinator.activatePairedServerShell(serverB)
+        #expect(coordinator.activeServerId == "sha256:restore-b")
+
+        #expect(coordinator.restoreActiveServer("sha256:restore-a"))
+        #expect(coordinator.activeServerId == "sha256:restore-a")
+        #expect(coordinator.restoreActiveServer("sha256:unknown") == false)
+        #expect(coordinator.activeServerId == "sha256:restore-a")
+    }
+
     @Test func switchToSameServerIsNoOp() {
         let (coordinator, _) = makeCoordinator()
         let server = makeServer(id: "sha256:same-test", name: "Studio")

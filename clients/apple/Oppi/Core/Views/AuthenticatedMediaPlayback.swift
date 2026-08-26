@@ -1205,11 +1205,15 @@ private struct AuthenticatedMediaPlayerSurface: View {
                     onFullScreenChange: { fullScreen in
                         if fullScreen {
                             model.setFullScreen(true)
+                            WorkspaceMediaOverlayPost.begin()
                         }
                     },
                     onFullScreenWillEnd: { model.handleWillEndFullScreen() },
                     onFullScreenDidEnd: { attached in
                         model.handleDidEndFullScreen(hostIsAttached: attached)
+                    },
+                    onFullScreenTransitionFinished: {
+                        WorkspaceMediaOverlayPost.end()
                     },
                     onPictureInPictureChange: { active in
                         if active {

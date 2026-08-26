@@ -163,6 +163,17 @@ final class ConnectionCoordinator {
         return connection
     }
 
+    /// Restore the focused server immediately from paired credentials.
+    /// Used after AVKit fullscreen so Back cannot land on a foreign inbox
+    /// while HTTPS preparation is still in flight.
+    @discardableResult
+    func restoreActiveServer(_ serverId: String) -> Bool {
+        guard let server = serverStore.server(for: serverId) else { return false }
+        if server.id == activeServerId { return true }
+        _ = activatePairedServerShell(server)
+        return true
+    }
+
     private func stagePairedServerConnection(_ server: PairedServer) -> ServerConnection {
         if let existing = connections[server.id] {
             return existing

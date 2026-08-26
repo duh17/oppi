@@ -1120,11 +1120,13 @@ struct DataImagePreviewView: View {
 
 /// AVKit's transition completion is MainActor-isolated; the delegate method is
 /// not. This box lets the completion call back without a sendability error.
-private struct FullScreenEndHandoff: @unchecked Sendable {
+struct FullScreenEndHandoff: @unchecked Sendable {
     let onDidEnd: ((Bool) -> Void)?
+    let onTransitionFinished: (() -> Void)?
 
     func complete(cancelled: Bool, player: AVPlayer?, isPlayingNow: Bool, hostIsAttached: Bool) {
-        if !cancelled {
+        if WorkspaceMediaOverlayNavigationPolicy.shouldEndOverlay(cancelled: cancelled) {
+            onTransitionFinished?()
             onDidEnd?(hostIsAttached)
         }
         if isPlayingNow {
@@ -1138,6 +1140,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     var onFullScreenChange: ((Bool) -> Void)?
     var onFullScreenWillEnd: (() -> Void)?
     var onFullScreenDidEnd: ((Bool) -> Void)?
+    var onFullScreenTransitionFinished: (() -> Void)?
     var onPictureInPictureChange: ((Bool) -> Void)?
     var onPictureInPictureDidStop: ((Bool) -> Void)?
 
@@ -1146,6 +1149,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             onFullScreenChange: onFullScreenChange,
             onFullScreenWillEnd: onFullScreenWillEnd,
             onFullScreenDidEnd: onFullScreenDidEnd,
+            onFullScreenTransitionFinished: onFullScreenTransitionFinished,
             onPictureInPictureChange: onPictureInPictureChange,
             onPictureInPictureDidStop: onPictureInPictureDidStop
         )
@@ -1163,6 +1167,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         context.coordinator.onFullScreenChange = onFullScreenChange
         context.coordinator.onFullScreenWillEnd = onFullScreenWillEnd
         context.coordinator.onFullScreenDidEnd = onFullScreenDidEnd
+        context.coordinator.onFullScreenTransitionFinished = onFullScreenTransitionFinished
         context.coordinator.onPictureInPictureChange = onPictureInPictureChange
         context.coordinator.onPictureInPictureDidStop = onPictureInPictureDidStop
         if uiViewController.player !== player {
@@ -1185,6 +1190,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         var onFullScreenChange: ((Bool) -> Void)?
         var onFullScreenWillEnd: (() -> Void)?
         var onFullScreenDidEnd: ((Bool) -> Void)?
+        var onFullScreenTransitionFinished: (() -> Void)?
         var onPictureInPictureChange: ((Bool) -> Void)?
         var onPictureInPictureDidStop: ((Bool) -> Void)?
         private var wasPlayingBeforeFullScreen = false
@@ -1193,12 +1199,14 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             onFullScreenChange: ((Bool) -> Void)?,
             onFullScreenWillEnd: (() -> Void)?,
             onFullScreenDidEnd: ((Bool) -> Void)?,
+            onFullScreenTransitionFinished: (() -> Void)?,
             onPictureInPictureChange: ((Bool) -> Void)?,
             onPictureInPictureDidStop: ((Bool) -> Void)?
         ) {
             self.onFullScreenChange = onFullScreenChange
             self.onFullScreenWillEnd = onFullScreenWillEnd
             self.onFullScreenDidEnd = onFullScreenDidEnd
+            self.onFullScreenTransitionFinished = onFullScreenTransitionFinished
             self.onPictureInPictureChange = onPictureInPictureChange
             self.onPictureInPictureDidStop = onPictureInPictureDidStop
         }
@@ -1222,7 +1230,10 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             // Keep ownership through the dismiss animation. AVKit still holds
             // the player until this coordinator completes.
             onFullScreenWillEnd?()
-            let handoff = FullScreenEndHandoff(onDidEnd: onFullScreenDidEnd)
+            let handoff = FullScreenEndHandoff(
+                onDidEnd: onFullScreenDidEnd,
+                onTransitionFinished: onFullScreenTransitionFinished
+            )
             MainActor.assumeIsolated {
                 let isPlayingNow = playerViewController.player?.timeControlStatus == .playing
                     || playerViewController.player?.rate ?? 0 > 0

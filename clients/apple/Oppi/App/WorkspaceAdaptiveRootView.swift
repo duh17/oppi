@@ -8,7 +8,12 @@ struct WorkspaceAdaptiveRootView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let presentation = presentation(for: proxy.size)
+            let measured = presentation(for: proxy.size)
+            let presentation = WorkspaceMediaOverlayNavigationPolicy.effectivePresentation(
+                measured: measured,
+                overlayActive: navigation.isMediaOverlayActive,
+                frozen: navigation.workspaceNavigationPresentation
+            )
 
             Group {
                 switch presentation {
@@ -23,8 +28,15 @@ struct WorkspaceAdaptiveRootView: View {
             .onAppear {
                 applyPresentation(presentation)
             }
-            .onChange(of: presentation) { _, newValue in
+            .onChange(of: measured) { _, newValue in
+                guard WorkspaceMediaOverlayNavigationPolicy.shouldApplyMeasuredPresentation(
+                    overlayActive: navigation.isMediaOverlayActive
+                ) else { return }
                 applyPresentation(newValue)
+            }
+            .onChange(of: navigation.isMediaOverlayActive) { wasActive, isActive in
+                guard wasActive, !isActive else { return }
+                applyPresentation(measured)
             }
         }
     }

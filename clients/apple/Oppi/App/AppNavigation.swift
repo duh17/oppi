@@ -159,7 +159,16 @@ final class AppNavigation {
     /// Keeps detail-only pushes, such as file browser directory drilling, out of
     /// the workspace sidebar/content stack.
     var splitDetailPath = NavigationPath() {
-        didSet { trimSplitDetailElementsToPathCount() }
+        didSet {
+            if isRestoringMediaOverlay { return }
+            if restoreMediaOverlayRouteIfNeeded(
+                snapshotCount: mediaOverlaySnapshot?.splitDetailPath.count ?? 0,
+                currentCount: splitDetailPath.count
+            ) {
+                return
+            }
+            trimSplitDetailElementsToPathCount()
+        }
     }
     private var splitDetailPathElements: [WorkspaceSplitDetailPathElement] = []
 
@@ -204,10 +213,23 @@ final class AppNavigation {
     /// When set, the Quick Session sheet is presented over the current view.
     var showQuickSession: Bool = false
 
+    /// True while native AVKit fullscreen is covering the workspace shell.
+    private(set) var isMediaOverlayActive = false
+    private var mediaOverlayDepth = 0
+    private var mediaOverlaySnapshot: MediaOverlaySnapshot?
+    private var isRestoringMediaOverlay = false
+
     /// Programmatic navigation path for the workspace tab.
     /// Set externally (e.g. by QuickSessionSheet) to deep-link to a session.
     var workspacePath = NavigationPath() {
         didSet {
+            if isRestoringMediaOverlay { return }
+            if restoreMediaOverlayRouteIfNeeded(
+                snapshotCount: mediaOverlaySnapshot?.workspacePath.count ?? 0,
+                currentCount: workspacePath.count
+            ) {
+                return
+            }
             synchronizeWorkspaceStackMetadata()
             if workspaceNavigationPresentation == .stack, workspacePath.count == 0 {
                 selectedWorkspaceFilter = nil
@@ -254,6 +276,7 @@ final class AppNavigation {
     }
 
     func setWorkspaceNavigationPresentation(_ presentation: WorkspaceNavigationPresentation) {
+        guard !isMediaOverlayActive else { return }
         guard workspaceNavigationPresentation != presentation else { return }
         let preservedStackState = presentation == .stack ? stackStateForCurrentSplitSelection() : nil
         let preservedSplitState = presentation == .split ? splitStateForCurrentStackSelection() : nil
@@ -280,6 +303,58 @@ final class AppNavigation {
             replaceWorkspaceStack(path: NavigationPath(), diagnosticContexts: [], routeElements: [])
             splitColumnVisibility = splitVisibility(for: splitDetailTarget)
         }
+    }
+
+    /// Snapshot the visible workspace route and selected server before AVKit
+    /// fullscreen can pop the stack or flip compact/split shells.
+    func beginMediaOverlay(activeServerId: String?) {
+        if mediaOverlayDepth == 0 {
+            mediaOverlaySnapshot = MediaOverlaySnapshot(
+                presentation: workspaceNavigationPresentation,
+                selectedWorkspaceFilter: selectedWorkspaceFilter,
+                workspacePath: workspacePath,
+                workspaceStackDiagnosticContexts: workspaceStackDiagnosticContexts,
+                workspaceStackRouteElements: workspaceStackRouteElements,
+                splitSelectedWorkspace: splitSelectedWorkspace,
+                splitDetailTarget: splitDetailTarget,
+                splitDetailPath: splitDetailPath,
+                splitDetailPathElements: splitDetailPathElements,
+                splitColumnVisibility: splitColumnVisibility,
+                activeServerId: activeServerId
+            )
+        }
+        mediaOverlayDepth = WorkspaceMediaOverlayNavigationPolicy.overlayDepth(
+            after: .begin,
+            current: mediaOverlayDepth
+        )
+        isMediaOverlayActive = WorkspaceMediaOverlayNavigationPolicy.isOverlayActive(
+            depth: mediaOverlayDepth
+        )
+    }
+
+    /// Restore the snapshotted chat route. Returns the snapshotted server id
+    /// when the focused server changed during the overlay.
+    @discardableResult
+    func endMediaOverlay(currentServerId: String?) -> String? {
+        mediaOverlayDepth = WorkspaceMediaOverlayNavigationPolicy.overlayDepth(
+            after: .end,
+            current: mediaOverlayDepth
+        )
+        isMediaOverlayActive = WorkspaceMediaOverlayNavigationPolicy.isOverlayActive(
+            depth: mediaOverlayDepth
+        )
+        guard !isMediaOverlayActive, let snapshot = mediaOverlaySnapshot else {
+            return nil
+        }
+        mediaOverlaySnapshot = nil
+        restoreMediaOverlaySnapshot(snapshot)
+        if WorkspaceMediaOverlayNavigationPolicy.shouldRestoreServer(
+            snapshotServerId: snapshot.activeServerId,
+            currentServerId: currentServerId
+        ) {
+            return snapshot.activeServerId
+        }
+        return nil
     }
 
     func openWorkspace(_ target: WorkspaceNavTarget) {
@@ -1176,6 +1251,52 @@ final class AppNavigation {
         case .workspaceConfiguration, .utility, nil:
             .all
         }
+    }
+
+    @discardableResult
+    private func restoreMediaOverlayRouteIfNeeded(
+        snapshotCount: Int,
+        currentCount: Int
+    ) -> Bool {
+        guard let snapshot = mediaOverlaySnapshot,
+              WorkspaceMediaOverlayNavigationPolicy.shouldRestoreRoute(
+                  overlayActive: isMediaOverlayActive,
+                  snapshotPathCount: snapshotCount,
+                  currentPathCount: currentCount
+              ) else {
+            return false
+        }
+        restoreMediaOverlaySnapshot(snapshot)
+        return true
+    }
+
+    private func restoreMediaOverlaySnapshot(_ snapshot: MediaOverlaySnapshot) {
+        isRestoringMediaOverlay = true
+        workspaceNavigationPresentation = snapshot.presentation
+        selectedWorkspaceFilter = snapshot.selectedWorkspaceFilter
+        workspaceStackDiagnosticContexts = snapshot.workspaceStackDiagnosticContexts
+        workspaceStackRouteElements = snapshot.workspaceStackRouteElements
+        workspacePath = snapshot.workspacePath
+        splitSelectedWorkspace = snapshot.splitSelectedWorkspace
+        splitDetailTarget = snapshot.splitDetailTarget
+        splitDetailPathElements = snapshot.splitDetailPathElements
+        splitDetailPath = snapshot.splitDetailPath
+        splitColumnVisibility = snapshot.splitColumnVisibility
+        isRestoringMediaOverlay = false
+    }
+
+    private struct MediaOverlaySnapshot {
+        let presentation: WorkspaceNavigationPresentation
+        let selectedWorkspaceFilter: WorkspaceNavTarget?
+        let workspacePath: NavigationPath
+        let workspaceStackDiagnosticContexts: [WorkspaceStackDiagnosticContext]
+        let workspaceStackRouteElements: [WorkspaceStackRouteElement]
+        let splitSelectedWorkspace: WorkspaceNavTarget?
+        let splitDetailTarget: WorkspaceSplitDetailTarget?
+        let splitDetailPath: NavigationPath
+        let splitDetailPathElements: [WorkspaceSplitDetailPathElement]
+        let splitColumnVisibility: NavigationSplitViewVisibility
+        let activeServerId: String?
     }
 }
 
