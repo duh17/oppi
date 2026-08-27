@@ -1275,14 +1275,24 @@ struct MarkdownInlineVideoTests {
         ))
         view.layoutIfNeeded()
 
-        var videos: [NativeMarkdownVideoView] = []
-        for _ in 0..<80 {
-            videos = timelineAllViews(in: view).compactMap { $0 as? NativeMarkdownVideoView }
-            if videos.count == 4, videos.allSatisfy(\.debugHasActivePlayerForTesting) { break }
-            await Task.yield()
-        }
+        // Four dummy files fail asynchronously and nil `model.player`.
+        // Install items synchronously so reuse/teardown assertions do not
+        // race AVPlayerItem status.
+        let videos = timelineAllViews(in: view).compactMap { $0 as? NativeMarkdownVideoView }
         #expect(videos.count == 4)
         try #require(videos.count == 4)
+        for video in videos {
+            let model = video.debugPlaybackModelForTesting
+            model.teardown()
+            model.prepare(
+                source: dummyMediaSource(),
+                autoplay: false,
+                telemetrySource: "markdown_inline_video",
+                telemetryMode: "inline",
+                telemetrySessionId: nil,
+                onPresentationSize: nil
+            )
+        }
         let players = videos.map { $0.debugPlaybackModelForTesting.player }
         #expect(players.allSatisfy { $0?.currentItem != nil })
 

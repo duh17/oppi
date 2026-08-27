@@ -1064,7 +1064,12 @@ final class AssistantMarkdownSegmentApplier {
                     cachedPlain.append(delta.string)
                     cachedStreamingSourceContent = config.content
                     refreshTextViewLayoutAfterContentChange(textView)
-                    textView.layoutIfNeeded()
+                    // Layout TextKit for the chunk fade without Auto Layout.
+                    // `layoutIfNeeded()` grows the text view inside a stale
+                    // collection-view frame between self-sizing passes.
+                    if let layoutManager = textView.textLayoutManager {
+                        layoutManager.ensureLayout(for: layoutManager.documentRange)
+                    }
                     chunkSettleAnimator.animateAppendedRange(
                         appendedRange,
                         attributedText: delta,
