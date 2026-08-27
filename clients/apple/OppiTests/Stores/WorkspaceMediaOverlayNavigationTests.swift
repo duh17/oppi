@@ -147,6 +147,93 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "chat-1")
     }
 
+    @Test func overlayAfterAllSessionsSessionDoesNotInsertWorkspaceLayer() {
+        let navigation = readyNavigation()
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-b",
+            workspace: makeTestWorkspace(id: "ws-b")
+        )
+        let session = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        navigation.openWorkspaceSession(session, workspace: workspace)
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.selectedWorkspaceFilter == nil)
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        navigation.selectedWorkspaceFilter = workspace
+        navigation.workspacePath = NavigationPath()
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "chat-1")
+
+        #expect(navigation.endMediaOverlay(currentServerId: "server-a") == "server-b")
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.splitSelectedWorkspace == nil)
+    }
+
+    @Test func overlayAfterSplitAllSessionsSessionDoesNotInsertWorkspaceLayer() {
+        let navigation = readyNavigation()
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-b",
+            workspace: makeTestWorkspace(id: "ws-b")
+        )
+        let session = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceSession(session, workspace: workspace)
+
+        #expect(navigation.splitSelectedWorkspace == nil)
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.splitDetailTarget == .session(session))
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        navigation.splitSelectedWorkspace = workspace
+        navigation.selectedWorkspaceFilter = workspace
+        navigation.splitDetailTarget = nil
+
+        let restoreServer = navigation.endMediaOverlay(currentServerId: "server-a")
+        #expect(restoreServer == "server-b")
+        #expect(navigation.splitSelectedWorkspace == nil)
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.splitDetailTarget == .session(session))
+    }
+
+    @Test func overlayRestoresLostVisitedWorkspaceChatRoute() {
+        let navigation = readyNavigation()
+        let workspace = WorkspaceNavTarget(
+            serverId: "server-b",
+            workspace: makeTestWorkspace(id: "ws-b")
+        )
+        let session = WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "chat-1",
+            workspaceId: "ws-b"
+        )
+        navigation.openWorkspace(workspace)
+        navigation.openWorkspaceSession(session, workspace: workspace)
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.selectedWorkspaceFilter == workspace)
+
+        navigation.beginMediaOverlay(activeServerId: "server-b")
+        navigation.workspacePath = NavigationPath()
+
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.selectedWorkspaceFilter == workspace)
+        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "chat-1")
+
+        #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
+        #expect(navigation.workspacePath.count == 2)
+        #expect(navigation.selectedWorkspaceFilter == workspace)
+    }
+
     @Test func fullscreenOverlayIgnoresStackSplitFlips() {
         let navigation = readyNavigation()
         navigation.openWorkspaceSession(

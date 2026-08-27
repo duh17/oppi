@@ -395,12 +395,12 @@ final class AppNavigation {
         let wasShowingWorkspaceInbox = workspace.map {
             selectedWorkspaceFilter == $0 && workspacePath.count == 1
         } ?? false
-        // The all-sessions inbox is the stack root. Opening a session from
-        // there appends the chat so swiping back returns to all sessions
-        // instead of the session's workspace-scoped inbox. The workspace hint
-        // still rides on the session target for server scoping.
+        // The all-sessions inbox is the visible back-stop. Opening a session
+        // from there keeps chat on top of all sessions instead of inventing
+        // the session's unvisited workspace inbox. The workspace hint still
+        // rides on the session target for server scoping.
         let isAtAllSessionsRoot = selectedWorkspaceFilter == nil && workspacePath.count == 0
-        if let workspace, !(workspaceNavigationPresentation == .stack && isAtAllSessionsRoot) {
+        if let workspace, !isAtAllSessionsRoot {
             selectedWorkspaceFilter = workspace
         }
         switch workspaceNavigationPresentation {
@@ -442,7 +442,7 @@ final class AppNavigation {
                 splitColumnVisibility = .detailOnly
                 return
             }
-            if let workspace {
+            if let workspace, !isAtAllSessionsRoot {
                 splitSelectedWorkspace = workspace
             }
             splitDetailTarget = .session(resolvedTarget)
