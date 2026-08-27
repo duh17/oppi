@@ -15,6 +15,8 @@ struct TimelineReducerCanonicalIdentityTests {
                 return "thinking:\(id):\(preview)"
             case .toolCall(let id, let tool, _, _, _, _, _):
                 return "tool:\(id):\(tool)"
+            case .cacheMiss(let id, let message):
+                return "cacheMiss:\(id):\(message)"
             default:
                 return "other"
             }
@@ -64,6 +66,117 @@ struct TimelineReducerCanonicalIdentityTests {
         #expect(structuralProjection(reducer.items) == [
             "assistant:entry-m-text-0:persisted M",
             "assistant:entry-n-text-0:newer N",
+        ])
+    }
+
+    @Test func replayedCacheMissesStayBesidePayingAssistant() {
+        let reducer = TimelineReducer()
+        let replayID = UUID()
+        reducer.beginHistoryReplayBuffer(id: replayID)
+        reducer.processBatch([
+            .messageEnd(
+                sessionId: "s1",
+                content: "persisted M",
+                assistantContent: [
+                    AssistantMessageContentPart(
+                        kind: "text",
+                        content: "persisted M",
+                        contentIndex: 0,
+                        id: "entry-m-text-0"
+                    ),
+                ]
+            ),
+            .cacheMiss(
+                sessionId: "s1",
+                id: "cache-miss:m",
+                message: "Cache miss: 25k tokens re-billed (~$0.04)"
+            ),
+            .messageEnd(
+                sessionId: "s1",
+                content: "newer N",
+                assistantContent: [
+                    AssistantMessageContentPart(
+                        kind: "text",
+                        content: "newer N",
+                        contentIndex: 0,
+                        id: "entry-n-text-0"
+                    ),
+                ]
+            ),
+            .cacheMiss(
+                sessionId: "s1",
+                id: "cache-miss:n",
+                message: "Cache miss: 36k tokens re-billed (~$0.05)"
+            ),
+        ])
+
+        reducer.applyTraceWithLiveReplay([
+            TraceEvent(
+                id: "entry-m-text-0",
+                type: .assistant,
+                timestamp: "2026-01-01T00:00:00Z",
+                text: "persisted M"
+            ),
+            TraceEvent(
+                id: "entry-n-text-0",
+                type: .assistant,
+                timestamp: "2026-01-01T00:00:01Z",
+                text: "newer N"
+            ),
+        ], replayID: replayID)
+
+        #expect(structuralProjection(reducer.items) == [
+            "assistant:entry-m-text-0:persisted M",
+            "cacheMiss:cache-miss:m:Cache miss: 25k tokens re-billed (~$0.04)",
+            "assistant:entry-n-text-0:newer N",
+            "cacheMiss:cache-miss:n:Cache miss: 36k tokens re-billed (~$0.05)",
+        ])
+    }
+
+    @Test func liveCacheMissesStayBesidePayingAssistant() {
+        let reducer = TimelineReducer()
+        reducer.processBatch([
+            .messageEnd(
+                sessionId: "s1",
+                content: "persisted M",
+                assistantContent: [
+                    AssistantMessageContentPart(
+                        kind: "text",
+                        content: "persisted M",
+                        contentIndex: 0,
+                        id: "entry-m-text-0"
+                    ),
+                ]
+            ),
+            .cacheMiss(
+                sessionId: "s1",
+                id: "cache-miss:m",
+                message: "Cache miss: 25k tokens re-billed (~$0.04)"
+            ),
+            .messageEnd(
+                sessionId: "s1",
+                content: "newer N",
+                assistantContent: [
+                    AssistantMessageContentPart(
+                        kind: "text",
+                        content: "newer N",
+                        contentIndex: 0,
+                        id: "entry-n-text-0"
+                    ),
+                ]
+            ),
+            .cacheMiss(
+                sessionId: "s1",
+                id: "cache-miss:n",
+                message: "Cache miss: 36k tokens re-billed (~$0.05)"
+            ),
+        ])
+
+        #expect(structuralProjection(reducer.items) == [
+            "assistant:entry-m-text-0:persisted M",
+            "cacheMiss:cache-miss:m:Cache miss: 25k tokens re-billed (~$0.04)",
+            "assistant:entry-n-text-0:newer N",
+            "cacheMiss:cache-miss:n:Cache miss: 36k tokens re-billed (~$0.05)",
         ])
     }
 

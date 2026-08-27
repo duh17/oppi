@@ -94,6 +94,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// deliberately not at agentStart, so a late-flushed text delta processed
     /// before its agentStart still belongs to the incoming message.
     private var messageRegionStart = 0
+    /// Last timeline row from the most recent `message_end`. Live `cache_miss`
+    /// events follow that message and have no canonical id in the trace, so a
+    /// history rebuild plus replay would otherwise append them under the last
+    /// assistant bubble. Insert after this row instead.
+    private var lastMessageEndAnchorID: String?
 
     /// The item ID currently being rendered in streaming mode.
     /// Non-nil while deltas arrive AND during tool-call gaps within a turn.
@@ -308,6 +313,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         itemIndex.clear()
         clearTurnBuffers()
         messageRegionStart = 0
+        lastMessageEndAnchorID = nil
         currentCompactionItemID = nil
         liveEventReplayBuffer = nil
         itemsMutationSeq = 0
@@ -413,6 +419,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             loadedTraceEvents.append(contentsOf: events[appendStart...])
             loadedTraceEventIDs.append(contentsOf: events[appendStart...].map(\.id))
             messageRegionStart = items.count
+            lastMessageEndAnchorID = nil
             bumpRenderVersion()
             timelineMatchesTrace = true
 
@@ -503,6 +510,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             rebuildIndex()
         }
         messageRegionStart = items.count
+        lastMessageEndAnchorID = nil
         bumpRenderVersion()
         // If we preserved orphans, the timeline no longer exactly matches the
         // trace — force a full rebuild on the next loadSession so the orphans
@@ -1072,9 +1080,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 items[index] = item
                 bumpItemsMutationSeq()
             } else {
-                items.append(item)
-                indexAppend(item)
-                bumpItemsMutationSeq()
+                insertCanonicalItem(item, after: lastMessageEndAnchorID)
             }
             return true
 
@@ -1510,13 +1516,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         _ content: String,
         assistantContent: [AssistantMessageContentPart]?
     ) {
+        defer {
+            rememberCacheMissAnchor(from: assistantContent)
+            clearCurrentAssistantMessageTracking()
+        }
         if let assistantContent {
             if assistantContent.contains(where: { $0.id != nil }) {
                 reconcileCanonicalAssistantContent(assistantContent)
             } else {
                 reconcileAssistantContent(assistantContent)
             }
-            clearCurrentAssistantMessageTracking()
             return
         }
 
@@ -1524,13 +1533,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         finalizeThinking()
         guard !content.isEmpty else {
             finalizeAssistantMessage()
-            clearCurrentAssistantMessageTracking()
             return
         }
 
         if shouldSuppressDuplicateMessageEnd(content) {
             finalizeAssistantMessage()
-            clearCurrentAssistantMessageTracking()
             return
         }
 
@@ -1549,7 +1556,28 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             upsertAssistantMessage()
         }
         finalizeAssistantMessage()
-        clearCurrentAssistantMessageTracking()
+    }
+
+    /// Prefer this message's own rows, never the latest assistant in the whole
+    /// timeline. After a trace rebuild the last assistant is often a later
+    /// message, and that is the placement bug the cache-miss replay test covers.
+    private func rememberCacheMissAnchor(from parts: [AssistantMessageContentPart]?) {
+        var knownIDs = Set(assistantIDsThisMessage)
+        knownIDs.formUnion(thinkingIDsThisMessage)
+        if let currentAssistantID {
+            knownIDs.insert(currentAssistantID)
+        }
+        if let parts {
+            for part in parts {
+                if let id = part.id {
+                    knownIDs.insert(id)
+                }
+                if let toolCallId = part.toolCallId {
+                    knownIDs.insert(toolCallId)
+                }
+            }
+        }
+        lastMessageEndAnchorID = items.reversed().first { knownIDs.contains($0.id) }?.id
     }
 
     private func reconcileCanonicalAssistantContent(_ parts: [AssistantMessageContentPart]) {
@@ -1726,6 +1754,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if currentAssistantID == oldID { currentAssistantID = newID }
         if currentThinkingID == oldID { currentThinkingID = newID }
         if lastAssistantIDThisTurn == oldID { lastAssistantIDThisTurn = newID }
+        if lastMessageEndAnchorID == oldID { lastMessageEndAnchorID = newID }
         rebuildIndex()
         bumpItemsMutationSeq()
     }
