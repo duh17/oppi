@@ -106,7 +106,7 @@ Inline Markdown video uses wiki-embed syntax:
 ````markdown
 - When pointing the user to a relevant file the owner can open, use a real relative, absolute, or `~` wiki link such as `[[path/to/file.ext|Short label]]` or `[[/tmp/notes.md|Debug log]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
 - When the image or SVG itself should appear inline, use `![Short description](path/to/image.png)`. When a real Oppi-backed video should play inline, use `![[path/to/video.mp4]]`. Keep `[[path/to/video.mp4|Video]]` for file navigation.
-- Fenced `mermaid` blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, and xyChart. Other Mermaid types stay source.
+- Fenced `mermaid` blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban. Other Mermaid types show an unsupported placeholder.
 - LaTeX renders inline, display, and fenced `latex` blocks.
 - Reuse a real existing path; never fabricate a path or expose secrets. Sandbox sessions should keep using sandbox-visible paths.
 ````
@@ -181,6 +181,28 @@ Some document types have a separate source/render toggle in the toolbar:
 - LaTeX, Org, and Mermaid: Rendered / Source
 
 Viewing Options apply to the mode currently on screen. Source mode uses code/source reader behavior. Rendered mode uses document reader behavior.
+
+## Mermaid
+
+Fenced `mermaid` blocks and `.mmd` / `.mermaid` files render these types:
+
+- flowchart (`graph`)
+- sequence (`sequenceDiagram`)
+- class (`classDiagram`, `classDiagram-v2`)
+- state (`stateDiagram`, `stateDiagram-v2`)
+- ER (`erDiagram`)
+- gantt
+- pie
+- mindmap
+- timeline (`timeline-beta`)
+- xyChart (`xychart`, `xychart-beta`)
+- journey
+- quadrantChart
+- gitGraph
+- sankey (`sankey-beta`)
+- kanban
+
+Unknown types show an unsupported placeholder.
 
 ## Native rendering and HTML
 

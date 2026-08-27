@@ -36,9 +36,9 @@ describe("Oppi documentation prompt hint", () => {
     expect(guide).toContain("[[path/to/file.ext#L12-L18|Label]]");
     expect(guide).toContain("![Description](path/to/image.svg)");
     expect(guide).toContain(
-      "flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, and xyChart",
+      "flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban",
     );
-    expect(guide).toContain("Other Mermaid types stay source");
+    expect(guide).toContain("Other Mermaid types show an unsupported placeholder");
     expect(guide).not.toContain("```mermaid");
     expect(guide).toContain("fenced latex blocks");
     expect(guide).toContain("images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, Graphviz");

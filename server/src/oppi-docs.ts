@@ -19,7 +19,7 @@ export const MOBILE_OUTPUT_GUIDE = [
   "- Wiki links open real workspace or owner-host files: [[path/to/file.ext|Label]], [[path/to/file.ext#L12-L18|Label]], [[/abs/path|Label]], [[~/path|Label]]. Recognized documents and media (images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, Graphviz) open in viewers.",
   "- Session links open a session: [Label](oppi://session/<session-id>) or oppi://session/<session-id>.",
   "- Images and SVG appear inline with ![Description](path/to/image.svg). Existing Oppi-backed videos play inline with ![[path/to/video.mp4]]; [[path/to/video.mp4]] stays a file link. Remote URLs, HTML <video>, and attachment IDs are not embeds.",
-  "- Fenced mermaid blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, and xyChart. Other Mermaid types stay source.",
+  "- Fenced mermaid blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban. Other Mermaid types show an unsupported placeholder.",
   "- LaTeX renders inline, display, and fenced latex blocks.",
   "- File targets must be real relative, absolute, or ~ paths. Do not cite secrets, credentials, private runtime state, or dump credential files. Sandbox sessions should keep using sandbox-visible paths.",
 ].join("\n");
