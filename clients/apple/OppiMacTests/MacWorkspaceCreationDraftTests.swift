@@ -16,7 +16,6 @@ struct MacWorkspaceCreationDraftTests {
             name: "  Oppi  ",
             hostMount: "  /Users/chenda/workspace/oppi  ",
             description: "  Main repo  ",
-            defaultModel: "  anthropic/claude-sonnet-4-5  ",
             gitStatusEnabled: false,
             runtime: .host
         )
@@ -25,7 +24,6 @@ struct MacWorkspaceCreationDraftTests {
         #expect(request.name == "Oppi")
         #expect(request.hostMount == "/Users/chenda/workspace/oppi")
         #expect(request.description == "Main repo")
-        #expect(request.defaultModel == "anthropic/claude-sonnet-4-5")
         #expect(request.gitStatusEnabled == false)
         #expect(request.runtime == .host)
     }
@@ -37,7 +35,6 @@ struct MacWorkspaceCreationDraftTests {
         #expect(request.name == "Scratch")
         #expect(request.hostMount == nil)
         #expect(request.description == nil)
-        #expect(request.defaultModel == nil)
     }
 
     @Test func initializesFromWorkspaceForEditing() {
@@ -48,7 +45,6 @@ struct MacWorkspaceCreationDraftTests {
             icon: .defaultValue,
             systemPrompt: nil,
             hostMount: "/Users/chenda/workspace/oppi",
-            defaultModel: "openai/gpt-5.5",
             tools: nil,
             gitStatusEnabled: false,
             runtime: .host,
@@ -62,7 +58,6 @@ struct MacWorkspaceCreationDraftTests {
         #expect(draft.name == "Oppi")
         #expect(draft.hostMount == "/Users/chenda/workspace/oppi")
         #expect(draft.description == "Main repo")
-        #expect(draft.defaultModel == "openai/gpt-5.5")
         #expect(draft.gitStatusEnabled == false)
     }
 
@@ -73,16 +68,5 @@ struct MacWorkspaceCreationDraftTests {
         #expect(request.body["name"] == .string("Renamed"))
         #expect(request.body["hostMount"] == .null)
         #expect(request.body["description"] == .null)
-        #expect(request.body["defaultModel"] == .null)
-    }
-
-    @Test func updateRequestTrimsDefaultModel() throws {
-        let draft = MacWorkspaceCreationDraft(
-            name: "Workspace",
-            defaultModel: "  openai/gpt-5.5  "
-        )
-
-        let request = try #require(draft.updateRequest)
-        #expect(request.body["defaultModel"] == .string("openai/gpt-5.5"))
     }
 }

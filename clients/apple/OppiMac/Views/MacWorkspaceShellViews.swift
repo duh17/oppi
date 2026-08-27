@@ -109,10 +109,6 @@ private struct MacWorkspaceCreateSheet: View {
             Form {
                 TextField("Name", text: $draft.name)
                 TextField("Local folder path", text: $draft.hostMount)
-                TextField("Default model", text: $draft.defaultModel)
-                Text("Leave blank to use the server default for new sessions.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 TextField("Description", text: $draft.description, axis: .vertical)
                     .lineLimit(2...4)
                 Toggle("Show workspace changes in chat", isOn: $draft.gitStatusEnabled)
@@ -179,9 +175,6 @@ private struct WorkspaceRow: View {
                     }
                 } else {
                     Text(workspace.hostMount ?? "No summary yet")
-                }
-                if let defaultModel = workspace.defaultModel, !defaultModel.isEmpty {
-                    Text(defaultModel.split(separator: "/").last.map(String.init) ?? defaultModel)
                 }
             }
             .font(.caption)
@@ -254,9 +247,6 @@ struct WorkspaceShellDetail: View {
             VStack(alignment: .leading, spacing: 4) {
                 if let hostMount = workspace.hostMount, !hostMount.isEmpty {
                     Text(hostMount)
-                }
-                if let defaultModel = workspace.defaultModel, !defaultModel.isEmpty {
-                    Label("Default model: \(defaultModel)", systemImage: "cpu")
                 }
             }
             .font(.callout)

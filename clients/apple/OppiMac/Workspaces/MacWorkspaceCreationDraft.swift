@@ -4,7 +4,6 @@ struct MacWorkspaceCreationDraft: Equatable, Sendable {
     var name: String = ""
     var hostMount: String = ""
     var description: String = ""
-    var defaultModel: String = ""
     var gitStatusEnabled = true
     var runtime: WorkspaceRuntime = .host
 
@@ -12,14 +11,12 @@ struct MacWorkspaceCreationDraft: Equatable, Sendable {
         name: String = "",
         hostMount: String = "",
         description: String = "",
-        defaultModel: String = "",
         gitStatusEnabled: Bool = true,
         runtime: WorkspaceRuntime = .host
     ) {
         self.name = name
         self.hostMount = hostMount
         self.description = description
-        self.defaultModel = defaultModel
         self.gitStatusEnabled = gitStatusEnabled
         self.runtime = runtime
     }
@@ -28,7 +25,6 @@ struct MacWorkspaceCreationDraft: Equatable, Sendable {
         name = workspace.name
         hostMount = workspace.hostMount ?? ""
         description = workspace.description ?? ""
-        defaultModel = workspace.defaultModel ?? ""
         gitStatusEnabled = workspace.gitStatusEnabled ?? true
         runtime = workspace.runtime ?? .host
     }
@@ -43,10 +39,6 @@ struct MacWorkspaceCreationDraft: Equatable, Sendable {
 
     var trimmedDescription: String {
         description.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var trimmedDefaultModel: String {
-        defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var canSubmit: Bool {
@@ -67,7 +59,6 @@ struct MacWorkspaceCreationDraft: Equatable, Sendable {
             systemPrompt: nil,
             systemPromptMode: nil,
             hostMount: trimmedHostMount.isEmpty ? nil : trimmedHostMount,
-            defaultModel: trimmedDefaultModel.isEmpty ? nil : trimmedDefaultModel,
             gitStatusEnabled: gitStatusEnabled,
             runtime: runtime,
             sandboxConfig: nil
@@ -80,7 +71,6 @@ struct MacWorkspaceCreationDraft: Equatable, Sendable {
             name: trimmedName,
             description: trimmedDescription.isEmpty ? .null : .string(trimmedDescription),
             hostMount: trimmedHostMount.isEmpty ? .null : .string(trimmedHostMount),
-            defaultModel: trimmedDefaultModel.isEmpty ? .null : .string(trimmedDefaultModel),
             gitStatusEnabled: gitStatusEnabled
         )
     }

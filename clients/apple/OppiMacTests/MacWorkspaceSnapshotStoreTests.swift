@@ -15,7 +15,6 @@ struct MacWorkspaceSnapshotStoreTests {
             icon: .symbol("folder"),
             systemPrompt: nil,
             hostMount: "/Users/chenda/workspace/oppi",
-            defaultModel: nil,
             tools: nil,
             gitStatusEnabled: nil,
             runtime: .host,
