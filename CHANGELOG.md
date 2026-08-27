@@ -38,7 +38,9 @@ Example:
 
 ## [Unreleased]
 
-Target: iOS `1.1.2` build `47`, unpublished `oppi-server@0.47.3` with bundled Pi runtime `0.84.3`, and unpublished `oppi-mirror@0.47.3`.
+## [0.47.3] - 2026-08-27
+
+Target: iOS `1.1.2` build `47`, `oppi-server@0.47.3` with bundled Pi runtime `0.84.3`, and `oppi-mirror@0.47.3`.
 
 ### Added
 
@@ -54,7 +56,7 @@ Target: iOS `1.1.2` build `47`, unpublished `oppi-server@0.47.3` with bundled Pi
 
 ### Changed
 
-- **Compatibility:** Build 47 requires unpublished `oppi-server@0.47.3` and `oppi-mirror@0.47.3`. npm `latest` is still `0.47.2`. Bundled and installed Pi is `0.84.3`.
+- **Compatibility:** Build 47 requires `oppi-server@0.47.3` and `oppi-mirror@0.47.3`. Bundled and installed Pi is `0.84.3`.
 - **Client:** Markdown rendering and streaming are refactored for better performance and stability. Live documents settle on one streaming clock and keep your place when a document finishes.
 - **Client:** Model and thinking defaults use Pi 0.84.3. The picker star saves the Pi global default. A row tap stays on the current session. Thinking menus list the current model's supported levels and can Save as Default. The default composer and Quick Session pill show the catalog model id and provider icon.
 - **Client:** Full-screen diffs were consolidated onto one word-level highlighter so completed views show changed words consistently.
