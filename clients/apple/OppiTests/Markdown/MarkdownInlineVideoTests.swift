@@ -222,8 +222,20 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
-    @Test("teardown drops the player item so a later play cannot leak audio")
-    func teardownDropsPlayerItemSoLaterPlayCannotLeakAudio() {
+    @Test("pause keeps the player item so a later play can start")
+    func pauseKeepsPlayerItemSoLaterPlayCanStart() {
+        let session = AuthenticatedMediaPlaybackSession(source: dummyMediaSource())
+        let player = session.player
+        #expect(player.currentItem != nil)
+        session.pausePlayback()
+        #expect(player.currentItem != nil)
+        player.play()
+        #expect(player.currentItem != nil)
+    }
+
+    @MainActor
+    @Test("host destruction drops the player item so a later play cannot leak audio")
+    func hostDestructionDropsPlayerItemSoLaterPlayCannotLeakAudio() {
         let session = AuthenticatedMediaPlaybackSession(source: dummyMediaSource())
         let player = session.player
         #expect(player.currentItem != nil)
@@ -232,6 +244,33 @@ struct MarkdownInlineVideoTests {
         player.play()
         // play() can still flip rate on an empty AVPlayer; no item means no audio.
         #expect(player.currentItem == nil)
+    }
+
+    @MainActor
+    @Test("hiding the inline surface pauses without dropping the player item")
+    func hidingInlineSurfacePausesWithoutDroppingPlayerItem() {
+        let model = AuthenticatedMediaPlayerModel()
+        model.prepare(
+            source: dummyMediaSource(),
+            autoplay: false,
+            telemetrySource: "test",
+            telemetryMode: "inline",
+            telemetrySessionId: nil,
+            onPresentationSize: nil
+        )
+        let player = model.player
+        #expect(player?.currentItem != nil)
+        model.debugDidTeardownForTesting = false
+        model.handleDisappear()
+        #expect(!model.debugDidTeardownForTesting)
+        #expect(!model.debugIsVisibleForTesting)
+        #expect(model.player === player)
+        #expect(player?.currentItem != nil)
+        #expect(player?.rate == 0)
+        player?.play()
+        #expect(player?.currentItem != nil)
+        model.teardown()
+        #expect(player?.currentItem == nil)
     }
 
     @MainActor
@@ -721,8 +760,8 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
-    @Test("hiding playback tears down the player without replacing the host")
-    func hidingPlaybackTearsDownWithoutReplacingHost() async throws {
+    @Test("hiding playback pauses without replacing the host or dropping the item")
+    func hidingPlaybackPausesWithoutReplacingHost() async throws {
         let embed = try makeEmbed("![[movie.mp4]]")
         let source = dummyMediaSource()
         let parent = UIViewController()
@@ -739,17 +778,22 @@ struct MarkdownInlineVideoTests {
             renderingMode: .live,
             preferredDisplayWidth: 320
         )
-        for _ in 0..<40 where !video.debugHasPlayerForTesting {
+        for _ in 0..<80 where !video.debugHasActivePlayerForTesting {
             await Task.yield()
         }
         let host = video.debugHostingControllerForTesting
+        let player = video.debugPlaybackModelForTesting.player
         #expect(host != nil)
         #expect(video.debugIsPlaybackVisibleForTesting)
+        #expect(video.debugHasActivePlayerForTesting)
+        #expect(player?.currentItem != nil)
 
         video.setPlaybackVisible(false)
         #expect(!video.debugIsPlaybackVisibleForTesting)
         #expect(video.debugHostingControllerForTesting === host)
-        #expect(!video.debugHasActivePlayerForTesting)
+        #expect(video.debugHasActivePlayerForTesting)
+        #expect(player?.currentItem != nil)
+        #expect(player?.rate == 0)
     }
 
     @MainActor
@@ -843,9 +887,23 @@ struct MarkdownInlineVideoTests {
     @Test("full-screen and PiP keep the same player when AVKit detaches the inline host")
     func fullScreenAndPiPKeepPlayerAcrossInlineDetach() {
         let hiddenOffscreen = AuthenticatedMediaPlayerModel()
+        hiddenOffscreen.prepare(
+            source: dummyMediaSource(),
+            autoplay: false,
+            telemetrySource: "test",
+            telemetryMode: "inline",
+            telemetrySessionId: nil,
+            onPresentationSize: nil
+        )
+        let hiddenPlayer = hiddenOffscreen.player
+        #expect(hiddenPlayer?.currentItem != nil)
+        hiddenOffscreen.debugDidTeardownForTesting = false
         hiddenOffscreen.handleDisappear()
-        #expect(hiddenOffscreen.debugDidTeardownForTesting)
+        #expect(!hiddenOffscreen.debugDidTeardownForTesting)
         #expect(!hiddenOffscreen.debugIsVisibleForTesting)
+        #expect(hiddenOffscreen.player === hiddenPlayer)
+        #expect(hiddenPlayer?.currentItem != nil)
+        #expect(hiddenPlayer?.rate == 0)
 
         let fullScreen = AuthenticatedMediaPlayerModel()
         let fullScreenPlayer = fullScreen.debugInstallStandalonePlayerForTesting()
@@ -883,8 +941,8 @@ struct MarkdownInlineVideoTests {
         hiddenDuringPresentation.setVisible(false)
         hiddenDuringPresentation.handleWillEndFullScreen()
         hiddenDuringPresentation.handleDidEndFullScreen(hostIsAttached: false)
-        #expect(hiddenDuringPresentation.debugDidTeardownForTesting)
-        #expect(hiddenDuringPresentation.player == nil)
+        #expect(!hiddenDuringPresentation.debugDidTeardownForTesting)
+        #expect(hiddenDuringPresentation.player != nil)
 
         let pictureInPicture = AuthenticatedMediaPlayerModel()
         let pipPlayer = pictureInPicture.debugInstallStandalonePlayerForTesting()
@@ -974,15 +1032,21 @@ struct MarkdownInlineVideoTests {
         #expect(!returnedSurface.handleDisappear(source: .playerSurface))
         #expect(!returnedSurface.debugDidTeardownForTesting)
         #expect(returnedSurface.handleDisappear(source: .playerSurface))
+        #expect(!returnedSurface.debugDidTeardownForTesting)
+        #expect(returnedSurface.player != nil)
+        returnedSurface.teardown()
         #expect(returnedSurface.debugDidTeardownForTesting)
 
         let timelineHidden = AuthenticatedMediaPlayerModel()
-        _ = timelineHidden.debugInstallStandalonePlayerForTesting()
+        let timelinePlayer = timelineHidden.debugInstallStandalonePlayerForTesting()
         timelineHidden.setFullScreen(true)
         timelineHidden.handleWillEndFullScreen()
         timelineHidden.handleDidEndFullScreen(hostIsAttached: false)
 
         #expect(timelineHidden.handleDisappear(source: .timelineVisibility))
+        #expect(!timelineHidden.debugDidTeardownForTesting)
+        #expect(timelineHidden.player === timelinePlayer)
+        timelineHidden.teardown()
         #expect(timelineHidden.debugDidTeardownForTesting)
     }
 

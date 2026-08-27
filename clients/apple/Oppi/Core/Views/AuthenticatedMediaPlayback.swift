@@ -798,23 +798,31 @@ final class AuthenticatedMediaPlaybackSession {
         return components.url ?? URL(fileURLWithPath: "/oppi-media-\(UUID().uuidString)")
     }
 
+    /// Pause transport without dropping the item. Apple's AVPlayer API uses
+    /// `pause()` to stop playback; `replaceCurrentItem(with:)` is for switching
+    /// assets on a reused player, not for hide/dismiss.
+    func pausePlayback() {
+        player.pause()
+    }
+
     func teardown() {
         timeControlObservation?.invalidate()
         timeControlObservation = nil
         bufferEmptyObservation?.invalidate()
         bufferEmptyObservation = nil
-        Self.stop(player)
+        Self.discardItem(player)
         asset.resourceLoader.setDelegate(nil, queue: nil)
         loader.cancelAll()
     }
 
     deinit {
-        Self.stop(player)
+        Self.discardItem(player)
         loader.cancelAll()
     }
 
-    /// Pause and drop the item so AVKit cannot keep playing after the host is gone.
-    nonisolated private static func stop(_ player: AVPlayer) {
+    /// Drop the item only when the host is actually destroyed. A later `play()`
+    /// on an empty AVPlayer cannot leak audio.
+    nonisolated private static func discardItem(_ player: AVPlayer) {
         player.pause()
         player.replaceCurrentItem(with: nil)
     }
@@ -1067,11 +1075,8 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         suppressNextReturnedSurfaceDisappear = returnsToVisibleSurface
         // AVKit reports the player VC detached at dismiss completion even
         // when the inline wiki card is still on screen. handleDisappear
-        // during fullscreen is a no-op, so treating that detach as hide
-        // nils the player and AuthenticatedMediaPlayerSurface sits on
-        // ProgressView forever. Real offscreen/recycle already called
-        // setVisible(false) or prepareForRemoval(); teardown then runs
-        // once fullscreen ownership clears.
+        // during fullscreen is a no-op. Hide/dismiss pauses transport;
+        // prepareForRemoval() is the only path that drops the item.
     }
 
     func handleDidStopPictureInPicture(hostIsAttached _: Bool = true) {
@@ -1086,12 +1091,14 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     }
 
     private func teardownIfHiddenAndUnowned() {
-        // Full-screen and PiP presentation can detach the inline view while
-        // AVKit still owns playback. Ordinary offscreen/reuse transitions tear
-        // the range loader and player down immediately. Full-screen end waits
-        // for the dismiss completion so AVKit is not left holding a nilled player.
+        // Full-screen and PiP can detach the inline view while AVKit still
+        // owns playback. Hide/dismiss only pauses; dropping the item here
+        // leaves the inline card on a spinner and makes tap-to-play a no-op.
+        // Recycle and identity changes still call teardown() via
+        // prepareForRemoval().
         guard ownership.shouldTeardown else { return }
-        teardown()
+        playbackSession?.pausePlayback()
+        player?.pause()
     }
 
     func teardown(resetPreparedIdentity: Bool = true) {
