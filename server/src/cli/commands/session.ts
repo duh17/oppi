@@ -26,6 +26,7 @@ import {
   assertNotSelfTargetingSession,
   callerSessionIdFromEnvironment,
 } from "../../session-caller-identity.js";
+import { resolveSessionIdTargets } from "../session-id-target.js";
 import { parseDurationMs } from "./wait.js";
 import {
   clipListCell,
@@ -93,13 +94,16 @@ export async function cmdSession(
     flags = normalizeSessionFlagAliases(mode, flags);
     assertSessionFlags(mode, flags);
     const callerSessionId = callerContext.callerSessionId ?? callerSessionIdFromEnvironment();
-    assertNotSelfTargetingSession(sessionTargetsForMode(mode, positional), callerSessionId);
+    const rawTargets = sessionTargetsForMode(mode, positional);
+    // Exact self-target stays local so managed callers fail before any HTTP call.
+    assertNotSelfTargetingSession(rawTargets, callerSessionId);
+    if (mode === "wait" && new Set(rawTargets).size !== rawTargets.length) {
+      throw new Error("session ids must be unique");
+    }
+    const resolvedTargets = await resolveSessionIdTargets(rawTargets, call);
+    assertNotSelfTargetingSession(resolvedTargets, callerSessionId);
     if (callerContext.sandboxScope) {
-      await assertSandboxScopeTargets(
-        call,
-        callerContext.sandboxScope,
-        sessionTargetsForMode(mode, positional),
-      );
+      await assertSandboxScopeTargets(call, callerContext.sandboxScope, resolvedTargets);
     }
 
     if (mode === "list") {
@@ -136,7 +140,7 @@ export async function cmdSession(
     }
 
     if (mode === "get") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const result = await call<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}`);
       output(result, () => {
         const session = result.session as Partial<Session> | undefined;
@@ -161,7 +165,7 @@ export async function cmdSession(
     }
 
     if (mode === "send") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const text = attributeManagedSessionMessage(
         resolvePromptInput(flags.text, "--text"),
         callerSessionId,
@@ -176,7 +180,7 @@ export async function cmdSession(
     }
 
     if (mode === "abort") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const result = await call<Record<string, unknown>>(
         `/sessions/${encodeURIComponent(id)}/command`,
         { method: "POST", body: { type: "abort" } },
@@ -189,7 +193,7 @@ export async function cmdSession(
     }
 
     if (mode === "wait") {
-      const ids = positional.map((value) => value.trim()).filter(Boolean);
+      const ids = resolvedTargets;
       if (ids.length === 0) throw new Error("session id is required");
       if (new Set(ids).size !== ids.length) throw new Error("session ids must be unique");
       const condition = parseWatchCondition(flags.for, "either");
@@ -285,7 +289,7 @@ export async function cmdSession(
     }
 
     if (mode === "read" || mode === "trace") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const params = new URLSearchParams();
       if (mode === "read" && flags.tail) params.set("tail", flags.tail);
       if (mode === "trace" && flags.include) params.set("include", flags.include);
@@ -307,7 +311,7 @@ export async function cmdSession(
     }
 
     if (mode === "events") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const params = new URLSearchParams();
       if (flags.since) params.set("since", flags.since);
       const result = await call<Record<string, unknown>>(
@@ -330,7 +334,7 @@ export async function cmdSession(
     }
 
     if (mode === "stop") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const result = await call<Record<string, unknown>>(
         `/sessions/${encodeURIComponent(id)}/stop`,
         {
@@ -397,7 +401,7 @@ export async function cmdSession(
     }
 
     if (mode === "inspect") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const result = await inspectSession(id, positional.slice(1), flags, call);
       output(inspectJsonResult(result), () => {
         writeHumanLine(result.text || "(empty)");
@@ -406,7 +410,7 @@ export async function cmdSession(
     }
 
     if (mode === "delete") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const workspaceId = await resolveSessionWorkspaceId(id, call);
       const result = await call<Record<string, unknown>>(
         `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}`,
@@ -419,7 +423,7 @@ export async function cmdSession(
     }
 
     if (mode === "resume") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const workspaceId = await resolveSessionWorkspaceId(id, call);
       const result = await call<Record<string, unknown>>(
         `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/resume`,
@@ -433,7 +437,7 @@ export async function cmdSession(
     }
 
     if (mode === "fork") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const entryId = flags.entry?.trim();
       if (!entryId) throw new Error("--entry is required");
       const workspaceId = await resolveSessionWorkspaceId(id, call);
@@ -458,7 +462,7 @@ export async function cmdSession(
     }
 
     if (mode === "tool-output") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const toolCallId = positional[1]?.trim();
       if (!toolCallId) throw new Error("tool call id is required");
       const workspaceId = await resolveSessionWorkspaceId(id, call);
@@ -475,7 +479,7 @@ export async function cmdSession(
     }
 
     if (mode === "trace-page" || mode === "trace-outline") {
-      const id = requirePositional(positional, "session id is required");
+      const id = requireTarget(resolvedTargets, "session id is required");
       const workspaceId = await resolveSessionWorkspaceId(id, call);
       const params = new URLSearchParams();
       if (mode === "trace-page") {
@@ -713,8 +717,8 @@ function sessionTargetsForMode(mode: string, positional: string[]): string[] {
   return [];
 }
 
-function requirePositional(positional: string[], message: string): string {
-  const value = positional[0]?.trim();
+function requireTarget(targets: string[], message: string): string {
+  const value = targets[0];
   if (!value) throw new Error(message);
   return value;
 }

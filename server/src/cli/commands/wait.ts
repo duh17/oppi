@@ -6,9 +6,17 @@ import {
   throwIfAborted,
   type LocalApiConnection,
 } from "../local-api-client.js";
-import { codeValue, printDetails, setCapturedCliExitCode, writeJsonEnvelope } from "../output.js";
+import {
+  cliExitCodeFromUnknown,
+  cliJsonErrorFromUnknown,
+  codeValue,
+  printDetails,
+  setCapturedCliExitCode,
+  writeJsonEnvelope,
+} from "../output.js";
 import { apiStatus } from "../resources.js";
 import { assertNotSelfTargetingSession } from "../../session-caller-identity.js";
+import { resolveSessionIdTargets } from "../session-id-target.js";
 
 type WaitSession = {
   id: string;
@@ -41,11 +49,17 @@ export async function cmdWait(
     const deadline = Date.now() + timeoutMs;
     throwIfAborted(signal);
 
+    const [resolvedSessionId] = await resolveSessionIdTargets([sessionId], (path, options) =>
+      localApiRequest(storage, path, signal ? { ...options, signal } : options),
+    );
+    if (!resolvedSessionId) throw new Error("session id is required");
+    assertNotSelfTargetingSession([resolvedSessionId]);
+
     for (;;) {
       throwIfAborted(signal);
       const result = await localApiRequest<{ session?: WaitSession }>(
         storage,
-        `/sessions/${encodeURIComponent(sessionId)}`,
+        `/sessions/${encodeURIComponent(resolvedSessionId)}`,
         signal ? { signal } : undefined,
       );
       const session = result.session;
@@ -63,7 +77,9 @@ export async function cmdWait(
       }
 
       if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for session ${sessionId} to become ${expectedStatus}`);
+        throw new Error(
+          `Timed out waiting for session ${resolvedSessionId} to become ${expectedStatus}`,
+        );
       }
       await sleepWithSignal(Math.min(pollMs, Math.max(0, deadline - Date.now())), signal);
     }
@@ -72,12 +88,15 @@ export async function cmdWait(
     const message = error instanceof Error ? error.message : String(error);
     const status = apiStatus(error);
     if (jsonOutput) {
-      writeJsonEnvelope({ ok: false, error: { message, ...(status ? { status } : {}) } });
-      setCapturedCliExitCode(1);
+      writeJsonEnvelope({
+        ok: false,
+        error: cliJsonErrorFromUnknown(error, message, status),
+      });
+      setCapturedCliExitCode(cliExitCodeFromUnknown(error));
       return;
     }
     console.log(c.red(`  Error: ${message}`));
-    process.exit(1);
+    process.exit(cliExitCodeFromUnknown(error));
   }
 }
 

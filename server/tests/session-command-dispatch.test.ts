@@ -21,6 +21,7 @@ describe("session command dispatch and output boundaries", () => {
 
   it("forwards trace-page pagination flags and removes redundant session metadata", async () => {
     request
+      .mockResolvedValueOnce({ sessions: [{ id: "s/1", workspaceId: "ws/1" }] })
       .mockResolvedValueOnce({ session: { id: "s/1", workspaceId: "ws/1" } })
       .mockResolvedValueOnce({
         session: { id: "s/1" },
@@ -38,9 +39,10 @@ describe("session command dispatch and output boundaries", () => {
       }),
     );
 
-    expect(request).toHaveBeenNthCalledWith(1, storage, "/sessions/s%2F1", undefined);
+    expect(request).toHaveBeenNthCalledWith(1, storage, "/sessions", undefined);
+    expect(request).toHaveBeenNthCalledWith(2, storage, "/sessions/s%2F1", undefined);
     expect(request).toHaveBeenNthCalledWith(
-      2,
+      3,
       storage,
       "/workspaces/ws%2F1/sessions/s%2F1/trace-page?cursor=prev+cursor&aroundEntryId=entry%2F1&targetEvents=50&previewBytes=1024",
       undefined,
@@ -139,6 +141,9 @@ describe("session command dispatch and output boundaries", () => {
 
   it("waits for any of several session ids by default", async () => {
     request.mockImplementation(async (_storage, path) => {
+      if (path === "/sessions") {
+        return { sessions: [{ id: "a" }, { id: "b" }] };
+      }
       if (path.includes("/sessions/a/events")) {
         return { session: { status: "busy" }, events: [], currentSeq: 1 };
       }
@@ -165,6 +170,9 @@ describe("session command dispatch and output boundaries", () => {
 
   it("waits until every session is idle when --all is set", async () => {
     request.mockImplementation(async (_storage, path) => {
+      if (path === "/sessions") {
+        return { sessions: [{ id: "a" }, { id: "b" }] };
+      }
       if (path.includes("/sessions/a/events") || path.includes("/sessions/b/events")) {
         return { session: { status: "ready" }, events: [], currentSeq: 1 };
       }
@@ -222,10 +230,16 @@ describe("session command dispatch and output boundaries", () => {
   });
 
   it("wait resolves to a terminal JSON record when the session is idle", async () => {
-    request.mockResolvedValue({
-      session: { status: "ready", lastMessage: "done" },
-      events: [],
-      currentSeq: 1,
+    request.mockImplementation(async (_storage, path) => {
+      if (path === "/sessions") return { sessions: [{ id: "sess-1" }] };
+      if (path === "/sessions/sess-1/events?since=0") {
+        return {
+          session: { status: "ready", lastMessage: "done" },
+          events: [],
+          currentSeq: 1,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
     });
 
     const { stdout } = await captureCliOutput(() =>
@@ -345,7 +359,10 @@ describe("session command dispatch and output boundaries", () => {
   });
 
   it("attributes send text with the caller session id", async () => {
-    request.mockResolvedValue({ messages: [] });
+    request.mockImplementation(async (_conn, path) => {
+      if (path === "/sessions") return { sessions: [{ id: "child-1" }] };
+      return { messages: [] };
+    });
 
     await captureCliOutput(() =>
       cmdSession(
@@ -369,7 +386,10 @@ describe("session command dispatch and output boundaries", () => {
   });
 
   it("leaves unaffiliated send text unchanged", async () => {
-    request.mockResolvedValue({ messages: [] });
+    request.mockImplementation(async (_conn, path) => {
+      if (path === "/sessions") return { sessions: [{ id: "child-1" }] };
+      return { messages: [] };
+    });
 
     await withCallerSessionEnv(undefined, async () => {
       await captureCliOutput(() =>

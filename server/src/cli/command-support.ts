@@ -10,7 +10,13 @@ import {
   modelResolutionErrorEnvelope,
   printModelResolutionError,
 } from "./model-resolution.js";
-import { captureHumanCliOutput, setCapturedCliExitCode, writeJsonEnvelope } from "./output.js";
+import {
+  captureHumanCliOutput,
+  cliExitCodeFromUnknown,
+  cliJsonErrorFromUnknown,
+  setCapturedCliExitCode,
+  writeJsonEnvelope,
+} from "./output.js";
 import { apiStatus } from "./resources.js";
 
 export function createLocalApiCommandContext(
@@ -41,9 +47,9 @@ export function handleModelResolvingCliError(err: unknown, jsonOutput: boolean):
       ok: false,
       error: isCliModelResolutionError(err)
         ? modelResolutionErrorEnvelope(err)
-        : { message, ...(status ? { status } : {}) },
+        : cliJsonErrorFromUnknown(err, message, status),
     });
-    setCapturedCliExitCode(1);
+    setCapturedCliExitCode(cliExitCodeFromUnknown(err));
     return;
   }
   if (isCliModelResolutionError(err)) {
@@ -51,5 +57,5 @@ export function handleModelResolvingCliError(err: unknown, jsonOutput: boolean):
   } else {
     console.log(c.red(`  Error: ${message}`));
   }
-  process.exit(1);
+  process.exit(cliExitCodeFromUnknown(err));
 }

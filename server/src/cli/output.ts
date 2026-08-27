@@ -8,6 +8,8 @@ export type CliJsonError = {
   message: string;
   status?: number;
   code?: string;
+  hint?: string;
+  exit_code?: number;
   expectedVersion?: number;
   currentVersion?: number;
 };
@@ -15,6 +17,32 @@ export type CliJsonError = {
 export type CliJsonEnvelope =
   | { ok: true; data: Record<string, unknown> }
   | { ok: false; error: CliJsonError };
+
+export function cliJsonErrorFromUnknown(
+  err: unknown,
+  message: string,
+  status?: number,
+): CliJsonError {
+  const details = err as { code?: unknown; hint?: unknown; exitCode?: unknown };
+  const code = typeof details.code === "string" ? details.code : undefined;
+  const hint = typeof details.hint === "string" ? details.hint : undefined;
+  const hasExplicitExitCode =
+    typeof details.exitCode === "number" &&
+    Number.isInteger(details.exitCode) &&
+    details.exitCode > 0;
+  return {
+    message,
+    ...(status !== undefined ? { status } : {}),
+    ...(code ? { code } : {}),
+    ...(hint ? { hint } : {}),
+    ...(hasExplicitExitCode ? { exit_code: details.exitCode as number } : {}),
+  };
+}
+
+export function cliExitCodeFromUnknown(err: unknown): number {
+  const exitCode = (err as { exitCode?: unknown }).exitCode;
+  return typeof exitCode === "number" && Number.isInteger(exitCode) && exitCode > 0 ? exitCode : 1;
+}
 
 export type TerminalDetailEntry = [string, unknown];
 

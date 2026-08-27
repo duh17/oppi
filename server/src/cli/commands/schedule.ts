@@ -1,4 +1,8 @@
-import { localApiRequest, type LocalApiConnection } from "../local-api-client.js";
+import {
+  localApiRequest,
+  type LocalApiConnection,
+  type LocalApiRequestOptions,
+} from "../local-api-client.js";
 import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
 import { readDefinitionInput } from "../definition-input.js";
 import {
@@ -10,6 +14,7 @@ import {
 } from "../output.js";
 import { resolveModelFlagForCli } from "../model-resolution.js";
 import { resolveWorkspaceIdForCli } from "../resources.js";
+import { resolveSessionIdTargets } from "../session-id-target.js";
 
 function parseDurationMs(value: string): number {
   const match = value.trim().match(/^(\d+)(ms|s|m|h|d)$/);
@@ -102,6 +107,28 @@ function savedAgentReference(agent: string | undefined): string | undefined {
   return normalized;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+async function resolveOneSessionId(
+  target: string,
+  call: <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>,
+): Promise<string> {
+  const [resolved] = await resolveSessionIdTargets([target], call);
+  if (!resolved) throw new Error("session id is required");
+  return resolved;
+}
+
+async function resolveDefinitionSessionId(
+  definition: Record<string, unknown>,
+  call: <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>,
+): Promise<void> {
+  const action = definition.action;
+  if (!isRecord(action) || typeof action.sessionId !== "string") return;
+  action.sessionId = await resolveOneSessionId(action.sessionId, call);
+}
+
 export async function cmdSchedule(
   storage: LocalApiConnection,
   action: string | undefined,
@@ -120,7 +147,7 @@ export async function cmdSchedule(
         const workspaceId = await resolveWorkspaceIdForCli(storage, flags.workspace);
         params.set("workspaceId", workspaceId);
       }
-      if (flags.session) params.set("sessionId", flags.session);
+      if (flags.session) params.set("sessionId", await resolveOneSessionId(flags.session, call));
       const agentId = savedAgentReference(flags.agent);
       if (agentId) params.set("agentId", agentId);
       const result = await call<Record<string, unknown>>(`/schedules${querySuffix(params)}`);
@@ -167,7 +194,11 @@ export async function cmdSchedule(
         throw new Error("--agent can only be used with new-session schedules");
       }
       const action = flags.session
-        ? await existingSessionAction(storage, flags.session, prompt)
+        ? await existingSessionAction(
+            storage,
+            await resolveOneSessionId(flags.session, call),
+            prompt,
+          )
         : await newSessionAction(storage, flags, prompt);
       const body = { name, trigger, action };
       const result = await call<Record<string, unknown>>("/schedules", { method: "POST", body });
@@ -216,6 +247,7 @@ export async function cmdSchedule(
                 : {}),
             },
           };
+      await resolveDefinitionSessionId(definition, call);
       const result = await call<Record<string, unknown>>(`/schedules/${encodeURIComponent(id)}`, {
         method: "PATCH",
         body: definition,

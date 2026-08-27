@@ -1105,15 +1105,14 @@ describe("oppi local API commands", () => {
         if (method === "GET" && url.pathname === "/sessions") {
           json({
             sessions: [
-              {
-                id: "sess-1",
-                workspaceId: "ws-1",
-                worktreeId: "main",
-                status: "stopped",
-                name: "Demo",
-              },
+              { id: "sess-1", workspaceId: "ws-1", status: "stopped" },
+              { id: "sess-recent", workspaceId: "ws-1", status: "stopped" },
+              { id: "sess-malformed", workspaceId: "ws-1", status: "stopped" },
+              { id: "sess-leading", workspaceId: "ws-1", status: "stopped" },
+              { id: "sess-data-url", workspaceId: "ws-1", status: "stopped" },
+              { id: "sess-trailing-user", workspaceId: "ws-1", status: "stopped" },
+              { id: "sess-agent-1", workspaceId: "ws-1", status: "ready" },
             ],
-            serverNow: 2,
           });
           return;
         }
@@ -1536,7 +1535,10 @@ describe("oppi local API commands", () => {
           args: ["session", "list", "--workspace", "ws-1", "--json"],
           expected: ["GET /workspaces/ws-1/sessions?status=active%2Cstopped&sinceMs=*"],
         },
-        { args: ["session", "get", "sess-1", "--json"], expected: ["GET /sessions/sess-1"] },
+        {
+          args: ["session", "get", "sess-1", "--json"],
+          expected: ["GET /sessions", "GET /sessions/sess-1"],
+        },
         {
           args: [
             "session",
@@ -1565,21 +1567,24 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["session", "read", "sess-1", "--tail", "1", "--json"],
-          expected: ["GET /sessions/sess-1/read?tail=1"],
+          expected: ["GET /sessions", "GET /sessions/sess-1/read?tail=1"],
         },
         {
           args: ["session", "events", "sess-1", "--since", "4", "--json"],
-          expected: ["GET /sessions/sess-1/events?since=4"],
+          expected: ["GET /sessions", "GET /sessions/sess-1/events?since=4"],
         },
         {
           args: ["session", "trace", "sess-1", "--include", "summary,tools", "--json"],
-          expected: ["GET /sessions/sess-1/trace?include=summary%2Ctools"],
+          expected: ["GET /sessions", "GET /sessions/sess-1/trace?include=summary%2Ctools"],
         },
         {
           args: ["session", "send", "sess-1", "--text", "hello", "--json"],
-          expected: ["POST /sessions/sess-1/command"],
+          expected: ["GET /sessions", "POST /sessions/sess-1/command"],
         },
-        { args: ["session", "stop", "sess-1", "--json"], expected: ["POST /sessions/sess-1/stop"] },
+        {
+          args: ["session", "stop", "sess-1", "--json"],
+          expected: ["GET /sessions", "POST /sessions/sess-1/stop"],
+        },
         {
           args: [
             "session",
@@ -1604,42 +1609,63 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["session", "inspect", "sess-1", "--turns", "all", "--view", "messages", "--json"],
-          expected: ["GET /sessions/sess-1/trace"],
+          expected: ["GET /sessions", "GET /sessions/sess-1/trace"],
         },
         {
           args: ["session", "inspect", "sess-1", "--turn", "1", "--view", "messages", "--json"],
-          expected: ["GET /sessions/sess-1/trace"],
+          expected: ["GET /sessions", "GET /sessions/sess-1/trace"],
         },
         {
           args: ["session", "inspect", "sess-1", "--view", "response", "--json"],
-          expected: ["GET /sessions/sess-1/trace?include=messages"],
+          expected: ["GET /sessions", "GET /sessions/sess-1/trace?include=messages"],
           exact: true,
         },
         {
           args: ["session", "inspect", "sess-1", "--json"],
-          expected: ["GET /sessions/sess-1", "GET /workspaces/ws-1/sessions/sess-1/trace-outline"],
+          expected: [
+            "GET /sessions",
+            "GET /sessions/sess-1",
+            "GET /workspaces/ws-1/sessions/sess-1/trace-outline",
+          ],
           exact: true,
         },
         {
           args: ["session", "inspect", "sess-1", "--view", "summary", "--json"],
-          expected: ["GET /sessions/sess-1", "GET /workspaces/ws-1/sessions/sess-1/trace-outline"],
+          expected: [
+            "GET /sessions",
+            "GET /sessions/sess-1",
+            "GET /workspaces/ws-1/sessions/sess-1/trace-outline",
+          ],
           exact: true,
         },
         {
           args: ["session", "resume", "sess-1", "--json"],
-          expected: ["GET /sessions/sess-1", "POST /workspaces/ws-1/sessions/sess-1/resume"],
+          expected: [
+            "GET /sessions",
+            "GET /sessions/sess-1",
+            "POST /workspaces/ws-1/sessions/sess-1/resume",
+          ],
         },
         {
           args: ["session", "fork", "sess-1", "--entry", "entry-1", "--name", "Fork", "--json"],
-          expected: ["GET /sessions/sess-1", "POST /workspaces/ws-1/sessions/sess-1/fork"],
+          expected: [
+            "GET /sessions",
+            "GET /sessions/sess-1",
+            "POST /workspaces/ws-1/sessions/sess-1/fork",
+          ],
         },
         {
           args: ["session", "delete", "sess-1", "--json"],
-          expected: ["GET /sessions/sess-1", "DELETE /workspaces/ws-1/sessions/sess-1"],
+          expected: [
+            "GET /sessions",
+            "GET /sessions/sess-1",
+            "DELETE /workspaces/ws-1/sessions/sess-1",
+          ],
         },
         {
           args: ["session", "tool-output", "sess-1", "tool-1", "--json"],
           expected: [
+            "GET /sessions",
             "GET /sessions/sess-1",
             "GET /workspaces/ws-1/sessions/sess-1/tool-output/tool-1",
           ],
@@ -1647,13 +1673,18 @@ describe("oppi local API commands", () => {
         {
           args: ["session", "trace-page", "sess-1", "--target-events", "80", "--json"],
           expected: [
+            "GET /sessions",
             "GET /sessions/sess-1",
             "GET /workspaces/ws-1/sessions/sess-1/trace-page?targetEvents=80",
           ],
         },
         {
           args: ["session", "trace-outline", "sess-1", "--json"],
-          expected: ["GET /sessions/sess-1", "GET /workspaces/ws-1/sessions/sess-1/trace-outline"],
+          expected: [
+            "GET /sessions",
+            "GET /sessions/sess-1",
+            "GET /workspaces/ws-1/sessions/sess-1/trace-outline",
+          ],
         },
         {
           args: [
@@ -1748,7 +1779,7 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["wait", "session", "sess-1", "--status", "stopped", "--json"],
-          expected: ["GET /sessions/sess-1"],
+          expected: ["GET /sessions", "GET /sessions/sess-1"],
         },
       ];
 

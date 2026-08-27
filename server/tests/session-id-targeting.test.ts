@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cmdSession } from "../src/cli/commands/session.js";
+import { resolveHelpTopic } from "../src/cli/help.js";
 import { localApiRequest, type LocalApiConnection } from "../src/cli/local-api-client.js";
 import { captureCliOutput } from "../src/cli/output.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -20,7 +21,9 @@ vi.mock("../src/cli/local-api-client.js", async (importOriginal) => {
 });
 
 const PI_SESSION_ID = "019e1fff-5555-7555-8555-555555555555";
+const PI_SESSION_ID_B = "019e1fff-6666-7666-8666-666666666666";
 const WRAPPER_ID = "cGEcSBwD";
+const LEFTOVER_WRAPPER_ID = "RleHDYBu";
 const request = vi.mocked(localApiRequest);
 const storage = {} as LocalApiConnection;
 
@@ -230,17 +233,18 @@ describe("session targeting uses Pi-native Session.id", () => {
       {
         action: "get",
         flags: { json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}`],
+        expected: ["/sessions", `/sessions/${PI_SESSION_ID}`],
       },
       {
         action: "send",
         flags: { text: "hello", json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}/command`],
+        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/command`],
       },
       {
         action: "inspect",
         flags: { json: "true" },
         expected: [
+          "/sessions",
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/trace-outline`,
         ],
@@ -249,6 +253,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         action: "resume",
         flags: { json: "true" },
         expected: [
+          "/sessions",
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/resume`,
         ],
@@ -256,48 +261,57 @@ describe("session targeting uses Pi-native Session.id", () => {
       {
         action: "wait",
         flags: { for: "idle", json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}/events?since=0`],
+        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/events?since=0`],
       },
       {
         action: "stop",
         flags: { json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}/stop`],
+        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/stop`],
       },
       {
         action: "abort",
         flags: { json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}/command`],
+        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/command`],
       },
       {
         action: "read",
         flags: { json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}/read`],
+        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/read`],
       },
       {
         action: "events",
         flags: { json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}/events`],
+        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/events`],
       },
       {
         action: "trace",
         flags: { json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}/trace`],
+        expected: ["/sessions", `/sessions/${PI_SESSION_ID}/trace`],
       },
       {
         action: "delete",
         flags: { json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}`, `/workspaces/ws-1/sessions/${PI_SESSION_ID}`],
+        expected: [
+          "/sessions",
+          `/sessions/${PI_SESSION_ID}`,
+          `/workspaces/ws-1/sessions/${PI_SESSION_ID}`,
+        ],
       },
       {
         action: "fork",
         flags: { entry: "entry-1", json: "true" },
-        expected: [`/sessions/${PI_SESSION_ID}`, `/workspaces/ws-1/sessions/${PI_SESSION_ID}/fork`],
+        expected: [
+          "/sessions",
+          `/sessions/${PI_SESSION_ID}`,
+          `/workspaces/ws-1/sessions/${PI_SESSION_ID}/fork`,
+        ],
       },
       {
         action: "tool-output",
         flags: { json: "true" },
         extraPositional: ["tool-1"],
         expected: [
+          "/sessions",
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/tool-output/tool-1`,
         ],
@@ -306,6 +320,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         action: "trace-page",
         flags: { json: "true" },
         expected: [
+          "/sessions",
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/trace-page`,
         ],
@@ -314,6 +329,7 @@ describe("session targeting uses Pi-native Session.id", () => {
         action: "trace-outline",
         flags: { json: "true" },
         expected: [
+          "/sessions",
           `/sessions/${PI_SESSION_ID}`,
           `/workspaces/ws-1/sessions/${PI_SESSION_ID}/trace-outline`,
         ],
@@ -324,6 +340,9 @@ describe("session targeting uses Pi-native Session.id", () => {
         const paths: string[] = [];
         request.mockImplementation(async (_conn, path, options) => {
           paths.push(path);
+          if (path === "/sessions") {
+            return { sessions: [{ id: PI_SESSION_ID, workspaceId: "ws-1", status: "ready" }] };
+          }
           if (path === `/sessions/${PI_SESSION_ID}`) {
             return { session: { id: PI_SESSION_ID, workspaceId: "ws-1", status: "ready" } };
           }
@@ -384,8 +403,208 @@ describe("session targeting uses Pi-native Session.id", () => {
         expect(paths.join("\n")).not.toContain(WRAPPER_ID);
       },
     );
+
+    it("resolves a unique Session.id prefix before the command HTTP call", async () => {
+      const paths: string[] = [];
+      request.mockImplementation(async (_conn, path) => {
+        paths.push(path);
+        if (path === "/sessions") {
+          return {
+            sessions: [
+              { id: PI_SESSION_ID, workspaceId: "ws-1", status: "ready" },
+              { id: PI_SESSION_ID_B, workspaceId: "ws-1", status: "ready" },
+            ],
+          };
+        }
+        if (path === `/sessions/${PI_SESSION_ID}`) {
+          return { session: { id: PI_SESSION_ID, workspaceId: "ws-1", status: "ready" } };
+        }
+        throw new Error(`unexpected CLI path ${path}`);
+      });
+
+      const { stdout, exitCode } = await captureCliOutput(() =>
+        cmdSession(storage, "get", ["019e1fff-5555"], { json: "true" }),
+      );
+
+      expect(exitCode).toBe(0);
+      expect(JSON.parse(stdout)).toMatchObject({
+        ok: true,
+        data: { session: { id: PI_SESSION_ID } },
+      });
+      expect(paths).toEqual(["/sessions", `/sessions/${PI_SESSION_ID}`]);
+    });
+
+    it("fails an ambiguous prefix and lists the full Session.ids", async () => {
+      const paths: string[] = [];
+      request.mockImplementation(async (_conn, path) => {
+        paths.push(path);
+        if (path === "/sessions") {
+          return {
+            sessions: [{ id: PI_SESSION_ID }, { id: PI_SESSION_ID_B }],
+          };
+        }
+        throw new Error(`unexpected CLI path ${path}`);
+      });
+
+      const { stdout, exitCode } = await captureCliOutput(() =>
+        cmdSession(storage, "send", ["019e1fff"], { text: "hello", json: "true" }),
+      );
+
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(stdout).ok).toBe(false);
+      expect(JSON.parse(stdout).error).toMatchObject({
+        message: expect.stringContaining("Ambiguous session prefix '019e1fff'"),
+        status: 409,
+        code: "session_prefix_ambiguous",
+        hint: "Pass more of the UUID until exactly one session matches.",
+        exit_code: 1,
+      });
+      expect(JSON.parse(stdout).error.message).toContain(PI_SESSION_ID);
+      expect(JSON.parse(stdout).error.message).toContain(PI_SESSION_ID_B);
+      expect(paths).toEqual(["/sessions"]);
+    });
+
+    it("fails an unknown prefix without calling the session route", async () => {
+      const paths: string[] = [];
+      request.mockImplementation(async (_conn, path) => {
+        paths.push(path);
+        if (path === "/sessions") {
+          return { sessions: [{ id: PI_SESSION_ID }] };
+        }
+        throw new Error(`unexpected CLI path ${path}`);
+      });
+
+      const { stdout, exitCode } = await captureCliOutput(() =>
+        cmdSession(storage, "get", ["deadbeef"], { json: "true" }),
+      );
+
+      expect(exitCode).toBe(1);
+      expect(JSON.parse(stdout)).toMatchObject({
+        ok: false,
+        error: {
+          message: "Session not found: deadbeef",
+          status: 404,
+          code: "session_not_found",
+          hint: "Use the full Session.id or a longer unique prefix. List ids with `oppi session list --json`.",
+          exit_code: 1,
+        },
+      });
+      expect(paths).toEqual(["/sessions"]);
+    });
+
+    it("treats a leftover short wrapper as exact Session.id only", async () => {
+      const paths: string[] = [];
+      request.mockImplementation(async (_conn, path) => {
+        paths.push(path);
+        if (path === "/sessions") {
+          return {
+            sessions: [
+              {
+                id: PI_SESSION_ID,
+                workspaceId: "ws-1",
+                piSessionId: LEFTOVER_WRAPPER_ID,
+              },
+              { id: WRAPPER_ID, workspaceId: "ws-1" },
+            ],
+          };
+        }
+        if (path === `/sessions/${WRAPPER_ID}`) {
+          return { session: { id: WRAPPER_ID, workspaceId: "ws-1", status: "stopped" } };
+        }
+        throw new Error(`unexpected CLI path ${path}`);
+      });
+
+      const alias = await captureCliOutput(() =>
+        cmdSession(storage, "get", [LEFTOVER_WRAPPER_ID], { json: "true" }),
+      );
+      expect(alias.exitCode).toBe(1);
+      expect(JSON.parse(alias.stdout)).toMatchObject({
+        ok: false,
+        error: {
+          message: `Session not found: ${LEFTOVER_WRAPPER_ID}`,
+          status: 404,
+          code: "session_not_found",
+          exit_code: 1,
+        },
+      });
+      expect(paths).toEqual(["/sessions"]);
+
+      paths.length = 0;
+      const exact = await captureCliOutput(() =>
+        cmdSession(storage, "get", [WRAPPER_ID], { json: "true" }),
+      );
+      expect(exact.exitCode).toBe(0);
+      expect(JSON.parse(exact.stdout)).toMatchObject({
+        ok: true,
+        data: { session: { id: WRAPPER_ID } },
+      });
+      expect(paths).toEqual(["/sessions", `/sessions/${WRAPPER_ID}`]);
+    });
+
+    it("resolves each wait target to a unique Session.id before live wait streaming", async () => {
+      const paths: string[] = [];
+      request.mockImplementation(async (_conn, path) => {
+        paths.push(path);
+        if (path === "/sessions") {
+          return { sessions: [{ id: PI_SESSION_ID }, { id: PI_SESSION_ID_B }] };
+        }
+        if (path === `/sessions/${PI_SESSION_ID}/events?since=0`) {
+          return {
+            session: { id: PI_SESSION_ID, status: "ready", messageCount: 1, lastMessage: "done" },
+            events: [],
+            currentSeq: 1,
+          };
+        }
+        throw new Error(`unexpected CLI path ${path}`);
+      });
+
+      const { stdout, exitCode } = await captureCliOutput(() =>
+        cmdSession(storage, "wait", ["019e1fff-5555"], { for: "idle", json: "true" }),
+      );
+
+      expect(exitCode).toBe(0);
+      expect(JSON.parse(stdout)).toMatchObject({
+        ok: true,
+        data: { session_id: PI_SESSION_ID, reason: "idle" },
+      });
+      expect(paths).toEqual(["/sessions", `/sessions/${PI_SESSION_ID}/events?since=0`]);
+    });
   });
 });
+
+describe("session prefix help", () => {
+  it("documents unique prefixes on session, wait, and schedule --session inputs", () => {
+    expect(argumentSummary(["session", "get"])).toBe("session id or unique prefix");
+    expect(argumentSummary(["session", "send"])).toBe("session id or unique prefix");
+    expect(argumentSummary(["session", "wait"])).toBe(
+      "one or more session ids or unique prefixes",
+    );
+    expect(argumentSummary(["session", "fork"])).toBe("source session id or unique prefix");
+    expect(argumentSummary(["wait", "session"])).toBe("session id or unique prefix");
+    expect(flagSummary(["schedule", "create"], "--session")).toBe(
+      "existing session id or unique prefix to send future prompts to",
+    );
+    expect(flagSummary(["schedule", "list"], "--session")).toBe(
+      "filter by existing-session id or unique prefix",
+    );
+    expect(resolveHelpTopic(["session"])?.notes?.join(" ")).toMatch(/unique Session\.id prefix/);
+  });
+
+  it("does not change schedule, agent, or workspace id help", () => {
+    expect(argumentSummary(["schedule", "get"])).toBe("schedule id");
+    expect(argumentSummary(["schedule", "update"])).toBe("schedule id");
+    expect(argumentSummary(["agent", "get"])).toBe("agent id or unique name");
+    expect(argumentSummary(["workspace", "get"])).toBe("workspace id or unique name");
+  });
+});
+
+function argumentSummary(path: string[]): string | undefined {
+  return resolveHelpTopic(path)?.arguments?.[0]?.summary;
+}
+
+function flagSummary(path: string[], name: string): string | undefined {
+  return resolveHelpTopic(path)?.flags?.find((flag) => flag.name === name)?.summary;
+}
 
 function afterEachStoreCleanup(dirs: string[]): void {
   afterEach(() => {

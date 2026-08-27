@@ -65,7 +65,15 @@ describe("sandbox-scoped CLI JSON", () => {
       cwd: hostMount,
       launch: { target: { displayCwd: "/workspace/sandbox" } },
     };
-    request.mockResolvedValue({ session } as never);
+    request.mockImplementation(async (_storage, path) => {
+      if (path === "/sessions") {
+        return { sessions: [{ id: "sess-1", workspaceId: "ws-sandbox" }] } as never;
+      }
+      if (path === "/sessions/sess-1") {
+        return { session } as never;
+      }
+      throw new Error(`unexpected path ${String(path)}`);
+    });
 
     const scoped = await runCli(["session", "get", "sess-1"], {
       dataDir: "/tmp/oppi-sandbox-cli-json",

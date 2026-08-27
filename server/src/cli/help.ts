@@ -735,7 +735,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Wait for a session",
     summary: "Poll one session until its status matches.",
     usage: "oppi wait session <id> --status <status> [--timeout <duration>] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       { name: "--status", value: "<status>", summary: "target status; defaults to stopped" },
       {
@@ -802,7 +802,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--session",
         value: "<session>",
-        summary: "existing session id to send future prompts to",
+        summary: "existing session id or unique prefix to send future prompts to",
       },
       {
         name: "--prompt",
@@ -859,7 +859,11 @@ const HELP_TOPICS: HelpTopic[] = [
       "oppi schedule list [--workspace <workspace>] [--session <session>] [--agent <agent>] [--json]",
     flags: [
       { name: "--workspace", value: "<workspace>", summary: "filter by workspace id or name" },
-      { name: "--session", value: "<session>", summary: "filter by existing-session target" },
+      {
+        name: "--session",
+        value: "<session>",
+        summary: "filter by existing-session id or unique prefix",
+      },
       { name: "--agent", value: "<agent>", summary: "filter by saved Agent id" },
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
@@ -1009,6 +1013,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "trace-outline <id>", summary: "show a trace outline" },
     ],
     notes: [
+      "Session targets accept a unique Session.id prefix, like official Pi --session. Example: oppi session inspect 11111111. Ambiguous prefixes fail. JSON and oppi://session/ stay the full UUID.",
       "Plain 'send' prompts an idle session and steers a busy session at the next turn boundary; use '--follow-up' to wait until current work finishes.",
       "Orchestrate with 'wait <id>' to block until a session is idle or needs attention.",
       "Inspect history progressively: 'inspect <id> --view summary' for counts, '--view outline' to choose turns, then '--view messages' or '--view tools'.",
@@ -1063,7 +1068,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Get session",
     summary: "Show session metadata without dumping transcript or trace entries.",
     usage: "oppi session get <id> [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     examples: [{ command: "oppi session get 11111111-1111-4111-8111-111111111111 --json" }],
   },
@@ -1072,7 +1077,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Send to session",
     summary: "Prompt an idle session, steer a busy session, or queue a follow-up.",
     usage: "oppi session send <id> --text <text> [--steer | --follow-up] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       { name: "--text", value: "<text>", summary: "message text to send", required: true },
       { name: "--steer", summary: "require a busy session and steer at the next turn boundary" },
@@ -1104,7 +1109,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Abort turn",
     summary: "Abort the current streaming turn without stopping the session.",
     usage: "oppi session abort <id> [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: ["Aborts the in-flight turn only; use 'session stop' to end the session."],
     examples: [{ command: "oppi session abort 11111111-1111-4111-8111-111111111111" }],
@@ -1116,7 +1121,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Block until one or more sessions are idle or need attention, then print the terminal state.",
     usage:
       "oppi session wait <id...> [--for idle|attention|either] [--all] [--poll <duration>] [--summary-every <duration>] [--timeout <duration>] [--json]",
-    arguments: [{ name: "<id...>", summary: "one or more session ids" }],
+    arguments: [{ name: "<id...>", summary: "one or more session ids or unique prefixes" }],
     flags: [
       {
         name: "--for",
@@ -1162,7 +1167,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Read session transcript",
     summary: "Read transcript-style trace entries for a session.",
     usage: "oppi session read <id> [--tail <count>] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       { name: "--tail", value: "<count>", summary: "return only the last trace entries" },
       { name: "--json", summary: "write the standard JSON envelope" },
@@ -1176,7 +1181,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Session events",
     summary: "Read live catch-up events for an active session.",
     usage: "oppi session events <id> [--since <cursor>] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       { name: "--since", value: "<cursor>", summary: "event sequence cursor" },
       { name: "--json", summary: "write the standard JSON envelope" },
@@ -1190,7 +1195,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Session trace",
     summary: "Read raw trace entries for a session.",
     usage: "oppi session trace <id> [--include <parts>] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       { name: "--include", value: "<parts>", summary: "trace parts such as summary,tools" },
       { name: "--json", summary: "write the standard JSON envelope" },
@@ -1207,7 +1212,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Stop session",
     summary: "Stop a session through the local API.",
     usage: "oppi session stop <id> [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     examples: [{ command: "oppi session stop 11111111-1111-4111-8111-111111111111 --json" }],
   },
@@ -1253,7 +1258,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Inspect session",
     summary: "Inspect selected turns without dumping the full session trace.",
     usage: "oppi session inspect <id> [--turns <spec>] [--view <view>] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       {
         name: "--turns",
@@ -1290,7 +1295,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Resume session",
     summary: "Resume a stopped workspace session through the local API.",
     usage: "oppi session resume <id> [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     examples: [{ command: "oppi session resume 11111111-1111-4111-8111-111111111111 --json" }],
   },
@@ -1299,7 +1304,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Fork session",
     summary: "Fork a session from a trace entry.",
     usage: "oppi session fork <id> --entry <entry-id> [--name <text>] [--json]",
-    arguments: [{ name: "<id>", summary: "source session id" }],
+    arguments: [{ name: "<id>", summary: "source session id or unique prefix" }],
     flags: [
       {
         name: "--entry",
@@ -1319,7 +1324,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Delete session",
     summary: "Delete a session through the workspace session API.",
     usage: "oppi session delete <id> [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     examples: [{ command: "oppi session delete 11111111-1111-4111-8111-111111111111 --json" }],
   },
@@ -1329,7 +1334,7 @@ const HELP_TOPICS: HelpTopic[] = [
     summary: "Show stored output for one tool call.",
     usage: "oppi session tool-output <id> <tool-call-id> [--json]",
     arguments: [
-      { name: "<id>", summary: "session id" },
+      { name: "<id>", summary: "session id or unique prefix" },
       { name: "<tool-call-id>", summary: "tool call id" },
     ],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
@@ -1342,7 +1347,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Session trace page",
     summary: "Read a bounded trace page for a session.",
     usage: "oppi session trace-page <id> [--cursor <cursor>] [--around-entry <entry-id>] [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
       { name: "--cursor", value: "<cursor>", summary: "trace page cursor" },
       { name: "--around-entry", value: "<entry-id>", summary: "center the page around an entry" },
@@ -1362,7 +1367,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Session trace outline",
     summary: "Read a compact, jumpable event index for a session without full tool output.",
     usage: "oppi session trace-outline <id> [--json]",
-    arguments: [{ name: "<id>", summary: "session id" }],
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     notes: [
       "This is a low-level entry index, not a turn summary; large sessions can still return many rows.",
@@ -1640,7 +1645,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",
       "--model also accepts an optional :thinking suffix such as sonnet:high. --thinking wins if both are present.",
       "Without --agent, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write inline sessionDefaults. With --agent, the same flags go to saved-Agent overrides.",
-      "Session targeting uses the exact full Pi UUID, for example 11111111-1111-4111-8111-111111111111.",
+      "CLI session targets accept a unique Session.id prefix, for example 11111111. JSON, HTTP, and oppi://session/ links still use the full UUID, for example 11111111-1111-4111-8111-111111111111.",
     ],
     examples: [
       {

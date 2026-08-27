@@ -74,6 +74,10 @@ async function runTraceOutlineCli(entries: TraceOutlineFixtureEntry[]): Promise<
   const api = createHttpServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     res.writeHead(200, { "Content-Type": "application/json" });
+    if (url.pathname === "/sessions") {
+      res.end(JSON.stringify({ sessions: [{ id: "sess-1", workspaceId: "ws-1" }] }));
+      return;
+    }
     if (url.pathname === "/sessions/sess-1") {
       res.end(JSON.stringify({ session: { id: "sess-1", workspaceId: "ws-1" } }));
       return;
@@ -174,6 +178,19 @@ async function withOrchApi<T>(
         query: url.search,
         ...(body ? { body } : {}),
       });
+      if (url.pathname === "/sessions") {
+        sendJson(res, {
+          sessions: [
+            { id: "sess-1", workspaceId: "ws-1" },
+            { id: "other-1", workspaceId: "ws-1" },
+            { id: "caller-1" },
+            { id: "mirror-1" },
+            { id: "s1" },
+            { id: "s2" },
+          ],
+        });
+        return;
+      }
       handler(res, { path: url.pathname, ...(body ? { body } : {}) });
     })();
   });
@@ -632,7 +649,9 @@ describe("CLI app-state API boundary", () => {
           "message piped over stdin\n",
         );
         expect(code).toBe(0);
-        expect(requests[0]?.body).toEqual({
+        expect(
+          requests.find((request) => request.path === "/sessions/sess-1/command")?.body,
+        ).toEqual({
           type: "prompt",
           message: "message piped over stdin\n",
           streamingBehavior: "steer",
@@ -813,7 +832,11 @@ describe("CLI app-state API boundary", () => {
 
           expect(code).toBe(0);
           expect(requests.some((request) => request.path === expectedPath)).toBe(true);
-          expect(requests.every((request) => request.path.includes("other-1"))).toBe(true);
+          expect(
+            requests.every(
+              (request) => request.path === "/sessions" || request.path.includes("other-1"),
+            ),
+          ).toBe(true);
         },
       );
     },
@@ -833,7 +856,10 @@ describe("CLI app-state API boundary", () => {
 
         expect(code).toBe(0);
         expect(JSON.parse(stdout)).toMatchObject({ ok: true });
-        expect(requests).toHaveLength(1);
+        expect(requests.map((request) => request.path)).toEqual([
+          "/sessions",
+          "/sessions/caller-1",
+        ]);
       },
     );
   });
