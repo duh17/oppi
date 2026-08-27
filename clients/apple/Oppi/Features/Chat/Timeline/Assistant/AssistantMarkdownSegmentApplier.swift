@@ -745,9 +745,9 @@ final class AssistantMarkdownSegmentApplier {
     }
 
     /// Streaming-aware structural rebuild that reuses views for unchanged
-    /// prefix segments. When segments go from [.text] to [.text, .codeBlock],
-    /// the existing text view is kept and only the code block view is created.
-    /// This avoids the cost of destroying and recreating expensive UITextViews.
+    /// prefix segments. The previous last segment is rebuilt when it is a
+    /// mutable tail (text or an open fence) whose content can change as a new
+    /// block appears. Finished tables, images, and videos stay mounted.
     private func incrementalRebuild(
         segments: [FlatSegment],
         signatures: [SegmentSignature],
@@ -764,6 +764,14 @@ final class AssistantMarkdownSegmentApplier {
             commonPrefix += 1
         }
 
+        // Adjacent-text merge can leave a pipe header in the last `.text`
+        // while the new segments are `.text` + `.table`. Open fences also
+        // need a remount when a following block closes them. Do not remount
+        // a finished table, image, or video just because prose follows.
+        if let lastOld = oldSigs.last, lastOld.isMutableStreamingTail {
+            commonPrefix = min(commonPrefix, oldSigs.count - 1)
+        }
+
         // If no common prefix, fall back to full rebuild.
         guard commonPrefix > 0 else {
             rebuild(
@@ -775,15 +783,9 @@ final class AssistantMarkdownSegmentApplier {
             return
         }
 
-        // Prefix views are already configured from the previous apply cycle.
-        // During streaming, prefix segments are frozen by the incremental
-        // parser — their content doesn't change. Only the last text segment
-        // (which is the growing tail) needs updating, and it's always at or
-        // beyond the common prefix boundary. Skip prefix updates entirely
-        // to avoid expensive textView.attributedText re-assignments.
-        //
-        // Note: this is safe because incrementalRebuild is only called during
-        // streaming (non-streaming structural changes use full rebuild).
+        // Earlier prefix views are already configured. Skip re-assigning them.
+        // incrementalRebuild is only called during streaming; non-streaming
+        // structural changes use full rebuild.
 
         // Remove extra views beyond the common prefix.
         while stackView.arrangedSubviews.count > commonPrefix {
@@ -1321,6 +1323,16 @@ private enum SegmentSignature: Equatable {
     case video(reference: ResourceReference)
     case mermaidDiagram
     case latexBlock
+
+    /// Streaming tail whose rendered content can change when a later block appears.
+    var isMutableStreamingTail: Bool {
+        switch self {
+        case .text, .codeBlock, .mermaidDiagram, .latexBlock:
+            true
+        case .table, .thematicBreak, .image, .video:
+            false
+        }
+    }
 
     init(_ segment: FlatSegment) {
         switch segment {

@@ -187,6 +187,46 @@ struct StreamingInlineReparseTests {
         )
     }
 
+    @Test func tableHeaderDoesNotRemainAsTextAfterDelimiterArrives() throws {
+        let (stackView, applier) = makeApplier()
+
+        let intro = "Each phone-safe server setting is:\n\n"
+        let header = "| Row | v1 | Control | Owner / API | Notes |\n"
+        let body = """
+        | --- | --- | --- | --- | --- |
+        | Connection | yes | toggle | server | note |
+        """
+
+        streamTick(applier: applier, content: intro + header)
+        #expect(extractPlainText(from: stackView).contains("| Row |"))
+        #expect(stackView.arrangedSubviews.contains { $0 is NativeTableBlockView } == false)
+
+        streamTick(applier: applier, content: intro + header + body)
+        #expect(stackView.arrangedSubviews.contains { $0 is NativeTableBlockView })
+        #expect(
+            !extractPlainText(from: stackView).contains("| Row |"),
+            "Raw table header must leave the prose text view once the delimiter makes a table"
+        )
+        #expect(extractPlainText(from: stackView).contains("Each phone-safe server setting is:"))
+    }
+
+    @Test func completedTableViewIsReusedWhenFollowingProseArrives() throws {
+        let (stackView, applier) = makeApplier()
+        let table = """
+        | Row | v1 |
+        | --- | --- |
+        | Connection | yes |
+        """
+
+        streamTick(applier: applier, content: table)
+        let tableView = try #require(stackView.arrangedSubviews.first { $0 is NativeTableBlockView })
+
+        streamTick(applier: applier, content: table + "\n\nAfter the table.\n")
+        let reused = try #require(stackView.arrangedSubviews.first { $0 is NativeTableBlockView })
+        #expect(reused === tableView, "A finished table should stay mounted when prose follows")
+        #expect(extractPlainText(from: stackView).contains("After the table."))
+    }
+
     // MARK: - Stream finish renders correctly
 
     @Test func streamFinishProducesCorrectOutput() {
