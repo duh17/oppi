@@ -1,15 +1,15 @@
 # Support and contact
 
-_Last updated: 2026-08-17_
+_Last updated: 2026-08-27_
 
 Oppi is a native Apple client for an Oppi server that you run and pair yourself. There is no hosted Oppi account service. Contact support by email, or use GitHub Issues for public bug reports and feature requests.
 
 ## Contact route
 
-- **Product support and private reports:** [support@chaosdonkey.dev](mailto:support@chaosdonkey.dev)
+- **Product support and private reports:** [duh@chaosdonkey.dev](mailto:duh@chaosdonkey.dev)
 - **Public bug reports and feature requests:** [Open an Oppi issue](https://github.com/duh17/oppi/issues/new) (GitHub sign-in required)
 - **Existing reports and answers:** [Browse Oppi issues](https://github.com/duh17/oppi/issues)
-- **Security reports:** Read [SECURITY.md](../SECURITY.md) first. Send sensitive details to [support@chaosdonkey.dev](mailto:support@chaosdonkey.dev), not to a public issue.
+- **Security reports:** Read [SECURITY.md](../SECURITY.md) first. Send sensitive details to [duh@chaosdonkey.dev](mailto:duh@chaosdonkey.dev), not to a public issue.
 - **Source and release context:** [Oppi repository](https://github.com/duh17/oppi)
 
 This page does not promise a response time or claim a separate legal entity.

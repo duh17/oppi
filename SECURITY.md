@@ -30,4 +30,4 @@ See [`docs/telemetry.md`](docs/telemetry.md) for the full telemetry policy.
 
 ## Reporting issues
 
-If you find a security issue, email [support@chaosdonkey.dev](mailto:support@chaosdonkey.dev). Do not include credentials, tokens, private prompts, workspace contents, or other secrets in a public GitHub issue.
+If you find a security issue, email [duh@chaosdonkey.dev](mailto:duh@chaosdonkey.dev). Do not include credentials, tokens, private prompts, workspace contents, or other secrets in a public GitHub issue.

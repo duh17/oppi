@@ -162,7 +162,7 @@ Turning off diagnostics stops new diagnostic uploads and clears the client-side 
 
 Oppi has no hosted account or central data-request system. For data held by a paired server, contact the person who operates that server or use its local filesystem and provider controls.
 
-For product support, privacy questions, and deletion help, email [support@chaosdonkey.dev](mailto:support@chaosdonkey.dev) or use the [Oppi Support page](support.md). For security reports, read [SECURITY.md](../SECURITY.md). Send sensitive details by email, not through a public issue.
+For product support, privacy questions, and deletion help, email [duh@chaosdonkey.dev](mailto:duh@chaosdonkey.dev) or use the [Oppi Support page](support.md). For security reports, read [SECURITY.md](../SECURITY.md). Send sensitive details by email, not through a public issue.
 
 ## Changes to this policy
 
