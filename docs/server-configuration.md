@@ -22,7 +22,7 @@ oppi config set --help
 
 ## Dictation (ASR / STT)
 
-Dictation needs a speech-to-text backend URL:
+HTTP backend (Yuwp or any compatible streaming STT URL):
 
 ```bash
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
@@ -30,14 +30,28 @@ oppi config validate
 oppi server restart   # or restart `oppi serve`
 ```
 
-- Unset `asr.sttEndpoint` disables remote dictation on the server.
+Pi package `./host` backend:
+
+```bash
+pi install @earendil-works/pi-transcribe
+oppi config set asr.extension @earendil-works/pi-transcribe
+oppi config set asr.backend pi-extension
+oppi config validate
+oppi server restart
+```
+
+- `asr.backend` is `http` or `pi-extension`. Omitted backend with a non-empty `sttEndpoint` means HTTP.
+- Unset `asr.sttEndpoint` disables HTTP dictation. For `pi-extension`, Oppi ignores `sttEndpoint` and requires a valid `asr.extension` whose package directory exports `./host`.
+- `asr.extension` must be a package name, an `npm:` spec, or an absolute package directory. It must not be a Node subpath or the TUI entry.
+- Oppi does not install the package. Use `pi install` or an absolute package directory.
 - The Apple app learns dictation availability from the server identity payload after pairing.
-- Point `asr.sttEndpoint` at a reachable STT service that Oppi can call from the server host.
 
 Inspect:
 
 ```bash
 oppi config get asr
+oppi config get asr.backend
+oppi config get asr.extension
 oppi config get asr.sttEndpoint
 ```
 
@@ -45,10 +59,10 @@ oppi config get asr.sttEndpoint
 
 TTS is not a single built-in endpoint. Extensions provide synthesis. Common server-side pieces:
 
-| Setting | Purpose |
-| --- | --- |
-| `runtimeEnv.TTS_BASE_URL` | Runtime env passed into the Oppi/Pi host process for a voice extension |
-| `extensions.voice.defaultVoiceId` | Saved default voice id for the voice extension |
+| Setting                           | Purpose                                                                |
+| --------------------------------- | ---------------------------------------------------------------------- |
+| `runtimeEnv.TTS_BASE_URL`         | Runtime env passed into the Oppi/Pi host process for a voice extension |
+| `extensions.voice.defaultVoiceId` | Saved default voice id for the voice extension                         |
 
 ```bash
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
@@ -77,15 +91,17 @@ Provider API keys use `pi auth`, not Oppi config.
 
 ## Common operator keys
 
-| Key | Notes |
-| --- | --- |
-| `port` / `host` | Listen address (restart) |
-| `tls.mode` | `disabled`, `self-signed`, `tailscale`, `manual` (restart) |
-| `asr.sttEndpoint` | Dictation STT backend (restart) |
-| `runtimeEnv.<NAME>` | Host runtime env, including TTS URLs (restart) |
-| `extensions.voice.defaultVoiceId` | Default voice id |
-| `images.autoResize` | Client image preprocessing preference |
-| `autoTitle.enabled` / `autoTitle.model` | Automatic session titles |
+| Key                                     | Notes                                                               |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| `port` / `host`                         | Listen address (restart)                                            |
+| `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart)          |
+| `asr.backend`                           | `http` or `pi-extension` (restart)                                  |
+| `asr.extension`                         | Pi STT package name, `npm:` spec, or absolute package dir (restart) |
+| `asr.sttEndpoint`                       | HTTP dictation STT backend (restart)                                |
+| `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
+| `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
+| `images.autoResize`                     | Client image preprocessing preference                               |
+| `autoTitle.enabled` / `autoTitle.model` | Automatic session titles                                            |
 
 After config changes that need a restart:
 

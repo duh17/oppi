@@ -5,6 +5,7 @@ import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js
 import { createLogger } from "../logger.js";
 import { isLocalRequest } from "../request-trust.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
+import { isDictationStreamEnabled } from "../pi-extension-stt-host.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
@@ -160,7 +161,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         sessionStream: { version: 1 },
         controlSessions: { version: 1 },
         appEventStream: { version: 1 },
-        dictationStream: config.asr?.sttEndpoint ? { version: 1 } : undefined,
+        dictationStream: isDictationStreamEnabled(config.asr) ? { version: 1 } : undefined,
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],

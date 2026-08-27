@@ -5,7 +5,7 @@ Oppi provides two dictation paths:
 1. **On-device dictation** — Apple local speech recognition on iPhone.
 2. **Server dictation** — iPhone audio streams to Oppi server, and Oppi forwards it to an STT backend.
 
-ASR is configured globally in Oppi server through `~/.config/oppi/config.json`, not as a workspace extension.
+Server dictation has two backends: HTTP (Yuwp or any compatible streaming STT endpoint) and a Pi package `./host` export. ASR is configured globally in Oppi server through `~/.config/oppi/config.json`, not as a workspace extension.
 
 ## iOS dictation engines
 
@@ -34,9 +34,52 @@ Message flow:
 6. iOS sends `dictation_stop`.
 7. Oppi server sends `dictation_final`.
 
+## Choose a server STT backend
+
+`asr.backend` is `http` or `pi-extension`. If you omit `backend` and set a non-empty `asr.sttEndpoint`, Oppi uses HTTP.
+
+HTTP:
+
+```bash
+oppi config set asr.sttEndpoint http://127.0.0.1:7936
+oppi config validate
+```
+
+```json
+{
+  "asr": {
+    "sttEndpoint": "http://127.0.0.1:7936"
+  }
+}
+```
+
+Pi extension host:
+
+```bash
+pi install @earendil-works/pi-transcribe
+oppi config set asr.extension @earendil-works/pi-transcribe
+oppi config set asr.backend pi-extension
+oppi config validate
+```
+
+```json
+{
+  "asr": {
+    "backend": "pi-extension",
+    "extension": "@earendil-works/pi-transcribe"
+  }
+}
+```
+
+`asr.extension` must be a package name (`@scope/name`), an `npm:` spec, or an absolute package directory. It must not be a Node subpath or the package TUI entry. Oppi imports only that package's `./host` export from the already-installed Pi package store. It does not run `npm install` or `git clone` on serve or `/server/info`, and it does not load the TUI factory.
+
+If `backend` is `pi-extension`, Oppi ignores `sttEndpoint` when deciding whether dictation is available. `GET /server/info` advertises `dictationStream` when HTTP has a non-empty `sttEndpoint`, or when `pi-extension` has a valid `extension` whose package directory exports `./host`. A `prepare()` failure is a fatal `dictation_error` after the client starts dictation, same as an unreachable Yuwp endpoint.
+
+Restart the Oppi server after changing `asr`.
+
 ## STT backend API contract
 
-The backend must implement this session API:
+The HTTP backend must implement this session API:
 
 | Method   | Path                                  | Purpose                                       |
 | -------- | ------------------------------------- | --------------------------------------------- |
@@ -80,7 +123,7 @@ Check it:
 curl -sf http://127.0.0.1:7936/v1/info | jq .
 ```
 
-Configure the Oppi server:
+Configure the Oppi server for HTTP:
 
 ```bash
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
@@ -106,7 +149,8 @@ Notes:
 - The connection runs from **Oppi server → STT backend**, not phone → STT backend.
 - Use `https://` for non-local endpoints.
 - Network latency directly affects partial and final transcript latency.
-- Oppi currently configures only `asr.sttEndpoint`. If your STT backend needs custom auth headers, put a reverse proxy in front of it.
+- For HTTP, Oppi configures `asr.sttEndpoint`. If your STT backend needs custom auth headers, put a reverse proxy in front of it.
+- For `pi-extension`, install the package with `pi install` (or point `asr.extension` at an absolute package directory). Oppi will not install it.
 
 ## Audio retention
 

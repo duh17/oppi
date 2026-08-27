@@ -309,6 +309,11 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "runtimeEnv.<NAME>", summary: "string; one runtime environment variable" },
       { name: "tls.mode", summary: "string; disabled, self-signed, tailscale, or manual" },
       { name: "tls.certPath", summary: "string; manual TLS certificate path" },
+      { name: "asr.backend", summary: "string; http or pi-extension" },
+      {
+        name: "asr.extension",
+        summary: "string; Pi package name, npm: spec, or absolute package directory",
+      },
       { name: "asr.sttEndpoint", summary: "string; STT backend base URL" },
       { name: "images.autoResize", summary: "boolean; resize large image uploads" },
       { name: "extensions.voice.defaultVoiceId", summary: "string; saved voice id" },

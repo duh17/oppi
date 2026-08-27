@@ -122,6 +122,10 @@ export interface ServerConfig {
    * by pointing Oppi at an STT backend endpoint.
    */
   asr?: {
+    /** Explicit backend. Omitted with a non-empty sttEndpoint means "http". */
+    backend?: "http" | "pi-extension";
+    /** Package name, npm: spec, or absolute package directory. Used when backend is pi-extension. */
+    extension?: string;
     sttEndpoint?: string;
   };
 

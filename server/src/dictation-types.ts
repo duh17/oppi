@@ -8,8 +8,12 @@
 // ─── Config ───
 
 export interface DictationConfig {
-  /** STT backend endpoint (must implement the streaming session API). */
-  sttEndpoint: string;
+  /** Explicit backend. Omitted with a non-empty sttEndpoint means "http". */
+  backend?: "http" | "pi-extension";
+  /** Package name, npm: spec, or absolute package directory. */
+  extension?: string;
+  /** STT backend endpoint for the HTTP backend. */
+  sttEndpoint?: string;
 
   /** Model to request from the STT backend. */
   sttModel: string;

@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
+import { ASR_EXTENSION_FORMAT_ERROR, isValidAsrExtensionSpec } from "../pi-extension-stt-host.js";
 import type { DevicePublicKey, ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
@@ -543,7 +544,7 @@ function normalizeConfig(
   // ASR / dictation pipeline config
   if ("asr" in obj && isRecord(obj.asr)) {
     const asr = obj.asr;
-    const allowedAsrKeys = new Set(["sttEndpoint"]);
+    const allowedAsrKeys = new Set(["sttEndpoint", "backend", "extension"]);
 
     if (strictUnknown) {
       for (const key of Object.keys(asr)) {
@@ -554,6 +555,29 @@ function normalizeConfig(
     }
 
     const asrConfig: NonNullable<ServerConfig["asr"]> = {};
+
+    if ("backend" in asr) {
+      if (asr.backend === "http" || asr.backend === "pi-extension") {
+        asrConfig.backend = asr.backend;
+      } else {
+        errors.push("config.asr.backend: expected http or pi-extension");
+        changed = true;
+      }
+    }
+
+    if ("extension" in asr) {
+      if (typeof asr.extension === "string" && isValidAsrExtensionSpec(asr.extension)) {
+        asrConfig.extension = asr.extension.trim();
+      } else {
+        errors.push(`config.asr.extension: ${ASR_EXTENSION_FORMAT_ERROR}`);
+        changed = true;
+      }
+    }
+
+    if (asrConfig.backend === "pi-extension" && !asrConfig.extension) {
+      errors.push("config.asr.extension: required when backend=pi-extension");
+      changed = true;
+    }
 
     if (typeof asr.sttEndpoint === "string" && asr.sttEndpoint.trim().length > 0) {
       asrConfig.sttEndpoint = asr.sttEndpoint.trim();

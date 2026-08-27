@@ -456,7 +456,13 @@ describe("oppi help", () => {
     const cases: Array<{ args: string[]; expected: string[] }> = [
       {
         args: ["config", "set", "--help"],
-        expected: ["Usage: oppi config set <key> <value>", "runtimeEnv.<NAME>", "tls.mode"],
+        expected: [
+          "Usage: oppi config set <key> <value>",
+          "runtimeEnv.<NAME>",
+          "tls.mode",
+          "asr.backend",
+          "asr.extension",
+        ],
       },
       {
         args: ["config", "validate", "--help"],
@@ -822,6 +828,12 @@ describe("oppi config", () => {
     );
     run(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]);
     expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
+    run(["config", "set", "asr.extension", "@earendil-works/pi-transcribe"]);
+    run(["config", "set", "asr.backend", "pi-extension"]);
+    expect(run(["config", "get", "asr.backend"]).stdout.trim()).toBe("pi-extension");
+    expect(run(["config", "get", "asr.extension"]).stdout.trim()).toBe(
+      "@earendil-works/pi-transcribe",
+    );
     run(["config", "set", "oppiDocsPrompt.enabled", "false"]);
     expect(run(["config", "get", "oppiDocsPrompt.enabled"]).stdout.trim()).toBe("false");
     run(["config", "set", "runtimeEnv.TTS_BASE_URL", "http://127.0.0.1:7937"]);
