@@ -103,7 +103,8 @@ enum AgentManagementPresentation {
         case write([String]?)
     }
 
-    /// PUT body after leaving Pi Tools. Uses the Back-time selection, not later view state.
+    /// PUT body for Pi Tools. Back (isPresented true→false) and post-load
+    /// checkbox/mode changes both save the captured selection, not later view state.
     static func piToolsSavePayload(
         leaveHasLoadedTools: Bool,
         leaveMode: AgentToolSelectionMode,
@@ -111,13 +112,36 @@ enum AgentManagementPresentation {
         laterHasLoadedTools _: Bool,
         laterMode _: AgentToolSelectionMode,
         laterSelectedNames _: Set<String>,
-        builtInTools: [ServerToolSummary]
+        builtInTools: [ServerToolSummary],
+        pickerWasPresented: Bool,
+        pickerIsPresented: Bool,
+        selectionChangedAfterLoad: Bool,
+        isApplyingLoadedTools: Bool = false,
+        namesChanged: Bool = false
     ) -> PiToolsSavePayload {
         guard leaveHasLoadedTools else { return .skip }
+        // GET/revert binding writes are not a user selection change.
+        guard !isApplyingLoadedTools else { return .skip }
+        // inherit→exact sets names then mode; names onChange must not PUT null.
+        if namesChanged && leaveMode == .inherit { return .skip }
+        let dismissedPicker = pickerWasPresented && !pickerIsPresented
+        guard dismissedPicker || selectionChangedAfterLoad else { return .skip }
         let desired: [String]? = leaveMode == .exact
             ? piExactToolNames(selectedNames: leaveSelectedNames, builtInTools: builtInTools)
             : nil
         return .write(desired)
+    }
+
+    /// Skip replacing the in-memory selection while a write is in flight or the picker is open.
+    /// PUT failure still reverts visible selection, including while the picker is presented.
+    static func shouldApplyLoadedPiTools(
+        hasLoadedTools: Bool,
+        isSaving: Bool,
+        pickerIsPresented: Bool,
+        isRevertingAfterFailure: Bool = false
+    ) -> Bool {
+        if isRevertingAfterFailure { return true }
+        return !hasLoadedTools || (!isSaving && !pickerIsPresented)
     }
 
     static func piToolsSummary(defaultTools: [String]?) -> String {
@@ -297,12 +321,14 @@ struct PiAgentDetailView: View {
     @State private var isShowingSystemPromptSession = false
     @State private var isShowingFilePromptReview = false
     @State private var isShowingDefaultPrompt = false
+    @State private var isShowingPiTools = false
     @State private var prompt: PiSystemPromptSnapshot?
     @State private var defaultTools: [String]?
     @State private var builtInTools: [ServerToolSummary] = []
     @State private var toolSelectionMode: AgentToolSelectionMode = .inherit
     @State private var selectedToolNames: Set<String> = []
     @State private var hasLoadedTools = false
+    @State private var isApplyingLoadedTools = false
     @State private var toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator()
     @State private var isLoading = false
     @State private var error: String?
@@ -377,33 +403,21 @@ struct PiAgentDetailView: View {
             }
 
             Section {
-                NavigationLink {
-                    AgentToolSelectionView(
-                        mode: $toolSelectionMode,
-                        selectedNames: $selectedToolNames,
-                        builtInTools: builtInTools,
-                        defaultSelection: defaultBuiltInSelection,
-                        title: "Pi Tools",
-                        inheritFooter: AgentManagementPresentation.piToolsInheritFooter,
-                        exactFooter: AgentManagementPresentation.piToolsExactFooter
-                    )
-                    .onDisappear {
-                        let leaveHasLoadedTools = hasLoadedTools
-                        let leaveMode = toolSelectionMode
-                        let leaveSelectedNames = selectedToolNames
-                        let leaveBuiltInTools = builtInTools
-                        Task {
-                            await saveToolsIfNeeded(
-                                leaveHasLoadedTools: leaveHasLoadedTools,
-                                leaveMode: leaveMode,
-                                leaveSelectedNames: leaveSelectedNames,
-                                leaveBuiltInTools: leaveBuiltInTools
-                            )
-                        }
-                    }
+                Button {
+                    isShowingPiTools = true
                 } label: {
-                    LabeledContent("Tools", value: AgentManagementPresentation.piToolsSummary(defaultTools: defaultTools))
+                    HStack(alignment: .center, spacing: 12) {
+                        LabeledContent(
+                            "Tools",
+                            value: AgentManagementPresentation.piToolsSummary(defaultTools: defaultTools)
+                        )
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityIdentifier("agents.pi.tools")
             } footer: {
                 Text("Chooses Pi's built-in tools. Extension tools stay enabled.")
@@ -423,13 +437,46 @@ struct PiAgentDetailView: View {
         .navigationTitle("Pi")
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
-        .task { await load() }
+        .navigationDestination(isPresented: $isShowingPiTools) {
+            AgentToolSelectionView(
+                mode: $toolSelectionMode,
+                selectedNames: $selectedToolNames,
+                builtInTools: builtInTools,
+                defaultSelection: defaultBuiltInSelection,
+                title: "Pi Tools",
+                inheritFooter: AgentManagementPresentation.piToolsInheritFooter,
+                exactFooter: AgentManagementPresentation.piToolsExactFooter
+            )
+        }
+        .task {
+            guard !hasLoadedTools else { return }
+            await load()
+        }
         .refreshable { await load() }
+        .onChange(of: isShowingPiTools) { wasPresented, isPresented in
+            guard wasPresented, !isPresented else { return }
+            saveCurrentTools(
+                pickerWasPresented: true,
+                pickerIsPresented: false,
+                selectionChangedAfterLoad: false
+            )
+        }
         .onChange(of: toolSelectionMode) { _, _ in
             syncDisplayedDefaultTools()
+            saveCurrentTools(
+                pickerWasPresented: isShowingPiTools,
+                pickerIsPresented: isShowingPiTools,
+                selectionChangedAfterLoad: true
+            )
         }
         .onChange(of: selectedToolNames) { _, _ in
             syncDisplayedDefaultTools()
+            saveCurrentTools(
+                pickerWasPresented: isShowingPiTools,
+                pickerIsPresented: isShowingPiTools,
+                selectionChangedAfterLoad: true,
+                namesChanged: true
+            )
         }
         .sheet(isPresented: $isShowingSystemPromptSession) {
             GuidedControlSessionSheet(
@@ -519,7 +566,21 @@ struct PiAgentDetailView: View {
         }
     }
 
-    private func applyLoadedDefaultTools(_ loaded: [String]?) {
+    private func applyLoadedDefaultTools(
+        _ loaded: [String]?,
+        isRevertingAfterFailure: Bool = false
+    ) {
+        guard AgentManagementPresentation.shouldApplyLoadedPiTools(
+            hasLoadedTools: hasLoadedTools,
+            isSaving: toolsSave.isSaving,
+            pickerIsPresented: isShowingPiTools,
+            isRevertingAfterFailure: isRevertingAfterFailure
+        ) else {
+            hasLoadedTools = true
+            return
+        }
+        // Binding onChange must not PUT while GET/revert writes mode and names.
+        isApplyingLoadedTools = true
         toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator(persisted: loaded)
         defaultTools = loaded
         if let loaded {
@@ -530,26 +591,47 @@ struct PiAgentDetailView: View {
             selectedToolNames = defaultBuiltInSelection
         }
         hasLoadedTools = true
+        Task { @MainActor in
+            isApplyingLoadedTools = false
+        }
     }
 
-    @MainActor
-    private func saveToolsIfNeeded(
-        leaveHasLoadedTools: Bool,
-        leaveMode: AgentToolSelectionMode,
-        leaveSelectedNames: Set<String>,
-        leaveBuiltInTools: [ServerToolSummary]
-    ) async {
+    private func saveCurrentTools(
+        pickerWasPresented: Bool,
+        pickerIsPresented: Bool,
+        selectionChangedAfterLoad: Bool,
+        namesChanged: Bool = false
+    ) {
         let action = AgentManagementPresentation.piToolsSavePayload(
-            leaveHasLoadedTools: leaveHasLoadedTools,
-            leaveMode: leaveMode,
-            leaveSelectedNames: leaveSelectedNames,
+            leaveHasLoadedTools: hasLoadedTools,
+            leaveMode: toolSelectionMode,
+            leaveSelectedNames: selectedToolNames,
             laterHasLoadedTools: hasLoadedTools,
             laterMode: toolSelectionMode,
             laterSelectedNames: selectedToolNames,
-            builtInTools: leaveBuiltInTools
+            builtInTools: builtInTools,
+            pickerWasPresented: pickerWasPresented,
+            pickerIsPresented: pickerIsPresented,
+            selectionChangedAfterLoad: selectionChangedAfterLoad,
+            isApplyingLoadedTools: isApplyingLoadedTools,
+            namesChanged: namesChanged
         )
-        guard case .write(let desired) = action, let apiClient else { return }
+        guard case .write(let desired) = action else { return }
+        // Mark isSaving before the async PUT so a following GET cannot apply stale names.
         guard toolsSave.requestSave(desired: desired) else { return }
+        Task {
+            await performQueuedPiToolsSave()
+        }
+    }
+
+    @MainActor
+    private func performQueuedPiToolsSave() async {
+        guard let apiClient else {
+            let persisted = toolsSave.persisted
+            toolsSave.fail()
+            applyLoadedDefaultTools(persisted, isRevertingAfterFailure: true)
+            return
+        }
 
         while true {
             let next = toolsSave.pendingDesired
@@ -566,7 +648,7 @@ struct PiAgentDetailView: View {
             } catch {
                 let persisted = toolsSave.persisted
                 toolsSave.fail()
-                applyLoadedDefaultTools(persisted)
+                applyLoadedDefaultTools(persisted, isRevertingAfterFailure: true)
                 self.error = error.localizedDescription
                 return
             }
