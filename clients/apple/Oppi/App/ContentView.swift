@@ -124,12 +124,6 @@ struct ContentView: View {
         .onChange(of: navigation.selectedTab) { _, _ in
             navigation.routeLegacySelectedTabIfNeeded()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .workspaceMediaOverlayDidBegin)) { _ in
-            navigation.beginMediaOverlay(activeServerId: coordinator.activeServerId)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .workspaceMediaOverlayDidEnd)) { _ in
-            restoreWorkspaceAfterMediaOverlay()
-        }
         .overlay(alignment: .topLeading) {
             e2eDiagnosticsOverlay
         }
@@ -146,14 +140,6 @@ struct ContentView: View {
                 .allowsHitTesting(false)
         }
 #endif
-    }
-
-    private func restoreWorkspaceAfterMediaOverlay() {
-        let restoreServerId = navigation.endMediaOverlay(
-            currentServerId: coordinator.activeServerId
-        )
-        guard let restoreServerId else { return }
-        _ = coordinator.restoreActiveServer(restoreServerId)
     }
 
     private func presentQuickSessionIfPossible(requestID: Int) {
