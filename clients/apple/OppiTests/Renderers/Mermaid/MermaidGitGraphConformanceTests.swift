@@ -572,19 +572,32 @@ private func draw(_ layout: MermaidFlowchartRenderer.FlowchartLayout) -> Bool? {
     paint(layout) == nil ? nil : true
 }
 
+private struct GitGraphRGB {
+    let r: CGFloat
+    let g: CGFloat
+    let b: CGFloat
+}
+
+private struct GitGraphPixel {
+    let rgb: GitGraphRGB
+    let a: UInt8
+}
+
 private struct GitGraphBitmap {
     let width: Int
     let height: Int
     let bytes: [UInt8]
 
-    func pixel(_ point: CGPoint) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: UInt8) {
+    func pixel(_ point: CGPoint) -> GitGraphPixel {
         let x = min(max(Int(point.x.rounded()), 0), width - 1)
         let y = min(max(Int(point.y.rounded()), 0), height - 1)
         let offset = (y * width + x) * 4
-        return (
-            r: CGFloat(bytes[offset]) / 255,
-            g: CGFloat(bytes[offset + 1]) / 255,
-            b: CGFloat(bytes[offset + 2]) / 255,
+        return GitGraphPixel(
+            rgb: GitGraphRGB(
+                r: CGFloat(bytes[offset]) / 255,
+                g: CGFloat(bytes[offset + 1]) / 255,
+                b: CGFloat(bytes[offset + 2]) / 255
+            ),
             a: bytes[offset + 3]
         )
     }
@@ -613,20 +626,17 @@ private func paint(_ layout: MermaidFlowchartRenderer.FlowchartLayout) -> GitGra
     return ok ? GitGraphBitmap(width: width, height: height, bytes: bytes) : nil
 }
 
-private func sRGB(_ color: CGColor) -> (r: CGFloat, g: CGFloat, b: CGFloat)? {
+private func sRGB(_ color: CGColor) -> GitGraphRGB? {
     guard let space = CGColorSpace(name: CGColorSpace.sRGB),
           let converted = color.converted(to: space, intent: .defaultIntent, options: nil),
           let components = converted.components, components.count >= 3
     else { return nil }
-    return (components[0], components[1], components[2])
+    return GitGraphRGB(r: components[0], g: components[1], b: components[2])
 }
 
-private func distance(
-    _ pixel: (r: CGFloat, g: CGFloat, b: CGFloat, a: UInt8),
-    _ color: (r: CGFloat, g: CGFloat, b: CGFloat)
-) -> CGFloat {
-    let dr = pixel.r - color.r
-    let dg = pixel.g - color.g
-    let db = pixel.b - color.b
+private func distance(_ pixel: GitGraphPixel, _ color: GitGraphRGB) -> CGFloat {
+    let dr = pixel.rgb.r - color.r
+    let dg = pixel.rgb.g - color.g
+    let db = pixel.rgb.b - color.b
     return (dr * dr + dg * dg + db * db).squareRoot()
 }
