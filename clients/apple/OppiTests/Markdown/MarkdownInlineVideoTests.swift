@@ -1248,6 +1248,133 @@ struct MarkdownInlineVideoTests {
         #expect(parent.children.isEmpty)
     }
 
+    @MainActor
+    @Test("theme-only reapply keeps the same four video players")
+    func themeOnlyReapplyKeepsTheSameFourVideoPlayers() async throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let source = dummyMediaSource()
+        let parent = UIViewController()
+        let view = AssistantMarkdownContentView()
+        view.makeMarkdownVideoSource = { _ in source }
+        parent.view.addSubview(view)
+        view.frame = CGRect(x: 0, y: 0, width: 360, height: 900)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 900))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let content = "![[one.mp4]]\n\n![[two.mp4]]\n\n![[three.mp4]]\n\n![[four.mp4]]"
+        view.apply(configuration: .make(
+            content: content,
+            isStreaming: false,
+            themeID: .dark,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        ))
+        view.layoutIfNeeded()
+
+        var videos: [NativeMarkdownVideoView] = []
+        for _ in 0..<80 {
+            videos = timelineAllViews(in: view).compactMap { $0 as? NativeMarkdownVideoView }
+            if videos.count == 4, videos.allSatisfy(\.debugHasActivePlayerForTesting) { break }
+            await Task.yield()
+        }
+        #expect(videos.count == 4)
+        try #require(videos.count == 4)
+        let players = videos.map { $0.debugPlaybackModelForTesting.player }
+        #expect(players.allSatisfy { $0?.currentItem != nil })
+
+        view.apply(configuration: .make(
+            content: content,
+            isStreaming: false,
+            themeID: .light,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        ))
+        view.layoutIfNeeded()
+
+        let after = timelineAllViews(in: view).compactMap { $0 as? NativeMarkdownVideoView }
+        #expect(after.count == 4)
+        #expect(zip(videos, after).allSatisfy { $0 === $1 })
+        #expect(zip(players, after).allSatisfy { player, video in
+            video.debugPlaybackModelForTesting.player === player && player?.currentItem != nil
+        })
+
+        let firstPlayer = after[0].debugPlaybackModelForTesting.player
+        let removedPlayer = after[1].debugPlaybackModelForTesting.player
+        view.apply(configuration: .make(
+            content: "![[one.mp4]]",
+            isStreaming: false,
+            themeID: .light,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        ))
+        view.layoutIfNeeded()
+        let remaining = timelineAllViews(in: view).compactMap { $0 as? NativeMarkdownVideoView }
+        #expect(remaining.count == 1)
+        #expect(remaining[0] === after[0])
+        #expect(remaining[0].debugPlaybackModelForTesting.player === firstPlayer)
+        #expect(firstPlayer?.currentItem != nil)
+        #expect(removedPlayer?.currentItem == nil)
+    }
+
+    @MainActor
+    @Test("clear after yielding a video off the stack does not destroy its player")
+    func clearAfterYieldDoesNotDestroyParkedPlayer() async throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let source = dummyMediaSource()
+        let parent = UIViewController()
+        let view = AssistantMarkdownContentView()
+        view.makeMarkdownVideoSource = { _ in source }
+        parent.view.addSubview(view)
+        view.frame = CGRect(x: 0, y: 0, width: 360, height: 400)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        view.apply(configuration: .make(
+            content: "![[movie.mp4]]",
+            isStreaming: false,
+            themeID: .dark,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        ))
+        view.layoutIfNeeded()
+
+        var video: NativeMarkdownVideoView?
+        for _ in 0..<80 {
+            if let found = timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view),
+               found.debugHasActivePlayerForTesting {
+                video = found
+                break
+            }
+            await Task.yield()
+        }
+        let parked = try #require(video)
+        let player = parked.debugPlaybackModelForTesting.player
+        #expect(player?.currentItem != nil)
+
+        parked.removeFromSuperview()
+        view.debugReleaseVideoViewOwnershipForTesting()
+        view.clearContent()
+
+        #expect(parked.debugPlaybackModelForTesting.player === player)
+        #expect(player?.currentItem != nil)
+        #expect(timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view) == nil)
+
+        parked.prepareForRemoval()
+        #expect(player?.currentItem == nil)
+    }
+
     @Test("mixed quote text around a video keeps quote chrome")
     func mixedQuoteVideoKeepsQuoteChrome() throws {
         let baseURL = try #require(URL(string: "https://server.example.com"))

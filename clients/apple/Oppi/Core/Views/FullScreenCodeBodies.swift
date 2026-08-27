@@ -1524,6 +1524,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        segmentApplier.releaseVideoViewOwnership()
         return views
     }
 
@@ -2736,7 +2737,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         guard let id = cell.appliedSegmentID else { return }
         let views = cell.yieldArrangedSegmentViews()
         guard !views.isEmpty else { return }
-        parkedSegmentViews[id]?.forEach { $0.removeFromSuperview() }
+        discardParkedVideoViews(parkedSegmentViews[id] ?? [])
         parkedSegmentViews[id] = views
         let parkedWidth = preparedCanonicalWidth ?? canonicalContentWidth
         for view in views {
@@ -2773,8 +2774,15 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     }
 
     private func resetParkedSegmentViews() {
-        parkedSegmentHost.subviews.forEach { $0.removeFromSuperview() }
+        discardParkedVideoViews(parkedSegmentHost.subviews)
         parkedSegmentViews.removeAll()
+    }
+
+    private func discardParkedVideoViews(_ views: [UIView]) {
+        for view in views {
+            (view as? NativeMarkdownVideoView)?.prepareForRemoval()
+            view.removeFromSuperview()
+        }
     }
 
     /// Install estimated geometry for the document, then synchronously settle a
@@ -3109,7 +3117,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
         let views = cell.yieldArrangedSegmentViews()
         if !views.isEmpty {
-            parkedSegmentViews[id]?.forEach { $0.removeFromSuperview() }
+            discardParkedVideoViews(parkedSegmentViews[id] ?? [])
             parkedSegmentViews[id] = views
             views.forEach { parkedSegmentHost.addSubview($0) }
         }

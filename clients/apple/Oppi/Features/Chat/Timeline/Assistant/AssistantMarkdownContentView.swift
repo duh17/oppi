@@ -609,6 +609,10 @@ extension AssistantMarkdownContentView {
         return max(0, maxOverlap)
     }
 
+    func debugReleaseVideoViewOwnershipForTesting() {
+        segmentApplier.releaseVideoViewOwnership()
+    }
+
     var debugRenderedContentOverflowPoints: CGFloat {
         let maxRenderedY = stackView.arrangedSubviews
             .filter { !$0.isHidden && $0.alpha > 0.01 }

@@ -258,6 +258,7 @@ final class AssistantMarkdownSegmentApplier {
     private var imageViews: [Int: NativeMarkdownImageView] = [:]
     /// References to native inline video views for in-place updates.
     private var videoViews: [Int: NativeMarkdownVideoView] = [:]
+    private var reusableVideoViews: [ResourceReference: NativeMarkdownVideoView] = [:]
     /// References to mermaid diagram views for in-place updates.
     private var mermaidViews: [Int: NativeMermaidBlockView] = [:]
     /// References to LaTeX block views for in-place updates.
@@ -312,6 +313,13 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
+    /// The markdown reader parks segment views by identity and reinstalls them.
+    /// Drop applier references without tearing down playback; the parked host
+    /// owns those players until it releases them.
+    func releaseVideoViewOwnership() {
+        videoViews.removeAll()
+    }
+
     /// Attached to each image view before `apply` so a cache hit can publish
     /// its reserved height without `forceInvalidate` from inside `cellForItemAt`.
     var onImageDisplayHeightChange: ((CGFloat) -> Void)?
@@ -355,7 +363,7 @@ final class AssistantMarkdownSegmentApplier {
         )
     }
 
-    func clear() {
+    func clear(preservingVideos: [NativeMarkdownVideoView] = []) {
         chunkSettleAnimator.cancelAndSnap()
         cachedStreamingTailNS = nil
         cachedStreamingTailPlain = nil
@@ -366,7 +374,8 @@ final class AssistantMarkdownSegmentApplier {
         }
         highlightTasks.removeAll()
 
-        for view in videoViews.values {
+        let preserved = Set(preservingVideos.map { ObjectIdentifier($0) })
+        for view in videoViews.values where !preserved.contains(ObjectIdentifier(view)) {
             view.prepareForRemoval()
         }
 
@@ -532,7 +541,13 @@ final class AssistantMarkdownSegmentApplier {
         config: AssistantMarkdownContentView.Configuration,
         hasUnclosedCodeFence: Bool
     ) {
-        clear()
+        reusableVideoViews = [:]
+        for (index, signature) in renderedSegmentSignatures.enumerated() {
+            if case .video(let reference) = signature, let view = videoViews[index] {
+                reusableVideoViews[reference] = view
+            }
+        }
+        clear(preservingVideos: Array(reusableVideoViews.values))
 
         appendSegmentViews(
             segments: segments,
@@ -542,6 +557,10 @@ final class AssistantMarkdownSegmentApplier {
         )
         renderedSegmentSignatures = signatures
         renderedBuildContext = SegmentRenderContext(config)
+        for leftover in reusableVideoViews.values {
+            leftover.prepareForRemoval()
+        }
+        reusableVideoViews.removeAll()
 
         // Seed the incremental cache for the streaming tail.
         if config.isStreaming, let lastIdx = segments.lastIndex(where: {
@@ -650,7 +669,7 @@ final class AssistantMarkdownSegmentApplier {
             imageViews[index] = imageView
 
         case .video(let embed):
-            let videoView = NativeMarkdownVideoView()
+            let videoView = reusableVideoViews.removeValue(forKey: embed.reference) ?? NativeMarkdownVideoView()
             videoView.onPreparedGeometry = onVideoPreparedGeometry
             videoView.apply(
                 embed: embed,
