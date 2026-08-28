@@ -297,15 +297,58 @@ struct WorkspaceReviewModelsTests {
     }
 
     @Test func newSessionNavigationAttachesSelectedFilesInDisplayOrder() {
-        #expect(QuickActionSessionNavDestination.attaching(
+        let dest = QuickActionSessionNavDestination.attaching(
             sessionId: "session-1",
             filePaths: ["Sources/App.swift", "README.md"]
-        ) == QuickActionSessionNavDestination(
+        )
+        #expect(dest == QuickActionSessionNavDestination(
             id: "session-1",
             inputText: "",
             filePaths: ["Sources/App.swift", "README.md"],
             fileDisplayPrefix: ""
         ))
+        #expect(dest.commitSha.isEmpty)
+        #expect(dest.commitMessage.isEmpty)
+        #expect(dest.pendingFileReferences.map(\.path) == ["Sources/App.swift", "README.md"])
+        #expect(dest.pendingFileReferences.map(\.kind) == [.reviewFile, .reviewFile])
+    }
+
+    @Test func newSessionNavigationAttachesCommitNotChangedFiles() {
+        let dest = QuickActionSessionNavDestination.attachingCommit(
+            sessionId: "session-1",
+            sha: "9b82f81",
+            message: "Fix composer chips"
+        )
+        #expect(dest == QuickActionSessionNavDestination(
+            id: "session-1",
+            inputText: "",
+            filePaths: [],
+            fileDisplayPrefix: "",
+            commitSha: "9b82f81",
+            commitMessage: "Fix composer chips"
+        ))
+        #expect(dest.pendingFileReferences == [
+            PendingFileReference(
+                path: "9b82f81",
+                isDirectory: false,
+                kind: .gitCommit,
+                commitMessage: "Fix composer chips"
+            )
+        ])
+    }
+
+    @Test func templateNavigationKeepsFilePathsWithoutCommitSha() {
+        let dest = QuickActionSessionNavDestination(
+            id: "session-1",
+            inputText: "Review the selected files.",
+            filePaths: ["Sources/App.swift", "README.md"],
+            fileDisplayPrefix: "Review"
+        )
+        #expect(dest.commitSha.isEmpty)
+        #expect(dest.commitMessage.isEmpty)
+        #expect(dest.pendingFileReferences.map(\.kind) == [.reviewFile, .reviewFile])
+        #expect(dest.pendingFileReferences.map(\.path) == ["Sources/App.swift", "README.md"])
+        #expect(dest.pendingFileReferences.map(\.displayPrefix) == ["Review", "Review"])
     }
 
     private func makeReviewDiff(

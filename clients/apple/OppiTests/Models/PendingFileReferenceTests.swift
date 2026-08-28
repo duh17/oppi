@@ -445,6 +445,97 @@ struct PendingFileReferenceTests {
         let parsed = UserMessageAttachmentPresentation.parse(rawText: transport)
         #expect(parsed.visibleText == "Please inspect")
         #expect(parsed.pathPills.map { $0.path } == ["Sources/App.swift", "Tests/AppTests.swift"])
+        #expect(transport.contains("Referenced workspace files:"))
+        #expect(!transport.contains("Selected commit:"))
+    }
+
+    @Test func gitCommitReferenceUsesShaAsDisplayNameAndCommitPill() {
+        let ref = PendingFileReference(
+            path: "9b82f81",
+            isDirectory: false,
+            kind: .gitCommit,
+            commitMessage: "Fix composer chips"
+        )
+        #expect(ref.displayName == "9b82f81")
+        #expect(ref.kind.pathPillKind == .gitCommit)
+
+        let pill = UserMessagePathPill(kind: .gitCommit, path: "9b82f81")
+        #expect(pill.prefix == "Commit")
+        #expect(pill.label == "9b82f81")
+        #expect(pill.symbolName == "arrow.triangle.branch")
+        #expect(pill.supportsInlinePreview == false)
+        #expect(pill.opensWorkspaceFileBrowser == false)
+        #expect(UserMessagePathPill(kind: .repoFile, path: "README.md").opensWorkspaceFileBrowser)
+    }
+
+    @Test func appendReferenceBlockEmitsSelectedCommitInsteadOfWorkspaceFiles() {
+        let transport = PendingFileReference.appendReferenceBlock(
+            to: "",
+            files: [
+                PendingFileReference(
+                    path: "9b82f81",
+                    isDirectory: false,
+                    kind: .gitCommit,
+                    commitMessage: "Fix composer chips"
+                )
+            ]
+        )
+
+        #expect(transport == """
+        Selected commit:
+        - SHA: 9b82f81
+        - Message: Fix composer chips
+        """)
+        #expect(!transport.contains("Referenced workspace files:"))
+        #expect(!transport.localizedCaseInsensitiveContains("selected files"))
+
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: transport)
+        #expect(parsed.visibleText.isEmpty)
+        #expect(parsed.pathPills == [UserMessagePathPill(kind: .gitCommit, path: "9b82f81")])
+        #expect(UserMessageTextProjection.visibleText(from: transport).isEmpty)
+        #expect(UserMessageTextProjection.comparableText(transport).isEmpty)
+    }
+
+    @Test func appendReferenceBlockKeepsFileRefsAndCommitRefsDistinct() {
+        let transport = PendingFileReference.appendReferenceBlock(
+            to: "Please inspect",
+            files: [
+                PendingFileReference(path: "Sources/App.swift", isDirectory: false, kind: .reviewFile),
+                PendingFileReference(
+                    path: "9b82f81",
+                    isDirectory: false,
+                    kind: .gitCommit,
+                    commitMessage: "Fix composer chips\n\nMore detail"
+                )
+            ]
+        )
+
+        #expect(transport.contains("Referenced workspace files:\n- Sources/App.swift"))
+        #expect(transport.contains("Selected commit:\n- SHA: 9b82f81\n- Message: Fix composer chips More detail"))
+
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: transport)
+        #expect(parsed.visibleText == "Please inspect")
+        #expect(parsed.pathPills.map(\.kind) == [.gitCommit, .repoFile])
+        #expect(parsed.pathPills.map(\.path) == ["9b82f81", "Sources/App.swift"])
+    }
+
+    @Test func gitCommitDraftPointerPersistsKindAndMessage() throws {
+        let pointer = ComposerDraftRepoPointer(
+            path: "9b82f81",
+            isDirectory: false,
+            kind: .gitCommit,
+            displayPrefix: nil,
+            commitMessage: "Fix composer chips"
+        )
+        let encoded = try JSONEncoder().encode(pointer)
+        let decoded = try JSONDecoder().decode(ComposerDraftRepoPointer.self, from: encoded)
+        #expect(decoded == pointer)
+
+        let restored = PendingFileReference(composerDraftPointer: pointer)
+        #expect(restored.kind == .gitCommit)
+        #expect(restored.path == "9b82f81")
+        #expect(restored.commitMessage == "Fix composer chips")
+        #expect(restored.composerDraftPointer == pointer)
     }
 
     @Test func attachmentPresentationCollapsesReloadedSkillOnlyBlockToSlashCommand() {

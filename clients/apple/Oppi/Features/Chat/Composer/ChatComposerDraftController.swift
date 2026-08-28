@@ -454,39 +454,3 @@ final class ChatComposerDraftController {
         return (failed + current).filter { seen.insert($0.id).inserted }
     }
 }
-
-private extension PendingFileReference {
-    var composerDraftPointer: ComposerDraftRepoPointer {
-        let draftKind: ComposerDraftRepoPointer.Kind
-        switch kind {
-        case .workspaceFile:
-            draftKind = .workspaceFile
-        case .reviewFile:
-            draftKind = .reviewFile
-        }
-
-        return ComposerDraftRepoPointer(
-            path: path,
-            isDirectory: isDirectory,
-            kind: draftKind,
-            displayPrefix: displayPrefix
-        )
-    }
-
-    init(composerDraftPointer: ComposerDraftRepoPointer) {
-        let referenceKind: PendingFileReferenceKind
-        switch composerDraftPointer.kind {
-        case .workspaceFile:
-            referenceKind = .workspaceFile
-        case .reviewFile:
-            referenceKind = .reviewFile
-        }
-
-        self.init(
-            path: composerDraftPointer.path,
-            isDirectory: composerDraftPointer.isDirectory,
-            kind: referenceKind,
-            displayPrefix: composerDraftPointer.displayPrefix
-        )
-    }
-}

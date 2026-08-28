@@ -10,6 +10,7 @@ enum UserMessageTextProjection {
     private static let markerSuffix = "]]"
     static let referenceBlockHeader = "Referenced workspace files:"
     static let attachedFilesHeader = "Attached files:"
+    static let selectedCommitHeader = "Selected commit:"
 
     static func comparableText(_ rawText: String) -> String {
         let visible = visibleText(from: rawText)
@@ -28,8 +29,10 @@ enum UserMessageTextProjection {
         let withoutMarker = stripMarker(from: content)
         let withoutAttachedFiles = splitTrailingAttachedFilesBlock(from: withoutMarker)?.visibleText
             ?? withoutMarker
-        let withoutReferenceBlock = splitTrailingReferenceBlock(from: withoutAttachedFiles)?.visibleText
+        let withoutCommitBlock = splitTrailingSelectedCommitBlock(from: withoutAttachedFiles)?.visibleText
             ?? withoutAttachedFiles
+        let withoutReferenceBlock = splitTrailingReferenceBlock(from: withoutCommitBlock)?.visibleText
+            ?? withoutCommitBlock
         return collapseLeadingSkillBlock(
             in: withoutReferenceBlock.trimmingCharacters(in: .whitespacesAndNewlines)
         )
@@ -148,7 +151,7 @@ enum UserMessageTextProjection {
     }
 
     private static func isKnownPathPillKind(_ value: String) -> Bool {
-        value == "uploadedFile" || value == "reviewFile" || value == "repoFile"
+        value == "uploadedFile" || value == "reviewFile" || value == "repoFile" || value == "gitCommit"
     }
 
     static func splitTrailingReferenceBlock(
@@ -160,6 +163,19 @@ enum UserMessageTextProjection {
                 return !line.dropFirst(2).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
         }
+    }
+
+    static func splitTrailingSelectedCommitBlock(
+        from text: String
+    ) -> (visibleText: String, bodyLines: [String])? {
+        splitTrailingBlock(header: selectedCommitHeader, from: text, validatesBody: isSelectedCommitBody)
+    }
+
+    static func selectedCommitSHA(from line: String) -> String? {
+        let prefix = "- SHA: "
+        guard line.hasPrefix(prefix) else { return nil }
+        let sha = String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return sha.isEmpty ? nil : sha
     }
 
     static func splitTrailingAttachedFilesBlock(
@@ -184,6 +200,20 @@ enum UserMessageTextProjection {
             }
             return hasEntry
         }
+    }
+
+    private static func isSelectedCommitBody(_ lines: [String]) -> Bool {
+        let messagePrefix = "- Message: "
+        guard lines.count >= 2, lines.count.isMultiple(of: 2) else { return false }
+        var index = 0
+        while index < lines.count {
+            guard selectedCommitSHA(from: lines[index]) != nil,
+                  lines[index + 1].hasPrefix(messagePrefix) else {
+                return false
+            }
+            index += 2
+        }
+        return true
     }
 
     static func attachedFilePath(from line: String) -> String? {

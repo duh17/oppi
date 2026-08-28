@@ -676,6 +676,8 @@ struct ComposerFilePill: View {
             return .themeCyan
         case .workspaceFile:
             return .themePurple
+        case .gitCommit:
+            return .themeOrange
         }
     }
 
@@ -688,14 +690,23 @@ struct ComposerFilePill: View {
             return "Review"
         case .workspaceFile:
             return "Repo"
+        case .gitCommit:
+            return "Commit"
+        }
+    }
+
+    private var icon: FileIcon {
+        switch file.kind {
+        case .gitCommit:
+            return FileIcon(symbolName: "arrow.triangle.branch", tint: .orange)
+        case .workspaceFile, .reviewFile:
+            return file.isDirectory
+                ? FileIcon(symbolName: "folder.fill", tint: .yellow)
+                : FileIcon.forPath(file.path)
         }
     }
 
     var body: some View {
-        let icon = file.isDirectory
-            ? FileIcon(symbolName: "folder.fill", tint: .yellow)
-            : FileIcon.forPath(file.path)
-
         HStack(spacing: 4) {
             Text(labelPrefix)
                 .font(.caption2.weight(.semibold))

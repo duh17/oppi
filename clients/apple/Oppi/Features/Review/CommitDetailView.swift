@@ -81,9 +81,7 @@ struct CommitDetailView: View {
                 sessionId: dest.id,
                 workspaceIdHint: workspaceId,
                 initialInputText: dest.inputText,
-                initialPendingFiles: dest.filePaths.map {
-                    PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: dest.fileDisplayPrefix)
-                }
+                initialPendingFiles: dest.pendingFileReferences
             )
         }
         .overlay {
@@ -372,9 +370,10 @@ struct CommitDetailView: View {
             let response = try await api.createWorkspaceSession(workspaceId: workspaceId)
             sessionStore.upsert(response.session)
             launchError = nil
-            navigateToQuickAction = QuickActionSessionNavDestination.attaching(
+            navigateToQuickAction = QuickActionSessionNavDestination.attachingCommit(
                 sessionId: response.session.id,
-                filePaths: detail?.files.map(\.path) ?? []
+                sha: detail?.sha ?? commit.sha,
+                message: detail?.message ?? commit.message
             )
         } catch {
             launchError = error.localizedDescription

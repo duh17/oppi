@@ -114,7 +114,8 @@ extension ChatTimelineCollectionHost.Controller {
                 }
             },
             onOpenPathPill: { [workspaceId, serverId, weak apiClient = connection?.apiClient, interactionContext = self.interactionContext] pill, sourceView in
-                guard let workspaceId, !workspaceId.isEmpty,
+                guard pill.opensWorkspaceFileBrowser,
+                      let workspaceId, !workspaceId.isEmpty,
                       let apiClient,
                       let presenter = sourceView.nearestViewController() else {
                     return

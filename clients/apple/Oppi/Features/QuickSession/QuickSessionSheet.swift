@@ -676,14 +676,7 @@ struct QuickSessionSheet: View {
             await composerDraftStore.load()
             let payload = composerDraftStore.quickSessionDraftPayload
             text = payload.text
-            pendingRepoPointers = payload.repoPointers.map { pointer in
-                PendingFileReference(
-                    path: pointer.path,
-                    isDirectory: pointer.isDirectory,
-                    kind: pointer.kind == .workspaceFile ? .workspaceFile : .reviewFile,
-                    displayPrefix: pointer.displayPrefix
-                )
-            }
+            pendingRepoPointers = payload.repoPointers.map(PendingFileReference.init(composerDraftPointer:))
             let attachmentData = composerDraftStore.quickSessionDraftAttachmentData()
             pendingAttachments = payload.attachments.compactMap { attachment in
                 PendingAttachment(
@@ -782,14 +775,7 @@ struct QuickSessionSheet: View {
     private func persistQuickSessionDraft() -> ComposerDraftRecord? {
         let payload = ComposerDraftPayload(
             text: text,
-            repoPointers: pendingRepoPointers.map { pointer in
-                ComposerDraftRepoPointer(
-                    path: pointer.path,
-                    isDirectory: pointer.isDirectory,
-                    kind: pointer.kind == .workspaceFile ? .workspaceFile : .reviewFile,
-                    displayPrefix: pointer.displayPrefix
-                )
-            },
+            repoPointers: pendingRepoPointers.map(\.composerDraftPointer),
             attachments: pendingAttachments.map(\.composerDraftMetadata)
         )
         let data: [String: Data] = Dictionary(uniqueKeysWithValues: pendingAttachments.compactMap { attachment -> (String, Data)? in

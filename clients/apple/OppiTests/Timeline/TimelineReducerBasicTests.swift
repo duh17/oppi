@@ -173,6 +173,10 @@ struct TimelineReducerBasicTests {
 
         let withReferences = "hello\n\nReferenced workspace files:\n- Sources/App.swift"
         #expect(UserMessageTextProjection.comparableText(withReferences) == "hello")
+
+        let withCommit = "hello\n\nSelected commit:\n- SHA: 9b82f81\n- Message: Fix composer chips"
+        #expect(UserMessageTextProjection.comparableText(withCommit) == "hello")
+        #expect(UserMessageTextProjection.visibleText(from: withCommit) == "hello")
     }
 
     @Test func userMessageProjectionMatchesOptimisticSkillCommandToReloadedSkillBlock() {

@@ -69,11 +69,30 @@ struct WorkspaceQuickActionSessionResponse: Codable, Sendable, Equatable {
 
 /// Navigation destination for a launched session.
 /// Carries optional repo file pointers so the destination ChatView can populate review-file context.
+/// `commitSha`/`commitMessage` attach a git commit instead of changed-file paths.
 struct QuickActionSessionNavDestination: Identifiable, Hashable {
     let id: String
     let inputText: String
     let filePaths: [String]
     let fileDisplayPrefix: String
+    let commitSha: String
+    let commitMessage: String
+
+    init(
+        id: String,
+        inputText: String,
+        filePaths: [String],
+        fileDisplayPrefix: String,
+        commitSha: String = "",
+        commitMessage: String = ""
+    ) {
+        self.id = id
+        self.inputText = inputText
+        self.filePaths = filePaths
+        self.fileDisplayPrefix = fileDisplayPrefix
+        self.commitSha = commitSha
+        self.commitMessage = commitMessage
+    }
 }
 
 extension QuickActionSessionNavDestination {
@@ -87,6 +106,17 @@ extension QuickActionSessionNavDestination {
 
     static func attaching(sessionId: String, filePaths: [String]) -> Self {
         Self(id: sessionId, inputText: "", filePaths: filePaths, fileDisplayPrefix: "")
+    }
+
+    static func attachingCommit(sessionId: String, sha: String, message: String) -> Self {
+        Self(
+            id: sessionId,
+            inputText: "",
+            filePaths: [],
+            fileDisplayPrefix: "",
+            commitSha: sha,
+            commitMessage: message
+        )
     }
 }
 

@@ -169,6 +169,7 @@ extension PendingAttachment {
 enum PendingFileReferenceKind: String, Sendable, Equatable {
     case workspaceFile
     case reviewFile
+    case gitCommit
 
     var pathPillKind: UserMessagePathPill.Kind {
         switch self {
@@ -176,6 +177,8 @@ enum PendingFileReferenceKind: String, Sendable, Equatable {
             return .repoFile
         case .reviewFile:
             return .reviewFile
+        case .gitCommit:
+            return .gitCommit
         }
     }
 }
@@ -213,6 +216,7 @@ struct UserMessagePathPill: Equatable, Sendable {
         case uploadedFile
         case reviewFile
         case repoFile
+        case gitCommit
     }
 
     let kind: Kind
@@ -222,7 +226,7 @@ struct UserMessagePathPill: Equatable, Sendable {
         switch kind {
         case .uploadedFile:
             return displayPath.lastPathComponentForDisplay
-        case .reviewFile, .repoFile:
+        case .reviewFile, .repoFile, .gitCommit:
             return displayPath
         }
     }
@@ -231,7 +235,7 @@ struct UserMessagePathPill: Equatable, Sendable {
         switch kind {
         case .uploadedFile:
             return path.lastPathComponentForDisplay
-        case .reviewFile, .repoFile:
+        case .reviewFile, .repoFile, .gitCommit:
             return path
         }
     }
@@ -244,6 +248,8 @@ struct UserMessagePathPill: Equatable, Sendable {
             return "Review"
         case .repoFile:
             return "Repo"
+        case .gitCommit:
+            return "Commit"
         }
     }
 
@@ -255,16 +261,32 @@ struct UserMessagePathPill: Equatable, Sendable {
             return "doc.text.magnifyingglass"
         case .repoFile:
             return "arrowshape.turn.up.right.circle"
+        case .gitCommit:
+            return "arrow.triangle.branch"
         }
     }
 
     var supportsInlinePreview: Bool {
-        let ext = (path as NSString).pathExtension.lowercased()
-        if ext == "svg" { return true }
-        if let type = UTType(filenameExtension: ext) {
-            return type.conforms(to: .image)
+        switch kind {
+        case .gitCommit:
+            return false
+        case .uploadedFile, .reviewFile, .repoFile:
+            let ext = (path as NSString).pathExtension.lowercased()
+            if ext == "svg" { return true }
+            if let type = UTType(filenameExtension: ext) {
+                return type.conforms(to: .image)
+            }
+            return false
         }
-        return false
+    }
+
+    var opensWorkspaceFileBrowser: Bool {
+        switch kind {
+        case .gitCommit:
+            return false
+        case .uploadedFile, .reviewFile, .repoFile:
+            return true
+        }
     }
 }
 
@@ -273,6 +295,7 @@ enum UserMessageAttachmentPresentation {
     private static let markerSuffix = "]]"
     static let referenceBlockHeader = "Referenced workspace files:"
     static let attachedFilesHeader = "Attached files:"
+    static let selectedCommitHeader = UserMessageTextProjection.selectedCommitHeader
 
     static func makeDisplayText(
         text: String,
@@ -303,14 +326,15 @@ enum UserMessageAttachmentPresentation {
 
         let (withoutMarker, markerBadges, markerPathPills) = stripMarker(from: content)
         let (withoutAttachedFiles, attachedFilePills) = stripAttachedFilesBlock(from: withoutMarker)
-        let (withoutReferenceBlock, referencePathPills) = stripReferenceBlock(from: withoutAttachedFiles)
+        let (withoutCommitBlock, commitPills) = stripSelectedCommitBlock(from: withoutAttachedFiles)
+        let (withoutReferenceBlock, referencePathPills) = stripReferenceBlock(from: withoutCommitBlock)
 
         return (
             UserMessageTextProjection.collapseLeadingSkillBlock(
                 in: withoutReferenceBlock.trimmingCharacters(in: .whitespacesAndNewlines)
             ),
             markerBadges,
-            dedupePathPills(markerPathPills + attachedFilePills + referencePathPills)
+            dedupePathPills(markerPathPills + attachedFilePills + commitPills + referencePathPills)
         )
     }
 
@@ -502,6 +526,22 @@ enum UserMessageAttachmentPresentation {
         }
         return (block.visibleText, pathPills)
     }
+
+    private static func stripSelectedCommitBlock(from text: String) -> (String, [UserMessagePathPill]) {
+        guard let block = UserMessageTextProjection.splitTrailingSelectedCommitBlock(from: text) else {
+            return (text, [])
+        }
+
+        var seen = Set<String>()
+        let pathPills = block.bodyLines.compactMap { line -> UserMessagePathPill? in
+            guard let sha = UserMessageTextProjection.selectedCommitSHA(from: line),
+                  seen.insert(sha).inserted else {
+                return nil
+            }
+            return UserMessagePathPill(kind: .gitCommit, path: sha)
+        }
+        return (block.visibleText, pathPills)
+    }
 }
 
 /// A repo file pointer queued for sending alongside a message.
@@ -515,42 +555,142 @@ struct PendingFileReference: Identifiable, Sendable, Equatable {
     let isDirectory: Bool
     let kind: PendingFileReferenceKind
     let displayPrefix: String?
+    let commitMessage: String?
 
     init(
         path: String,
         isDirectory: Bool,
         kind: PendingFileReferenceKind = .workspaceFile,
-        displayPrefix: String? = nil
+        displayPrefix: String? = nil,
+        commitMessage: String? = nil
     ) {
         self.path = path
         self.isDirectory = isDirectory
         self.kind = kind
         let trimmedPrefix = displayPrefix?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.displayPrefix = trimmedPrefix?.isEmpty == false ? trimmedPrefix : nil
+        let trimmedMessage = commitMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.commitMessage = trimmedMessage?.isEmpty == false ? trimmedMessage : nil
     }
 
     var id: String { path }
 
     var displayName: String {
-        let normalized = isDirectory && path.hasSuffix("/") ? String(path.dropLast()) : path
-        return normalized.split(separator: "/").last.map(String.init) ?? normalized
+        switch kind {
+        case .gitCommit:
+            return path
+        case .workspaceFile, .reviewFile:
+            let normalized = isDirectory && path.hasSuffix("/") ? String(path.dropLast()) : path
+            return normalized.split(separator: "/").last.map(String.init) ?? normalized
+        }
+    }
+
+    var composerDraftPointer: ComposerDraftRepoPointer {
+        let draftKind: ComposerDraftRepoPointer.Kind
+        switch kind {
+        case .workspaceFile:
+            draftKind = .workspaceFile
+        case .reviewFile:
+            draftKind = .reviewFile
+        case .gitCommit:
+            draftKind = .gitCommit
+        }
+
+        return ComposerDraftRepoPointer(
+            path: path,
+            isDirectory: isDirectory,
+            kind: draftKind,
+            displayPrefix: displayPrefix,
+            commitMessage: commitMessage
+        )
+    }
+
+    init(composerDraftPointer: ComposerDraftRepoPointer) {
+        let referenceKind: PendingFileReferenceKind
+        switch composerDraftPointer.kind {
+        case .workspaceFile:
+            referenceKind = .workspaceFile
+        case .reviewFile:
+            referenceKind = .reviewFile
+        case .gitCommit:
+            referenceKind = .gitCommit
+        }
+
+        self.init(
+            path: composerDraftPointer.path,
+            isDirectory: composerDraftPointer.isDirectory,
+            kind: referenceKind,
+            displayPrefix: composerDraftPointer.displayPrefix,
+            commitMessage: composerDraftPointer.commitMessage
+        )
     }
 
     static func appendReferenceBlock(to text: String, files: [PendingFileReference]) -> String {
-        var seen = Set<String>()
-        let uniquePaths = files.compactMap { file -> String? in
-            let trimmed = file.path.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { return nil }
-            return trimmed
-        }
-        guard !uniquePaths.isEmpty else { return text }
+        var seenFiles = Set<String>()
+        var filePaths: [String] = []
+        var seenCommits = Set<String>()
+        var commits: [(sha: String, message: String)] = []
 
-        let block = ([UserMessageAttachmentPresentation.referenceBlockHeader] + uniquePaths.map { "- \($0)" })
-            .joined(separator: "\n")
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return block
+        for file in files {
+            let trimmed = file.path.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            switch file.kind {
+            case .gitCommit:
+                guard seenCommits.insert(trimmed).inserted else { continue }
+                commits.append((sha: trimmed, message: flattenedCommitMessage(file.commitMessage)))
+            case .workspaceFile, .reviewFile:
+                guard seenFiles.insert(trimmed).inserted else { continue }
+                filePaths.append(trimmed)
+            }
         }
-        return "\(trimmed)\n\n\(block)"
+
+        var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !filePaths.isEmpty {
+            let block = ([UserMessageAttachmentPresentation.referenceBlockHeader] + filePaths.map { "- \($0)" })
+                .joined(separator: "\n")
+            result = result.isEmpty ? block : "\(result)\n\n\(block)"
+        }
+        if !commits.isEmpty {
+            var lines = [UserMessageAttachmentPresentation.selectedCommitHeader]
+            for commit in commits {
+                lines.append("- SHA: \(commit.sha)")
+                lines.append("- Message: \(commit.message)")
+            }
+            let block = lines.joined(separator: "\n")
+            result = result.isEmpty ? block : "\(result)\n\n\(block)"
+        }
+        return result
+    }
+
+    private static func flattenedCommitMessage(_ message: String?) -> String {
+        (message ?? "")
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
+extension QuickActionSessionNavDestination {
+    var pendingFileReferences: [PendingFileReference] {
+        let sha = commitSha.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sha.isEmpty {
+            return [
+                PendingFileReference(
+                    path: sha,
+                    isDirectory: false,
+                    kind: .gitCommit,
+                    commitMessage: commitMessage
+                )
+            ]
+        }
+        return filePaths.map { path in
+            PendingFileReference(
+                path: path,
+                isDirectory: false,
+                kind: .reviewFile,
+                displayPrefix: fileDisplayPrefix
+            )
+        }
     }
 }

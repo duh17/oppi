@@ -449,9 +449,7 @@ struct WorkspaceContextBar: View {
                 sessionId: dest.id,
                 workspaceIdHint: workspaceId,
                 initialInputText: dest.inputText,
-                initialPendingFiles: dest.filePaths.map {
-                    PendingFileReference(path: $0, isDirectory: false, kind: .reviewFile, displayPrefix: dest.fileDisplayPrefix)
-                }
+                initialPendingFiles: dest.pendingFileReferences
             )
         }
     }

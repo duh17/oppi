@@ -574,6 +574,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                 UIColor(palette.cyan)
             case .repoFile:
                 UIColor(palette.purple)
+            case .gitCommit:
+                UIColor(palette.orange)
             }
 
             let pillView = makeCapsuleView(
