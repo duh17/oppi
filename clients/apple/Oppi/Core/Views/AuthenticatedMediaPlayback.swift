@@ -891,7 +891,6 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     @Published var player: AVPlayer?
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published private(set) var isPresentingRootFullscreen = false
 
     private var playbackSession: AuthenticatedMediaPlaybackSession?
     private var statusObservation: NSKeyValueObservation?
@@ -1029,13 +1028,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         if fullScreen {
             suppressNextReturnedSurfaceDisappear = false
         }
-        // Ownership only. Nilling the inline player is beginRootFullscreen().
         applyOwnership(fullScreen ? .willBeginFullScreen : .didEndFullScreen)
-    }
-
-    func beginRootFullscreen() {
-        isPresentingRootFullscreen = true
-        setFullScreen(true)
     }
 
     func setPictureInPicture(_ pictureInPicture: Bool) {
@@ -1078,7 +1071,6 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
 
     func handleDidEndFullScreen(hostIsAttached _: Bool = true) {
         let returnsToVisibleSurface = ownership.isVisible && player != nil
-        isPresentingRootFullscreen = false
         applyOwnership(.didEndFullScreen)
         suppressNextReturnedSurfaceDisappear = returnsToVisibleSurface
         // AVKit reports the player VC detached at dismiss completion even
@@ -1119,7 +1111,6 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         player = nil
         isLoading = false
         ownership.isFullScreen = false
-        isPresentingRootFullscreen = false
         ownership.isPictureInPicture = false
         ownership.isFullScreenTransitioning = false
         suppressNextReturnedSurfaceDisappear = false
@@ -1149,7 +1140,6 @@ struct AuthenticatedMediaPlayerView: View {
     var telemetrySource = "authenticated_media"
     var telemetryMode = "inline"
     var telemetrySessionId: String? = nil
-    var usesCustomRootFullscreenChrome = false
 
     private let injectedModel: AuthenticatedMediaPlayerModel?
     @StateObject private var ownedModel = AuthenticatedMediaPlayerModel()
@@ -1168,7 +1158,6 @@ struct AuthenticatedMediaPlayerView: View {
         telemetrySource: String = "authenticated_media",
         telemetryMode: String = "inline",
         telemetrySessionId: String? = nil,
-        usesCustomRootFullscreenChrome: Bool = false,
         model: AuthenticatedMediaPlayerModel? = nil
     ) {
         self.source = source
@@ -1184,7 +1173,6 @@ struct AuthenticatedMediaPlayerView: View {
         self.telemetrySource = telemetrySource
         self.telemetryMode = telemetryMode
         self.telemetrySessionId = telemetrySessionId
-        self.usesCustomRootFullscreenChrome = usesCustomRootFullscreenChrome
         injectedModel = model
     }
 
@@ -1203,7 +1191,6 @@ struct AuthenticatedMediaPlayerView: View {
             telemetrySource: telemetrySource,
             telemetryMode: telemetryMode,
             telemetrySessionId: telemetrySessionId,
-            usesCustomRootFullscreenChrome: usesCustomRootFullscreenChrome,
             model: injectedModel ?? ownedModel
         )
     }
@@ -1223,7 +1210,6 @@ private struct AuthenticatedMediaPlayerSurface: View {
     var telemetrySource: String
     var telemetryMode: String
     var telemetrySessionId: String?
-    var usesCustomRootFullscreenChrome: Bool
     @ObservedObject var model: AuthenticatedMediaPlayerModel
 
     var body: some View {
@@ -1233,21 +1219,20 @@ private struct AuthenticatedMediaPlayerSurface: View {
         Group {
             if let player = model.player {
                 AVPlayerViewControllerContainer(
-                    player: RootFullscreenPlaybackPolicy.inlinePlayer(
-                        for: player,
-                        isRootFullscreen: model.isPresentingRootFullscreen
-                    ),
-                    usesCustomRootFullscreenChrome: usesCustomRootFullscreenChrome,
+                    player: player,
                     onFullScreenChange: { fullScreen in
                         if fullScreen {
                             model.setFullScreen(true)
+                            WorkspaceMediaOverlayPost.begin()
                         }
                     },
                     onFullScreenWillEnd: { model.handleWillEndFullScreen() },
                     onFullScreenDidEnd: { attached in
                         model.handleDidEndFullScreen(hostIsAttached: attached)
                     },
-                    onBeginRootFullscreen: { model.beginRootFullscreen() },
+                    onFullScreenTransitionFinished: {
+                        WorkspaceMediaOverlayPost.end()
+                    },
                     onPictureInPictureChange: { active in
                         if active {
                             model.setPictureInPicture(true)

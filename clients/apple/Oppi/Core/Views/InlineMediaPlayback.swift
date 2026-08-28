@@ -1178,51 +1178,12 @@ struct FullScreenEndHandoff: @unchecked Sendable {
     }
 }
 
-enum RootFullscreenPlaybackPolicy {
-    /// File Browser keeps AVKit chrome. Chat markdown cards hide it so
-    /// AVKit cannot expand the chat-hosted player.
-    static func showsPlaybackControls(usesCustomRootFullscreenChrome: Bool) -> Bool {
-        !usesCustomRootFullscreenChrome
-    }
-
-    static let inlineEntersFullScreenWhenPlaybackBegins = false
-
-    static func shouldInstallCustomChrome(usesCustomRootFullscreenChrome: Bool) -> Bool {
-        usesCustomRootFullscreenChrome
-    }
-
-    /// One AVPlayer can drive one layer. Detach inline only while a custom
-    /// root modal shows the same player, not during AVKit expand of this host.
-    static func inlinePlayer(for player: AVPlayer?, isRootFullscreen: Bool) -> AVPlayer? {
-        isRootFullscreen ? nil : player
-    }
-
-    /// Card tap toggles play. UIControl hits (expand) must own the touch.
-    static func shouldReceiveCardTap(from view: UIView?) -> Bool {
-        var current = view
-        while let candidate = current {
-            if candidate is UIControl { return false }
-            current = candidate.superview
-        }
-        return true
-    }
-
-    /// Abort belongs in `present(animated:completion:)`, never a later hop.
-    static func shouldAbortUnpresentedFullscreen(
-        presentingViewController: UIViewController?,
-        window: UIWindow?
-    ) -> Bool {
-        presentingViewController == nil && window == nil
-    }
-}
-
 struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
-    var player: AVPlayer?
-    var usesCustomRootFullscreenChrome = false
+    let player: AVPlayer
     var onFullScreenChange: ((Bool) -> Void)?
     var onFullScreenWillEnd: (() -> Void)?
     var onFullScreenDidEnd: ((Bool) -> Void)?
-    var onBeginRootFullscreen: (() -> Void)?
+    var onFullScreenTransitionFinished: (() -> Void)?
     var onPictureInPictureChange: ((Bool) -> Void)?
     var onPictureInPictureDidStop: ((Bool) -> Void)?
 
@@ -1231,7 +1192,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             onFullScreenChange: onFullScreenChange,
             onFullScreenWillEnd: onFullScreenWillEnd,
             onFullScreenDidEnd: onFullScreenDidEnd,
-            onBeginRootFullscreen: onBeginRootFullscreen,
+            onFullScreenTransitionFinished: onFullScreenTransitionFinished,
             onPictureInPictureChange: onPictureInPictureChange,
             onPictureInPictureDidStop: onPictureInPictureDidStop
         )
@@ -1240,8 +1201,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.delegate = context.coordinator
-        context.coordinator.host = controller
-        configure(controller, coordinator: context.coordinator)
+        configure(controller)
         controller.player = player
         return controller
     }
@@ -1250,131 +1210,72 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         context.coordinator.onFullScreenChange = onFullScreenChange
         context.coordinator.onFullScreenWillEnd = onFullScreenWillEnd
         context.coordinator.onFullScreenDidEnd = onFullScreenDidEnd
-        context.coordinator.onBeginRootFullscreen = onBeginRootFullscreen
+        context.coordinator.onFullScreenTransitionFinished = onFullScreenTransitionFinished
         context.coordinator.onPictureInPictureChange = onPictureInPictureChange
         context.coordinator.onPictureInPictureDidStop = onPictureInPictureDidStop
-        context.coordinator.host = uiViewController
         if uiViewController.player !== player {
             uiViewController.player = player
         }
         uiViewController.delegate = context.coordinator
-        configure(uiViewController, coordinator: context.coordinator)
+        configure(uiViewController)
     }
 
-    private func configure(
-        _ controller: AVPlayerViewController,
-        coordinator: Coordinator
-    ) {
-        controller.showsPlaybackControls = RootFullscreenPlaybackPolicy.showsPlaybackControls(
-            usesCustomRootFullscreenChrome: usesCustomRootFullscreenChrome
-        )
+    private func configure(_ controller: AVPlayerViewController) {
+        controller.showsPlaybackControls = true
         controller.allowsPictureInPicturePlayback = true
         controller.canStartPictureInPictureAutomaticallyFromInline = true
-        controller.entersFullScreenWhenPlaybackBegins =
-            RootFullscreenPlaybackPolicy.inlineEntersFullScreenWhenPlaybackBegins
+        controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
         controller.view.accessibilityIdentifier = "videoPlayer.native"
-        if RootFullscreenPlaybackPolicy.shouldInstallCustomChrome(
-            usesCustomRootFullscreenChrome: usesCustomRootFullscreenChrome
-        ) {
-            coordinator.installInlineChrome(on: controller)
-        }
     }
 
-    final class Coordinator: NSObject, AVPlayerViewControllerDelegate, @unchecked Sendable {
+    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
         var onFullScreenChange: ((Bool) -> Void)?
         var onFullScreenWillEnd: (() -> Void)?
         var onFullScreenDidEnd: ((Bool) -> Void)?
-        var onBeginRootFullscreen: (() -> Void)?
+        var onFullScreenTransitionFinished: (() -> Void)?
         var onPictureInPictureChange: ((Bool) -> Void)?
         var onPictureInPictureDidStop: ((Bool) -> Void)?
-        weak var host: AVPlayerViewController?
-        private var didInstallChrome = false
+        private var wasPlayingBeforeFullScreen = false
 
         init(
             onFullScreenChange: ((Bool) -> Void)?,
             onFullScreenWillEnd: (() -> Void)?,
             onFullScreenDidEnd: ((Bool) -> Void)?,
-            onBeginRootFullscreen: (() -> Void)?,
+            onFullScreenTransitionFinished: (() -> Void)?,
             onPictureInPictureChange: ((Bool) -> Void)?,
             onPictureInPictureDidStop: ((Bool) -> Void)?
         ) {
             self.onFullScreenChange = onFullScreenChange
             self.onFullScreenWillEnd = onFullScreenWillEnd
             self.onFullScreenDidEnd = onFullScreenDidEnd
-            self.onBeginRootFullscreen = onBeginRootFullscreen
+            self.onFullScreenTransitionFinished = onFullScreenTransitionFinished
             self.onPictureInPictureChange = onPictureInPictureChange
             self.onPictureInPictureDidStop = onPictureInPictureDidStop
-        }
-
-        func installInlineChrome(on controller: AVPlayerViewController) {
-            guard !didInstallChrome else { return }
-            didInstallChrome = true
-            let tap = UITapGestureRecognizer(target: self, action: #selector(togglePlay(_:)))
-            tap.cancelsTouchesInView = false
-            tap.delegate = InlineVideoCardTapDelegate.shared
-            controller.view.addGestureRecognizer(tap)
-            let button = UIButton(type: .system)
-            button.setImage(
-                UIImage(systemName: "arrow.up.left.and.arrow.down.right"),
-                for: .normal
-            )
-            button.accessibilityLabel = String(localized: "Full Screen")
-            button.accessibilityIdentifier = "videoPlayer.rootFullscreen"
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.addTarget(self, action: #selector(presentRootFullscreen), for: .touchUpInside)
-            let overlay: UIView = controller.contentOverlayView ?? controller.view
-            overlay.addSubview(button)
-            NSLayoutConstraint.activate([
-                button.trailingAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-                button.topAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.topAnchor, constant: 12),
-                button.widthAnchor.constraint(equalToConstant: 44),
-                button.heightAnchor.constraint(equalToConstant: 44),
-            ])
-        }
-
-        @objc func togglePlay(_ gesture: UITapGestureRecognizer) {
-            let hit = gesture.view.flatMap { view in
-                view.hitTest(gesture.location(in: view), with: nil)
-            }
-            guard RootFullscreenPlaybackPolicy.shouldReceiveCardTap(from: hit) else { return }
-            guard let player = host?.player else { return }
-            if player.rate > 0 {
-                player.pause()
-            } else {
-                player.play()
-            }
-        }
-
-        @objc func presentRootFullscreen() {
-            guard let host, let player = host.player else { return }
-            onBeginRootFullscreen?()
-            host.player = nil
-            let source = host
-            Task { @MainActor in
-                SystemVideoPlaybackPresenter.presentExistingPlayer(player, from: source) { [weak self] in
-                    self?.onFullScreenDidEnd?(true)
-                }
-            }
         }
 
         func playerViewController(
             _ playerViewController: AVPlayerViewController,
             willBeginFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
         ) {
-            // AVKit expand of this host must keep the same player attached.
-            // Only the custom root modal detaches via onBeginRootFullscreen.
+            wasPlayingBeforeFullScreen = playerViewController.player?.timeControlStatus == .playing
+                || playerViewController.player?.rate ?? 0 > 0
             onFullScreenChange?(true)
+            if wasPlayingBeforeFullScreen {
+                playerViewController.player?.play()
+            }
         }
 
         func playerViewController(
             _ playerViewController: AVPlayerViewController,
             willEndFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
         ) {
+            // Keep ownership through the dismiss animation. AVKit still holds
+            // the player until this coordinator completes.
             onFullScreenWillEnd?()
             let handoff = FullScreenEndHandoff(
                 onDidEnd: onFullScreenDidEnd,
-                onTransitionFinished: nil
+                onTransitionFinished: onFullScreenTransitionFinished
             )
             MainActor.assumeIsolated {
                 let isPlayingNow = playerViewController.player?.timeControlStatus == .playing
@@ -1419,18 +1320,6 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     }
 }
 
-/// File-level so Coordinator stays nonisolated; UIGestureRecognizerDelegate is MainActor.
-private final class InlineVideoCardTapDelegate: NSObject, UIGestureRecognizerDelegate, @unchecked Sendable {
-    static let shared = InlineVideoCardTapDelegate()
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldReceive touch: UITouch
-    ) -> Bool {
-        RootFullscreenPlaybackPolicy.shouldReceiveCardTap(from: touch.view)
-    }
-}
-
 @MainActor
 enum SystemVideoPlaybackPresenter {
     static func present(
@@ -1453,78 +1342,5 @@ enum SystemVideoPlaybackPresenter {
         presenter.present(controller, animated: true) {
             controller.player?.play()
         }
-    }
-
-    static func attachExistingPlayer(_ player: AVPlayer, to controller: AVPlayerViewController) {
-        controller.player = player
-        controller.showsPlaybackControls = true
-        controller.allowsPictureInPicturePlayback = true
-        controller.canStartPictureInPictureAutomaticallyFromInline = false
-        controller.entersFullScreenWhenPlaybackBegins = false
-        controller.exitsFullScreenWhenPlaybackEnds = false
-        controller.modalPresentationStyle = .fullScreen
-        controller.view.accessibilityIdentifier = "videoPlayer.native"
-    }
-
-    static func presentExistingPlayer(
-        _ player: AVPlayer,
-        from source: UIViewController,
-        onDismiss: @escaping () -> Void
-    ) {
-        let controller = SharedPlayerFullscreenViewController()
-        attachExistingPlayer(player, to: controller)
-        controller.onDismiss = onDismiss
-        controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
-        presenter(from: source).present(controller, animated: true) {
-            abortIfPresentFailed(controller)
-        }
-    }
-
-    static func abortIfPresentFailed(_ controller: SharedPlayerFullscreenViewController) {
-        if RootFullscreenPlaybackPolicy.shouldAbortUnpresentedFullscreen(
-            presentingViewController: controller.presentingViewController,
-            window: controller.viewIfLoaded?.window
-        ) {
-            controller.abortIfNotPresented()
-        }
-    }
-
-    static func presenter(from source: UIViewController) -> UIViewController {
-        if let window = source.view.window ?? source.viewIfLoaded?.window,
-           let root = window.rootViewController {
-            var top = root
-            while let presented = top.presentedViewController {
-                top = presented
-            }
-            return top
-        }
-        var current = source
-        while let parent = current.parent {
-            current = parent
-        }
-        return current
-    }
-}
-
-final class SharedPlayerFullscreenViewController: AVPlayerViewController {
-    var onDismiss: (() -> Void)?
-    private var didFinish = false
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        guard isBeingDismissed || presentingViewController == nil else { return }
-        finishIfNeeded()
-    }
-
-    func abortIfNotPresented() {
-        finishIfNeeded()
-    }
-
-    private func finishIfNeeded() {
-        guard !didFinish else { return }
-        didFinish = true
-        player = nil
-        onDismiss?()
-        onDismiss = nil
     }
 }

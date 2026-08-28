@@ -318,7 +318,6 @@ final class NativeMarkdownVideoView: UIView {
             telemetrySource: "markdown_inline_video",
             telemetryMode: "inline",
             telemetrySessionId: embed?.reference.sourceSessionID,
-            usesCustomRootFullscreenChrome: true,
             model: playbackModel
         )
     }
@@ -424,10 +423,6 @@ extension NativeMarkdownVideoView {
     var debugOpenButtonIsHiddenForTesting: Bool { openButton.isHidden }
     var debugOpenButtonAdjustsFontForTesting: Bool {
         openButton.titleLabel?.adjustsFontForContentSizeCategory == true
-    }
-
-    func debugMakePlayerViewForTesting(source: AuthenticatedMediaSource) -> AuthenticatedMediaPlayerView {
-        makePlayerView(source: source, embed: nil, isActive: true)
     }
 }
 #endif

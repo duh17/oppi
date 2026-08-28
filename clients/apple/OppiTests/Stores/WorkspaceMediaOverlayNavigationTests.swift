@@ -279,22 +279,6 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(!navigation.isMediaOverlayActive)
     }
 
-    @Test func unmatchedFullscreenBeginTrapsBackNavigation() {
-        let navigation = readyNavigation()
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
-                serverId: "server-b",
-                sessionId: "chat-1"
-            )
-        )
-        navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.workspacePath = NavigationPath()
-
-        #expect(navigation.isMediaOverlayActive)
-        #expect(navigation.workspacePath.count == 1)
-        #expect(navigation.workspaceStackDiagnosticContext.sessionId == "chat-1")
-    }
-
     @Test func overlayDoesNotTrapLaterUserPops() {
         let navigation = readyNavigation()
         navigation.openWorkspaceSession(
