@@ -205,6 +205,7 @@ interface MockExtensionContext {
   hasPendingMessages: ReturnType<typeof vi.fn>;
   abort: ReturnType<typeof vi.fn>;
   shutdown: ReturnType<typeof vi.fn>;
+  navigateTree?: ReturnType<typeof vi.fn>;
   ui: {
     theme: { fg: ReturnType<typeof vi.fn> };
     setWidget: ReturnType<typeof vi.fn>;
@@ -734,6 +735,237 @@ describe("oppi mirror input preflight", () => {
 
       expect(agentSession.promptCalls).toHaveLength(6);
       expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  it("routes remote tree navigation through the terminal command context", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const agentSession = new piAgentMock.FakeAgentSession();
+      agentSession.bindExtensions();
+      const navigateTree = vi.fn(async () => ({ cancelled: false }));
+      pi.sendUserMessage.mockImplementation((text: string) => {
+        const args = text.replace(/^\/oppi-mirror\s*/, "");
+        void pi.commands
+          .get("oppi-mirror")
+          ?.handler(args, { ...ctx, navigateTree });
+      });
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "navigate-tree-terminal-sync",
+          command: {
+            type: "navigate_tree",
+            targetId: "entry-1",
+            summarize: false,
+          },
+        }),
+      );
+      await drainMicrotasks();
+
+      expect(navigateTree).toHaveBeenCalledWith("entry-1", {
+        summarize: false,
+        customInstructions: undefined,
+        replaceInstructions: undefined,
+        label: undefined,
+      });
+      expect(pi.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^\/oppi-mirror __navigate-tree [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        ),
+        { expandPromptTemplates: true },
+      );
+      expect(sentCommandResults(socket, "navigate-tree-terminal-sync")).toEqual(
+        [
+          expect.objectContaining({
+            success: true,
+            data: { cancelled: false },
+          }),
+        ],
+      );
+    });
+  });
+
+  it("rejects concurrent remote tree navigation", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      for (const [id, targetId] of [
+        ["navigate-first", "entry-1"],
+        ["navigate-second", "entry-2"],
+      ]) {
+        socket.receive(
+          JSON.stringify({
+            type: "command",
+            id,
+            command: { type: "navigate_tree", targetId },
+          }),
+        );
+      }
+      await drainMicrotasks();
+
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(sentCommandResults(socket, "navigate-second")).toEqual([
+        expect.objectContaining({
+          success: false,
+          error: "A session-tree navigation is already in progress.",
+        }),
+      ]);
+
+      await pi.commands.get("oppi-mirror")?.handler("stop", ctx);
+      await drainMicrotasks();
+    });
+  });
+
+  it("rejects tree navigation if Pi becomes busy before command dispatch", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "navigate-became-busy",
+          command: { type: "navigate_tree", targetId: "entry-1" },
+        }),
+      );
+      await drainMicrotasks();
+      const dispatched = pi.sendUserMessage.mock.calls[0]?.[0];
+      expect(dispatched).toEqual(expect.any(String));
+      ctx.isIdle.mockReturnValue(false);
+      const navigateTree = vi.fn();
+      await pi.commands
+        .get("oppi-mirror")
+        ?.handler(String(dispatched).replace(/^\/oppi-mirror\s*/, ""), {
+          ...ctx,
+          navigateTree,
+        });
+      await drainMicrotasks();
+
+      expect(navigateTree).not.toHaveBeenCalled();
+      expect(sentCommandResults(socket, "navigate-became-busy")).toEqual([
+        expect.objectContaining({
+          success: false,
+          error:
+            "Wait for the current response to finish before navigating the session tree.",
+        }),
+      ]);
+    });
+  });
+
+  it("keeps the navigation lock across mirror stop and restart", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      let finishNavigation = () => {};
+      const navigateTree = vi.fn(
+        () =>
+          new Promise<{ cancelled: false }>((resolve) => {
+            finishNavigation = () => resolve({ cancelled: false });
+          }),
+      );
+      const commandContext = { ...ctx, navigateTree };
+      pi.sendUserMessage.mockImplementation((text: string) => {
+        void pi.commands
+          .get("oppi-mirror")
+          ?.handler(text.replace(/^\/oppi-mirror\s*/, ""), commandContext);
+      });
+      const firstSocket = await startMirror(pi, ctx);
+
+      firstSocket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "navigate-before-stop",
+          command: { type: "navigate_tree", targetId: "entry-1" },
+        }),
+      );
+      await drainMicrotasks();
+      expect(navigateTree).toHaveBeenCalledTimes(1);
+
+      await pi.commands.get("oppi-mirror")?.handler("stop", ctx);
+      const secondSocket = await startMirror(pi, ctx);
+      secondSocket.sent.length = 0;
+      secondSocket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "navigate-after-restart",
+          command: { type: "navigate_tree", targetId: "entry-2" },
+        }),
+      );
+      await drainMicrotasks();
+
+      expect(
+        sentCommandResults(secondSocket, "navigate-after-restart"),
+      ).toEqual([
+        expect.objectContaining({
+          success: false,
+          error: "A session-tree navigation is already in progress.",
+        }),
+      ]);
+      expect(navigateTree).toHaveBeenCalledTimes(1);
+
+      finishNavigation();
+      await drainMicrotasks();
+    });
+  });
+
+  it("fails a remote tree navigation when Pi does not dispatch its command", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.useFakeTimers();
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      await startSession(pi, ctx);
+      const socket = await startMirror(pi, ctx);
+      socket.sent.length = 0;
+
+      socket.receive(
+        JSON.stringify({
+          type: "command",
+          id: "navigate-not-dispatched",
+          command: { type: "navigate_tree", targetId: "entry-1" },
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(sentCommandResults(socket, "navigate-not-dispatched")).toEqual([
+        expect.objectContaining({
+          success: false,
+          error: "Pi did not start the session-tree navigation command",
+        }),
+      ]);
     });
   });
 

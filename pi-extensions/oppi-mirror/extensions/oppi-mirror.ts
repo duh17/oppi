@@ -9,7 +9,7 @@ import {
   type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { hostname } from "node:os";
@@ -144,15 +144,21 @@ interface EditableAgentSession {
     ReturnType<ExtensionAPI["getThinkingLevel"]>
   >;
   getUserMessagesForForking?: () => Array<{ entryId: string; text: string }>;
-  navigateTree?: (
-    targetId: string,
-    options?: {
-      summarize?: boolean;
-      customInstructions?: string;
-      replaceInstructions?: boolean;
-      label?: string;
-    },
-  ) => Promise<unknown>;
+}
+
+interface MirrorTreeNavigationOptions {
+  summarize?: boolean;
+  customInstructions?: string;
+  replaceInstructions?: boolean;
+  label?: string;
+}
+
+interface PendingTreeNavigation {
+  targetId: string;
+  options: MirrorTreeNavigationOptions;
+  dispatchTimer: ReturnType<typeof setTimeout>;
+  resolve: (result: unknown) => void;
+  reject: (error: unknown) => void;
 }
 
 interface QueueUpdateEvent {
@@ -2861,6 +2867,8 @@ async function createTuiMirrorRuntime(
   >();
   const pendingUIRequestPayloads = new Map<string, Record<string, unknown>>();
   const pendingUISettledIds = new Set<string>();
+  const pendingTreeNavigations = new Map<string, PendingTreeNavigation>();
+  let activeTreeNavigationToken: string | null = null;
   const terminalDialogQueue = createMirrorTerminalDialogQueue();
   const toolArgsByCallId = new Map<string, Record<string, unknown>>();
   const proxiedUIContexts = new WeakSet<object>();
@@ -2949,9 +2957,20 @@ async function createTuiMirrorRuntime(
     );
   }
 
+  function rejectPendingTreeNavigations(reason: string): void {
+    for (const pending of pendingTreeNavigations.values()) {
+      clearTimeout(pending.dispatchTimer);
+      pending.reject(new Error(reason));
+    }
+    pendingTreeNavigations.clear();
+  }
+
   function deactivateAfterStaleContext(scope: string) {
     if (!runtimeActive && !ws && !reconnectTimer && !heartbeatTimer) return;
     runtimeActive = false;
+    rejectPendingTreeNavigations(
+      "Oppi Mirror deactivated during tree navigation",
+    );
     manualStop = true;
     connectionSerial += 1;
     clearTimers();
@@ -4518,6 +4537,7 @@ async function createTuiMirrorRuntime(
     pendingUIResponses.clear();
     pendingUIRequestPayloads.clear();
     pendingUISettledIds.clear();
+    rejectPendingTreeNavigations("Oppi Mirror stopped during tree navigation");
     const socket = ws;
     const stateCtx = ctx ?? latestCtx;
     if (socket?.readyState === WebSocket.OPEN) {
@@ -4962,12 +4982,15 @@ async function createTuiMirrorRuntime(
       case "navigate_tree": {
         const targetId = String(command.targetId ?? "").trim();
         if (!targetId) throw new Error("Invalid payload: expected targetId");
-        const navigateTree = requireEditableAgentSession(ctx).navigateTree;
-        if (!navigateTree)
+        if (!ctx.isIdle()) {
           throw new Error(
-            "Terminal Pi runtime tree navigation is not attached yet",
+            "Wait for the current response to finish before navigating the session tree.",
           );
-        return await navigateTree(targetId, {
+        }
+        if (activeTreeNavigationToken || pendingTreeNavigations.size > 0) {
+          throw new Error("A session-tree navigation is already in progress.");
+        }
+        const options: MirrorTreeNavigationOptions = {
           summarize:
             typeof command.summarize === "boolean"
               ? command.summarize
@@ -4981,6 +5004,33 @@ async function createTuiMirrorRuntime(
               ? command.replaceInstructions
               : undefined,
           label: typeof command.label === "string" ? command.label : undefined,
+        };
+        const token = randomUUID();
+        return await new Promise((resolve, reject) => {
+          const dispatchTimer = setTimeout(() => {
+            const pending = pendingTreeNavigations.get(token);
+            if (!pending || activeTreeNavigationToken === token) return;
+            pendingTreeNavigations.delete(token);
+            pending.reject(
+              new Error("Pi did not start the session-tree navigation command"),
+            );
+          }, 10_000);
+          pendingTreeNavigations.set(token, {
+            targetId,
+            options,
+            dispatchTimer,
+            resolve,
+            reject,
+          });
+          try {
+            pi.sendUserMessage(`/oppi-mirror __navigate-tree ${token}`, {
+              expandPromptTemplates: true,
+            });
+          } catch (error) {
+            clearTimeout(dispatchTimer);
+            pendingTreeNavigations.delete(token);
+            reject(error);
+          }
         });
       }
 
@@ -5343,7 +5393,7 @@ async function createTuiMirrorRuntime(
     description: "Mirror this live Pi TUI session into Oppi",
     handler: async (args, ctx) => {
       try {
-        const [subcommand] = args.trim().split(/\s+/).filter(Boolean);
+        const [subcommand, token] = args.trim().split(/\s+/).filter(Boolean);
         switch (subcommand || "status") {
           case "start":
             connect(ctx);
@@ -5360,6 +5410,43 @@ async function createTuiMirrorRuntime(
               ws?.readyState === WebSocket.OPEN ? "info" : "warning",
             );
             return;
+          case "__navigate-tree": {
+            const pending = token
+              ? pendingTreeNavigations.get(token)
+              : undefined;
+            if (!pending || activeTreeNavigationToken === token) return;
+            if (activeTreeNavigationToken) {
+              clearTimeout(pending.dispatchTimer);
+              pendingTreeNavigations.delete(token);
+              pending.reject(
+                new Error("A session-tree navigation is already in progress."),
+              );
+              return;
+            }
+            if (!ctx.isIdle()) {
+              clearTimeout(pending.dispatchTimer);
+              pendingTreeNavigations.delete(token);
+              pending.reject(
+                new Error(
+                  "Wait for the current response to finish before navigating the session tree.",
+                ),
+              );
+              return;
+            }
+            activeTreeNavigationToken = token;
+            clearTimeout(pending.dispatchTimer);
+            try {
+              pending.resolve(
+                await ctx.navigateTree(pending.targetId, pending.options),
+              );
+            } catch (error) {
+              pending.reject(error);
+            } finally {
+              pendingTreeNavigations.delete(token);
+              activeTreeNavigationToken = null;
+            }
+            return;
+          }
           default:
             notify(ctx, "Usage: /oppi-mirror start|stop|status", "warning");
         }
