@@ -255,6 +255,42 @@ struct MermaidSequenceRendererTests {
         #expect(selfSize.height > 0)
     }
 
+    @Test func rightmostSelfMessageLoopAndLabelStayInsideCanvas() {
+        let source = """
+            sequenceDiagram
+                participant Client
+                participant Renderer
+                Client->>Renderer: Render the conversation
+                Renderer->>Renderer: Recalculate a bounded width-aware graphical layout
+            """
+        guard case .sequence(let diagram) = parser.parse(source) else {
+            Issue.record("Expected sequence")
+            return
+        }
+        let inline = RenderConfiguration(
+            fontSize: config.fontSize,
+            maxWidth: 720,
+            theme: config.theme,
+            displayMode: .inline
+        )
+        let facts = MermaidSequenceRenderer.layoutFacts(diagram, configuration: inline)
+        let layout = MermaidSequenceRenderer.layout(diagram, configuration: inline)
+        guard let renderer = facts.participants.first(where: { $0.id == "Renderer" }),
+              let selfMessage = facts.messages.last else {
+            Issue.record("Expected rightmost participant and self message")
+            return
+        }
+        let requiredWidth = MermaidSequenceRenderer.selfMessageCanvasWidth(
+            participantCenterX: renderer.centerX,
+            labelWidth: selfMessage.rect.width,
+            fontSize: inline.fontSize
+        )
+
+        #expect(facts.size.width >= requiredWidth - 0.5)
+        #expect(layout.customSize?.width == facts.size.width)
+        #expect(drawLayout(layout))
+    }
+
     // MARK: - Arrow styles
 
     @Test func solidArrowRenders() {

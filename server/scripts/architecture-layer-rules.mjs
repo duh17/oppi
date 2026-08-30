@@ -78,6 +78,7 @@ const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES = new Set([
   "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift",
   "clients/apple/Oppi/Core/Networking/ServerConnection+MessageRouter.swift",
   "clients/apple/Oppi/Core/Networking/ServerConnection+AppEvents.swift",
+  "clients/apple/OppiCore/Runtime/ExtensionSurfaceState.swift",
   "clients/apple/OppiCore/Models/ExtensionUIWireDecoding.swift",
   "clients/apple/OppiCore/Models/ServerMessage.swift",
   "server/src/app-event-stream.ts",

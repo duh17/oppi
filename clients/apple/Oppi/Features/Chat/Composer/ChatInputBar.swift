@@ -567,7 +567,10 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .frame(minHeight: showsComposerActionRow ? 88 : 52)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .themedSurface(
+            .elevatedPanel,
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
         .overlay(alignment: .topTrailing) {
             if showsExpandButton, askRequest == nil {
                 expandButton

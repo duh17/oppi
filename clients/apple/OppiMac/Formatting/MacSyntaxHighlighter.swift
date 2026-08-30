@@ -1,29 +1,77 @@
 import AppKit
 import Foundation
 
-/// macOS syntax-highlighted attributed text adapter backed by OppiCore's shared
-/// `SyntaxTokenScanner`.
+extension FontPreferenceStore.CodeFontFamily {
+    fileprivate func macPostScriptName(weight: NSFont.Weight) -> String? {
+        guard let prefix = fontNamePrefix else { return nil }
+        let suffix: String
+        switch weight {
+        case .bold:
+            suffix = "Bold"
+        case .semibold:
+            suffix = self == .sourceCodePro ? "Semibold" : "SemiBold"
+        default:
+            suffix = "Regular"
+        }
+        return "\(prefix)-\(suffix)"
+    }
+
+    fileprivate func macFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        if let name = macPostScriptName(weight: weight),
+           let font = NSFont(name: name, size: size) {
+            return font
+        }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    }
+}
+
+extension FontPreferenceStore {
+    static func macCodeFont(weight: NSFont.Weight = .regular) -> NSFont {
+        codeFont.macFont(
+            size: CGFloat(codePointSize(baseSize: 11)),
+            weight: weight
+        )
+    }
+
+    static func macMessageFont(
+        forTextStyle textStyle: NSFont.TextStyle,
+        weight: NSFont.Weight = .regular
+    ) -> NSFont {
+        let baseSize = NSFont.preferredFont(forTextStyle: textStyle).pointSize
+        let size = CGFloat(messagePointSize(baseSize: Double(baseSize)))
+        if useMonoForMessages {
+            return codeFont.macFont(size: size, weight: weight)
+        }
+        return NSFont.systemFont(ofSize: size, weight: weight)
+    }
+}
+
+/// macOS syntax-highlighted attributed text adapter.
+///
+/// Token ranges come from OppiCore's shared provider (`TreeSitterHighlighter`
+/// with `SyntaxTokenScanner` fallback). Colors, fonts, and gutters stay here.
 enum MacSyntaxHighlighter {
     static func color(for kind: SyntaxTokenKind) -> NSColor? {
+        let syntax = ThemeRuntimeState.currentThemeID().appTheme.syntax
         switch kind {
         case .variable:
             return nil
         case .comment:
-            return .secondaryLabelColor
+            return NSColor(syntax.comment)
         case .keyword:
-            return .systemPurple
+            return NSColor(syntax.keyword)
         case .string:
-            return .systemGreen
+            return NSColor(syntax.string)
         case .number:
-            return .systemOrange
+            return NSColor(syntax.number)
         case .type:
-            return .systemBlue
+            return NSColor(syntax.type)
         case .punctuation:
-            return .tertiaryLabelColor
+            return NSColor(syntax.punctuation)
         case .function:
-            return .systemTeal
+            return NSColor(syntax.function)
         case .operator:
-            return .systemPink
+            return NSColor(syntax.operator)
         }
     }
 
@@ -33,8 +81,11 @@ enum MacSyntaxHighlighter {
         includeLineNumbers: Bool = true
     ) -> NSAttributedString {
         let source = SyntaxTokenScanner.truncatedCode(code)
-        let defaultFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        let lineNumberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        let theme = ThemeRuntimeState.currentThemeID().appTheme
+        let plainColor = NSColor(theme.syntax.plain)
+        let gutterColor = NSColor(theme.text.tertiary)
+        let defaultFont = FontPreferenceStore.macCodeFont()
+        let lineNumberFont = defaultFont
         let result = NSMutableAttributedString()
         let lines = source.components(separatedBy: "\n")
         let lineNumberWidth = String(lines.count).count
@@ -58,7 +109,7 @@ enum MacSyntaxHighlighter {
                     string: prefix,
                     attributes: [
                         .font: lineNumberFont,
-                        .foregroundColor: NSColor.secondaryLabelColor,
+                        .foregroundColor: gutterColor,
                     ]
                 ))
             } else {
@@ -69,7 +120,7 @@ enum MacSyntaxHighlighter {
                 string: line,
                 attributes: [
                     .font: defaultFont,
-                    .foregroundColor: NSColor.labelColor,
+                    .foregroundColor: plainColor,
                 ]
             ))
 
@@ -78,7 +129,7 @@ enum MacSyntaxHighlighter {
                     string: "\n",
                     attributes: [
                         .font: defaultFont,
-                        .foregroundColor: NSColor.labelColor,
+                        .foregroundColor: plainColor,
                     ]
                 ))
             }
@@ -87,7 +138,7 @@ enum MacSyntaxHighlighter {
         }
 
         guard let language else { return result }
-        let tokenRanges = SyntaxTokenScanner.scanTokenRanges(source, language: language)
+        let tokenRanges = TreeSitterHighlighter.resolvedTokenRanges(source, language: language)
         for token in tokenRanges {
             guard let color = color(for: token.kind) else { continue }
             for outputRange in outputRanges(

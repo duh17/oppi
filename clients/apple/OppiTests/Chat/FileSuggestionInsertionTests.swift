@@ -10,57 +10,57 @@ struct FileSuggestionInsertionTests {
 
     @Test func fileInsertionAddsTrailingSpace() {
         let suggestion = FileSuggestion(path: "ios/Oppi/ChatView.swift", isDirectory: false)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "fix @ios/Oppi/Chat")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "fix @ios/Oppi/Chat")
         #expect(result == "fix @ios/Oppi/ChatView.swift ")
     }
 
     @Test func directoryInsertionAddsTrailingSlashNoSpace() {
         let suggestion = FileSuggestion(path: "ios/Oppi/", isDirectory: true)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "look at @ios/O")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "look at @ios/O")
         #expect(result == "look at @ios/Oppi/")
     }
 
     @Test func insertionAtStartOfMessage() {
         let suggestion = FileSuggestion(path: "README.md", isDirectory: false)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "@READ")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "@READ")
         #expect(result == "@README.md ")
     }
 
     @Test func insertionWithEmptyAtQuery() {
         let suggestion = FileSuggestion(path: "package.json", isDirectory: false)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "@")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "@")
         #expect(result == "@package.json ")
     }
 
     @Test func insertionLeavesLeadingTextUntouched() {
         let suggestion = FileSuggestion(path: "src/index.ts", isDirectory: false)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "please update @src/ind")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "please update @src/ind")
         #expect(result.hasPrefix("please update "))
         #expect(result == "please update @src/index.ts ")
     }
 
     @Test func insertionNoOpWhenNoAtToken() {
         let suggestion = FileSuggestion(path: "README.md", isDirectory: false)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "no trigger here")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "no trigger here")
         #expect(result == "no trigger here")
     }
 
     @Test func insertionNoOpAfterWhitespace() {
         // Token is complete once a space appears — no active @-token.
         let suggestion = FileSuggestion(path: "README.md", isDirectory: false)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "@old ")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "@old ")
         #expect(result == "@old ")
     }
 
     @Test func fileInsertionResultEndsWithSpace() {
         let suggestion = FileSuggestion(path: "src/utils.ts", isDirectory: false)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "@src/ut")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "@src/ut")
         #expect(result.hasSuffix(" "))
     }
 
     @Test func directoryInsertionResultEndsWithSlash() {
         let suggestion = FileSuggestion(path: "src/utils/", isDirectory: true)
-        let result = ComposerAutocomplete.insertFileSuggestion(suggestion, into: "@src/ut")
+        let result = ComposerAutocomplete.insertFileMention(path: suggestion.path, isDirectory: suggestion.isDirectory, into: "@src/ut")
         #expect(result.hasSuffix("/"))
         #expect(!result.hasSuffix(" "))
     }

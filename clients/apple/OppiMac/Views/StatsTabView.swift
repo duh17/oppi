@@ -11,65 +11,72 @@ struct StatsTabView: View {
     @State private var isLoadingDetail = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
 
-            // Range picker
-            Picker("Range", selection: $monitor.selectedRange) {
-                Text("7d").tag(7)
-                Text("30d").tag(30)
-                Text("90d").tag(90)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .onChange(of: monitor.selectedRange) {
-                dailyDetail = nil
-                dailyDetailCache = [:]
-            }
+                // Range picker
+                Picker("Range", selection: $monitor.selectedRange) {
+                    Text("7d").tag(7)
+                    Text("30d").tag(30)
+                    Text("90d").tag(90)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .onChange(of: monitor.selectedRange) {
+                    dailyDetail = nil
+                    dailyDetailCache = [:]
+                }
 
-            if let stats = monitor.stats {
-                VStack(alignment: .leading, spacing: 8) {
-                    heroStats(stats)
+                if let stats = monitor.stats {
+                    VStack(alignment: .leading, spacing: 8) {
+                        heroStats(stats)
 
-                    DailyCostChart(
-                        daily: stats.daily,
-                        metric: selectedMetric,
-                        onDaySelected: { dateString in
-                            Task { await loadDailyDetail(date: dateString) }
+                        DailyCostChart(
+                            daily: stats.daily,
+                            metric: selectedMetric,
+                            onDaySelected: { dateString in
+                                Task { await loadDailyDetail(date: dateString) }
+                            }
+                        )
+
+                        if isLoadingDetail {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                    .controlSize(.small)
+                                Spacer()
+                            }
+                            .padding(.vertical, 4)
                         }
-                    )
 
-                    if isLoadingDetail {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                                .controlSize(.small)
-                            Spacer()
-                        }
-                        .padding(.vertical, 4)
-                    }
-
-                    if let dailyDetail {
-                        MacDailyDetailView(detail: dailyDetail) {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                self.dailyDetail = nil
+                        if let dailyDetail {
+                            MacDailyDetailView(detail: dailyDetail) {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    self.dailyDetail = nil
+                                }
                             }
                         }
-                    }
 
-                    modelSection(stats)
-                    workspaceSection(stats)
-                    serverHealthSection(stats)
+                        modelSection(stats)
+                        workspaceSection(stats)
+                        serverHealthSection(stats)
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Waiting for server stats")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
                 }
-            } else {
-                HStack {
-                    Spacer()
-                    ProgressView()
-                        .controlSize(.small)
-                    Spacer()
-                }
-                .padding(.vertical, 20)
             }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .accessibilityIdentifier("mac.stats")
     }
 
     // MARK: - Model section
@@ -217,13 +224,8 @@ struct StatsTabView: View {
             return
         }
 
-        // Need the MacAPIClient — reconstruct from monitor's context
-        let dataDir = NSString("~/.config/oppi").expandingTildeInPath
-        guard let token = MacAPIClient.readOwnerToken(dataDir: dataDir) else { return }
-        let client = MacAPIClient(baseURL: URL(string: "https://localhost:7749")!, token: token)
-
         isLoadingDetail = true
-        if let result = await client.fetchDailyDetail(date: date) {
+        if let result = await monitor.fetchDailyDetail(date: date) {
             dailyDetailCache[date] = result
             withAnimation(.easeInOut(duration: 0.2)) {
                 dailyDetail = result

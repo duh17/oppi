@@ -1,7 +1,11 @@
 import Foundation
 import SwiftUI
-import UIKit
 import os
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Color palette for the entire app — 49 tokens.
 ///
@@ -609,25 +613,35 @@ enum ThemeRuntimeState {
 extension ThemePalette {
     var renderTheme: RenderTheme {
         RenderTheme(
-            foreground: UIColor(fg).cgColor,
-            foregroundDim: UIColor(fgDim).cgColor,
-            background: UIColor(bg).cgColor,
-            backgroundDark: UIColor(bgDark).cgColor,
-            comment: UIColor(comment).cgColor,
-            keyword: UIColor(syntaxKeyword).cgColor,
-            string: UIColor(syntaxString).cgColor,
-            number: UIColor(syntaxNumber).cgColor,
-            function: UIColor(syntaxFunction).cgColor,
-            type: UIColor(syntaxType).cgColor,
-            link: UIColor(mdLink).cgColor,
-            heading: UIColor(mdHeading).cgColor,
-            accentBlue: UIColor(blue).cgColor,
-            accentCyan: UIColor(cyan).cgColor,
-            accentGreen: UIColor(green).cgColor,
-            accentOrange: UIColor(orange).cgColor,
-            accentPurple: UIColor(purple).cgColor,
-            accentRed: UIColor(red).cgColor,
-            accentYellow: UIColor(yellow).cgColor
+            foreground: Self.platformCGColor(fg),
+            foregroundDim: Self.platformCGColor(fgDim),
+            background: Self.platformCGColor(bg),
+            backgroundDark: Self.platformCGColor(bgDark),
+            comment: Self.platformCGColor(comment),
+            keyword: Self.platformCGColor(syntaxKeyword),
+            string: Self.platformCGColor(syntaxString),
+            number: Self.platformCGColor(syntaxNumber),
+            function: Self.platformCGColor(syntaxFunction),
+            type: Self.platformCGColor(syntaxType),
+            link: Self.platformCGColor(mdLink),
+            heading: Self.platformCGColor(mdHeading),
+            accentBlue: Self.platformCGColor(blue),
+            accentCyan: Self.platformCGColor(cyan),
+            accentGreen: Self.platformCGColor(green),
+            accentOrange: Self.platformCGColor(orange),
+            accentPurple: Self.platformCGColor(purple),
+            accentRed: Self.platformCGColor(red),
+            accentYellow: Self.platformCGColor(yellow)
         )
+    }
+
+    private static func platformCGColor(_ color: Color) -> CGColor {
+        #if canImport(UIKit)
+        UIColor(color).cgColor
+        #elseif canImport(AppKit)
+        NSColor(color).usingColorSpace(.sRGB)?.cgColor ?? CGColor(gray: 0.5, alpha: 1)
+        #else
+        CGColor(gray: 0.5, alpha: 1)
+        #endif
     }
 }

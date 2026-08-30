@@ -41,21 +41,19 @@ struct ChatSessionManagerTests {
     }
 
     @Test func staleTracePageFallsBackToFullSessionTrace() {
-        #expect(
-            ChatSessionManager.shouldFallbackToFullTrace(
-                APIError.server(status: 409, message: "Session trace is not synchronized")
+        let cases: [(status: Int, shouldFallback: Bool)] = [
+            (404, true),
+            (405, true),
+            (409, true),
+            (500, false),
+        ]
+        for item in cases {
+            #expect(
+                IOSChatSessionRuntimeAdapter.shouldFallbackToFullTrace(
+                    APIError.server(status: item.status, message: "trace")
+                ) == item.shouldFallback
             )
-        )
-        #expect(
-            ChatSessionManager.shouldFallbackToFullTrace(
-                APIError.server(status: 404, message: "not found")
-            )
-        )
-        #expect(
-            !ChatSessionManager.shouldFallbackToFullTrace(
-                APIError.server(status: 500, message: "boom")
-            )
-        )
+        }
     }
 
     @Test func initialState() {
@@ -1295,7 +1293,7 @@ struct ChatSessionManagerTests {
         }
 
         manager._loadCatchUpForTesting = { _, _ in
-            APIClient.SessionEventsResponse(
+            ChatSessionCatchUpResponse(
                 events: [
                     .init(seq: 2, message: .state(session: makeTestSession(id: sessionId, workspaceId: "w1", status: .ready))),
                 ],
@@ -1386,7 +1384,7 @@ struct ChatSessionManagerTests {
         var catchUpCalls = 0
         manager._loadCatchUpForTesting = { _, _ in
             catchUpCalls += 1
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [
                     .init(seq: 1, message: .state(session: makeTestSession(id: sessionId, status: .busy))),
                     .init(seq: 2, message: .state(session: makeTestSession(id: sessionId, status: .ready))),
@@ -1676,7 +1674,7 @@ struct ChatSessionManagerTests {
         var catchUpCalls = 0
         manager._loadCatchUpForTesting = { _, _ in
             catchUpCalls += 1
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [
                     .init(seq: 1, message: .stopRequested(source: .user, reason: "Stopping current turn")),
                     .init(seq: 2, message: .stopConfirmed(source: .user, reason: nil)),
@@ -1739,7 +1737,7 @@ struct ChatSessionManagerTests {
         var catchUpCalls = 0
         manager._loadCatchUpForTesting = { _, _ in
             catchUpCalls += 1
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [
                     .init(seq: 1, message: .stopRequested(source: .user, reason: "Stopping current turn")),
                     .init(seq: 2, message: .stopFailed(source: .timeout, reason: "Stop timed out after 8000ms")),
@@ -1808,7 +1806,7 @@ struct ChatSessionManagerTests {
         }
 
         manager._loadCatchUpForTesting = { _, _ in
-            APIClient.SessionEventsResponse(
+            ChatSessionCatchUpResponse(
                 events: [],
                 currentSeq: 5,
                 session: makeTestSession(id: sessionId, status: .busy),
@@ -2551,7 +2549,7 @@ struct ChatSessionManagerTests {
         var catchUpCalled = false
         manager._loadCatchUpForTesting = { _, _ in
             catchUpCalled = true
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [],
                 currentSeq: 0,
                 session: makeTestSession(id: sessionId),

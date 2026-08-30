@@ -1,26 +1,30 @@
 import Testing
 @testable import Oppi
 
-@Suite("Mac session action policy")
+@Suite("Shared session action policy")
 struct MacSessionActionPolicyTests {
     @Test func stopIsAvailableForActiveSessionStates() {
-        #expect(MacSessionActionPolicy.canStop(.starting))
-        #expect(MacSessionActionPolicy.canStop(.ready))
-        #expect(MacSessionActionPolicy.canStop(.busy))
+        #expect(SessionActionPolicy.canStop(.starting))
+        #expect(SessionActionPolicy.canStop(.ready))
+        #expect(SessionActionPolicy.canStop(.busy))
     }
 
     @Test func stopIsHiddenForTerminalOrStoppingStates() {
-        #expect(!MacSessionActionPolicy.canStop(.stopping))
-        #expect(!MacSessionActionPolicy.canStop(.stopped))
-        #expect(!MacSessionActionPolicy.canStop(.error))
+        #expect(!SessionActionPolicy.canStop(.stopping))
+        #expect(!SessionActionPolicy.canStop(.stopped))
+        #expect(!SessionActionPolicy.canStop(.error))
     }
 
     @Test func deleteIsOnlyAvailableForTerminalHistoryRows() {
-        #expect(MacSessionActionPolicy.canDelete(.stopped))
-        #expect(MacSessionActionPolicy.canDelete(.error))
-        #expect(!MacSessionActionPolicy.canDelete(.starting))
-        #expect(!MacSessionActionPolicy.canDelete(.ready))
-        #expect(!MacSessionActionPolicy.canDelete(.busy))
-        #expect(!MacSessionActionPolicy.canDelete(.stopping))
+        #expect(SessionActionPolicy.canDelete(.stopped))
+        #expect(SessionActionPolicy.canDelete(.error))
+        #expect(!SessionActionPolicy.canDelete(.starting))
+        #expect(!SessionActionPolicy.canDelete(.ready))
+        #expect(!SessionActionPolicy.canDelete(.busy))
+        #expect(!SessionActionPolicy.canDelete(.stopping))
+    }
+
+    @Test func macNameRemainsAnAliasForCallers() {
+        #expect(MacSessionActionPolicy.canStop(.ready) == SessionActionPolicy.canStop(.ready))
     }
 }

@@ -732,6 +732,46 @@ struct MermaidRendererTests {
         assertEveryPathClearsOtherLabelsAndArrowheads(layout)
     }
 
+    @Test func liveSessionFanOutKeepsEveryBranchVisibleAndDecorationsClear() {
+        let diagram = parser.parse("""
+            flowchart LR
+                stream[Live events] --> reducer{Session reducer}
+                reducer -->|timeline| list[Timeline]
+                reducer -->|tool output| document[Document]
+                document --> verified[Visual gate]
+            """)
+        guard case .flowchart(let flowchart) = diagram else {
+            Issue.record("Canonical flowchart fixture must parse as a flowchart")
+            return
+        }
+        #expect(flowchart.edges.count == 4)
+        #expect(flowchart.edges.map(\.label) == [nil, "timeline", "tool output", nil])
+
+        let layout = renderer.layout(diagram, configuration: config)
+        #expect(layout.graphResult.edgePaths.count == flowchart.edges.count)
+        guard let reducer = layout.graphResult.nodePositions["reducer"] else {
+            Issue.record("Expected reducer diamond position")
+            return
+        }
+        let branches = layout.graphResult.edgePaths.filter { $0.from == "reducer" }
+        #expect(branches.count == 2)
+        #expect(
+            branches.allSatisfy { $0.points.count >= 2 },
+            "Both reducer branches must render connected; paths=\(branches.map(\.points))"
+        )
+        let startsTop = branches.contains {
+            guard let start = $0.points.first else { return false }
+            return abs(start.x - reducer.midX) < 0.6 && abs(start.y - reducer.minY) < 0.6
+        }
+        let startsBottom = branches.contains {
+            guard let start = $0.points.first else { return false }
+            return abs(start.x - reducer.midX) < 0.6 && abs(start.y - reducer.maxY) < 0.6
+        }
+        #expect(startsTop, "LR fan-out should leave the diamond's top vertex: \(branches.map(\.points))")
+        #expect(startsBottom, "LR fan-out should leave the diamond's bottom vertex: \(branches.map(\.points))")
+        assertEveryPathClearsOtherLabelsAndArrowheads(layout, expectedLabelCount: 2)
+    }
+
     @Test func laterUnlabeledSharedRoutesClearEarlierLabelsAndArrowheads() {
         let layout = renderer.layout(
             parser.parse("""

@@ -25,7 +25,7 @@ xcrun simctl openurl booted 'oppi://workspace?path=/Users/example/workspace/oppi
 | `oppi://connect?v=3&invite=<payload>` | Signed pairing invite | Pairs or re-pairs a server, validates trust, switches to the server, then opens Workspaces. |
 | `oppi://pair?v=3&invite=<payload>` | Signed pairing invite | Same as `connect`. |
 | `oppi://workspace?path=<path>&name=<name>&server=<fingerprint>` | `path`; `name` and `server` are optional | Opens Workspaces and presents Create Workspace with the path/name prefilled. The user confirms creation. |
-| `oppi://session/<session-id>` | Session ID | Opens the session if it is already known locally. If not found, opens the Workspaces tab. |
+| `oppi://session/<session-id>` | Session ID | Opens the session if it is known locally or found by the server lookup. If not found, opens the Workspaces tab. |
 
 Supported route forms:
 
@@ -33,6 +33,8 @@ Supported route forms:
 - Session links use the host-route form: `oppi://session/<id>`.
 
 Use lowercase parameter names. Route names are case-insensitive.
+
+On Mac, an external session link waits for the local workspace catalog. If the session is not in the recent snapshot, Oppi makes one authenticated `GET /sessions/<session-id>` request through the owner Unix socket. It does not fall back to HTTPS. A matching routable session opens directly; a not-found response or other lookup failure opens Workspaces.
 
 ## Pairing invites
 

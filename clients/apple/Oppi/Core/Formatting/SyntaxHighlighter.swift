@@ -5,9 +5,9 @@ import UIKit
 
 /// UIKit syntax-highlighting adapter used by the iOS app.
 ///
-/// The scanner itself lives in `OppiCore` as `SyntaxTokenScanner`; this type
-/// handles iOS-specific theme color resolution, optional tree-sitter dispatch,
-/// and `NSAttributedString` construction.
+/// Token ranges come from OppiCore's shared provider (`TreeSitterHighlighter`
+/// with `SyntaxTokenScanner` fallback). This type handles iOS-specific theme
+/// color resolution and `NSAttributedString` construction.
 enum SyntaxHighlighter {
 
     typealias TokenKind = SyntaxTokenKind
@@ -102,31 +102,23 @@ enum SyntaxHighlighter {
 
     /// Scan source code and return token ranges for non-default tokens.
     ///
-    /// Tree-sitter is used when a grammar is registered; otherwise this falls
-    /// back to the shared `SyntaxTokenScanner` in `OppiCore`.
+    /// Delegates to the shared OppiCore provider so iOS and Mac paint the same
+    /// `[SyntaxTokenRange]` values.
     static func scanTokenRanges(
         _ code: String,
         language: SyntaxLanguage
     ) -> [TokenRange] {
-        resolveTokenRanges(code, language: language)
+        TreeSitterHighlighter.resolvedTokenRanges(code, language: language)
     }
 
     /// ASCII-optimized scanner using raw UTF-8 bytes where possible.
     ///
-    /// Used by `DiffAttributedStringBuilder` for batch syntax scanning. When
-    /// tree-sitter supports a language, dispatch through that path first so iOS
-    /// shell highlighting keeps the upstream Bash grammar behavior.
+    /// Used by `DiffAttributedStringBuilder` for batch syntax scanning.
     static func scanTokenRangesUTF8(
         _ text: String,
         language: SyntaxLanguage
     ) -> [TokenRange] {
-        guard language != .unknown else { return [] }
-
-        if TreeSitterHighlighter.supports(language) {
-            return resolveTokenRanges(text, language: language)
-        }
-
-        return SyntaxTokenScanner.scanTokenRangesUTF8(text, language: language)
+        TreeSitterHighlighter.resolvedTokenRangesUTF8(text, language: language)
     }
 
     /// Highlight source code using range-based attribute application.
@@ -141,8 +133,8 @@ enum SyntaxHighlighter {
         // Build the full attributed string with default variable color.
         let result = NSMutableAttributedString(string: truncated, attributes: attrs.variable)
 
-        // Scan for token ranges via unified dispatch (tree-sitter or fallback).
-        let tokenRanges = resolveTokenRanges(truncated, language: language)
+        // Scan for token ranges via the shared OppiCore provider.
+        let tokenRanges = TreeSitterHighlighter.resolvedTokenRanges(truncated, language: language)
 
         // Pre-extract UIColors to avoid dictionary lookup + cast per token.
         let commentColor = attrs.comment[.foregroundColor] as? UIColor
@@ -178,18 +170,5 @@ enum SyntaxHighlighter {
         }
 
         return result
-    }
-
-    // MARK: - Unified Dispatch
-
-    /// Single dispatch point for tree-sitter vs shared fallback scanner.
-    private static func resolveTokenRanges(
-        _ code: String,
-        language: SyntaxLanguage
-    ) -> [TokenRange] {
-        if let tsRanges = TreeSitterHighlighter.scanTokenRanges(code, language: language) {
-            return tsRanges
-        }
-        return SyntaxTokenScanner.scanTokenRanges(code, language: language)
     }
 }

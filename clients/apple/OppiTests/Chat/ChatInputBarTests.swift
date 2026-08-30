@@ -460,6 +460,21 @@ struct ChatInputBarTests {
         #expect(reserved < 20, "Trailing gutter should stay visually tight so wrapped text reaches near the send button")
     }
 
+    @Test("Composer capsule uses the live semantic themed panel contract")
+    func composerCapsuleUsesLiveSemanticThemedPanel() throws {
+        let source = try chatInputBarSource()
+        let slice = try chatInputBarSourceSlice(
+            named: "private var composerCapsule: some View {",
+            until: "private func askCard",
+            in: source
+        )
+
+        #expect(slice.contains(".themedSurface("))
+        #expect(slice.contains(".elevatedPanel"))
+        #expect(slice.contains("RoundedRectangle(cornerRadius: 20, style: .continuous)"))
+        #expect(!slice.contains(".glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20"))
+    }
+
     @Test("Active asks can disable expanded composer routing")
     func activeAsksCanDisableExpandedComposerRouting() {
         #expect(!ChatInputBar<EmptyView>.shouldShowExpandButton(
@@ -1084,6 +1099,35 @@ struct ChatInputBarTests {
         try await manager.startRecording(keyboardLanguage: "en-US", source: source.rawValue)
         return (manager, session)
     }
+}
+
+private func chatInputBarSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/Chat/Composer/ChatInputBar.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func chatInputBarSourceSlice(
+    named marker: String,
+    until endMarker: String,
+    in source: String
+) throws -> String {
+    guard let start = source.range(of: marker) else {
+        Issue.record("Missing source marker \(marker)")
+        throw ChatInputBarSourceSliceError.missingMarker(marker)
+    }
+    guard let end = source.range(of: endMarker, range: start.upperBound..<source.endIndex) else {
+        Issue.record("Missing source end marker \(endMarker)")
+        throw ChatInputBarSourceSliceError.missingMarker(endMarker)
+    }
+    return String(source[start.lowerBound..<end.lowerBound])
+}
+
+private enum ChatInputBarSourceSliceError: Error {
+    case missingMarker(String)
 }
 
 private final class DismissSpyImagePickerController: UIImagePickerController {

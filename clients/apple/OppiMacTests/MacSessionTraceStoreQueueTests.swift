@@ -57,6 +57,134 @@ struct MacSessionTraceStoreQueueTests {
         #expect(store.messageQueue.steering.map(\.message) == ["steer"])
     }
 
+    @Test func refreshRemainsInFlightUntilCorrelatedQueueResultArrives() async {
+        let store = MacSessionTraceStore()
+        let target = makeTarget(status: .busy)
+        store.select(target)
+
+        let getQueueRequest = QueueRequestIdBox()
+        store._sendLiveMessageForTesting = { message in
+            guard case .getQueue(let requestId) = message else {
+                Issue.record("Unexpected queue command: \(message)")
+                return true
+            }
+            guard let requestId else {
+                Issue.record("Queue refresh should include a request ID")
+                return true
+            }
+            getQueueRequest.complete(requestId)
+            return true
+        }
+
+        let refreshTask = Task {
+            await store.refreshQueue(target: target, client: Self.unusedClient)
+        }
+
+        let requestId = await getQueueRequest.value()
+        #expect(store.isRefreshingQueue)
+
+        store.applyServerMessageForTesting(
+            .commandResult(
+                command: "get_queue",
+                requestId: requestId,
+                success: true,
+                data: [
+                    "version": 3,
+                    "steering": [],
+                    "followUp": [],
+                ],
+                error: nil
+            ),
+            target: target
+        )
+
+        await refreshTask.value
+        #expect(!store.isRefreshingQueue)
+        #expect(store.messageQueue.version == 3)
+        #expect(store.messageQueueError == nil)
+    }
+
+    @Test func rejectedMutationWaitsForCommandResultAndReconcilesLatestQueue() async {
+        let store = MacSessionTraceStore()
+        let target = makeTarget(status: .busy)
+        store.select(target)
+        store.applyServerMessageForTesting(
+            .queueState(queue: MessageQueueState(
+                version: 1,
+                steering: [item(id: "old", message: "old queue")],
+                followUp: []
+            )),
+            target: target
+        )
+
+        let setQueueRequest = QueueRequestIdBox()
+        var sentCommands: [String] = []
+        store._sendLiveMessageForTesting = { message in
+            switch message {
+            case .setQueue(_, _, _, let requestId):
+                sentCommands.append("set_queue")
+                if let requestId {
+                    setQueueRequest.complete(requestId)
+                }
+            case .getQueue(let requestId):
+                sentCommands.append("get_queue")
+                store.applyServerMessageForTesting(
+                    .commandResult(
+                        command: "get_queue",
+                        requestId: requestId,
+                        success: true,
+                        data: [
+                            "version": 2,
+                            "steering": [
+                                ["id": "latest", "message": "server latest", "createdAt": 1_800_000_000_001],
+                            ],
+                            "followUp": [],
+                        ],
+                        error: nil
+                    ),
+                    target: target
+                )
+            default:
+                Issue.record("Unexpected queue command: \(message)")
+            }
+            return true
+        }
+
+        let mutation = MacMessageQueueMutationRequest(
+            baseVersion: 1,
+            steering: [],
+            followUp: []
+        )
+        let mutationTask = Task {
+            try await store.applyQueueMutation(
+                mutation,
+                target: target,
+                client: Self.unusedClient
+            )
+        }
+
+        let requestId = await setQueueRequest.value()
+        store.applyServerMessageForTesting(
+            .commandResult(
+                command: "set_queue",
+                requestId: requestId,
+                success: false,
+                data: nil,
+                error: "Queue version mismatch"
+            ),
+            target: target
+        )
+
+        await #expect(throws: MacSessionTraceStoreError.commandRejected("Queue version mismatch")) {
+            try await mutationTask.value
+        }
+        #expect(sentCommands == ["set_queue", "get_queue"])
+        #expect(store.messageQueue.version == 2)
+        #expect(store.messageQueue.steering.map(\.message) == ["server latest"])
+        #expect(store.messageQueueError == "Queue version mismatch")
+        #expect(!store.isUpdatingQueue)
+    }
+
     @Test func clearsQueueOnSessionEnded() {
         let store = MacSessionTraceStore()
         let target = makeTarget(status: .busy)
@@ -95,5 +223,38 @@ struct MacSessionTraceStoreQueueTests {
 
     private func item(id: String, message: String) -> MessageQueueItem {
         MessageQueueItem(id: id, message: message, createdAt: 1_800_000_000_000)
+    }
+
+    private static let unusedClient = MacWorkspaceClient(
+        socketPath: "/tmp/oppi-mac-queue-unused.sock",
+        token: "test"
+    )
+}
+
+@MainActor
+private final class QueueRequestIdBox {
+    private var requestId: String?
+    private var continuation: CheckedContinuation<String, Never>?
+
+    func complete(_ requestId: String) {
+        if let continuation {
+            self.continuation = nil
+            continuation.resume(returning: requestId)
+        } else {
+            self.requestId = requestId
+        }
+    }
+
+    func value() async -> String {
+        if let requestId {
+            return requestId
+        }
+        return await withCheckedContinuation { continuation in
+            if let requestId {
+                continuation.resume(returning: requestId)
+            } else {
+                self.continuation = continuation
+            }
+        }
     }
 }

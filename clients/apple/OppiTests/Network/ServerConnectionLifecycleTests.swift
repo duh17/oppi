@@ -31,6 +31,13 @@ struct ServerConnectionLifecycleTests {
         #expect(conn.wsClient == nil)
     }
 
+    @Test func unixTransportPathIsNotARouteCandidate() {
+        let conn = ServerConnection()
+        #expect(conn.routeCandidateKindForTesting(.unix) == nil)
+        #expect(conn.routeCandidateKindForTesting(.lan) == .lan)
+        #expect(conn.routeCandidateKindForTesting(.paired) == .paired)
+    }
+
     @Test func transportGenerationPreventsTurnRetryAcrossReplacement() async {
         let conn = ServerConnection()
         conn._setActiveSessionIdForTesting("session-1")

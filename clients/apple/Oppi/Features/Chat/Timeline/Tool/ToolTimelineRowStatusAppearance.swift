@@ -8,38 +8,39 @@ struct ToolTimelineRowStatusAppearance {
     let borderColor: CGColor
 
     static func make(isDone: Bool, isError: Bool, isInterrupted: Bool = false) -> Self {
+        let palette = ThemeRuntimeState.currentPalette()
         if !isDone {
             return .init(
                 symbolName: "play.circle.fill",
-                statusColor: UIColor(Color.themeBlue),
-                borderBackgroundColor: UIColor(Color.themeBgHighlight.opacity(0.75)),
-                borderColor: UIColor(Color.themeBlue.opacity(0.25)).cgColor
+                statusColor: UIColor(palette.blue),
+                borderBackgroundColor: UIColor(palette.toolPendingBg),
+                borderColor: UIColor(palette.blue.opacity(0.25)).cgColor
             )
         }
 
         if isInterrupted {
             return .init(
                 symbolName: "exclamationmark.circle.fill",
-                statusColor: UIColor(Color.themeOrange),
-                borderBackgroundColor: UIColor(Color.themeOrange.opacity(0.08)),
-                borderColor: UIColor(Color.themeOrange.opacity(0.25)).cgColor
+                statusColor: UIColor(palette.orange),
+                borderBackgroundColor: UIColor(palette.orange.opacity(0.08)),
+                borderColor: UIColor(palette.orange.opacity(0.25)).cgColor
             )
         }
 
         if isError {
             return .init(
                 symbolName: "xmark.circle.fill",
-                statusColor: UIColor(Color.themeRed),
-                borderBackgroundColor: UIColor(Color.themeRed.opacity(0.08)),
-                borderColor: UIColor(Color.themeRed.opacity(0.25)).cgColor
+                statusColor: UIColor(palette.red),
+                borderBackgroundColor: UIColor(palette.toolErrorBg),
+                borderColor: UIColor(palette.red.opacity(0.25)).cgColor
             )
         }
 
         return .init(
             symbolName: "checkmark.circle.fill",
-            statusColor: UIColor(Color.themeGreen),
-            borderBackgroundColor: UIColor(Color.themeGreen.opacity(0.06)),
-            borderColor: UIColor(Color.themeComment.opacity(0.2)).cgColor
+            statusColor: UIColor(palette.green),
+            borderBackgroundColor: UIColor(palette.toolSuccessBg),
+            borderColor: UIColor(palette.comment.opacity(0.2)).cgColor
         )
     }
 }

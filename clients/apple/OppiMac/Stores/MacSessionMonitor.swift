@@ -1,7 +1,4 @@
 import Foundation
-import OSLog
-
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "MacSessionMonitor")
 
 /// Polls `/server/stats` and publishes the latest ``ServerStats`` to SwiftUI views.
 ///
@@ -50,6 +47,12 @@ final class MacSessionMonitor {
     func stopPolling() {
         pollingTask?.cancel()
         pollingTask = nil
+    }
+
+    /// `GET /server/stats/daily/:date` through the same owner client as polling.
+    func fetchDailyDetail(date: String) async -> DailyDetail? {
+        guard let client = apiClient else { return nil }
+        return await client.fetchDailyDetail(date: date)
     }
 
     // MARK: - Private

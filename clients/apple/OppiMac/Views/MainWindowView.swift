@@ -1,8 +1,20 @@
-import Combine
 import SwiftUI
 
-extension Notification.Name {
-    static let navigateToTab = Notification.Name("OppiMac.navigateToTab")
+private struct MacSidebarLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.themeFg)
+                .frame(width: 18)
+                .accessibilityHidden(true)
+            Text(title)
+                .foregroundStyle(.themeFg)
+        }
+        .accessibilityElement(children: .combine)
+    }
 }
 
 struct MainWindowView: View {
@@ -12,20 +24,29 @@ struct MainWindowView: View {
     let permissionState: TCCPermissionState
     let sessionMonitor: MacSessionMonitor
     let checkForUpdates: @MainActor () -> Void
+    @Binding var pendingSessionDeepLinkURL: URL?
 
-    @State private var selectedSection: MacSidebarSection = .workspaces
+    @State private var selectedSection = MacSidebarSection.defaultSection
+    @State private var columnVisibility = MacShellColumnVisibility.launch
+    @State private var selectedSettingsPane: MacSettingsPane = .app
     @State private var selectedWorkspaceID: String?
     @State private var selectedSessionID: String?
+    @State private var resolvingSessionDeepLinkURL: URL?
+    @State private var sessionDeepLinkResolutionGeneration: UInt = 0
     @State private var searchText = ""
+    @State private var searchStore = SessionSearchStore()
+    @State private var workspacesExpanded = false
     @State private var workspaceStore = MacWorkspaceSnapshotStore()
     @State private var sessionTraceStore = MacSessionTraceStore()
     @State private var remoteServerStore = MacRemoteServerStore()
+    @Bindable private var catalogStore = MacCatalogStore.shared
 
     init(
         processManager: ServerProcessManager,
         healthMonitor: ServerHealthMonitor,
         permissionState: TCCPermissionState,
         sessionMonitor: MacSessionMonitor,
+        pendingSessionDeepLinkURL: Binding<URL?>,
         checkForUpdates: @escaping @MainActor () -> Void
     ) {
         self.processManager = processManager
@@ -33,72 +54,131 @@ struct MainWindowView: View {
         self.permissionState = permissionState
         self.sessionMonitor = sessionMonitor
         self.checkForUpdates = checkForUpdates
+        _pendingSessionDeepLinkURL = pendingSessionDeepLinkURL
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
         } content: {
             contentList
+                .themedListSurface()
+                .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 420)
         } detail: {
             detailPane
+                .themedScrollSurface()
         }
         .navigationTitle(windowTitle)
-        .searchable(text: $searchText, prompt: "Search workspaces and sessions")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                serverStatusLabel
-            }
+        .background {
+            Rectangle()
+                .fill(.themeBg)
+                .ignoresSafeArea()
         }
         .frame(minWidth: 980, minHeight: 620)
         .task {
+            wireAttentionNotifications()
             await refreshWorkspaceCatalogAndSessions()
+            await consumePendingSessionDeepLink()
+            await workspaceStore.runAppEventStreamFromLocalConfig()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .navigateToTab)) { note in
-            if let section = note.object as? MacSidebarSection {
-                selectedSection = section
+        .onChange(of: selectedSessionID) { _, _ in
+            publishVisibleAttentionSession()
+        }
+        .onChange(of: pendingSessionDeepLinkURL) { _, _ in
+            Task { await consumePendingSessionDeepLink() }
+        }
+        .onChange(of: processManager.state) { _, state in
+            guard MacSessionDeepLinkNavigation.shouldRetryAfterServerBecameReady(
+                state: state,
+                hasPendingSessionDeepLink: pendingSessionDeepLinkURL != nil
+            ) else { return }
+            Task {
+                await refreshWorkspaceCatalogAndSessions()
+                await consumePendingSessionDeepLink()
+            }
+        }
+        .onChange(of: workspaceStore.sessionTargets.map(\.sessionId)) { _, _ in
+            bindHomeTraceIfCatalogHit()
+            Task { await consumePendingSessionDeepLink() }
+        }
+        .onChange(of: searchText) { _, newValue in
+            updateSessionSearch(newValue)
+        }
+        .onChange(of: selectedSection) { _, _ in
+            publishVisibleAttentionSession()
+            updateSessionSearch(searchText)
+        }
+        .onDisappear {
+            publishVisibleAttentionSession(isMainWindowPresented: false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .revealMacHostTool)) { note in
+            guard let pane = MacHostToolReveal.pane(from: note) else { return }
+            let revealed = MacHostToolReveal.selection(for: pane)
+            selectedSection = revealed.section
+            selectedSettingsPane = revealed.pane
+        }
+        .sheet(isPresented: controlLaunchPresented) {
+            MacControlSessionLaunchSheet(store: catalogStore) { target in
+                workspaceStore.noteOpenedSession(target)
+                selectSessionTarget(target)
             }
         }
     }
 
+    private var controlLaunchPresented: Binding<Bool> {
+        Binding(
+            get: { catalogStore.controlLaunchDraft != nil },
+            set: { isPresented in
+                if !isPresented {
+                    catalogStore.cancelControlSessionLaunch()
+                }
+            }
+        )
+    }
+
     private var windowTitle: String {
-        switch selectedSection {
-        case .workspaces:
-            return "Workspaces"
-        case .sessions:
-            return "Sessions"
-        default:
-            return selectedSection.title
+        if selectedSection == .sessionHome, selectedSessionID != nil {
+            if let session = sessionTraceStore.session {
+                return session.displayTitle
+            }
+            if let target = sessionTraceStore.selectedTarget {
+                return target.summary.session.displayTitle
+            }
+            if let selectedSessionID,
+               let runtime = sessionMonitor.stats?.activeSessions.first(where: {
+                   $0.id == selectedSessionID
+               }) {
+                return runtime.displayTitle
+            }
         }
+        return selectedSection.title
+    }
+
+    private var homeSearchMatches: [MacSessionSearchPresentation.Match]? {
+        MacSessionSearchPresentation.matches(
+            localTargets: workspaceStore.sessionTargets,
+            query: searchText,
+            serverResults: searchStore.results,
+            completedServerQuery: searchStore.completedServerQuery,
+            activeServerQuery: searchStore.activeServerQuery,
+            snippetsBySessionId: searchStore.snippetsBySessionId
+        )
+    }
+
+    private var homeSessionTargets: [MacSelectedSessionTarget] {
+        homeSearchMatches?.map(\.target) ?? workspaceStore.sessionTargets
     }
 
     private var filteredActiveSessions: [StatsActiveSession] {
-        let sessions = sessionMonitor.stats?.activeSessions ?? []
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return sessions }
-        return sessions.filter { session in
-            session.displayTitle.localizedCaseInsensitiveContains(trimmed)
-                || (session.workspaceName?.localizedCaseInsensitiveContains(trimmed) ?? false)
-                || (session.model?.localizedCaseInsensitiveContains(trimmed) ?? false)
-        }
-    }
-
-    private var filteredSessionTargets: [MacSelectedSessionTarget] {
-        let targets = workspaceStore.sessionTargets
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return targets }
-        return targets.filter { target in
-            let session = target.summary.session
-            return session.displayTitle.localizedCaseInsensitiveContains(trimmed)
-                || (session.workspaceName?.localizedCaseInsensitiveContains(trimmed) ?? false)
-                || (session.model?.localizedCaseInsensitiveContains(trimmed) ?? false)
-                || target.workspaceId.localizedCaseInsensitiveContains(trimmed)
-        }
+        MacSessionSearchPresentation.matchingRuntimeSessions(
+            sessionMonitor.stats?.activeSessions ?? [],
+            query: searchText
+        )
     }
 
     private var firstWorkspaceSessionError: String? {
         workspaceStore.sessionTargets.isEmpty
-            ? workspaceStore.sessionErrors.values.first
+            ? (workspaceStore.recentSessionsError ?? workspaceStore.sessionErrors.values.first)
             : nil
     }
 
@@ -113,19 +193,72 @@ struct MainWindowView: View {
         }
     }
 
+    private var sidebarSelection: Binding<MacSidebarSelection> {
+        Binding(
+            get: {
+                MacSidebarSelection.from(
+                    section: selectedSection,
+                    workspaceID: selectedWorkspaceID
+                )
+            },
+            set: { newValue in
+                let (section, workspaceID) = newValue.applied(
+                    to: selectedSection,
+                    workspaceID: selectedWorkspaceID
+                )
+                selectedSection = section
+                selectedWorkspaceID = workspaceID
+            }
+        )
+    }
+
     @ViewBuilder
     private var sidebar: some View {
-        List(selection: $selectedSection) {
-            ForEach(MacSidebarGroup.allCases) { group in
-                Section(group.title) {
-                    ForEach(MacSidebarSection.allCases.filter { $0.group == group }) { section in
-                        Label(section.title, systemImage: section.icon)
-                            .tag(section)
-                    }
+        List(selection: sidebarSelection) {
+            Section {
+                MacSidebarLabel(
+                    title: MacSidebarHomeAffordance.home.title,
+                    systemImage: MacSidebarHomeAffordance.home.icon
+                )
+                    .tag(MacSidebarSelection.section(MacSidebarHomeAffordance.home.destination))
+                    .help("Show sessions")
+                    .accessibilityLabel("Home")
+                    .accessibilityHint("Shows the session list")
+
+                ForEach(MacSidebarSection.primaryDestinations.filter { !$0.isDisclosure }) { section in
+                    MacSidebarLabel(title: section.title, systemImage: section.icon)
+                        .tag(MacSidebarSelection.section(section))
                 }
+            }
+
+            Section {
+                DisclosureGroup(isExpanded: $workspacesExpanded) {
+                    MacSidebarLabel(title: "All Workspaces", systemImage: "rectangle.stack")
+                        .tag(MacSidebarSelection.section(.workspaces))
+
+                    ForEach(workspaceStore.workspaces) { workspace in
+                        MacSidebarLabel(title: workspace.name, systemImage: "folder")
+                            .tag(MacSidebarSelection.workspace(workspace.id))
+                    }
+                } label: {
+                    MacSidebarLabel(
+                        title: MacSidebarSection.workspaces.title,
+                        systemImage: MacSidebarSection.workspaces.icon
+                    )
+                }
+            }
+
+            Section {
+                MacSidebarLabel(
+                    title: MacSidebarSection.settings.title,
+                    systemImage: MacSidebarSection.settings.icon
+                )
+                    .tag(MacSidebarSelection.section(.settings))
             }
         }
         .listStyle(.sidebar)
+        .themedListSurface()
+        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
     }
 
     @ViewBuilder
@@ -143,95 +276,37 @@ struct MainWindowView: View {
                 refresh: { await workspaceStore.loadFromLocalConfig() },
                 createWorkspace: { draft in
                     await workspaceStore.createWorkspaceFromLocalConfig(draft)
+                },
+                beginCreateControlSession: {
+                    await catalogStore.beginCreateWorkspaceControlSession()
                 }
             )
-        case .sessions:
-            SessionShellList(
-                targets: filteredSessionTargets,
-                runtimeSessions: filteredActiveSessions,
+            .searchable(text: $searchText, prompt: "Search workspaces")
+        case .agents, .schedules, .skills, .extensions:
+            MacSidebarUtilityList(section: selectedSection)
+        case .sessionHome:
+            MacHomeSessionList(
+                targets: homeSessionTargets,
+                searchQuery: $searchText,
+                isSearching: searchStore.isSearching,
+                searchMatches: homeSearchMatches,
+                runtimeSessions: MacHomeSessionSelection.runtimeActivity(
+                    targets: workspaceStore.sessionTargets,
+                    runtimeSessions: filteredActiveSessions
+                ),
                 isLoadingWorkspaceSessions: workspaceStore.isLoadingAnySessions,
                 workspaceSessionError: firstWorkspaceSessionError,
                 sessionActionError: { workspaceStore.sessionActionError(for: $0) },
                 isStoppingSession: { workspaceStore.isStoppingSession($0) },
                 isDeletingSession: { workspaceStore.isDeletingSession($0) },
-                selectedSessionID: $selectedSessionID,
+                selectedSessionID: homeSelectedSessionID,
                 refresh: { await workspaceStore.loadRecentSessionsForLoadedWorkspacesFromLocalConfig() },
                 stopTarget: stopSessionTarget,
                 deleteTarget: deleteSessionTarget,
                 selectTarget: selectSessionTarget
             )
-        case .localServer:
-            LocalServerShellList(
-                processManager: processManager,
-                healthMonitor: healthMonitor,
-                permissionState: permissionState
-            )
-        case .remoteServers:
-            RemoteServersShellList(
-                processManager: processManager,
-                healthMonitor: healthMonitor,
-                store: remoteServerStore
-            )
-        case .pairDevices:
-            MacToolSummaryList(
-                title: "Pair Devices",
-                rows: [
-                    MacToolSummaryRow(
-                        title: "Companion pairing",
-                        subtitle: "Generate QR and nearby invites for iPhone or iPad. Optional for Mac use.",
-                        systemImage: "qrcode"
-                    )
-                ]
-            )
-        case .permissions:
-            MacToolSummaryList(
-                title: "Permissions",
-                rows: permissionState.permissions.map { permission in
-                    MacToolSummaryRow(
-                        title: permission.name,
-                        subtitle: permission.description,
-                        systemImage: permission.status == .granted ? "checkmark.circle" : "lock.shield"
-                    )
-                }
-            )
-        case .logs:
-            MacToolSummaryList(
-                title: "Logs",
-                rows: [
-                    MacToolSummaryRow(
-                        title: "Server log stream",
-                        subtitle: "\(processManager.logBuffer.count) buffered lines from the local server process.",
-                        systemImage: "doc.text"
-                    )
-                ]
-            )
-        case .doctor:
-            MacToolSummaryList(
-                title: "Doctor",
-                rows: [
-                    MacToolSummaryRow(
-                        title: "Local diagnostics",
-                        subtitle: "Run server CLI checks for runtime, paths, and process health.",
-                        systemImage: "stethoscope"
-                    )
-                ]
-            )
         case .settings:
-            MacToolSummaryList(
-                title: "Settings",
-                rows: [
-                    MacToolSummaryRow(
-                        title: "Launch and updates",
-                        subtitle: "Configure login item behavior, server dependencies, and app updates.",
-                        systemImage: "gear"
-                    ),
-                    MacToolSummaryRow(
-                        title: "Runtime paths",
-                        subtitle: "Inspect the local Node.js and Oppi server CLI paths.",
-                        systemImage: "terminal"
-                    )
-                ]
-            )
+            MacSettingsList(selection: $selectedSettingsPane)
         }
     }
 
@@ -255,17 +330,26 @@ struct MainWindowView: View {
                     sessionActionError: { workspaceStore.sessionActionError(for: $0) },
                     isStoppingSession: { workspaceStore.isStoppingSession($0) },
                     isDeletingSession: { workspaceStore.isDeletingSession($0) },
-                    refreshSessions: { await workspaceStore.loadSessionsFromLocalConfig(workspaceId: workspace.id) },
-                    createSession: { prompt in
+                    refreshSessions: { worktreeId in
+                        await workspaceStore.loadSessionsFromLocalConfig(
+                            workspaceId: workspace.id,
+                            worktreeId: worktreeId
+                        )
+                    },
+                    createSession: { prompt, worktreeId in
                         if let target = await workspaceStore.createSessionFromLocalConfig(
                             workspaceId: workspace.id,
-                            prompt: prompt
+                            prompt: prompt,
+                            worktreeId: worktreeId
                         ) {
                             selectSessionTarget(target)
                         }
                     },
                     updateWorkspace: { draft in
                         await workspaceStore.updateWorkspaceFromLocalConfig(id: workspace.id, draft: draft)
+                    },
+                    beginReviseControlSession: {
+                        await catalogStore.beginReviseWorkspaceControlSession(workspace)
                     },
                     deleteWorkspace: {
                         if await workspaceStore.deleteWorkspaceFromLocalConfig(id: workspace.id) {
@@ -309,116 +393,216 @@ struct MainWindowView: View {
             } else {
                 MacShellEmptyDetail(
                     title: "Select a workspace",
-                    message: "Workspaces now load from the local server via shared OppiCore DTOs. Session rows are the next snapshot path.",
+                    message: "Choose a workspace to see its sessions and files.",
                     systemImage: "folder"
                 )
             }
-        case .sessions:
-            if let selectedTarget = sessionTraceStore.selectedTarget {
+        case .sessionHome:
+            switch homeSessionDetail {
+            case .trace(let target):
                 SessionTraceShellDetail(
                     store: sessionTraceStore,
-                    isStoppingSession: workspaceStore.isStoppingSession(selectedTarget.sessionId),
-                    stopSession: { await stopSessionTarget(selectedTarget) }
+                    workspace: workspaceStore.workspaces.first(where: {
+                        $0.id == target.workspaceId
+                    }),
+                    isStoppingSession: workspaceStore.isStoppingSession(target.sessionId),
+                    stopSession: { await stopSessionTarget(target) }
                 )
-            } else if let selectedSession = filteredActiveSessions.first(where: { $0.id == selectedSessionID }) {
+                .id(target.sessionId)
+            case .statsOnly(let selectedSession):
                 SessionShellDetail(session: selectedSession)
-            } else {
+            case .none:
                 MacShellEmptyDetail(
                     title: "Select a session",
-                    message: "Choose a workspace session to load its trace through shared TimelineReducer state.",
+                    message: "Choose a session to open the conversation.",
                     systemImage: "bubble.left.and.bubble.right"
                 )
             }
-        case .localServer:
-            StatusView(
-                processManager: processManager,
-                healthMonitor: healthMonitor,
-                sessionMonitor: sessionMonitor
-            )
-        case .remoteServers:
-            RemoteServersDetail(
-                processManager: processManager,
-                healthMonitor: healthMonitor,
-                store: remoteServerStore
-            )
-        case .pairDevices:
-            PairView()
-        case .permissions:
-            PermissionsView(permissionState: permissionState)
-        case .logs:
-            LogsView(processManager: processManager)
-        case .doctor:
-            DoctorView()
+        case .agents, .schedules, .skills, .extensions:
+            MacSidebarUtilityDetail(section: selectedSection)
         case .settings:
             SettingsView(
+                pane: selectedSettingsPane,
                 processManager: processManager,
+                healthMonitor: healthMonitor,
+                permissionState: permissionState,
+                sessionMonitor: sessionMonitor,
+                remoteServerStore: remoteServerStore,
                 checkForUpdates: checkForUpdates
             )
         }
     }
 
-    @ViewBuilder
-    private var serverStatusLabel: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(serverStatusColor)
-                .frame(width: 8, height: 8)
-            Text(serverStatusText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityLabel("Server status: \(serverStatusText)")
+    private var homeSelectedSessionID: Binding<String?> {
+        Binding(
+            get: { selectedSessionID },
+            set: { newValue in
+                selectedSessionID = newValue
+                applyHomeListSelection(newValue)
+            }
+        )
     }
 
-    private var serverStatusText: String {
-        switch processManager.state {
-        case .stopped:
-            return "Stopped"
-        case .starting:
-            return "Starting"
-        case .running:
-            return processManager.processOwner == .externalProcess ? "Attached" : "Running"
-        case .stopping:
-            return "Stopping"
-        case .failed:
-            return "Failed"
+    private var homeSelectionTargets: [MacSelectedSessionTarget] {
+        let catalog = workspaceStore.sessionTargets
+        guard let matches = homeSearchMatches else { return catalog }
+        var seen = Set(catalog.map(\.sessionId))
+        var combined = catalog
+        for match in matches where seen.insert(match.target.sessionId).inserted {
+            combined.append(match.target)
+        }
+        return combined
+    }
+
+    private var homeSessionDetail: MacHomeSessionSelection {
+        MacHomeSessionSelection.resolve(
+            selectedSessionID: selectedSessionID,
+            targets: homeSelectionTargets,
+            runtimeSessions: sessionMonitor.stats?.activeSessions ?? []
+        )
+    }
+
+    private func applyHomeListSelection(_ sessionID: String?) {
+        switch MacHomeSessionSelection.resolve(
+            selectedSessionID: sessionID,
+            targets: homeSelectionTargets,
+            runtimeSessions: sessionMonitor.stats?.activeSessions ?? []
+        ) {
+        case .trace(let target):
+            sessionTraceStore.select(target)
+            selectedSection = .sessionHome
+        case .statsOnly:
+            sessionTraceStore.clearSelection()
+        case .none:
+            break
         }
     }
 
-    private var serverStatusColor: Color {
-        switch processManager.state {
-        case .running:
-            return .green
-        case .starting, .stopping:
-            return .orange
-        case .failed:
-            return .red
-        case .stopped:
-            return .secondary
+    private func bindHomeTraceIfCatalogHit() {
+        guard let target = MacHomeSessionSelection.unboundTraceTarget(
+            selectedSessionID: selectedSessionID,
+            targets: homeSelectionTargets,
+            runtimeSessions: sessionMonitor.stats?.activeSessions ?? [],
+            boundSessionID: sessionTraceStore.selectedTarget?.sessionId
+        ) else {
+            return
+        }
+        sessionTraceStore.select(target)
+        selectedSection = .sessionHome
+    }
+
+    private func wireAttentionNotifications() {
+        MacAttentionNotificationService.shared.configureForLaunch()
+        publishVisibleAttentionSession()
+    }
+
+    private func publishVisibleAttentionSession(isMainWindowPresented: Bool = true) {
+        MacAttentionNotificationService.shared.activeSessionId = MacAttentionVisibleSession.id(
+            section: selectedSection,
+            selectedSessionID: selectedSessionID,
+            isMainWindowPresented: isMainWindowPresented
+        )
+    }
+
+    @MainActor
+    private func consumePendingSessionDeepLink() async {
+        guard let url = pendingSessionDeepLinkURL else { return }
+        if let resolvingSessionDeepLinkURL, resolvingSessionDeepLinkURL != url {
+            invalidateSessionDeepLinkResolution()
+        }
+
+        let sessionID = MacSessionDeepLink.sessionId(from: url)
+        let knownIDs = Set(workspaceStore.sessionTargets.map(\.sessionId))
+            .union((sessionMonitor.stats?.activeSessions ?? []).map(\.id))
+        let destination = MacSessionDeepLinkNavigation.destination(
+            sessionId: sessionID,
+            knownSessionIDs: knownIDs,
+            catalogReady: workspaceStore.hasLoaded && !workspaceStore.isLoadingRecentSessions
+        )
+
+        guard destination == .showWorkspaces, let sessionID else {
+            if destination != .park {
+                invalidateSessionDeepLinkResolution()
+            }
+            applyPendingSessionDeepLinkDestination(destination)
+            return
+        }
+        guard resolvingSessionDeepLinkURL != url else { return }
+        guard let client = MacWorkspaceClient.localOwner() else {
+            applyPendingSessionDeepLinkDestination(.showWorkspaces)
+            return
+        }
+
+        sessionDeepLinkResolutionGeneration &+= 1
+        let generation = sessionDeepLinkResolutionGeneration
+        resolvingSessionDeepLinkURL = url
+        let fetchedDestination = await MacSessionDeepLinkNavigation.fetchedDestination(
+            sessionId: sessionID,
+            isCurrentRequest: {
+                sessionDeepLinkResolutionGeneration == generation
+                    && pendingSessionDeepLinkURL == url
+            },
+            fetchSession: { try await client.getSessionRecord(sessionId: $0) }
+        )
+        guard sessionDeepLinkResolutionGeneration == generation,
+              resolvingSessionDeepLinkURL == url,
+              pendingSessionDeepLinkURL == url else {
+            return
+        }
+        resolvingSessionDeepLinkURL = nil
+        applyPendingSessionDeepLinkDestination(fetchedDestination)
+    }
+
+    private func invalidateSessionDeepLinkResolution() {
+        sessionDeepLinkResolutionGeneration &+= 1
+        resolvingSessionDeepLinkURL = nil
+    }
+
+    private func applyPendingSessionDeepLinkDestination(
+        _ destination: MacSessionDeepLinkNavigation.Destination
+    ) {
+        switch destination {
+        case .selectSession(let sessionID):
+            pendingSessionDeepLinkURL = nil
+            if let target = workspaceStore.target(for: sessionID) {
+                selectSessionTarget(target)
+            } else {
+                selectedSessionID = sessionID
+                selectedSection = .sessionHome
+                applyHomeListSelection(sessionID)
+            }
+        case .selectTarget(let target):
+            pendingSessionDeepLinkURL = nil
+            workspaceStore.noteOpenedSession(target)
+            selectSessionTarget(target)
+        case .showWorkspaces:
+            pendingSessionDeepLinkURL = nil
+            selectedSection = .workspaces
+            selectedWorkspaceID = nil
+            selectedSessionID = nil
+            sessionTraceStore.clearSelection()
+        case .park:
+            break
+        case .ignore:
+            pendingSessionDeepLinkURL = nil
         }
     }
 
     private func selectSessionTarget(_ target: MacSelectedSessionTarget) {
         sessionTraceStore.select(target)
         selectedSessionID = target.sessionId
-        selectedSection = .sessions
+        selectedSection = .sessionHome
     }
 
     private func stopSessionTarget(_ target: MacSelectedSessionTarget) async {
-        if let updatedTarget = await workspaceStore.stopSessionFromLocalConfig(
-            workspaceId: target.workspaceId,
-            sessionId: target.sessionId
-        ) {
+        if let updatedTarget = await workspaceStore.stopSessionFromLocalConfig(target) {
             sessionTraceStore.select(updatedTarget)
             await sessionTraceStore.loadSelectedFromLocalConfig()
         }
     }
 
     private func deleteSessionTarget(_ target: MacSelectedSessionTarget) async {
-        let didDelete = await workspaceStore.deleteSessionFromLocalConfig(
-            workspaceId: target.workspaceId,
-            sessionId: target.sessionId
-        )
+        let didDelete = await workspaceStore.deleteSessionFromLocalConfig(target)
         guard didDelete else { return }
         if selectedSessionID == target.sessionId {
             selectedSessionID = nil
@@ -431,5 +615,16 @@ struct MainWindowView: View {
     private func refreshWorkspaceCatalogAndSessions() async {
         await workspaceStore.loadFromLocalConfig()
         await workspaceStore.loadRecentSessionsForLoadedWorkspacesFromLocalConfig()
+    }
+
+    private func updateSessionSearch(_ query: String) {
+        guard selectedSection == .sessionHome else {
+            searchStore.clear()
+            return
+        }
+        searchStore.search(
+            query: query,
+            apiClient: MacWorkspaceClient.localOwner()
+        )
     }
 }

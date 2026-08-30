@@ -1,8 +1,16 @@
 import AppKit
 import SwiftUI
 
+enum MacWorkspaceFileBrowserPresentation: Equatable, Sendable {
+    case card
+    case column
+}
+
 struct MacWorkspaceFileBrowserView: View {
     let workspace: Workspace
+    let worktreeId: String
+    @Binding var openPlan: FileViewerPlan?
+    var presentation: MacWorkspaceFileBrowserPresentation = .card
 
     @State private var currentPath = ""
     @State private var listing: DirectoryListingResponse?
@@ -11,13 +19,39 @@ struct MacWorkspaceFileBrowserView: View {
     @State private var copiedPath: String?
 
     var body: some View {
+        Group {
+            if presentation == .column {
+                browserContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .themedScrollSurface()
+            } else {
+                browserContent
+                    .padding(12)
+                    .background(
+                        .thinMaterial,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(.themeComment.opacity(0.20), lineWidth: 1)
+                    )
+            }
+        }
+            .task(id: "\(workspace.id):\(worktreeId)") {
+                currentPath = ""
+                listing = nil
+                await loadDirectory(path: "")
+            }
+    }
+
+    private var browserContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Label("Workspace files", systemImage: "folder")
+                Label("Workspace Files", systemImage: "folder")
                     .font(.headline)
                 Text(currentPath.isEmpty ? "Root" : currentPath)
                     .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeFgDim)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
@@ -62,21 +96,11 @@ struct MacWorkspaceFileBrowserView: View {
             if let copiedPath {
                 Label("Copied \(copiedPath)", systemImage: "checkmark.circle")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeGreen)
                     .lineLimit(1)
             }
         }
-        .padding(12)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-        )
-        .task(id: workspace.id) {
-            currentPath = ""
-            listing = nil
-            await loadDirectory(path: "")
-        }
+        .padding(presentation == .column ? 12 : 0)
     }
 
     private func fileList(_ response: DirectoryListingResponse) -> some View {
@@ -103,64 +127,83 @@ struct MacWorkspaceFileBrowserView: View {
                     }
                     .padding(.vertical, 2)
                 }
-                .frame(minHeight: 120, maxHeight: 220)
+                .frame(
+                    minHeight: 120,
+                    maxHeight: presentation == .column ? .infinity : 220
+                )
             }
         }
     }
 
     private func entryRow(_ entry: FileEntry) -> some View {
-        let path = entryPath(for: entry)
-        return HStack(spacing: 8) {
-            Image(systemName: entry.isDirectory ? "folder.fill" : "doc.text")
-                .foregroundStyle(entry.isDirectory ? Color.accentColor : Color.secondary)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.name)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                HStack(spacing: 8) {
-                    if !entry.formattedSize.isEmpty {
-                        Text(entry.formattedSize)
-                    }
-                    Text(entry.relativeModifiedTime)
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
+        let path = FileViewerPlan.resolvedPath(
+            entryPath: entry.path,
+            name: entry.name,
+            currentPath: currentPath
+        )
+        let isOpenFile = openPlan?.path == path && !entry.isDirectory
+        return Button {
             if entry.isDirectory {
-                Button {
-                    Task { await openDirectory(directoryPath(for: entry)) }
-                } label: {
-                    Label("Open", systemImage: "chevron.right")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-            } else {
-                Button {
-                    copyPath(path)
-                } label: {
-                    Label("Copy Path", systemImage: "doc.on.doc")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
+                Task { await openDirectory(directoryPath(for: entry)) }
+            } else if let plan = FileViewerPlan.opening(
+                entry: entry,
+                workspaceID: workspace.id,
+                currentPath: currentPath,
+                worktreeId: worktreeId
+            ) {
+                openDocument(plan)
             }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: entry.isDirectory ? "folder.fill" : "doc.text")
+                    .foregroundStyle(entry.isDirectory ? .themeBlue : .themeFgDim)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    HStack(spacing: 8) {
+                        if !entry.formattedSize.isEmpty {
+                            Text(entry.formattedSize)
+                        }
+                        Text(entry.relativeModifiedTime)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.themeFgDim)
+                }
+                Spacer(minLength: 8)
+                if entry.isDirectory {
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(.themeFgDim)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                (isOpenFile ? Color.themeBlue.opacity(0.14) : Color.themeBgHighlight.opacity(0.72)),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .buttonStyle(.plain)
         .contextMenu {
             Button("Copy Workspace Path") { copyPath(path) }
             if entry.isDirectory {
                 Button("Open Directory") { Task { await openDirectory(directoryPath(for: entry)) } }
+            } else if let plan = FileViewerPlan.opening(
+                entry: entry,
+                workspaceID: workspace.id,
+                currentPath: currentPath,
+                worktreeId: worktreeId
+            ) {
+                Button("Open") { openDocument(plan) }
             }
         }
     }
 
     private func loadDirectory(path: String) async {
         guard workspace.hostMount?.isEmpty == false else { return }
-        guard let token = MacAPIClient.readOwnerToken(dataDir: ServerProcessManager.serverDataDir),
-              let baseURL = MacServerLifecycle.defaultBaseURL else {
+        guard let client = MacWorkspaceClient.localOwner() else {
             error = "Local server config is not initialized yet."
             return
         }
@@ -169,8 +212,11 @@ struct MacWorkspaceFileBrowserView: View {
         error = nil
         defer { isLoading = false }
         do {
-            let client = MacWorkspaceClient(baseURL: baseURL, token: token)
-            let response = try await client.listWorkspaceDirectory(workspaceId: workspace.id, path: path)
+            let response = try await client.listWorkspaceDirectory(
+                workspaceId: workspace.id,
+                path: path,
+                worktreeId: worktreeId
+            )
             guard currentPath == path, !Task.isCancelled else { return }
             listing = response
         } catch {
@@ -186,14 +232,16 @@ struct MacWorkspaceFileBrowserView: View {
         await loadDirectory(path: path)
     }
 
-    private func entryPath(for entry: FileEntry) -> String {
-        if let path = entry.path { return path }
-        if currentPath.isEmpty { return entry.name }
-        return currentPath.hasSuffix("/") ? "\(currentPath)\(entry.name)" : "\(currentPath)/\(entry.name)"
+    private func openDocument(_ plan: FileViewerPlan) {
+        openPlan = plan
     }
 
     private func directoryPath(for entry: FileEntry) -> String {
-        let path = entryPath(for: entry)
+        let path = FileViewerPlan.resolvedPath(
+            entryPath: entry.path,
+            name: entry.name,
+            currentPath: currentPath
+        )
         return path.hasSuffix("/") ? path : "\(path)/"
     }
 

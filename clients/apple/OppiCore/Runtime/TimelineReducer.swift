@@ -244,9 +244,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         var events: [AgentEvent]
     }
 
-    /// When non-nil, `processBatch` appends events to this buffer in addition
-    /// to processing them normally. Set when a history reload starts and
-    /// consumed or discarded when that reload finishes.
+    /// When non-nil, both single-event and batched processing append events to
+    /// this buffer in addition to processing them normally. Set when a history
+    /// reload starts and consumed or discarded when that reload finishes.
     private var liveEventReplayBuffer: LiveReplayBuffer?
 
     /// True when any replay buffering is active.
@@ -978,6 +978,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     /// Process a single event. Bumps renderVersion once.
     func process(_ event: AgentEvent) {
+        // Manager-generated setup failures use this single-event path. Capture
+        // them alongside streamed batches so a concurrent authoritative trace
+        // rebuild cannot erase the only user-visible terminal error.
+        if liveEventReplayBuffer != nil {
+            liveEventReplayBuffer?.events.append(event)
+        }
         _ = processInternal(event)
         bumpRenderVersion()
         timelineMatchesTrace = false

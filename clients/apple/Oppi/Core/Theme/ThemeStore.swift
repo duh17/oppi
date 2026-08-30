@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 extension Notification.Name {
     /// Main-actor notification for persistent UIKit surfaces that are not
@@ -26,7 +30,11 @@ enum ThemeMode: String, CaseIterable, Identifiable {
         case .manual:
             return "Use one selected theme everywhere."
         case .system:
+            #if os(macOS)
+            return "Follow macOS light and dark appearance, using your selected presets for each."
+            #else
             return "Follow iOS light and dark appearance, using your selected presets for each."
+            #endif
         }
     }
 }
@@ -45,8 +53,8 @@ final class ThemeStore {
             UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)
             if mode == .system {
                 // When leaving a forced manual scheme, SwiftUI can report the
-                // previous environment value for one transaction. Read UIKit's
-                // system trait first so List/Form chrome and palette stay aligned.
+                // previous environment value for one transaction. Read the
+                // platform system appearance first so chrome and palette stay aligned.
                 refreshSystemColorSchemeFromSystemTraits()
             }
             applyResolvedTheme()
@@ -185,6 +193,7 @@ final class ThemeStore {
     }
 
     private static func currentSystemColorScheme(fallback: ColorScheme = .dark) -> ColorScheme {
+        #if canImport(UIKit)
         guard let userInterfaceStyle = currentForegroundWindowScene()?.screen.traitCollection.userInterfaceStyle else {
             return fallback
         }
@@ -198,8 +207,21 @@ final class ThemeStore {
         @unknown default:
             return fallback
         }
+        #elseif canImport(AppKit)
+        // Do not read `NSApp.effectiveAppearance` here. ThemeStore is created
+        // from SwiftUI `App.init`, and that AppKit call traps before the
+        // application object is ready. `MacThemeColorSchemeSyncView` refreshes
+        // from the SwiftUI environment once the window is up.
+        if UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark" {
+            return .dark
+        }
+        return .light
+        #else
+        return fallback
+        #endif
     }
 
+    #if canImport(UIKit)
     /// Foreground-active window scene, used to resolve system appearance
     /// without the deprecated `UIScreen.main` singleton (iOS 26).
     private static func currentForegroundWindowScene() -> UIWindowScene? {
@@ -207,6 +229,7 @@ final class ThemeStore {
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
     }
+    #endif
 
     private func refreshSystemColorSchemeFromSystemTraits() {
         systemColorScheme = systemColorSchemeProvider(systemColorScheme)
@@ -232,7 +255,9 @@ final class ThemeStore {
             userInfo: ["themeID": nextThemeID.rawValue]
         )
         if evictCaches {
+            #if canImport(UIKit)
             ToolRowRenderCache.evictAll()
+            #endif
         }
     }
 }

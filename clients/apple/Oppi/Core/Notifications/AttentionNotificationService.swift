@@ -18,13 +18,13 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     static let shared = AttentionNotificationService()
 
     /// Category ID for agent questions. Tapping opens the owning session.
-    nonisolated static let askCategoryId = "ASK_REQUEST"
+    nonisolated static let askCategoryId = AttentionNotificationPolicy.askCategoryId
 
     /// Remote session-ended alerts. Tapping opens the owning session.
-    nonisolated static let sessionDoneCategoryId = "SESSION_DONE"
+    nonisolated static let sessionDoneCategoryId = AttentionNotificationPolicy.sessionDoneCategoryId
 
     /// Remote session-error alerts. Tapping opens the owning session.
-    nonisolated static let sessionErrorCategoryId = "SESSION_ERROR"
+    nonisolated static let sessionErrorCategoryId = AttentionNotificationPolicy.sessionErrorCategoryId
 
     /// Called when the user taps an ask notification body.
     /// Navigate to the session containing this ask request.
@@ -64,11 +64,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
         didConfigureForLaunch = true
 
-        let sessionCategories = [
-            Self.askCategoryId,
-            Self.sessionDoneCategoryId,
-            Self.sessionErrorCategoryId,
-        ].map { identifier in
+        let sessionCategories = AttentionNotificationPolicy.sessionCategoryIds.map { identifier in
             UNNotificationCategory(
                 identifier: identifier,
                 actions: [],
@@ -94,33 +90,20 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             return
         }
 
-        let questionCount = ask.questions.count
-        let firstQuestion = ask.questions.first?.question.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackBody = questionCount == 1
-            ? String(localized: "Open Oppi to answer a question.")
-            : String(localized: "Open Oppi to answer questions.")
-
+        let payload = AttentionNotificationPolicy.askPayload(for: ask)
         let content = UNMutableNotificationContent()
-        content.title = String(localized: "Question from agent")
-        content.subtitle = questionCount == 1 ? String(localized: "1 question") : "\(questionCount) questions"
-        if let firstQuestion, !firstQuestion.isEmpty {
-            content.body = firstQuestion
-        } else {
-            content.body = fallbackBody
-        }
-        content.categoryIdentifier = Self.askCategoryId
-        content.userInfo = [
-            "kind": "ask",
-            "askId": ask.id,
-            "sessionId": ask.sessionId,
-        ]
-        content.threadIdentifier = ask.sessionId
-        content.targetContentIdentifier = ask.sessionId
+        content.title = payload.title
+        content.subtitle = payload.subtitle
+        content.body = payload.body
+        content.categoryIdentifier = payload.categoryIdentifier
+        content.userInfo = payload.userInfo
+        content.threadIdentifier = payload.threadIdentifier
+        content.targetContentIdentifier = payload.targetContentIdentifier
         content.sound = .default
         content.interruptionLevel = .timeSensitive
 
         schedule(
-            identifier: "ask-\(ask.sessionId)",
+            identifier: payload.identifier,
             content: content
         )
     }
@@ -130,10 +113,11 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         requestSessionId: String,
         activeSessionId: String?
     ) -> Bool {
-        guard isAppActive else {
-            return true
-        }
-        return requestSessionId != activeSessionId
+        AttentionNotificationPolicy.shouldNotify(
+            isAppActive: isAppActive,
+            requestSessionId: requestSessionId,
+            activeSessionId: activeSessionId
+        )
     }
 
     /// Session id carried by a local ask banner or a remote session-event push.
@@ -141,25 +125,19 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         categoryIdentifier: String,
         userInfo: [AnyHashable: Any]
     ) -> String? {
-        switch categoryIdentifier {
-        case askCategoryId, sessionDoneCategoryId, sessionErrorCategoryId:
-            break
-        default:
-            return nil
-        }
-        guard let sessionId = userInfo["sessionId"] as? String else {
-            return nil
-        }
-        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        AttentionNotificationPolicy.navigationSessionId(
+            categoryIdentifier: categoryIdentifier,
+            userInfo: userInfo
+        )
     }
 
     /// Cancel ask notification when the ask is answered or superseded.
     func cancelAskNotification(sessionId: String) {
+        let identifier = AttentionNotificationPolicy.askRequestIdentifier(sessionId: sessionId)
         UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: ["ask-\(sessionId)"])
+            .removePendingNotificationRequests(withIdentifiers: [identifier])
         UNUserNotificationCenter.current()
-            .removeDeliveredNotifications(withIdentifiers: ["ask-\(sessionId)"])
+            .removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
     private func schedule(identifier: String, content: UNNotificationContent) {

@@ -1,50 +1,8 @@
 import SwiftUI
 
-/// Status pill variants for session rows.
-///
-/// Provides text + color status indication alongside the session title,
-/// keeping the list scannable even when section headers are off-screen.
-enum SessionPillVariant: Equatable {
-    case question
-    case idle
-    case working
-    case done
-    case stopped
-    case error
+typealias SessionPillVariant = SessionRowStatusKind
 
-    /// Priority: ask/input request > status-based.
-    static func from(status: SessionStatus, pendingAskCount: Int = 0) -> SessionPillVariant {
-        if pendingAskCount > 0 { return .question }
-
-        switch status {
-        case .busy, .starting, .stopping:
-            return .working
-        case .ready:
-            return .done
-        case .stopped:
-            return .stopped
-        case .error:
-            return .error
-        }
-    }
-
-    static func from(session: Session, pendingAskCount: Int = 0) -> SessionPillVariant {
-        if pendingAskCount > 0 { return .question }
-        if session.isAwaitingFirstPrompt { return .idle }
-        return from(status: session.status)
-    }
-
-    var label: String {
-        switch self {
-        case .question: "Question"
-        case .idle: "Idle"
-        case .working: "Working"
-        case .done: "Done"
-        case .stopped: "Stopped"
-        case .error: "Error"
-        }
-    }
-
+extension SessionRowStatusKind {
     var foregroundColor: Color {
         switch self {
         case .idle, .done: .themeGreen

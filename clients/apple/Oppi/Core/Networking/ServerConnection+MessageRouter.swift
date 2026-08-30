@@ -107,23 +107,7 @@ extension ServerConnection {
 
         if let notification = effects.extensionNotification {
             applyExtensionUINotification(
-                method: notification.method,
-                message: notification.message,
-                notifyType: notification.notifyType,
-                statusKey: notification.statusKey,
-                statusText: notification.statusText,
-                title: notification.title,
-                text: notification.text,
-                widgetKey: notification.widgetKey,
-                widgetLines: notification.widgetLines,
-                widgetPlacement: notification.widgetPlacement,
-                extensionScopeId: notification.extensionScopeId,
-                extensionDisplayName: notification.extensionDisplayName,
-                workingIndicator: notification.workingIndicator,
-                workingVisible: notification.workingVisible,
-                hiddenThinkingLabel: notification.hiddenThinkingLabel,
-                toolsExpanded: notification.toolsExpanded,
-                nativeSurface: notification.nativeSurface,
+                notification,
                 sessionId: sessionId,
                 isActiveSession: effects.isFocusedSession
             )
@@ -185,134 +169,35 @@ extension ServerConnection {
     // MARK: - Extension Surface
 
     func applyExtensionUINotification(
-        method: String,
-        message: String?,
-        notifyType: String?,
-        statusKey: String?,
-        statusText: String?,
-        title: String?,
-        text: String?,
-        widgetKey: String?,
-        widgetLines: [String]?,
-        widgetPlacement: String?,
-        extensionScopeId: String?,
-        extensionDisplayName: String?,
-        workingIndicator: ExtensionUIWorkingIndicator?,
-        workingVisible: Bool?,
-        hiddenThinkingLabel: String?,
-        toolsExpanded: Bool?,
-        nativeSurface: ExtensionUINativeSurface?,
+        _ notification: ExtensionUINotification,
         sessionId: String,
         isActiveSession: Bool
     ) {
-        switch method {
+        switch notification.method {
         case "notify":
             if isActiveSession {
-                extensionToast = message
+                extensionToast = notification.message
             }
-
-        case "setWorkingMessage":
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            var working = surface.working ?? ExtensionWorkingState()
-            let normalized = message?.trimmingCharacters(in: .whitespacesAndNewlines)
-            working.message = (normalized?.isEmpty == false) ? normalized : nil
-            surface.working = working.isDefault ? nil : working
-            storeExtensionSurface(surface, for: sessionId)
-
-        case "setWorkingVisible":
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            var working = surface.working ?? ExtensionWorkingState()
-            working.visible = workingVisible ?? true
-            surface.working = working.isDefault ? nil : working
-            storeExtensionSurface(surface, for: sessionId)
-
-        case "setWorkingIndicator":
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            var working = surface.working ?? ExtensionWorkingState()
-            working.indicator = workingIndicator
-            surface.working = working.isDefault ? nil : working
-            storeExtensionSurface(surface, for: sessionId)
-
-        case "setHiddenThinkingLabel":
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            let normalized = hiddenThinkingLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
-            surface.hiddenThinkingLabel = (normalized?.isEmpty == false) ? normalized : nil
-            storeExtensionSurface(surface, for: sessionId)
-
-        case "setToolsExpanded":
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            surface.toolsExpanded = toolsExpanded ?? false
-            storeExtensionSurface(surface, for: sessionId)
-
-        case "setStatus":
-            guard let statusKey else { return }
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            let normalized = statusText?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let normalized, !normalized.isEmpty {
-                surface.statuses[statusKey] = ExtensionStatusState(
-                    key: statusKey,
-                    text: normalized,
-                    extensionScopeId: extensionScopeId,
-                    extensionDisplayName: extensionDisplayName
-                )
-            } else {
-                surface.statuses.removeValue(forKey: statusKey)
-            }
-            storeExtensionSurface(surface, for: sessionId)
-
-        case "setWidget":
-            guard let widgetKey else { return }
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            if let nativeSurface, nativeSurface.hasVisibleContent {
-                surface.widgets.removeValue(forKey: widgetKey)
-                removeNativeWidgetSurfaces(widgetKey: widgetKey, from: &surface)
-                let order = surface.nextWidgetOrder()
-                surface.nativeSurfaces[nativeSurface.id] = ExtensionNativeSurfaceState(
-                    key: widgetKey,
-                    surface: nativeSurface,
-                    placement: widgetPlacement,
-                    extensionScopeId: extensionScopeId,
-                    extensionDisplayName: extensionDisplayName,
-                    order: order
-                )
-            } else if let widgetLines {
-                removeNativeWidgetSurfaces(widgetKey: widgetKey, from: &surface)
-                let normalizedLines = widgetLines
-                    .map { $0.trimmingCharacters(in: .newlines) }
-                    .filter { !$0.isEmpty }
-                if normalizedLines.isEmpty {
-                    surface.widgets.removeValue(forKey: widgetKey)
-                } else {
-                    let order = surface.nextWidgetOrder()
-                    surface.widgets[widgetKey] = ExtensionWidgetState(
-                        key: widgetKey,
-                        lines: normalizedLines,
-                        placement: widgetPlacement,
-                        extensionScopeId: extensionScopeId,
-                        extensionDisplayName: extensionDisplayName,
-                        order: order
-                    )
-                }
-            } else {
-                surface.widgets.removeValue(forKey: widgetKey)
-                removeNativeWidgetSurfaces(widgetKey: widgetKey, from: &surface)
-            }
-            storeExtensionSurface(surface, for: sessionId)
-
-        case "setTitle":
-            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
-            let normalized = title?.trimmingCharacters(in: .whitespacesAndNewlines)
-            surface.title = (normalized?.isEmpty == false) ? normalized : nil
-            storeExtensionSurface(surface, for: sessionId)
 
         case "set_editor_text":
-            guard isActiveSession,
-                  let text else { return }
+            guard isActiveSession, let text = notification.text else { return }
             chatState.stageExtensionEditorText(text: text, sessionId: sessionId)
+
+        case "setStatus",
+             "setWidget",
+             "setTitle",
+             "setWorkingMessage",
+             "setWorkingVisible",
+             "setWorkingIndicator",
+             "setHiddenThinkingLabel",
+             "setToolsExpanded":
+            var surface = extensionSurfaceBySession[sessionId] ?? ExtensionSurfaceState()
+            ExtensionSurfaceReducer.apply(notification, to: &surface)
+            storeExtensionSurface(surface, for: sessionId)
 
         default:
             if isActiveSession {
-                extensionToast = message ?? notifyType
+                extensionToast = notification.message ?? notification.notifyType
             }
         }
     }
@@ -328,16 +213,6 @@ extension ServerConnection {
     func clearExtensionSurface(for sessionId: String) {
         extensionSurfaceBySession.removeValue(forKey: sessionId)
         clearExtensionDialog(for: sessionId)
-    }
-
-    private func removeNativeWidgetSurfaces(
-        widgetKey: String,
-        from surface: inout ExtensionSurfaceState
-    ) {
-        let canonicalSurfaceId = "widget:\(widgetKey)"
-        surface.nativeSurfaces = surface.nativeSurfaces.filter { entry in
-            entry.value.surface.id != canonicalSurfaceId && entry.value.key != widgetKey
-        }
     }
 
     // MARK: - Connected / State

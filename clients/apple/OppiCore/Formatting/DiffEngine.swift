@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - DiffLine
 
-struct DiffLine: Sendable {
+struct DiffLine: Sendable, Equatable {
     let kind: Kind
     let text: String
     let oldLineNumber: Int?
@@ -15,7 +15,7 @@ struct DiffLine: Sendable {
         self.newLineNumber = newLineNumber
     }
 
-    enum Kind: Sendable {
+    enum Kind: Sendable, Equatable {
         case context
         case added
         case removed

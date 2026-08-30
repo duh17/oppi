@@ -1,49 +1,46 @@
+import Foundation
 import Testing
 @testable import Oppi
 
 @Suite("Mac file mention autocomplete")
 struct MacFileMentionAutocompleteTests {
     @Test func detectsActiveAtTokenAtEndOfDraft() {
-        #expect(MacFileMentionAutocomplete.activeToken(in: "please inspect @Sources/App") == "Sources/App")
-        #expect(MacFileMentionAutocomplete.activeToken(in: "@") == "")
-        #expect(MacFileMentionAutocomplete.activeToken(in: "please inspect @Sources/App ") == nil)
-        #expect(MacFileMentionAutocomplete.activeToken(in: "no mention") == nil)
+        #expect(ComposerAutocomplete.context(for: "please inspect @Sources/App") == .atFile(query: "Sources/App"))
+        #expect(ComposerAutocomplete.context(for: "@") == .atFile(query: ""))
+        #expect(ComposerAutocomplete.context(for: "please inspect @Sources/App ") == .none)
+        #expect(ComposerAutocomplete.context(for: "no mention") == .none)
     }
 
     @Test func insertsSuggestionByReplacingActiveToken() {
-        let suggestion = MacFileMentionSuggestion(path: "Sources/App/main.swift", score: 1)
+        let suggestion = FileSuggestion(path: "Sources/App/main.swift", isDirectory: false)
 
         #expect(
-            MacFileMentionAutocomplete.insert(suggestion, into: "please inspect @Sources/App") ==
-            "please inspect @Sources/App/main.swift "
+            ComposerAutocomplete.insertFileMention(
+                path: suggestion.path,
+                isDirectory: suggestion.isDirectory,
+                into: "please inspect @Sources/App"
+            ) == "please inspect @Sources/App/main.swift "
         )
-        #expect(MacFileMentionAutocomplete.insert(suggestion, into: "no mention") == "no mention")
+        #expect(
+            ComposerAutocomplete.insertFileMention(
+                path: suggestion.path,
+                isDirectory: suggestion.isDirectory,
+                into: "no mention"
+            ) == "no mention"
+        )
     }
 
-    @Test func suggestionsPreferExactAndFilenameMatches() {
-        let paths = [
-            "server/src/server.ts",
-            "server/src/event-ring.ts",
-            "clients/apple/OppiMac/Views/MacSessionShellViews.swift",
-            "README.md",
-        ]
+    @Test func composerUsesSharedFileMentionAPIs() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "OppiMac/Views/MacSessionComposerBar.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        let serverResults = MacFileMentionAutocomplete.suggestions(for: "server.ts", paths: paths)
-        let shellResults = MacFileMentionAutocomplete.suggestions(for: "session", paths: paths)
-
-        #expect(serverResults.first?.path == "server/src/server.ts")
-        #expect(shellResults.first?.path == "clients/apple/OppiMac/Views/MacSessionShellViews.swift")
-    }
-
-    @Test func emptyQueryReturnsShortReadablePaths() {
-        let paths = [
-            "clients/apple/OppiMac/Views/MacSessionShellViews.swift",
-            "README.md",
-            "server/src/server.ts",
-        ]
-
-        let results = MacFileMentionAutocomplete.suggestions(for: "", paths: paths, limit: 2)
-
-        #expect(results.map(\.path) == ["README.md", "server/src/server.ts"])
+        #expect(source.contains("ComposerAutocomplete.context(for: draft)"))
+        #expect(source.contains("case .atFile(let query)"))
+        #expect(source.contains("FileSuggestion.ranked(query: query, paths: store.fileIndexPaths)"))
+        #expect(source.contains("ComposerAutocomplete.insertFileMention("))
+        #expect(!source.contains("MacFileMentionAutocomplete"))
     }
 }

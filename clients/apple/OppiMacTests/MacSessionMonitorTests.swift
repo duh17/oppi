@@ -188,3 +188,16 @@ struct MacSessionMonitorRangeTests {
         #expect(monitor.selectedRange == 30)
     }
 }
+
+// MARK: - daily detail
+
+@Suite("MacSessionMonitor — fetchDailyDetail")
+@MainActor
+struct MacSessionMonitorDailyDetailTests {
+
+    @Test func fetchDailyDetailWithoutClientReturnsNil() async {
+        let monitor = MacSessionMonitor()
+        let result = await monitor.fetchDailyDetail(date: "2026-08-28")
+        #expect(result == nil)
+    }
+}

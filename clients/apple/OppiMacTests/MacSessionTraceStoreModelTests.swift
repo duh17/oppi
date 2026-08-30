@@ -160,7 +160,7 @@ struct MacSessionTraceStoreModelTests {
     )
 
     private static let unusedClient = MacWorkspaceClient(
-        baseURL: URL(string: "http://127.0.0.1:9")!,
+        socketPath: "/tmp/oppi-mac-unused.sock",
         token: "test"
     )
 

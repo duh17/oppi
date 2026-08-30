@@ -51,7 +51,7 @@ struct ChatSessionReentryTests {
         var ringCatchUpCalled = false
         manager._loadCatchUpForTesting = { _, _ in
             ringCatchUpCalled = true
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [],
                 currentSeq: 42,
                 session: makeTestSession(id: sessionId, status: .ready),
@@ -272,7 +272,7 @@ struct ChatSessionReentryTests {
         var ringCatchUpCalls = 0
         manager._loadCatchUpForTesting = { since, _ in
             ringCatchUpCalls += 1
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [
                     .init(seq: since + 1, message: .state(session: makeTestSession(id: sessionId, status: .busy))),
                 ],
@@ -759,7 +759,7 @@ struct ChatSessionReentryTests {
         var catchUpSince: Int?
         manager._loadCatchUpForTesting = { since, _ in
             catchUpSince = since
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [
                     .init(seq: 11, message: .agentEnd),
                 ],
@@ -812,7 +812,7 @@ struct ChatSessionReentryTests {
         var catchUpSince: Int?
         manager._loadCatchUpForTesting = { since, _ in
             catchUpSince = since
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [
                     .init(seq: 1, message: .agentStart),
                 ],
@@ -866,7 +866,7 @@ struct ChatSessionReentryTests {
         var catchUpCalled = false
         manager._loadCatchUpForTesting = { _, _ in
             catchUpCalled = true
-            return APIClient.SessionEventsResponse(
+            return ChatSessionCatchUpResponse(
                 events: [],
                 currentSeq: 600,
                 runtimeEpoch: "epoch-b",

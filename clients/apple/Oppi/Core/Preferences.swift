@@ -51,47 +51,18 @@ enum AppPreferences {
     /// After activity ends, the selected timeout controls how long the idle timer
     /// stays disabled before normal auto-lock behavior resumes.
     enum ScreenAwake {
-        enum TimeoutPreset: Int, CaseIterable, Identifiable {
-            case off = 0
-            case oneMinute = 60
-            case twoMinutes = 120
-            case fiveMinutes = 300
-            case tenMinutes = 600
-
-            var id: Int { rawValue }
-
-            var duration: Duration? {
-                guard rawValue > 0 else { return nil }
-                return .seconds(rawValue)
-            }
-
-            var label: String {
-                switch self {
-                case .off: return "Off"
-                case .oneMinute: return "1 minute"
-                case .twoMinutes: return "2 minutes"
-                case .fiveMinutes: return "5 minutes"
-                case .tenMinutes: return "10 minutes"
-                }
-            }
-        }
-
-        private static let presetKey = "\(AppIdentifiers.subsystem).screenAwake.timeoutPreset"
+        typealias TimeoutPreset = AppPreferenceStore.ScreenAwake.TimeoutPreset
 
         static var timeoutPreset: TimeoutPreset {
-            if let raw = UserDefaults.standard.object(forKey: presetKey) as? Int,
-               let preset = TimeoutPreset(rawValue: raw) {
-                return preset
-            }
-            return .twoMinutes
+            AppPreferenceStore.ScreenAwake.timeoutPreset
         }
 
         static var keepAwakeDuration: Duration? {
-            timeoutPreset.duration
+            AppPreferenceStore.ScreenAwake.keepAwakeDuration
         }
 
         static func setTimeoutPreset(_ preset: TimeoutPreset) {
-            UserDefaults.standard.set(preset.rawValue, forKey: presetKey)
+            AppPreferenceStore.ScreenAwake.setTimeoutPreset(preset)
         }
     }
 
@@ -149,140 +120,43 @@ enum AppPreferences {
 
     /// User-facing preferences for voice input engine selection.
     enum Voice {
-        enum EngineMode: String, CaseIterable, Identifiable {
-            case auto
-            case onDevice
-            case remote
-
-            var id: String { rawValue }
-
-            var label: String {
-                switch self {
-                case .auto: return "Automatic"
-                case .onDevice: return "On-device"
-                case .remote: return "Server"
-                }
-            }
-        }
-
-        enum ReplyMode: String, CaseIterable, Identifiable {
-            case manual
-            case autoplay
-
-            var id: String { rawValue }
-
-            var label: String {
-                switch self {
-                case .manual: return "Manual"
-                case .autoplay: return "Agent decides"
-                }
-            }
-
-            var detail: String {
-                switch self {
-                case .manual:
-                    return "Keep voice replies tap-to-play in this app until you change the setting or session mode."
-                case .autoplay:
-                    return "Let each reply choose whether to play now or stay tap-to-play."
-                }
-            }
-        }
+        typealias EngineMode = AppPreferenceStore.Voice.EngineMode
+        typealias ReplyMode = AppPreferenceStore.Voice.ReplyMode
 
         /// User-facing engine choices. Auto remains available only as a legacy
         /// stored value so older installs can be migrated safely.
-        static let supportedModes: [EngineMode] = [.remote, .onDevice]
-
-        private static let engineModeKey = "\(AppIdentifiers.subsystem).voice.engineMode"
-        private static let replyModeKey = "\(AppIdentifiers.subsystem).voice.replyMode"
-        private static let sessionReplyModeOverridesKey = "\(AppIdentifiers.subsystem).voice.sessionReplyModeOverrides"
+        static let supportedModes: [EngineMode] = AppPreferenceStore.Voice.supportedModes
 
         static var engineMode: EngineMode {
-            guard let raw = UserDefaults.standard.string(forKey: engineModeKey),
-                  let mode = EngineMode(rawValue: raw)
-            else {
-                return .remote
-            }
-            return mode == .auto ? .remote : mode
+            AppPreferenceStore.Voice.engineMode
         }
 
         static var replyMode: ReplyMode {
-            guard let raw = UserDefaults.standard.string(forKey: replyModeKey) else {
-                return .autoplay
-            }
-            switch raw {
-            case ReplyMode.manual.rawValue, "voice", "audioMessage":
-                return .manual
-            case ReplyMode.autoplay.rawValue, "directSpeak":
-                return .autoplay
-            default:
-                return .autoplay
-            }
+            AppPreferenceStore.Voice.replyMode
         }
 
         static func setEngineMode(_ mode: EngineMode) {
-            let normalizedMode: EngineMode = mode == .auto ? .remote : mode
-            UserDefaults.standard.set(normalizedMode.rawValue, forKey: engineModeKey)
+            AppPreferenceStore.Voice.setEngineMode(mode)
         }
 
         static func setReplyMode(_ mode: ReplyMode) {
-            UserDefaults.standard.set(mode.rawValue, forKey: replyModeKey)
+            AppPreferenceStore.Voice.setReplyMode(mode)
         }
 
         static func sessionReplyMode(for sessionId: String?) -> ReplyMode? {
-            guard let sessionId = normalizedSessionId(sessionId) else { return nil }
-            let stored = sessionReplyModeOverrides()[sessionId]
-            return stored.flatMap(ReplyMode.init(rawValue:))
+            AppPreferenceStore.Voice.sessionReplyMode(for: sessionId)
         }
 
         static func setSessionReplyMode(_ mode: ReplyMode?, for sessionId: String?) {
-            guard let sessionId = normalizedSessionId(sessionId) else { return }
-            var overrides = sessionReplyModeOverrides()
-            overrides[sessionId] = mode?.rawValue
-            if overrides.isEmpty {
-                UserDefaults.standard.removeObject(forKey: sessionReplyModeOverridesKey)
-            } else {
-                UserDefaults.standard.set(overrides, forKey: sessionReplyModeOverridesKey)
-            }
+            AppPreferenceStore.Voice.setSessionReplyMode(mode, for: sessionId)
         }
 
         static func applySessionReplyModeDetails(_ details: JSONValue?, sessionId: String?) {
-            guard let object = details?.objectValue,
-                  object["kind"]?.stringValue == "voice_reply_mode"
-            else {
-                return
-            }
-
-            switch object["mode"]?.stringValue {
-            case ReplyMode.manual.rawValue:
-                setSessionReplyMode(.manual, for: sessionId)
-            case ReplyMode.autoplay.rawValue:
-                setSessionReplyMode(.autoplay, for: sessionId)
-            case "default", nil:
-                setSessionReplyMode(nil, for: sessionId)
-            default:
-                break
-            }
+            AppPreferenceStore.Voice.applySessionReplyModeDetails(details, sessionId: sessionId)
         }
 
         static func shouldAutoplay(playbackBehavior: AudioPlaybackBehavior?, sessionId: String? = nil) -> Bool {
-            let resolvedBehavior = playbackBehavior ?? .tapToPlay
-            switch sessionReplyMode(for: sessionId) ?? replyMode {
-            case .manual:
-                return false
-            case .autoplay:
-                return resolvedBehavior == .playNow
-            }
-        }
-
-        private static func sessionReplyModeOverrides() -> [String: String] {
-            UserDefaults.standard.dictionary(forKey: sessionReplyModeOverridesKey) as? [String: String] ?? [:]
-        }
-
-        private static func normalizedSessionId(_ sessionId: String?) -> String? {
-            guard let sessionId = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines), !sessionId.isEmpty else {
-                return nil
-            }
-            return sessionId
+            AppPreferenceStore.Voice.shouldAutoplay(playbackBehavior: playbackBehavior, sessionId: sessionId)
         }
     }
 
@@ -531,21 +405,13 @@ enum AppPreferences {
 
     /// Spinner animation style preference.
     enum Appearance {
-        private static let spinnerStyleKey = "spinnerStyle"
-
         static var spinnerStyle: SpinnerStyle {
-            guard let raw = UserDefaults.standard.string(forKey: spinnerStyleKey),
-                  let style = SpinnerStyle(rawValue: raw)
-            else {
-                return .brailleDots
-            }
-            return style
+            AppPreferenceStore.Appearance.spinnerStyle
         }
 
         static func setSpinnerStyle(_ style: SpinnerStyle) {
-            UserDefaults.standard.set(style.rawValue, forKey: spinnerStyleKey)
+            AppPreferenceStore.Appearance.setSpinnerStyle(style)
         }
-
     }
 
     // MARK: - Interaction
@@ -595,36 +461,23 @@ enum AppPreferences {
 
     /// Session behavior preferences (auto-title, etc.).
     enum Session {
-
-        /// Which backend generates session titles.
-        enum AutoTitleProvider: String, CaseIterable {
-            /// Server generates the title using a configured model.
-            case server
-            /// On-device Foundation model generates the title.
-            case onDevice
-            /// Title generation disabled.
-            case off
-        }
+        typealias AutoTitleProvider = AppPreferenceStore.Session.AutoTitleProvider
 
         /// UserDefaults key for auto-title provider.
-        static let autoTitleProviderKey = "\(AppIdentifiers.subsystem).session.autoTitle.provider"
+        static let autoTitleProviderKey = AppPreferenceStore.Session.autoTitleProviderKey
 
         /// The active auto-title provider.
         static var autoTitleProvider: AutoTitleProvider {
-            if let raw = UserDefaults.standard.string(forKey: autoTitleProviderKey),
-               let provider = AutoTitleProvider(rawValue: raw) {
-                return provider
-            }
-            return .server
+            AppPreferenceStore.Session.autoTitleProvider
         }
 
         static func setAutoTitleProvider(_ provider: AutoTitleProvider) {
-            UserDefaults.standard.set(provider.rawValue, forKey: autoTitleProviderKey)
+            AppPreferenceStore.Session.setAutoTitleProvider(provider)
         }
 
         /// Convenience: true when any provider is active.
         static var isAutoTitleEnabled: Bool {
-            autoTitleProvider != .off
+            AppPreferenceStore.Session.isAutoTitleEnabled
         }
     }
 

@@ -40,7 +40,7 @@ struct MacAskResponseTests {
         )
         var draft = MacAskResponseDraft()
         let question = AskQuestion(
-            id: MacAskResponseEncoder.inlineQuestionId,
+            id: ExtensionUIRequest.inlineQuestionId,
             question: "Pick",
             options: [AskOption(value: "A", label: "A")],
             multiSelect: false
@@ -62,12 +62,12 @@ struct MacAskResponseTests {
         )
         var draft = MacAskResponseDraft()
         let question = AskQuestion(
-            id: MacAskResponseEncoder.inlineQuestionId,
+            id: ExtensionUIRequest.inlineQuestionId,
             question: "Confirm?",
-            options: [AskOption(value: MacAskResponseEncoder.confirmValue, label: "Confirm")],
+            options: [AskOption(value: ExtensionUIRequest.confirmValue, label: "Confirm")],
             multiSelect: false
         )
-        draft.toggle(AskOption(value: MacAskResponseEncoder.confirmValue, label: "Confirm"), question: question)
+        draft.toggle(AskOption(value: ExtensionUIRequest.confirmValue, label: "Confirm"), question: question)
 
         let confirmed = try MacAskResponseEncoder.responseMessage(request: request, draft: draft).jsonString()
         let cancelled = try MacAskResponseEncoder.responseMessage(request: request, draft: MacAskResponseDraft()).jsonString()

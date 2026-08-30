@@ -215,20 +215,6 @@ enum ToolTimelineRowDisplayState {
         }
     }
 
-    /// Format elapsed seconds into a compact human-readable string.
-    static func formatElapsed(_ seconds: Int) -> String {
-        if seconds < 1 { return "<1s" }
-        if seconds < 60 { return "\(seconds)s" }
-        let m = seconds / 60
-        let s = seconds % 60
-        if m < 60 {
-            return s > 0 ? "\(m)m \(s)s" : "\(m)m"
-        }
-        let h = m / 60
-        let rm = m % 60
-        return rm > 0 ? "\(h)h \(rm)m" : "\(h)h"
-    }
-
     static func applyElapsed(
         startedAt: Date?,
         elapsedSeconds: Int?,
@@ -254,7 +240,7 @@ enum ToolTimelineRowDisplayState {
             return
         }
 
-        elapsedLabel.text = formatElapsed(elapsed)
+        elapsedLabel.text = ToolCallFormatting.formatElapsed(elapsed)
         elapsedLabel.isHidden = false
     }
 

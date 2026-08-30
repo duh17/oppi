@@ -243,6 +243,24 @@ enum ToolCallFormatting {
         SessionFormatting.byteCount(bytes)
     }
 
+    /// Compact elapsed time shared by iOS and Mac tool-row chrome.
+    static func formatElapsed(_ seconds: Int) -> String {
+        if seconds < 1 { return "<1s" }
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        let remainingSeconds = seconds % 60
+        if minutes < 60 {
+            return remainingSeconds > 0
+                ? "\(minutes)m \(remainingSeconds)s"
+                : "\(minutes)m"
+        }
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        return remainingMinutes > 0
+            ? "\(hours)h \(remainingMinutes)m"
+            : "\(hours)h"
+    }
+
     // MARK: - Tool Name Normalization
 
     /// Canonical lowercase tool name for switch matching.

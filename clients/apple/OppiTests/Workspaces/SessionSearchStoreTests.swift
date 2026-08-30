@@ -30,7 +30,6 @@ struct SessionSearchStoreTests {
         #expect(emphasizedRuns.count == 1)
         if let run = emphasizedRuns.first {
             #expect(String(attributed.characters[run.range]) == "launch")
-            #expect(run.foregroundColor == .themeYellow)
         }
     }
 

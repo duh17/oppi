@@ -863,20 +863,7 @@ export class Server {
     this.localApiBinding = await listenOnLocalApiSocket(this.localApiServer, this.localApiSocket);
     log.info("server.local_api_listening", { socketPath: this.localApiSocket });
     this.localApiServer.on("upgrade", (req, socket, head) => {
-      markLocalRequest(req);
-      const url = new URL(req.url || "/", "http://localhost");
-      if (url.pathname !== "/mirror/v1/bridge") {
-        writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
-          Connection: "close",
-          "Content-Length": "0",
-        });
-        return;
-      }
-      this.localWss.handleUpgrade(req, socket, head, (ws) => {
-        this.trackConnection(ws);
-        ws.on("close", () => this.untrackConnection(ws));
-        this.mirrorRuntime.handleBridgeWebSocket(ws);
-      });
+      this.handleLocalUpgrade(req, socket, head);
     });
 
     try {
@@ -1448,10 +1435,41 @@ export class Server {
 
   // ─── WebSocket ───
 
-  private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
-    (socket as Socket).setNoDelay?.(true);
+  private handleLocalUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    markLocalRequest(req);
+    const url = new URL(req.url || "/", "http://localhost");
+    if (url.pathname === "/mirror/v1/bridge") {
+      this.localWss.handleUpgrade(req, socket, head, (ws) => {
+        this.trackConnection(ws);
+        ws.on("close", () => this.untrackConnection(ws));
+        this.mirrorRuntime.handleBridgeWebSocket(ws);
+      });
+      return;
+    }
+    this.authenticateAndUpgrade(req, socket, head, url, this.localWss, "http");
+  }
 
+  private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     const url = new URL(req.url || "/", `${this.transportScheme}://${req.headers.host}`);
+    if (url.pathname === "/mirror/v1/bridge") {
+      writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
+        Connection: "close",
+        "Content-Length": "0",
+      });
+      return;
+    }
+    this.authenticateAndUpgrade(req, socket, head, url, this.wss, this.transportScheme);
+  }
+
+  private authenticateAndUpgrade(
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    url: URL,
+    wss: WebSocketServer,
+    originScheme: "http" | "https",
+  ): void {
+    (socket as Socket).setNoDelay?.(true);
 
     const authResult = this.authenticate(req);
     if (!authResult.ok) {
@@ -1480,14 +1498,7 @@ export class Server {
     const sessionStreamMatch = matchFocusedSessionStreamPath(url.pathname);
     const appEventStreamMatch = url.pathname === "/app/events/stream";
     const dictationStreamMatch = url.pathname === "/dictation/stream";
-    const mirrorBridgeMatch = url.pathname === "/mirror/v1/bridge";
-    if (
-      !sessionStreamMatch &&
-      !appEventStreamMatch &&
-      !dictationStreamMatch &&
-      !mirrorBridgeMatch
-    ) {
-      // Unknown WebSocket endpoint.
+    if (!sessionStreamMatch && !appEventStreamMatch && !dictationStreamMatch) {
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
         "Content-Length": "0",
@@ -1495,7 +1506,7 @@ export class Server {
       return;
     }
 
-    if (!isAllowedWebSocketOrigin(req, this.transportScheme)) {
+    if (!isAllowedWebSocketOrigin(req, originScheme)) {
       log.warn("ws.upgrade_rejected_origin_mismatch", {
         origin: req.headers.origin,
         host: req.headers.host,
@@ -1507,56 +1518,63 @@ export class Server {
       return;
     }
 
-    if (mirrorBridgeMatch) {
-      writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
-        Connection: "close",
-        "Content-Length": "0",
-      });
-      return;
-    }
-
     const upgradeReceivedAt = Date.now();
-    this.wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.handleUpgrade(req, socket, head, (ws) => {
       this.socketPrincipals.set(ws, principal);
       ws.on("close", () => this.socketPrincipals.delete(ws));
-      if (sessionStreamMatch) {
-        const sessionId = sessionStreamMatch.sessionId;
-        const session = this.storage.getSession(sessionId);
-        const inScope =
-          sessionStreamMatch.scope === "workspace"
-            ? session?.workspaceId === sessionStreamMatch.workspaceId
-            : session !== undefined && isDeclaredControlSession(session);
-        if (!session || !inScope) {
-          ws.close(1008, "Session not found");
-          return;
-        }
-        if (sessionStreamMatch.scope === "workspace") {
-          this.boundSessionStreamMux.handleWebSocket(
-            sessionStreamMatch.workspaceId,
-            sessionId,
-            ws,
-            upgradeReceivedAt,
-          );
-        } else {
-          this.boundSessionStreamMux.handleControlWebSocket(sessionId, ws, upgradeReceivedAt);
-        }
-        return;
-      }
-      if (appEventStreamMatch) {
-        this.appEventStreamMux.handleWebSocket(ws, upgradeReceivedAt);
-        return;
-      }
-      if (dictationStreamMatch) {
-        this.dictationStreamMux.handleServerWebSocket(ws, upgradeReceivedAt);
-        return;
-      }
-      if (mirrorBridgeMatch) {
-        this.trackConnection(ws);
-        ws.on("close", () => this.untrackConnection(ws));
-        this.mirrorRuntime.handleBridgeWebSocket(ws);
-        return;
-      }
-      ws.close(1008, "Unsupported WebSocket endpoint");
+      this.routeAuthenticatedUpgrade(ws, {
+        sessionStreamMatch,
+        appEventStreamMatch,
+        dictationStreamMatch,
+        upgradeReceivedAt,
+      });
     });
+  }
+
+  private routeAuthenticatedUpgrade(
+    ws: WebSocket,
+    route: {
+      sessionStreamMatch: FocusedSessionStreamPath | null;
+      appEventStreamMatch: boolean;
+      dictationStreamMatch: boolean;
+      upgradeReceivedAt: number;
+    },
+  ): void {
+    if (route.sessionStreamMatch) {
+      const sessionId = route.sessionStreamMatch.sessionId;
+      const session = this.storage.getSession(sessionId);
+      const inScope =
+        route.sessionStreamMatch.scope === "workspace"
+          ? session?.workspaceId === route.sessionStreamMatch.workspaceId
+          : session !== undefined && isDeclaredControlSession(session);
+      if (!session || !inScope) {
+        ws.close(1008, "Session not found");
+        return;
+      }
+      if (route.sessionStreamMatch.scope === "workspace") {
+        void this.boundSessionStreamMux.handleWebSocket(
+          route.sessionStreamMatch.workspaceId,
+          sessionId,
+          ws,
+          route.upgradeReceivedAt,
+        );
+      } else {
+        void this.boundSessionStreamMux.handleControlWebSocket(
+          sessionId,
+          ws,
+          route.upgradeReceivedAt,
+        );
+      }
+      return;
+    }
+    if (route.appEventStreamMatch) {
+      this.appEventStreamMux.handleWebSocket(ws, route.upgradeReceivedAt);
+      return;
+    }
+    if (route.dictationStreamMatch) {
+      this.dictationStreamMux.handleServerWebSocket(ws, route.upgradeReceivedAt);
+      return;
+    }
+    ws.close(1008, "Unsupported WebSocket endpoint");
   }
 }

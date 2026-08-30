@@ -30,7 +30,7 @@ enum ToolTimelineRowViewStyler {
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = ToolFont.title
-        titleLabel.textColor = UIColor(Color.themeFg)
+        titleLabel.textColor = UIColor(Color.themeToolTitle)
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -80,7 +80,7 @@ enum ToolTimelineRowViewStyler {
 
     static func stylePreviewLabel(_ previewLabel: UILabel) {
         previewLabel.font = ToolFont.regular
-        previewLabel.textColor = UIColor(Color.themeFgDim)
+        previewLabel.textColor = UIColor(Color.themeToolOutput)
         previewLabel.numberOfLines = 3
     }
 
@@ -101,13 +101,13 @@ enum ToolTimelineRowViewStyler {
     ) {
         let palette = ThemeRuntimeState.currentPalette()
         toolImageView.tintColor = UIColor(palette.cyan)
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = UIColor(palette.toolTitle)
         languageBadgeIconView.tintColor = UIColor(palette.blue)
         addedLabel.textColor = UIColor(palette.toolDiffAdded)
         removedLabel.textColor = UIColor(palette.toolDiffRemoved)
         trailingLabel.textColor = UIColor(palette.comment)
         elapsedLabel.textColor = UIColor(palette.comment)
-        previewLabel.textColor = UIColor(palette.fgDim)
+        previewLabel.textColor = UIColor(palette.toolOutput)
         expandedContainer.backgroundColor = UIColor(
             ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
         )

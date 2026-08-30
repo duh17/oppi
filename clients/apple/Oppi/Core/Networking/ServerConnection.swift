@@ -1538,6 +1538,10 @@ final class ServerConnection {
             "reason": persistentStreamHealthReason(failure),
         ])
 
+        // Unix is Mac owner-socket only. iOS must not treat it as LAN or
+        // paired recovery, and it is not an HTTPS route candidate.
+        guard let route else { return }
+
         if route == .lan {
             discoveredLANEndpoint = nil
             lanCandidateGeneration &+= 1
@@ -1547,10 +1551,11 @@ final class ServerConnection {
 
     private func routeCandidateKind(
         for path: ConnectionTransportPath
-    ) -> ServerRouteCandidateKind {
+    ) -> ServerRouteCandidateKind? {
         switch path {
         case .lan: .lan
         case .paired: .paired
+        case .unix: nil
         }
     }
 
@@ -2426,7 +2431,7 @@ final class ServerConnection {
                     trace = response.trace
                     page = response.page
                 } catch {
-                    guard ChatSessionManager.shouldFallbackToFullTrace(error) else { throw error }
+                    guard IOSChatSessionRuntimeAdapter.shouldFallbackToFullTrace(error) else { throw error }
                     let fallback = try await apiClient.getSession(
                         scope: routeScope,
                         sessionId: sessionId,
@@ -2806,6 +2811,13 @@ final class ServerConnection {
 
     var persistentHealthRecoveryPendingForTesting: Bool {
         pendingPersistentHealthRecovery != nil
+    }
+
+    // periphery:ignore - used by ServerConnectionLifecycleTests via @testable import
+    func routeCandidateKindForTesting(
+        _ path: ConnectionTransportPath
+    ) -> ServerRouteCandidateKind? {
+        routeCandidateKind(for: path)
     }
 
     /// Wait until fire-and-forget availability recovery has started and finished.

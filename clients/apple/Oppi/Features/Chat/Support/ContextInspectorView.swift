@@ -78,77 +78,23 @@ struct ContextInspectorView: View {
     private var compositionSegments: [CompositionSegment] {
         guard let total = contextSnapshot.tokens, total > 0 else { return [] }
         guard let composition = loadedStats?.contextComposition else { return [] }
-
-        let systemTotal = min(max(composition.piSystemPromptTokens, 0), total)
-        let agents = min(max(composition.agentsTokens, 0), systemTotal)
-        let skills = min(max(composition.skillsListingTokens, 0), systemTotal)
-        let basePrompt = max(systemTotal - agents - skills, 0)
-        let messages = max(total - systemTotal, 0)
-
-        var segments: [CompositionSegment] = []
-
-        if basePrompt > 0 {
-            segments.append(CompositionSegment(
-                label: "Pi Base Prompt",
-                detail: "Pi system prompt, tools, and baseline instructions.",
-                tokens: basePrompt,
-                color: .themePurple
-            ))
+        return SessionContextCompositionProjection.segments(
+            totalContextTokens: total,
+            composition: composition
+        ).map { segment in
+            CompositionSegment(
+                label: segment.label,
+                detail: segment.detail,
+                tokens: segment.tokens,
+                color: compositionColor(for: segment.kind)
+            )
         }
-
-        if agents > 0 {
-            let fileCount = composition.agentsFiles.count
-            segments.append(CompositionSegment(
-                label: "AGENTS files (\(fileCount))",
-                detail: "Workspace instructions from AGENTS.md files.",
-                tokens: agents,
-                color: .themeCyan
-            ))
-        }
-
-        if skills > 0 {
-            segments.append(CompositionSegment(
-                label: "Skills Index",
-                detail: "Available skill names and descriptions included in context.",
-                tokens: skills,
-                color: .themeYellow
-            ))
-        }
-
-        if messages > 0 {
-            segments.append(CompositionSegment(
-                label: "Messages and Runtime",
-                detail: "Conversation history, tool calls, and results.",
-                tokens: messages,
-                color: .themeGreen
-            ))
-        }
-
-        return segments
     }
 
     private var sessionUsageStats: SessionStatsSnapshot? {
         if let loadedStats { return loadedStats }
         guard let session else { return nil }
-
-        let input = max(session.tokens.input, 0)
-        let output = max(session.tokens.output, 0)
-        let cacheRead = max(session.tokens.cacheRead ?? 0, 0)
-        let cacheWrite = max(session.tokens.cacheWrite ?? 0, 0)
-        return SessionStatsSnapshot(
-            tokens: SessionTokenStats(
-                input: input,
-                output: output,
-                cacheRead: cacheRead,
-                cacheWrite: cacheWrite,
-                total: input + output + cacheRead + cacheWrite
-            ),
-            cost: max(session.cost, 0),
-            cacheWaste: nil,
-            modelBreakdown: [],
-            contextComposition: nil,
-            loadedResources: nil
-        )
+        return SessionStatsSnapshot.fallback(from: session)
     }
 
     private var contextUsedTokens: Int {
@@ -619,6 +565,15 @@ struct ContextInspectorView: View {
         }
 
         statsLoading = false
+    }
+
+    private func compositionColor(for kind: SessionContextCompositionKind) -> ThemeShapeStyle {
+        switch kind {
+        case .piBasePrompt: .themePurple
+        case .agentsFiles: .themeCyan
+        case .skillsIndex: .themeYellow
+        case .messagesAndRuntime: .themeGreen
+        }
     }
 
     private func progressTint(_ progress: Double) -> Color {

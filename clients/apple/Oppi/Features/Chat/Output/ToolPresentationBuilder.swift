@@ -7,36 +7,7 @@ import SwiftUI
 /// so per-tool rendering logic is isolated and testable.
 enum ToolPresentationBuilder {
 
-    struct ToolMediaAttachment: Equatable, Sendable {
-        let kind: String
-        let id: String
-        let mimeType: String
-        let fileName: String?
-        let sizeBytes: Int?
-        let sha256: String?
-        let width: Int?
-        let height: Int?
-
-        init(
-            kind: String,
-            id: String,
-            mimeType: String,
-            fileName: String?,
-            sizeBytes: Int?,
-            sha256: String? = nil,
-            width: Int?,
-            height: Int?
-        ) {
-            self.kind = kind
-            self.id = id
-            self.mimeType = mimeType
-            self.fileName = fileName
-            self.sizeBytes = sizeBytes
-            self.sha256 = sha256
-            self.width = width
-            self.height = height
-        }
-    }
+    typealias ToolMediaAttachment = ToolContentMediaAttachment
 
     // MARK: - Dependencies
 
@@ -387,7 +358,7 @@ enum ToolPresentationBuilder {
     }
 
     private static func buildExpanded(
-        normalizedTool: String,
+        normalizedTool _: String,
         rawToolName: String,
         args: [String: JSONValue]?,
         details: JSONValue?,
@@ -398,157 +369,89 @@ enum ToolPresentationBuilder {
         isDone: Bool,
         isLoadingOutput: Bool
     ) -> ExpandedPresentation {
-        let output = fullOutput.isEmpty ? outputPreview : fullOutput
-        let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fileMetadata = filePresentationMetadata(args: args, argsSummary: argsSummary)
-        let mediaAttachments = mediaAttachmentDetails(from: details)
-        var copyOutput: String? = outputTrimmed.isEmpty ? nil : outputTrimmed
-        var copyCommand: String?
-        var content: ToolExpandedContent?
-
-        switch normalizedTool {
-        case "ask":
-            // Ask answers are rendered as user messages in the transcript.
-            // Keep the tool row collapsed to avoid duplicating the same Q/A receipt.
-            break
-
-        case "bash":
-            let command = ToolCallFormatting.bashCommandFull(args: args, argsSummary: argsSummary)
-            copyCommand = command.isEmpty ? nil : command
-            content = .bash(
-                command: command.isEmpty ? nil : command,
-                output: outputTrimmed.isEmpty ? nil : outputTrimmed,
-                unwrapped: true
+        let presentation = ToolContentDescriptorBuilder.build(
+            tool: rawToolName,
+            argsSummary: argsSummary,
+            outputPreview: outputPreview,
+            isError: isError,
+            isDone: isDone,
+            context: ToolContentDescriptorBuilder.Context(
+                args: args,
+                details: details,
+                fullOutput: fullOutput,
+                isLoadingOutput: isLoadingOutput
             )
-
-        case "read":
-            if !outputTrimmed.isEmpty || !mediaAttachments.isEmpty {
-                let startLine = ToolCallFormatting.readStartLine(from: args)
-                content = expandedFileContent(
-                    text: outputTrimmed,
-                    metadata: fileMetadata,
-                    startLine: startLine,
-                    attachments: mediaAttachments
-                )
-            } else if isLoadingOutput {
-                content = .status(message: "Loading read output…")
-            } else if isDone {
-                content = .status(message: "Waiting for output…")
-            }
-
-        case "write":
-            let writeContent = ToolCallFormatting.writeContent(from: args)
-            if let writeContent, !writeContent.isEmpty {
-                copyOutput = writeContent
-                content = expandedFileContent(
-                    text: writeContent,
-                    metadata: fileMetadata,
-                    startLine: 1,
-                    attachments: []
-                )
-            } else if !outputTrimmed.isEmpty {
-                content = isDone
-                    ? expandedFileCodeFallback(
-                        text: outputTrimmed,
-                        metadata: fileMetadata,
-                        startLine: nil
-                    )
-                    : .text(text: outputTrimmed, language: nil)
-            }
-
-        case "edit":
-            if !isError {
-                let editText = ToolCallFormatting.editOldAndNewText(from: args)
-                if isDone {
-                    let changes = ToolCallFormatting.editTextChanges(from: args)
-                    let lines = ToolCallFormatting.editResultDiffLines(from: details) ?? changes.flatMap { change in
-                        DiffEngine.compute(old: change.oldText, new: change.newText)
-                    }
-                    if !lines.isEmpty {
-                        // Use the raw file path (not displayFilePath) so downstream consumers
-                        // can fetch the file via API. Display views apply shortenedPath as needed.
-                        let diffPath = fileMetadata.filePath
-                            ?? ToolCallFormatting.displayFilePath(
-                                tool: normalizedTool, args: args, argsSummary: argsSummary
-                            )
-                        content = .diff(lines: lines, path: diffPath)
-                        copyOutput = DiffEngine.formatUnified(lines)
-                    }
-                } else if let editText {
-                    let streamingText = streamingEditText(from: editText)
-                    if !streamingText.isEmpty {
-                        copyOutput = streamingText
-                        content = expandedFileContent(
-                            text: streamingText,
-                            metadata: fileMetadata,
-                            startLine: 1,
-                            attachments: []
-                        )
-                    }
-                }
-            }
-            if content == nil, !outputTrimmed.isEmpty {
-                content = isDone
-                    ? expandedFileCodeFallback(
-                        text: outputTrimmed,
-                        metadata: fileMetadata,
-                        startLine: nil
-                    )
-                    : .text(text: outputTrimmed, language: nil)
-            }
-
-        default:
-            let audioPresentation = Self.toolAudioPresentationDetails(from: details)
-            let hasStructuredVoiceContent = audioPresentation != nil
-            let hasStructuredMediaContent = !mediaAttachments.isEmpty
-                || Self.toolImageAttachmentDetails(from: details) != nil
-            if !outputTrimmed.isEmpty || hasStructuredVoiceContent || hasStructuredMediaContent {
-                if !isError,
-                   let audioPresentation,
-                   audioPresentation.audio == nil {
-                    let transcript = audioPresentationTranscript(
-                        output: outputTrimmed,
-                        details: audioPresentation,
-                        args: args
-                    )
-                    content = .audioMessage(
-                        text: transcript,
-                        attachmentId: "",
-                        mimeType: "audio/wav",
-                        durationSeconds: nil,
-                        playbackBehavior: audioPresentation.playbackBehavior
-                    )
-                    copyOutput = transcript.isEmpty ? nil : transcript
-                } else if !mediaAttachments.isEmpty && Self.toolAudioPresentationDetails(from: details) == nil {
-                    content = .readMedia(
-                        output: outputTrimmed,
-                        filePath: rawToolName,
-                        startLine: 1,
-                        attachments: mediaAttachments
-                    )
-                    copyOutput = outputTrimmed.isEmpty ? rawToolName : outputTrimmed
-                } else {
-                    let resolved = resolveGenericExtensionExpandedContent(
-                        output: outputTrimmed,
-                        toolName: rawToolName,
-                        details: details,
-                        args: args
-                    )
-                    content = resolved.content
-                    copyOutput = resolved.copyOutput
-                }
-            }
-        }
-
-        if content == nil, !isDone, normalizedTool != "ask" {
-            content = .status(message: pendingStatusMessage(normalizedTool: normalizedTool))
-        }
-
-        return ExpandedPresentation(
-            content: content,
-            copyCommandText: copyCommand,
-            copyOutputText: copyOutput
         )
+        return ExpandedPresentation(
+            content: presentation.content.map(expandedContent(from:)),
+            copyCommandText: presentation.copyCommandText,
+            copyOutputText: presentation.copyOutputText
+        )
+    }
+
+    /// Maps the shared semantic descriptor onto iOS expanded paint cases.
+    /// Collapsed UIKit configuration stays in this builder.
+    private static func expandedContent(from descriptor: ToolContentDescriptor) -> ToolExpandedContent {
+        switch descriptor {
+        case .terminal(let terminal):
+            if terminal.unwrapped {
+                return .bash(
+                    command: terminal.command,
+                    output: terminal.output,
+                    unwrapped: true
+                )
+            }
+            return .text(text: terminal.output ?? "", language: terminal.language)
+        case .diff(let diff):
+            return .diff(lines: diff.lines, path: diff.path)
+        case .code(let code):
+            return .code(
+                text: code.text,
+                language: code.language,
+                startLine: code.startLine,
+                filePath: code.filePath
+            )
+        case .markdown(let markdown):
+            return .markdown(text: markdown.text)
+        case .file(let file):
+            return expandedFileContent(
+                text: file.text,
+                metadata: FilePresentationMetadata(
+                    filePath: file.filePath,
+                    fileType: file.fileType,
+                    language: file.language
+                ),
+                startLine: file.startLine ?? 1,
+                attachments: file.attachments
+            )
+        case .media(let media):
+            if let audio = media.audio {
+                if audio.mimeType != "audio/wav" {
+                    let message = "Audio unavailable on iOS: unsupported MIME type \(audio.mimeType)"
+                    return .readMedia(
+                        output: message,
+                        filePath: media.filePath ?? "Voice message",
+                        startLine: 1,
+                        attachments: []
+                    )
+                }
+                return .audioMessage(
+                    text: audio.text,
+                    attachmentId: audio.attachmentId,
+                    mimeType: audio.mimeType,
+                    durationSeconds: audio.durationSeconds,
+                    playbackBehavior: audio.playbackBehavior
+                )
+            }
+            return .readMedia(
+                output: media.output,
+                filePath: media.filePath,
+                startLine: media.startLine,
+                attachments: media.attachments
+            )
+        case .status(let message):
+            return .status(message: message)
+        }
     }
 
     // MARK: - Helpers (moved from Coordinator)
@@ -571,26 +474,11 @@ enum ToolPresentationBuilder {
         args: [String: JSONValue]?,
         argsSummary: String
     ) -> FilePresentationMetadata {
-        let filePath = resolvedFilePath(args: args, argsSummary: argsSummary)
-        let fileType = filePath.map { FileType.detect(from: $0) }
-        let language: SyntaxLanguage?
-
-        switch fileType {
-        case .code(let resolvedLanguage):
-            language = resolvedLanguage
-        case .json:
-            language = .json
-        case .html:
-            language = .html
-        case .markdown, .image, .audio, .video, .pdf, .binary, .plain,
-             .latex, .orgMode, .mermaid, .graphviz, .none:
-            language = nil
-        }
-
+        let metadata = ToolContentDescriptorBuilder.fileMetadata(args: args, argsSummary: argsSummary)
         return FilePresentationMetadata(
-            filePath: filePath,
-            fileType: fileType,
-            language: language
+            filePath: metadata.filePath,
+            fileType: metadata.fileType,
+            language: metadata.language
         )
     }
 
@@ -620,59 +508,6 @@ enum ToolPresentationBuilder {
                 startLine: startLine,
                 filePath: metadata.filePath
             )
-        }
-    }
-
-    private static func expandedFileCodeFallback(
-        text: String,
-        metadata: FilePresentationMetadata,
-        startLine: Int?
-    ) -> ToolExpandedContent {
-        .code(
-            text: text,
-            language: metadata.language,
-            startLine: startLine,
-            filePath: metadata.filePath
-        )
-    }
-
-    private static func streamingEditText(from editText: (oldText: String, newText: String)) -> String {
-        if !editText.newText.isEmpty {
-            return editText.newText
-        }
-        return editText.oldText
-    }
-
-    private static func audioPresentationTranscript(
-        output: String,
-        details: ToolAudioPresentationDetails,
-        args: [String: JSONValue]?
-    ) -> String {
-        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let explicitMessage = details.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let argText = args?["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !explicitMessage.isEmpty {
-            return explicitMessage
-        }
-        if trimmedOutput == "Voice message" {
-            return argText
-        }
-        if !trimmedOutput.isEmpty {
-            return trimmedOutput
-        }
-        return argText
-    }
-
-    private static func pendingStatusMessage(normalizedTool: String) -> String {
-        switch normalizedTool {
-        case "read":
-            return "Reading…"
-        case "write":
-            return "Writing…"
-        case "edit":
-            return "Editing…"
-        default:
-            return "Waiting for output…"
         }
     }
 
@@ -722,45 +557,7 @@ enum ToolPresentationBuilder {
         args: [String: JSONValue]?,
         argsSummary: String
     ) -> FileType? {
-        guard let filePath = resolvedFilePath(args: args, argsSummary: argsSummary),
-              !filePath.isEmpty else {
-            return nil
-        }
-        return FileType.detect(from: filePath)
-    }
-
-    private static func resolvedFilePath(
-        args: [String: JSONValue]?,
-        argsSummary: String
-    ) -> String? {
-        ToolCallFormatting.filePath(from: args)
-            ?? ToolCallFormatting.parseArgValue("path", from: argsSummary)
-            ?? inferredPathFromSummary(argsSummary)
-    }
-
-    private static func inferredPathFromSummary(_ argsSummary: String) -> String? {
-        let trimmed = argsSummary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let withoutToolPrefix: String
-        if trimmed.hasPrefix("read ") {
-            withoutToolPrefix = String(trimmed.dropFirst(5))
-        } else if trimmed.hasPrefix("write ") {
-            withoutToolPrefix = String(trimmed.dropFirst(6))
-        } else if trimmed.hasPrefix("edit ") {
-            withoutToolPrefix = String(trimmed.dropFirst(5))
-        } else {
-            withoutToolPrefix = trimmed
-        }
-
-        let candidate = withoutToolPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidate.isEmpty else { return nil }
-
-        if let range = candidate.range(of: #":\d+(?:-\d+)?$"#, options: .regularExpression) {
-            return String(candidate[..<range.lowerBound])
-        }
-
-        return candidate
+        ToolContentDescriptorBuilder.readOutputFileType(args: args, argsSummary: argsSummary)
     }
 
     /// Convert org mode source text to markdown for the `.markdown` render pipeline.
@@ -771,16 +568,22 @@ enum ToolPresentationBuilder {
 
     // periphery:ignore - used by ToolPresentationBuilderTests via @testable import
     static func readOutputLanguage(args: [String: JSONValue]?, argsSummary: String) -> SyntaxLanguage? {
-        guard let fileType = readOutputFileType(args: args, argsSummary: argsSummary) else { return nil }
-        switch fileType {
-        case .code(let language): return language
-        case .json: return .json
-        case .html: return .html
-        case .latex: return .latex
-        case .orgMode: return .orgMode
-        case .mermaid: return .mermaid
-        case .graphviz: return .dot
-        case .markdown, .image, .audio, .video, .pdf, .binary, .plain: return nil
-        }
+        ToolContentDescriptorBuilder.readOutputLanguage(args: args, argsSummary: argsSummary)
+    }
+
+    static func toolAudioPresentationDetails(
+        from details: JSONValue?
+    ) -> ToolContentDescriptorBuilder.AudioPresentation? {
+        ToolContentDescriptorBuilder.audioPresentation(from: details)
+    }
+
+    static func toolImageAttachmentDetails(
+        from details: JSONValue?
+    ) -> ToolContentDescriptorBuilder.ImageAttachment? {
+        ToolContentDescriptorBuilder.imageAttachment(from: details)
+    }
+
+    static func mediaAttachmentDetails(from details: JSONValue?) -> [ToolMediaAttachment] {
+        ToolContentDescriptorBuilder.mediaAttachments(from: details)
     }
 }

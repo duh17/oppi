@@ -1,0 +1,90 @@
+# Mac vs iOS/iPadOS feature parity
+# Source worktree: wt_feat-mac-app-PRz1_RnV  branch feat/mac-app  audited production HEAD b4057be5
+# Audited: 2026-08-29  (production code + same-model review; no running-app or visual approval)
+# ios/ipados/mac: full | partial | stub | missing | n/a
+# gap: none | mac-behind | ios-behind | different-by-design | planned | wont-fix
+# share: OppiCore | paint-per-platform | mac-host-only | ios-device-only
+# wont-fix means the current Mac-native baseline remains and the named iOS-depth behavior is an explicit non-goal.
+area,feature,ios,ipados,mac,gap,share,notes
+shell,App shell / navigation,full,full,full,none,paint-per-platform,"Mac NavigationSplitView wires Home, Agents, Schedules, Skills, Extensions, Workspaces, and Settings to live list/detail surfaces."
+shell,Global sessions inbox,full,full,full,none,OppiCore,Shared SessionRowPresentation + grouping (Your Turn / Working / stopped-by-day). Mac paints SwiftUI rows; iOS/iPad use SessionRow.
+shell,Session identity badges,full,full,full,none,OppiCore,Shared SessionGridRenderer π-grid on both. Mac no longer uses emoji/SF Symbol for default identity.
+shell,Unread completion dots,full,full,stub,wont-fix,OppiCore,Mac can paint a shared completion date but has no unread producer. A Mac unread store is an explicit non-goal.
+shell,Session search,full,full,full,none,OppiCore,Shared SessionSearchStore + SessionListSearchPresentation. Mac Home uses server FTS plus local fuzzy match; workspace catalog search stays a name filter.
+shell,Worktree indicator on rows,full,full,full,none,OppiCore,"Rows show worktree identity. The workspace picker scopes session fetch/create/import, files, Git, media, and viewer routes to the selected worktree."
+shell,Runtime activity strip,n/a,n/a,full,none,paint-per-platform,Mac-only caption strip for live sessions. iOS folds this into inbox sections.
+shell,What's New / onboarding tips,full,full,missing,wont-fix,ios-device-only,Mac keeps host first-run server/TCC onboarding. iOS product What's New and feature-education surfaces are not a Mac finish-line goal.
+shell,Deeplinks / oppi://session,full,full,full,none,paint-per-platform,The Mac scene accepts oppi://session/<id>; known sessions open directly while uncached sessions are fetched over the owner socket. Cold-start links retry after server readiness; attention-banner taps use the same route.
+shell,Menu bar extra,n/a,n/a,partial,none,mac-host-only,"Mac MenuBarExtra + popover (open/quit, server status). StatsTabView is live in Settings; SessionsTabView is not in the menu-bar scene."
+shell,Multi-window session viewers,n/a,n/a,missing,wont-fix,paint-per-platform,The production document surface is the wide side column beside the timeline with system fullscreen escalation. A detached WindowGroup-first viewer is an explicit non-goal.
+host,Pair as remote client (scan QR),full,full,n/a,different-by-design,ios-device-only,iOS/iPad onboard by pairing to a server. Mac is the host.
+host,Pair as host (show QR / nearby),n/a,n/a,full,none,mac-host-only,Mac PairView + nearby advertiser under App Settings.
+host,Local server lifecycle,n/a,n/a,full,none,mac-host-only,"Mac owns Node/CLI process, auto-start, health. iOS never runs the server."
+host,Owner Unix-socket auth (sk_ only on socket),n/a,n/a,full,none,mac-host-only,Architecture rule. iOS uses paired HTTPS/WSS + token.
+host,TCC permissions pane,n/a,n/a,full,none,mac-host-only,Notifications/mic/screen etc. for local server + tools.
+host,Doctor / logs,n/a,n/a,full,none,mac-host-only,Mac Settings panes. iOS has no host doctor.
+host,Remote servers as first-class clients,full,full,stub,wont-fix,paint-per-platform,Mac remains the local Oppi host and owner-socket client. The URL stash does not authenticate or switch active servers; Mac-as-remote-client is an explicit non-goal.
+host,Launch at login / Sparkle updates,n/a,n/a,full,none,mac-host-only,Mac General settings.
+sessions,Open live chat (CSM + stream),full,full,full,none,OppiCore,Shared ChatSessionManager. Mac Unix socket; iOS paired connection.
+sessions,Create / stop / delete session,full,full,full,none,OppiCore,Wired on Mac Home + workspace detail.
+sessions,Import local Pi TUI sessions,full,full,full,none,paint-per-platform,Workspace stopped sections show importable Pi TUI rows and import into the selected worktree before opening the ordinary session view.
+sessions,Incognito indicator,full,full,full,none,OppiCore,Mac inbox row shows eye.slash when presented.
+sessions,Auto-name sessions setting,full,full,partial,wont-fix,OppiCore,Mac displays server-derived titles and identifies Server as the active title source. On-device and Off controls are explicit non-goals.
+sessions,Quick Session (sheet / shortcut),full,full,missing,wont-fix,ios-device-only,"Mac uses normal workspace creation and guided control-session entry points. The iOS Quick Session sheet, Shortcut, and share intake are explicit non-goals."
+sessions,Control / guided sessions,full,full,full,none,paint-per-platform,"Agents, Schedules, and Workspaces launch ordinary control-session chats. Retries reuse one frozen atomic request/key; revised drafts remain local for a new send."
+composer,Send / stop / steer / follow-up queue,full,full,full,none,OppiCore,"Mac composer bar implements send, abort-turn, steer vs queue follow-up."
+composer,Dictation,full,full,partial,wont-fix,paint-per-platform,Mac records microphone audio and streams server dictation over the owner Unix socket. An on-device dictation engine and picker are explicit non-goals.
+composer,Attachments + file drop,full,full,full,none,paint-per-platform,"Mac supports attachment selection and drop plus file/image paste, image thumbnails, dedupe/removal, mixed-text preservation, and owned temp cleanup."
+composer,@file autocomplete,full,full,full,none,OppiCore,MacFileMentionAutocomplete on composer; iOS FileSuggestionList.
+composer,Slash-command autocomplete,full,full,full,none,OppiCore,"The live Mac composer loads shared slash-command metadata, filters suggestions, and inserts a selected command without taking composer key ownership."
+composer,Model picker,full,full,full,none,OppiCore,MacModelPickerSheet + persist.
+composer,Thinking level,full,full,full,none,OppiCore,Mac thinking menu on action row.
+composer,Ask cards (select/confirm/input),full,full,full,none,OppiCore,"Mac ask cards support single choice, multi-select, custom input, submit, and ignore over the active session route."
+composer,Native extension UI panel,full,full,full,none,paint-per-platform,"Mac paints generic status, widget, progress, terminal, markdown, text-span, and activity-row metadata above/below the composer without extension-name branches."
+composer,Cmd-Return send,n/a,partial,full,none,paint-per-platform,Mac composer Cmd-Return sends. Sol: keep this; viewer open must not steal it while composer focused.
+timeline,Assistant markdown (shared parse),full,full,full,none,OppiCore,"OppiCore CommonMark parsing feeds the Mac SwiftUI/AppKit painter, including GFM tables and HTML/SVG preview. UIKit ChatView/timeline painters remain iOS-only by design."
+timeline,Mermaid / LaTeX / images / video in markdown,full,full,full,none,paint-per-platform,"Mac has native Mermaid, LaTeX, image/SVG, and authenticated video painters; nested relative media resolves from the Markdown file path."
+timeline,Thinking blocks,full,full,full,none,paint-per-platform,Mac paints thinking rows with measured 200-point collapse/expand behavior and preserves the shared timeline model.
+timeline,Compact turns / work strip,full,n/a,missing,wont-fix,ios-device-only,Compact turns are an iPhone-specific presentation preference. Mac keeps its native timeline and activity chrome.
+timeline,Context inspector / token usage,full,full,full,none,paint-per-platform,"Live session chrome shows context/token/cost stats and loaded-resource states, with loading, failed, unknown, empty, and populated states kept distinct."
+timeline,Session outline,full,full,partial,wont-fix,paint-per-platform,"Mac ships server-backed timeline search/filter/jump. iOS Tree mode, branch navigation, and fork actions are explicit non-goals."
+timeline,Review comments on selection,full,full,full,none,paint-per-platform,"Selectable Markdown, code, terminal, diff, and document text can stage, edit, remove, and send review comments from the composer."
+timeline,Wiki file links open viewers,full,full,full,none,OppiCore,"Workspace, host, and session wiki/Markdown links open the side-column viewer; relative and nested media preserve source directory and worktree scope."
+tool-rows,Collapsed tool header,full,full,full,none,paint-per-platform,Both show tool title/status/path-ish detail. Mac ToolTimelineBubble.
+tool-rows,Expanded inline tool output,full,full,full,none,OppiCore,"Session-owned row state expands shared tool descriptors for code, diff, terminal, file, and media output; large output stays outside hot row state."
+tool-rows,Fullscreen / dedicated tool viewer,full,full,full,none,OppiCore,Mac opens the selected tool/file document in the wide side column and can escalate the same main window to system fullscreen. It does not copy the UIKit viewer.
+tool-rows,Syntax highlighting,full,full,full,none,OppiCore,OppiCore shares Tree-sitter/token ranges and fallback scanning; Mac applies AppKit colors and the selected bundled code font.
+tool-rows,Diff rendering,full,full,full,none,OppiCore,Mac paints structured diff plans inline and in the document column with changed-file routing and review-comment selection.
+tool-rows,Terminal / ANSI output,full,full,full,none,OppiCore,Shared ANSI parsing feeds Mac inline and document-column terminal painters with preference-aware monospaced typography.
+tool-rows,Read-media / images in tool output,full,full,full,none,OppiCore,Shared media descriptors drive Mac inline/document image rendering and authenticated file loads.
+tool-rows,Audio / video tool output,full,full,full,none,paint-per-platform,Mac plays authenticated workspace/session audio and video through the owner Unix-socket range adapter and native AVPlayer view.
+tool-rows,PDF / HTML / SVG preview,full,full,full,none,paint-per-platform,The side column uses PDFKit for PDFs and a CSP-constrained source/preview flow for HTML and SVG.
+keybindings,Dual modes (Mac-default vs vim),missing,missing,full,none,OppiCore,One OppiCore catalog defines Mac-default and Vim actions by focus. Mac Settings exposes a live persisted mode picker; composer letters and Cmd-Return remain composer-owned.
+keybindings,Share catalog to iOS/iPad hardware keyboard,missing,missing,full,none,OppiCore,The iOS/iPad hardware-keyboard responder installs and executes the same OppiCore catalog through a thin UIKit adapter.
+keybindings,Mac menu commands for standard shortcuts,n/a,n/a,partial,wont-fix,mac-host-only,Focused timeline/viewer handlers provide the standard and Vim actions. Duplicating those routes in Mac command menus is an explicit non-goal; no global key monitor is used.
+files,Workspace file browser,full,full,full,none,paint-per-platform,The selected-worktree file browser lists directories and opens supported files in the shared side-column document surface.
+files,Session changed files + diff/preview,full,full,full,none,paint-per-platform,"The session inspector opens changed-file previews and diffs, including image/text content and review-comment selection."
+files,Workspace git status / review,full,full,full,none,OppiCore,The Mac workspace surface loads selected-worktree Git status and opens per-file diffs in the document column.
+files,Workspace create / edit / delete,full,full,full,none,paint-per-platform,Mac workspace detail + create sheet.
+files,Workspace configuration,full,full,partial,wont-fix,paint-per-platform,Mac has native create/edit/delete for common host fields plus Ask Oppi/Edit with Oppi. The full iOS sandbox/resource configuration form is an explicit non-goal.
+catalogs,Saved Agents,full,full,partial,wont-fix,paint-per-platform,"Mac has live list/detail/create/edit/archive and guided Edit with Oppi. The full advanced native field set for model, tools, resources, and launch constraints is an explicit non-goal."
+catalogs,Schedules,full,full,partial,wont-fix,paint-per-platform,Mac has live list/detail/create/edit/status controls and guided Edit with Oppi. The full advanced native trigger/action field set is an explicit non-goal.
+catalogs,Skills browser / files,full,full,partial,wont-fix,paint-per-platform,"Mac has live list/detail, enable state, and SKILL.md content. An auxiliary Skill file-tree editor is an explicit non-goal."
+catalogs,Extensions catalog,full,full,full,none,paint-per-platform,"Mac has live searchable list/detail surfaces, contributed-tool metadata, load errors, and enable/disable controls."
+settings,Theme source + palettes,full,full,full,none,OppiCore,Shared ThemeStore. Mac uses macOS Appearance; iOS uses Display & Brightness.
+settings,Import theme,full,full,full,none,paint-per-platform,Mac Settings imports Oppi theme JSON from files or discovered host themes and supports removal.
+settings,Assistant avatar / spinner,full,full,partial,wont-fix,OppiCore,Mac Settings exposes live built-in/emoji avatar and spinner choices with previews; session timeline chrome consumes the persisted values. Mac intentionally does not offer or decode Genmoji.
+settings,Code/message fonts and scale,full,full,full,none,OppiCore,"Mac Settings controls bundled code families, code/message scale, and message mono mode. Live timeline, viewer, inspector, diff, terminal, and extension painters consume them."
+settings,Voice replies + dictation engine,full,full,partial,wont-fix,paint-per-platform,Mac applies server voice-reply details and can autoplay live WAV or tap-play completed media. A configurable reply-mode selector and on-device dictation picker are explicit non-goals.
+settings,Haptics,full,n/a,n/a,wont-fix,ios-device-only,Haptics remain an iPhone interaction surface and are an explicit Mac non-goal.
+settings,Biometrics lock,full,full,n/a,wont-fix,ios-device-only,Mac relies on host account security and TCC. The iOS/iPad app-level biometric lock is an explicit non-goal.
+settings,Keep screen awake,full,full,full,none,paint-per-platform,Mac prevents idle display sleep for running sessions. Authoritative recent-session snapshots add and remove reasons with latest-request-wins reconciliation.
+settings,Clear local cache,full,full,full,none,paint-per-platform,Mac Settings reports and clears the pasted-attachment temp cache that Mac owns. Mac does not invent the iOS TimelineCache.
+settings,Live Activities experiment toggle,full,full,n/a,wont-fix,ios-device-only,ActivityKit and its experiment control remain iOS/iPadOS-only and are an explicit Mac non-goal.
+stats,Server health + cost charts,full,full,full,none,paint-per-platform,"The live Settings Stats destination shows health, cost, model, workspace, and daily detail from the local server monitor."
+stats,Session cost / context tokens in chrome,full,full,full,none,OppiCore,"Selected live sessions expose context usage, token/cost totals, and loaded resources in toolbar chrome."
+system,Share extension,full,full,n/a,wont-fix,ios-device-only,The OppiShareExtension intake flow remains iOS/iPadOS-only and is an explicit Mac non-goal.
+system,Control widget,full,full,n/a,wont-fix,ios-device-only,The OppiControlWidget target remains iOS/iPadOS-only and is an explicit Mac non-goal.
+system,Live Activities,full,full,n/a,wont-fix,ios-device-only,The OppiActivityExtension target remains iOS/iPadOS-only and is an explicit Mac non-goal.
+system,Attention notifications,full,full,full,none,paint-per-platform,"Mac posts local ask banners when attention is outside the visible session, deduplicates/cancels them, and routes taps through the session deeplink path."
+system,Hardware-keyboard vim/Mac catalog,missing,missing,full,none,OppiCore,Mac and iOS/iPad hardware responders execute the shared focus-aware catalog; the live Mac Settings picker switches Mac-default and Vim modes.

@@ -1,75 +1,5 @@
 import SwiftUI
 
-struct SessionModelSummary: Identifiable, Equatable, Sendable {
-    let rawModel: String
-    let provider: String
-    let label: String
-
-    var id: String { rawModel }
-}
-
-enum SessionModelSummaryBuilder {
-    static func summaries(primaryModel: String?, descendantModels: [String] = []) -> [SessionModelSummary] {
-        let candidates = [primaryModel] + descendantModels.map(Optional.some)
-        var seen: Set<String> = []
-        var result: [SessionModelSummary] = []
-
-        for candidate in candidates {
-            guard let normalized = normalize(candidate), seen.insert(normalized).inserted else {
-                continue
-            }
-
-            result.append(
-                SessionModelSummary(
-                    rawModel: normalized,
-                    provider: providerFromModel(normalized) ?? "",
-                    label: displayLabel(for: normalized)
-                )
-            )
-        }
-
-        return result
-    }
-
-    static func displayLabel(for rawModel: String) -> String {
-        let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "unknown" }
-
-        if let slashIndex = trimmed.firstIndex(of: "/") {
-            let remainder = String(trimmed[trimmed.index(after: slashIndex)...])
-            if !remainder.isEmpty {
-                return remainder
-            }
-        }
-
-        return trimmed
-    }
-
-    private static func normalize(_ rawModel: String?) -> String? {
-        guard let rawModel else { return nil }
-        let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
-struct SessionWorktreeIndicatorPresentation: Equatable, Sendable {
-    let worktreeId: String
-    let accessibilityLabel: String
-
-    init?(session: Session) {
-        guard let worktreeId = Self.normalizedWorktreeId(session.worktreeId) else { return nil }
-        self.worktreeId = worktreeId
-        accessibilityLabel = "Worktree session"
-    }
-
-    private static func normalizedWorktreeId(_ rawWorktreeId: String?) -> String? {
-        guard let rawWorktreeId else { return nil }
-        let trimmed = rawWorktreeId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != WorkspaceWorktree.mainId else { return nil }
-        return trimmed
-    }
-}
-
 // MARK: - Session Row
 
 /// Unified session row used in both active and stopped sections.
@@ -113,6 +43,19 @@ struct SessionRow: View {
         self.modelSummaries = modelSummaries
         self.unreadCompletionAt = unreadCompletionAt
         self.searchSnippet = searchSnippet
+    }
+
+    init(presentation: SessionRowPresentation) {
+        self.init(
+            session: presentation.session,
+            pendingAskCount: presentation.pendingAskCount,
+            attentionText: presentation.attentionText,
+            lineageHint: presentation.lineageHint,
+            workspaceContext: presentation.workspaceContext,
+            modelSummaries: presentation.modelSummaries,
+            unreadCompletionAt: presentation.unreadCompletionAt,
+            searchSnippet: presentation.searchSnippet
+        )
     }
 
     private var title: String {
@@ -204,7 +147,7 @@ struct SessionRow: View {
 
             // Row 1.75: search snippet (when searching)
             if let searchSnippet {
-                Text(searchSnippet)
+                Text(highlightedSearchSnippet(searchSnippet))
                     .font(.caption)
                     .foregroundStyle(.themeFgDim)
                     .lineLimit(2)
@@ -307,6 +250,16 @@ struct SessionRow: View {
         )
         .frame(width: 20, height: 20)
         .frame(width: 24, height: 24)
+    }
+
+    private func highlightedSearchSnippet(_ snippet: AttributedString) -> AttributedString {
+        var highlighted = snippet
+        for run in highlighted.runs
+            where run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
+        {
+            highlighted[run.range].foregroundColor = .themeYellow
+        }
+        return highlighted
     }
 
     @ViewBuilder
@@ -454,18 +407,6 @@ struct SessionIdentityIconView: UIViewRepresentable {
 
     static func dismantleUIView(_ view: SessionGridBadgeView, coordinator: Void) {
         view.prepareForReuse()
-    }
-}
-
-// MARK: - Row Metrics Formatting
-
-enum SessionRowMetricsFormatting {
-    static func filesTouchedAccessibilityLabel(_ filesChanged: Int) -> String {
-        filesChanged == 1 ? String(localized: "1 file touched") : String(localized: "\(filesChanged) files touched")
-    }
-
-    static func compactionAccessibilityLabel(_ compactionCount: Int) -> String {
-        compactionCount == 1 ? "1 compaction" : "\(compactionCount) compactions"
     }
 }
 

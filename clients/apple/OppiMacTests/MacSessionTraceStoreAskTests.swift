@@ -29,6 +29,7 @@ struct MacSessionTraceStoreAskTests {
 
         store.applyServerMessageForTesting(.extensionUIRequest(request), target: target)
 
+        #expect(store.currentAskRequest == request.askRequest)
         #expect(store.currentAskRequest?.id == "ask-1")
         #expect(store.currentAskRequest?.questions.first?.question == "Choose?")
         #expect(store.currentAskRequest?.allowCustom == false)
@@ -56,9 +57,34 @@ struct MacSessionTraceStoreAskTests {
 
         store.applyServerMessageForTesting(.extensionUIRequest(request), target: target)
 
+        #expect(store.currentAskRequest == request.askRequest)
         #expect(store.currentAskRequest?.responseEncoding == .extensionSelect)
-        #expect(store.currentAskRequest?.questions.first?.id == MacAskResponseEncoder.inlineQuestionId)
+        #expect(store.currentAskRequest?.questions.first?.id == ExtensionUIRequest.inlineQuestionId)
         #expect(store.currentAskRequest?.questions.first?.options.map(\.value) == ["fast", "careful"])
+    }
+
+    @Test func postsAttentionBannerWhenFocusedSessionAskArrivesWhileNotKey() {
+        let service = MacAttentionNotificationService.shared
+        service.resetForTesting()
+        service._isAppActiveForTesting = false
+        service.activeSessionId = "session-1"
+
+        let store = MacSessionTraceStore()
+        let target = makeTarget()
+        store.select(target)
+
+        let request = ExtensionUIRequest(
+            id: "ask-bg",
+            sessionId: target.sessionId,
+            method: "ask",
+            askQuestions: [
+                AskQuestion(id: "q", question: "Still there?", options: [], multiSelect: false),
+            ]
+        )
+        store.applyServerMessageForTesting(.extensionUIRequest(request), target: target)
+
+        #expect(service._lastScheduledPayloadForTesting?.identifier == "ask-session-1")
+        #expect(service._lastScheduledPayloadForTesting?.body == "Still there?")
     }
 
     @Test func ignoresAskRequestsForOtherSessions() {

@@ -1,37 +1,5 @@
 import SwiftUI
 
-struct ContextUsageSnapshot: Sendable, Equatable {
-    let tokens: Int?
-    let window: Int?
-
-    var progress: Double? {
-        guard let tokens, let window, window > 0 else { return nil }
-        return min(max(Double(tokens) / Double(window), 0), 1)
-    }
-
-    var percentText: String {
-        guard let progress else { return "Unknown" }
-        return String(format: "%.1f%%", progress * 100)
-    }
-
-    var usageText: String {
-        guard let window, window > 0 else { return "Unknown" }
-        guard let tokens else { return "— / \(SessionFormatting.tokenCount(window))" }
-        return "\(SessionFormatting.tokenCount(tokens)) / \(SessionFormatting.tokenCount(window))"
-    }
-
-    var accessibilityLabel: String {
-        guard let window, window > 0 else {
-            return "Context usage unavailable"
-        }
-        guard let tokens else {
-            return "Context usage unknown out of \(window) tokens"
-        }
-        let percent = Int(((Double(tokens) / Double(window)) * 100).rounded())
-        return "Context usage \(percent) percent, \(tokens) of \(window) tokens"
-    }
-}
-
 struct ContextUsageRingBadge: View {
     let usage: ContextUsageSnapshot
 

@@ -11,6 +11,7 @@ struct WorkspaceShellList: View {
     @Binding var selectedWorkspaceID: String?
     let refresh: () async -> Void
     let createWorkspace: (MacWorkspaceCreationDraft) async -> Workspace?
+    let beginCreateControlSession: () async -> Void
 
     @State private var isPresentingCreateWorkspace = false
     @State private var createDraft = MacWorkspaceCreationDraft()
@@ -43,6 +44,16 @@ struct WorkspaceShellList: View {
                 } label: {
                     Label("Create Workspace", systemImage: "plus")
                 }
+                .disabled(isCreatingWorkspace)
+            }
+            ToolbarItem {
+                Button {
+                    Task { await beginCreateControlSession() }
+                } label: {
+                    Label("Ask Oppi", systemImage: "text.bubble")
+                }
+                .help("Create with Oppi")
+                .accessibilityIdentifier("mac.workspace.askOppi")
                 .disabled(isCreatingWorkspace)
             }
             ToolbarItem {
@@ -199,9 +210,10 @@ struct WorkspaceShellDetail: View {
     let sessionActionError: (String) -> String?
     let isStoppingSession: (String) -> Bool
     let isDeletingSession: (String) -> Bool
-    let refreshSessions: () async -> Void
-    let createSession: (String) async -> Void
+    let refreshSessions: (String) async -> Void
+    let createSession: (String, String) async -> Void
     let updateWorkspace: (MacWorkspaceCreationDraft) async -> Workspace?
+    let beginReviseControlSession: () async -> Void
     let deleteWorkspace: () async -> Void
     let stopSession: (SessionSummary) async -> Void
     let deleteSession: (SessionSummary) async -> Void
@@ -212,182 +224,41 @@ struct WorkspaceShellDetail: View {
     @State private var editDraft = MacWorkspaceCreationDraft()
     @State private var isConfirmingWorkspaceDeletion = false
     @State private var sessionPendingDeletion: SessionSummary?
+    @State private var openPlan: FileViewerPlan?
+    @State private var openDescriptor: ToolContentDescriptor?
+    @State private var isLoadingDocument = false
+    @State private var documentError: String?
+    @State private var isImportingLocal = false
+    @State private var importLocalError: String?
+    @State private var importedLocalPaths: Set<String> = []
+    @State private var worktrees: [WorkspaceWorktree] = []
+    @State private var selectedWorktreeId = WorkspaceWorktree.mainId
+    @State private var isLoadingWorktrees = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 12) {
-                Label(workspace.name, systemImage: workspace.iconSymbolName)
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                Spacer()
-                Button {
-                    editDraft = MacWorkspaceCreationDraft(workspace: workspace)
-                    isPresentingEditWorkspace = true
-                } label: {
-                    Label("Edit Workspace", systemImage: "pencil")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isSavingWorkspace || isDeletingWorkspace)
-                Button(role: .destructive) {
-                    isConfirmingWorkspaceDeletion = true
-                } label: {
-                    if isDeletingWorkspace {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Delete Workspace", systemImage: "trash")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isDeletingWorkspace)
-            }
+        HSplitView {
+            workspaceDetail
+                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
 
-            VStack(alignment: .leading, spacing: 4) {
-                if let hostMount = workspace.hostMount, !hostMount.isEmpty {
-                    Text(hostMount)
-                }
-            }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-
-            Divider()
-
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
-                if let summary {
-                    GridRow {
-                        Text("Active")
-                            .foregroundStyle(.secondary)
-                        Text(String(summary.activeCount))
-                    }
-                    GridRow {
-                        Text("Stopped")
-                            .foregroundStyle(.secondary)
-                        Text(String(summary.stoppedCount))
-                    }
-                    GridRow {
-                        Text("Attention")
-                            .foregroundStyle(.secondary)
-                        Text(summary.hasAttention ? "Yes" : "No")
-                    }
-                    if let latestActivity = summary.latestActivity {
-                        GridRow {
-                            Text("Latest")
-                                .foregroundStyle(.secondary)
-                            Text(latestActivity.relativeString())
-                        }
-                    }
-                } else {
-                    GridRow {
-                        Text("Summary")
-                            .foregroundStyle(.secondary)
-                        Text("Not returned yet")
-                    }
-                }
-            }
-            .font(.callout)
-
-            if let workspaceActionError {
-                Label(workspaceActionError, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-
-            MacWorkspaceFileBrowserView(workspace: workspace)
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Start a local session")
-                    .font(.headline)
-                HStack(alignment: .bottom, spacing: 8) {
-                    TextField("Ask Oppi to work in this workspace", text: $newSessionPrompt, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(1...4)
-                    Button {
-                        let prompt = newSessionPrompt
-                        newSessionPrompt = ""
-                        Task { await createSession(prompt) }
-                    } label: {
-                        if isCreatingSession {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text("Start")
-                        }
-                    }
-                    .disabled(isCreatingSession || newSessionPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                if let createSessionError {
-                    Label(createSessionError, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            }
-
-            Divider()
-
-            HStack {
-                Text("Recent sessions")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    Task { await refreshSessions() }
-                } label: {
-                    Label("Refresh Sessions", systemImage: "arrow.clockwise")
-                }
-                .disabled(isLoadingSessions)
-            }
-
-            if isLoadingSessions {
-                ProgressView("Loading sessions...")
-            } else if let sessionError {
-                ContentUnavailableView(
-                    "Could not load sessions",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(sessionError)
+            if let plan = openPlan {
+                MacToolDocumentColumn(
+                    plan: plan,
+                    descriptor: openDescriptor,
+                    isLoading: isLoadingDocument,
+                    error: documentError,
+                    close: closeDocument
                 )
-            } else if let sessions, !sessions.allSummaries.isEmpty {
-                List {
-                    Section("Active") {
-                        ForEach(sessions.active, id: \.id) { session in
-                            WorkspaceSessionActionRow(
-                                summary: session,
-                                actionError: sessionActionError(session.id),
-                                isStopping: isStoppingSession(session.id),
-                                isDeleting: isDeletingSession(session.id),
-                                selectSession: { selectSession(session) },
-                                stopSession: { await stopSession(session) },
-                                requestDelete: { sessionPendingDeletion = session }
-                            )
-                        }
-                    }
-                    Section("Stopped") {
-                        ForEach(sessions.stopped, id: \.id) { session in
-                            WorkspaceSessionActionRow(
-                                summary: session,
-                                actionError: sessionActionError(session.id),
-                                isStopping: isStoppingSession(session.id),
-                                isDeleting: isDeletingSession(session.id),
-                                selectSession: { selectSession(session) },
-                                stopSession: { await stopSession(session) },
-                                requestDelete: { sessionPendingDeletion = session }
-                            )
-                        }
-                    }
-                }
-                .listStyle(.inset)
-            } else {
-                ContentUnavailableView(
-                    "No recent sessions",
-                    systemImage: "list.bullet.rectangle",
-                    description: Text("Recent local workspace sessions appear here after the server returns activity for this workspace.")
+                .frame(
+                    minWidth: MacToolDocumentColumnMetrics.minWidth,
+                    idealWidth: MacToolDocumentColumnMetrics.idealWidth,
+                    maxWidth: .infinity,
+                    maxHeight: .infinity
                 )
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .environment(\.macOpenFileViewer, MacOpenFileViewerAction { plan in
+            openPlan = plan
+        })
         .sheet(isPresented: $isPresentingEditWorkspace) {
             MacWorkspaceCreateSheet(
                 title: "Edit Workspace",
@@ -439,16 +310,528 @@ struct WorkspaceShellDetail: View {
         } message: { session in
             Text("Delete \"\(session.session.displayTitle)\" from local session history and generated attachments.")
         }
+        .onChange(of: workspace.id) { _, _ in
+            closeDocument()
+            importedLocalPaths = []
+            importLocalError = nil
+            worktrees = []
+            selectedWorktreeId = WorkspaceWorktree.mainId
+        }
+        .onChange(of: selectedWorktreeId) { _, newId in
+            reopenDocumentForSelectedWorktree(newId)
+        }
         .task(id: workspace.id) {
-            if sessions == nil {
-                await refreshSessions()
+            await loadWorktrees()
+        }
+        .task(id: MacWorkspaceWorktreePresentation.sessionScope(
+            workspaceId: workspace.id,
+            selectedWorktreeId: selectedWorktreeId
+        )) {
+            await refreshSessions(selectedWorktreeId)
+        }
+        .task(id: openPlan) {
+            await loadOpenedDocument()
+        }
+    }
+
+    private var workspaceDetail: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 12) {
+                Label(workspace.name, systemImage: workspace.iconSymbolName)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Spacer()
+                Button {
+                    editDraft = MacWorkspaceCreationDraft(workspace: workspace)
+                    isPresentingEditWorkspace = true
+                } label: {
+                    Label("Edit Workspace", systemImage: "pencil")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isSavingWorkspace || isDeletingWorkspace)
+                Button {
+                    Task { await beginReviseControlSession() }
+                } label: {
+                    Label("Edit with Oppi", systemImage: "text.bubble")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Revise this Workspace with Oppi")
+                .accessibilityIdentifier("mac.workspace.editWithOppi")
+                .disabled(isSavingWorkspace || isDeletingWorkspace)
+                Button(role: .destructive) {
+                    isConfirmingWorkspaceDeletion = true
+                } label: {
+                    if isDeletingWorkspace {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("Delete Workspace", systemImage: "trash")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isDeletingWorkspace)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                if let hostMount = workspace.hostMount, !hostMount.isEmpty {
+                    Text(hostMount)
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+
+            worktreeSwitcher
+
+            Divider()
+
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                if let summary {
+                    GridRow {
+                        Text("Active")
+                            .foregroundStyle(.secondary)
+                        Text(String(summary.activeCount))
+                    }
+                    GridRow {
+                        Text("Stopped")
+                            .foregroundStyle(.secondary)
+                        Text(String(summary.stoppedCount))
+                    }
+                    GridRow {
+                        Text("Attention")
+                            .foregroundStyle(.secondary)
+                        Text(summary.hasAttention ? "Yes" : "No")
+                    }
+                    if let latestActivity = summary.latestActivity {
+                        GridRow {
+                            Text("Latest")
+                                .foregroundStyle(.secondary)
+                            Text(latestActivity.relativeString())
+                        }
+                    }
+                } else {
+                    GridRow {
+                        Text("Summary")
+                            .foregroundStyle(.secondary)
+                        Text("Not returned yet")
+                    }
+                }
+            }
+            .font(.callout)
+
+            if let workspaceActionError {
+                Label(workspaceActionError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            MacWorkspaceFileBrowserView(
+                workspace: workspace,
+                worktreeId: selectedWorktreeId,
+                openPlan: $openPlan
+            )
+
+            MacWorkspaceGitStatusView(
+                workspace: workspace,
+                worktreeId: selectedWorktreeId,
+                openPlan: $openPlan,
+                openDescriptor: $openDescriptor,
+                isLoadingDocument: $isLoadingDocument,
+                documentError: $documentError
+            )
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Start a local session")
+                    .font(.headline)
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField("Ask Oppi to work in this workspace", text: $newSessionPrompt, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...4)
+                    Button {
+                        let prompt = newSessionPrompt
+                        newSessionPrompt = ""
+                        Task { await createSession(prompt, selectedWorktreeId) }
+                    } label: {
+                        if isCreatingSession {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text("Start")
+                        }
+                    }
+                    .disabled(isCreatingSession || newSessionPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if let createSessionError {
+                    Label(createSessionError, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Text("Recent sessions")
+                    .font(.headline)
+                if isImportingLocal {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Spacer()
+                Button {
+                    Task { await refreshSessions(selectedWorktreeId) }
+                } label: {
+                    Label("Refresh Sessions", systemImage: "arrow.clockwise")
+                }
+                .disabled(isLoadingSessions || isImportingLocal)
+            }
+
+            if let importLocalError {
+                Label(importLocalError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if isLoadingSessions {
+                ProgressView("Loading sessions...")
+            } else if let sessionError {
+                ContentUnavailableView(
+                    "Could not load sessions",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(sessionError)
+                )
+            } else if sessions != nil, showsSessionList {
+                List {
+                    if !filteredActiveSessions.isEmpty {
+                        Section("Active") {
+                            ForEach(filteredActiveSessions, id: \.id) { session in
+                                WorkspaceSessionActionRow(
+                                    summary: session,
+                                    actionError: sessionActionError(session.id),
+                                    isStopping: isStoppingSession(session.id),
+                                    isDeleting: isDeletingSession(session.id),
+                                    selectSession: { selectSession(session) },
+                                    stopSession: { await stopSession(session) },
+                                    requestDelete: { sessionPendingDeletion = session }
+                                )
+                            }
+                        }
+                    }
+                    if !filteredStoppedSessions.isEmpty || !visibleImportableSessions.isEmpty {
+                        Section("Stopped") {
+                            ForEach(filteredStoppedSessions, id: \.id) { session in
+                                WorkspaceSessionActionRow(
+                                    summary: session,
+                                    actionError: sessionActionError(session.id),
+                                    isStopping: isStoppingSession(session.id),
+                                    isDeleting: isDeletingSession(session.id),
+                                    selectSession: { selectSession(session) },
+                                    stopSession: { await stopSession(session) },
+                                    requestDelete: { sessionPendingDeletion = session }
+                                )
+                            }
+                            ForEach(visibleImportableSessions) { local in
+                                Button {
+                                    Task { await importLocal(local) }
+                                } label: {
+                                    MacLocalSessionRow(session: local)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isImportingLocal)
+                                .accessibilityIdentifier(
+                                    MacWorkspaceLocalSessionPresentation.accessibilityIdentifier(for: local)
+                                )
+                                .contextMenu {
+                                    Button("Import") {
+                                        Task { await importLocal(local) }
+                                    }
+                                    .disabled(isImportingLocal)
+                                }
+                            }
+                        }
+                    }
+                }
+                .listStyle(.inset)
+            } else {
+                ContentUnavailableView(
+                    "No recent sessions",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text("Recent local workspace sessions and importable Pi TUI sessions appear here after the server returns activity for this workspace.")
+                )
             }
         }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var visibleWorktrees: [WorkspaceWorktree] {
+        MacWorkspaceWorktreePresentation.visibleWorktrees(
+            fetched: worktrees,
+            hostMount: workspace.hostMount
+        )
+    }
+
+    private var selectedWorktreeDisplayName: String {
+        visibleWorktrees.first { $0.id == selectedWorktreeId }?.displayName ?? "Main"
+    }
+
+    private var canSwitchWorktrees: Bool {
+        MacWorkspaceWorktreePresentation.canSwitch(
+            visibleWorktrees: visibleWorktrees,
+            isLoading: isLoadingWorktrees
+        )
+    }
+
+    private var filteredActiveSessions: [SessionSummary] {
+        MacWorkspaceWorktreePresentation.filterSessions(
+            sessions?.active ?? [],
+            selectedId: selectedWorktreeId
+        )
+    }
+
+    private var filteredStoppedSessions: [SessionSummary] {
+        MacWorkspaceWorktreePresentation.filterSessions(
+            sessions?.stopped ?? [],
+            selectedId: selectedWorktreeId
+        )
+    }
+
+    private var visibleImportableSessions: [LocalSession] {
+        (sessions?.importableSessions ?? []).filter { !importedLocalPaths.contains($0.path) }
+    }
+
+    private var showsSessionList: Bool {
+        guard sessions != nil else { return false }
+        return !filteredActiveSessions.isEmpty
+            || !filteredStoppedSessions.isEmpty
+            || !visibleImportableSessions.isEmpty
+    }
+
+    @ViewBuilder
+    private var worktreeSwitcher: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text("Worktree")
+                .foregroundStyle(.secondary)
+            if canSwitchWorktrees {
+                Picker("Worktree", selection: $selectedWorktreeId) {
+                    ForEach(visibleWorktrees) { worktree in
+                        Text(MacWorkspaceWorktreePresentation.menuTitle(for: worktree))
+                            .tag(worktree.id)
+                            .accessibilityLabel(WorkspaceWorktreeMenuFormatting.accessibilityLabel(for: worktree))
+                            .accessibilityIdentifier("workspace.worktree.\(worktree.id)")
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                .accessibilityLabel("Switch worktree, current worktree \(selectedWorktreeDisplayName)")
+                .accessibilityIdentifier("workspace.worktree.menu")
+            } else {
+                Text(selectedWorktreeDisplayName)
+                    .accessibilityLabel("Current worktree \(selectedWorktreeDisplayName)")
+                    .accessibilityIdentifier("workspace.worktree.title")
+                if isLoadingWorktrees {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+            }
+            Spacer()
+        }
+        .font(.callout)
+    }
+
+    private func closeDocument() {
+        openPlan = nil
+        openDescriptor = nil
+        documentError = nil
+        isLoadingDocument = false
+    }
+
+    private func reopenDocumentForSelectedWorktree(_ worktreeId: String) {
+        guard let plan = openPlan else { return }
+        guard case .workspaceFile(let workspaceID, let path) = plan.source,
+              workspaceID == workspace.id else { return }
+        let updated = FileViewerPlan.workspaceFile(
+            workspaceID: workspaceID,
+            path: path,
+            worktreeId: worktreeId
+        )
+        if updated != plan {
+            openPlan = updated
+        }
+    }
+
+    private func loadWorktrees() async {
+        guard let client = MacWorkspaceClient.localOwner() else { return }
+        isLoadingWorktrees = worktrees.isEmpty
+        defer { isLoadingWorktrees = false }
+
+        do {
+            let fetched = try await client.listWorkspaceWorktrees(workspaceId: workspace.id)
+            worktrees = fetched
+            selectedWorktreeId = MacWorkspaceWorktreePresentation.resolvedSelectedId(
+                selectedWorktreeId,
+                in: fetched
+            )
+        } catch {
+            // Worktree discovery is best-effort for older servers. Keep the main checkout visible.
+            if worktrees.isEmpty {
+                worktrees = MacWorkspaceWorktreePresentation.visibleWorktrees(
+                    fetched: [],
+                    hostMount: workspace.hostMount
+                )
+            }
+        }
+    }
+
+    private func importLocal(_ local: LocalSession) async {
+        guard !isImportingLocal else { return }
+        isImportingLocal = true
+        importLocalError = nil
+        defer { isImportingLocal = false }
+
+        guard let client = MacWorkspaceClient.localOwner() else {
+            importLocalError = "Local server config is not initialized yet."
+            return
+        }
+
+        do {
+            let response = try await client.createWorkspaceSessionFromLocal(
+                workspaceId: workspace.id,
+                piSessionFile: local.path,
+                worktreeId: selectedWorktreeId
+            )
+            importedLocalPaths.insert(local.path)
+            await refreshSessions(selectedWorktreeId)
+            selectSession(SessionSummary(from: response.session))
+        } catch {
+            importLocalError = "Import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func loadOpenedDocument() async {
+        guard let plan = openPlan else {
+            openDescriptor = nil
+            documentError = nil
+            isLoadingDocument = false
+            return
+        }
+        guard plan.loadsFileBytes else { return }
+        openDescriptor = nil
+        documentError = nil
+        isLoadingDocument = true
+        if !FileViewerDescriptorBuilder.needsFileBytes(path: plan.path) {
+            guard openPlan == plan, !Task.isCancelled else { return }
+            isLoadingDocument = false
+            openDescriptor = FileViewerDescriptorBuilder.descriptor(path: plan.path, data: Data())
+            documentError = nil
+            return
+        }
+        let data = await MacMarkdownWorkspaceFileLoader.data(
+            for: plan,
+            sessionID: nil
+        )
+        guard openPlan == plan, !Task.isCancelled else { return }
+        isLoadingDocument = false
+        guard let data else {
+            documentError = "Could not load \(plan.fileName)."
+            openDescriptor = nil
+            return
+        }
+        openDescriptor = FileViewerDescriptorBuilder.descriptor(path: plan.path, data: data)
+        documentError = nil
+    }
+}
+
+/// Workspace-list chrome for importable local pi TUI sessions.
+enum MacWorkspaceLocalSessionPresentation {
+    static let badgeTitle = "Terminal"
+
+    static func accessibilityIdentifier(for session: LocalSession) -> String {
+        "localSession.nav.\(session.piSessionId)"
+    }
+
+    static func messageCountLabel(for session: LocalSession) -> String? {
+        session.messageCount > 0 ? "\(session.messageCount) msgs" : nil
+    }
+
+    static func showsList(_ list: MacWorkspaceClient.WorkspaceSessionList) -> Bool {
+        list.hasVisibleSessions
+    }
+}
+
+struct MacLocalSessionRow: View {
+    let session: LocalSession
+
+    private var modelSummary: SessionModelSummary? {
+        SessionModelSummaryBuilder.summaries(primaryModel: session.model).first
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.themeFgDim)
+                .frame(width: 20, height: 20)
+                .frame(width: 24, height: 24)
+                .padding(.top, 1)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(session.displayTitle)
+                        .font(.body)
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+
+                    Spacer(minLength: 4)
+
+                    Text(session.lastModified.relativeString())
+                        .font(.caption2)
+                        .foregroundStyle(.themeComment)
+                        .fixedSize()
+                }
+
+                HStack(spacing: 6) {
+                    Text(MacWorkspaceLocalSessionPresentation.badgeTitle)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.themeComment)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(.themeComment.opacity(0.15))
+                        )
+
+                    if let modelSummary {
+                        if !modelSummary.provider.isEmpty {
+                            ProviderGlyph(provider: modelSummary.provider, size: 11, color: .themeFgDim)
+                        }
+                        Text(modelSummary.label)
+                            .truncationMode(.middle)
+                    }
+
+                    if let countLabel = MacWorkspaceLocalSessionPresentation.messageCountLabel(for: session) {
+                        Text(countLabel)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.themeFgDim)
+                .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
 struct WorkspaceSessionActionRow: View {
     let summary: SessionSummary
+    var includeWorkspaceContext: Bool = false
     let actionError: String?
     let isStopping: Bool
     let isDeleting: Bool
@@ -457,51 +840,21 @@ struct WorkspaceSessionActionRow: View {
     let requestDelete: () -> Void
 
     var body: some View {
+        // Stop/Delete are context-menu only. Inline flags stay off in
+        // `MacSessionInboxRowChrome` so the home and workspace lists match iPad.
+        let chrome = MacSessionInboxRowChrome.make(status: summary.status)
+        let presentation = MacSessionInboxPresentation.rowPresentation(
+            for: summary,
+            includeWorkspaceContext: includeWorkspaceContext
+        )
+
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center, spacing: 8) {
-                Button {
-                    selectSession()
-                } label: {
-                    WorkspaceSessionSummaryRow(summary: summary)
-                }
-                .buttonStyle(.plain)
-
-                Spacer(minLength: 8)
-
-                if MacSessionActionPolicy.canStop(summary.status) {
-                    Button {
-                        Task { await stopSession() }
-                    } label: {
-                        if isStopping {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("Stop", systemImage: "stop.circle")
-                                .labelStyle(.iconOnly)
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(isStopping || isDeleting)
-                    .help("Stop session")
-                }
-
-                if MacSessionActionPolicy.canDelete(summary.status) {
-                    Button(role: .destructive) {
-                        requestDelete()
-                    } label: {
-                        if isDeleting {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("Delete", systemImage: "trash")
-                                .labelStyle(.iconOnly)
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(isDeleting || isStopping)
-                    .help("Delete session")
-                }
+            Button {
+                selectSession()
+            } label: {
+                WorkspaceSessionSummaryRow(presentation: presentation)
             }
+            .buttonStyle(.plain)
 
             if let actionError {
                 Text(actionError)
@@ -511,39 +864,15 @@ struct WorkspaceSessionActionRow: View {
         }
         .contextMenu {
             Button("Open") { selectSession() }
-            if MacSessionActionPolicy.canStop(summary.status) {
+            if chrome.showsContextMenuStop {
                 Button("Stop Session") { Task { await stopSession() } }
                     .disabled(isStopping || isDeleting)
             }
-            if MacSessionActionPolicy.canDelete(summary.status) {
+            if chrome.showsContextMenuDelete {
                 Button("Delete Session", role: .destructive) { requestDelete() }
                     .disabled(isDeleting || isStopping)
             }
         }
-    }
-}
-
-struct WorkspaceSessionSummaryRow: View {
-    let summary: SessionSummary
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(summary.session.displayTitle)
-                .font(.headline)
-            HStack(spacing: 8) {
-                Text(summary.status.rawValue.capitalized)
-                if let model = summary.model {
-                    Text(model.split(separator: "/").last.map(String.init) ?? model)
-                }
-                Text(summary.lastActivity.relativeString())
-                if summary.pendingAskCount > 0 {
-                    Label("\(summary.pendingAskCount)", systemImage: "questionmark.circle")
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 3)
     }
 }
 

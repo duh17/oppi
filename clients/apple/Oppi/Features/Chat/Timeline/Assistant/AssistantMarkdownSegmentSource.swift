@@ -13,34 +13,19 @@ final class AssistantMarkdownSegmentSource {
         let worktreeId: String?
     }
 
-    /// Cached state for tail-only re-parsing during streaming.
-    private struct StreamingParseState {
-        /// UTF-8 byte length of the finalized prefix (content before last block).
-        var prefixUTF8ByteCount: Int
-        /// FNV-1a 64-bit hash of the prefix content — used to detect prefix changes.
-        var prefixContentHash: UInt64
-        /// Parsed `MarkdownBlock` nodes for the finalized prefix region.
+    /// UIKit-specific paint cache layered over the shared block parser.
+    private struct StreamingSegmentState {
         var prefixBlocks: [MarkdownBlock]
-        /// Pre-built `FlatSegment` array for the finalized prefix.
         var prefixSegments: [FlatSegment]
-        /// Rendering context used to build `prefixSegments`.
         var buildContext: SegmentBuildContext
-        /// Total content UTF-8 byte count when this state was last updated.
-        /// Used to skip FNV-1a hash when content only grew (streaming appends).
-        var lastContentUTF8ByteCount: Int
     }
 
-    private struct ReferenceDefinitionScanState {
-        var contentUTF8ByteCount: Int
-        var hasPotentialDefinition: Bool
-    }
-
-    private var streamingState: StreamingParseState?
-    private var referenceDefinitionScanState: ReferenceDefinitionScanState?
+    private var streamingParser = CommonMarkStreamingParser()
+    private var streamingSegmentState: StreamingSegmentState?
 
     func reset() {
-        streamingState = nil
-        referenceDefinitionScanState = nil
+        streamingParser.reset()
+        streamingSegmentState = nil
     }
 
     func buildSegments(
@@ -171,232 +156,66 @@ final class AssistantMarkdownSegmentSource {
     private func buildSegmentsIncremental(
         _ config: AssistantMarkdownContentView.Configuration
     ) -> [FlatSegment] {
-        let content = config.content
-        let themeID = config.themeID
-        let serverID = config.serverID
-        let workspaceID = config.workspaceID
-        let sessionID = config.sessionID
-        let serverBaseURL = config.serverBaseURL
-        let sourceDirectory = config.sourceDirectory
-        let worktreeId = config.worktreeId
         let buildContext = SegmentBuildContext(
-            themeID: themeID,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            sessionID: sessionID,
-            serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory,
-            worktreeId: worktreeId
+            themeID: config.themeID,
+            serverID: config.serverID,
+            workspaceID: config.workspaceID,
+            sessionID: config.sessionID,
+            serverBaseURL: config.serverBaseURL,
+            sourceDirectory: config.sourceDirectory,
+            worktreeId: config.worktreeId
         )
-        let contentUTF8 = content.utf8
-        // Reference definitions can retroactively resolve links in already-finalized
-        // blocks. Keep the canonical full-document path while one is present.
-        let requiresCanonicalFullParse = containsPotentialLinkReferenceDefinition(content)
-            || containsPotentialDisplayMath(content)
+        let parseStart = MarkdownStreamingPerf.timestampNs()
+        let parsed = streamingParser.parse(config.content)
+        let parseEnd = MarkdownStreamingPerf.timestampNs()
 
-        if !requiresCanonicalFullParse,
-           let state = streamingState,
-           state.prefixUTF8ByteCount > 0,
-           state.prefixUTF8ByteCount < contentUTF8.count {
-            // Fast path: skip FNV-1a hash when content only grew (streaming appends).
-            // The prefix bytes are unchanged since streaming only adds to the tail.
-            // Fall back to hash verification if content shrank or was replaced.
-            let contentByteCount = contentUTF8.count
-            let prefixValid: Bool
-            if contentByteCount >= state.lastContentUTF8ByteCount {
-                prefixValid = true
-            } else {
-                prefixValid = fnv1a64(bytes: contentUTF8, count: state.prefixUTF8ByteCount) == state.prefixContentHash
-            }
-
-            if prefixValid {
-                let boundaryIdx = contentUTF8.index(
-                    contentUTF8.startIndex,
-                    offsetBy: state.prefixUTF8ByteCount
-                )
-                let tailContent = String(content[boundaryIdx...])
-                let tailLineCount = Self.countNewlines(tailContent) + 1
-
-                let parseStart = MarkdownStreamingPerf.timestampNs()
-                let (tailBlocks, tailLastBlockLine) = tailContent.isEmpty
-                    ? ([], 1)
-                    : parseCommonMarkWithLastLine(tailContent)
-                let parseEnd = MarkdownStreamingPerf.timestampNs()
-
-                let prefixSegments: [FlatSegment]
-                if state.buildContext == buildContext {
-                    prefixSegments = state.prefixSegments
-                } else {
-                    prefixSegments = FlatSegment.build(
-                        from: state.prefixBlocks,
-                        themeID: themeID,
-                        serverID: serverID,
-                        workspaceID: workspaceID,
-                        sessionID: sessionID,
-                        serverBaseURL: serverBaseURL,
-                        sourceDirectory: sourceDirectory,
-                        worktreeId: worktreeId
-                    )
-                }
-
-                let tailSegments = FlatSegment.build(
-                    from: tailBlocks,
-                    themeID: themeID,
-                    serverID: serverID,
-                    workspaceID: workspaceID,
-                    sessionID: sessionID,
-                    serverBaseURL: serverBaseURL,
-                    sourceDirectory: sourceDirectory,
-                    worktreeId: worktreeId
-                )
-                let buildEnd = MarkdownStreamingPerf.timestampNs()
-                let segments = mergeSegments(prefix: prefixSegments, tail: tailSegments)
-
-                MarkdownStreamingPerf.record(
-                    parseDurationNs: parseEnd - parseStart,
-                    buildDurationNs: buildEnd - parseEnd,
-                    lineCount: tailLineCount,
-                    isTailOnly: true,
-                    isStreaming: true
-                )
-
-                if tailBlocks.count >= 2, tailLastBlockLine > 1 {
-                    let tailPrefixByteCount = utf8ByteOffset(forLine: tailLastBlockLine, in: tailContent)
-                    let newPrefixByteCount = state.prefixUTF8ByteCount + tailPrefixByteCount
-
-                    if newPrefixByteCount < contentUTF8.count {
-                        let tailFinalizedBlocks = Array(tailBlocks.dropLast())
-                        let tailFinalizedSegments = FlatSegment.build(
-                            from: tailFinalizedBlocks,
-                            themeID: themeID,
-                            serverID: serverID,
-                            workspaceID: workspaceID,
-                            sessionID: sessionID,
-                            serverBaseURL: serverBaseURL,
-                            sourceDirectory: sourceDirectory,
-                            worktreeId: worktreeId
-                        )
-                        let newPrefixSegments = mergeSegments(
-                            prefix: prefixSegments,
-                            tail: tailFinalizedSegments
-                        )
-
-                        streamingState = StreamingParseState(
-                            prefixUTF8ByteCount: newPrefixByteCount,
-                            prefixContentHash: fnv1a64(bytes: contentUTF8, count: newPrefixByteCount),
-                            prefixBlocks: Array((state.prefixBlocks + tailBlocks).dropLast()),
-                            prefixSegments: newPrefixSegments,
-                            buildContext: buildContext,
-                            lastContentUTF8ByteCount: contentByteCount
-                        )
-                    } else {
-                        streamingState = nil
-                    }
-                } else if state.buildContext != buildContext {
-                    streamingState = StreamingParseState(
-                        prefixUTF8ByteCount: state.prefixUTF8ByteCount,
-                        prefixContentHash: state.prefixContentHash,
-                        prefixBlocks: state.prefixBlocks,
-                        prefixSegments: prefixSegments,
-                        buildContext: buildContext,
-                        lastContentUTF8ByteCount: contentByteCount
-                    )
-                }
-
-                return segments
-            }
+        let prefixSegments: [FlatSegment]
+        if let cached = streamingSegmentState,
+           cached.prefixBlocks == parsed.prefixBlocks,
+           cached.buildContext == buildContext {
+            prefixSegments = cached.prefixSegments
+        } else {
+            prefixSegments = FlatSegment.build(
+                from: parsed.prefixBlocks,
+                themeID: config.themeID,
+                serverID: config.serverID,
+                workspaceID: config.workspaceID,
+                sessionID: config.sessionID,
+                serverBaseURL: config.serverBaseURL,
+                sourceDirectory: config.sourceDirectory,
+                worktreeId: config.worktreeId
+            )
         }
 
-        let parseStart = MarkdownStreamingPerf.timestampNs()
-        let (allBlocks, lastBlockLine) = parseCommonMarkWithLastLine(content)
-        let parseEnd = MarkdownStreamingPerf.timestampNs()
-        let segments = FlatSegment.build(
-            from: allBlocks,
-            themeID: themeID,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            sessionID: sessionID,
-            serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory,
-            worktreeId: worktreeId
+        let tailSegments = FlatSegment.build(
+            from: parsed.tailBlocks,
+            themeID: config.themeID,
+            serverID: config.serverID,
+            workspaceID: config.workspaceID,
+            sessionID: config.sessionID,
+            serverBaseURL: config.serverBaseURL,
+            sourceDirectory: config.sourceDirectory,
+            worktreeId: config.worktreeId
         )
         let buildEnd = MarkdownStreamingPerf.timestampNs()
+
+        streamingSegmentState = parsed.prefixBlocks.isEmpty
+            ? nil
+            : StreamingSegmentState(
+                prefixBlocks: parsed.prefixBlocks,
+                prefixSegments: prefixSegments,
+                buildContext: buildContext
+            )
 
         MarkdownStreamingPerf.record(
             parseDurationNs: parseEnd - parseStart,
             buildDurationNs: buildEnd - parseEnd,
-            lineCount: Self.countNewlines(content) + 1,
-            isTailOnly: false,
+            lineCount: Self.countNewlines(config.content) + 1,
+            isTailOnly: parsed.strategy == .tailOnly,
             isStreaming: true
         )
 
-        if requiresCanonicalFullParse {
-            streamingState = nil
-        } else {
-            storeStreamingState(
-                content: content,
-                contentUTF8: contentUTF8,
-                allBlocks: allBlocks,
-                lastBlockLine: lastBlockLine,
-                themeID: themeID,
-                serverID: serverID,
-                workspaceID: workspaceID,
-                sessionID: sessionID,
-                serverBaseURL: serverBaseURL,
-                sourceDirectory: sourceDirectory,
-                worktreeId: worktreeId,
-                buildContext: buildContext
-            )
-        }
-
-        return segments
-    }
-
-    private func storeStreamingState(
-        content: String,
-        contentUTF8: String.UTF8View,
-        allBlocks: [MarkdownBlock],
-        lastBlockLine: Int,
-        themeID: ThemeID,
-        serverID: String?,
-        workspaceID: String?,
-        sessionID: String?,
-        serverBaseURL: URL?,
-        sourceDirectory: String?,
-        worktreeId: String?,
-        buildContext: SegmentBuildContext
-    ) {
-        guard allBlocks.count >= 2, lastBlockLine > 1 else {
-            streamingState = nil
-            return
-        }
-
-        let byteOffset = utf8ByteOffset(forLine: lastBlockLine, in: content)
-        guard byteOffset > 0, byteOffset < contentUTF8.count else {
-            streamingState = nil
-            return
-        }
-
-        let prefixBlocks = Array(allBlocks.dropLast())
-        let prefixSegments = FlatSegment.build(
-            from: prefixBlocks,
-            themeID: themeID,
-            serverID: serverID,
-            workspaceID: workspaceID,
-            sessionID: sessionID,
-            serverBaseURL: serverBaseURL,
-            sourceDirectory: sourceDirectory,
-            worktreeId: worktreeId
-        )
-
-        streamingState = StreamingParseState(
-            prefixUTF8ByteCount: byteOffset,
-            prefixContentHash: fnv1a64(bytes: contentUTF8, count: byteOffset),
-            prefixBlocks: prefixBlocks,
-            prefixSegments: prefixSegments,
-            buildContext: buildContext,
-            lastContentUTF8ByteCount: contentUTF8.count
-        )
+        return mergeSegments(prefix: prefixSegments, tail: tailSegments)
     }
 
     // MARK: - Segment merge
@@ -460,75 +279,6 @@ final class AssistantMarkdownSegmentSource {
     }
 
     // MARK: - Helpers
-
-    private func utf8ByteOffset(forLine targetLine: Int, in content: String) -> Int {
-        guard targetLine > 1 else { return 0 }
-        var currentLine = 1
-        var byteOffset = 0
-        for byte in content.utf8 {
-            byteOffset += 1
-            if byte == UInt8(ascii: "\n") {
-                currentLine += 1
-                if currentLine == targetLine {
-                    return byteOffset
-                }
-            }
-        }
-        return content.utf8.count
-    }
-
-    private func fnv1a64(bytes: String.UTF8View, count: Int) -> UInt64 {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        let end = bytes.index(bytes.startIndex, offsetBy: count)
-        for byte in bytes[..<end] {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return hash
-    }
-
-    /// Display delimiters can retroactively turn an earlier CommonMark block
-    /// into one opaque formula. Keep the canonical full-document path whenever
-    /// they are present rather than duplicating the pre-cmark scanner's HTML,
-    /// indentation, fence, and code-span state machine in the streaming cache.
-    private func containsPotentialDisplayMath(_ content: String) -> Bool {
-        content.contains("$$") || content.contains(#"\["#) || content.contains(#"\]"#)
-    }
-
-    /// Conservatively detects CommonMark link reference definitions by their
-    /// required closing-label delimiter (`]:`). Definitions may be nested in
-    /// containers or use multiline labels, so line-start matching is unsafe.
-    /// False positives only select the slower canonical path.
-    ///
-    /// Streaming source is append-only. Scan only the appended UTF-8 suffix,
-    /// retaining one overlap byte so a delimiter split across ticks is found.
-    private func containsPotentialLinkReferenceDefinition(_ content: String) -> Bool {
-        if referenceDefinitionScanState?.hasPotentialDefinition == true {
-            return true
-        }
-
-        let bytes = content.utf8
-        let previousByteCount = referenceDefinitionScanState?.contentUTF8ByteCount ?? 0
-        let isAppend = bytes.count >= previousByteCount
-        let startOffset = isAppend ? max(0, previousByteCount - 1) : 0
-        let start = bytes.index(bytes.startIndex, offsetBy: startOffset)
-
-        var previousByte: UInt8?
-        var found = false
-        for byte in bytes[start...] {
-            if previousByte == UInt8(ascii: "]"), byte == UInt8(ascii: ":") {
-                found = true
-                break
-            }
-            previousByte = byte
-        }
-
-        referenceDefinitionScanState = ReferenceDefinitionScanState(
-            contentUTF8ByteCount: bytes.count,
-            hasPotentialDefinition: found
-        )
-        return found
-    }
 
     /// Count newlines via UTF-8 byte scan. Avoids the `components(separatedBy:)` array allocation.
     private static func countNewlines(_ string: String) -> Int {

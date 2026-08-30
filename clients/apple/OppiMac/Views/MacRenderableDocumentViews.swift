@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import SwiftUI
 
 struct MacOrgDocumentPreview: View {
@@ -24,6 +25,91 @@ struct MacOrgDocumentPreview: View {
             displayMode: .inline
         )
         return OrgAttributedStringRenderer().renderAttributedString(document, configuration: configuration)
+    }
+}
+
+/// Rasterizes Shared graphical layouts (Mermaid, LaTeX) to a bitmap.
+///
+/// Layout coordinates are UIKit Y-down. The bitmap context is flipped to match
+/// before `GraphicalDocumentRenderer.draw`.
+enum MacGraphicalDocumentRaster: Sendable {
+    struct Bitmap: @unchecked Sendable {
+        let cgImage: CGImage
+        let size: CGSize
+
+        var nsImage: NSImage {
+            NSImage(cgImage: cgImage, size: size)
+        }
+    }
+
+    nonisolated static func mermaid(
+        code: String,
+        maxWidth: CGFloat,
+        theme: RenderTheme
+    ) -> Bitmap? {
+        let parser = MermaidParser()
+        let renderer = MermaidRenderer()
+        let document = parser.parse(code)
+        let configuration = RenderConfiguration(
+            fontSize: 13,
+            maxWidth: maxWidth,
+            theme: theme,
+            displayMode: .inline
+        )
+        let layout = renderer.layout(document, configuration: configuration)
+        let size = renderer.boundingBox(layout)
+        return image(size: size) { context, origin in
+            renderer.draw(layout, in: context, at: origin)
+        }
+    }
+
+    nonisolated static func latex(
+        code: String,
+        maxWidth: CGFloat,
+        theme: RenderTheme,
+        fontSize: CGFloat
+    ) -> Bitmap? {
+        let parsed = TeXMathParser().parseValidated(code)
+        guard parsed.isRenderable else { return nil }
+        let renderer = MathCoreGraphicsRenderer()
+        let configuration = RenderConfiguration(
+            fontSize: fontSize,
+            maxWidth: maxWidth,
+            theme: theme,
+            displayMode: .document
+        )
+        let layout = renderer.layout(parsed.nodes, configuration: configuration)
+        let size = renderer.boundingBox(layout)
+        return image(size: size) { context, origin in
+            renderer.draw(layout, in: context, at: origin)
+        }
+    }
+
+    nonisolated static func image(
+        size: CGSize,
+        scale: CGFloat = 2,
+        draw: (CGContext, CGPoint) -> Void
+    ) -> Bitmap? {
+        guard size.width > 0, size.height > 0, scale > 0 else { return nil }
+        let pixelWidth = max(1, Int(ceil(size.width * scale)))
+        let pixelHeight = max(1, Int(ceil(size.height * scale)))
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil,
+                width: pixelWidth,
+                height: pixelHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
+            return nil
+        }
+        context.translateBy(x: 0, y: CGFloat(pixelHeight))
+        context.scaleBy(x: scale, y: -scale)
+        draw(context, .zero)
+        guard let cgImage = context.makeImage() else { return nil }
+        return Bitmap(cgImage: cgImage, size: size)
     }
 }
 

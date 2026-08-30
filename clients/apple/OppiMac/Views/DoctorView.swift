@@ -1,7 +1,4 @@
 import SwiftUI
-import OSLog
-
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "DoctorView")
 
 /// Runs `oppi doctor` via the server CLI and displays structured results.
 struct DoctorView: View {

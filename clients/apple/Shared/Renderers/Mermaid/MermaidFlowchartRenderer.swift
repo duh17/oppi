@@ -2010,7 +2010,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     to: toRect,
                     toward: edge.to,
                     siblingIds: outgoingTargets[edge.from] ?? [],
-                    positions: positions
+                    positions: positions,
+                    direction: direction
                 )
                 fromVertex = vertex
                 fromPoint = vertex.point(in: fromRect)
@@ -2030,7 +2031,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     to: fromRect,
                     toward: edge.from,
                     siblingIds: [],
-                    positions: positions
+                    positions: positions,
+                    direction: direction
                 ).point(in: toRect)
             } else if fromIsDiamond {
                 toPoint = facingPort(on: toRect, from: fromPoint)
@@ -2054,7 +2056,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     to: fromRect,
                     toward: edge.from,
                     siblingIds: [],
-                    positions: positions
+                    positions: positions,
+                    direction: direction
                 )
                 return GraphLayoutEdgePath(
                     from: edge.from,
@@ -2090,19 +2093,28 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         to other: CGRect,
         toward targetId: String,
         siblingIds: [String],
-        positions: [String: CGRect]
+        positions: [String: CGRect],
+        direction: GraphLayoutDirection
     ) -> DiamondVertex {
-        // Two or more branches always leave the side vertices so they cannot
-        // share the bottom tip and then stair-step horizontally.
+        // Fan branches across the axis perpendicular to the declared flow:
+        // TB/BT use left/right, while LR/RL use top/bottom. Inferring the axis
+        // from downstream spread fails when siblings occupy different ranks.
         if siblingIds.count >= 2 {
-            let ranked = siblingIds.sorted { a, b in
-                let ax = positions[a]?.midX ?? 0
-                let bx = positions[b]?.midX ?? 0
-                if abs(ax - bx) > 1 { return ax < bx }
-                return a < b
+            let horizontalFlow = direction == .leftToRight || direction == .rightToLeft
+            let ranked = siblingIds.sorted { first, second in
+                let firstCoordinate = horizontalFlow
+                    ? positions[first]?.midY ?? 0
+                    : positions[first]?.midX ?? 0
+                let secondCoordinate = horizontalFlow
+                    ? positions[second]?.midY ?? 0
+                    : positions[second]?.midX ?? 0
+                if abs(firstCoordinate - secondCoordinate) > 1 {
+                    return firstCoordinate < secondCoordinate
+                }
+                return first < second
             }
-            if targetId == ranked.first { return .left }
-            if targetId == ranked.last { return .right }
+            if targetId == ranked.first { return horizontalFlow ? .top : .left }
+            if targetId == ranked.last { return horizontalFlow ? .bottom : .right }
         }
         let dx = other.midX - rect.midX
         let dy = other.midY - rect.midY

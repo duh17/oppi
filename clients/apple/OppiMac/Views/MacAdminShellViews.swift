@@ -1,99 +1,5 @@
 import SwiftUI
 
-struct LocalServerShellList: View {
-    let processManager: ServerProcessManager
-    let healthMonitor: ServerHealthMonitor
-    let permissionState: TCCPermissionState
-
-    var body: some View {
-        List {
-            Section("Status") {
-                Label(statusText, systemImage: statusIcon)
-                Label(healthMonitor.isHealthy ? "Health check passed" : "Waiting for health", systemImage: "heart.text.square")
-                Label("Permissions: \(permissionState.summary)", systemImage: "lock.shield")
-                if let info = healthMonitor.serverInfo {
-                    Label(info.serverURL, systemImage: "link")
-                    Label("Version \(info.version)", systemImage: "number")
-                }
-            }
-        }
-        .navigationTitle("Local Server")
-    }
-
-    private var statusText: String {
-        switch processManager.state {
-        case .stopped: "Stopped"
-        case .starting: "Starting"
-        case .running: processManager.processOwner == .externalProcess ? "Attached to background server" : "Running"
-        case .stopping: "Stopping"
-        case .failed(let message): "Failed: \(message)"
-        }
-    }
-
-    private var statusIcon: String {
-        switch processManager.state {
-        case .running: "checkmark.circle"
-        case .starting, .stopping: "clock"
-        case .failed: "exclamationmark.triangle"
-        case .stopped: "circle"
-        }
-    }
-}
-
-struct RemoteServersShellList: View {
-    let processManager: ServerProcessManager
-    let healthMonitor: ServerHealthMonitor
-    let store: MacRemoteServerStore
-
-    var body: some View {
-        List {
-            Section("Primary") {
-                Label(localStatusText, systemImage: "desktopcomputer")
-                if let info = healthMonitor.serverInfo {
-                    Label(info.serverURL, systemImage: "link")
-                } else {
-                    Label("https://localhost:7749", systemImage: "link")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("Remote") {
-                if store.servers.isEmpty {
-                    Label("No remote servers saved", systemImage: "network")
-                        .foregroundStyle(.secondary)
-                    Text("Save a URL in the detail pane to keep remote attachment ready without changing the local-first default.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(store.servers) { server in
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(server.displayName)
-                                Text(server.url.absoluteString)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "network")
-                        }
-                    }
-                }
-            }
-        }
-        .navigationTitle("Servers")
-    }
-
-    private var localStatusText: String {
-        switch processManager.state {
-        case .stopped: "Local server stopped"
-        case .starting: "Local server starting"
-        case .running: "Local server connected"
-        case .stopping: "Local server stopping"
-        case .failed: "Local server needs attention"
-        }
-    }
-}
-
 struct RemoteServersDetail: View {
     let processManager: ServerProcessManager
     let healthMonitor: ServerHealthMonitor
@@ -171,6 +77,7 @@ struct RemoteServersDetail: View {
             }
         }
         .formStyle(.grouped)
+        .themedListSurface()
         .navigationTitle("Remote Servers")
     }
 
@@ -185,45 +92,6 @@ struct RemoteServersDetail: View {
     }
 }
 
-struct MacToolSummaryList: View {
-    let title: String
-    let rows: [MacToolSummaryRow]
-
-    var body: some View {
-        List {
-            Section(title) {
-                ForEach(rows) { row in
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.title)
-                            Text(row.subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: row.systemImage)
-                    }
-                }
-            }
-        }
-        .navigationTitle(title)
-    }
-}
-
-struct MacToolSummaryRow: Identifiable, Equatable {
-    let id: String
-    let title: String
-    let subtitle: String
-    let systemImage: String
-
-    init(title: String, subtitle: String, systemImage: String) {
-        self.id = title
-        self.title = title
-        self.subtitle = subtitle
-        self.systemImage = systemImage
-    }
-}
-
 struct MacShellEmptyDetail: View {
     let title: String
     let message: String
@@ -232,5 +100,29 @@ struct MacShellEmptyDetail: View {
     var body: some View {
         ContentUnavailableView(title, systemImage: systemImage, description: Text(message))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .foregroundStyle(.themeFg)
+            .background {
+                Rectangle()
+                    .fill(.themeBg)
+                    .ignoresSafeArea()
+            }
+    }
+}
+
+struct MacSidebarUtilityList: View {
+    let section: MacSidebarSection
+
+    var body: some View {
+        MacCatalogListColumn(section: section)
+            .themedListSurface()
+    }
+}
+
+struct MacSidebarUtilityDetail: View {
+    let section: MacSidebarSection
+
+    var body: some View {
+        MacCatalogDetailColumn(section: section)
+            .themedScrollSurface()
     }
 }

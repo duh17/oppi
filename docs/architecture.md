@@ -169,6 +169,7 @@ Durable session events get per-session sequence numbers and can be replayed thro
 ## Cross-system invariants
 
 - The local CLI uses bearer-authenticated HTTP over the owner-only Unix socket. It does not discover or fall back to a host, port, DNS name, TLS identity, or plaintext network listener.
+- The local Mac app uses that same owner Unix socket for authenticated HTTP and live WebSocket upgrades, and does not send `sk_` over HTTPS or WSS. `GET /health` may stay on localhost HTTPS because it is unauthenticated.
 - Supported remote access uses HTTPS/WSS, including Tailscale, and is independent from the local CLI socket. Remote failures fail closed without disabling local CLI routes.
 - HTTPS/WSS device credentials are bound to a per-device P-256 key and short-lived token.
 - Workspace navigation is HTTP-first. `/app/events/stream` keeps visible rows and attention state fresh between snapshots; compact sidebar Git state comes from the workspace catalog snapshot, never raw Git payloads on the app-event stream.
@@ -185,7 +186,7 @@ Durable session events get per-session sequence numbers and can be replayed thro
 - Workspace quick-action discovery, selected-file prompt-template preparation, review comments, saved Agents, and schedules stay on HTTP routes. Only the created or focused session uses the session stream.
 - Automatic schedule runs use the server schedule runner and managed-session launch path; they do not create a separate runtime adapter.
 - Shared store updates apply exactly once per inbound live session event on the client.
-- Reducers and coalescers stay UI-framework-free. UIKit-specific rendering lives under the timeline package.
+- Reducers, coalescers, and focused-session connect/load/stop policies stay UI-framework-free in OppiCore. UIKit-specific rendering lives under the timeline package. A still-stopped session must stay history-only; opening its focused stream can resume server-owned execution.
 - Imported TUI sessions remain resumable without mutating original JSONL traces.
 
 ## Protocol boundary

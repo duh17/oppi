@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// Centralized theme definition for the entire app.
 ///

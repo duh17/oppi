@@ -11,27 +11,27 @@ struct ToolElapsedTimeTests {
 
     @Test("formatElapsed sub-second")
     func formatSubSecond() {
-        #expect(ToolTimelineRowDisplayState.formatElapsed(0) == "<1s")
+        #expect(ToolCallFormatting.formatElapsed(0) == "<1s")
     }
 
     @Test("formatElapsed seconds")
     func formatSeconds() {
-        #expect(ToolTimelineRowDisplayState.formatElapsed(1) == "1s")
-        #expect(ToolTimelineRowDisplayState.formatElapsed(45) == "45s")
-        #expect(ToolTimelineRowDisplayState.formatElapsed(59) == "59s")
+        #expect(ToolCallFormatting.formatElapsed(1) == "1s")
+        #expect(ToolCallFormatting.formatElapsed(45) == "45s")
+        #expect(ToolCallFormatting.formatElapsed(59) == "59s")
     }
 
     @Test("formatElapsed minutes")
     func formatMinutes() {
-        #expect(ToolTimelineRowDisplayState.formatElapsed(60) == "1m")
-        #expect(ToolTimelineRowDisplayState.formatElapsed(72) == "1m 12s")
-        #expect(ToolTimelineRowDisplayState.formatElapsed(330) == "5m 30s")
+        #expect(ToolCallFormatting.formatElapsed(60) == "1m")
+        #expect(ToolCallFormatting.formatElapsed(72) == "1m 12s")
+        #expect(ToolCallFormatting.formatElapsed(330) == "5m 30s")
     }
 
     @Test("formatElapsed hours")
     func formatHours() {
-        #expect(ToolTimelineRowDisplayState.formatElapsed(3600) == "1h")
-        #expect(ToolTimelineRowDisplayState.formatElapsed(3720) == "1h 2m")
+        #expect(ToolCallFormatting.formatElapsed(3600) == "1h")
+        #expect(ToolCallFormatting.formatElapsed(3720) == "1h 2m")
     }
 
     // MARK: - Reducer timing

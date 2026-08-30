@@ -2,38 +2,16 @@ import Foundation
 
 /// Mac-only mapping from a local ask draft onto `ClientMessage`.
 ///
-/// Wire JSON for `.ask` answers lives in `AskResponseEncoder`. This type keeps
-/// Mac response-encoding constants and the confirm/select/input wrappers.
+/// Payload encoding lives on `AskRequest.responsePayload(from:)`.
 enum MacAskResponseEncoder {
-    static let inlineQuestionId = "extension-ui"
-    static let confirmValue = "__oppi_confirm"
-    static let cancelValue = "__oppi_cancel"
-
     static func responseMessage(request: AskRequest, draft: MacAskResponseDraft) -> ClientMessage {
-        switch request.responseEncoding {
-        case .ask:
-            return .extensionUIResponse(id: request.id, value: draft.encodedValue())
-
-        case .extensionSelect:
-            guard case .single(let value) = draft.answers[inlineQuestionId] else {
-                return .extensionUIResponse(id: request.id, cancelled: true)
-            }
-            return .extensionUIResponse(id: request.id, value: value)
-
-        case .extensionConfirm:
-            if draft.answers[inlineQuestionId] == .single(confirmValue) {
-                return .extensionUIResponse(id: request.id, confirmed: true)
-            }
-            return .extensionUIResponse(id: request.id, cancelled: true)
-
-        case .extensionInput:
-            switch draft.answers[inlineQuestionId] {
-            case .custom(let value), .single(let value):
-                return .extensionUIResponse(id: request.id, value: value)
-            case .multi, nil:
-                return .extensionUIResponse(id: request.id, cancelled: true)
-            }
-        }
+        let payload = request.responsePayload(from: draft.answers) ?? .cancelled
+        return .extensionUIResponse(
+            id: request.id,
+            value: payload.value,
+            confirmed: payload.confirmed,
+            cancelled: payload.cancelled
+        )
     }
 }
 

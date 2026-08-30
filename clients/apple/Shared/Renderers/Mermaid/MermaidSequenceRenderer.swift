@@ -191,6 +191,23 @@ enum MermaidSequenceRenderer {
         prepare(diagram, configuration: configuration).facts
     }
 
+    /// Rightmost canvas edge required by the self-message loop, its label,
+    /// and the ordinary sequence side margin. Kept inspectable for layout
+    /// tests because Core Graphics silently clips outside the bitmap bounds.
+    nonisolated static func selfMessageCanvasWidth(
+        participantCenterX: CGFloat,
+        labelWidth: CGFloat,
+        fontSize: CGFloat
+    ) -> CGFloat {
+        ceil(
+            participantCenterX
+                + fontSize * 3
+                + fontSize * 0.3
+                + labelWidth
+                + fontSize * 1.5
+        )
+    }
+
     nonisolated static func layout(
         _ diagram: SequenceDiagram,
         configuration: RenderConfiguration
@@ -544,6 +561,27 @@ enum MermaidSequenceRenderer {
                 currentY += maxBoxH
                 bottomCopyCount = survivingCount
             }
+        }
+
+        // A self-message draws its loop and label to the right of the
+        // participant lifeline. Include that real paint extent in customSize;
+        // otherwise a self-message on the rightmost participant is clipped by
+        // the bitmap even though the participant headers themselves fit.
+        for (message, layout) in zip(diagram.messages, messageLayouts)
+        where message.from == message.to {
+            guard let index = participantIndex[message.from] else { continue }
+            let centerX = participants[index].centerX
+            let requiredWidth: CGFloat
+            if layout.wrappedText.isEmpty {
+                requiredWidth = ceil(centerX + c.selfMessageWidth + c.sideMargin)
+            } else {
+                requiredWidth = Self.selfMessageCanvasWidth(
+                    participantCenterX: centerX,
+                    labelWidth: layout.labelSize.width,
+                    fontSize: c.fontSize
+                )
+            }
+            totalWidth = max(totalWidth, requiredWidth)
         }
 
         let totalHeight = currentY + c.bottomMargin

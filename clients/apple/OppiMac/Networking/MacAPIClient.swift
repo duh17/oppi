@@ -5,33 +5,44 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac"
 
 /// Thin REST client for the local Oppi server.
 ///
-/// Handles health checks and server info. Accepts self-signed TLS certificates
-/// from the local server since the Mac app manages the server process directly.
+/// Health attach stays on HTTPS because `/health` is unauthenticated.
+/// Authenticated owner calls use the Unix socket; `sk_` must not go over HTTPS.
 final class MacAPIClient: Sendable {
 
     let baseURL: URL
+    let socketPath: String
     private let token: String
     private let session: URLSession
+    private let transport: any MacLocalHTTPPerforming
 
     init(
         baseURL: URL,
         token: String,
+        socketPath: String = MacLocalAPISocket.path(
+            dataDir: NSString("~/.config/oppi").expandingTildeInPath
+        ),
         timeoutIntervalForRequest: TimeInterval = 10,
-        timeoutIntervalForResource: TimeInterval = 15
+        timeoutIntervalForResource: TimeInterval = 15,
+        transport: (any MacLocalHTTPPerforming)? = nil
     ) {
         self.baseURL = baseURL
         self.token = token
+        self.socketPath = socketPath
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = timeoutIntervalForRequest
         config.timeoutIntervalForResource = timeoutIntervalForResource
 
-        // Accept self-signed certs from the local server.
+        // Accept self-signed certs from the local server for unauthenticated health.
         let delegate = LocalServerTrustDelegate()
         self.session = URLSession(
             configuration: config,
             delegate: delegate,
             delegateQueue: nil
+        )
+        self.transport = transport ?? MacUnixSocketHTTPClient(
+            socketPath: socketPath,
+            timeout: timeoutIntervalForRequest
         )
     }
 
@@ -76,7 +87,6 @@ final class MacAPIClient: Sendable {
         let url = baseURL.appendingPathComponent("health")
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        addAuth(&request)
 
         do {
             let (_, response) = try await session.data(for: request)
@@ -92,22 +102,8 @@ final class MacAPIClient: Sendable {
 
     /// Fetch `GET /server/info`. Returns parsed server info or nil.
     nonisolated func fetchServerInfo() async -> ServerHealthMonitor.ServerInfo? {
-        let url = baseURL.appendingPathComponent("server/info")
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        addAuth(&request)
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode) else {
-                return nil
-            }
-            return parseServerInfo(data)
-        } catch {
-            logger.debug("Server info fetch failed: \(error.localizedDescription)")
-            return nil
-        }
+        guard let data = await socketData(path: "/server/info") else { return nil }
+        return parseServerInfo(data)
     }
 
     // MARK: - Stats
@@ -123,18 +119,10 @@ final class MacAPIClient: Sendable {
         ]
 
         guard let url = components?.url else { return nil }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        addAuth(&request)
-
+        let path = "/server/stats?\(url.query ?? "")"
+        guard let data = await socketData(path: path) else { return nil }
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode) else {
-                return nil
-            }
-            let decoder = JSONDecoder()
-            return try decoder.decode(ServerStats.self, from: data)
+            return try JSONDecoder().decode(ServerStats.self, from: data)
         } catch {
             logger.debug("Stats fetch failed: \(error.localizedDescription)")
             return nil
@@ -146,19 +134,9 @@ final class MacAPIClient: Sendable {
     /// Fetch `GET /server/stats/daily/:date?tz=N`. Returns parsed daily detail or nil.
     nonisolated func fetchDailyDetail(date: String) async -> DailyDetail? {
         let tz = TimeZone.current.secondsFromGMT() / 60
-        let url = baseURL
-            .appendingPathComponent("server/stats/daily/\(date)")
-            .appending(queryItems: [URLQueryItem(name: "tz", value: "\(tz)")])
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        addAuth(&request)
-
+        let path = "/server/stats/daily/\(date)?tz=\(tz)"
+        guard let data = await socketData(path: path) else { return nil }
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode) else {
-                return nil
-            }
             return try JSONDecoder().decode(DailyDetail.self, from: data)
         } catch {
             logger.debug("Daily detail fetch failed: \(error.localizedDescription)")
@@ -168,8 +146,20 @@ final class MacAPIClient: Sendable {
 
     // MARK: - Private
 
-    private nonisolated func addAuth(_ request: inout URLRequest) {
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    private nonisolated func socketData(path: String) async -> Data? {
+        do {
+            let response = try await transport.perform(
+                macLocalAuthenticatedRequest(method: "GET", path: path, token: token)
+            )
+            guard (200..<300).contains(response.statusCode) else {
+                logger.debug("Local socket GET \(path) failed: \(response.statusCode)")
+                return nil
+            }
+            return response.body
+        } catch {
+            logger.debug("Local socket GET \(path) failed: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     /// Parse raw JSON into a ``ServerHealthMonitor/ServerInfo``.

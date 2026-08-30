@@ -558,4 +558,21 @@ struct TreeSitterIntegrationTests {
         #expect(!TreeSitterHighlighter.supports(.python))
         #expect(!TreeSitterHighlighter.supports(.unknown))
     }
+
+    @Test func iosPainterConsumesSharedProviderRanges() {
+        let shell = "echo hello"
+        let swift = "let x = 42"
+        #expect(
+            SyntaxHighlighter.scanTokenRanges(shell, language: .shell)
+                == TreeSitterHighlighter.resolvedTokenRanges(shell, language: .shell)
+        )
+        #expect(
+            SyntaxHighlighter.scanTokenRanges(swift, language: .swift)
+                == TreeSitterHighlighter.resolvedTokenRanges(swift, language: .swift)
+        )
+        #expect(
+            SyntaxHighlighter.scanTokenRangesUTF8(shell, language: .shell)
+                == TreeSitterHighlighter.resolvedTokenRangesUTF8(shell, language: .shell)
+        )
+    }
 }

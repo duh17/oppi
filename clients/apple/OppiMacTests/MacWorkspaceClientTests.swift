@@ -127,6 +127,60 @@ struct MacWorkspaceClientTests {
         #expect(uploaded.attachment.workspacePath == ".pi/attachments/session/turn/note.txt")
     }
 
+    @Test func controlSessionAttachmentCreateAndContentUseControlRouteFamily() async throws {
+        let createTransport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"uploadId":"upload-1","contentUrl":"/control-sessions/control-1/attachments/upload-1/content","maxFileBytes":10485760,"expiresAt":1760000000000}"#.utf8)
+            )
+        )
+        let createClient = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: createTransport
+        )
+
+        _ = try await createClient.createSessionAttachmentUpload(
+            scope: .control,
+            sessionId: "control-1",
+            name: "note.txt",
+            mimeType: "text/plain",
+            sizeBytes: 5
+        )
+
+        let createRequest = try #require(await createTransport.requests.first)
+        #expect(createRequest.method == "POST")
+        #expect(createRequest.path == "/control-sessions/control-1/attachments")
+        #expect(createRequest.headers["Authorization"] == "Bearer sk_owner")
+
+        let contentTransport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"attachment":{"type":"chat_attachment","id":"upload-1","source":"upload","name":"note.txt","mimeType":"text/plain","sizeBytes":5,"sha256":"abc123","kind":"text","workspacePath":".pi/attachments/control-1/turn/note.txt"}}"#.utf8)
+            )
+        )
+        let contentClient = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: contentTransport
+        )
+
+        _ = try await contentClient.uploadSessionAttachmentContent(
+            scope: .control,
+            sessionId: "control-1",
+            attachmentId: "upload-1",
+            data: Data("hello".utf8),
+            contentType: "text/plain"
+        )
+
+        let contentRequest = try #require(await contentTransport.requests.first)
+        #expect(contentRequest.method == "PUT")
+        #expect(contentRequest.path == "/control-sessions/control-1/attachments/upload-1/content")
+        #expect(contentRequest.headers["Authorization"] == "Bearer sk_owner")
+    }
+
     @Test func decodesWorkspaceFileBrowserResponses() throws {
         let listingData = try #"""
         {
@@ -227,34 +281,6 @@ struct MacWorkspaceClientTests {
         #expect(diff.hunks.first?.lines.map(\.kind) == [.removed, .added])
     }
 
-    @Test func decodesSessionCommandResponseMessages() throws {
-        let data = try #"""
-        {
-          "messages": [
-            {
-              "type": "command_result",
-              "command": "set_model",
-              "requestId": "request-1",
-              "success": false,
-              "error": "Unknown model"
-            }
-          ]
-        }
-        """#.data(using: .utf8).unwrap()
-
-        let messages = try MacWorkspaceClient.decodeSessionCommandResponse(data)
-
-        #expect(messages == [
-            .commandResult(
-                command: "set_model",
-                requestId: "request-1",
-                success: false,
-                data: nil,
-                error: "Unknown model"
-            )
-        ])
-    }
-
     @Test func decodesWorkspaceCatalogWithoutSummaries() throws {
         let data = try #"""
         {
@@ -273,6 +299,73 @@ struct MacWorkspaceClientTests {
 
         #expect(catalog.workspaces.count == 1)
         #expect(catalog.summaries.isEmpty)
+    }
+
+    @Test func decodesRecentSessionSummaries() throws {
+        let data = try #"""
+        {
+          "sessions": [
+            {
+              "id": "s2",
+              "workspaceId": "w2",
+              "status": "busy",
+              "createdAt": 0,
+              "lastActivity": 2000,
+              "currentTurnStartedAt": 1500,
+              "messageCount": 5,
+              "tokens": { "input": 100, "output": 50 },
+              "cost": 0.01,
+              "pendingAskCount": 1
+            },
+            {
+              "id": "s1",
+              "workspaceId": "w1",
+              "status": "ready",
+              "createdAt": 0,
+              "lastActivity": 1000,
+              "messageCount": 0,
+              "tokens": { "input": 0, "output": 0 },
+              "cost": 0
+            }
+          ]
+        }
+        """#.data(using: .utf8).unwrap()
+
+        let summaries = try MacWorkspaceClient.decodeRecentSessions(data)
+
+        #expect(summaries.map(\.id) == ["s2", "s1"])
+        #expect(summaries[0].workspaceId == "w2")
+        #expect(summaries[0].status == .busy)
+        #expect(summaries[0].pendingAskCount == 1)
+        #expect(summaries[1].workspaceId == "w1")
+        #expect(summaries[1].pendingAskCount == 0)
+    }
+
+    @Test func getSessionRecordUsesOwnerUnixSocketWithoutHTTPSFallback() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"session":{"id":"session-old","workspaceId":"ws-1","status":"stopped","createdAt":0,"lastActivity":0,"messageCount":2,"tokens":{"input":0,"output":0},"cost":0}}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        let session = try await client.getSessionRecord(sessionId: "session-old")
+
+        #expect(session.id == "session-old")
+        #expect(session.status == .stopped)
+        let request = try #require(await transport.requests.first)
+        #expect(request.method == "GET")
+        #expect(request.path == "/sessions/session-old")
+        #expect(request.headers["Authorization"] == "Bearer sk_owner")
+        #expect(!request.path.contains("https"))
+        #expect(!request.path.contains("sk_"))
+        #expect(await transport.requests.count == 1)
     }
 
     @Test func decodesWorkspaceSessionListRows() throws {
@@ -334,6 +427,76 @@ struct MacWorkspaceClientTests {
         #expect(list.stopped.map(\.id) == ["session-stopped"])
         #expect(list.importableSessions.map(\.piSessionId) == ["pi-1"])
         #expect(list.allSummaries.map(\.id) == ["session-active", "session-stopped"])
+        #expect(list.hasVisibleSessions)
+        #expect(MacWorkspaceLocalSessionPresentation.showsList(list))
+    }
+
+    @Test func importableOnlyWorkspaceSessionListIsVisible() throws {
+        let list = MacWorkspaceClient.WorkspaceSessionList(
+            workspaceId: "ws-1",
+            serverNow: 1_760_000_003_000,
+            active: [],
+            stopped: [],
+            importableSessions: [
+                LocalSession(
+                    path: "/tmp/pi-session.jsonl",
+                    piSessionId: "pi-1",
+                    cwd: "/tmp",
+                    name: "Import me",
+                    firstMessage: "hello",
+                    model: "anthropic/claude-sonnet-4-5",
+                    messageCount: 3,
+                    createdAt: Date(timeIntervalSince1970: 1_760_000_000),
+                    lastModified: Date(timeIntervalSince1970: 1_760_000_002.5)
+                )
+            ]
+        )
+
+        #expect(list.allSummaries.isEmpty)
+        #expect(list.hasVisibleSessions)
+        #expect(MacWorkspaceLocalSessionPresentation.showsList(list))
+        #expect(
+            MacWorkspaceLocalSessionPresentation.accessibilityIdentifier(for: list.importableSessions[0])
+                == "localSession.nav.pi-1"
+        )
+    }
+
+    @Test func createWorkspaceSessionFromLocalPostsPiSessionFileOnOwnerSocket() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"""
+                {"session":{"id":"session-imported","workspaceId":"ws-1","name":"Import me","status":"busy","createdAt":1760000000000,"lastActivity":1760000002000,"messageCount":3,"tokens":{"input":0,"output":0},"cost":0},"prompted":false}
+                """#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        let response = try await client.createWorkspaceSessionFromLocal(
+            workspaceId: "ws-1",
+            piSessionFile: "/tmp/pi-session.jsonl"
+        )
+
+        #expect(response.session.id == "session-imported")
+        #expect(response.session.workspaceId == "ws-1")
+        let request = try #require(await transport.requests.first)
+        #expect(request.method == "POST")
+        #expect(request.path == "/workspaces/ws-1/sessions")
+        #expect(request.headers["Authorization"] == "Bearer sk_owner")
+        #expect(!request.path.contains("https"))
+        #expect(!request.path.contains("sk_"))
+        let body = try JSONDecoder().decode(
+            ImportLocalSessionBody.self,
+            from: try #require(request.body)
+        )
+        #expect(body.piSessionFile == "/tmp/pi-session.jsonl")
+        #expect(body.worktreeId == nil)
+        #expect(await client.socketPath == "/tmp/oppi-test.sock")
     }
 
     @Test func decodesCreateWorkspaceSessionResponse() throws {
@@ -435,6 +598,343 @@ struct MacWorkspaceClientTests {
         #expect(page.trace.map(\.id) == ["event-1"])
         #expect(page.page.hasOlder == false)
     }
+
+    @Test func getWorkspaceSessionTracePageUsesOwnerUnixSocketNotHTTPS() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"session":{"id":"sess-1","workspaceId":"ws-1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0},"trace":[],"page":{"hasOlder":false,"olderCursor":null,"traceVersion":"v1","previewBytes":4096,"staleCursor":false}}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        _ = try await client.getWorkspaceSessionTracePage(
+            workspaceId: "ws-1",
+            sessionId: "sess-1",
+            previewBytes: 4_096,
+            cursor: "older-1",
+            aroundEntryId: "event-1"
+        )
+
+        let request = try #require(await transport.requests.first)
+        #expect(request.method == "GET")
+        #expect(request.path.hasPrefix("/workspaces/ws-1/sessions/sess-1/trace-page?"))
+        #expect(request.path.contains("cursor=older-1"))
+        #expect(request.path.contains("aroundEntryId=event-1"))
+        #expect(request.headers["Authorization"] == "Bearer sk_owner")
+        #expect(!request.path.contains("https"))
+        #expect(!request.path.contains("sk_"))
+        #expect(await client.socketPath == "/tmp/oppi-test.sock")
+    }
+
+    @Test func getWorkspaceSessionEventsUsesOwnerUnixSocketNotHTTPS() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"events":[{"seq":13,"type":"agent_start"}],"currentSeq":13,"catchUpComplete":true,"session":{"id":"sess-1","workspaceId":"ws-1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        let catchUp = try await client.getWorkspaceSessionEvents(
+            workspaceId: "ws-1",
+            sessionId: "sess-1",
+            since: 12
+        )
+
+        let request = try #require(await transport.requests.first)
+        #expect(request.method == "GET")
+        #expect(request.path == "/workspaces/ws-1/sessions/sess-1/events?since=12")
+        #expect(request.headers["Authorization"] == "Bearer sk_owner")
+        #expect(!request.path.contains("https"))
+        #expect(!request.path.contains("wss"))
+        #expect(catchUp.currentSeq == 13)
+        #expect(catchUp.events.map(\.seq) == [13])
+        #expect(await client.socketPath == "/tmp/oppi-test.sock")
+    }
+
+    @Test func controlSessionTraceAndEventsUseControlRouteFamily() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"session":{"id":"control-1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"create"}},"trace":[],"page":{"hasOlder":false,"olderCursor":null,"traceVersion":"v1","previewBytes":4096,"staleCursor":false},"events":[],"currentSeq":0,"catchUpComplete":true}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        _ = try await client.getSessionTracePage(
+            scope: .control,
+            sessionId: "control-1",
+            previewBytes: 4_096
+        )
+        _ = try await client.getSessionEvents(
+            scope: .control,
+            sessionId: "control-1",
+            since: 9
+        )
+
+        let requests = await transport.requests
+        #expect(requests.map(\.method) == ["GET", "GET"])
+        #expect(requests[0].path.hasPrefix("/control-sessions/control-1/trace-page?"))
+        #expect(requests[1].path == "/control-sessions/control-1/events?since=9")
+        #expect(requests.allSatisfy { !$0.path.contains("/workspaces/") })
+        #expect(requests.allSatisfy { $0.headers["Authorization"] == "Bearer sk_owner" })
+    }
+
+    @Test func decodeSessionCatchUpReadsSequencedEvents() throws {
+        let data = try #"""
+        {
+          "events": [
+            { "seq": 13, "type": "agent_start" }
+          ],
+          "currentSeq": 13,
+          "runtimeEpoch": "epoch-1",
+          "catchUpComplete": true,
+          "session": {
+            "id": "sess-1",
+            "workspaceId": "ws-1",
+            "status": "ready",
+            "createdAt": 1760000000000,
+            "lastActivity": 1760000002000,
+            "messageCount": 1,
+            "tokens": { "input": 1, "output": 1 },
+            "cost": 0
+          }
+        }
+        """#.data(using: .utf8).unwrap()
+
+        let catchUp = try MacWorkspaceClient.decodeSessionCatchUp(data)
+
+        #expect(catchUp.currentSeq == 13)
+        #expect(catchUp.runtimeEpoch == "epoch-1")
+        #expect(catchUp.catchUpComplete)
+        #expect(catchUp.events.map(\.seq) == [13])
+        #expect(catchUp.session.id == "sess-1")
+    }
+
+    @Test func getFullToolOutputUsesOwnerSocketQuery() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"output":"full bash log\nline 2"}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        let output = try await client.getFullToolOutput(
+            workspaceId: "ws-1",
+            sessionId: "session-1",
+            toolCallId: "tool-1"
+        )
+
+        let request = try #require(await transport.requests.first)
+        #expect(request.method == "GET")
+        #expect(request.path == "/workspaces/ws-1/sessions/session-1/tool-output/tool-1?full=true")
+        #expect(request.headers["Authorization"] == "Bearer sk_owner")
+        #expect(output == "full bash log\nline 2")
+        #expect(await transport.requests.count == 1)
+    }
+
+    @Test func getFullToolOutputUsesControlRouteFamilyWhenScopedToControl() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"output":"full control-session output"}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        let output = try await client.getFullToolOutput(
+            scope: .control,
+            sessionId: "control-1",
+            toolCallId: "tool-1"
+        )
+
+        let request = try #require(await transport.requests.first)
+        #expect(request.method == "GET")
+        #expect(request.path == "/control-sessions/control-1/tool-output/tool-1?full=true")
+        #expect(request.headers["Authorization"] == "Bearer sk_owner")
+        #expect(output == "full control-session output")
+    }
+
+    @Test func getFullToolOutputReturnsNilOn404() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 404,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"error":"not found"}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        let output = try await client.getFullToolOutput(
+            workspaceId: "ws-1",
+            sessionId: "session-1",
+            toolCallId: "missing-tool"
+        )
+
+        #expect(output == nil)
+        let request = try #require(await transport.requests.first)
+        #expect(request.path == "/workspaces/ws-1/sessions/session-1/tool-output/missing-tool?full=true")
+    }
+
+    @Test func decodeFullToolOutputReadsOutputField() throws {
+        let data = try #"{"output":"complete tool text"}"#.data(using: .utf8).unwrap()
+        #expect(try MacWorkspaceClient.decodeFullToolOutput(data) == "complete tool text")
+    }
+
+    @Test func listWorkspaceDirectoryAppendsWorktreeQueryAfterSwitch() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"path":"/","truncated":false,"entries":[]}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        _ = try await client.listWorkspaceDirectory(
+            workspaceId: "ws-1",
+            path: "",
+            worktreeId: WorkspaceWorktree.mainId
+        )
+        _ = try await client.listWorkspaceDirectory(
+            workspaceId: "ws-1",
+            path: "Sources/",
+            worktreeId: "wt_feature"
+        )
+
+        let requests = await transport.requests
+        #expect(requests.map(\.method) == ["GET", "GET"])
+        #expect(requests[0].path.hasPrefix("/workspaces/ws-1/contents/"))
+        #expect(requests[1].path.hasPrefix("/workspaces/ws-1/contents/Sources/"))
+        #expect(queryValue("worktreeId", in: requests[0].path) == WorkspaceWorktree.mainId)
+        #expect(queryValue("worktreeId", in: requests[1].path) == "wt_feature")
+        #expect(requests[0].headers["Authorization"] == "Bearer sk_owner")
+        #expect(!requests[1].path.contains("https"))
+    }
+
+    @Test func getWorkspaceRawFileDataAppendsWorktreeQueryAfterSwitch() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "text/plain"],
+                body: Data("feature-bytes".utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        let main = try await client.getWorkspaceRawFileData(
+            workspaceId: "ws-1",
+            path: "Notes.md",
+            worktreeId: WorkspaceWorktree.mainId
+        )
+        let feature = try await client.getWorkspaceRawFileData(
+            workspaceId: "ws-1",
+            path: "clips/demo.mp4",
+            worktreeId: "wt_feature"
+        )
+
+        let requests = await transport.requests
+        #expect(main == Data("feature-bytes".utf8))
+        #expect(feature == Data("feature-bytes".utf8))
+        #expect(requests.map(\.method) == ["GET", "GET"])
+        #expect(requests[0].path == "/workspaces/ws-1/raw/Notes.md")
+        #expect(queryValue("worktreeId", in: requests[0].path) == nil)
+        #expect(requests[1].path.hasPrefix("/workspaces/ws-1/raw/clips/demo.mp4"))
+        #expect(queryValue("worktreeId", in: requests[1].path) == "wt_feature")
+        #expect(requests[1].headers["Authorization"] == "Bearer sk_owner")
+        #expect(!requests[1].path.contains("https"))
+    }
+
+    @Test func getWorkspaceRawFileDataOmitsWorktreeQueryWhenUnscoped() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "text/plain"],
+                body: Data("main-bytes".utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        _ = try await client.getWorkspaceRawFileData(workspaceId: "ws-1", path: "Notes.md")
+
+        let request = try #require(await transport.requests.first)
+        #expect(request.path == "/workspaces/ws-1/raw/Notes.md")
+        #expect(queryValue("worktreeId", in: request.path) == nil)
+    }
+
+    @Test func listWorkspaceDirectoryOmitsWorktreeQueryWhenUnscoped() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"path":"/","truncated":false,"entries":[]}"#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        _ = try await client.listWorkspaceDirectory(workspaceId: "ws-1", path: "")
+
+        let request = try #require(await transport.requests.first)
+        #expect(request.path == "/workspaces/ws-1/contents/")
+        #expect(queryValue("worktreeId", in: request.path) == nil)
+    }
+
+    private func queryValue(_ name: String, in path: String) -> String? {
+        guard let query = path.split(separator: "?", maxSplits: 1).dropFirst().first else {
+            return nil
+        }
+        return URLComponents(string: "http://local?\(query)")?
+            .queryItems?
+            .first(where: { $0.name == name })?
+            .value
+    }
 }
 
 private extension Optional where Wrapped == Data {
@@ -446,4 +946,9 @@ private extension Optional where Wrapped == Data {
 
 private enum TestDataError: Error {
     case invalidUTF8
+}
+
+private struct ImportLocalSessionBody: Decodable {
+    let piSessionFile: String
+    let worktreeId: String?
 }

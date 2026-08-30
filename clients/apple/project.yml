@@ -59,8 +59,6 @@ targets:
         buildPhase: resources
       - path: OppiCore
         type: group
-        excludes:
-          - "PlatformAdapters"
       - path: Shared
         type: group
     settings:
@@ -252,12 +250,20 @@ targets:
     sources:
       - path: OppiActivityExtension
         type: group
-      - path: Shared
+      - path: Shared/Activity
         type: group
-        excludes:
-          - "ModelColorHelpers.swift"
-          - "ShareQuickSessionSender.swift"
-          - "KeychainDeviceCredentialMerger.swift"
+      - path: Shared/Constants
+        type: group
+      - path: Shared/Logging
+        type: group
+      - path: Shared/Models
+        type: group
+      - path: Shared/NearbyPairing
+        type: group
+      - path: Shared/Renderers
+        type: group
+      - path: Shared/ShareQuickSession/Payload
+        type: group
       - path: OppiCore/Formatting/SessionFormatting.swift
         type: file
     entitlements:
@@ -288,17 +294,14 @@ targets:
       - path: OppiShareExtension/PrivacyInfo.xcprivacy
         type: file
         buildPhase: resources
-      - path: Shared
+      - path: Shared/Auth/Keychain
         type: group
-        excludes:
-          - "ModelColorHelpers.swift"
-          - "PiSessionAttributes.swift"
-          - "LiveActivityPresentation.swift"
-          - "ClientLogUploadModels.swift"
-          - "ClientLogUploadQueue.swift"
-          - "NearbyPairing"
-          - "Renderers"
-          - "Models"
+      - path: Shared/Constants
+        type: group
+      - path: Shared/ShareQuickSession/Payload
+        type: group
+      - path: Shared/ShareQuickSession/Sender
+        type: group
       - path: OppiCore/Client/DeviceKey.swift
         type: file
       - path: OppiCore/Client/DeviceAuthSession.swift
@@ -357,12 +360,20 @@ targets:
       # Apple requires control-opening intents in both the app and widget targets.
       - path: Oppi/Core/Intents/QuickSessionOpenIntent.swift
         type: file
-      - path: Shared
+      - path: Shared/Activity
         type: group
-        excludes:
-          - "ModelColorHelpers.swift"
-          - "ShareQuickSessionSender.swift"
-          - "KeychainDeviceCredentialMerger.swift"
+      - path: Shared/Constants
+        type: group
+      - path: Shared/Logging
+        type: group
+      - path: Shared/Models
+        type: group
+      - path: Shared/NearbyPairing
+        type: group
+      - path: Shared/Renderers
+        type: group
+      - path: Shared/ShareQuickSession/Payload
+        type: group
       - path: OppiCore/Formatting/SessionFormatting.swift
         type: file
     entitlements:
@@ -469,19 +480,41 @@ targets:
     sources:
       - path: OppiMac
         type: group
+      - path: Oppi/Resources/Fonts
+        type: folder
+        buildPhase: resources
       - path: OppiCore
         type: group
-        excludes:
-          - "PlatformAdapters"
-      - path: Shared
+      - path: Shared/Auth/Keychain
         type: group
-        excludes:
-          - "PiSessionAttributes.swift"
-          - "LiveActivityPresentation.swift"
-          - "ShareQuickSessionPayload.swift"
-          - "ShareQuickSessionSender.swift"
+      - path: Shared/Constants
+        type: group
+      - path: Shared/Logging
+        type: group
+      - path: Shared/Models
+        type: group
+      - path: Shared/NearbyPairing
+        type: group
+      - path: Shared/Renderers
+        type: group
+      - path: Shared/Theme
+        type: group
+      - path: Oppi/Core/AppIdentifiers.swift
+      - path: Oppi/Core/Extensions/Color+Theme.swift
+      - path: Oppi/Core/Theme/AppTheme.swift
+      - path: Oppi/Core/Theme/RemoteTheme.swift
+      - path: Oppi/Core/Theme/ThemeCatalog.swift
+      - path: Oppi/Core/Theme/ThemeStore.swift
     dependencies:
       - package: Sparkle
+      - package: swift-cmark
+        product: cmark-gfm
+      - package: swift-cmark
+        product: cmark-gfm-extensions
+      - package: swift-tree-sitter
+        product: SwiftTreeSitter
+      - package: tree-sitter-bash
+        product: TreeSitterBash
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMac
@@ -502,13 +535,20 @@ targets:
       path: OppiMac/Resources/Info.plist
       properties:
         CFBundleDisplayName: Oppi
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: dev.chenda.oppi.invite
+            CFBundleURLSchemes:
+              - oppi
         SUFeedURL: "https://github.com/duh17/oppi/releases/download/appcast/appcast.xml"
         SUPublicEDKey: "wnLCIfY048anOcj7/J/Iv6Lp9Fmba4zQ0EjCL7k/M+E="
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
+        NSMicrophoneUsageDescription: "Oppi uses the microphone to transcribe your voice into text prompts."
         NSLocalNetworkUsageDescription: "Oppi uses the local network to pair nearby iPhones with this Mac."
         NSBonjourServices:
           - "_oppi-pair._tcp"
+        ATSApplicationFontsPath: Fonts
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
 

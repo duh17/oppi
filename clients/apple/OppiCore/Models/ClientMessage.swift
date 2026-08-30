@@ -117,6 +117,18 @@ enum ThinkingLevel: String, Codable, Sendable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Parse a session-stored thinking-level string.
+    /// Trims whitespace/newlines, lowercases, then `ThinkingLevel(rawValue:)`.
+    /// Missing or unknown values become `.medium`.
+    init(sessionValue: String?) {
+        guard let normalized = sessionValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              let value = Self(rawValue: normalized) else {
+            self = .medium
+            return
+        }
+        self = value
+    }
+
     var displayTitle: String {
         switch self {
         case .off: "Off"

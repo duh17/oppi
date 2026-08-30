@@ -1,6 +1,6 @@
 # Oppi server architecture
 
-The Oppi server owns sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP plus the bearer-free Oppi Mirror bridge over an owner-only Unix socket. Apple clients, dictation, and app events use authenticated HTTPS/WSS listeners.
+The Oppi server owns sessions, workspace access, runtime configuration, and the mobile-facing projection of Pi session state. It exposes authenticated HTTP plus the bearer-free Oppi Mirror bridge over an owner-only Unix socket. iPhone and iPad clients, dictation, and app events use authenticated HTTPS/WSS listeners. The co-located Mac app uses that same owner Unix socket for authenticated local HTTP and live WebSocket upgrades, and must not send `sk_` over HTTPS or WSS.
 
 ## Audience and scope
 
@@ -135,9 +135,9 @@ graph TD
 - The mandatory local listener serves HTTP over an owner-only Unix socket. Its normal path is `$OPPI_DATA_DIR/run/oppi.sock`; deep custom data-directory paths use a deterministic socket under the user's temporary runtime directory. The runtime directory is `0700`, the socket and startup lock are `0600`, stale paths are ownership-checked, and startup refuses concurrent owners.
 - The network listener serves configured HTTP(S) and scoped WebSockets to remote clients. TLS preparation runs off the main thread after the local socket begins listening, so certificate commands and renewal-lock waits do not block local requests. Expected Tailscale availability failures disable the remote listener; unexpected preparation errors remain fatal. Network TLS failure must never create a plaintext fallback.
 
-The local socket accepts only the `/mirror/v1/bridge` WebSocket upgrade; that bridge is bearer-free because Unix-socket ownership is the trust boundary. The network listener returns 404 for the mirror bridge. `server.ts` validates network startup security, handles `/health`, authenticates requests, and delegates authenticated HTTP from either listener to `RouteHandler`.
+The local socket accepts the bearer-free `/mirror/v1/bridge` upgrade and owner-authenticated upgrades for app-event, focused-session, control-session, and dictation streams. That mirror bridge stays bearer-free because Unix-socket ownership is the trust boundary. The network listener returns 404 for the mirror bridge and rejects owner `sk_` tokens. `server.ts` validates network startup security, handles `/health`, authenticates requests, and delegates authenticated HTTP from either listener to `RouteHandler`.
 
-The server's supported remote boundary is HTTPS/WSS with per-device P-256 keys and short-lived access tokens. The local loopback is reserved for the owner-only Unix-socket Mirror bridge; it is not a remote transport or a second API.
+The server's supported remote boundary is HTTPS/WSS with per-device P-256 keys and short-lived access tokens. The owner Unix socket is the local CLI and Mac-app API, including owner-authenticated live streams; it is not a remote transport. The bearer-free Mirror bridge stays on that socket only.
 
 `RouteHandler` owns route dispatch across domain files:
 

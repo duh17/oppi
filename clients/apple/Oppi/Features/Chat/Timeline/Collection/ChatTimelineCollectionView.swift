@@ -162,6 +162,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         collectionView.accessibilityIdentifier = "chat.timeline"
         collectionView.contentInset.top = configuration.topOverlap
         collectionView.contentInset.bottom = configuration.bottomOverlap
+        context.coordinator.attachHardwareKeybindingResponder(to: collectionView)
         context.coordinator.configureDataSource(collectionView: collectionView)
         return collectionView
     }
@@ -214,6 +215,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             set { context.audioLifecycleCoordinator = newValue }
         }
         weak var collectionView: UICollectionView?
+        var hardwareKeybindingResponder: HardwareKeybindingResponder?
         private var backSwipeGestureInstaller: HorizontalBackSwipeGestureInstaller?
         var onBackSwipe: (() -> Void)?
 
@@ -703,6 +705,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             context.apply(configuration: configuration)
             self.collectionView = collectionView
+            refreshHardwareKeybindingResponder()
             currentFullTimelineItemIDs = configuration.fullTimelineItemIDs
             scrollController?.updateTimelineItemOrder(configuration.fullTimelineItemIDs)
             onBackSwipe = configuration.onBackSwipe
@@ -1129,6 +1132,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         @objc func handleTimelineTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended else { return }
             gesture.view?.window?.endEditing(true)
+            claimHardwareKeybindingFocusIfNeeded()
         }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
             Self.shouldReceiveTimelineGestureTouch(from: touch.view)
@@ -1332,7 +1336,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             return toolRowView.presentCollapsedImagePreviewIfAvailable()
         }
 
-        private static func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
+        static func firstSubview<T: UIView>(ofType type: T.Type, in root: UIView) -> T? {
             if let match = root as? T { return match }
             for child in root.subviews {
                 if let match = firstSubview(ofType: type, in: child) {
@@ -1344,7 +1348,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         // MARK: - Tool Output Loading
 
-        private func ensureExpandedToolOutputLoaded(
+        func ensureExpandedToolOutputLoaded(
             itemID: String,
             tool: String,
             outputByteCount: Int,
@@ -1426,11 +1430,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
         }
 
-        private func cancelToolOutputRetryWork(for itemID: String) {
+        func cancelToolOutputRetryWork(for itemID: String) {
             toolOutputLoader.cancelRetryWork(for: itemID)
         }
 
-        private func cancelToolOutputLoadTasks(for itemIDs: Set<String>) {
+        func cancelToolOutputLoadTasks(for itemIDs: Set<String>) {
             toolOutputLoader.cancelLoadTasks(for: itemIDs)
         }
 
@@ -1458,7 +1462,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         /// the reconfigure, restores it after, and sets the anchored
         /// collection view's expand/collapse anchor for any deferred async
         /// layout passes (e.g. `invalidateEnclosingCollectionViewLayout`).
-        private func anchoredReconfigureToolRow(
+        func anchoredReconfigureToolRow(
             itemID: String,
             anchorIndexPath: IndexPath,
             in collectionView: UICollectionView,

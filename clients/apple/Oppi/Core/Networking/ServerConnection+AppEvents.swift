@@ -67,23 +67,7 @@ extension ServerConnection {
 
         case .extensionUINotification(let notification, let sessionId, _, _):
             applyExtensionUINotification(
-                method: notification.method,
-                message: notification.message,
-                notifyType: notification.notifyType,
-                statusKey: notification.statusKey,
-                statusText: notification.statusText,
-                title: notification.title,
-                text: notification.text,
-                widgetKey: notification.widgetKey,
-                widgetLines: notification.widgetLines,
-                widgetPlacement: notification.widgetPlacement,
-                extensionScopeId: notification.extensionScopeId,
-                extensionDisplayName: notification.extensionDisplayName,
-                workingIndicator: notification.workingIndicator,
-                workingVisible: notification.workingVisible,
-                hiddenThinkingLabel: notification.hiddenThinkingLabel,
-                toolsExpanded: notification.toolsExpanded,
-                nativeSurface: notification.nativeSurface,
+                notification,
                 sessionId: sessionId,
                 isActiveSession: isFocusedSession(sessionId)
             )

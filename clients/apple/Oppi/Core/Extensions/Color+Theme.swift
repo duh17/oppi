@@ -30,6 +30,12 @@ extension Color {
     static var themeRed: Color { palette.red }
     static var themeYellow: Color { palette.yellow }
 
+    static var themeToolPendingBg: Color { palette.toolPendingBg }
+    static var themeToolSuccessBg: Color { palette.toolSuccessBg }
+    static var themeToolErrorBg: Color { palette.toolErrorBg }
+    static var themeToolTitle: Color { palette.toolTitle }
+    static var themeToolOutput: Color { palette.toolOutput }
+
     // MARK: - Semantic UI Helpers
 
     static var themeScrim: Color { palette.bgDark.opacity(0.82) }
@@ -95,7 +101,7 @@ extension Color {
 /// `EnvironmentValues.theme` dependency, so persistent List/LazyVStack cells
 /// repaint when the active theme changes instead of retaining captured colors.
 struct ThemeShapeStyle: ShapeStyle {
-    enum Role: Sendable {
+    enum Role: Equatable, Sendable {
         case background
         case backgroundDark
         case backgroundHighlight
@@ -127,6 +133,11 @@ struct ThemeShapeStyle: ShapeStyle {
         case diffAdded
         case diffRemoved
         case diffContext
+        case toolPendingBackground
+        case toolSuccessBackground
+        case toolErrorBackground
+        case toolTitle
+        case toolOutput
     }
 
     let role: Role
@@ -137,6 +148,7 @@ struct ThemeShapeStyle: ShapeStyle {
 
     func color(in environment: EnvironmentValues) -> Color {
         let theme = environment.theme
+        let palette = environment.themeID.palette
         return switch role {
         case .background: theme.bg.primary
         case .backgroundDark: theme.bg.secondary
@@ -177,6 +189,14 @@ struct ThemeShapeStyle: ShapeStyle {
         case .diffAdded: theme.diff.addedAccent
         case .diffRemoved: theme.diff.removedAccent
         case .diffContext: theme.diff.contextFg
+        // Tool surfaces are authored semantic palette tokens rather than
+        // reconstructed accent washes. This preserves imported themes and
+        // repaints mounted Mac rows when the live theme changes.
+        case .toolPendingBackground: palette.toolPendingBg
+        case .toolSuccessBackground: palette.toolSuccessBg
+        case .toolErrorBackground: palette.toolErrorBg
+        case .toolTitle: palette.toolTitle
+        case .toolOutput: palette.toolOutput
         }
     }
 }
@@ -216,6 +236,11 @@ extension ShapeStyle where Self == ThemeShapeStyle {
     static var themeDiffAdded: ThemeShapeStyle { ThemeShapeStyle(role: .diffAdded) }
     static var themeDiffRemoved: ThemeShapeStyle { ThemeShapeStyle(role: .diffRemoved) }
     static var themeDiffContext: ThemeShapeStyle { ThemeShapeStyle(role: .diffContext) }
+    static var themeToolPendingBg: ThemeShapeStyle { ThemeShapeStyle(role: .toolPendingBackground) }
+    static var themeToolSuccessBg: ThemeShapeStyle { ThemeShapeStyle(role: .toolSuccessBackground) }
+    static var themeToolErrorBg: ThemeShapeStyle { ThemeShapeStyle(role: .toolErrorBackground) }
+    static var themeToolTitle: ThemeShapeStyle { ThemeShapeStyle(role: .toolTitle) }
+    static var themeToolOutput: ThemeShapeStyle { ThemeShapeStyle(role: .toolOutput) }
 }
 
 // MARK: - Themed Surface Roles
