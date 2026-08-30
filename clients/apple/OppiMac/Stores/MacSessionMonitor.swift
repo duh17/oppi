@@ -80,13 +80,25 @@ final class MacSessionMonitor {
         stats = fetched
     }
 
-    /// Deduplication check: returns true when totals and active session count match.
+    /// Deduplication check: skip only when totals and Home/menu-visible
+    /// active-session fields are unchanged. Count alone is not enough —
+    /// same-count status, identity, and display-field changes must publish.
     /// Extracted so unit tests can verify without hitting the network.
     static func shouldSkipUpdate(existing: ServerStats, fetched: ServerStats) -> Bool {
         existing.totals.sessions == fetched.totals.sessions
             && existing.totals.cost == fetched.totals.cost
             && existing.totals.tokens == fetched.totals.tokens
-            && existing.activeSessions.count == fetched.activeSessions.count
+            && existing.activeSessions.elementsEqual(fetched.activeSessions) { lhs, rhs in
+                lhs.id == rhs.id
+                    && lhs.status == rhs.status
+                    && lhs.model == rhs.model
+                    && lhs.cost == rhs.cost
+                    && lhs.name == rhs.name
+                    && lhs.firstMessage == rhs.firstMessage
+                    && lhs.workspaceName == rhs.workspaceName
+                    && lhs.contextTokens == rhs.contextTokens
+                    && lhs.contextWindow == rhs.contextWindow
+            }
     }
 
     // MARK: - Test helpers

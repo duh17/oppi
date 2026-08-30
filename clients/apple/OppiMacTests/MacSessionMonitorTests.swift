@@ -4,6 +4,26 @@ import Foundation
 
 // MARK: - Helpers
 
+/// Build a minimal active session. Home/menu fields stay nil unless a test sets them.
+private func makeActiveSession(
+    id: String,
+    status: String = "idle"
+) -> StatsActiveSession {
+    StatsActiveSession(
+        id: id,
+        status: status,
+        model: nil,
+        cost: 0,
+        name: nil,
+        firstMessage: nil,
+        workspaceName: nil,
+        thinkingLevel: nil,
+        contextTokens: nil,
+        contextWindow: nil,
+        createdAt: nil
+    )
+}
+
 /// Build a minimal ServerStats with given totals and active session count.
 private func makeStats(
     sessions: Int = 0,
@@ -11,22 +31,21 @@ private func makeStats(
     tokens: Int = 0,
     activeCount: Int = 0
 ) -> ServerStats {
-    let activeSessions = (0..<activeCount).map { i in
-        StatsActiveSession(
-            id: "sess-\(i)",
-            status: "idle",
-            model: nil,
-            cost: 0,
-            name: nil,
-            firstMessage: nil,
-            workspaceName: nil,
-            thinkingLevel: nil,
-            contextTokens: nil,
-            contextWindow: nil,
-            createdAt: nil
-        )
-    }
-    return ServerStats(
+    makeStats(
+        sessions: sessions,
+        cost: cost,
+        tokens: tokens,
+        activeSessions: (0..<activeCount).map { makeActiveSession(id: "sess-\($0)") }
+    )
+}
+
+private func makeStats(
+    sessions: Int = 0,
+    cost: Double = 0,
+    tokens: Int = 0,
+    activeSessions: [StatsActiveSession]
+) -> ServerStats {
+    ServerStats(
         memory: StatsMemory(heapUsed: 0, heapTotal: 0, rss: 0, external: 0),
         activeSessions: activeSessions,
         daily: [],
@@ -161,6 +180,28 @@ struct MacSessionMonitorDedupTests {
         let b = makeStats(activeCount: 2)
 
         #expect(!MacSessionMonitor.shouldSkipUpdate(existing: a, fetched: b))
+    }
+
+    @Test func noSkipWhenSameCountStatusChangesBusyToReady() {
+        let existing = makeStats(
+            activeSessions: [makeActiveSession(id: "sess-0", status: "busy")]
+        )
+        let fetched = makeStats(
+            activeSessions: [makeActiveSession(id: "sess-0", status: "ready")]
+        )
+
+        #expect(!MacSessionMonitor.shouldSkipUpdate(existing: existing, fetched: fetched))
+    }
+
+    @Test func noSkipWhenSameCountSessionIdentityIsReplaced() {
+        let existing = makeStats(
+            activeSessions: [makeActiveSession(id: "sess-a", status: "busy")]
+        )
+        let fetched = makeStats(
+            activeSessions: [makeActiveSession(id: "sess-b", status: "busy")]
+        )
+
+        #expect(!MacSessionMonitor.shouldSkipUpdate(existing: existing, fetched: fetched))
     }
 
     @Test func skipWithZeroTotals() {
