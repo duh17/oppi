@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   findIosLayerViolations,
+  findMacLayerViolations,
   findServerLayerViolations,
 } from "./architecture-layer-rules.mjs"; // kept as .mjs — also imported by eslint.config.js under Node
 
@@ -24,7 +25,7 @@ function parseArgs(argv) {
         throw new Error("Missing value for --scope");
       }
 
-      if (!["all", "server", "ios"].includes(next)) {
+      if (!["all", "server", "ios", "mac"].includes(next)) {
         throw new Error(`Invalid --scope value: ${next}`);
       }
 
@@ -121,21 +122,35 @@ function run(options) {
     checks.push(...findIosLayerViolations(repoRoot));
   }
 
-  const violations = checks.sort((a, b) => {
-    if (a.file !== b.file) {
-      return a.file.localeCompare(b.file);
-    }
+  if (options.scope === "all" || options.scope === "mac") {
+    checks.push(...findMacLayerViolations(repoRoot));
+  }
 
-    if ((a.line ?? 1) !== (b.line ?? 1)) {
-      return (a.line ?? 1) - (b.line ?? 1);
-    }
+  const seen = new Set();
+  const violations = checks
+    .filter((violation) => {
+      const key = `${violation.file}:${violation.line ?? 1}:${violation.column ?? 1}:${violation.rule}:${violation.target ?? ""}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
+      if (a.file !== b.file) {
+        return a.file.localeCompare(b.file);
+      }
 
-    if ((a.column ?? 1) !== (b.column ?? 1)) {
-      return (a.column ?? 1) - (b.column ?? 1);
-    }
+      if ((a.line ?? 1) !== (b.line ?? 1)) {
+        return (a.line ?? 1) - (b.line ?? 1);
+      }
 
-    return a.rule.localeCompare(b.rule);
-  });
+      if ((a.column ?? 1) !== (b.column ?? 1)) {
+        return (a.column ?? 1) - (b.column ?? 1);
+      }
+
+      return a.rule.localeCompare(b.rule);
+    });
 
   if (violations.length === 0) {
     if (options.scope === "all" || options.scope === "ios") {

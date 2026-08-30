@@ -9,7 +9,7 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 SIM_POOL="$REPO_ROOT/clients/apple/scripts/sim-pool.sh"
 PLANNER="$REPO_ROOT/scripts/pre-push-plan.ts"
-GATE_VERSION="5"
+GATE_VERSION="6"
 ZERO_OID="0000000000000000000000000000000000000000"
 CACHE_DIR="$(git rev-parse --git-dir)/oppi/pre-push-cache/v${GATE_VERSION}"
 GIT_LOCAL_ENV_VARS="$(git rev-parse --local-env-vars)"
@@ -389,6 +389,7 @@ run_apple_gate() {
 }
 
 run_mac_gate() {
+  (cd "$REPO_ROOT/server" && bun scripts/check-architecture-boundaries.ts --scope mac)
   (cd "$REPO_ROOT/clients/apple" && xcodebuild \
     -project Oppi.xcodeproj -scheme OppiMac build-for-testing \
     -destination 'platform=macOS' \

@@ -21,9 +21,9 @@ The Apple app is a remote control and renderer. The server is the authority for 
 ```mermaid
 graph TD
   subgraph Apple[Apple clients]
-    App[iOS and macOS app]
+    App[iOS and Mac apps]
     WorkspaceUI[Sessions inbox, workspace sidebar,<br/>and workspace detail]
-    Timeline[UIKit chat timeline]
+    Timeline[iOS UIKit and Mac AppKit/SwiftUI timelines]
     Voice[Voice input and playback]
   end
 
@@ -77,6 +77,8 @@ graph TD
   Streams --> Timeline
   Voice --> Streams
 ```
+
+Both Apple clients share protocol DTOs, `ChatSessionManager`, reducers, and other framework-free semantics in `OppiCore`. iOS adapts that core over paired HTTPS/WSS and paints with UIKit. Mac adapts it over the owner Unix socket and paints with AppKit/SwiftUI. The Mac app starts by attaching to a healthy local runtime, waiting for an installed LaunchAgent, or spawning a child `oppi serve` process. iOS does not own that local process lifecycle.
 
 ## Runtime ownership and projection
 
@@ -144,7 +146,7 @@ graph TD
   Manager[ChatSessionManager]
   Coalesce[DeltaCoalescer]
   Reduce[TimelineReducer]
-  Render[UIKit timeline]
+  Render[iOS UIKit or Mac AppKit/SwiftUI timeline]
 
   Prompt --> ClientMsg
   ClientMsg --> Handler
@@ -186,7 +188,7 @@ Durable session events get per-session sequence numbers and can be replayed thro
 - Workspace quick-action discovery, selected-file prompt-template preparation, review comments, saved Agents, and schedules stay on HTTP routes. Only the created or focused session uses the session stream.
 - Automatic schedule runs use the server schedule runner and managed-session launch path; they do not create a separate runtime adapter.
 - Shared store updates apply exactly once per inbound live session event on the client.
-- Reducers, coalescers, and focused-session connect/load/stop policies stay UI-framework-free in OppiCore. UIKit-specific rendering lives under the timeline package. A still-stopped session must stay history-only; opening its focused stream can resume server-owned execution.
+- Reducers, coalescers, and focused-session connect/load/stop policies stay UI-framework-free in OppiCore. iOS timeline paint lives under the UIKit timeline package; Mac timeline paint lives under OppiMac AppKit/SwiftUI views. A still-stopped session must stay history-only; opening its focused stream can resume server-owned execution.
 - Imported TUI sessions remain resumable without mutating original JSONL traces.
 
 ## Protocol boundary

@@ -1,6 +1,6 @@
 # Oppi client architecture
 
-The Oppi Apple client controls and renders server-owned and terminal-owned Pi sessions. It keeps workspace navigation HTTP-first, reserves WebSockets for live streams, and renders the hot chat timeline through a UIKit-backed pipeline. HTTP/WebSocket clients use authenticated HTTPS/WSS routes.
+The Oppi Apple clients control and render server-owned and terminal-owned Pi sessions. They keep workspace navigation HTTP-first and reserve WebSockets for live streams. iOS paints the hot chat timeline with UIKit over authenticated HTTPS/WSS. Mac paints with AppKit/SwiftUI over the owner Unix socket.
 
 ## Audience and scope
 
@@ -23,6 +23,8 @@ The Apple client owns:
 The client does not execute Pi sessions or directly mutate server read models. It sends commands and renders the server projection.
 
 ## Client topology
+
+The diagram below is the iOS HTTPS/WSS and UIKit composition. Mac uses the same `ChatSessionManager` and reducer core with owner-socket and AppKit/SwiftUI adapters; see [Mac adapter path](#mac-adapter-path).
 
 ```mermaid
 graph TD
@@ -118,7 +120,27 @@ graph TD
 
 `clients/apple/OppiCore/**` is the source-group boundary for Apple client/data code that should compile into both iOS/iPadOS and macOS targets. It holds protocol DTOs, client-environment values, transport identifiers, `ChatSessionManager` and its runtime ports, reducer support state, stream sequence state, focused-session connect/stop policy, extension-surface state/reduction, session-list presentation, ask/message queue state, review-comment state, file-index state, git status state, freshness/health state, media/diff/date/session/error formatting, and other helpers that need no UI or device framework.
 
-Files in `OppiCore` must stay platform-neutral. The CommonMark parser, its `MarkdownBlock` / `MarkdownInline` AST, and the tail-only `CommonMarkStreamingParser` cache live under `OppiCore/Formatting`; iOS and macOS paint that shared parse result in their platform UI layers. UI/device work belongs in the iOS app under `clients/apple/Oppi/**` or the Mac app under `clients/apple/OppiMac/**`. Mac local server ownership, owner-token loading, owner Unix-socket HTTP, owner Unix-socket WebSocket upgrades, certificate trust delegates, notifications, TCC, and process lifecycle are platform-app adapters around this shared core, not part of the core itself. The Mac app sends the owner `sk_` token only on that Unix socket. Unauthenticated `GET /health` may use localhost HTTPS for attach. Local live streams use authenticated WebSocket upgrades on the owner Unix socket. Remote live WSS stays on the network listener and never carries `sk_`. Mac session home loads `GET /sessions/recent` over that socket; workspace detail still uses per-workspace session lists.
+Files in `OppiCore` must stay platform-neutral. The CommonMark parser, its `MarkdownBlock` / `MarkdownInline` AST, and the tail-only `CommonMarkStreamingParser` cache live under `OppiCore/Formatting`; iOS and macOS paint that shared parse result in their platform UI layers. UI/device work belongs in the iOS app under `clients/apple/Oppi/**` or the Mac app under `clients/apple/OppiMac/**`.
+
+## Mac adapter path
+
+Share semantics; paint and adapt per platform. Do not combine Unix-socket and HTTPS transports or Mac and iOS renderers to reduce file count.
+
+| Layer | Owner |
+| --- | --- |
+| Protocol DTOs, `ChatSessionManager` three ports, reducers, coalescers, focused-session policy, extension-surface state | `OppiCore` |
+| Paired HTTPS/WSS, device auth, UIKit timeline, iOS navigation | `clients/apple/Oppi/**` |
+| Owner Unix-socket HTTP/WebSocket, attach/LaunchAgent/spawn, TCC, AppKit/SwiftUI paint, Mac navigation | `clients/apple/OppiMac/**` |
+
+Mac local server ownership, owner-token loading, owner Unix-socket HTTP, owner Unix-socket WebSocket upgrades, certificate trust delegates, notifications, TCC, and process lifecycle are platform-app adapters around this shared core, not part of the core itself. The Mac app sends the owner `sk_` token only on that Unix socket. Unauthenticated `GET /health` may use localhost HTTPS for attach. Local live streams use authenticated WebSocket upgrades on the owner Unix socket. Remote live WSS stays on the network listener and never carries `sk_`. Mac session home loads `GET /sessions/recent` over that socket; workspace detail still uses per-workspace session lists.
+
+`MacServerLifecycle.startupPlan` chooses one local runtime mode:
+
+1. **Attach** when `GET /health` already succeeds.
+2. **Wait for LaunchAgent** when a LaunchAgent plist is installed and health has not succeeded yet.
+3. **Spawn a child** `oppi serve` process when neither attach nor LaunchAgent applies.
+
+`MacChatSessionRuntimeAdapter` implements the same three `ChatSessionManager` ports as the iOS adapter, using `MacSessionTraceStore` and owner-socket transport instead of `ServerConnection`.
 
 ## Transport lanes
 
@@ -152,7 +174,7 @@ graph TD
   AudioWS --> Dictation[Dictation and audio input]
 ```
 
-The global app event stream and focused session stream stay separate. App events update lists and attention across workspaces. Focused session streams carry timeline events, commands, queue state, and session-specific UI messages. `SessionRouteScope` selects workspace-owned or declared control-session paths; both scopes feed the same `ChatSessionManager`, reducer, and UIKit timeline.
+The global app event stream and focused session stream stay separate. App events update lists and attention across workspaces. Focused session streams carry timeline events, commands, queue state, and session-specific UI messages. `SessionRouteScope` selects workspace-owned or declared control-session paths; both scopes feed the same `ChatSessionManager` and reducer. iOS paints that result with UIKit; Mac paints it with AppKit/SwiftUI.
 
 ## Workspace navigation flow
 
@@ -191,14 +213,14 @@ graph TD
 ```mermaid
 graph TD
   Open[Open session]
-  Adapter[iOS chat runtime adapter]
+  Adapter[iOS or Mac chat runtime adapter]
   Manager[ChatSessionManager.connect]
   Cache[History/cache port]
   Stream[Focused-stream port]
   Effects[Effects/state port]
   Coalescer[DeltaCoalescer]
   Reducer[TimelineReducer]
-  UIKit[ChatTimelineCollectionView]
+  Paint[iOS UIKit or Mac AppKit/SwiftUI timeline]
 
   Open --> Adapter
   Adapter --> Manager
@@ -207,7 +229,7 @@ graph TD
   Manager --> Effects
   Manager --> Coalescer
   Coalescer --> Reducer
-  Reducer --> UIKit
+  Reducer --> Paint
 ```
 
 The manager loads cached trace first for immediate display, then fetches the latest trace page in the background. On first WebSocket connect it seeds sequence tracking from the server. On reconnect it uses focused-session catch-up; if the server ring cannot serve the gap, it repairs from paged trace history instead of loading the entire trace at once.
@@ -221,7 +243,7 @@ Shared policy types live under `clients/apple/OppiCore/Runtime/`:
 
 `ChatSessionManager` lives under `clients/apple/OppiCore/Runtime/` and owns the connection loop, cache-first restore order, paging, catch-up apply, and reducer/coalescer mutations. It sequences cache → paged trace → catch-up directly. It depends on three cohesive ports: history/cache, focused stream, and effects/state. The iOS adapter implements those ports with `ServerConnection`, `APIClient`, `SessionStore`, `TimelineCache`, UI effects, audio, preferences, and telemetry. The manager does not import those app services or a UI framework. iOS trace-page 404/405/409 fallback to a full session trace is classified by `IOSChatSessionRuntimeAdapter`, not by the manager.
 
-The iOS app is the live runtime consumer. Mac wires `MacChatSessionRuntimeAdapter` through `MacSessionTraceStore` so the selected session uses `ChatSessionManager` over the owner Unix socket. Live-stream authentication, app-event handling, and dictation remain outside this runtime boundary. The manager still consults `FocusedSessionConnectionPolicy` and `FocusedSessionStopTurnPolicy`.
+iOS and Mac are both live runtime consumers. iOS implements the three ports with `ServerConnection`, `APIClient`, `SessionStore`, `TimelineCache`, UI effects, audio, preferences, and telemetry. Mac implements them with `MacChatSessionRuntimeAdapter` and `MacSessionTraceStore` over the owner Unix socket. Live-stream authentication, app-event handling, and dictation remain outside this runtime boundary. The manager still consults `FocusedSessionConnectionPolicy` and `FocusedSessionStopTurnPolicy`.
 
 ## Shared store updates
 
@@ -269,14 +291,16 @@ Quick Session intake has two paths:
 
 ## Client boundary rules current code
 
-These rules are enforced by `server/scripts/check-architecture-boundaries.ts` during server checks and the Apple build phase:
+These rules are enforced by `server/scripts/check-architecture-boundaries.ts` during server checks (`--scope all`), the iOS build phase (`--scope ios`), and the Mac pre-push gate (`--scope mac`):
 
 - `clients/apple/OppiCore/Runtime/TimelineReducer.swift` and `DeltaCoalescer.swift` must stay platform-neutral under the shared-core import rule.
 - `clients/apple/OppiCore/**` files must not import UIKit, AppKit, SwiftUI, ActivityKit, UserNotifications, Speech, AVFoundation, WebKit, or MetricKit. Put platform-specific code in the iOS or macOS app target.
+- `clients/apple/OppiMac/**` files must not import UIKit. Mac paint stays on AppKit/SwiftUI.
+- `project.yml` is the Mac target membership authority. OppiMac may compile `OppiMac/**`, `OppiCore/**`, `Shared/**`, and only the established `Oppi/**` adapter files listed there; do not add arbitrary iOS production files to the Mac target.
 - `clients/apple/Oppi/Core/Views/**` and `clients/apple/Oppi/Features/Chat/Timeline/**` must not reference `APIClient` or `WebSocketClient` directly.
 - Workspace and quick-session list views must read `SessionStore.listProjectionSessions` or `listProjectionSessions(workspaceId:)`, not full `SessionStore.sessions`.
 - `SessionStore`, `WorkspaceStore`, `ServerResourceStore`, and shared stores under `clients/apple/OppiCore/Stores/**` must not depend on each other. Cross-store workflows belong in `ServerConnection` or a small service.
-- Generic extension UI rendering and routing must not branch on concrete tool names, extension names, status keys, widget keys, or display names. Add semantic protocol metadata at the producer boundary instead.
+- Generic extension UI rendering and routing must not branch on concrete tool names, extension names, status keys, widget keys, or display names. Add semantic protocol metadata at the producer boundary instead. This includes `ExtensionSurfacePanel.swift` and `MacExtensionSurfacePanel.swift`.
 - SwiftUI foreground, fill, and stroke styling must use the environment-resolved `.theme*` `ShapeStyle` shorthand. `Color.theme*` is a runtime snapshot for APIs that require a concrete `Color` or a UIKit/AppKit bridge. Persistent list and panel modifiers must read `theme` or `themeID` from the environment so mounted content repaints after a theme switch. `scripts/theme-surface-guard.ts` enforces the shorthand boundary during the iOS architecture check.
 
 ## Client cleanup targets
@@ -303,9 +327,11 @@ Keep these high-churn client modules small and explicit:
 | Global sessions inbox         | `clients/apple/Oppi/Features/Workspaces/SessionInboxView.swift`, `SessionRow.swift`, `SessionRowPresentation.swift`                                                                                                                     |
 | Workspace detail list         | `clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift`, `WorkspaceStoppedSessionsSection.swift`                                                                                                                             |
 | Session store                 | `clients/apple/Oppi/Core/Services/SessionStore.swift`; shared ask/queue/review state in `clients/apple/OppiCore/Stores/**`                                                                                                              |
-| Chat session lifecycle        | Shared runtime and ports under `clients/apple/OppiCore/Runtime/ChatSessionManager.swift` and `ChatSessionRuntimePorts.swift`; iOS adapter under `clients/apple/Oppi/Core/Networking/`; `ChatActionHandler.swift` and the focused-session policy types |
+| Chat session lifecycle        | Shared runtime and ports under `clients/apple/OppiCore/Runtime/ChatSessionManager.swift` and `ChatSessionRuntimePorts.swift`; iOS adapter under `clients/apple/Oppi/Core/Networking/`; Mac adapter `MacChatSessionRuntimeAdapter.swift`; `ChatActionHandler.swift` and the focused-session policy types |
+| Mac local runtime             | `clients/apple/OppiMac/Server/MacServerLifecycle.swift`, `ServerProcessManager.swift` |
+| Mac owner-socket transport    | `MacUnixSocketHTTPClient.swift`, `MacUnixWebSocketTransport.swift`, `MacAPIClient.swift` |
 | Timeline model                | `clients/apple/OppiCore/Runtime/TimelineReducer.swift`, `DeltaCoalescer.swift`, and shared support under `OppiCore/Runtime/**`                                                                                                          |
-| Timeline rendering            | `clients/apple/Oppi/Features/Chat/Timeline/**`, `ChatTimelineCollectionView.swift`                                                                                                                                                      |
+| Timeline rendering            | iOS: `clients/apple/Oppi/Features/Chat/Timeline/**`, `ChatTimelineCollectionView.swift`; Mac: `clients/apple/OppiMac/Views/**`                                                                                                                                                      |
 | Extension UI                  | `clients/apple/OppiCore/Runtime/ExtensionSurfaceState.swift`, `ServerConnection+Ask.swift`, `ServerConnection+MessageRouter.swift`, `clients/apple/OppiCore/Stores/AskRequestStore.swift`, `ExtensionSurfacePanel.swift`, `MacExtensionSurfacePanel.swift` |
 | File browser and media        | `APIClient.swift`, `AuthenticatedMediaSource.swift`, `AuthenticatedMediaPlayback.swift`, `InlineMediaPlayback.swift`, `FileBrowserView.swift`                                                                                           |
 | Quick Session intake          | Main app: `QuickSessionTrigger.swift`, `StartQuickSessionIntent.swift`, `QuickSessionSheet.swift`; share extension: `ShareViewController.swift`, `ShareQuickSessionComposerViewController.swift`, `ShareQuickSessionSender.swift`       |

@@ -1,6 +1,6 @@
 # Oppi - Agent Guide
 
-Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone and iPad through a server you run yourself.
+Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone, iPad, and Mac through a server you run yourself.
 
 ## Rules
 
@@ -8,7 +8,9 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone 
 - Do not use the word `legacy`. Add compatibility layers only when asked. Before making a breaking change, explain what may stop working. Ask first when the impact might surprise the user.
 - Use a small function or local type instead of adding a new layer.
 - Keep important context in comments next to the code.
-- Before changing server or Apple client structure, network connections, state stores, or extension UI, read `docs/architecture.md`. Then read the relevant split page: `docs/architecture-server.md` or `docs/architecture-client.md`. `server/scripts/check-architecture-boundaries.ts` and local ESLint rules enforce these boundaries.
+- Before changing server or Apple client structure, network connections, state stores, or extension UI, read `docs/architecture.md`. Then read the relevant split page: `docs/architecture-server.md` or `docs/architecture-client.md`. `server/scripts/check-architecture-boundaries.ts` (`--scope server`, `--scope ios`, `--scope mac`) and local ESLint rules enforce these boundaries.
+- Mac is an Apple client target (`OppiMac`). Include it when the work names Mac, macOS, desktop, or OppiMac, or when it changes `OppiCore` or other shared Apple code.
+- `OppiCore` changes need relevant proof on both Apple clients. Canonical Mac validation is `docs/testing/README.md`; do not duplicate those commands here.
 - For protocol changes, follow the "Protocol boundary" checklist in `docs/architecture-server.md`. Update these files and add tests on both sides:
   - `server/src/types/protocol.ts`
   - the matching Apple models in `clients/apple/OppiCore/Models/`

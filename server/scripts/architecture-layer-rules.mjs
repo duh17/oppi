@@ -7,6 +7,8 @@ export const SERVER_ARCHITECTURE_GUIDE =
   "docs/architecture-server.md#server-boundary-rules-current-code";
 export const IOS_ARCHITECTURE_GUIDE =
   "docs/architecture-client.md#client-boundary-rules-current-code";
+export const MAC_ARCHITECTURE_GUIDE =
+  "docs/architecture-client.md#client-boundary-rules-current-code";
 
 const SERVER_COMPOSITION_ROOT = "server/src/server.ts";
 const SERVER_ENTRY_FILE = "server/src/cli.ts";
@@ -50,6 +52,19 @@ const SERVER_PI_TUI_RUNTIME_CHECK_ALLOWED_FILES = new Set([
 
 const APPLE_SHARED_CORE_ROOT = "clients/apple/OppiCore/";
 const APPLE_SHARED_CORE_PLATFORM_ADAPTER_PREFIXES = [`${APPLE_SHARED_CORE_ROOT}PlatformAdapters/`];
+const MAC_APP_ROOT = "clients/apple/OppiMac/";
+const MAC_PROJECT_YML = "clients/apple/project.yml";
+const MAC_FORBIDDEN_APP_IMPORTS = new Set(["UIKit"]);
+const MAC_ALLOWED_SOURCE_ROOTS = new Set(["OppiMac", "OppiCore", "Shared"]);
+const MAC_OPPI_TREE_ALLOWED_PATHS = new Set([
+  "Oppi/Resources/Fonts",
+  "Oppi/Core/AppIdentifiers.swift",
+  "Oppi/Core/Extensions/Color+Theme.swift",
+  "Oppi/Core/Theme/AppTheme.swift",
+  "Oppi/Core/Theme/RemoteTheme.swift",
+  "Oppi/Core/Theme/ThemeCatalog.swift",
+  "Oppi/Core/Theme/ThemeStore.swift",
+]);
 const APPLE_SHARED_CORE_FORBIDDEN_IMPORTS = new Set([
   "UIKit",
   "AppKit",
@@ -76,6 +91,7 @@ const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
 const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES = new Set([
   "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift",
+  "clients/apple/OppiMac/Views/MacExtensionSurfacePanel.swift",
   "clients/apple/Oppi/Core/Networking/ServerConnection+MessageRouter.swift",
   "clients/apple/Oppi/Core/Networking/ServerConnection+AppEvents.swift",
   "clients/apple/OppiCore/Runtime/ExtensionSurfaceState.swift",
@@ -1187,6 +1203,213 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
       makeIosViolation,
     ),
   );
+
+  return sortArchitectureViolations(violations);
+}
+
+function makeMacViolation({ rule, file, line, column, reason, remediation, target }) {
+  return {
+    rule,
+    file,
+    target,
+    line,
+    column,
+    reason,
+    remediation,
+    guide: MAC_ARCHITECTURE_GUIDE,
+  };
+}
+
+function isMacAppSwiftFile(filePath) {
+  return filePath.startsWith(MAC_APP_ROOT) && filePath.endsWith(".swift");
+}
+
+function collectMacSwiftFiles(repoRoot, files = undefined) {
+  if (files) {
+    return files.map(normalizeRepoPath).filter(isMacAppSwiftFile).sort();
+  }
+
+  return listFilesRecursively(path.join(repoRoot, "clients", "apple", "OppiMac"), ".swift")
+    .map((absolutePath) => normalizeRepoPath(path.relative(repoRoot, absolutePath)))
+    .sort();
+}
+
+function isAllowedMacSourcePath(declaredPath) {
+  if (!declaredPath || declaredPath.startsWith("/") || declaredPath.includes("..")) {
+    return false;
+  }
+
+  for (const root of MAC_ALLOWED_SOURCE_ROOTS) {
+    if (declaredPath === root || declaredPath.startsWith(`${root}/`)) {
+      return true;
+    }
+  }
+
+  for (const allowed of MAC_OPPI_TREE_ALLOWED_PATHS) {
+    if (declaredPath === allowed || declaredPath.startsWith(`${allowed}/`)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function readOppiMacDeclaredSourcePaths(projectYml) {
+  const paths = [];
+  let inTarget = false;
+  let inSources = false;
+
+  for (const line of projectYml.split("\n")) {
+    if (!inTarget) {
+      if (/^  OppiMac:\s*$/.test(line)) {
+        inTarget = true;
+      }
+      continue;
+    }
+
+    if (/^  \S/.test(line) && !line.startsWith("    ")) {
+      break;
+    }
+
+    if (!inSources) {
+      if (/^    sources:\s*$/.test(line)) {
+        inSources = true;
+      }
+      continue;
+    }
+
+    if (/^    [A-Za-z]/.test(line)) {
+      break;
+    }
+
+    const match = line.match(/^\s+- path:\s*(.+?)\s*$/) ?? line.match(/^\s+path:\s*(.+?)\s*$/);
+    if (!match) {
+      continue;
+    }
+
+    paths.push(match[1].replace(/^['"]|['"]$/g, ""));
+  }
+
+  return paths;
+}
+
+function collectAppleSharedCoreSwiftFiles(repoRoot, files = undefined) {
+  if (files) {
+    return files
+      .map(normalizeRepoPath)
+      .filter(
+        (filePath) => filePath.startsWith(APPLE_SHARED_CORE_ROOT) && filePath.endsWith(".swift"),
+      )
+      .sort();
+  }
+
+  return listFilesRecursively(path.join(repoRoot, "clients", "apple", "OppiCore"), ".swift")
+    .map((absolutePath) => normalizeRepoPath(path.relative(repoRoot, absolutePath)))
+    .sort();
+}
+
+export function findMacLayerViolations(repoRoot, files = undefined) {
+  const candidateFiles = collectMacSwiftFiles(repoRoot, files);
+  const violations = [];
+
+  for (const file of collectAppleSharedCoreSwiftFiles(repoRoot, files)) {
+    if (APPLE_SHARED_CORE_PLATFORM_ADAPTER_PREFIXES.some((prefix) => file.startsWith(prefix))) {
+      continue;
+    }
+
+    const parsed = readSwiftSource(repoRoot, file);
+    if (!parsed) {
+      continue;
+    }
+
+    for (const framework of APPLE_SHARED_CORE_FORBIDDEN_IMPORTS) {
+      const match = findFirstMatch(
+        parsed.stripped,
+        new RegExp(`^\\s*import\\s+${framework}\\b`, "m"),
+      );
+      if (!match) {
+        continue;
+      }
+
+      const location = lineAndColumnForIndex(parsed.stripped, match.index);
+      violations.push(
+        makeMacViolation({
+          rule: "apple-shared-core-platform-import",
+          file,
+          line: location.line,
+          column: location.column,
+          reason: `OppiCore non-adapter files must not import ${framework}.`,
+          remediation:
+            "Move UI, device, trust-delegate, notification, audio, or rendering code into OppiCore/PlatformAdapters/** or an app-specific adapter under Oppi/** or OppiMac/**.",
+        }),
+      );
+    }
+  }
+
+  for (const file of candidateFiles) {
+    const parsed = readSwiftSource(repoRoot, file);
+    if (!parsed) {
+      continue;
+    }
+
+    for (const framework of MAC_FORBIDDEN_APP_IMPORTS) {
+      const match = findFirstMatch(
+        parsed.stripped,
+        new RegExp(`^\\s*import\\s+${framework}\\b`, "m"),
+      );
+      if (!match) {
+        continue;
+      }
+
+      const location = lineAndColumnForIndex(parsed.stripped, match.index);
+      violations.push(
+        makeMacViolation({
+          rule: "mac-app-no-uikit",
+          file,
+          line: location.line,
+          column: location.column,
+          reason: `OppiMac files must not import ${framework}.`,
+          remediation:
+            "Keep Mac paint and adapters on AppKit/SwiftUI. Shared semantics belong in OppiCore without UIKit.",
+        }),
+      );
+    }
+  }
+
+  const genericExtensionFiles = files ? files.map(normalizeRepoPath) : candidateFiles;
+  violations.push(
+    ...findGenericExtensionSurfaceIdentityBranchViolations(
+      repoRoot,
+      genericExtensionFiles,
+      makeMacViolation,
+    ),
+  );
+
+  const shouldCheckMembership = !files || files.map(normalizeRepoPath).includes(MAC_PROJECT_YML);
+  const projectYmlPath = path.join(repoRoot, MAC_PROJECT_YML);
+  if (shouldCheckMembership && existsSync(projectYmlPath)) {
+    const projectYml = readFileSync(projectYmlPath, "utf8");
+    const declaredPaths = readOppiMacDeclaredSourcePaths(projectYml);
+    for (const declaredPath of declaredPaths) {
+      if (isAllowedMacSourcePath(declaredPath)) {
+        continue;
+      }
+
+      const location = lineAndColumnForIndex(projectYml, projectYml.indexOf(declaredPath));
+      violations.push(
+        makeMacViolation({
+          rule: "mac-oppi-tree-membership",
+          file: MAC_PROJECT_YML,
+          target: declaredPath,
+          line: location.line,
+          column: location.column,
+          reason: `OppiMac must not compile undeclared source roots (${declaredPath}).`,
+          remediation:
+            "Keep Mac sources under OppiMac/**, OppiCore/**, or Shared/**. Expand the established Mac Oppi/** allowlist only when that exact file is already a Mac adapter dependency.",
+        }),
+      );
+    }
+  }
 
   return sortArchitectureViolations(violations);
 }
