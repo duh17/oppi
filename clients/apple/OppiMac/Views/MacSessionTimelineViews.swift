@@ -1691,7 +1691,8 @@ struct MacCodeOutputPreview: View {
                     includeLineNumbers: false
                 ),
                 source: source,
-                fillsColumn: false
+                fillsColumn: false,
+                heightBehavior: .fitContent(maxHeight: 360)
             )
             .frame(maxHeight: 360)
             .background(.themeBgDark, in: RoundedRectangle(cornerRadius: 6))

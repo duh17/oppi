@@ -308,6 +308,198 @@ final class MacSessionShellVisualGateTests: XCTestCase {
         )
     }
 
+    func testContentSizedCodeAtExactTextWidthDoesNotCreateHorizontalScroller() throws {
+        let code = "echo boundary"
+        let attributedCode = MacSyntaxHighlighter.attributedCode(
+            code,
+            language: .shell,
+            includeLineNumbers: false
+        )
+        let width = unwrappedCodeWidth(attributedCode)
+        let root = MacReviewCommentTextView(
+            text: code,
+            attributedText: attributedCode,
+            source: MacReviewCommentSource(kind: .timelineText),
+            fillsColumn: false,
+            heightBehavior: .fitContent(maxHeight: 360)
+        )
+        .frame(width: width)
+        .environment(\.theme, AppTheme.dark)
+        .environment(\.themeID, ThemeID.dark)
+        .preferredColorScheme(.dark)
+
+        try withHostedView(root, width: width, height: 100) { host, _ in
+            host.layoutSubtreeIfNeeded()
+            let scrollView = try XCTUnwrap(descendantViews(in: host).first {
+                $0 is NSScrollView
+                    && $0.identifier?.rawValue == "mac.reviewComment.text"
+            } as? NSScrollView)
+            let textView = try XCTUnwrap(scrollView.documentView as? NSTextView)
+            let textContainer = try XCTUnwrap(textView.textContainer)
+            let layoutManager = try XCTUnwrap(textView.layoutManager)
+            layoutManager.ensureLayout(for: textContainer)
+            let requiredWidth = ceil(
+                layoutManager.usedRect(for: textContainer).width
+                    + textView.textContainerInset.width * 2
+            )
+
+            XCTAssertEqual(scrollView.frame.width, width, accuracy: 0.5)
+            XCTAssertEqual(scrollView.contentView.bounds.width, requiredWidth, accuracy: 0.5)
+            XCTAssertEqual(textView.frame.width, scrollView.contentView.bounds.width, accuracy: 0.5)
+            XCTAssertFalse(
+                scrollView.hasHorizontalScroller,
+                "TextKit line-fragment padding is already present in usedRect and must not force overflow"
+            )
+        }
+    }
+
+    func testContentSizedCodeOverHeightCapUsesVerticalScrollerAndClipWidth() throws {
+        let code = (1...40)
+            .map { String(format: "echo line %02d", $0) }
+            .joined(separator: "\n")
+        let width: CGFloat = 240
+        let maximumHeight: CGFloat = 80
+        let root = MacReviewCommentTextView(
+            text: code,
+            attributedText: MacSyntaxHighlighter.attributedCode(
+                code,
+                language: .shell,
+                includeLineNumbers: false
+            ),
+            source: MacReviewCommentSource(kind: .timelineText),
+            fillsColumn: false,
+            heightBehavior: .fitContent(maxHeight: maximumHeight)
+        )
+        .frame(width: width)
+        .environment(\.theme, AppTheme.dark)
+        .environment(\.themeID, ThemeID.dark)
+        .preferredColorScheme(.dark)
+
+        try withHostedView(root, width: width, height: 140) { host, _ in
+            host.layoutSubtreeIfNeeded()
+            let scrollView = try XCTUnwrap(descendantViews(in: host).first {
+                $0 is NSScrollView
+                    && $0.identifier?.rawValue == "mac.reviewComment.text"
+            } as? NSScrollView)
+            let textView = try XCTUnwrap(scrollView.documentView as? NSTextView)
+
+            scrollView.scrollerStyle = .legacy
+            scrollView.invalidateIntrinsicContentSize()
+            host.needsLayout = true
+            host.layoutSubtreeIfNeeded()
+
+            XCTAssertEqual(scrollView.frame.height, maximumHeight, accuracy: 0.5)
+            XCTAssertTrue(scrollView.hasVerticalScroller)
+            XCTAssertFalse(scrollView.hasHorizontalScroller)
+            XCTAssertGreaterThan(textView.frame.height, scrollView.contentView.bounds.height)
+            XCTAssertEqual(textView.frame.width, scrollView.contentView.bounds.width, accuracy: 0.5)
+        }
+    }
+
+    func testPlainFencedCodeMarkdownUsesContentSizedViewports() throws {
+        let shortCode = "echo ready"
+        let longCode = [
+            "printf 'first line\\n'",
+            "tools/fruitstand reminders add \"A deliberately long reminder title that must scroll horizontally instead of widening its ordered-list parent\" --list Personal",
+            "printf 'last line\\n'",
+        ].joined(separator: "\n")
+        let markdown = """
+        ## Safe sequence
+        1. Verify the short command:
+           ```bash
+           \(shortCode)
+           ```
+        2. Run the longer command without collapsing its body:
+           ```bash
+           printf 'first line\\n'
+           tools/fruitstand reminders add "A deliberately long reminder title that must scroll horizontally instead of widening its ordered-list parent" --list Personal
+           printf 'last line\\n'
+           ```
+        3. Continue after both complete.
+        """
+        let width: CGFloat = 520
+        let height: CGFloat = 420
+        let root = ScrollView {
+            MacMarkdownDocumentView(markdown: markdown)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+        }
+        .frame(width: width, height: height)
+        .background(AppTheme.dark.bg.primary)
+        .environment(\.theme, AppTheme.dark)
+        .environment(\.themeID, ThemeID.dark)
+        .tint(.themeBlue)
+        .preferredColorScheme(.dark)
+
+        let image = try withHostedView(root, width: width, height: height) { host, _ in
+            host.layoutSubtreeIfNeeded()
+            let codeScrollViews = descendantViews(in: host)
+                .compactMap { $0 as? NSScrollView }
+                .filter {
+                    $0.identifier?.rawValue == "mac.reviewComment.text"
+                        && $0.documentView is MacReviewCommentTextViewBridge
+                }
+            XCTAssertEqual(codeScrollViews.count, 2)
+
+            let shortViewport = try XCTUnwrap(codeScrollViews.first {
+                ($0.documentView as? NSTextView)?.string
+                    .trimmingCharacters(in: .whitespacesAndNewlines) == shortCode
+            })
+            let longViewport = try XCTUnwrap(codeScrollViews.first {
+                ($0.documentView as? NSTextView)?.string
+                    .trimmingCharacters(in: .whitespacesAndNewlines) == longCode
+            })
+
+            XCTAssertGreaterThanOrEqual(shortViewport.frame.height, 30)
+            XCTAssertLessThanOrEqual(shortViewport.frame.height, 60)
+            XCTAssertFalse(
+                shortViewport.hasHorizontalScroller,
+                "A short code fence must not paint an empty horizontal scrollbar track"
+            )
+            XCTAssertEqual(
+                shortViewport.documentView?.frame.width ?? 0,
+                shortViewport.contentView.bounds.width,
+                accuracy: 0.5,
+                "A fitting code document should exactly fill its clip width"
+            )
+
+            XCTAssertGreaterThanOrEqual(
+                longViewport.frame.height,
+                64,
+                "A multiline fence must paint all short lines instead of collapsing to scroll chrome"
+            )
+            XCTAssertLessThanOrEqual(longViewport.frame.height, 120)
+            XCTAssertTrue(
+                longViewport.hasHorizontalScroller,
+                "Only the deliberately overflowing line should enable horizontal scrolling"
+            )
+            XCTAssertLessThanOrEqual(
+                longViewport.horizontalScroller?.frame.height ?? 0,
+                20,
+                "The horizontal scroller must remain normal Mac chrome"
+            )
+            XCTAssertGreaterThan(
+                longViewport.documentView?.frame.width ?? 0,
+                longViewport.contentView.bounds.width,
+                "An overflowing code document must be wider than its clip viewport"
+            )
+
+            for viewport in codeScrollViews {
+                let frame = host.convert(viewport.bounds, from: viewport)
+                XCTAssertGreaterThanOrEqual(frame.minX, -1)
+                XCTAssertLessThanOrEqual(frame.maxX, width + 1)
+                XCTAssertLessThanOrEqual(viewport.frame.height, 360)
+            }
+            return try snapshot(host)
+        }
+
+        addStructuralAttachment(
+            image,
+            name: "mac-markdown-ordered-fenced-code-dark-520x420-structural"
+        )
+        assertCaptureBounds(image, expectedWidth: width, expectedHeight: height)
+    }
+
     private func captureShell(
         width: CGFloat,
         height: CGFloat,
@@ -410,7 +602,31 @@ final class MacSessionShellVisualGateTests: XCTestCase {
         themeID: ThemeID = .dark,
         waitUntil: ((NSImage) -> Bool)? = nil
     ) throws -> NSImage {
+        try withHostedView(
+            root,
+            width: width,
+            height: height,
+            themeID: themeID
+        ) { host, _ in
+            var image = try snapshot(host)
+            guard let waitUntil else { return image }
 
+            let deadline = Date().addingTimeInterval(2)
+            while !waitUntil(image), Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+                image = try snapshot(host)
+            }
+            return image
+        }
+    }
+
+    private func withHostedView<Content: View, Result>(
+        _ root: Content,
+        width: CGFloat,
+        height: CGFloat,
+        themeID: ThemeID = .dark,
+        operation: (NSHostingView<Content>, NSWindow) throws -> Result
+    ) throws -> Result {
         let host = NSHostingView(rootView: root)
         host.frame = NSRect(x: 0, y: 0, width: width, height: height)
         let window = NSWindow(
@@ -432,31 +648,41 @@ final class MacSessionShellVisualGateTests: XCTestCase {
             window.contentView = nil
             window.close()
         }
-
-        func snapshot() throws -> NSImage {
-            host.layoutSubtreeIfNeeded()
-            host.displayIfNeeded()
-            CATransaction.flush()
-            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
-                throw MacSessionShellVisualGateError.noBitmap
-            }
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            let image = NSImage(size: host.bounds.size)
-            image.addRepresentation(bitmap)
-            return image
-        }
-
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-        var image = try snapshot()
-        guard let waitUntil else { return image }
+        return try operation(host, window)
+    }
 
-        let deadline = Date().addingTimeInterval(2)
-        while !waitUntil(image), Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-            image = try snapshot()
+    private func snapshot<Content>(_ host: NSHostingView<Content>) throws -> NSImage {
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        CATransaction.flush()
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            throw MacSessionShellVisualGateError.noBitmap
         }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = NSImage(size: host.bounds.size)
+        image.addRepresentation(bitmap)
         return image
     }
+
+    private func descendantViews(in root: NSView) -> [NSView] {
+        root.subviews.flatMap { [$0] + descendantViews(in: $0) }
+    }
+
+    private func unwrappedCodeWidth(_ attributedCode: NSAttributedString) -> CGFloat {
+        let textStorage = NSTextStorage(attributedString: attributedCode)
+        let layoutManager = NSLayoutManager()
+        let textContainer = NSTextContainer(size: NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        ))
+        textContainer.lineFragmentPadding = 4
+        textStorage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(textContainer)
+        layoutManager.ensureLayout(for: textContainer)
+        return ceil(layoutManager.usedRect(for: textContainer).width + 16)
+    }
+
 
     private func luminance(in image: NSImage, at point: CGPoint) -> CGFloat {
         guard let bitmap = image.representations.compactMap({ $0 as? NSBitmapImageRep }).first else {
