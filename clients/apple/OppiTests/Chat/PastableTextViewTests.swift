@@ -2,6 +2,34 @@ import Testing
 import UIKit
 @testable import Oppi
 
+@Suite("composer input assistant")
+@MainActor
+struct ComposerInputAssistantTests {
+    @Test(arguments: [true, false])
+    func hidesShortcutBarGroupsInBothAutocorrectionModes(autocorrectionEnabled: Bool) {
+        let textView = UITextView()
+        let seededGroup = UIBarButtonItemGroup(
+            barButtonItems: [UIBarButtonItem(barButtonSystemItem: .done, target: nil, action: nil)],
+            representativeItem: nil
+        )
+        textView.inputAssistantItem.leadingBarButtonGroups = [seededGroup]
+        textView.inputAssistantItem.trailingBarButtonGroups = [seededGroup]
+
+        applyComposerInputTraits(to: textView, autocorrectionEnabled: autocorrectionEnabled)
+
+        #expect(textView.inputAssistantItem.leadingBarButtonGroups.isEmpty)
+        #expect(textView.inputAssistantItem.trailingBarButtonGroups.isEmpty)
+        #expect(textView.textContentType == .none)
+        if autocorrectionEnabled {
+            #expect(textView.autocorrectionType == .default)
+            #expect(textView.writingToolsBehavior == .complete)
+        } else {
+            #expect(textView.autocorrectionType == .no)
+            #expect(textView.writingToolsBehavior == .none)
+        }
+    }
+}
+
 @Suite("inlineComposerHeight")
 struct InlineComposerHeightTests {
 

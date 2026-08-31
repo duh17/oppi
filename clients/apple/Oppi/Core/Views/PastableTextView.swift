@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 @MainActor
-private func applyComposerInputTraits(
+func applyComposerInputTraits(
     to textView: UITextView,
     autocorrectionEnabled: Bool
 ) {
@@ -16,19 +16,21 @@ private func applyComposerInputTraits(
         textView.textContentType = .none
         textView.writingToolsBehavior = .complete
         textView.allowedWritingToolsResultOptions = .plainText
-        return
+    } else {
+        textView.autocorrectionType = .no
+        textView.autocapitalizationType = .none
+        textView.spellCheckingType = .no
+        textView.smartQuotesType = .no
+        textView.smartDashesType = .no
+        textView.smartInsertDeleteType = .no
+        textView.textContentType = .none
+        textView.writingToolsBehavior = .none
+        textView.allowedWritingToolsResultOptions = .plainText
     }
 
-    textView.autocorrectionType = .no
-    textView.autocapitalizationType = .none
-    textView.spellCheckingType = .no
-    textView.smartQuotesType = .no
-    textView.smartDashesType = .no
-    textView.smartInsertDeleteType = .no
-    textView.textContentType = .none
-    textView.writingToolsBehavior = .none
-    textView.allowedWritingToolsResultOptions = .plainText
-
+    // Hide iPadOS shortcut-bar items such as "Write with Siri".
+    // Empty leading/trailing groups hide shortcuts only; typing suggestions,
+    // dictation, and Writing Tools stay under the traits above.
     let assistant = textView.inputAssistantItem
     assistant.leadingBarButtonGroups = []
     assistant.trailingBarButtonGroups = []
