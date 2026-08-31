@@ -86,11 +86,14 @@ struct MacExtensionSurfaceComposerSourceTests {
         #expect(!source.contains("toolName"))
     }
 
-    @Test func eachPlacementIsOneBoundedScrollingSurface() throws {
+    @Test func eachPlacementIsOneBoundedHuggingSurface() throws {
         let source = try panelSource()
-        #expect(source.contains("expandedMaxHeight"))
         #expect(source.contains("MacExtensionBoundedSurface"))
+        #expect(source.contains("contentHeight > 0 ? contentHeight : nil"))
         #expect(source.contains("mac.extension.surface.scroll"))
+        #expect(!source.contains("min(contentHeight, maxHeight)"))
+        #expect(!source.contains("expandedMaxHeight"))
+        #expect(!source.contains("ScrollView(.vertical"))
         #expect(!source.contains("NSEvent.addLocalMonitor"))
     }
 
@@ -122,11 +125,6 @@ struct MacExtensionSurfaceLinkTests {
         #expect(MacExtensionSurfaceLink.url(from: "") == nil)
         #expect(MacExtensionSurfaceLink.url(from: "docs/foo.md") == nil)
         #expect(MacExtensionSurfaceLink.url(from: "[[wiki]]") == nil)
-    }
-
-    @Test func expandedPlacementBudgetIsBounded() {
-        #expect(MacExtensionSurfaceLayout.expandedMaxHeight == 260)
-        #expect(MacExtensionSurfaceLayout.expandedMaxHeight > 0)
     }
 }
 

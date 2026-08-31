@@ -66,35 +66,34 @@ struct MacSessionComposerBar: View {
                 sessionStateBar
             } else if composerSurface.acceptsInput {
                 if hasAboveComposerAuxiliaryContent {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if hasEditorAuxiliaryContent {
-                            ScrollView(.vertical) {
+                    MacComposerHuggingCappedRegion(maxHeight: composerAuxiliaryRegionMaximumHeight) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if hasEditorAuxiliaryContent {
                                 editorAuxiliaryContent
                             }
-                            .scrollBounceBehavior(.basedOnSize)
-                        }
 
-                        if hasAboveEditorExtensionSurface {
-                            // Extension surfaces already own their vertical
-                            // scrolling; do not wrap them in another scroller.
-                            MacExtensionSurfacePanel(
-                                surface: store.extensionSurface,
-                                placement: .aboveEditor
-                            )
+                            if hasAboveEditorExtensionSurface {
+                                // Extension surface hugs/caps; this region owns
+                                // the only vertical scroller.
+                                MacExtensionSurfacePanel(
+                                    surface: store.extensionSurface,
+                                    placement: .aboveEditor
+                                )
+                            }
                         }
                     }
-                    .frame(maxHeight: composerAuxiliaryRegionMaximumHeight)
                     .accessibilityIdentifier("mac.composer.auxiliary")
                 }
 
                 composerCapsule
 
                 if hasBelowEditorExtensionSurface {
-                    MacExtensionSurfacePanel(
-                        surface: store.extensionSurface,
-                        placement: .belowEditor
-                    )
-                    .frame(maxHeight: composerAuxiliaryRegionMaximumHeight)
+                    MacComposerHuggingCappedRegion(maxHeight: composerAuxiliaryRegionMaximumHeight) {
+                        MacExtensionSurfacePanel(
+                            surface: store.extensionSurface,
+                            placement: .belowEditor
+                        )
+                    }
                 }
             }
         }
@@ -1111,6 +1110,57 @@ struct MacSessionComposerBar: View {
             return URL(string: string) ?? URL(fileURLWithPath: string)
         }
         return nil
+    }
+}
+
+private struct MacComposerAuxiliaryContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Measure-then-cap so short queue/extension chrome hugs its content inside
+/// the full-height composer overlay. Keep one ScrollView mounted; bounce
+/// basedOnSize so short cards do not rubber-band. Do not use scrollDisabled:
+/// that environment flag also disables descendant horizontal widget/terminal
+/// line scrollers.
+private struct MacComposerHuggingCappedRegion<Content: View>: View {
+    let maxHeight: CGFloat
+    let content: Content
+    @State private var contentHeight: CGFloat = 0
+
+    init(maxHeight: CGFloat, @ViewBuilder content: () -> Content) {
+        self.maxHeight = maxHeight
+        self.content = content()
+    }
+
+    var body: some View {
+        let height = contentHeight > 0 ? min(contentHeight, maxHeight) : nil
+
+        ScrollView(.vertical) {
+            measuredContent
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(height: height, alignment: .top)
+    }
+
+    private var measuredContent: some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: MacComposerAuxiliaryContentHeightKey.self,
+                        value: proxy.size.height
+                    )
+                }
+            }
+            .onPreferenceChange(MacComposerAuxiliaryContentHeightKey.self) {
+                contentHeight = $0
+            }
     }
 }
 

@@ -272,6 +272,186 @@ final class MacComposerVisualGateTests: XCTestCase {
         add(attachment)
     }
 
+    func testCollapsedMessageQueueHugsContentInsideATallOverlay() throws {
+        let overlayHeight: CGFloat = 640
+        let composerWidth: CGFloat = 560
+        let baselineStore = MacSessionTraceStore()
+        let baselineTarget = makeTarget(status: .busy)
+        baselineStore.select(baselineTarget)
+
+        let queuedStore = MacSessionTraceStore()
+        let queuedTarget = makeTarget(status: .busy)
+        queuedStore.select(queuedTarget)
+        applyQueueState(
+            MessageQueueState(
+                version: 1,
+                steering: [
+                    MessageQueueItem(
+                        id: "steer-1",
+                        message: "Tighten the live session layout",
+                        createdAt: 1_800_000_000_000
+                    ),
+                ],
+                followUp: []
+            ),
+            to: queuedStore,
+            target: queuedTarget
+        )
+
+        let baseline = try measureComposerHeightInOverlay(
+            store: baselineStore,
+            width: composerWidth,
+            overlayHeight: overlayHeight,
+            attachmentName: "composer-busy-tall-overlay-baseline"
+        )
+        let queued = try measureComposerHeightInOverlay(
+            store: queuedStore,
+            width: composerWidth,
+            overlayHeight: overlayHeight,
+            attachmentName: "composer-busy-collapsed-queue-tall-overlay"
+        )
+
+        let auxiliaryBand = queued.height - baseline.height
+        XCTAssertGreaterThan(
+            auxiliaryBand,
+            24,
+            "Collapsed Message Queue chip should paint above the composer"
+        )
+        XCTAssertLessThan(
+            auxiliaryBand,
+            100,
+            "Collapsed Message Queue must hug the chip instead of reserving the \(Int(MacSessionWindowChrome.composerAuxiliaryTotalMaximumHeight))pt auxiliary cap"
+        )
+        XCTAssertLessThan(
+            queued.height,
+            baseline.height + MacSessionWindowChrome.composerAuxiliaryTotalMaximumHeight,
+            "Composer height must stay near chip+composer, well below the 220pt cap"
+        )
+    }
+
+    func testShortExtensionSurfaceHugsContentInsideATallOverlay() throws {
+        let overlayHeight: CGFloat = 640
+        let composerWidth: CGFloat = 560
+        let baselineStore = MacSessionTraceStore()
+        let baselineTarget = makeTarget(status: .busy)
+        baselineStore.select(baselineTarget)
+
+        let extensionStore = MacSessionTraceStore()
+        let extensionTarget = makeTarget(status: .busy)
+        extensionStore.select(extensionTarget)
+        applyWidgetLines(["Agents active"], to: extensionStore, target: extensionTarget)
+
+        let baseline = try measureComposerHeightInOverlay(
+            store: baselineStore,
+            width: composerWidth,
+            overlayHeight: overlayHeight,
+            attachmentName: "composer-busy-tall-overlay-extension-baseline"
+        )
+        let shortSurface = try measureComposerHeightInOverlay(
+            store: extensionStore,
+            width: composerWidth,
+            overlayHeight: overlayHeight,
+            attachmentName: "composer-busy-short-extension-tall-overlay"
+        )
+
+        let auxiliaryBand = shortSurface.height - baseline.height
+        XCTAssertGreaterThan(
+            auxiliaryBand,
+            24,
+            "Short above-composer extension chrome should paint above the composer"
+        )
+        XCTAssertLessThan(
+            auxiliaryBand,
+            140,
+            "Short extension chrome must hug its card instead of filling the expanded 260pt scroller"
+        )
+        XCTAssertLessThan(
+            shortSurface.height,
+            baseline.height + MacSessionWindowChrome.composerAuxiliaryTotalMaximumHeight,
+            "Short extension chrome must not reserve the 220pt auxiliary band"
+        )
+    }
+
+    func testAuxiliaryContentCompressesInsideAShortOverlay() throws {
+        let overlayHeight: CGFloat = 320
+        let composerWidth: CGFloat = 560
+        let manyLines = (1...40).map { "Queued job \($0)" }
+        let moreLines = (1...80).map { "Queued job \($0)" }
+
+        let manyStore = MacSessionTraceStore()
+        let manyTarget = makeTarget(status: .busy)
+        manyStore.select(manyTarget)
+        applyWidgetLines(manyLines, to: manyStore, target: manyTarget)
+
+        let moreStore = MacSessionTraceStore()
+        let moreTarget = makeTarget(status: .busy)
+        moreStore.select(moreTarget)
+        applyWidgetLines(moreLines, to: moreStore, target: moreTarget)
+
+        let many = try measureComposerHeightInOverlay(
+            store: manyStore,
+            width: composerWidth,
+            overlayHeight: overlayHeight,
+            attachmentName: "composer-busy-extension-40-lines-short-overlay"
+        )
+        let more = try measureComposerHeightInOverlay(
+            store: moreStore,
+            width: composerWidth,
+            overlayHeight: overlayHeight,
+            attachmentName: "composer-busy-extension-80-lines-short-overlay"
+        )
+
+        XCTAssertEqual(
+            many.height,
+            more.height,
+            accuracy: 12,
+            "Overflowing auxiliary chrome should cap and scroll instead of growing with extra lines"
+        )
+        XCTAssertLessThanOrEqual(
+            many.height,
+            MacSessionWindowChrome.composerAuxiliaryTotalMaximumHeight + 180,
+            "A short overlay must keep overflowing auxiliary content inside the shared 220pt cap"
+        )
+        XCTAssertGreaterThan(
+            many.height,
+            160,
+            "Capped auxiliary chrome should still occupy the bounded pane"
+        )
+    }
+
+    func testHuggingCappedRegionKeepsAStableScrollViewIdentity() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "OppiMac/Views/MacSessionComposerBar.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(
+            source.contains("struct MacComposerHuggingCappedRegion"),
+            "Composer auxiliary chrome must keep a dedicated hugging region"
+        )
+        XCTAssertTrue(
+            source.contains("ScrollView(.vertical)"),
+            "The hugging region must always wrap in a vertical ScrollView"
+        )
+        XCTAssertTrue(
+            source.contains(".scrollBounceBehavior(.basedOnSize)"),
+            "Short content must not rubber-band; bounce basedOnSize replaces scrollDisabled"
+        )
+        XCTAssertFalse(
+            source.contains(".scrollDisabled"),
+            "Parent vertical ScrollView.scrollDisabled also disables descendant horizontal widget/terminal line scrollers"
+        )
+        XCTAssertTrue(
+            source.contains("contentHeight > 0 ? min(contentHeight, maxHeight) : nil"),
+            "Unmeasured content must hug instead of filling maxHeight"
+        )
+        XCTAssertFalse(
+            source.contains("if overflows"),
+            "Do not recreate auxiliary content by branching Group vs ScrollView at the cap"
+        )
+    }
+
     private func assertComposerGeometry(
         _ image: NSImage,
         composerWidth: CGFloat,
@@ -305,6 +485,69 @@ final class MacComposerVisualGateTests: XCTestCase {
         )
     }
 
+    private func measureComposerHeightInOverlay(
+        store: MacSessionTraceStore,
+        width: CGFloat,
+        overlayHeight: CGFloat,
+        attachmentName: String
+    ) throws -> (height: CGFloat, image: NSImage) {
+        let heightBox = MacComposerHeightBox()
+        let image = try hostedOverlaySnapshot(
+            of: MacComposerOverlayHost(store: store, heightBox: heightBox)
+                .frame(width: width, height: overlayHeight)
+                .background(AppTheme.dark.bg.primary)
+                .environment(\.theme, AppTheme.dark)
+                .environment(\.themeID, ThemeID.dark)
+                .tint(.themeBlue)
+                .preferredColorScheme(.dark),
+            width: width,
+            height: overlayHeight,
+            heightBox: heightBox
+        )
+        let attachment = XCTAttachment(image: image)
+        attachment.name = attachmentName
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertGreaterThan(
+            heightBox.height,
+            72,
+            "Composer content did not paint for \(attachmentName)"
+        )
+        return (heightBox.height, image)
+    }
+
+    private func applyQueueState(
+        _ queue: MessageQueueState,
+        to store: MacSessionTraceStore,
+        target: MacSelectedSessionTarget
+    ) {
+        store.applyServerMessageForTesting(.queueState(queue: queue), target: target)
+    }
+
+    private func applyWidgetLines(
+        _ lines: [String],
+        to store: MacSessionTraceStore,
+        target: MacSelectedSessionTarget
+    ) {
+        store.applyServerMessageForTesting(
+            .extensionUINotification(
+                ExtensionUINotification(
+                    method: "setWidget",
+                    message: nil,
+                    notifyType: nil,
+                    statusKey: nil,
+                    statusText: nil,
+                    title: nil,
+                    text: nil,
+                    widgetKey: "jobs",
+                    widgetLines: lines,
+                    widgetPlacement: "aboveEditor"
+                )
+            ),
+            target: target
+        )
+    }
+
     /// `ImageRenderer` paints AppKit-backed controls as yellow prohibited
     /// placeholders. Hosting in a real offscreen window preserves structural
     /// layout while the desktop is locked. Liquid Glass still requires the
@@ -316,7 +559,65 @@ final class MacComposerVisualGateTests: XCTestCase {
             origin: .zero,
             size: NSSize(width: ceil(fitted.width), height: ceil(fitted.height))
         )
+        return try snapshotHostedView(host)
+    }
 
+    private func hostedOverlaySnapshot<Content: View>(
+        of root: Content,
+        width: CGFloat,
+        height: CGFloat,
+        heightBox: MacComposerHeightBox
+    ) throws -> NSImage {
+        let host = NSHostingView(rootView: root)
+        host.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(AppTheme.dark.bg.primary)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+        window.orderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+            window.close()
+        }
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let deadline = Date().addingTimeInterval(2)
+        var lastHeight: CGFloat = 0
+        var stableCount = 0
+        while Date() < deadline {
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            CATransaction.flush()
+            if heightBox.height > 72, abs(heightBox.height - lastHeight) < 0.5 {
+                stableCount += 1
+                if stableCount >= 3 {
+                    break
+                }
+            } else {
+                stableCount = 0
+                lastHeight = heightBox.height
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            throw MacComposerSnapshotError.noBitmap
+        }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = NSImage(size: host.bounds.size)
+        image.addRepresentation(bitmap)
+        return image
+    }
+
+    private func snapshotHostedView(_ host: NSHostingView<some View>) throws -> NSImage {
         let window = NSWindow(
             contentRect: host.frame,
             styleMask: [.borderless],
@@ -369,6 +670,35 @@ final class MacComposerVisualGateTests: XCTestCase {
             sessionId: session.id,
             summary: SessionSummary(from: session)
         )
+    }
+}
+
+@MainActor
+private final class MacComposerHeightBox {
+    var height: CGFloat = 0
+}
+
+private struct MacComposerOverlayHost: View {
+    let store: MacSessionTraceStore
+    let heightBox: MacComposerHeightBox
+    @Environment(\.theme) private var theme
+    @FocusState private var focus: KeybindingFocus?
+
+    var body: some View {
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .bottom) {
+                MacSessionComposerBar(store: store, sessionFocus: $focus)
+                    .background(
+                        theme.bg.highlight.opacity(0.72),
+                        in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    )
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: {
+                        heightBox.height = $0
+                    }
+            }
     }
 }
 

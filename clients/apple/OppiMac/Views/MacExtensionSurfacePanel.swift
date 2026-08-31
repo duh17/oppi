@@ -1,11 +1,5 @@
 import SwiftUI
 
-/// One expanded placement in the composer overlay. Height is capped; overflow
-/// scrolls internally. Not an iOS pill strip / replaceable drawer.
-enum MacExtensionSurfaceLayout {
-    static let expandedMaxHeight: CGFloat = 260
-}
-
 /// Shared parser for `span.link` and `activityRow.link`. Real URLs only.
 enum MacExtensionSurfaceLink {
     static func url(from raw: String?) -> URL? {
@@ -107,37 +101,43 @@ private struct MacExtensionSurfaceContentHeightKey: PreferenceKey {
     }
 }
 
+/// One expanded placement in the composer overlay. Height hugs the full
+/// measured content. Unmeasured height stays nil so the surface does not
+/// fill a maxHeight. Parent MacComposerHuggingCappedRegion is the only
+/// vertical cap and scroller. Not an iOS pill strip / replaceable drawer.
 private struct MacExtensionBoundedSurface<Content: View>: View {
-    let maxHeight: CGFloat
     let content: Content
     @State private var contentHeight: CGFloat = 0
 
-    init(
-        maxHeight: CGFloat = MacExtensionSurfaceLayout.expandedMaxHeight,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.maxHeight = maxHeight
+    init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
     var body: some View {
-        let cappedHeight = contentHeight > 0 ? min(contentHeight, maxHeight) : maxHeight
-        ScrollView(.vertical, showsIndicators: contentHeight > maxHeight) {
-            content
-                .fixedSize(horizontal: false, vertical: true)
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: MacExtensionSurfaceContentHeightKey.self,
-                            value: proxy.size.height
-                        )
-                    }
+        // Unmeasured content must hug. Never substitute a maxHeight.
+        // Parent MacComposerHuggingCappedRegion owns the vertical cap/scroller.
+        let height = contentHeight > 0 ? contentHeight : nil
+
+        measuredContent
+            .frame(maxWidth: .infinity, alignment: .top)
+            .frame(height: height, alignment: .top)
+            .accessibilityIdentifier("mac.extension.surface.scroll")
+    }
+
+    private var measuredContent: some View {
+        content
+            .fixedSize(horizontal: false, vertical: true)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: MacExtensionSurfaceContentHeightKey.self,
+                        value: proxy.size.height
+                    )
                 }
-        }
-        .onPreferenceChange(MacExtensionSurfaceContentHeightKey.self) { contentHeight = $0 }
-        .frame(maxWidth: .infinity, maxHeight: cappedHeight, alignment: .top)
-        .scrollBounceBehavior(.basedOnSize)
-        .accessibilityIdentifier("mac.extension.surface.scroll")
+            }
+            .onPreferenceChange(MacExtensionSurfaceContentHeightKey.self) {
+                contentHeight = $0
+            }
     }
 }
 
