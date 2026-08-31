@@ -56,6 +56,26 @@ enum MacSessionTimelineAutoFollow {
         isAttached && !isNearBottom && contentHeightIncreased
     }
 
+    /// Inspector open/close changes timeline width and reflows wrapping.
+    /// That can grow `contentHeight` without new rows; treating it as document
+    /// growth retriggers follow-scroll and AppKit constraint passes.
+    static func contentHeightIncreasedFromDocumentGrowth(
+        previousHeight: CGFloat,
+        nextHeight: CGFloat,
+        previousViewportWidth: CGFloat,
+        nextViewportWidth: CGFloat
+    ) -> Bool {
+        guard nextHeight > previousHeight else { return false }
+        if previousViewportWidth == 0 {
+            return true
+        }
+        return measurementsMatch(previousViewportWidth, nextViewportWidth)
+    }
+
+    static func measurementsMatch(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
+        abs(lhs - rhs) < 0.5
+    }
+
     static func shouldScrollToLatestRow(isAttached: Bool) -> Bool {
         isAttached
     }

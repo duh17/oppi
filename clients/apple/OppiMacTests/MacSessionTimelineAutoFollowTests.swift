@@ -92,6 +92,39 @@ struct MacSessionTimelineAutoFollowTests {
         #expect(!MacSessionTimelineAutoFollow.isUserDriven(.animating))
     }
 
+    @Test func treatsSameWidthHeightGrowthAsDocumentGrowth() {
+        #expect(
+            MacSessionTimelineAutoFollow.contentHeightIncreasedFromDocumentGrowth(
+                previousHeight: 800,
+                nextHeight: 960,
+                previousViewportWidth: 720,
+                nextViewportWidth: 720
+            )
+        )
+    }
+
+    @Test func ignoresHeightGrowthWhenViewportWidthChanges() {
+        #expect(
+            !MacSessionTimelineAutoFollow.contentHeightIncreasedFromDocumentGrowth(
+                previousHeight: 800,
+                nextHeight: 960,
+                previousViewportWidth: 720,
+                nextViewportWidth: 480
+            )
+        )
+    }
+
+    @Test func treatsFirstGeometryFrameAsDocumentGrowth() {
+        #expect(
+            MacSessionTimelineAutoFollow.contentHeightIncreasedFromDocumentGrowth(
+                previousHeight: 0,
+                nextHeight: 400,
+                previousViewportWidth: 0,
+                nextViewportWidth: 720
+            )
+        )
+    }
+
     @Test func scrollsTheTailAnchorAfterAttachedContentGrowth() {
         #expect(
             MacSessionTimelineAutoFollow.shouldScrollAfterContentGrowth(

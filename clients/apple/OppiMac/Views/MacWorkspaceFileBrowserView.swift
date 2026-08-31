@@ -113,20 +113,24 @@ struct MacWorkspaceFileBrowserView: View {
                 )
                 .frame(maxWidth: .infinity, minHeight: 120)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 3) {
-                        ForEach(response.entries) { entry in
-                            entryRow(entry)
-                        }
-                        if response.truncated {
-                            Text("Showing first \(response.entries.count) entries")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 4)
-                        }
+                List {
+                    ForEach(response.entries) { entry in
+                        entryRow(entry)
+                            .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                     }
-                    .padding(.vertical, 2)
+                    if response.truncated {
+                        Text("Showing first \(response.entries.count) entries")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
                 .frame(
                     minHeight: 120,
                     maxHeight: presentation == .column ? .infinity : 220

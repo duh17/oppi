@@ -111,6 +111,7 @@ private struct MacSessionTimelineScrollSnapshot: Equatable {
     var contentHeight: CGFloat
     var offsetY: CGFloat
     var viewportHeight: CGFloat
+    var viewportWidth: CGFloat
 }
 
 private struct MacSessionTimelineScrollView: View {
@@ -127,6 +128,7 @@ private struct MacSessionTimelineScrollView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAttachedToLatestRow = true
     @State private var lastContentHeight: CGFloat = 0
+    @State private var lastViewportWidth: CGFloat = 0
     @State private var scrollPhase: ScrollPhase = .idle
 
     var body: some View {
@@ -175,11 +177,16 @@ private struct MacSessionTimelineScrollView: View {
                 MacSessionTimelineScrollSnapshot(
                     contentHeight: geometry.contentSize.height,
                     offsetY: geometry.contentOffset.y,
-                    viewportHeight: geometry.containerSize.height
+                    viewportHeight: geometry.containerSize.height,
+                    viewportWidth: geometry.containerSize.width
                 )
             } action: { _, snapshot in
-                let contentHeightIncreased = snapshot.contentHeight > lastContentHeight
-                lastContentHeight = snapshot.contentHeight
+                let contentHeightIncreased = MacSessionTimelineAutoFollow.contentHeightIncreasedFromDocumentGrowth(
+                    previousHeight: lastContentHeight,
+                    nextHeight: snapshot.contentHeight,
+                    previousViewportWidth: lastViewportWidth,
+                    nextViewportWidth: snapshot.viewportWidth
+                )
                 let isNearBottom = MacSessionTimelineAutoFollow.isNearBottom(
                     contentHeight: snapshot.contentHeight,
                     offsetY: snapshot.offsetY,
@@ -190,7 +197,15 @@ private struct MacSessionTimelineScrollView: View {
                     isNearBottom: isNearBottom,
                     scrollPhase: scrollPhase
                 )
-                isAttachedToLatestRow = nextAttachment
+                if !MacSessionTimelineAutoFollow.measurementsMatch(lastContentHeight, snapshot.contentHeight) {
+                    lastContentHeight = snapshot.contentHeight
+                }
+                if !MacSessionTimelineAutoFollow.measurementsMatch(lastViewportWidth, snapshot.viewportWidth) {
+                    lastViewportWidth = snapshot.viewportWidth
+                }
+                if isAttachedToLatestRow != nextAttachment {
+                    isAttachedToLatestRow = nextAttachment
+                }
                 if MacSessionTimelineAutoFollow.shouldScrollAfterContentGrowth(
                     isAttached: nextAttachment,
                     isNearBottom: isNearBottom,
@@ -205,6 +220,7 @@ private struct MacSessionTimelineScrollView: View {
             .onChange(of: sessionID) { _, _ in
                 isAttachedToLatestRow = true
                 lastContentHeight = 0
+                lastViewportWidth = 0
                 scrollToLatestIfAttached(proxy: proxy, animated: false)
             }
             .onChange(of: store.scrollTargetID) { _, targetID in
