@@ -18,7 +18,7 @@ struct MacLatexFormulaView: View {
     var body: some View {
         Group {
             if let image, naturalSize.width > 0, naturalSize.height > 0 {
-                ScrollView(.horizontal, showsIndicators: true) {
+                ScrollView(.horizontal) {
                     Image(nsImage: image)
                         .resizable()
                         .interpolation(.high)

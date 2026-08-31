@@ -498,6 +498,102 @@ final class MacSessionShellVisualGateTests: XCTestCase {
         assertCaptureBounds(image, expectedWidth: width, expectedHeight: height)
     }
 
+    func testHostedShellScrollersUseThinOverlayAutohide() throws {
+        let recorder = MacSessionShellGeometryRecorder()
+        let store = makeStore()
+        let root = MacSessionShellVisualFixture(
+            store: store,
+            recorder: recorder,
+            hasDocument: false,
+            inspectorRequested: false
+        )
+        .frame(width: 1_200, height: 760)
+        .environment(\.theme, AppTheme.dark)
+        .environment(\.themeID, ThemeID.dark)
+        .tint(.themeBlue)
+        .preferredColorScheme(.dark)
+        .background { MacScrollChrome.WindowInstaller() }
+
+        try withHostedView(root, width: 1_200, height: 760) { host, window in
+            let deadline = Date().addingTimeInterval(1.5)
+            var scrollViews: [NSScrollView] = []
+            repeat {
+                host.layoutSubtreeIfNeeded()
+                window.contentView?.layoutSubtreeIfNeeded()
+                window.displayIfNeeded()
+                scrollViews = MacScrollChrome.scrollViews(in: host)
+                if !scrollViews.isEmpty,
+                   scrollViews.contains(where: { MacScrollChrome.hasInstalledChrome($0) }) {
+                    break
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            } while Date() < deadline
+
+            XCTAssertFalse(scrollViews.isEmpty, "The hosted shell should contain NSScrollView instances")
+            XCTAssertEqual(
+                UserDefaults.standard.string(forKey: MacScrollChrome.showScrollBarsDefaultsKey),
+                MacScrollChrome.showScrollBarsWhenScrolling
+            )
+            XCTAssertGreaterThan(MacScrollChrome.systemOverlayThickness, 15)
+            for scrollView in scrollViews {
+                XCTAssertTrue(scrollView.autohidesScrollers)
+                guard scrollView.hasVerticalScroller, let scroller = scrollView.verticalScroller else {
+                    continue
+                }
+                XCTAssertTrue(scroller is MacOverlayScroller)
+                XCTAssertEqual(scroller.scrollerStyle, .overlay)
+                let thickness = type(of: scroller).scrollerWidth(
+                    for: scroller.controlSize,
+                    scrollerStyle: .overlay
+                )
+                XCTAssertEqual(thickness, MacScrollChrome.overlayThickness)
+                XCTAssertLessThan(thickness, 10)
+            }
+        }
+    }
+
+    func testReviewCommentFitContentClipWidthWithLegacyScroller() throws {
+        let text = (1...40).map { index in
+            "line \(index) " + String(repeating: "x", count: 72)
+        }.joined(separator: "\n")
+        let root = MacReviewCommentTextView(
+            text: text,
+            source: MacReviewCommentSource(kind: .unknown),
+            fillsColumn: false,
+            accessibilityIdentifier: "mac.reviewComment.fitContent"
+        )
+        .frame(width: 280, height: 120)
+
+        try withHostedView(root, width: 280, height: 120) { host, _ in
+            host.layoutSubtreeIfNeeded()
+            let scrollView = try XCTUnwrap(
+                MacScrollChrome.scrollViews(in: host).first,
+                "MacReviewCommentTextView should host an NSScrollView"
+            )
+            let standardScroller = NSScroller()
+            standardScroller.scrollerStyle = .legacy
+            scrollView.verticalScroller = standardScroller
+            scrollView.scrollerStyle = .legacy
+            scrollView.autohidesScrollers = false
+            scrollView.hasVerticalScroller = true
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+
+            let clipWidth = scrollView.contentView.documentVisibleRect.width
+            let gutter = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+            XCTAssertGreaterThan(clipWidth, 200, "Fit-content review text should keep a usable clip width")
+            XCTAssertGreaterThan(gutter, 10)
+            XCTAssertLessThanOrEqual(
+                clipWidth + gutter,
+                scrollView.bounds.width + 2,
+                "Forcing the persistent scroller style must still leave a measurable clip width"
+            )
+            let document = try XCTUnwrap(scrollView.documentView as? NSTextView)
+            XCTAssertTrue(document.isHorizontallyResizable)
+            XCTAssertEqual(document.textContainer?.widthTracksTextView, false)
+        }
+    }
+
     private func captureShell(
         width: CGFloat,
         height: CGFloat,

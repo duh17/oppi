@@ -25,6 +25,10 @@ struct OppiMacApp: App {
             userDriverDelegate: nil
         )
         MacAttentionNotificationService.shared.configureForLaunch()
+        MacScrollChrome.preferOverlayScrollers()
+        Task { @MainActor in
+            MacScrollChrome.install()
+        }
 
         // Auto-start server from init. The .task on MenuBarPopover content only
         // fires when the popover is opened (.menuBarExtraStyle(.window) is lazy),
@@ -62,6 +66,7 @@ struct OppiMacApp: App {
             }
             .macSharedTheme(themeStore)
             .background(MainWindowActivationView())
+            .background(MacScrollChrome.WindowInstaller())
             .task {
                 await permissionState.refresh()
                 onboardingState.checkFirstRun()
@@ -111,6 +116,7 @@ struct OppiMacApp: App {
             .onDisappear {
                 sessionMonitor.setFastPolling(false)
             }
+            .background { MacScrollChrome.WindowInstaller() }
         } label: {
             MenuBarIconView(
                 processManager: processManager,

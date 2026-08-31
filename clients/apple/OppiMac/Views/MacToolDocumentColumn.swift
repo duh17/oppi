@@ -583,7 +583,7 @@ private struct MacToolDocumentDiffView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView([.horizontal, .vertical], showsIndicators: true) {
+            ScrollView([.horizontal, .vertical]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(MacToolDocumentDiffLayout.rows(from: diff).enumerated()), id: \.offset) { _, row in
                         HStack(alignment: .firstTextBaseline, spacing: 0) {

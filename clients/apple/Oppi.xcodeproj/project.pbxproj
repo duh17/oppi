@@ -183,6 +183,7 @@
 		1C0EC3705F9EE6E3AA83BD44 /* GraphLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7405B03AC2992545512251C3 /* GraphLayoutTests.swift */; };
 		1C404E60473D273CE62D2FFC /* MermaidRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BB8853A610FA99BB2554E0C /* MermaidRenderer.swift */; };
 		1C58FB5DB5DD636289A0C70D /* PhotoLibrarySaver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FC4977C6DDC232C05876DF /* PhotoLibrarySaver.swift */; };
+		1C754F4773D0E6D37D2E0CA4 /* MacScrollChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A8D3B24425B5516D17FA084 /* MacScrollChromeTests.swift */; };
 		1C7A9F3199635A18374EB679 /* StreamingRenderPolicyResourcePressureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36F8AFDEA09CB278CA3F6C01 /* StreamingRenderPolicyResourcePressureTests.swift */; };
 		1C853238E3853C4CF22BF5FA /* TCCPermissionStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56FEE1863EF98B4F980A4794 /* TCCPermissionStateTests.swift */; };
 		1C9536740A157E8AD89AE02D /* UserMessageFilePillE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0BE08C649DB52E7F703BB3 /* UserMessageFilePillE2ETests.swift */; };
@@ -1544,6 +1545,7 @@
 		F0382A85064BF9D0DFEC6B4A /* DocumentParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F4E6616EE3AE9922D062C4 /* DocumentParser.swift */; };
 		F06B1F8FB156F63E060514BF /* OrgParserErrorRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4BAF27B0787756180D319F /* OrgParserErrorRecoveryTests.swift */; };
 		F08785AD64DE914F2E8EE5C1 /* VoiceInputSessionMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AFA3328723C1BA25FBEE42C /* VoiceInputSessionMonitorTests.swift */; };
+		F08CEFDD37D3D9122391CE56 /* MacScrollChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07A5E7ABA9C6715CD048D224 /* MacScrollChrome.swift */; };
 		F0959F1D80997BF02E17BF17 /* MacServerHealthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A115EFD70539A8D0DFDE2B6 /* MacServerHealthView.swift */; };
 		F0ACD4ADDDC9C33F05069F98 /* SyntaxLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 088F078E3443736CC8735B6D /* SyntaxLanguage.swift */; };
 		F0E3F8E8A8161326118A0EA4 /* ThemeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DEC45147BB32B40B61FE0F7 /* ThemeCatalog.swift */; };
@@ -1772,6 +1774,7 @@
 		0757B5CB98EB12498EE29B93 /* ContextUsageSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextUsageSnapshot.swift; sourceTree = "<group>"; };
 		0769A67F5D9AC4E6FB85B0BD /* TextSearchMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextSearchMatch.swift; sourceTree = "<group>"; };
 		079119C660FD99BC327CC8E9 /* WebSocketTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketTransport.swift; sourceTree = "<group>"; };
+		07A5E7ABA9C6715CD048D224 /* MacScrollChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScrollChrome.swift; sourceTree = "<group>"; };
 		07A87D190D85C01709A795EF /* TeXMathParserErrorRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeXMathParserErrorRecoveryTests.swift; sourceTree = "<group>"; };
 		07D6D176BA726AD604D6BB90 /* ServerConnectionForegroundRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionForegroundRecoveryTests.swift; sourceTree = "<group>"; };
 		0819880F1B11944637823460 /* FullScreenMarkdownAsyncRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenMarkdownAsyncRenderTests.swift; sourceTree = "<group>"; };
@@ -2124,6 +2127,7 @@
 		490D07E1EB1A8673A161ACC0 /* ScrollInvariantPropertyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollInvariantPropertyTests.swift; sourceTree = "<group>"; };
 		49D1C856DB31CB6335C6EB8E /* MermaidGanttConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGanttConformanceTests.swift; sourceTree = "<group>"; };
 		49DEEBA56210523A5AFBB7D5 /* MermaidThemeContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidThemeContractTests.swift; sourceTree = "<group>"; };
+		4A8D3B24425B5516D17FA084 /* MacScrollChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScrollChromeTests.swift; sourceTree = "<group>"; };
 		4AC653105A38C74E2829E0FD /* AppEventStreamClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEventStreamClientTests.swift; sourceTree = "<group>"; };
 		4AF617D452054E49624583D2 /* ChatSessionTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionTelemetry.swift; sourceTree = "<group>"; };
 		4B192B9E99A61FF6141FD5E2 /* ServerSkillBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSkillBrowserView.swift; sourceTree = "<group>"; };
@@ -3418,6 +3422,7 @@
 				4331E332BD85853950F3E8B4 /* MacRenderableDocumentViews.swift */,
 				F3582E38CDDBE1EAEEAE80C5 /* MacReviewCommentSheets.swift */,
 				C7F26D67087D8FA5A2196BF1 /* MacReviewCommentTextView.swift */,
+				07A5E7ABA9C6715CD048D224 /* MacScrollChrome.swift */,
 				446A8A1BE27288AAE26DABA9 /* MacSessionCommands.swift */,
 				BAC3EDB08D9E729159D979EB /* MacSessionComposerBar.swift */,
 				F7E6A833C93E92A2E4C68F7A /* MacSessionContextInspectorView.swift */,
@@ -4834,6 +4839,7 @@
 				369CC8375740648865129C00 /* MacReviewCommentTests.swift */,
 				6FD1C5EDA1AF52B46E9EE82A /* MacScheduleRunTests.swift */,
 				B076BE79358DCB57D26B64B3 /* MacScreenAwakeControllerTests.swift */,
+				4A8D3B24425B5516D17FA084 /* MacScrollChromeTests.swift */,
 				6967D1470CC713AF430A8877 /* MacServerLifecycleTests.swift */,
 				43DA1D961B8DBC99A67F2F8D /* MacSessionActionPolicyTests.swift */,
 				6555571A8BEC13631255650C /* MacSessionCommandPendingChangeTests.swift */,
@@ -6239,6 +6245,7 @@
 				F802FC33F5AA752BD29DE0AE /* MacReviewCommentSheets.swift in Sources */,
 				EC7774EB77802CC172C1C9EB /* MacReviewCommentTextView.swift in Sources */,
 				4FF7F111C5C9547DD9E3856D /* MacScreenAwakeController.swift in Sources */,
+				F08CEFDD37D3D9122391CE56 /* MacScrollChrome.swift in Sources */,
 				F0959F1D80997BF02E17BF17 /* MacServerHealthView.swift in Sources */,
 				E0EE285FFEEB660234E9489C /* MacServerLifecycle.swift in Sources */,
 				AFB89AFF43B4152AD928E1C1 /* MacSessionActionPolicy.swift in Sources */,
@@ -6482,6 +6489,7 @@
 				7DE130FAA8699850AF5917F8 /* MacReviewCommentTests.swift in Sources */,
 				4BCA658487C1CE93E5A80386 /* MacScheduleRunTests.swift in Sources */,
 				C0909E42177D736F610A5552 /* MacScreenAwakeControllerTests.swift in Sources */,
+				1C754F4773D0E6D37D2E0CA4 /* MacScrollChromeTests.swift in Sources */,
 				130BD3A1C4CAEB259EC06837 /* MacServerLifecycleTests.swift in Sources */,
 				8884E29C0CA88D87338BC7BC /* MacSessionActionPolicyTests.swift in Sources */,
 				60CA891A3F5D304E07684C07 /* MacSessionCommandPendingChangeTests.swift in Sources */,

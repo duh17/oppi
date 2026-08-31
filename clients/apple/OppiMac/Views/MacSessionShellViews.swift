@@ -783,7 +783,7 @@ private struct MacTextFileSourcePreview: View {
                 source: MacReviewCommentSource.fileDocument(path: preview.path)
             )
         } else {
-            ScrollView(.horizontal, showsIndicators: true) {
+            ScrollView(.horizontal) {
                 Text(preview.text?.isEmpty == false ? preview.text ?? "" : " ")
                     .font(Font(FontPreferenceStore.macCodeFont()))
                     .textSelection(.enabled)
@@ -833,7 +833,7 @@ private struct MacSessionDiffPreview: View {
                         .font(.caption)
                         .foregroundStyle(.themeFgDim)
                 }
-                ScrollView(.horizontal, showsIndicators: true) {
+                ScrollView(.horizontal) {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(plan.hunks) { visibleHunk in
                             Text(visibleHunk.headerText)

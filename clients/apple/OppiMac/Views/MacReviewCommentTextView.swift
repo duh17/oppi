@@ -36,6 +36,8 @@ struct MacReviewCommentTextView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
@@ -59,6 +61,7 @@ struct MacReviewCommentTextView: NSViewRepresentable {
 
         scrollView.documentView = textView
         applyLayout(to: scrollView, textView: textView)
+        MacScrollChrome.apply(to: scrollView)
         applyContent(to: textView)
         applyHandler(to: textView)
         return scrollView
@@ -67,6 +70,7 @@ struct MacReviewCommentTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? MacReviewCommentTextViewBridge else { return }
         applyLayout(to: scrollView, textView: textView)
+        MacScrollChrome.apply(to: scrollView)
         applyContent(to: textView)
         applyHandler(to: textView)
         if let accessibilityIdentifier {

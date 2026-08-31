@@ -120,7 +120,6 @@ private struct MacAttributedDocumentTextView: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
 
@@ -139,6 +138,7 @@ private struct MacAttributedDocumentTextView: NSViewRepresentable {
         textView.textStorage?.setAttributedString(attributedText)
 
         scrollView.documentView = textView
+        MacScrollChrome.apply(to: scrollView)
         return scrollView
     }
 

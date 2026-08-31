@@ -41,9 +41,9 @@ struct MacComposerInputView: NSViewRepresentable {
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.documentView = textView
+        MacScrollChrome.apply(to: scrollView)
         scrollView.setAccessibilityIdentifier("mac.composer.input")
         scrollView.setAccessibilityLabel(accessibilityLabel)
 
