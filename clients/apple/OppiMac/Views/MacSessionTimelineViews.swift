@@ -1716,6 +1716,15 @@ enum ThinkingFoldPolicy {
     }
 }
 
+/// iOS fades done thinking at the bottom 30% when the 200pt cap clips.
+enum ThinkingFadePolicy {
+    static let startFraction: CGFloat = 0.7
+
+    static func shouldFade(isDone: Bool, overflowsPaintedCap: Bool, isExpanded: Bool = false) -> Bool {
+        isDone && overflowsPaintedCap && !isExpanded
+    }
+}
+
 private struct ThinkingPaintedHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -1753,8 +1762,8 @@ struct ThinkingTimelineBubble: View {
     var worktreeId: String? = nil
 
     @Environment(\.theme) private var theme
-    @State private var isExpanded = false
     @State private var overflowsPaintedCap = false
+    @State private var isExpanded = false
 
     private var collapsedCap: CGFloat {
         ThinkingFoldPolicy.collapsedMaxHeight
@@ -1763,28 +1772,16 @@ struct ThinkingTimelineBubble: View {
     var body: some View {
         // Match iOS: no "Thinking" title. Done gets a sparkle; streaming is
         // plain muted callout. WorkingIndicator already shows activity.
-        ZStack(alignment: .topTrailing) {
-            HStack(alignment: .top, spacing: 6) {
-                if isDone, !preview.isEmpty {
-                    Image(systemName: "sparkle")
-                        .font(.system(size: 14))
-                        .foregroundStyle(theme.accent.purple.opacity(0.7))
-                        .frame(width: 14, height: 14)
-                        .padding(.top, 1)
-                        .accessibilityHidden(true)
-                }
-                thinkingBody
+        HStack(alignment: .top, spacing: 6) {
+            if isDone, !preview.isEmpty {
+                Image(systemName: "sparkle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.accent.purple.opacity(0.7))
+                    .frame(width: 14, height: 14)
+                    .padding(.top, 1)
+                    .accessibilityHidden(true)
             }
-
-            if overflowsPaintedCap {
-                Button(isExpanded ? "Collapse" : "Expand") {
-                    isExpanded.toggle()
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-                .fixedSize()
-                .accessibilityIdentifier("mac.timeline.thinking.fold")
-            }
+            thinkingBody
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1792,9 +1789,20 @@ struct ThinkingTimelineBubble: View {
             theme.text.tertiary.opacity(isDone ? 0.08 : 0.06),
             in: RoundedRectangle(cornerRadius: 12)
         )
+        .contextMenu {
+            if overflowsPaintedCap {
+                Button(isExpanded ? "Show Less" : "Show All") {
+                    isExpanded.toggle()
+                }
+            }
+        }
         .accessibilityIdentifier("mac.timeline.thinkingRow")
         .accessibilityLabel("Thinking")
         .accessibilityValue(foldAccessibilityValue)
+        .accessibilityAction(named: isExpanded ? "Show Less" : "Show All") {
+            guard overflowsPaintedCap else { return }
+            isExpanded.toggle()
+        }
     }
 
     @ViewBuilder
@@ -1834,6 +1842,25 @@ struct ThinkingTimelineBubble: View {
                 }
             }
             .clipped()
+            .mask {
+                if ThinkingFadePolicy.shouldFade(
+                    isDone: isDone,
+                    overflowsPaintedCap: overflowsPaintedCap,
+                    isExpanded: isExpanded
+                ) {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black, location: 0),
+                            .init(color: .black, location: ThinkingFadePolicy.startFraction),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                } else {
+                    Rectangle()
+                }
+            }
             .onPreferenceChange(ThinkingPaintedHeightKey.self) { height in
                 let overflows = ThinkingFoldPolicy.overflowsCollapsedCap(paintedHeight: height)
                 if overflowsPaintedCap != overflows {
@@ -1846,7 +1873,7 @@ struct ThinkingTimelineBubble: View {
 
     private var foldAccessibilityValue: String {
         guard overflowsPaintedCap else { return "Short" }
-        return isExpanded ? "Expanded" : "Collapsed"
+        return isExpanded ? "Expanded" : "Truncated"
     }
 }
 

@@ -29,10 +29,13 @@ struct MacThinkingTimelineRowPaintTests {
             in: source
         )
 
-        #expect(bubble.contains("Button(isExpanded ? \"Collapse\" : \"Expand\")"))
+        #expect(!bubble.contains("Button(isExpanded ? \"Collapse\" : \"Expand\")"))
         #expect(bubble.contains("ThinkingFoldPolicy.collapsedMaxHeight"))
         #expect(bubble.contains("ThinkingFoldLayout("))
         #expect(bubble.contains("ThinkingFoldPolicy.overflowsCollapsedCap"))
+        #expect(bubble.contains("ThinkingFadePolicy.shouldFade"))
+        #expect(bubble.contains("Button(isExpanded ? \"Show Less\" : \"Show All\")"))
+        #expect(bubble.contains(".contextMenu"))
         #expect(bubble.contains("ThinkingPaintedHeightKey"))
         #expect(bubble.contains("onPreferenceChange(ThinkingPaintedHeightKey.self)"))
         #expect(!bubble.contains("DispatchQueue.main.async"))
@@ -74,6 +77,7 @@ struct MacThinkingTimelineRowPaintTests {
         #expect(!bubble.contains("title: isDone ? \"Thinking\""))
         #expect(!bubble.contains("usesMessageTypography"))
         #expect(!bubble.contains("typography: .message"))
+        #expect(!bubble.contains("\"Collapse\" : \"Expand\""))
     }
 
     @Test func shortCharacterTallMarkdownAppliesPaintedCapAndExpand() {

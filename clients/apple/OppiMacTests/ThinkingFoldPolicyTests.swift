@@ -18,6 +18,15 @@ struct ThinkingFoldPolicyTests {
         #expect(ThinkingFoldPolicy.overflowsCollapsedCap(paintedHeight: 400))
     }
 
+    @Test func fadeMatchesIOSDoneOverflowOnly() {
+        #expect(ThinkingFadePolicy.startFraction == 0.7)
+        #expect(ThinkingFadePolicy.shouldFade(isDone: true, overflowsPaintedCap: true))
+        #expect(!ThinkingFadePolicy.shouldFade(isDone: true, overflowsPaintedCap: true, isExpanded: true))
+        #expect(!ThinkingFadePolicy.shouldFade(isDone: true, overflowsPaintedCap: false))
+        #expect(!ThinkingFadePolicy.shouldFade(isDone: false, overflowsPaintedCap: true))
+        #expect(!ThinkingFadePolicy.shouldFade(isDone: false, overflowsPaintedCap: false))
+    }
+
     @Test func policyLivesNextToMacLayoutNotOppiCore() throws {
         let appleRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
