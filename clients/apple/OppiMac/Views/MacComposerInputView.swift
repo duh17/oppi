@@ -50,6 +50,7 @@ struct MacComposerInputView: NSViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.textView = textView
         applyChrome(to: textView)
+        MacComposerPasteTextView.hideWritingToolsAffordance(on: textView)
         return scrollView
     }
 
@@ -158,6 +159,16 @@ final class MacComposerInputScrollView: NSScrollView {
 final class MacComposerPasteTextView: NSTextView {
     var onPasteAttachments: ((MacComposerPasteboardPayload) -> Void)?
     var onFocusChange: ((Bool) -> Void)?
+
+    /// Hides the macOS "Write with Siri" affordance without turning Writing Tools off.
+    /// `allowsWritingToolsAffordance` exists on `NSTextView` at runtime (macOS 15.4+)
+    /// but is only declared on `NSTextField` in the public SDK.
+    /// Call once after the system `NSTextView` initializer — do not KVC this on every SwiftUI update.
+    static func hideWritingToolsAffordance(on textView: NSTextView) {
+        let setter = Selector(("setAllowsWritingToolsAffordance:"))
+        guard textView.responds(to: setter) else { return }
+        textView.setValue(false, forKey: "allowsWritingToolsAffordance")
+    }
 
     override var acceptsFirstResponder: Bool { true }
 
