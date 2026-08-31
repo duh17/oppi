@@ -241,6 +241,16 @@ struct PathResolutionTests {
         #expect(path.contains("oppi"))
     }
 
+    @Test func settingsDoesNotProbeNodeVersionFromSwiftUIBody() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "OppiMac/Views/SettingsView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        #expect(!source.contains("ServerProcessManager.resolveRuntimePath()"))
+        #expect(source.contains("ServerProcessManager.resolveNodePath()"))
+    }
+
 }
 
 // MARK: - Crash classification

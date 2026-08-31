@@ -552,7 +552,7 @@ private struct AppSettingsView: View {
                     }
                 }
 
-                if let runtimePath = ServerProcessManager.resolveRuntimePath() {
+                if let runtimePath = ServerProcessManager.resolveNodePath() {
                     LabeledContent("Node.js") {
                         Text(runtimePath)
                             .font(.system(.caption, design: .monospaced))
