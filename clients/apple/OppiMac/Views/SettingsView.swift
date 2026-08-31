@@ -3,23 +3,58 @@ import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Stable information architecture for the Settings source list.
+///
+/// App preferences, connection setup, local-host controls, and diagnostics are
+/// different jobs. Keeping those groups explicit makes the list scan quickly
+/// without changing the existing pane destinations.
+struct MacSettingsNavigationSection: Identifiable, Equatable, Sendable {
+    enum ID: String, Sendable {
+        case app
+        case connections
+        case localHost
+        case diagnostics
+    }
+
+    let id: ID
+    let title: String
+    let panes: [MacSettingsPane]
+
+    static let all: [Self] = [
+        MacSettingsNavigationSection(id: .app, title: "Oppi", panes: [.app]),
+        MacSettingsNavigationSection(
+            id: .connections,
+            title: "Connections",
+            panes: [.pairing, .remoteServers]
+        ),
+        MacSettingsNavigationSection(
+            id: .localHost,
+            title: "Local Host",
+            panes: [.permissions, .localServer]
+        ),
+        MacSettingsNavigationSection(
+            id: .diagnostics,
+            title: "Diagnostics",
+            panes: [.stats, .logs, .doctor]
+        ),
+    ]
+}
+
 /// The middle-column index for app preferences and host administration tools.
 struct MacSettingsList: View {
     @Binding var selection: MacSettingsPane
 
     var body: some View {
         List(selection: $selection) {
-            Section("Oppi") {
-                settingsRow(.app)
-            }
-
-            Section("Host Tools") {
-                ForEach(MacSettingsPane.hostToolPanes) { pane in
-                    settingsRow(pane)
+            ForEach(MacSettingsNavigationSection.all) { section in
+                Section(section.title) {
+                    ForEach(section.panes) { pane in
+                        settingsRow(pane)
+                    }
                 }
             }
         }
-        .navigationTitle("App Settings")
+        .navigationTitle("Settings")
     }
 
     private func settingsRow(_ pane: MacSettingsPane) -> some View {
@@ -83,6 +118,7 @@ enum MacAppSettingsPreferenceControl: String, CaseIterable, Identifiable {
     case monoMessages
     case autoTitle
     case keepScreenAwake
+    case voiceReplies
     case dictationEngine
 
     var id: String { rawValue }
@@ -98,6 +134,7 @@ enum MacAppSettingsPreferenceControl: String, CaseIterable, Identifiable {
         case .monoMessages: return "Monospaced messages"
         case .autoTitle: return "Auto-name Sessions"
         case .keepScreenAwake: return "Keep screen awake"
+        case .voiceReplies: return "Voice Replies"
         case .dictationEngine: return "Dictation Engine"
         }
     }
@@ -169,6 +206,7 @@ private struct AppSettingsView: View {
     @State private var hostThemes: [MacAppSettingsThemeImport.HostTheme] = []
     @State private var importError: String?
     @State private var screenAwakePreset = AppPreferenceStore.ScreenAwake.timeoutPreset
+    @State private var voiceReplyMode = AppPreferenceStore.Voice.replyMode
     @State private var cacheSizeText: String?
 
     var body: some View {
@@ -429,6 +467,25 @@ private struct AppSettingsView: View {
             }
 
             Section {
+                Picker(
+                    MacAppSettingsPreferenceControl.voiceReplies.title,
+                    selection: $voiceReplyMode
+                ) {
+                    ForEach(AppPreferenceStore.Voice.ReplyMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .onChange(of: voiceReplyMode) { _, newValue in
+                    AppPreferenceStore.Voice.setReplyMode(newValue)
+                }
+                .accessibilityIdentifier(
+                    MacAppSettingsPreferenceControl.voiceReplies.accessibilityIdentifier
+                )
+
+                Text(voiceReplyMode.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
                 LabeledContent(MacAppSettingsPreferenceControl.dictationEngine.title) {
                     Text(AppPreferenceStore.Voice.EngineMode.remote.label)
                 }
@@ -437,7 +494,7 @@ private struct AppSettingsView: View {
                 Text("Voice")
             } footer: {
                 Text(
-                    "Mac dictation sends audio to the speech-to-text service on your Oppi server. On-device dictation is not available in this app."
+                    "Session-specific voice reply changes still happen in chat. Mac dictation sends audio to the speech-to-text service on your Oppi server; on-device dictation is not available in this app."
                 )
             }
 
@@ -633,6 +690,7 @@ private struct AppSettingsView: View {
         emojiDraft = MacAssistantAvatarKind.emojiDraft(for: selectedAvatar)
         avatarError = nil
         screenAwakePreset = AppPreferenceStore.ScreenAwake.timeoutPreset
+        voiceReplyMode = AppPreferenceStore.Voice.replyMode
     }
 
     private var screenAwakeDetail: String {

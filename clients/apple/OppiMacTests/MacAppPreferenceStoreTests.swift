@@ -428,7 +428,7 @@ struct VoiceEnginePreferenceStoreTests {
 
 @Suite("Mac app settings preference controls")
 struct MacAppSettingsPreferenceControlTests {
-    @Test func exposesAvatarSpinnerTypographyAutoTitleAndDictationEngine() {
+    @Test func exposesAvatarSpinnerTypographyAutoTitleAndVoiceControls() {
         let titles = MacAppSettingsPreferenceControl.allCases.map(\.title)
         #expect(titles == [
             "Assistant Avatar",
@@ -440,6 +440,7 @@ struct MacAppSettingsPreferenceControlTests {
             "Monospaced messages",
             "Auto-name Sessions",
             "Keep screen awake",
+            "Voice Replies",
             "Dictation Engine",
         ])
     }
@@ -457,6 +458,29 @@ struct MacAppSettingsPreferenceControlTests {
             "Grid π",
             "Emoji",
         ])
+    }
+}
+
+@Suite("Mac settings navigation")
+struct MacSettingsNavigationTests {
+    @Test func groupsEveryPaneByUserIntentWithoutDuplicates() {
+        #expect(MacSettingsNavigationSection.all.map(\.title) == [
+            "Oppi",
+            "Connections",
+            "Local Host",
+            "Diagnostics",
+        ])
+        #expect(MacSettingsNavigationSection.all.flatMap(\.panes) == [
+            .app,
+            .pairing,
+            .remoteServers,
+            .permissions,
+            .localServer,
+            .stats,
+            .logs,
+            .doctor,
+        ])
+        #expect(Set(MacSettingsNavigationSection.all.flatMap(\.panes)).count == MacSettingsPane.allCases.count)
     }
 }
 
