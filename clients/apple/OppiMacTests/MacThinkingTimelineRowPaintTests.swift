@@ -67,7 +67,11 @@ struct MacThinkingTimelineRowPaintTests {
         )
 
         #expect(bubble.contains("typography: .thinking"))
-        #expect(bubble.contains("theme.text.thinking"))
+        #expect(bubble.contains("systemName: \"sparkle\""))
+        #expect(bubble.contains("macMessageFont(forTextStyle: .callout)"))
+        #expect(bubble.contains("theme.text.tertiary.opacity(0.88)"))
+        #expect(!bubble.contains("TimelineBubbleHeader("))
+        #expect(!bubble.contains("title: isDone ? \"Thinking\""))
         #expect(!bubble.contains("usesMessageTypography"))
         #expect(!bubble.contains("typography: .message"))
     }

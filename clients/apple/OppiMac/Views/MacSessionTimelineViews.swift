@@ -1745,56 +1745,29 @@ struct ThinkingTimelineBubble: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                TimelineBubbleHeader(
-                    title: isDone ? "Thinking" : "Thinking…",
-                    subtitle: hasMore ? "Preview" : nil,
-                    titleColor: theme.text.thinking
-                )
-                Spacer(minLength: 0)
-                if overflowsPaintedCap {
-                    Button(isExpanded ? "Collapse" : "Expand") {
-                        isExpanded.toggle()
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-                    .fixedSize()
-                    .accessibilityIdentifier("mac.timeline.thinking.fold")
+        // Match iOS: no "Thinking" title. Done gets a sparkle; streaming is
+        // plain muted callout. WorkingIndicator already shows activity.
+        ZStack(alignment: .topTrailing) {
+            HStack(alignment: .top, spacing: 6) {
+                if isDone, !preview.isEmpty {
+                    Image(systemName: "sparkle")
+                        .font(.system(size: 14))
+                        .foregroundStyle(theme.accent.purple.opacity(0.7))
+                        .frame(width: 14, height: 14)
+                        .padding(.top, 1)
+                        .accessibilityHidden(true)
                 }
+                thinkingBody
             }
-            if !preview.isEmpty {
-                ThinkingFoldLayout(
-                    cap: collapsedCap,
-                    isExpanded: isExpanded
-                ) {
-                    MacMarkdownDocumentView(
-                        markdown: preview,
-                        itemID: itemID,
-                        workspaceID: workspaceID,
-                        sessionID: sessionID,
-                        worktreeId: worktreeId,
-                        typography: .thinking
-                    )
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: ThinkingPaintedHeightKey.self,
-                                value: proxy.size.height
-                            )
-                        }
-                    }
+
+            if overflowsPaintedCap {
+                Button(isExpanded ? "Collapse" : "Expand") {
+                    isExpanded.toggle()
                 }
-                .clipped()
-                .onPreferenceChange(ThinkingPaintedHeightKey.self) { height in
-                    let overflows = ThinkingFoldPolicy.overflowsCollapsedCap(paintedHeight: height)
-                    if overflowsPaintedCap != overflows {
-                        overflowsPaintedCap = overflows
-                    }
-                }
-                .accessibilityIdentifier("mac.timeline.thinking.body")
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .fixedSize()
+                .accessibilityIdentifier("mac.timeline.thinking.fold")
             }
         }
         .padding(10)
@@ -1804,7 +1777,55 @@ struct ThinkingTimelineBubble: View {
             in: RoundedRectangle(cornerRadius: 12)
         )
         .accessibilityIdentifier("mac.timeline.thinkingRow")
+        .accessibilityLabel("Thinking")
         .accessibilityValue(foldAccessibilityValue)
+    }
+
+    @ViewBuilder
+    private var thinkingBody: some View {
+        if preview.isEmpty {
+            EmptyView()
+        } else {
+            ThinkingFoldLayout(
+                cap: collapsedCap,
+                isExpanded: isExpanded
+            ) {
+                Group {
+                    if isDone {
+                        MacMarkdownDocumentView(
+                            markdown: preview,
+                            itemID: itemID,
+                            workspaceID: workspaceID,
+                            sessionID: sessionID,
+                            worktreeId: worktreeId,
+                            typography: .thinking
+                        )
+                    } else {
+                        Text(preview)
+                            .font(Font(FontPreferenceStore.macMessageFont(forTextStyle: .callout)))
+                            .foregroundStyle(theme.text.tertiary.opacity(0.88))
+                    }
+                }
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: ThinkingPaintedHeightKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                }
+            }
+            .clipped()
+            .onPreferenceChange(ThinkingPaintedHeightKey.self) { height in
+                let overflows = ThinkingFoldPolicy.overflowsCollapsedCap(paintedHeight: height)
+                if overflowsPaintedCap != overflows {
+                    overflowsPaintedCap = overflows
+                }
+            }
+            .accessibilityIdentifier("mac.timeline.thinking.body")
+        }
     }
 
     private var foldAccessibilityValue: String {
