@@ -2,6 +2,38 @@ import Testing
 import Foundation
 @testable import Oppi
 
+// MARK: - Motion
+
+@Suite("Mac stats motion")
+struct MacStatsMotionTests {
+
+    @Test func statsCurveHonorsReduceMotion() {
+        #expect(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: true) == nil)
+        #expect(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: false) != nil)
+    }
+
+    @Test func statsViewsRouteTheirAnimationsThroughThemeMotion() throws {
+        let statsTab = try source(named: "OppiMac/Views/StatsTabView.swift")
+        let modelBreakdown = try source(named: "OppiMac/Views/Components/ModelBreakdownView.swift")
+        let motionCall = "ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)"
+
+        #expect(statsTab.contains("@Environment(\\.accessibilityReduceMotion) private var reduceMotion"))
+        #expect(modelBreakdown.contains("@Environment(\\.accessibilityReduceMotion) private var reduceMotion"))
+        #expect(statsTab.components(separatedBy: motionCall).count - 1 == 3)
+        #expect(modelBreakdown.components(separatedBy: motionCall).count - 1 == 2)
+        #expect(!statsTab.contains("withAnimation(.easeInOut"))
+        #expect(!modelBreakdown.contains("withAnimation(.easeInOut"))
+    }
+
+    private func source(named relativePath: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: relativePath)
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+}
+
 // MARK: - displayTitle
 
 @Suite("StatsActiveSession — displayTitle")

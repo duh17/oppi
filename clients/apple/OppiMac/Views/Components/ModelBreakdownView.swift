@@ -8,6 +8,8 @@ private let topModelCount = 5
 /// Model list with share bars, cache stats, and show-more toggle.
 struct ModelBreakdownView: View {
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let breakdown: [StatsModelBreakdown]
 
     @State private var showAll = false
@@ -48,7 +50,9 @@ struct ModelBreakdownView: View {
 
             if !showAll, hiddenCount > 0 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { showAll = true }
+                    withAnimation(
+                        ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)
+                    ) { showAll = true }
                 } label: {
                     Text("Show \(hiddenCount) more")
                         .font(.caption2)
@@ -58,7 +62,9 @@ struct ModelBreakdownView: View {
                 .padding(.top, 2)
             } else if showAll, hiddenCount > 0 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { showAll = false }
+                    withAnimation(
+                        ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)
+                    ) { showAll = false }
                 } label: {
                     Text("Show less")
                         .font(.caption2)

@@ -2,6 +2,8 @@ import SwiftUI
 
 struct StatsTabView: View {
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     @Bindable var monitor: MacSessionMonitor
     let healthMonitor: ServerHealthMonitor
 
@@ -51,7 +53,9 @@ struct StatsTabView: View {
 
                         if let dailyDetail {
                             MacDailyDetailView(detail: dailyDetail) {
-                                withAnimation(.easeInOut(duration: 0.2)) {
+                                withAnimation(
+                                    ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)
+                                ) {
                                     self.dailyDetail = nil
                                 }
                             }
@@ -218,7 +222,9 @@ struct StatsTabView: View {
 
     private func loadDailyDetail(date: String) async {
         if let cached = dailyDetailCache[date] {
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(
+                ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)
+            ) {
                 dailyDetail = cached
             }
             return
@@ -227,7 +233,9 @@ struct StatsTabView: View {
         isLoadingDetail = true
         if let result = await monitor.fetchDailyDetail(date: date) {
             dailyDetailCache[date] = result
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(
+                ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)
+            ) {
                 dailyDetail = result
             }
         }
