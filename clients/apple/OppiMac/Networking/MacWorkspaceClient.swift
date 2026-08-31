@@ -186,6 +186,66 @@ actor MacWorkspaceClient {
         return try JSONDecoder().decode(AgentListResponse.self, from: data).agents
     }
 
+    func launchAgentSession(
+        agentId: String,
+        prompt: String?,
+        workspaceId: String,
+        worktreeId: String? = nil,
+        model: String? = nil,
+        thinkingLevel: ThinkingLevel? = nil,
+        sessionName: String? = nil,
+        idempotencyKey: String = "mac-agent-launch-\(UUID().uuidString)"
+    ) async throws -> AgentSessionLaunchResponse {
+        struct PromptBody: Encodable {
+            let text: String
+        }
+        struct TargetBody: Encodable {
+            let workspaceId: String
+            let worktreeId: String?
+        }
+        struct OverridesBody: Encodable {
+            let model: String?
+            let thinkingLevel: ThinkingLevel?
+        }
+        struct Body: Encodable {
+            let prompt: PromptBody?
+            let target: TargetBody
+            let overrides: OverridesBody?
+            let sessionName: String?
+            let idempotencyKey: String
+        }
+
+        func blankToNil(_ value: String?) -> String? {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        let cleanModel = blankToNil(model)
+        let overrides = (cleanModel != nil || thinkingLevel != nil)
+            ? OverridesBody(model: cleanModel, thinkingLevel: thinkingLevel)
+            : nil
+        let body = Body(
+            prompt: blankToNil(prompt).map { PromptBody(text: $0) },
+            target: TargetBody(workspaceId: workspaceId, worktreeId: blankToNil(worktreeId)),
+            overrides: overrides,
+            sessionName: blankToNil(sessionName),
+            idempotencyKey: idempotencyKey
+        )
+        let url = try makeURL(pathSegments: ["agents", agentId, "sessions"])
+        let response = try await sendRaw(
+            method: "POST",
+            url: url,
+            body: try JSONEncoder().encode(body),
+            contentType: "application/json"
+        )
+        if response.statusCode == 422,
+           let failure = try? JSONDecoder().decode(AgentLaunchFailureResponse.self, from: response.body) {
+            throw failure
+        }
+        try checkStatus(response)
+        return try JSONDecoder().decode(AgentSessionLaunchResponse.self, from: response.body)
+    }
+
     func getAgent(_ agentId: String) async throws -> StoredAgentDefinition {
         let data = try await get(url: try makeURL(pathSegments: ["agents", agentId]))
         return try JSONDecoder().decode(AgentResponse.self, from: data).agent
@@ -695,7 +755,8 @@ actor MacWorkspaceClient {
         model: String? = nil,
         prompt: String? = nil,
         ephemeral: Bool? = nil,
-        worktreeId: String? = nil
+        worktreeId: String? = nil,
+        idempotencyKey: String? = nil
     ) async throws -> CreateSessionResponse {
         struct Body: Encodable {
             let name: String?
@@ -703,6 +764,7 @@ actor MacWorkspaceClient {
             let prompt: String?
             let ephemeral: Bool?
             let worktreeId: String?
+            let idempotencyKey: String?
         }
         let data = try await post(
             path: "/workspaces/\(workspaceId)/sessions",
@@ -711,7 +773,8 @@ actor MacWorkspaceClient {
                 model: model,
                 prompt: prompt,
                 ephemeral: ephemeral,
-                worktreeId: worktreeId
+                worktreeId: worktreeId,
+                idempotencyKey: idempotencyKey
             )
         )
         return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
@@ -997,9 +1060,20 @@ actor MacWorkspaceClient {
     }
 
     private func send(method: String, url: URL, body: Data? = nil, contentType: String? = nil) async throws -> Data {
+        let response = try await sendRaw(method: method, url: url, body: body, contentType: contentType)
+        try checkStatus(response)
+        return response.body
+    }
+
+    private func sendRaw(
+        method: String,
+        url: URL,
+        body: Data? = nil,
+        contentType: String? = nil
+    ) async throws -> MacLocalHTTPResponse {
         let path = requestTarget(from: url)
         workspaceLogger.debug("\(method) \(path)")
-        let response = try await transport.perform(
+        return try await transport.perform(
             macLocalAuthenticatedRequest(
                 method: method,
                 path: path,
@@ -1008,8 +1082,6 @@ actor MacWorkspaceClient {
                 contentType: contentType
             )
         )
-        try checkStatus(response)
-        return response.body
     }
 
     private func requestTarget(from url: URL) -> String {

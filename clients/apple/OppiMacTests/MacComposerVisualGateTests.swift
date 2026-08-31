@@ -452,6 +452,112 @@ final class MacComposerVisualGateTests: XCTestCase {
         )
     }
 
+    func testZeroPaneQuickSessionIsCenteredBoundedAndResponsive() throws {
+        let fixtures: [(name: String, width: CGFloat)] = [
+            ("wide", 1_000),
+            ("minimum", MacSessionShellLayoutPolicy.timelineMinimumWidth),
+        ]
+
+        for fixture in fixtures {
+            let capture = try hostedZeroPaneQuickSession(
+                width: fixture.width,
+                height: 620
+            )
+            XCTAssertEqual(capture.image.size.width, fixture.width, accuracy: 1)
+            XCTAssertEqual(capture.image.size.height, 620, accuracy: 1)
+            XCTAssertEqual(capture.inputCount, 1, "Zero-pane startup must expose one Quick Session input")
+            XCTAssertGreaterThan(capture.inputFrame.width, 180, "The Quick Session input must remain usable")
+            XCTAssertGreaterThan(capture.inputFrame.minY, 180, "The start surface must not hug the bottom edge")
+            XCTAssertLessThan(capture.inputFrame.maxY, 440, "The start surface must remain vertically centered")
+
+            if fixture.width > MacQuickSessionPaneLayoutPolicy.maximumSurfaceWidth {
+                let boundedInset = (fixture.width - MacQuickSessionPaneLayoutPolicy.maximumSurfaceWidth) / 2
+                XCTAssertGreaterThanOrEqual(capture.inputFrame.minX, boundedInset)
+                XCTAssertLessThanOrEqual(capture.inputFrame.maxX, fixture.width - boundedInset)
+            } else {
+                XCTAssertGreaterThanOrEqual(capture.inputFrame.minX, 0)
+                XCTAssertLessThanOrEqual(capture.inputFrame.maxX, fixture.width)
+            }
+
+            let attachment = XCTAttachment(image: capture.image)
+            attachment.name = "quick-session-zero-pane-\(fixture.name)-\(Int(fixture.width))pt-structural"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
+    private func hostedZeroPaneQuickSession(
+        width: CGFloat,
+        height: CGFloat
+    ) throws -> (image: NSImage, inputFrame: NSRect, inputCount: Int) {
+        let deck = MacSessionPaneDeck()
+        let root = MacSessionPaneDeckView(
+            deck: deck,
+            workspaces: [quickSessionWorkspace()],
+            isStoppingSession: { _ in false },
+            stopTarget: { _ in },
+            loadWorktrees: { _ in [] },
+            launchQuickSession: { _, _ in },
+            loadsSessionsOnMount: false
+        )
+        .frame(width: width, height: height)
+        .background(AppTheme.dark.bg.primary)
+        .environment(\.theme, AppTheme.dark)
+        .environment(\.themeID, ThemeID.dark)
+        .tint(.themeBlue)
+        .preferredColorScheme(.dark)
+        let host = NSHostingView(rootView: root)
+        host.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(AppTheme.dark.bg.primary)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+        window.orderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+            window.close()
+        }
+
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        CATransaction.flush()
+        let inputs = visualDescendants(of: host, type: MacComposerPasteTextView.self)
+        let input = try XCTUnwrap(inputs.first)
+        let inputFrame = input.convert(input.bounds, to: host)
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            throw MacComposerSnapshotError.noBitmap
+        }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = NSImage(size: host.bounds.size)
+        image.addRepresentation(bitmap)
+        return (image, inputFrame, inputs.count)
+    }
+
+    private func quickSessionWorkspace() -> Workspace {
+        Workspace(
+            id: "visual-workspace",
+            name: "Oppi",
+            description: nil,
+            icon: .symbol("folder"),
+            systemPrompt: nil,
+            hostMount: "/tmp/oppi",
+            tools: nil,
+            gitStatusEnabled: nil,
+            runtime: .host,
+            sandboxConfig: nil,
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+    }
+
     private func assertComposerGeometry(
         _ image: NSImage,
         composerWidth: CGFloat,
@@ -753,6 +859,17 @@ private struct MacTimelineSnapshotHost: View {
             sessionFocus: $focus
         )
     }
+}
+
+private func visualDescendants<T: NSView>(of root: NSView, type: T.Type) -> [T] {
+    var matches: [T] = []
+    if let match = root as? T {
+        matches.append(match)
+    }
+    for subview in root.subviews {
+        matches.append(contentsOf: visualDescendants(of: subview, type: type))
+    }
+    return matches
 }
 
 private enum MacComposerSnapshotError: Error {

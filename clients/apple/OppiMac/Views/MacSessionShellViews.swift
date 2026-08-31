@@ -194,6 +194,11 @@ struct SessionTraceShellDetail: View {
     let workspace: Workspace?
     let isStoppingSession: Bool
     let stopSession: () async -> Void
+    var composerState: MacSessionComposerState? = nil
+    var isActivePane = true
+    var activatePane: (() -> Void)? = nil
+    var loadsSessionOnMount = true
+    @State private var ownedComposerState = MacSessionComposerState()
     @State private var isInspectorPresented = MacSessionWindowChrome.inspectorInitiallyPresented
     @State private var selectedFilesSection: MacSessionFilesInspectorSection = .browser
     @State private var isOutlinePresented = false
@@ -232,6 +237,7 @@ struct SessionTraceShellDetail: View {
                     .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
             }
             .task(id: store.selectedTarget?.sessionId) {
+                guard loadsSessionOnMount else { return }
                 await store.loadSelectedFromLocalConfig()
             }
             .task(id: openPlan) {
@@ -247,8 +253,14 @@ struct SessionTraceShellDetail: View {
                 store.keybindingFocus = new ?? .composer
             }
             .onChange(of: store.keybindingFocus) { _, new in
+                guard isActivePane else { return }
                 if sessionFocus != new {
                     sessionFocus = new
+                }
+            }
+            .onChange(of: isActivePane) { _, active in
+                if !active {
+                    sessionFocus = nil
                 }
             }
             .onReceive(NotificationCenter.default.publisher(
@@ -359,10 +371,18 @@ struct SessionTraceShellDetail: View {
             maxWidth: .infinity,
             maxHeight: .infinity
         )
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                guard !isActivePane else { return }
+                activatePane?()
+            }
+        )
         .overlay(alignment: .bottom) {
             MacSessionComposerBar(
                 store: store,
-                sessionFocus: $sessionFocus
+                sessionFocus: $sessionFocus,
+                composerState: composerState ?? ownedComposerState,
+                ownsDictationLifecycle: composerState == nil
             )
             .padding(.horizontal, 12)
             .padding(.bottom, 10)

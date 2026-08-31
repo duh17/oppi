@@ -36,7 +36,7 @@ struct NewSessionModelPresentation: Equatable, Sendable {
                 requestModelId: requestModelId,
                 pillText: requestModelId,
                 pillProvider: Self.displayProvider(catalog?.provider)
-                    ?? providerFromModel(requestModelId)
+                    ?? providerPrefix(from: requestModelId)
             )
         }
         if isAgent {
@@ -55,6 +55,12 @@ struct NewSessionModelPresentation: Equatable, Sendable {
     private static func displayProvider(_ provider: String?) -> String? {
         let trimmed = provider?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func providerPrefix(from model: String) -> String? {
+        guard let slashIndex = model.firstIndex(of: "/") else { return nil }
+        let provider = String(model[model.startIndex..<slashIndex])
+        return provider.isEmpty ? nil : provider
     }
 }
 

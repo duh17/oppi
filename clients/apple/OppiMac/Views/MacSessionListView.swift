@@ -68,6 +68,8 @@ struct SessionShellList: View {
     let stopTarget: (MacSelectedSessionTarget) async -> Void
     let deleteTarget: (MacSelectedSessionTarget) async -> Void
     let selectTarget: (MacSelectedSessionTarget) -> Void
+    var splitRight: ((MacSelectedSessionTarget) -> Void)? = nil
+    var splitBelow: ((MacSelectedSessionTarget) -> Void)? = nil
 
     @State private var targetPendingDeletion: MacSelectedSessionTarget?
     @State private var expandedStoppedGroupIDs: Set<String> = []
@@ -262,7 +264,9 @@ struct SessionShellList: View {
                 selectTarget(target)
             },
             stopSession: { await stopTarget(target) },
-            requestDelete: { targetPendingDeletion = target }
+            requestDelete: { targetPendingDeletion = target },
+            splitRight: splitRight.map { split in { split(target) } },
+            splitBelow: splitBelow.map { split in { split(target) } }
         )
         .tag(target.sessionId)
         .foregroundStyle(.themeFg)

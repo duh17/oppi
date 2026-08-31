@@ -861,6 +861,9 @@ struct WorkspaceSessionActionRow: View {
     let selectSession: () -> Void
     let stopSession: () async -> Void
     let requestDelete: () -> Void
+    var splitRight: (() -> Void)? = nil
+    var splitBelow: (() -> Void)? = nil
+
     var body: some View {
         // Stop/Delete are context-menu only. Inline flags stay off in
         // `MacSessionInboxRowChrome` so the home and workspace lists match iPad.
@@ -886,6 +889,12 @@ struct WorkspaceSessionActionRow: View {
         }
         .contextMenu {
             Button("Open") { selectSession() }
+            if let splitRight {
+                Button("Open in Split Right") { splitRight() }
+            }
+            if let splitBelow {
+                Button("Open in Split Below") { splitBelow() }
+            }
             if chrome.showsContextMenuStop {
                 Button("Stop Session") { Task { await stopSession() } }
                     .disabled(isStopping || isDeleting)

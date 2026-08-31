@@ -18,6 +18,8 @@ struct MacHomeSessionList: View {
     let stopTarget: (MacSelectedSessionTarget) async -> Void
     let deleteTarget: (MacSelectedSessionTarget) async -> Void
     let selectTarget: (MacSelectedSessionTarget) -> Void
+    var splitRight: ((MacSelectedSessionTarget) -> Void)? = nil
+    var splitBelow: ((MacSelectedSessionTarget) -> Void)? = nil
 
     @State private var targetPendingDeletion: MacSelectedSessionTarget?
 
@@ -80,7 +82,9 @@ struct MacHomeSessionList: View {
                 selectedSessionID: $selectedSessionID,
                 stopTarget: stopTarget,
                 deleteTarget: deleteTarget,
-                selectTarget: selectTarget
+                selectTarget: selectTarget,
+                splitRight: splitRight,
+                splitBelow: splitBelow
             )
         case .searching:
             List {
@@ -180,6 +184,12 @@ struct MacHomeSessionList: View {
             Button("Open") {
                 selectedSessionID = match.target.sessionId
                 selectTarget(match.target)
+            }
+            if let splitRight {
+                Button("Open in Split Right") { splitRight(match.target) }
+            }
+            if let splitBelow {
+                Button("Open in Split Below") { splitBelow(match.target) }
             }
             if chrome.showsContextMenuStop {
                 Button("Stop Session") {

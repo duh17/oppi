@@ -8,6 +8,8 @@ struct MacComposerInputView: NSViewRepresentable {
     var isEnabled: Bool
     var accessibilityLabel: String
     var textColor: NSColor
+    var keyboardOwnershipGeneration: UInt = 0
+    var wantsKeyboardOwnership = false
     var onFocusChange: (Bool) -> Void
     var onPasteAttachments: (MacComposerPasteboardPayload) -> Void
 
@@ -49,8 +51,12 @@ struct MacComposerInputView: NSViewRepresentable {
 
         context.coordinator.parent = self
         context.coordinator.textView = textView
+        scrollView.onWindowAvailable = { [weak coordinator = context.coordinator] in
+            coordinator?.applyKeyboardOwnershipIfNeeded()
+        }
         applyChrome(to: textView)
         MacComposerPasteTextView.hideWritingToolsAffordance(on: textView)
+        context.coordinator.applyKeyboardOwnershipIfNeeded()
         return scrollView
     }
 
@@ -58,6 +64,9 @@ struct MacComposerInputView: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = scrollView.documentView as? MacComposerPasteTextView else { return }
         context.coordinator.textView = textView
+        scrollView.onWindowAvailable = { [weak coordinator = context.coordinator] in
+            coordinator?.applyKeyboardOwnershipIfNeeded()
+        }
         applyChrome(to: textView)
         textView.setAccessibilityLabel(accessibilityLabel)
         scrollView.setAccessibilityLabel(accessibilityLabel)
@@ -76,6 +85,7 @@ struct MacComposerInputView: NSViewRepresentable {
             }
             context.coordinator.isApplyingExternalText = false
         }
+        context.coordinator.applyKeyboardOwnershipIfNeeded()
     }
 
     func sizeThatFits(
@@ -113,6 +123,25 @@ struct MacComposerInputView: NSViewRepresentable {
         var parent: MacComposerInputView?
         weak var textView: MacComposerPasteTextView?
         var isApplyingExternalText = false
+        var appliedKeyboardOwnershipGeneration: UInt = 0
+
+        func applyKeyboardOwnershipIfNeeded() {
+            guard let parent, let textView else { return }
+            guard appliedKeyboardOwnershipGeneration != parent.keyboardOwnershipGeneration else {
+                return
+            }
+            if parent.keyboardOwnershipGeneration == 0 {
+                appliedKeyboardOwnershipGeneration = 0
+                return
+            }
+            guard let window = textView.window else { return }
+            appliedKeyboardOwnershipGeneration = parent.keyboardOwnershipGeneration
+            if parent.wantsKeyboardOwnership {
+                _ = window.makeFirstResponder(textView)
+            } else if window.firstResponder === textView {
+                _ = window.makeFirstResponder(nil)
+            }
+        }
 
         func textDidChange(_ notification: Notification) {
             guard !isApplyingExternalText,
@@ -145,7 +174,16 @@ enum MacComposerInputMetrics {
 }
 
 final class MacComposerInputScrollView: NSScrollView {
+    var onWindowAvailable: (() -> Void)?
+
     override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            onWindowAvailable?()
+        }
+    }
 
     override func becomeFirstResponder() -> Bool {
         if let documentView {

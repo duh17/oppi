@@ -90,7 +90,7 @@ struct OppiMacApp: App {
         }
         .defaultLaunchBehavior(.presented)
         .commands {
-            MacSessionCommands()
+            MacSessionPaneCommandMenu()
         }
 
         Settings {

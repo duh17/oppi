@@ -36,7 +36,7 @@ struct MainWindowView: View {
     @State private var searchStore = SessionSearchStore()
     @State private var workspacesExpanded = false
     @State private var workspaceStore = MacWorkspaceSnapshotStore()
-    @State private var sessionTraceStore = MacSessionTraceStore()
+    @State private var paneCommands = MacSessionPaneCommandCenter(deck: MacSessionPaneDeck())
     @State private var remoteServerStore = MacRemoteServerStore()
     @Bindable private var catalogStore = MacCatalogStore.shared
 
@@ -53,6 +53,8 @@ struct MainWindowView: View {
         self.sessionMonitor = sessionMonitor
         _pendingSessionDeepLinkURL = pendingSessionDeepLinkURL
     }
+
+    private var paneDeck: MacSessionPaneDeck { paneCommands.deck }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -101,11 +103,24 @@ struct MainWindowView: View {
         .onChange(of: searchText) { _, newValue in
             updateSessionSearch(newValue)
         }
-        .onChange(of: selectedSection) { _, _ in
+        .onChange(of: selectedSection) { _, section in
+            if section != .sessionHome {
+                paneDeck.cancelAllLiveDictation()
+                paneDeck.suspendAllSessionRuntimes()
+            }
             publishVisibleAttentionSession()
             updateSessionSearch(searchText)
         }
+        .onChange(of: paneDeck.focusedSessionID) { _, sessionID in
+            if let sessionID {
+                selectedSessionID = sessionID
+            }
+            publishVisibleAttentionSession()
+        }
+        .focusedSceneValue(\.macSessionPaneCommands, paneCommands)
         .onDisappear {
+            paneDeck.cancelAllLiveDictation()
+            paneDeck.suspendAllSessionRuntimes()
             publishVisibleAttentionSession(isMainWindowPresented: false)
         }
         .onReceive(NotificationCenter.default.publisher(for: .revealMacHostTool)) { note in
@@ -118,6 +133,14 @@ struct MainWindowView: View {
             MacControlSessionLaunchSheet(store: catalogStore) { target in
                 workspaceStore.noteOpenedSession(target)
                 selectSessionTarget(target)
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { paneCommands.isCheatSheetPresented },
+            set: { paneCommands.isCheatSheetPresented = $0 }
+        )) {
+            MacKeyboardCheatSheetView {
+                paneCommands.isCheatSheetPresented = false
             }
         }
     }
@@ -134,11 +157,14 @@ struct MainWindowView: View {
     }
 
     private var windowTitle: String {
-        if selectedSection == .sessionHome, selectedSessionID != nil {
-            if let session = sessionTraceStore.session {
+        if selectedSection == .sessionHome {
+            if paneDeck.focusedRuntime?.isEmpty == true {
+                return "New Session"
+            }
+            if let session = paneDeck.focusedRuntime?.traceStore.session {
                 return session.displayTitle
             }
-            if let target = sessionTraceStore.selectedTarget {
+            if let target = paneDeck.focusedRuntime?.target {
                 return target.summary.session.displayTitle
             }
             if let selectedSessionID,
@@ -300,7 +326,9 @@ struct MainWindowView: View {
                 refresh: { await workspaceStore.loadRecentSessionsForLoadedWorkspacesFromLocalConfig() },
                 stopTarget: stopSessionTarget,
                 deleteTarget: deleteSessionTarget,
-                selectTarget: selectSessionTarget
+                selectTarget: selectSessionTarget,
+                splitRight: { splitSessionTarget($0, axis: .horizontal) },
+                splitBelow: { splitSessionTarget($0, axis: .vertical) }
             )
         case .settings:
             MacSettingsList(selection: $selectedSettingsPane)
@@ -353,9 +381,8 @@ struct MainWindowView: View {
                             if selectedWorkspaceID == workspace.id {
                                 selectedWorkspaceID = nil
                             }
-                            if sessionTraceStore.selectedTarget?.workspaceId == workspace.id {
-                                selectedSessionID = nil
-                                sessionTraceStore.clearSelection()
+                            if paneDeck.remove(workspaceID: workspace.id) > 0 {
+                                selectedSessionID = paneDeck.focusedSessionID
                             }
                         }
                     },
@@ -395,25 +422,24 @@ struct MainWindowView: View {
                 )
             }
         case .sessionHome:
-            switch homeSessionDetail {
-            case .trace(let target):
-                SessionTraceShellDetail(
-                    store: sessionTraceStore,
-                    workspace: workspaceStore.workspaces.first(where: {
-                        $0.id == target.workspaceId
-                    }),
-                    isStoppingSession: workspaceStore.isStoppingSession(target.sessionId),
-                    stopSession: { await stopSessionTarget(target) }
-                )
-                .id(target.sessionId)
-            case .statsOnly(let selectedSession):
+            if case .statsOnly(let selectedSession) = homeSessionDetail {
                 SessionShellDetail(session: selectedSession)
-            case .none:
-                MacShellEmptyDetail(
-                    title: "Select a session",
-                    message: "Choose a session to open the conversation.",
-                    systemImage: "bubble.left.and.bubble.right"
+            } else {
+                MacSessionPaneDeckView(
+                    deck: paneDeck,
+                    workspaces: workspaceStore.workspaces,
+                    isStoppingSession: { workspaceStore.isStoppingSession($0) },
+                    stopTarget: { await stopSessionTarget($0) },
+                    loadWorktrees: { workspaceId in
+                        guard let client = MacWorkspaceClient.localOwner() else { return [] }
+                        return (try? await client.listWorkspaceWorktrees(workspaceId: workspaceId)) ?? []
+                    },
+                    launchQuickSession: launchQuickSession(from:attempt:)
                 )
+                .onDisappear {
+                    paneDeck.cancelAllLiveDictation()
+                    paneDeck.suspendAllSessionRuntimes()
+                }
             }
         case .agents, .schedules, .skills, .extensions:
             MacSidebarUtilityDetail(section: selectedSection, onOpenSession: selectSessionTarget)
@@ -465,10 +491,10 @@ struct MainWindowView: View {
             runtimeSessions: sessionMonitor.stats?.activeSessions ?? []
         ) {
         case .trace(let target):
-            sessionTraceStore.select(target)
+            _ = paneDeck.openOrFocus(target)
             selectedSection = .sessionHome
         case .statsOnly:
-            sessionTraceStore.clearSelection()
+            break
         case .none:
             break
         }
@@ -479,11 +505,11 @@ struct MainWindowView: View {
             selectedSessionID: selectedSessionID,
             targets: homeSelectionTargets,
             runtimeSessions: sessionMonitor.stats?.activeSessions ?? [],
-            boundSessionID: sessionTraceStore.selectedTarget?.sessionId
+            boundSessionID: paneDeck.focusedSessionID
         ) else {
             return
         }
-        sessionTraceStore.select(target)
+        _ = paneDeck.openOrFocus(target)
         selectedSection = .sessionHome
     }
 
@@ -576,7 +602,6 @@ struct MainWindowView: View {
             selectedSection = .workspaces
             selectedWorkspaceID = nil
             selectedSessionID = nil
-            sessionTraceStore.clearSelection()
         case .park:
             break
         case .ignore:
@@ -585,26 +610,63 @@ struct MainWindowView: View {
     }
 
     private func selectSessionTarget(_ target: MacSelectedSessionTarget) {
-        sessionTraceStore.select(target)
+        _ = paneDeck.openOrFocus(target)
         selectedSessionID = target.sessionId
         selectedSection = .sessionHome
     }
 
+    private func splitSessionTarget(_ target: MacSelectedSessionTarget, axis: MacSessionPaneSplitAxis) {
+        selectedSection = .sessionHome
+        if paneDeck.layout == nil {
+            _ = paneDeck.openOrFocus(target)
+            return
+        }
+        switch axis {
+        case .horizontal:
+            _ = paneDeck.splitFocusedRight(with: target)
+        case .vertical:
+            _ = paneDeck.splitFocusedBelow(with: target)
+        }
+        selectedSessionID = paneDeck.focusedSessionID ?? target.sessionId
+    }
+
+    private func launchQuickSession(
+        from runtime: MacSessionPaneRuntime,
+        attempt: MacQuickSessionLaunchAttempt
+    ) async {
+        guard let client = MacWorkspaceClient.localOwner() else {
+            runtime.quickSession.errorMessage = "Local server config is not initialized yet."
+            return
+        }
+        do {
+            guard let target = try await MacQuickSessionLauncher.launchIntoOriginatingPane(
+                attempt: attempt,
+                originatingRuntime: runtime,
+                deck: paneDeck,
+                client: client
+            ) else {
+                return
+            }
+            workspaceStore.noteOpenedSession(target)
+            selectedSessionID = paneDeck.focusedSessionID
+        } catch {
+            runtime.quickSession.errorMessage = error.localizedDescription
+        }
+    }
+
     private func stopSessionTarget(_ target: MacSelectedSessionTarget) async {
         if let updatedTarget = await workspaceStore.stopSessionFromLocalConfig(target) {
-            sessionTraceStore.select(updatedTarget)
-            await sessionTraceStore.loadSelectedFromLocalConfig()
+            _ = paneDeck.updateOpenTarget(updatedTarget)
+            _ = await paneDeck.reloadOpenTarget(updatedTarget)
         }
     }
 
     private func deleteSessionTarget(_ target: MacSelectedSessionTarget) async {
         let didDelete = await workspaceStore.deleteSessionFromLocalConfig(target)
         guard didDelete else { return }
+        _ = paneDeck.remove(sessionID: target.sessionId)
         if selectedSessionID == target.sessionId {
-            selectedSessionID = nil
-        }
-        if sessionTraceStore.selectedTarget?.sessionId == target.sessionId {
-            sessionTraceStore.clearSelection()
+            selectedSessionID = paneDeck.focusedSessionID
         }
     }
 

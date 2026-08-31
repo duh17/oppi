@@ -236,6 +236,11 @@ final class MacSessionTraceStore {
         loadReviewComments()
     }
 
+    /// Drop the live stream without clearing the selected target or drafts.
+    func suspendRuntime() {
+        tearDownRuntime()
+    }
+
     func clearSelection() {
         tearDownRuntime()
         resetTimelineKeybindingState()

@@ -926,6 +926,46 @@ struct MacWorkspaceClientTests {
         #expect(queryValue("worktreeId", in: request.path) == nil)
     }
 
+    @Test func launchAgentSessionPostsOnOwnerSocket() async throws {
+        let transport = RecordingLocalHTTPTransport(
+            response: MacLocalHTTPResponse(
+                statusCode: 201,
+                headers: ["content-type": "application/json"],
+                body: Data(#"""
+                {"receipt":{"accepted":true,"agentId":"agent-1","sessionId":"session-new","promptDispatch":"delivered"},"session":{"id":"session-new","workspaceId":"ws-1","name":"Agent","status":"busy","createdAt":1760000000000,"lastActivity":1760000002000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0}}
+                """#.utf8)
+            )
+        )
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-test.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+
+        let response = try await client.launchAgentSession(
+            agentId: "agent-1",
+            prompt: "Review the Mac mux",
+            workspaceId: "ws-1",
+            worktreeId: "wt_feature",
+            idempotencyKey: "mac-agent-launch-test"
+        )
+
+        #expect(response.session?.id == "session-new")
+        #expect(QuickSessionLaunchRouting.canNavigateAfterAgentLaunch(response))
+        let request = try #require(await transport.requests.first)
+        #expect(request.method == "POST")
+        #expect(request.path == "/agents/agent-1/sessions")
+        #expect(request.headers["Authorization"] == "Bearer sk_owner")
+        #expect(!request.path.contains("https"))
+        let json = try JSONSerialization.jsonObject(with: try #require(request.body)) as? [String: Any]
+        let target = json?["target"] as? [String: Any]
+        #expect(target?["workspaceId"] as? String == "ws-1")
+        #expect(target?["worktreeId"] as? String == "wt_feature")
+        let prompt = json?["prompt"] as? [String: Any]
+        #expect(prompt?["text"] as? String == "Review the Mac mux")
+        #expect(json?["idempotencyKey"] as? String == "mac-agent-launch-test")
+    }
+
     private func queryValue(_ name: String, in path: String) -> String? {
         guard let query = path.split(separator: "?", maxSplits: 1).dropFirst().first else {
             return nil
