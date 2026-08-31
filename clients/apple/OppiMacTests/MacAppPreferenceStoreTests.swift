@@ -167,6 +167,10 @@ struct FontPreferenceStoreTests {
         let proportionalFont = FontPreferenceStore.macMessageFont(forTextStyle: .body)
         #expect(proportionalFont.pointSize == expectedSize)
         #expect(proportionalFont.fontName == NSFont.systemFont(ofSize: expectedSize).fontName)
+
+        let callout = FontPreferenceStore.macMessageFont(forTextStyle: .callout)
+        #expect(callout.pointSize < proportionalFont.pointSize)
+        #expect(callout.fontName == proportionalFont.fontName)
     }
 
     @Test func liveMacTypographyRepaintsWithoutReplacingTimelineOrDocumentSubtrees() throws {
@@ -188,7 +192,8 @@ struct FontPreferenceStoreTests {
         #expect(timeline.contains("FontPreferenceStore.didChangeNotification"))
         #expect(timeline.contains("let _ = fontPreferenceRevision"))
         #expect(!timeline.contains(".id(fontPreferenceRevision)"))
-        #expect(timeline.contains("usesMessageTypography: true"))
+        #expect(timeline.contains("typography: .message"))
+        #expect(timeline.contains("typography: .thinking"))
         #expect(document.contains("FontPreferenceStore.didChangeNotification"))
         #expect(document.contains("let _ = fontPreferenceRevision"))
         #expect(!document.contains(".id(fontPreferenceRevision)"))

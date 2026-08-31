@@ -46,6 +46,32 @@ struct MacThinkingTimelineRowPaintTests {
         #expect(!bubble.contains("estimatedCharsPerLine"))
     }
 
+    @Test func thinkingTypographyIsQuieterThanMessagesButStillUsesSettings() {
+        #expect(MacMarkdownTypography.thinking.usesScaledMessageFont)
+        #expect(MacMarkdownTypography.message.usesScaledMessageFont)
+        #expect(!MacMarkdownTypography.document.usesScaledMessageFont)
+        #expect(MacMarkdownTypography.thinking.usesThinkingForeground)
+        #expect(!MacMarkdownTypography.message.usesThinkingForeground)
+        #expect(MacMarkdownTypography.thinking.resolvedTextStyle(.body) == .callout)
+        #expect(MacMarkdownTypography.thinking.resolvedTextStyle(.title3) == .callout)
+        #expect(MacMarkdownTypography.message.resolvedTextStyle(.title3) == .title3)
+        #expect(MacMarkdownTypography.message.resolvedTextStyle(.body) == .body)
+    }
+
+    @Test func thinkingBubbleWiresQuietMessageTypography() throws {
+        let source = try macThinkingTimelineSource()
+        let bubble = try sourceSlice(
+            named: "struct ThinkingTimelineBubble: View {",
+            until: "private struct MarkdownTimelineBubble: View {",
+            in: source
+        )
+
+        #expect(bubble.contains("typography: .thinking"))
+        #expect(bubble.contains("theme.text.thinking"))
+        #expect(!bubble.contains("usesMessageTypography"))
+        #expect(!bubble.contains("typography: .message"))
+    }
+
     @Test func shortCharacterTallMarkdownAppliesPaintedCapAndExpand() {
         let preview = Self.shortCharacterTallMarkdown
         #expect(preview.utf8.count < ChatItem.maxPreviewLength)

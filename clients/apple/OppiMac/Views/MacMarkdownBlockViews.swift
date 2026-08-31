@@ -61,9 +61,31 @@ enum MacWikiFileLinkRouting {
     }
 }
 
-/// Paints OppiCore `MarkdownBlock` trees. Parse happens in `MacMarkdownPaintDispatch`.
-/// Timeline rows pass `itemID` so `MacMarkdownStreamingParserStore` can reuse one
-/// `CommonMarkStreamingParser` per `ChatItem` across appends.
+/// Timeline prose vs thinking vs document chrome. Thinking keeps Settings
+/// (message scale + mono) but paints one step quieter than user/assistant.
+enum MacMarkdownTypography: Equatable, Sendable {
+    case document
+    case message
+    case thinking
+
+    var usesScaledMessageFont: Bool {
+        self != .document
+    }
+
+    var usesThinkingForeground: Bool {
+        self == .thinking
+    }
+
+    func resolvedTextStyle(_ requested: NSFont.TextStyle) -> NSFont.TextStyle {
+        switch self {
+        case .thinking:
+            return .callout
+        case .document, .message:
+            return requested
+        }
+    }
+}
+
 enum MacMarkdownBlockWidthPaint: Sendable {
     enum Role: Equatable, Sendable {
         case prose
@@ -93,6 +115,9 @@ enum MacMarkdownBlockWidthPaint: Sendable {
     }
 }
 
+/// Paints OppiCore `MarkdownBlock` trees. Parse happens in `MacMarkdownPaintDispatch`.
+/// Timeline rows pass `itemID` so `MacMarkdownStreamingParserStore` can reuse one
+/// `CommonMarkStreamingParser` per `ChatItem` across appends.
 struct MacMarkdownDocumentView: View {
     let markdown: String
     var itemID: String? = nil
@@ -101,7 +126,7 @@ struct MacMarkdownDocumentView: View {
     var worktreeId: String? = nil
     var sourceDirectory: String? = nil
     var filePath: String? = nil
-    var usesMessageTypography = false
+    var typography: MacMarkdownTypography = .document
     var proseMaximumWidth: CGFloat? = nil
 
     var body: some View {
@@ -112,7 +137,7 @@ struct MacMarkdownDocumentView: View {
             worktreeId: worktreeId,
             sourceDirectory: resolvedSourceDirectory,
             filePath: filePath,
-            usesMessageTypography: usesMessageTypography,
+            typography: typography,
             proseMaximumWidth: proseMaximumWidth
         )
     }
@@ -152,7 +177,7 @@ struct MacMarkdownBlockList: View {
     var worktreeId: String? = nil
     var sourceDirectory: String? = nil
     var filePath: String? = nil
-    var usesMessageTypography = false
+    var typography: MacMarkdownTypography = .document
     var proseMaximumWidth: CGFloat? = nil
 
     var body: some View {
@@ -165,7 +190,7 @@ struct MacMarkdownBlockList: View {
                     worktreeId: worktreeId,
                     sourceDirectory: sourceDirectory,
                     filePath: filePath,
-                    usesMessageTypography: usesMessageTypography,
+                    typography: typography,
                     proseMaximumWidth: proseMaximumWidth
                 )
                 .frame(
@@ -188,7 +213,7 @@ struct MacMarkdownBlockView: View {
     var worktreeId: String? = nil
     var sourceDirectory: String? = nil
     var filePath: String? = nil
-    var usesMessageTypography = false
+    var typography: MacMarkdownTypography = .document
     var proseMaximumWidth: CGFloat? = nil
     @Environment(\.theme) private var theme
 
@@ -209,7 +234,7 @@ struct MacMarkdownBlockView: View {
                     weight: .semibold
                 ))
                 .fontWeight(.semibold)
-                .foregroundStyle(theme.markdown.heading)
+                .foregroundStyle(headingForeground)
         case .paragraph(let inlines):
             if let formula = MacMarkdownPaintDispatch.displayMathSource(from: inlines) {
                 MacLatexFormulaView(code: formula)
@@ -222,7 +247,7 @@ struct MacMarkdownBlockView: View {
                     sourceDirectory: sourceDirectory
                 )
                     .font(messageFont(.body, fallback: .body))
-                    .foregroundStyle(theme.text.primary)
+                    .foregroundStyle(proseForeground)
             }
         case .blockQuote(let children):
             HStack(alignment: .top, spacing: 8) {
@@ -236,10 +261,10 @@ struct MacMarkdownBlockView: View {
                     worktreeId: worktreeId,
                     sourceDirectory: sourceDirectory,
                     filePath: filePath,
-                    usesMessageTypography: usesMessageTypography,
+                    typography: typography,
                     proseMaximumWidth: proseMaximumWidth
                 )
-                    .foregroundStyle(theme.markdown.quote)
+                    .foregroundStyle(quoteForeground)
             }
         case .codeBlock(let language, let code):
             codeBlockView(language: language, code: code)
@@ -249,7 +274,7 @@ struct MacMarkdownBlockView: View {
                     HStack(alignment: .top, spacing: 7) {
                         Text("•")
                             .font(messageFont(.body, fallback: .body))
-                            .foregroundStyle(theme.markdown.listBullet)
+                            .foregroundStyle(listForeground)
                         MacMarkdownBlockList(
                             blocks: item,
                             workspaceID: workspaceID,
@@ -257,7 +282,7 @@ struct MacMarkdownBlockView: View {
                             worktreeId: worktreeId,
                             sourceDirectory: sourceDirectory,
                             filePath: filePath,
-                            usesMessageTypography: usesMessageTypography,
+                            typography: typography,
                             proseMaximumWidth: proseMaximumWidth
                         )
                     }
@@ -269,7 +294,7 @@ struct MacMarkdownBlockView: View {
                     HStack(alignment: .top, spacing: 7) {
                         Text("\(start + offset).")
                             .font(messageFont(.body, fallback: .body))
-                            .foregroundStyle(theme.markdown.listBullet)
+                            .foregroundStyle(listForeground)
                         MacMarkdownBlockList(
                             blocks: item,
                             workspaceID: workspaceID,
@@ -277,7 +302,7 @@ struct MacMarkdownBlockView: View {
                             worktreeId: worktreeId,
                             sourceDirectory: sourceDirectory,
                             filePath: filePath,
-                            usesMessageTypography: usesMessageTypography,
+                            typography: typography,
                             proseMaximumWidth: proseMaximumWidth
                         )
                     }
@@ -296,7 +321,7 @@ struct MacMarkdownBlockView: View {
                             worktreeId: worktreeId,
                             sourceDirectory: sourceDirectory,
                             filePath: filePath,
-                            usesMessageTypography: usesMessageTypography,
+                            typography: typography,
                             proseMaximumWidth: proseMaximumWidth
                         )
                     }
@@ -313,7 +338,7 @@ struct MacMarkdownBlockView: View {
                 sessionID: sessionID,
                 worktreeId: worktreeId,
                 sourceDirectory: sourceDirectory,
-                usesMessageTypography: usesMessageTypography
+                typography: typography
             )
         case .htmlBlock(let html):
             MacMarkupSourcePreviewView(
@@ -329,8 +354,27 @@ struct MacMarkdownBlockView: View {
         fallback: Font,
         weight: NSFont.Weight = .regular
     ) -> Font {
-        guard usesMessageTypography else { return fallback }
-        return Font(FontPreferenceStore.macMessageFont(forTextStyle: textStyle, weight: weight))
+        guard typography.usesScaledMessageFont else { return fallback }
+        return Font(FontPreferenceStore.macMessageFont(
+            forTextStyle: typography.resolvedTextStyle(textStyle),
+            weight: weight
+        ))
+    }
+
+    private var proseForeground: Color {
+        typography.usesThinkingForeground ? theme.text.thinking : theme.text.primary
+    }
+
+    private var headingForeground: Color {
+        typography.usesThinkingForeground ? theme.text.thinking : theme.markdown.heading
+    }
+
+    private var quoteForeground: Color {
+        typography.usesThinkingForeground ? theme.text.thinking : theme.markdown.quote
+    }
+
+    private var listForeground: Color {
+        typography.usesThinkingForeground ? theme.text.thinking : theme.markdown.listBullet
     }
 
     @ViewBuilder
@@ -362,7 +406,7 @@ private struct MacMarkdownTableView: View {
     var sessionID: String? = nil
     var worktreeId: String? = nil
     var sourceDirectory: String? = nil
-    var usesMessageTypography = false
+    var typography: MacMarkdownTypography = .document
     @Environment(\.theme) private var theme
 
     private var columnCount: Int {
@@ -376,7 +420,7 @@ private struct MacMarkdownTableView: View {
                 ForEach(Array(padded(headers, to: columns).enumerated()), id: \.offset) { _, cell in
                     cellView(cell)
                         .fontWeight(.semibold)
-                        .foregroundStyle(theme.markdown.heading)
+                        .foregroundStyle(headingForeground)
                 }
             }
             GridRow {
@@ -418,9 +462,20 @@ private struct MacMarkdownTableView: View {
             worktreeId: worktreeId,
             sourceDirectory: sourceDirectory
         )
-        .font(usesMessageTypography
-            ? Font(FontPreferenceStore.macMessageFont(forTextStyle: .body))
+        .font(typography.usesScaledMessageFont
+            ? Font(FontPreferenceStore.macMessageFont(
+                forTextStyle: typography.resolvedTextStyle(.body)
+            ))
             : .body)
+        .foregroundStyle(proseForeground)
+    }
+
+    private var proseForeground: Color {
+        typography.usesThinkingForeground ? theme.text.thinking : theme.text.primary
+    }
+
+    private var headingForeground: Color {
+        typography.usesThinkingForeground ? theme.text.thinking : theme.markdown.heading
     }
 }
 

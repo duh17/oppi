@@ -1749,7 +1749,8 @@ struct ThinkingTimelineBubble: View {
             HStack(spacing: 6) {
                 TimelineBubbleHeader(
                     title: isDone ? "Thinking" : "Thinking…",
-                    subtitle: hasMore ? "Preview" : nil
+                    subtitle: hasMore ? "Preview" : nil,
+                    titleColor: theme.text.thinking
                 )
                 Spacer(minLength: 0)
                 if overflowsPaintedCap {
@@ -1772,7 +1773,8 @@ struct ThinkingTimelineBubble: View {
                         itemID: itemID,
                         workspaceID: workspaceID,
                         sessionID: sessionID,
-                        worktreeId: worktreeId
+                        worktreeId: worktreeId,
+                        typography: .thinking
                     )
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1847,7 +1849,7 @@ private struct MarkdownTimelineBubble: View {
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     worktreeId: worktreeId,
-                    usesMessageTypography: true,
+                    typography: .message,
                     proseMaximumWidth: MacTimelineProsePaint.readableMaximumWidth
                 )
                     .textSelection(.enabled)
@@ -1865,6 +1867,7 @@ private struct TimelineBubbleHeader: View {
     let subtitle: String?
     var sessionID: String? = nil
     var showsAssistantAvatar: Bool = false
+    var titleColor: Color? = nil
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -1879,7 +1882,7 @@ private struct TimelineBubbleHeader: View {
             Text(title)
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(theme.text.primary)
+                .foregroundStyle(titleColor ?? theme.text.primary)
             if let subtitle {
                 Text(subtitle)
                     .font(.caption2)
