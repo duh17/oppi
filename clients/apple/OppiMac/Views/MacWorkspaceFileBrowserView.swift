@@ -1,45 +1,29 @@
 import AppKit
 import SwiftUI
 
-enum MacWorkspaceFileBrowserPresentation: Equatable, Sendable {
-    case card
-    case column
-}
-
 struct MacWorkspaceFileBrowserView: View {
     let workspace: Workspace
     let worktreeId: String
     @Binding var openPlan: FileViewerPlan?
-    var presentation: MacWorkspaceFileBrowserPresentation = .card
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var currentPath = ""
     @State private var listing: DirectoryListingResponse?
     @State private var isLoading = false
     @State private var error: String?
     @State private var copiedPath: String?
+    @State private var hoveredPath: String?
 
     var body: some View {
-        Group {
-            if presentation == .column {
-                browserContent
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .themedScrollSurface()
-            } else {
-                browserContent
-                    .padding(12)
-                    .background(
-                        .thinMaterial,
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(.themeComment.opacity(0.20), lineWidth: 1)
-                    )
-            }
-        }
+        browserContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .foregroundStyle(.themeFg)
+            .themedScrollSurface()
+            .accessibilityIdentifier("mac.fileBrowser.inspector")
             .task(id: "\(workspace.id):\(worktreeId)") {
                 currentPath = ""
                 listing = nil
+                hoveredPath = nil
                 await loadDirectory(path: "")
             }
     }
@@ -60,16 +44,22 @@ struct MacWorkspaceFileBrowserView: View {
                         Task { await openDirectory(parentPath(for: currentPath)) }
                     } label: {
                         Label("Back", systemImage: "chevron.up")
+                            .labelStyle(.iconOnly)
                     }
                     .controlSize(.small)
+                    .help("Parent Folder")
+                    .accessibilityIdentifier("mac.fileBrowser.back")
                 }
                 Button {
                     Task { await loadDirectory(path: currentPath) }
                 } label: {
                     Label("Refresh Files", systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
                 }
                 .controlSize(.small)
                 .disabled(isLoading)
+                .help("Refresh Files")
+                .accessibilityIdentifier("mac.fileBrowser.refresh")
             }
 
             if workspace.hostMount?.isEmpty != false {
@@ -77,6 +67,7 @@ struct MacWorkspaceFileBrowserView: View {
                     "No local folder",
                     systemImage: "folder.badge.questionmark",
                     description: Text("Set a local folder path before browsing workspace files.")
+                        .foregroundStyle(.themeFgDim)
                 )
                 .frame(maxWidth: .infinity, minHeight: 120)
             } else if isLoading, listing == nil {
@@ -87,6 +78,7 @@ struct MacWorkspaceFileBrowserView: View {
                     "Could not load files",
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
+                        .foregroundStyle(.themeFgDim)
                 )
                 .frame(maxWidth: .infinity, minHeight: 120)
             } else if let listing {
@@ -100,7 +92,7 @@ struct MacWorkspaceFileBrowserView: View {
                     .lineLimit(1)
             }
         }
-        .padding(presentation == .column ? 12 : 0)
+        .padding(12)
     }
 
     private func fileList(_ response: DirectoryListingResponse) -> some View {
@@ -110,6 +102,7 @@ struct MacWorkspaceFileBrowserView: View {
                     "Empty directory",
                     systemImage: "folder",
                     description: Text("No files in this directory.")
+                        .foregroundStyle(.themeFgDim)
                 )
                 .frame(maxWidth: .infinity, minHeight: 120)
             } else {
@@ -123,7 +116,7 @@ struct MacWorkspaceFileBrowserView: View {
                     if response.truncated {
                         Text("Showing first \(response.entries.count) entries")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.themeFgDim)
                             .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
@@ -131,10 +124,7 @@ struct MacWorkspaceFileBrowserView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .frame(
-                    minHeight: 120,
-                    maxHeight: presentation == .column ? .infinity : 220
-                )
+                .frame(minHeight: 120, maxHeight: .infinity)
             }
         }
     }
@@ -146,6 +136,7 @@ struct MacWorkspaceFileBrowserView: View {
             currentPath: currentPath
         )
         let isOpenFile = openPlan?.path == path && !entry.isDirectory
+        let isHovered = hoveredPath == path
         return Button {
             if entry.isDirectory {
                 Task { await openDirectory(directoryPath(for: entry)) }
@@ -184,12 +175,28 @@ struct MacWorkspaceFileBrowserView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(
-                (isOpenFile ? Color.themeBlue.opacity(0.14) : Color.themeBgHighlight.opacity(0.72)),
+                ThemeShapeStyle(role: isOpenFile ? .blue : .backgroundHighlight)
+                    .opacity(isOpenFile ? 0.16 : (isHovered ? 0.62 : 0)),
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                hoveredPath = path
+            } else if hoveredPath == path {
+                hoveredPath = nil
+            }
+        }
+        .animation(
+            ThemeMotion.easeInOut(duration: 0.12, reduceMotion: reduceMotion),
+            value: isHovered
+        )
+        .animation(
+            ThemeMotion.easeInOut(duration: 0.12, reduceMotion: reduceMotion),
+            value: isOpenFile
+        )
         .contextMenu {
             Button("Copy Workspace Path") { copyPath(path) }
             if entry.isDirectory {

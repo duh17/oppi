@@ -145,7 +145,7 @@ struct MacSessionWindowChromeTests {
 
     @Test func filesAndDiffsLiveInTheInspector() {
         #expect(MacSessionWindowChrome.items(in: .inspector) == [
-            .changedFiles, .filePreview, .diff,
+            .fileBrowser, .changedFiles, .filePreview, .diff,
         ])
     }
 
@@ -365,7 +365,7 @@ struct MacSessionShellLayoutTests {
         ) == .timelineAndDocument)
     }
 
-    @Test func eitherDocumentKindSuppressesTheInspector() {
+    @Test func requestedFilesInspectorStaysAvailableBesideEitherDocumentKind() {
         let workspaceDocument = MacSessionShellLayoutPolicy.hasDocument(
             workspaceDocumentIsOpen: true,
             toolDocumentIsOpen: false
@@ -377,17 +377,21 @@ struct MacSessionShellLayoutTests {
 
         #expect(workspaceDocument)
         #expect(toolDocument)
-        #expect(!MacSessionShellLayoutPolicy.shouldPresentInspector(
+        #expect(MacSessionShellLayoutPolicy.shouldPresentInspector(
             requested: true,
             hasDocument: workspaceDocument
         ))
-        #expect(!MacSessionShellLayoutPolicy.shouldPresentInspector(
+        #expect(MacSessionShellLayoutPolicy.shouldPresentInspector(
             requested: true,
             hasDocument: toolDocument
         ))
         #expect(MacSessionShellLayoutPolicy.shouldPresentInspector(
             requested: true,
             hasDocument: false
+        ))
+        #expect(!MacSessionShellLayoutPolicy.shouldPresentInspector(
+            requested: false,
+            hasDocument: workspaceDocument
         ))
     }
 }

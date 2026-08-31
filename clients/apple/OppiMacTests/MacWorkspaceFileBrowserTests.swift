@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Oppi
 
-@Suite("Mac workspace file browser document column")
+@Suite("Mac workspace file browser inspector and document column")
 struct MacWorkspaceFileBrowserTests {
     @Test func nonDirectoryRowsOpenAWorkspaceFileViewerPlan() {
         let file = FileEntry(
@@ -248,20 +248,48 @@ struct MacWorkspaceFileBrowserTests {
         #expect(video.contains("MacOwnerMediaSource.workspaceFile("))
     }
 
-    @Test func fileBrowserEmitsAPlanAndTheWorkspaceShellHostsTheWideColumn() throws {
+    @Test func fileBrowserLivesOnlyInRightInspectorsAndTheWorkspaceShellHostsTheWideDocument() throws {
         let browser = try source(named: "OppiMac/Views/MacWorkspaceFileBrowserView.swift")
-        let shell = try source(named: "OppiMac/Views/MacWorkspaceShellViews.swift")
+        let workspaceShell = try source(named: "OppiMac/Views/MacWorkspaceShellViews.swift")
+        let sessionShell = try source(named: "OppiMac/Views/MacSessionShellViews.swift")
         let column = try source(named: "OppiMac/Views/MacToolDocumentColumn.swift")
+        let workspaceInspector = try sourceSlice(
+            from: ".inspector(isPresented: $isFilesInspectorPresented) {",
+            to: ".toolbar {",
+            in: workspaceShell
+        )
+        let workspaceDetail = try sourceSlice(
+            from: "private var workspaceDetail: some View {",
+            to: "private var visibleWorktrees: [WorkspaceWorktree] {",
+            in: workspaceShell
+        )
+        let sessionInspector = try sourceSlice(
+            from: "private var sessionInspector: some View {",
+            to: "private var sessionChangesInspector: some View {",
+            in: sessionShell
+        )
 
         #expect(browser.contains("FileViewerPlan"))
         #expect(browser.contains("openPlan"))
-        #expect(browser.contains("MacWorkspaceFileBrowserPresentation"))
-        #expect(browser.contains("case column"))
-        #expect(browser.contains("presentation == .column"))
-        #expect(browser.contains("Copy Workspace Path"))
+        #expect(browser.contains("mac.fileBrowser.inspector"))
+        #expect(browser.contains(".themedScrollSurface()"))
+        #expect(browser.contains(".foregroundStyle(.themeFg)"))
+        #expect(browser.contains(".foregroundStyle(.themeFgDim)"))
+        #expect(browser.contains("ThemeShapeStyle(role:"))
+        #expect(browser.contains("ThemeMotion.easeInOut"))
+        #expect(browser.contains("mac.fileBrowser.back"))
+        #expect(browser.contains("mac.fileBrowser.refresh"))
+        #expect(browser.contains(".labelStyle(.iconOnly)"))
         #expect(browser.contains("List {"))
         #expect(browser.contains(".listStyle(.plain)"))
         #expect(!browser.contains("LazyVStack"))
+        #expect(!browser.contains("MacWorkspaceFileBrowserPresentation"))
+        #expect(!browser.contains("case card"))
+        #expect(!browser.contains(".thinMaterial"))
+        #expect(!browser.contains("Color.themeBlue"))
+        #expect(!browser.contains("Color.themeBgHighlight"))
+        #expect(!browser.contains(".foregroundStyle(.secondary)"))
+        #expect(browser.contains("Copy Workspace Path"))
         #expect(browser.contains(".contextMenu"))
         #expect(!browser.contains("HSplitView"))
         #expect(!browser.contains("MacToolDocumentColumn"))
@@ -272,15 +300,23 @@ struct MacWorkspaceFileBrowserTests {
         #expect(!browser.contains(".sheet("))
         #expect(!browser.contains("Label(\"Copy Path\""))
 
-        #expect(shell.contains("HSplitView"))
-        #expect(shell.contains("MacToolDocumentColumn("))
-        #expect(shell.contains("MacToolDocumentColumnMetrics.minWidth"))
-        #expect(shell.contains("MacToolDocumentColumnMetrics.idealWidth"))
-        #expect(shell.contains("FileViewerPlan"))
-        #expect(shell.contains("needsFileBytes"))
-        #expect(!shell.contains("inspectorColumnWidth"))
-        #expect(!shell.contains("fullScreenCover"))
-        #expect(!shell.contains("WindowGroup"))
+        #expect(workspaceShell.contains("HSplitView"))
+        #expect(workspaceShell.contains("MacToolDocumentColumn("))
+        #expect(workspaceShell.contains("MacToolDocumentColumnMetrics.minWidth"))
+        #expect(workspaceShell.contains("MacToolDocumentColumnMetrics.idealWidth"))
+        #expect(workspaceShell.contains("FileViewerPlan"))
+        #expect(workspaceShell.contains("needsFileBytes"))
+        #expect(workspaceShell.contains(".inspector(isPresented: $isFilesInspectorPresented)"))
+        #expect(workspaceShell.contains(".inspectorColumnWidth(min: 260, ideal: 320, max: 420)"))
+        #expect(workspaceShell.contains("mac.workspace.toolbar.files"))
+        #expect(workspaceInspector.contains("MacWorkspaceFileBrowserView("))
+        #expect(!workspaceDetail.contains("MacWorkspaceFileBrowserView("))
+        #expect(!workspaceShell.contains("fullScreenCover"))
+        #expect(!workspaceShell.contains("WindowGroup"))
+
+        #expect(sessionShell.contains(".inspector(isPresented: inspectorPresentation)"))
+        #expect(sessionInspector.contains("MacWorkspaceFileBrowserView("))
+        #expect(!sessionShell.contains("presentation: .column"))
 
         #expect(column.contains("FileViewerPlan"))
         #expect(column.contains("MacToolDocumentDescriptorView"))
@@ -300,5 +336,18 @@ struct MacWorkspaceFileBrowserTests {
             .deletingLastPathComponent()
             .appending(path: relativePath)
         return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func sourceSlice(
+        from startMarker: String,
+        to endMarker: String,
+        in source: String
+    ) throws -> String {
+        let start = try #require(source.range(of: startMarker))
+        let end = try #require(source.range(
+            of: endMarker,
+            range: start.upperBound..<source.endIndex
+        ))
+        return String(source[start.lowerBound..<end.lowerBound])
     }
 }

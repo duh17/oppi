@@ -234,6 +234,7 @@ struct WorkspaceShellDetail: View {
     @State private var worktrees: [WorkspaceWorktree] = []
     @State private var selectedWorktreeId = WorkspaceWorktree.mainId
     @State private var isLoadingWorktrees = false
+    @State private var isFilesInspectorPresented = true
 
     var body: some View {
         HSplitView {
@@ -259,6 +260,33 @@ struct WorkspaceShellDetail: View {
         .environment(\.macOpenFileViewer, MacOpenFileViewerAction { plan in
             openPlan = plan
         })
+        .inspector(isPresented: $isFilesInspectorPresented) {
+            MacWorkspaceFileBrowserView(
+                workspace: workspace,
+                worktreeId: selectedWorktreeId,
+                openPlan: $openPlan
+            )
+            .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
+            .navigationTitle("Files")
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    isFilesInspectorPresented.toggle()
+                } label: {
+                    Label(
+                        isFilesInspectorPresented ? "Close Files" : "Files",
+                        systemImage: isFilesInspectorPresented ? "folder.fill" : "folder"
+                    )
+                    .labelStyle(.iconOnly)
+                }
+                .help("Workspace Files")
+                .accessibilityLabel(
+                    isFilesInspectorPresented ? "Close workspace files" : "Open workspace files"
+                )
+                .accessibilityIdentifier("mac.workspace.toolbar.files")
+            }
+        }
         .sheet(isPresented: $isPresentingEditWorkspace) {
             MacWorkspaceCreateSheet(
                 title: "Edit Workspace",
@@ -316,6 +344,7 @@ struct WorkspaceShellDetail: View {
             importLocalError = nil
             worktrees = []
             selectedWorktreeId = WorkspaceWorktree.mainId
+            isFilesInspectorPresented = true
         }
         .onChange(of: selectedWorktreeId) { _, newId in
             reopenDocumentForSelectedWorktree(newId)
@@ -426,12 +455,6 @@ struct WorkspaceShellDetail: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-
-            MacWorkspaceFileBrowserView(
-                workspace: workspace,
-                worktreeId: selectedWorktreeId,
-                openPlan: $openPlan
-            )
 
             MacWorkspaceGitStatusView(
                 workspace: workspace,
@@ -838,7 +861,6 @@ struct WorkspaceSessionActionRow: View {
     let selectSession: () -> Void
     let stopSession: () async -> Void
     let requestDelete: () -> Void
-
     var body: some View {
         // Stop/Delete are context-menu only. Inline flags stay off in
         // `MacSessionInboxRowChrome` so the home and workspace lists match iPad.

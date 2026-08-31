@@ -284,7 +284,7 @@ struct MacToolDocumentColumnTests {
         #expect(shell.contains("mac.session.toolbar.files"))
         #expect(shell.contains("MacAssistantAvatarView(avatar: .officialPi"))
         #expect(shell.contains("MacWorkspaceFileBrowserView("))
-        #expect(shell.contains("presentation: .column"))
+        #expect(!shell.contains("MacWorkspaceFileBrowserPresentation"))
         #expect(shell.contains("MacSessionFilesInspectorSection"))
         #expect(!shell.contains("fullScreenCover"))
         #expect(!shell.contains("WindowGroup"))

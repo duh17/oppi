@@ -84,9 +84,9 @@ final class MacSessionShellVisualGateTests: XCTestCase {
             "At the 980 pt app minimum, the document should replace the constrained timeline"
         )
         XCTAssertNil(minimumRecorder.timelineFrame)
-        XCTAssertNil(
+        XCTAssertNotNil(
             minimumRecorder.inspectorFrame,
-            "An open document must suppress the competing inspector"
+            "The requested file browser must remain in the right sidebar beside a document"
         )
         let minimumDetailFrame = try XCTUnwrap(minimumRecorder.detailFrame)
         let minimumDocumentFrame = try XCTUnwrap(minimumRecorder.documentFrame)
@@ -109,9 +109,9 @@ final class MacSessionShellVisualGateTests: XCTestCase {
             .timelineAndDocument,
             "A wide shell should keep the timeline and document side by side"
         )
-        XCTAssertNil(
+        XCTAssertNotNil(
             wideRecorder.inspectorFrame,
-            "The inspector must remain suppressed beside an open document"
+            "Wide windows should keep file navigation available beside the document"
         )
         let wideDetailFrame = try XCTUnwrap(wideRecorder.detailFrame)
         let wideTimelineFrame = try XCTUnwrap(wideRecorder.timelineFrame)
@@ -248,6 +248,28 @@ final class MacSessionShellVisualGateTests: XCTestCase {
         )
     }
 
+    func testWorkspaceFileBrowserInspectorRepaintsForLightTheme() throws {
+        let dark = try captureFileBrowser(themeID: .dark)
+        let light = try captureFileBrowser(themeID: .light)
+
+        addStructuralAttachment(
+            dark,
+            name: "mac-file-browser-inspector-dark-320x620-structural"
+        )
+        addStructuralAttachment(
+            light,
+            name: "mac-file-browser-inspector-light-320x620-structural"
+        )
+        assertCaptureBounds(dark, expectedWidth: 320, expectedHeight: 620)
+        assertCaptureBounds(light, expectedWidth: 320, expectedHeight: 620)
+        let samplePoint = CGPoint(x: 280, y: 300)
+        XCTAssertGreaterThan(
+            luminance(in: light, at: samplePoint) - luminance(in: dark, at: samplePoint),
+            0.35,
+            "The mounted file-browser inspector must repaint its surface for the active theme"
+        )
+    }
+
     func testVoicePlaybackControlPaintsIdleLoadingPlayingAndFailureStates() throws {
         let width: CGFloat = 520
         let height: CGFloat = 170
@@ -348,6 +370,36 @@ final class MacSessionShellVisualGateTests: XCTestCase {
             width: width,
             height: height,
             waitUntil: { self.bodyPaintedFraction(in: $0) >= minimumPaintedFraction }
+        )
+    }
+
+    private func captureFileBrowser(themeID: ThemeID) throws -> NSImage {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let workspace = Workspace(
+            id: "visual-file-browser",
+            name: "Oppi",
+            description: nil,
+            icon: .symbol("folder"),
+            hostMount: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+        let root = MacWorkspaceFileBrowserView(
+            workspace: workspace,
+            worktreeId: WorkspaceWorktree.mainId,
+            openPlan: .constant(nil)
+        )
+        .frame(width: 320, height: 620)
+        .environment(\.theme, themeID.appTheme)
+        .environment(\.themeID, themeID)
+        .tint(.themeBlue)
+        .preferredColorScheme(themeID.preferredColorScheme)
+
+        return try captureHostedView(
+            root,
+            width: 320,
+            height: 620,
+            themeID: themeID
         )
     }
 

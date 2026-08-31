@@ -50,6 +50,7 @@ enum MacSessionChromeItem: String, CaseIterable, Sendable {
     case steering
     case stop
     case dictation
+    case fileBrowser
     case changedFiles
     case filePreview
     case diff
@@ -60,7 +61,7 @@ enum MacSessionChromeItem: String, CaseIterable, Sendable {
         switch self {
         case .title, .context, .outline:
             .toolbar
-        case .changedFiles, .filePreview, .diff:
+        case .fileBrowser, .changedFiles, .filePreview, .diff:
             .inspector
         case .model, .thinking, .steering, .stop, .dictation, .composer:
             .composer
@@ -77,7 +78,7 @@ enum MacSessionChromeItem: String, CaseIterable, Sendable {
             .primaryButton
         case .dictation:
             .textRow
-        case .title, .context, .outline, .changedFiles, .filePreview, .diff, .composer, .timeline:
+        case .title, .context, .outline, .fileBrowser, .changedFiles, .filePreview, .diff, .composer, .timeline:
             nil
         }
     }

@@ -31,8 +31,11 @@ enum MacSessionShellLayoutPolicy {
             : .documentOnly
     }
 
-    static func shouldPresentInspector(requested: Bool, hasDocument: Bool) -> Bool {
-        requested && !hasDocument
+    /// The file browser is navigation, not document content. Keep the user's
+    /// right-sidebar choice independent from whichever file or tool document
+    /// is open in the main surface.
+    static func shouldPresentInspector(requested: Bool, hasDocument _: Bool) -> Bool {
+        requested
     }
 }
 
@@ -217,7 +220,6 @@ struct SessionTraceShellDetail: View {
                     .ignoresSafeArea()
             }
             .environment(\.macOpenFileViewer, MacOpenFileViewerAction { plan in
-                isInspectorPresented = false
                 openPlan = plan
             })
             .environment(\.macReviewCommentStaging, reviewCommentStaging)
@@ -240,11 +242,6 @@ struct SessionTraceShellDetail: View {
                 selectedFilesSection = .browser
                 isOutlinePresented = false
                 isContextPresented = false
-            }
-            .onChange(of: hasOpenDocument) { _, isOpen in
-                if isOpen {
-                    isInspectorPresented = false
-                }
             }
             .onChange(of: sessionFocus) { _, new in
                 store.keybindingFocus = new ?? .composer
@@ -446,8 +443,7 @@ struct SessionTraceShellDetail: View {
                 )
                 .labelStyle(.iconOnly)
             }
-            .disabled(hasOpenDocument)
-            .help(hasOpenDocument ? "Close the document to show Files" : "Session Files")
+            .help("Session Files")
             .accessibilityLabel(isInspectorPresented ? "Close session files" : "Open session files")
             .accessibilityIdentifier("mac.session.toolbar.files")
         }
@@ -515,8 +511,7 @@ struct SessionTraceShellDetail: View {
                     MacWorkspaceFileBrowserView(
                         workspace: workspace,
                         worktreeId: store.session?.worktreeId ?? WorkspaceWorktree.mainId,
-                        openPlan: $openPlan,
-                        presentation: .column
+                        openPlan: $openPlan
                     )
                 } else {
                     ContentUnavailableView(
