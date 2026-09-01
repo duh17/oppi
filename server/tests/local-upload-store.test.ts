@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { IncomingMessage } from "node:http";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -81,6 +82,33 @@ describe("local upload store", () => {
     expect(statSync(join(storeRoot, "records")).mode & 0o777).toBe(0o700);
     expect(statSync(join(storeRoot, "tmp")).mode & 0o777).toBe(0o700);
     expect(statSync(join(storeRoot, "blobs", "sha256")).mode & 0o777).toBe(0o700);
+  });
+
+  it("does not chmod an existing custom upload root", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-upload-custom-"));
+    const storeRoot = join(root, "shared-uploads");
+    mkdirSync(storeRoot, { recursive: true, mode: 0o770 });
+    chmodSync(storeRoot, 0o770);
+    const config: UploadStoreConfigResolved = {
+      rootPath: storeRoot,
+      maxFileBytes: 1024 * 1024,
+      maxTurnBytes: 2 * 1024 * 1024,
+      unusedTtlMs: 60_000,
+      retainedTtlMs: 120_000,
+      allowedMimeTypes: [],
+    };
+
+    await createUploadRecord({
+      config,
+      workspaceId: "ws-1",
+      name: "note.txt",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      purpose: "chat_attachment",
+    });
+
+    expect(statSync(storeRoot).mode & 0o777).toBe(0o770);
+    expect(statSync(join(storeRoot, "records")).mode & 0o777).toBe(0o700);
   });
 
   afterEach(() => {

@@ -1,4 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -81,6 +89,16 @@ describe("ensurePrivateDiagnosticsDir", () => {
     const telemetryDir = join(tempDir, "diagnostics", "telemetry");
     ensurePrivateDiagnosticsDir(telemetryDir);
     expect(statSync(join(tempDir, "diagnostics")).mode & 0o777).toBe(0o700);
+    expect(statSync(telemetryDir).mode & 0o777).toBe(0o700);
+  });
+
+  it("does not chmod an existing diagnostics directory", () => {
+    const diagnosticsDir = join(tempDir, "diagnostics");
+    mkdirSync(diagnosticsDir, { recursive: true, mode: 0o750 });
+    chmodSync(diagnosticsDir, 0o750);
+    const telemetryDir = join(diagnosticsDir, "telemetry");
+    ensurePrivateDiagnosticsDir(telemetryDir);
+    expect(statSync(diagnosticsDir).mode & 0o777).toBe(0o750);
     expect(statSync(telemetryDir).mode & 0o777).toBe(0o700);
   });
 });

@@ -5,6 +5,8 @@ services:
       context: ..
       dockerfile: server/Dockerfile
     restart: unless-stopped
+    # Container listens on 0.0.0.0 (entrypoint). To publish only on a host
+    # Tailscale/LAN IP: "100.x.x.x:${OPPI_PORT:-7750}:${OPPI_PORT:-7750}"
     ports:
       - "${OPPI_PORT:-7750}:${OPPI_PORT:-7750}"
     environment:

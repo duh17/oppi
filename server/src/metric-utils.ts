@@ -14,14 +14,16 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-/** Create `path` as 0700. If the parent is `diagnostics/`, tighten that too. */
+/** Create `path` as 0700 if missing. New `diagnostics/` parents get 0700 too. */
 export function ensurePrivateDiagnosticsDir(path: string): void {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  chmodSync(path, 0o700);
   const parent = dirname(path);
-  if (basename(parent) === "diagnostics") {
+  if (basename(parent) === "diagnostics" && !existsSync(parent)) {
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
     chmodSync(parent, 0o700);
   }
+  if (existsSync(path)) return;
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  chmodSync(path, 0o700);
 }
 
 /** Format epoch-ms as "YYYY-MM-DD" in UTC. */

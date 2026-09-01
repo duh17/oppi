@@ -221,6 +221,9 @@ function tmpPathFor(rootPath: string, uploadId: string): string {
 }
 
 async function ensurePrivateDir(path: string): Promise<void> {
+  // Do not chmod an existing operator-owned path (custom uploadStore.path
+  // may be group-readable for backup or sidecar processes).
+  if (existsSync(path)) return;
   await mkdir(path, { recursive: true, mode: 0o700 });
   await chmod(path, 0o700);
 }
@@ -229,6 +232,7 @@ async function ensureDirs(rootPath: string): Promise<void> {
   await ensurePrivateDir(rootPath);
   await ensurePrivateDir(join(rootPath, "records"));
   await ensurePrivateDir(join(rootPath, "tmp"));
+  await ensurePrivateDir(join(rootPath, "blobs"));
   await ensurePrivateDir(join(rootPath, "blobs", "sha256"));
 }
 
