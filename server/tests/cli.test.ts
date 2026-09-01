@@ -2609,6 +2609,27 @@ describe("oppi pair", () => {
     }
   });
 
+  it("keeps a first-run serve up when Tailscale certs are not ready yet", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-first-cert-retry-"));
+    try {
+      expect(run(["config", "set", "tls.mode", "tailscale"], { OPPI_DATA_DIR: dir }).exitCode).toBe(
+        0,
+      );
+      writeFileSync(join(dir, "tailscale"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const stdout = await runUntilOutput(
+        ["serve", "--host", "my-server.tail00000.ts.net"],
+        "Pairing QR will be shown after remote TLS is ready",
+        { OPPI_DATA_DIR: dir, PATH: `${dir}:${process.env.PATH ?? ""}` },
+        20_000,
+      );
+      expect(stripAnsi(stdout)).toMatch(/Remote TLS is not ready yet|Local API is up/i);
+      expect(stripAnsi(stdout)).not.toContain("Scan QR above");
+      expect(stripAnsi(stdout)).not.toMatch(/certificate not found/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("keeps an already-paired serve up when Tailscale certs are not ready yet", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-cert-retry-"));
     try {

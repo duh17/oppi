@@ -240,14 +240,31 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     console.log(c.dim("  Run 'oppi pair' to re-pair or add devices."));
     console.log("");
   } else {
-    // First run: show pairing QR inline so user doesn't need a separate command.
-    console.log("");
-    if (!showPairingQR(storage, undefined, pairHost)) {
-      await shutdown(1);
-      return;
+    // First run: show pairing QR inline. If start() returned without a
+    // remote listener (Tailscale certs not ready), keep the retry and
+    // print the QR when the listener recovers.
+    const showFirstRunQr = (): boolean => {
+      if (!showPairingQR(storage, undefined, pairHost)) return false;
+      console.log(c.green("  Server is running. Scan QR above, then Ctrl+C when done."));
+      console.log("");
+      return true;
+    };
+    if (server.hasPublicHttpListener) {
+      if (!showFirstRunQr()) {
+        await shutdown(1);
+        return;
+      }
+    } else {
+      console.log(c.yellow("  ! Remote TLS is not ready yet."));
+      console.log(c.dim("  Local API is up. Pairing QR will be shown after remote TLS is ready."));
+      console.log(c.dim("  Press Ctrl+C to stop"));
+      console.log("");
+      server.onRemoteListenerReady(() => {
+        if (!showFirstRunQr()) {
+          void shutdown(1);
+        }
+      });
     }
-    console.log(c.green("  Server is running. Scan QR above, then Ctrl+C when done."));
-    console.log("");
   }
 }
 
