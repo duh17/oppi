@@ -6,10 +6,29 @@
 export type DoctorCheckLevel = "pass" | "warn" | "fail";
 export type DoctorCheck = { level: DoctorCheckLevel; message: string };
 
-const WILDCARD_BIND_HOSTS = new Set(["0.0.0.0", "::"]);
-
+/**
+ * Node's listen() treats more than the literal "0.0.0.0" / "::" as
+ * unspecified: "0", hex IPv4, "::0", the expanded IPv6 form, and
+ * bracketed IPv6. Normalize through the URL hostname parser so doctor
+ * fails closed on every spelling. Keep the original host in messages.
+ */
 export function isWildcardBindHost(host: string): boolean {
-  return WILDCARD_BIND_HOSTS.has(host.trim().toLowerCase());
+  const trimmed = host.trim();
+  if (trimmed.length === 0) return false;
+  const unbracketed =
+    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  try {
+    const parsed = new URL(
+      `http://${unbracketed.includes(":") ? `[${unbracketed}]` : unbracketed}/`,
+    );
+    return (
+      parsed.hostname === "0.0.0.0" ||
+      parsed.hostname === "[::]" ||
+      parsed.hostname === "[::ffff:0:0]"
+    );
+  } catch {
+    return unbracketed === "::" || unbracketed === "::0";
+  }
 }
 
 /**

@@ -20,11 +20,33 @@ describe("wildcard bind doctor check", () => {
     expect(check?.message).toContain("host=::");
   });
 
+  it("fails closed on every Node unspecified-address spelling", () => {
+    const spellings = [
+      "0",
+      "0x00000000",
+      "::0",
+      "0:0:0:0:0:0:0:0",
+      "[::]",
+      "[::0]",
+      "0.0.0",
+      "::ffff:0.0.0.0",
+    ];
+    for (const host of spellings) {
+      expect(isWildcardBindHost(host), host).toBe(true);
+      const check = wildcardBindDoctorCheck(host);
+      expect(check?.level, host).toBe("fail");
+      expect(check?.message, host).toContain(`host=${host}`);
+      expect(check?.message, host).toContain("oppi config set host <tailscale-ip-or-lan>");
+    }
+  });
+
   it("does not flag loopback or specific LAN/Tailscale binds", () => {
     expect(isWildcardBindHost("127.0.0.1")).toBe(false);
+    expect(isWildcardBindHost("0x7f000001")).toBe(false);
     expect(wildcardBindDoctorCheck("127.0.0.1")).toBeNull();
     expect(wildcardBindDoctorCheck("100.64.1.20")).toBeNull();
     expect(wildcardBindDoctorCheck("192.168.1.44")).toBeNull();
+    expect(wildcardBindDoctorCheck("::1")).toBeNull();
   });
 });
 

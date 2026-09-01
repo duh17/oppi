@@ -12,7 +12,7 @@
  */
 
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Session } from "./types.js";
@@ -279,8 +279,12 @@ export class SearchIndex {
   constructor(dataDir: string, getSession: (id: string) => Session | undefined) {
     this.getSession = getSession;
     const dbPath = join(dataDir, "session-search.db");
+    const created = !existsSync(dbPath);
     this.db = openDatabase(dbPath);
-    chmodSync(dbPath, 0o600);
+    // First-run only. Do not tighten an existing custom-mode database.
+    if (created) {
+      chmodSync(dbPath, 0o600);
+    }
     // Use exec() for pragmas — bun:sqlite lacks the .pragma() method
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");

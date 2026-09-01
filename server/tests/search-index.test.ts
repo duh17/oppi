@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { rmSync, statSync, unlinkSync, utimesSync, writeFileSync, mkdtempSync } from "node:fs";
+import {
+  chmodSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+  mkdtempSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -92,6 +100,22 @@ describe("SearchIndex file modes", () => {
     cleanupPaths.add(join(dataDir, "session-search.db"));
     try {
       expect(statSync(join(dataDir, "session-search.db")).mode & 0o777).toBe(0o600);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("leaves permissions on an existing session-search.db", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-mode-existing-"));
+    cleanupPaths.add(dataDir);
+    const dbPath = join(dataDir, "session-search.db");
+    const seed = openDatabase(dbPath);
+    seed.close();
+    chmodSync(dbPath, 0o660);
+    const index = new SearchIndex(dataDir, () => undefined);
+    cleanupPaths.add(dbPath);
+    try {
+      expect(statSync(dbPath).mode & 0o777).toBe(0o660);
     } finally {
       index.close();
     }
