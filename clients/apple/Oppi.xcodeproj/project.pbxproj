@@ -683,7 +683,6 @@
 		712F90360FAD98A3BBDCF5F3 /* ExtensionUIRequest+Presentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ECA92A975C3051BF296D6ED /* ExtensionUIRequest+Presentation.swift */; };
 		714D3397D2F9645C7125ED80 /* MacVoiceReplyPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C46B7145814E41066EA0131B /* MacVoiceReplyPlayer.swift */; };
 		7152681E402F3680FA24C011 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6CAAE9CE09DF2D28BCF715E /* Preferences.swift */; };
-		716A1997A5FFCA1306A5161C /* ImageAttachment+UIKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25244FDF00164BE12FDACE6E /* ImageAttachment+UIKit.swift */; };
 		71B71C9CC0AB184B11A4B932 /* AvatarPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E2B2F457487706444AC9029 /* AvatarPickerView.swift */; };
 		71CC41E388D6D6EEA07C77EF /* WebSocketTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 079119C660FD99BC327CC8E9 /* WebSocketTransport.swift */; };
 		71E7F246FA2143AA9ECD60D9 /* ToolRowViewportPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF9922071AFCD6218F98DE49 /* ToolRowViewportPolicy.swift */; };
@@ -1811,7 +1810,6 @@
 		2472A6F9B056CC63EA9F7ABF /* WorkspaceWorktreeMenuFormattingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWorktreeMenuFormattingTests.swift; sourceTree = "<group>"; };
 		24EB557504322E89E70F7427 /* MarkdownReaderRenderAhead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownReaderRenderAhead.swift; sourceTree = "<group>"; };
 		24F80637EB2D077A3410259D /* DeviceAuthSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthSession.swift; sourceTree = "<group>"; };
-		25244FDF00164BE12FDACE6E /* ImageAttachment+UIKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ImageAttachment+UIKit.swift"; sourceTree = "<group>"; };
 		252668A2818D83CF2622BA9B /* VoiceInputRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputRouting.swift; sourceTree = "<group>"; };
 		252E234C474F5A173CD9CFB9 /* TimelineReducerRecoveredThinkingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerRecoveredThinkingTests.swift; sourceTree = "<group>"; };
 		2538F87D78752BAA4B634D5A /* LocalServerTrustDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServerTrustDelegate.swift; sourceTree = "<group>"; };
@@ -4071,7 +4069,6 @@
 			children = (
 				58532A7E2A60614AE6EB188A /* AssistantAvatar.swift */,
 				38806E81D6A6DFA26CEFFA0A /* HostDirectory.swift */,
-				25244FDF00164BE12FDACE6E /* ImageAttachment+UIKit.swift */,
 				E3AB80529A9DCA6A8A7694B8 /* PairedServer.swift */,
 				2B36170C993C7F4ABCCED07F /* PendingFileReference.swift */,
 				0030872E17F5A3AB36FC58DE /* QuickCommentTemplate.swift */,
@@ -6880,7 +6877,6 @@
 				1914515C1038EB8743E49E18 /* IconAssetCache.swift in Sources */,
 				D16788FDE99F2CFC4C552D9A /* IconChoice.swift in Sources */,
 				06A180F4D1AEA0D96B205C4B /* IconPickerView.swift in Sources */,
-				716A1997A5FFCA1306A5161C /* ImageAttachment+UIKit.swift in Sources */,
 				A20CFE95DEC6C3909AAB6290 /* ImageAttachment.swift in Sources */,
 				D9D5F4D78818DA6BCE65C8D0 /* ImageBlobView.swift in Sources */,
 				7FD2EE2EB27E4A476FC58ED5 /* ImageDecodeCache.swift in Sources */,
