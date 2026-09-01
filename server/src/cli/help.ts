@@ -234,7 +234,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "Doctor exits non-zero for critical failures.",
       "Wildcard bind (host=0.0.0.0 or ::) fails. Bind a Tailscale or LAN IP instead.",
-      "MagicDNS plus tls.mode=self-signed is a warning; remote Tailscale should use tls.mode=tailscale.",
+      "An advertised MagicDNS pairing host plus tls.mode=self-signed is a warning; use tls.mode=tailscale.",
       "It inspects TLS files but does not generate missing certificate material.",
     ],
     examples: [{ command: "oppi doctor" }],

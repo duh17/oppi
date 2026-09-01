@@ -396,7 +396,8 @@ function cmdDoctor(storage: CliConnectionConfig): void {
   const tls = resolveTlsConfig(config, storage.getDataDir());
   const magicDnsSelfSigned = magicDnsSelfSignedDoctorCheck(
     config.tls?.mode ?? tls.mode,
-    getTailscaleHostname(),
+    resolvePairingAdvertiseHost(config),
+    config.port,
   );
   if (magicDnsSelfSigned) {
     checks.push(magicDnsSelfSigned);

@@ -45,20 +45,30 @@ export function wildcardBindDoctorCheck(host: string): DoctorCheck | null {
   };
 }
 
+/** Advertised pairing host is MagicDNS (`*.ts.net`), not merely that Tailscale is up. */
+export function isMagicDnsHostname(host: string | null | undefined): boolean {
+  if (!host) return false;
+  const trimmed = host.trim().toLowerCase();
+  const unbracketed =
+    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  return unbracketed.endsWith(".ts.net");
+}
+
 /**
- * MagicDNS (`*.ts.net`) plus self-signed is the wrong remote path.
- * The phone should use tls.mode=tailscale (`tailscale cert`).
+ * MagicDNS as the advertised pairing route plus self-signed is the wrong path.
+ * LAN/mDNS pairing on a Tailscale-connected machine is not this check.
  */
 export function magicDnsSelfSignedDoctorCheck(
   tlsMode: string | undefined,
-  tailscaleHostname: string | null,
+  advertisedHost: string | null,
+  port = 7749,
 ): DoctorCheck | null {
-  if (!tailscaleHostname) return null;
+  if (!isMagicDnsHostname(advertisedHost)) return null;
   if ((tlsMode ?? "disabled") !== "self-signed") return null;
   return {
     level: "warn",
     message:
-      `Tailscale MagicDNS is present (${tailscaleHostname}) but tls.mode=self-signed. ` +
-      "Use tls.mode=tailscale so the phone can use https://<machine>.ts.net:7749 with a real cert.",
+      `Advertised pairing host ${advertisedHost} is MagicDNS but tls.mode=self-signed. ` +
+      `Use tls.mode=tailscale so the phone can use https://${advertisedHost}:${port} with a real cert.`,
   };
 }

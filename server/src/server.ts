@@ -163,6 +163,10 @@ const log = createLogger({ base: { component: "server" } });
 
 type TransportServer = ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
 
+function isRemoteBindUnavailableError(error: unknown): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === "EADDRNOTAVAIL";
+}
+
 function closeListeningServer(server: TransportServer | undefined): Promise<void> {
   if (!server?.listening) return Promise.resolve();
   server.closeIdleConnections?.();
@@ -886,24 +890,37 @@ export class Server {
       }
 
       if (this.httpServer) {
-        await new Promise<void>((resolve, reject) => {
-          const server = this.httpServer;
-          if (!server) {
-            resolve();
-            return;
-          }
-          const onError = (error: Error): void => reject(error);
-          server.once("error", onError);
-          server.listen(config.port, config.host, () => {
-            server.off("error", onError);
-            resolve();
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const server = this.httpServer;
+            if (!server) {
+              resolve();
+              return;
+            }
+            const onError = (error: Error): void => reject(error);
+            server.once("error", onError);
+            server.listen(config.port, config.host, () => {
+              server.off("error", onError);
+              resolve();
+            });
           });
-        });
-        log.info("server.listening", {
-          scheme: this.transportScheme,
-          host: config.host,
-          port: this.port,
-        });
+          log.info("server.listening", {
+            scheme: this.transportScheme,
+            host: config.host,
+            port: this.port,
+          });
+        } catch (error: unknown) {
+          // Tailscale/LAN bind can vanish (EADDRNOTAVAIL). Keep the local socket.
+          if (!isRemoteBindUnavailableError(error)) throw error;
+          this.remoteTransportError = safeErrorMessage(error);
+          await closeListeningServer(this.httpServer).catch(() => {});
+          this.httpServer = undefined;
+          log.warn("server.remote_listener_unavailable", {
+            mode: config.tls?.mode ?? "disabled",
+            host: config.host,
+            error: this.remoteTransportError,
+          });
+        }
       } else {
         log.warn("server.remote_listener_unavailable", {
           mode: config.tls?.mode ?? "disabled",

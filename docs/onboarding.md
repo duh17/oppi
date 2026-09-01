@@ -40,7 +40,7 @@ oppi config set host <tailscale-ip-or-lan>
 
 `oppi serve --host`, `oppi pair --host`, and `OPPI_PAIR_HOST` are the **advertised pairing hostname**. Use a MagicDNS name such as `cos-1.taila3ebc.ts.net` there. Binding `0.0.0.0` is not how you advertise MagicDNS.
 
-When Tailscale MagicDNS is the remote path, set `tls.mode=tailscale` (`tailscale cert`) so the phone can use `https://<machine>.ts.net:7749` with a real certificate. `tls.mode=self-signed` plus MagicDNS is a mismatch; `oppi doctor` warns.
+When the advertised pairing host is MagicDNS (`*.ts.net`), set `tls.mode=tailscale` (`tailscale cert`) so the phone can use `https://<machine>.ts.net:<port>` with a real certificate (`<port>` is `config.port`). `tls.mode=self-signed` plus an advertised MagicDNS host is a mismatch; `oppi doctor` warns. LAN or mDNS pairing on a Tailscale-connected machine does not trigger that warning.
 
 ```bash
 oppi config set tls.mode tailscale

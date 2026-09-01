@@ -49,6 +49,31 @@ describe("Unix-socket local API", () => {
     }
   }, 30_000);
 
+  it("keeps the local API when the configured bind address is missing", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-eaddrnotavail-"));
+    const storage = new Storage(dataDir);
+    storage.ensurePaired();
+    storage.updateConfig({
+      host: "192.0.2.1",
+      port: 0,
+      tls: { mode: "disabled", allowInsecureNetworkHttp: true },
+    });
+
+    const server = new Server(storage);
+    try {
+      await server.start();
+      expect(server.remoteAvailable).toBe(false);
+      expect(existsSync(server.socketPath)).toBe(true);
+      await expect(localApiRequest<Record<string, unknown>>(storage, "/me")).resolves.toEqual(
+        expect.objectContaining({}),
+      );
+    } finally {
+      await server.stop().catch(() => {});
+      expect(existsSync(server.socketPath)).toBe(false);
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("serves local requests while slow Tailscale preparation is still running", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-slow-remote-"));
     const storage = new Storage(dataDir);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isMagicDnsHostname,
   isWildcardBindHost,
   magicDnsSelfSignedDoctorCheck,
   wildcardBindDoctorCheck,
@@ -53,12 +54,27 @@ describe("wildcard bind doctor check", () => {
 describe("MagicDNS + self-signed doctor check", () => {
   const magicDns = "cos-1.taila3ebc.ts.net";
 
-  it("warns when MagicDNS is present and tls.mode is self-signed", () => {
+  it("warns when the advertised pairing host is MagicDNS and tls.mode is self-signed", () => {
     const check = magicDnsSelfSignedDoctorCheck("self-signed", magicDns);
     expect(check?.level).toBe("warn");
     expect(check?.message).toContain(magicDns);
     expect(check?.message).toContain("tls.mode=self-signed");
     expect(check?.message).toContain("tls.mode=tailscale");
+    expect(check?.message).toContain(`https://${magicDns}:7749`);
+  });
+
+  it("uses the configured port in the MagicDNS remediation URL", () => {
+    const check = magicDnsSelfSignedDoctorCheck("self-signed", magicDns, 8443);
+    expect(check?.message).toContain(`https://${magicDns}:8443`);
+    expect(check?.message).not.toContain(":7749");
+  });
+
+  it("does not warn when the advertised host is LAN or mDNS", () => {
+    expect(isMagicDnsHostname("192.168.1.44")).toBe(false);
+    expect(isMagicDnsHostname("studio.local")).toBe(false);
+    expect(isMagicDnsHostname("100.64.1.20")).toBe(false);
+    expect(magicDnsSelfSignedDoctorCheck("self-signed", "192.168.1.44")).toBeNull();
+    expect(magicDnsSelfSignedDoctorCheck("self-signed", "studio.local")).toBeNull();
   });
 
   it("does not warn when tls.mode is tailscale", () => {

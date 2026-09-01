@@ -94,7 +94,7 @@ Provider API keys use `pi auth`, not Oppi config.
 | --------------------------------------- | ------------------------------------------------------------------- |
 | `port`                                  | Listen port (restart)                                               |
 | `host`                                  | HTTP/TLS **bind** address (restart). Do not use `0.0.0.0` on npm/VPS installs; bind a Tailscale `100.x` or LAN IP. Pairing advertise is `--host` / `OPPI_PAIR_HOST`, not this key. |
-| `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart). Use `tailscale` when MagicDNS is the remote path. |
+| `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart). Use `tailscale` when the advertised pairing host is MagicDNS. |
 | `asr.backend`                           | `http` or `pi-extension` (restart)                                  |
 | `asr.extension`                         | Pi STT package name, `npm:` spec, or absolute package dir (restart) |
 | `asr.sttEndpoint`                       | HTTP dictation STT backend (restart)                                |

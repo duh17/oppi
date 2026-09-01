@@ -83,7 +83,7 @@ With the default HTTP/TLS transport, the phone must reach the server over LAN, T
 oppi pair --host <hostname-or-ip>
 ```
 
-When MagicDNS is the remote path, use `tls.mode=tailscale`. Supported remote access is authenticated HTTPS/WSS, including through Tailscale. `oppi doctor` fails on a wildcard bind and warns when MagicDNS is present with self-signed TLS.
+When the advertised pairing host is MagicDNS, use `tls.mode=tailscale`. Supported remote access is authenticated HTTPS/WSS, including through Tailscale. `oppi doctor` fails on a wildcard bind and warns when the advertised pairing host is MagicDNS with self-signed TLS.
 
 Notes:
 
