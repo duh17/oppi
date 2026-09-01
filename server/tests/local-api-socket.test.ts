@@ -49,6 +49,38 @@ describe("Unix-socket local API", () => {
     }
   }, 30_000);
 
+  it("retries the remote listener when the configured bind address returns", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-bind-retry-"));
+    const storage = new Storage(dataDir);
+    storage.ensurePaired();
+    storage.updateConfig({
+      host: "192.0.2.1",
+      port: 0,
+      tls: { mode: "disabled", allowInsecureNetworkHttp: true },
+    });
+
+    const previousRetryMs = process.env.OPPI_REMOTE_BIND_RETRY_MS;
+    process.env.OPPI_REMOTE_BIND_RETRY_MS = "40";
+    const server = new Server(storage);
+    try {
+      await server.start();
+      expect(server.remoteAvailable).toBe(false);
+      expect(existsSync(server.socketPath)).toBe(true);
+
+      storage.updateConfig({ host: "127.0.0.1" });
+      await waitFor(() => server.remoteAvailable, 3_000);
+      expect(server.remoteAvailable).toBe(true);
+      await expect(localApiRequest<Record<string, unknown>>(storage, "/me")).resolves.toEqual(
+        expect.objectContaining({}),
+      );
+    } finally {
+      if (previousRetryMs === undefined) delete process.env.OPPI_REMOTE_BIND_RETRY_MS;
+      else process.env.OPPI_REMOTE_BIND_RETRY_MS = previousRetryMs;
+      await server.stop().catch(() => {});
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("keeps the local API when the configured bind address is missing", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-eaddrnotavail-"));
     const storage = new Storage(dataDir);

@@ -67,6 +67,12 @@ export interface ServerConfig {
   configVersion?: number;
   port: number;
   host: string;
+  /**
+   * Last explicit pairing advertise host (`oppi pair --host` / `oppi serve --host`).
+   * Not the HTTP bind address. Doctor and later pair commands read this after
+   * `--host` / `OPPI_PAIR_HOST`.
+   */
+  pairHost?: string;
   dataDir: string;
   sessionIdleTimeoutMs: number;
   workspaceIdleTimeoutMs: number;

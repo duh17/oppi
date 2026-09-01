@@ -133,7 +133,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "On first run, serve creates owner credentials, enables self-signed TLS, and prints a pairing QR.",
-      "config host is the HTTP/TLS bind address. --host and OPPI_PAIR_HOST advertise the pairing name.",
+      "config host is the HTTP/TLS bind address. --host, OPPI_PAIR_HOST, and pairHost advertise the pairing name.",
       "Do not bind 0.0.0.0 to advertise MagicDNS. Bind a Tailscale or LAN IP: oppi config set host <ip>.",
       "Press Ctrl+C to stop the foreground server.",
     ],
@@ -174,7 +174,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "The QR and link carry the same signed invite.",
-      "config host is the HTTP/TLS bind address. --host and OPPI_PAIR_HOST advertise the pairing name.",
+      "config host is the HTTP/TLS bind address. --host, OPPI_PAIR_HOST, and pairHost advertise the pairing name.",
       "Use --show-token only for manual recovery; it exposes the owner token in the terminal.",
     ],
     examples: [
@@ -230,14 +230,25 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["doctor"],
     title: "Doctor",
     summary: "Run security, TLS, launchd, runtime, and environment diagnostics.",
-    usage: "oppi doctor",
+    usage: "oppi doctor [--host <host>]",
+    flags: [
+      {
+        name: "--host",
+        value: "<host>",
+        summary: "advertised pairing hostname to diagnose (same as pair --host)",
+      },
+    ],
     notes: [
       "Doctor exits non-zero for critical failures.",
       "Wildcard bind (host=0.0.0.0 or ::) fails. Bind a Tailscale or LAN IP instead.",
       "An advertised MagicDNS pairing host plus tls.mode=self-signed is a warning; use tls.mode=tailscale.",
+      "Advertise host is --host, then OPPI_PAIR_HOST, then the last pair/serve --host (config pairHost).",
       "It inspects TLS files but does not generate missing certificate material.",
     ],
-    examples: [{ command: "oppi doctor" }],
+    examples: [
+      { command: "oppi doctor" },
+      { command: "oppi doctor --host machine.tailnet.ts.net" },
+    ],
   },
   {
     path: ["update"],
@@ -326,6 +337,10 @@ const HELP_TOPICS: HelpTopic[] = [
     keys: [
       { name: "port", summary: "number; server port" },
       { name: "host", summary: "string; HTTP/TLS bind address, not the pairing advertise host" },
+      {
+        name: "pairHost",
+        summary: "string; last advertised pairing hostname; not the bind address",
+      },
       { name: "maxSessionsGlobal", summary: "number; global concurrent session limit" },
       { name: "runtimePathEntries", summary: "JSON array; runtime PATH entries" },
       { name: "runtimeEnv.<NAME>", summary: "string; one runtime environment variable" },

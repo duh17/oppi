@@ -66,7 +66,7 @@ import { isNpmVersionNewer } from "./cli/npm-version.js";
 import { cmdConfig } from "./cli/commands/config.js";
 import { magicDnsSelfSignedDoctorCheck, wildcardBindDoctorCheck } from "./cli/doctor-checks.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
-import { resolvePairingAdvertiseHost } from "./cli/pairing-host.js";
+import { rememberPairingAdvertiseHost, resolvePairingAdvertiseHost } from "./cli/pairing-host.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -101,6 +101,7 @@ function shortHostLabel(host: string): string {
 // ─── Commands ───
 
 async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
+  rememberPairingAdvertiseHost(storage, pairHost);
   const wasPaired = storage.isPaired();
 
   // Auto-init: generate owner token + identity keys if this is a fresh install.
@@ -300,6 +301,7 @@ async function cmdPair(
   showToken = false,
   jsonOutput = false,
 ): Promise<void> {
+  rememberPairingAdvertiseHost(storage, hostOverride);
   if (jsonOutput) {
     try {
       const invite = generatePairInvite(storage, hostOverride, requestedName);
@@ -322,7 +324,7 @@ function isLoopbackHost(host: string): boolean {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
-function cmdDoctor(storage: CliConnectionConfig): void {
+function cmdDoctor(storage: CliConnectionConfig, hostOverride?: string): void {
   type CheckLevel = "pass" | "warn" | "fail";
   type Check = { level: CheckLevel; message: string };
   const checks: Check[] = [];
@@ -396,7 +398,7 @@ function cmdDoctor(storage: CliConnectionConfig): void {
   const tls = resolveTlsConfig(config, storage.getDataDir());
   const magicDnsSelfSigned = magicDnsSelfSignedDoctorCheck(
     config.tls?.mode ?? tls.mode,
-    resolvePairingAdvertiseHost(config),
+    resolvePairingAdvertiseHost(config, hostOverride),
     config.port,
   );
   if (magicDnsSelfSigned) {
@@ -1127,7 +1129,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
       break;
 
     case "doctor":
-      cmdDoctor(connection);
+      cmdDoctor(connection, flags.host);
       break;
 
     case "token":

@@ -763,6 +763,39 @@ describe("oppi doctor bind posture", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("warns when --host advertises MagicDNS with self-signed TLS", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-doctor-magicdns-host-"));
+    try {
+      const set = run(["config", "set", "host", "127.0.0.1"], { OPPI_DATA_DIR: dir });
+      expect(set.exitCode).toBe(0);
+      const { stdout } = run(["doctor", "--host", "cos-1.taila3ebc.ts.net"], {
+        OPPI_DATA_DIR: dir,
+      });
+      const text = stripAnsi(stdout);
+      expect(text).toContain("Advertised pairing host cos-1.taila3ebc.ts.net is MagicDNS");
+      expect(text).toContain("https://cos-1.taila3ebc.ts.net:7749");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns from persisted pairHost without a doctor --host flag", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-doctor-pairhost-"));
+    try {
+      expect(run(["config", "set", "host", "127.0.0.1"], { OPPI_DATA_DIR: dir }).exitCode).toBe(0);
+      expect(
+        run(["config", "set", "pairHost", "cos-1.taila3ebc.ts.net"], { OPPI_DATA_DIR: dir })
+          .exitCode,
+      ).toBe(0);
+      const { stdout } = run(["doctor"], { OPPI_DATA_DIR: dir });
+      expect(stripAnsi(stdout)).toContain(
+        "Advertised pairing host cos-1.taila3ebc.ts.net is MagicDNS",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── Unknown command ──

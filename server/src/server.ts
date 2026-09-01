@@ -167,6 +167,25 @@ function isRemoteBindUnavailableError(error: unknown): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === "EADDRNOTAVAIL";
 }
 
+function remoteBindRetryMs(): number {
+  const raw = process.env.OPPI_REMOTE_BIND_RETRY_MS;
+  if (raw === undefined || raw.trim().length === 0) return 5_000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return 5_000;
+  return Math.min(Math.floor(parsed), 60_000);
+}
+
+function listenOnHost(server: TransportServer, port: number, host: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error): void => reject(error);
+    server.once("error", onError);
+    server.listen(port, host, () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+}
+
 function closeListeningServer(server: TransportServer | undefined): Promise<void> {
   if (!server?.listening) return Promise.resolve();
   server.closeIdleConnections?.();
@@ -414,6 +433,8 @@ export class Server {
   private transportScheme: "http" | "https" = "http";
   private transportCertPath?: string;
   private remoteTransportError?: string;
+  private remoteBindRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private shuttingDown = false;
   private wss: WebSocketServer;
   private localWss: WebSocketServer;
 
@@ -891,35 +912,23 @@ export class Server {
 
       if (this.httpServer) {
         try {
-          await new Promise<void>((resolve, reject) => {
-            const server = this.httpServer;
-            if (!server) {
-              resolve();
-              return;
-            }
-            const onError = (error: Error): void => reject(error);
-            server.once("error", onError);
-            server.listen(config.port, config.host, () => {
-              server.off("error", onError);
-              resolve();
-            });
-          });
+          await listenOnHost(this.httpServer, config.port, config.host);
           log.info("server.listening", {
             scheme: this.transportScheme,
             host: config.host,
             port: this.port,
           });
         } catch (error: unknown) {
-          // Tailscale/LAN bind can vanish (EADDRNOTAVAIL). Keep the local socket.
+          // Tailscale/LAN bind can vanish (EADDRNOTAVAIL). Keep the local socket
+          // and retry listen when the address may return.
           if (!isRemoteBindUnavailableError(error)) throw error;
           this.remoteTransportError = safeErrorMessage(error);
-          await closeListeningServer(this.httpServer).catch(() => {});
-          this.httpServer = undefined;
           log.warn("server.remote_listener_unavailable", {
             mode: config.tls?.mode ?? "disabled",
             host: config.host,
             error: this.remoteTransportError,
           });
+          this.scheduleRemoteBindRetry();
         }
       } else {
         log.warn("server.remote_listener_unavailable", {
@@ -930,6 +939,8 @@ export class Server {
 
       await finishStartup();
     } catch (error: unknown) {
+      this.shuttingDown = true;
+      this.clearRemoteBindRetry();
       await closeListeningServer(this.httpServer).catch(() => {});
       await closeListeningServer(this.localApiServer).catch(() => {});
       this.releaseLocalApiBinding();
@@ -961,6 +972,8 @@ export class Server {
   }
 
   async stop(): Promise<void> {
+    this.shuttingDown = true;
+    this.clearRemoteBindRetry();
     this.stopUploadGcLoop();
     this.scheduleRunner.stop();
     this.opsMetrics.stop();
@@ -1040,6 +1053,53 @@ export class Server {
     }
     clearInterval(this.uploadGcTimer);
     this.uploadGcTimer = null;
+  }
+
+  private clearRemoteBindRetry(): void {
+    if (!this.remoteBindRetryTimer) return;
+    clearTimeout(this.remoteBindRetryTimer);
+    this.remoteBindRetryTimer = null;
+  }
+
+  private scheduleRemoteBindRetry(): void {
+    if (this.shuttingDown || this.remoteBindRetryTimer) return;
+    this.remoteBindRetryTimer = setTimeout(() => {
+      this.remoteBindRetryTimer = null;
+      void this.retryRemoteBind();
+    }, remoteBindRetryMs());
+  }
+
+  private async retryRemoteBind(): Promise<void> {
+    const server = this.httpServer;
+    if (this.shuttingDown || !server || server.listening) return;
+    const config = this.storage.getConfig();
+    try {
+      await listenOnHost(server, config.port, config.host);
+      if (this.shuttingDown) {
+        await closeListeningServer(server).catch(() => {});
+        return;
+      }
+      this.remoteTransportError = undefined;
+      log.info("server.listening", {
+        scheme: this.transportScheme,
+        host: config.host,
+        port: this.port,
+        recovered: true,
+      });
+      try {
+        this.startBonjourAdvertisement();
+      } catch (err: unknown) {
+        log.warn("bonjour.advertisement_disabled", { error: safeErrorMessage(err) });
+      }
+    } catch (error: unknown) {
+      if (this.shuttingDown) return;
+      if (isRemoteBindUnavailableError(error)) {
+        this.remoteTransportError = safeErrorMessage(error);
+        this.scheduleRemoteBindRetry();
+        return;
+      }
+      log.error("server.remote_listener_retry.failed", { error: safeErrorMessage(error) });
+    }
   }
 
   private startBonjourAdvertisement(): void {

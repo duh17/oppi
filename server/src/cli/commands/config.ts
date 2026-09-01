@@ -20,6 +20,10 @@ type SettableConfigPath = {
 export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   port: { type: "number", desc: "Server port" },
   host: { type: "string", desc: "HTTP/TLS bind address (not pairing advertise host)" },
+  pairHost: {
+    type: "string",
+    desc: "Advertised pairing hostname (MagicDNS or LAN); not the bind address",
+  },
   maxSessionsGlobal: { type: "number", desc: "Max concurrent sessions" },
   maxSessionsPerWorkspace: { type: "number", desc: "Max sessions per workspace" },
   sessionIdleTimeoutMs: { type: "number", desc: "Session idle timeout (ms)" },

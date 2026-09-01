@@ -19,7 +19,7 @@ vi.mock("../src/cli/status.js", () => ({
   getTailscaleIp: (...args: unknown[]) => mockGetTailscaleIp(...args),
 }));
 
-import { resolvePairingAdvertiseHost } from "../src/cli/pairing-host.js";
+import { rememberPairingAdvertiseHost, resolvePairingAdvertiseHost } from "../src/cli/pairing-host.js";
 
 describe("resolvePairingAdvertiseHost", () => {
   afterEach(() => {
@@ -55,5 +55,24 @@ describe("resolvePairingAdvertiseHost", () => {
     mockGetTailscaleHostname.mockReturnValue("cos-1.taila3ebc.ts.net");
     const host = resolvePairingAdvertiseHost({ tls: { mode: "tailscale" } }, undefined, {});
     expect(host).toBe("cos-1.taila3ebc.ts.net");
+  });
+
+  it("uses persisted pairHost after OPPI_PAIR_HOST and before auto-detect", () => {
+    mockGetLocalHostname.mockReturnValue("studio.local");
+    const host = resolvePairingAdvertiseHost(
+      { tls: { mode: "self-signed" }, pairHost: "cos-1.taila3ebc.ts.net" },
+      undefined,
+      {},
+    );
+    expect(host).toBe("cos-1.taila3ebc.ts.net");
+    expect(mockGetLocalHostname).not.toHaveBeenCalled();
+  });
+
+  it("remembers an explicit --host on the pairing store", () => {
+    const updateConfig = vi.fn();
+    rememberPairingAdvertiseHost({ updateConfig }, "  cos-1.taila3ebc.ts.net  ");
+    expect(updateConfig).toHaveBeenCalledWith({ pairHost: "cos-1.taila3ebc.ts.net" });
+    rememberPairingAdvertiseHost({ updateConfig }, "  ");
+    expect(updateConfig).toHaveBeenCalledTimes(1);
   });
 });

@@ -115,6 +115,7 @@ function normalizeConfig(
     "configVersion",
     "port",
     "host",
+    "pairHost",
     "dataDir",
     "sessionIdleTimeoutMs",
     "workspaceIdleTimeoutMs",
@@ -215,6 +216,13 @@ function normalizeConfig(
   const host = readString("host");
   if (host !== undefined) {
     config.host = host;
+  }
+
+  if ("pairHost" in obj) {
+    const pairHost = readString("pairHost");
+    if (pairHost !== undefined) {
+      config.pairHost = pairHost;
+    }
   }
 
   const configuredDataDir = readString("dataDir");
