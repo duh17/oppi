@@ -304,4 +304,15 @@ describe("generateInvite", () => {
     expect(signedPayload.tlsCertFingerprint).toBeUndefined();
   });
 
+  it("brackets a bare IPv6 pairing host in the signed invite", () => {
+    const storage = makeStorage({ port: 7777, host: "0.0.0.0" });
+    mockIsTailscaleHostname.mockReturnValue(false);
+
+    const invite = generateInvite(storage as Storage, () => "2001:db8::1", () => "studio");
+
+    expect(invite.host).toBe("[2001:db8::1]");
+    const { signedPayload } = decodeInvite(invite.inviteURL);
+    expect(signedPayload.host).toBe("[2001:db8::1]");
+  });
+
 });

@@ -487,6 +487,17 @@ describe("Storage config validation", () => {
     expect(result.config?.pairHost).toBe("studio.local");
   });
 
+  it("brackets a bare IPv6 pairHost", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      pairHost: "2001:db8::1",
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.pairHost).toBe("[2001:db8::1]");
+  });
+
   it("validateConfigFile reports parse errors with file path", () => {
     const configPath = join(dir, "bad-config.json");
     writeFileSync(configPath, "{ invalid json }");

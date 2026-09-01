@@ -13,7 +13,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { isPairingAdvertiseHost } from "../cli/pairing-host.js";
+import { isPairingAdvertiseHost, normalizePairingAdvertiseHost } from "../cli/pairing-host.js";
 import { createLogger } from "../logger.js";
 import { ASR_EXTENSION_FORMAT_ERROR, isValidAsrExtensionSpec } from "../pi-extension-stt-host.js";
 import type { DevicePublicKey, ServerConfig } from "../types.js";
@@ -227,7 +227,7 @@ function normalizeConfig(
         errors.push("config.pairHost: expected hostname or IP only (no scheme, no port)");
         changed = true;
       } else {
-        config.pairHost = trimmed;
+        config.pairHost = normalizePairingAdvertiseHost(trimmed);
       }
     }
   }

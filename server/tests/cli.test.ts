@@ -928,6 +928,19 @@ describe("oppi config", () => {
     );
   }, 45_000);
 
+  it("brackets a bare IPv6 pairHost from config set", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-pairhost-ipv6-"));
+    try {
+      const set = run(["config", "set", "pairHost", "2001:db8::1"], { OPPI_DATA_DIR: dir });
+      expect(set.exitCode).toBe(0);
+      const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
+      expect(stored.exitCode).toBe(0);
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).toContain("[2001:db8::1]");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects config set pairHost values that include a port", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-config-pairhost-port-"));
     try {

@@ -41,6 +41,17 @@ export function isPairingAdvertiseHost(host: string): boolean {
   return isDnsHostname(host);
 }
 
+/**
+ * Apple builds `https://<host>:<port>`, so a bare IPv6 literal becomes
+ * `https://2001:db8::1:7749`. Persist and advertise the bracketed form.
+ */
+export function normalizePairingAdvertiseHost(host: string): string {
+  const trimmed = host.trim();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
+  if (isIP(trimmed) === 6) return `[${trimmed}]`;
+  return trimmed;
+}
+
 function isDnsHostname(host: string): boolean {
   if (host.length === 0 || host.length > 253) return false;
   if (host.startsWith(".") || host.endsWith(".") || host.includes("..")) return false;
@@ -57,7 +68,7 @@ export function rememberPairingAdvertiseHost(
   const trimmed = host?.trim();
   if (!trimmed) return;
   assertPairingAdvertiseHostGrammar(trimmed);
-  storage.updateConfig({ pairHost: trimmed });
+  storage.updateConfig({ pairHost: normalizePairingAdvertiseHost(trimmed) });
 }
 
 /** Suffix-only check so serve can start and renew certs before SAN validation. */
@@ -117,16 +128,19 @@ export function resolvePairingAdvertiseHost(
   hostOverride?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  if (hostOverride?.trim()) return hostOverride.trim();
+  if (hostOverride?.trim()) return normalizePairingAdvertiseHost(hostOverride);
 
   const envHost = env.OPPI_PAIR_HOST?.trim();
-  if (envHost) return envHost;
+  if (envHost) return normalizePairingAdvertiseHost(envHost);
 
-  if (config.pairHost?.trim()) return config.pairHost.trim();
+  if (config.pairHost?.trim()) return normalizePairingAdvertiseHost(config.pairHost);
 
   if (config.tls?.mode === "tailscale") {
-    return getTailscaleHostname();
+    const tailscale = getTailscaleHostname();
+    return tailscale ? normalizePairingAdvertiseHost(tailscale) : tailscale;
   }
 
-  return getLocalHostname() || getLocalIp() || getTailscaleHostname() || getTailscaleIp();
+  const detected =
+    getLocalHostname() || getLocalIp() || getTailscaleHostname() || getTailscaleIp();
+  return detected ? normalizePairingAdvertiseHost(detected) : detected;
 }

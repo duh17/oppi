@@ -38,6 +38,7 @@ import {
   isRetryablePairingHostMaterialError,
   rememberPairingAdvertiseHost,
   rememberValidatedPairingAdvertiseHost,
+  normalizePairingAdvertiseHost,
   resolvePairingAdvertiseHost,
 } from "../src/cli/pairing-host.js";
 
@@ -172,9 +173,23 @@ describe("resolvePairingAdvertiseHost", () => {
       "192.168.1.44",
       "[::1]",
       "[2001:db8::1]",
+      "2001:db8::1",
+      "::1",
     ]) {
       expect(() => assertPairingAdvertiseHostGrammar(host)).not.toThrow();
     }
+  });
+
+  it("brackets a bare IPv6 pairing host before persisting it", () => {
+    const updateConfig = vi.fn();
+    rememberPairingAdvertiseHost({ updateConfig }, "2001:db8::1");
+    expect(updateConfig).toHaveBeenCalledWith({ pairHost: "[2001:db8::1]" });
+    expect(normalizePairingAdvertiseHost("2001:db8::1")).toBe("[2001:db8::1]");
+    expect(normalizePairingAdvertiseHost("[2001:db8::1]")).toBe("[2001:db8::1]");
+    expect(normalizePairingAdvertiseHost("studio.local")).toBe("studio.local");
+    expect(resolvePairingAdvertiseHost({ tls: { mode: "self-signed" } }, "2001:db8::1")).toBe(
+      "[2001:db8::1]",
+    );
   });
 
   it("treats missing Tailscale material as retryable and SAN mismatch as fatal", () => {
