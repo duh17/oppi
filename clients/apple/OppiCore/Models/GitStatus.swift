@@ -62,26 +62,6 @@ struct GitStatus: Codable, Sendable, Equatable {
     var isClean: Bool {
         totalFiles == 0
     }
-
-    // periphery:ignore - API surface for empty/default git state
-    static let empty = Self(
-        isGitRepo: false,
-        branch: nil,
-        headSha: nil,
-        ahead: nil,
-        behind: nil,
-        dirtyCount: 0,
-        untrackedCount: 0,
-        stagedCount: 0,
-        files: [],
-        totalFiles: 0,
-        addedLines: 0,
-        removedLines: 0,
-        stashCount: 0,
-        lastCommitMessage: nil,
-        lastCommitDate: nil,
-        recentCommits: []
-    )
 }
 
 /// Summary of a single git commit, included in `GitStatus.recentCommits`.

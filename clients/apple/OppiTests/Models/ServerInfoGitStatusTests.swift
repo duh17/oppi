@@ -464,11 +464,30 @@ struct ServerInfoTests {
 }
 
 @Suite("GitStatus and ExtensionInfo helpers")
-struct GitStatusTests {
+struct ServerInfoGitStatusTests {
     @Test func emptyStatusIsCleanAndHasZeroCounts() {
-        #expect(GitStatus.empty.isGitRepo == false)
-        #expect(GitStatus.empty.uncommittedCount == 0)
-        #expect(GitStatus.empty.isClean == true)
+        let status = GitStatus(
+            isGitRepo: false,
+            branch: nil,
+            headSha: nil,
+            ahead: nil,
+            behind: nil,
+            dirtyCount: 0,
+            untrackedCount: 0,
+            stagedCount: 0,
+            files: [],
+            totalFiles: 0,
+            addedLines: 0,
+            removedLines: 0,
+            stashCount: 0,
+            lastCommitMessage: nil,
+            lastCommitDate: nil,
+            recentCommits: []
+        )
+
+        #expect(status.isGitRepo == false)
+        #expect(status.uncommittedCount == 0)
+        #expect(status.isClean == true)
     }
 
     @Test func uncommittedCountTracksTotalFiles() {

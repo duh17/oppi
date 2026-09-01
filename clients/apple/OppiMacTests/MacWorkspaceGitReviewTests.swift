@@ -272,7 +272,24 @@ struct MacWorkspaceGitReviewTests {
             MacWorkspaceGitReviewPresentation.phase(
                 gitStatusEnabled: true,
                 isLoading: false,
-                gitStatus: GitStatus.empty,
+                gitStatus: GitStatus(
+                    isGitRepo: false,
+                    branch: nil,
+                    headSha: nil,
+                    ahead: nil,
+                    behind: nil,
+                    dirtyCount: 0,
+                    untrackedCount: 0,
+                    stagedCount: 0,
+                    files: [],
+                    totalFiles: 0,
+                    addedLines: 0,
+                    removedLines: 0,
+                    stashCount: 0,
+                    lastCommitMessage: nil,
+                    lastCommitDate: nil,
+                    recentCommits: []
+                ),
                 error: nil
             ) == .notGitRepo
         )
