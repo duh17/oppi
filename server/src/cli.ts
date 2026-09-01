@@ -67,6 +67,7 @@ import { cmdConfig } from "./cli/commands/config.js";
 import { magicDnsSelfSignedDoctorCheck, wildcardBindDoctorCheck } from "./cli/doctor-checks.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
 import {
+  assertPairingAdvertiseHostSuffix,
   rememberPairingAdvertiseHost,
   rememberValidatedPairingAdvertiseHost,
   resolvePairingAdvertiseHost,
@@ -119,7 +120,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     console.log(c.green("  ✓ First run — owner token generated"));
   }
   if (wasPaired) {
-    rememberValidatedPairingAdvertiseHost(storage, pairHost);
+    assertPairingAdvertiseHostSuffix(storage.getConfig(), pairHost);
   }
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
 
@@ -183,6 +184,14 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   });
 
   await server.start();
+  try {
+    if (wasPaired) {
+      rememberValidatedPairingAdvertiseHost(storage, pairHost);
+    }
+  } catch (error: unknown) {
+    await shutdown(1, safeErrorMessage(error));
+    return;
+  }
 
   console.log("");
   const scheme = server.scheme;
@@ -406,9 +415,10 @@ function cmdDoctor(storage: CliConnectionConfig, hostOverride?: string): void {
   }
 
   const tls = resolveTlsConfig(config, storage.getDataDir());
+  const advertisedHost = resolvePairingAdvertiseHost(config, hostOverride);
   const magicDnsSelfSigned = magicDnsSelfSignedDoctorCheck(
     config.tls?.mode ?? tls.mode,
-    resolvePairingAdvertiseHost(config, hostOverride),
+    advertisedHost,
     config.port,
   );
   if (magicDnsSelfSigned) {
@@ -428,7 +438,10 @@ function cmdDoctor(storage: CliConnectionConfig, hostOverride?: string): void {
       const tailscaleHostname = getTailscaleHostname();
       let validatedTailnetName: string | undefined;
       try {
-        validatedTailnetName = validateTailscaleMaterial(tls, tailscaleHostname ?? undefined);
+        validatedTailnetName = validateTailscaleMaterial(
+          tls,
+          advertisedHost ?? tailscaleHostname ?? undefined,
+        );
         checks.push({
           level: "pass",
           message: `Tailscale cert/key are locally valid for ${validatedTailnetName}`,

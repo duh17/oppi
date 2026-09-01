@@ -20,9 +20,25 @@ export function rememberPairingAdvertiseHost(
   storage.updateConfig({ pairHost: trimmed });
 }
 
+/** Suffix-only check so serve can start and renew certs before SAN validation. */
+export function assertPairingAdvertiseHostSuffix(
+  config: Pick<ServerConfig, "tls">,
+  host?: string,
+): void {
+  const trimmed = host?.trim();
+  if (!trimmed) return;
+  if (config.tls?.mode === "tailscale" && !isTailscaleHostname(trimmed)) {
+    throw new Error(
+      "Tailscale TLS mode requires a *.ts.net pairing host. " +
+        "Use --host <machine>.<tailnet>.ts.net or disable tls.mode=tailscale",
+    );
+  }
+}
+
 /**
  * Persist an explicit serve --host after the same Tailscale suffix + cert SAN
- * checks generateInvite uses. Call this when no invite is generated (already paired).
+ * checks generateInvite uses. Call this after Server.start() so cert prep/renewal
+ * can run first.
  */
 export function rememberValidatedPairingAdvertiseHost(
   storage: {
@@ -35,13 +51,8 @@ export function rememberValidatedPairingAdvertiseHost(
   const trimmed = host?.trim();
   if (!trimmed) return;
   const config = storage.getConfig();
+  assertPairingAdvertiseHostSuffix(config, trimmed);
   if (config.tls?.mode === "tailscale") {
-    if (!isTailscaleHostname(trimmed)) {
-      throw new Error(
-        "Tailscale TLS mode requires a *.ts.net pairing host. " +
-          "Use --host <machine>.<tailnet>.ts.net or disable tls.mode=tailscale",
-      );
-    }
     validateTailscaleMaterial(resolveTlsConfig(config, storage.getDataDir()), trimmed);
   }
   rememberPairingAdvertiseHost(storage, trimmed);

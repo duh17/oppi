@@ -33,6 +33,7 @@ vi.mock("../src/tls.js", async (importOriginal) => {
 });
 
 import {
+  assertPairingAdvertiseHostSuffix,
   rememberPairingAdvertiseHost,
   rememberValidatedPairingAdvertiseHost,
   resolvePairingAdvertiseHost,
@@ -131,5 +132,13 @@ describe("resolvePairingAdvertiseHost", () => {
     );
     expect(mockValidateTailscaleMaterial).toHaveBeenCalled();
     expect(updateConfig).toHaveBeenCalledWith({ pairHost: "cos-1.taila3ebc.ts.net" });
+  });
+
+  it("checks Tailscale suffix without requiring cert material", () => {
+    assertPairingAdvertiseHostSuffix({ tls: { mode: "tailscale" } }, "cos-1.taila3ebc.ts.net");
+    expect(mockValidateTailscaleMaterial).not.toHaveBeenCalled();
+    expect(() =>
+      assertPairingAdvertiseHostSuffix({ tls: { mode: "tailscale" } }, "not-a-tailnet.example"),
+    ).toThrow(/Tailscale TLS mode requires a \*\.ts\.net pairing host/);
   });
 });
