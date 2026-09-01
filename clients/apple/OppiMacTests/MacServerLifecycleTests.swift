@@ -53,12 +53,4 @@ struct MacServerLifecycleTests {
             readContents: { _ in "<string>/opt/homebrew/bin/oppi</string>" }
         ))
     }
-
-    @Test func oldLaunchAgentLabelNeedsMigration() {
-        let oldPath = MacServerLifecycle.launchAgentPlistPaths[1]
-        #expect(MacServerLifecycle.launchAgentNeedsMigration(
-            fileExists: { $0 == oldPath },
-            readContents: { _ in nil }
-        ))
-    }
 }

@@ -24,7 +24,6 @@ enum MacServerLifecycle {
 
     static let launchAgentPlistPaths = [
         "~/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
-        "~/Library/LaunchAgents/dev.chenda.oppi.plist",
     ].map { NSString(string: $0).expandingTildeInPath }
 
     static func startupPlan(
@@ -51,10 +50,6 @@ enum MacServerLifecycle {
         readContents: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }
     ) -> Bool {
         let currentPath = launchAgentPlistPaths[0]
-        let oldLabelPath = launchAgentPlistPaths[1]
-        if fileExists(oldLabelPath) {
-            return true
-        }
         guard fileExists(currentPath) else { return false }
         guard let plist = readContents(currentPath) else { return true }
 
