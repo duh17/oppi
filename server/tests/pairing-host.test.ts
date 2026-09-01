@@ -89,6 +89,27 @@ describe("resolvePairingAdvertiseHost", () => {
     expect(mockGetLocalHostname).not.toHaveBeenCalled();
   });
 
+  it("skips a persisted LAN pairHost after switching to tls.mode=tailscale", () => {
+    mockGetTailscaleHostname.mockReturnValue("cos-1.taila3ebc.ts.net");
+    const host = resolvePairingAdvertiseHost(
+      { tls: { mode: "tailscale" }, pairHost: "studio.local" },
+      undefined,
+      {},
+    );
+    expect(host).toBe("cos-1.taila3ebc.ts.net");
+  });
+
+  it("keeps a persisted Tailnet pairHost in tls.mode=tailscale", () => {
+    mockGetTailscaleHostname.mockReturnValue("other.taila3ebc.ts.net");
+    const host = resolvePairingAdvertiseHost(
+      { tls: { mode: "tailscale" }, pairHost: "cos-1.taila3ebc.ts.net" },
+      undefined,
+      {},
+    );
+    expect(host).toBe("cos-1.taila3ebc.ts.net");
+    expect(mockGetTailscaleHostname).not.toHaveBeenCalled();
+  });
+
   it("remembers an explicit --host on the pairing store", () => {
     const updateConfig = vi.fn();
     rememberPairingAdvertiseHost({ updateConfig }, "  cos-1.taila3ebc.ts.net  ");
@@ -197,7 +218,9 @@ describe("resolvePairingAdvertiseHost", () => {
       isRetryablePairingHostMaterialError(new Error("Tailscale TLS certificate not found")),
     ).toBe(true);
     expect(
-      isRetryablePairingHostMaterialError(new Error("Tailscale TLS certificate is expired: /tmp/c")),
+      isRetryablePairingHostMaterialError(
+        new Error("Tailscale TLS certificate is expired: /tmp/c"),
+      ),
     ).toBe(true);
     expect(
       isRetryablePairingHostMaterialError(

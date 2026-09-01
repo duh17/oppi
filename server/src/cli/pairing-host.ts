@@ -2,7 +2,9 @@
  * Pairing advertise host — not the HTTP bind address.
  *
  * `config.host` is the listener bind. Pairing QR/invite host comes from
- * `--host`, then `OPPI_PAIR_HOST`, then persisted `pairHost`. Do not set
+ * `--host`, then `OPPI_PAIR_HOST`, then persisted `pairHost` when it is
+ * compatible with `tls.mode`. A LAN `pairHost` is skipped after a switch
+ * to `tls.mode=tailscale` so pair/doctor can use live MagicDNS. Do not set
  * bind=0.0.0.0 to advertise MagicDNS; pass the MagicDNS name to pair/serve
  * `--host` or `OPPI_PAIR_HOST`.
  */
@@ -50,6 +52,14 @@ export function normalizePairingAdvertiseHost(host: string): string {
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
   if (isIP(trimmed) === 6) return `[${trimmed}]`;
   return trimmed;
+}
+
+function pairingHostCompatibleWithTlsMode(
+  config: Pick<ServerConfig, "tls">,
+  host: string,
+): boolean {
+  if (config.tls?.mode !== "tailscale") return true;
+  return isTailscaleHostname(host);
 }
 
 function isDnsHostname(host: string): boolean {
@@ -133,7 +143,12 @@ export function resolvePairingAdvertiseHost(
   const envHost = env.OPPI_PAIR_HOST?.trim();
   if (envHost) return normalizePairingAdvertiseHost(envHost);
 
-  if (config.pairHost?.trim()) return normalizePairingAdvertiseHost(config.pairHost);
+  const persisted = config.pairHost?.trim();
+  // After a LAN pair then tls.mode=tailscale, studio.local must not win
+  // over live MagicDNS. Explicit --host / OPPI_PAIR_HOST still win.
+  if (persisted && pairingHostCompatibleWithTlsMode(config, persisted)) {
+    return normalizePairingAdvertiseHost(persisted);
+  }
 
   if (config.tls?.mode === "tailscale") {
     const tailscale = getTailscaleHostname();
