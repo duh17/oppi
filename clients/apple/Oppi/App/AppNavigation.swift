@@ -660,6 +660,116 @@ final class AppNavigation {
         }
     }
 
+    var visibleHostSwitcherDestination: HostSwitcherDestination {
+        switch workspaceNavigationPresentation {
+        case .stack:
+            return Self.hostSwitcherDestination(from: workspaceStackRouteElements.last) ?? .inbox
+        case .split:
+            if let last = splitDetailPathElements.last,
+               let destination = Self.hostSwitcherDestination(from: last) {
+                return destination
+            }
+            if case .utility(.manageServers) = splitDetailTarget {
+                return .usage
+            }
+            return .inbox
+        }
+    }
+
+    func openHostSwitcherDestination(_ destination: HostSwitcherDestination, serverId: String) {
+        guard destination.shouldNavigate(from: visibleHostSwitcherDestination) else { return }
+
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            popTrailingHostSwitcherJobs()
+            pushHostSwitcherDestination(destination, serverId: serverId)
+        case .split:
+            applySplitHostSwitcherDestination(destination, serverId: serverId)
+        }
+    }
+
+    private func popTrailingHostSwitcherJobs() {
+        while Self.hostSwitcherDestination(from: workspaceStackRouteElements.last) != nil,
+              workspacePath.count > 0 {
+            workspacePath.removeLast()
+        }
+    }
+
+    private func pushHostSwitcherDestination(
+        _ destination: HostSwitcherDestination,
+        serverId: String
+    ) {
+        switch destination {
+        case .inbox:
+            break
+        case .usage:
+            appendWorkspaceStack(
+                WorkspaceUtilityNavTarget.manageServers,
+                diagnosticContext: Self.utilityDiagnosticContext(.manageServers),
+                routeElement: .utility(.manageServers)
+            )
+        case .serverSettings:
+            let target = ServerDetailsNavTarget(serverId: serverId)
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.serverDetailsDiagnosticContext,
+                routeElement: .serverDetails(target)
+            )
+        case .modelProviders:
+            let target = ModelProvidersNavTarget(serverId: serverId)
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.modelProvidersDiagnosticContext,
+                routeElement: .modelProviders(target)
+            )
+        }
+    }
+
+    private func applySplitHostSwitcherDestination(
+        _ destination: HostSwitcherDestination,
+        serverId: String
+    ) {
+        selectedWorkspaceFilter = nil
+        splitSelectedWorkspace = nil
+        splitColumnVisibility = .all
+        switch destination {
+        case .inbox:
+            splitDetailTarget = nil
+            resetSplitDetailPath()
+        case .usage:
+            splitDetailTarget = .utility(.manageServers)
+            resetSplitDetailPath()
+        case .serverSettings:
+            splitDetailTarget = nil
+            installSplitDetailPath([.serverDetails(ServerDetailsNavTarget(serverId: serverId))])
+        case .modelProviders:
+            splitDetailTarget = nil
+            installSplitDetailPath([.modelProviders(ModelProvidersNavTarget(serverId: serverId))])
+        }
+    }
+
+    private static func hostSwitcherDestination(
+        from element: WorkspaceStackRouteElement?
+    ) -> HostSwitcherDestination? {
+        switch element {
+        case .utility(.manageServers): .usage
+        case .serverDetails: .serverSettings
+        case .modelProviders: .modelProviders
+        default: nil
+        }
+    }
+
+    private static func hostSwitcherDestination(
+        from element: WorkspaceSplitDetailPathElement
+    ) -> HostSwitcherDestination? {
+        switch element {
+        case .serverDetails: .serverSettings
+        case .modelProviders: .modelProviders
+        default: nil
+        }
+    }
+
     func openServerResourceDetail(_ target: ServerResourceDetailNavTarget) {
         selectedTab = .workspaces
         switch workspaceNavigationPresentation {

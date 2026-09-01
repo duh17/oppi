@@ -1,19 +1,16 @@
 import SwiftUI
 
-/// Main Server tab view showing stats dashboard and health info
-/// for paired servers.
+/// Today's cost dashboard for the selected host.
 ///
 /// Data flow:
 /// - Stats from `GET /server/stats?range=N` via per-server `APIClient`
 /// - Server info from `GET /server/info` via per-server `APIClient`
-/// - Stats reload on server/range changes; server metadata reloads on server changes
-/// - Multi-server picker when 2+ servers are paired
+/// - Reloads follow the pill's active host and the 7d / 30d / 90d range
 struct ServerView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
 
-    @State private var selectedServerId: String?
     @State private var stats: ServerStats?
     @State private var serverInfo: ServerInfo?
     @State private var selectedRange: Int = 7
@@ -26,9 +23,9 @@ struct ServerView: View {
     @State private var showAddServer = false
     @State private var providerStatuses: [ProviderAuthProviderStatus] = []
 
-    /// Resolves selected server, falling back to first available.
+    /// Follows the pill's selected host.
     private var selectedServer: PairedServer? {
-        Self.resolveServer(selectedId: selectedServerId, from: serverStore.servers)
+        Self.resolveServer(selectedId: coordinator.activeServerId, from: serverStore.servers)
     }
 
     /// Resolve the coordinator-owned client for the dashboard/provider path.
@@ -67,38 +64,28 @@ struct ServerView: View {
         Group {
             if serverStore.servers.isEmpty {
                 emptyState
-            } else {
+            } else if let selectedServer {
                 dashboard
+                    .id(selectedServer.id)
+            } else {
+                emptyState
             }
         }
-        .navigationTitle(selectedServer?.name ?? "Server")
+        .navigationTitle(HostSwitcherDestination.usage.title)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    if let server = selectedServer {
-                        Button {
-                            navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
-                        } label: {
-                            Label("Model Providers", systemImage: "cpu")
-                        }
-                        .accessibilityIdentifier("server.modelProviders.menu")
-
-                        Button {
-                            navigation.openServerDetails(ServerDetailsNavTarget(serverId: server.id))
-                        } label: {
-                            Label("Server Details", systemImage: "info.circle")
-                        }
-                        .accessibilityIdentifier("server.details.menu")
-                    }
+            if let selectedServer {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        showAddServer = true
+                        navigation.openServerDetails(ServerDetailsNavTarget(serverId: selectedServer.id))
                     } label: {
-                        Label("Add Server", systemImage: "plus")
+                        Image(systemName: "gearshape")
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+                    .accessibilityLabel(HostSwitcherDestination.serverSettings.menuTitle)
+                    .accessibilityIdentifier("server.settings.gear")
                 }
-                .accessibilityIdentifier("server.menu")
+                ToolbarItem(placement: .topBarTrailing) {
+                    HostSwitcherMenu(current: selectedServer, destination: .usage)
+                }
             }
         }
         .navigationDestination(for: PairedServer.self) { server in
@@ -113,14 +100,6 @@ struct ServerView: View {
         .sheet(isPresented: $showAddServer) {
             OnboardingView(mode: .addServer)
         }
-        .onChange(of: serverStore.servers) { _, newServers in
-            // If selected server was removed, reset to first
-            if let selectedServerId,
-               !newServers.contains(where: { $0.id == selectedServerId })
-            {
-                self.selectedServerId = newServers.first?.id
-            }
-        }
     }
 
     // MARK: - Empty State
@@ -129,7 +108,7 @@ struct ServerView: View {
         ContentUnavailableView {
             Label("No Servers", systemImage: "server.rack")
         } description: {
-            Text("Pair a server to view stats and health information.")
+            Text("Pair a server to view usage.")
         } actions: {
             Button("Add Server") {
                 showAddServer = true
@@ -143,10 +122,6 @@ struct ServerView: View {
     private var dashboard: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                if serverStore.servers.count > 1 {
-                    serverPicker
-                }
-
                 if let selectedServer, shouldShowProviderSetupCard {
                     providerSetupCard(for: selectedServer)
                 }
@@ -183,36 +158,6 @@ struct ServerView: View {
             async let i: () = loadServerInfo()
             async let p: () = loadProviderStatus()
             _ = await (s, i, p)
-        }
-    }
-
-    // MARK: - Server Picker
-
-    private var serverPicker: some View {
-        let servers = serverStore.servers
-        let binding = Binding<String>(
-            get: { selectedServer?.id ?? "" },
-            set: { selectedServerId = $0 }
-        )
-
-        return Group {
-            if servers.count <= 3 {
-                Picker("Server", selection: binding) {
-                    ForEach(servers) { server in
-                        Text(server.name).tag(server.id)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            } else {
-                Picker("Server", selection: binding) {
-                    ForEach(servers) { server in
-                        Text(server.name).tag(server.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-            }
         }
     }
 
@@ -260,7 +205,7 @@ struct ServerView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.title2)
                 .foregroundStyle(.themeOrange)
-            Text("Unable to load stats")
+            Text("Unable to load usage")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.themeFg)
             Text(message)
@@ -324,6 +269,7 @@ struct ServerView: View {
     private func clearStatsState() {
         dailyDetail = nil
         dailyDetailCache = [:]
+        isLoadingDetail = false
         stats = nil
         error = nil
         isLoading = true
@@ -331,10 +277,23 @@ struct ServerView: View {
 
     // MARK: - Data Loading
 
+    private func shouldApplyHostResult(requestedId: String, error: Error? = nil) -> Bool {
+        ServerSelection.shouldApplyHostResult(
+            requestedId: requestedId,
+            visibleId: selectedServer?.id,
+            error: error
+        )
+    }
+
     private func loadStats() async {
-        guard let server = selectedServer,
-              let client = await apiClient(for: server)
-        else {
+        guard let server = selectedServer else {
+            error = "Not connected to a server"
+            isLoading = false
+            return
+        }
+        let requestedId = server.id
+        guard let client = await apiClient(for: server) else {
+            guard shouldApplyHostResult(requestedId: requestedId) else { return }
             error = "Not connected to a server"
             isLoading = false
             return
@@ -342,9 +301,11 @@ struct ServerView: View {
 
         do {
             let result = try await client.fetchStats(range: selectedRange)
+            guard shouldApplyHostResult(requestedId: requestedId) else { return }
             stats = result
             error = nil
         } catch {
+            guard shouldApplyHostResult(requestedId: requestedId, error: error) else { return }
             if stats == nil {
                 self.error = error.localizedDescription
             }
@@ -354,54 +315,103 @@ struct ServerView: View {
     }
 
     private func loadServerInfo() async {
-        guard let server = selectedServer,
-              let client = await apiClient(for: server)
-        else { return }
+        guard let server = selectedServer else { return }
+        let requestedId = server.id
+        guard let client = await apiClient(for: server) else { return }
 
         do {
-            serverInfo = try await client.serverInfo()
+            let info = try await client.serverInfo()
+            guard shouldApplyHostResult(requestedId: requestedId) else { return }
+            serverInfo = info
         } catch {
-            // Non-fatal — stats still show without server info
+            // Non-fatal — stats still show without server info. Ignore cancellation.
         }
     }
 
     private func loadProviderStatus() async {
-        guard let server = selectedServer,
-              let client = await apiClient(for: server)
-        else { return }
+        guard let server = selectedServer else { return }
+        let requestedId = server.id
+        guard let client = await apiClient(for: server) else { return }
 
         do {
-            providerStatuses = try await client.listProviderAuthStatus()
+            let statuses = try await client.listProviderAuthStatus()
+            guard shouldApplyHostResult(requestedId: requestedId) else { return }
+            providerStatuses = statuses
         } catch {
+            guard shouldApplyHostResult(requestedId: requestedId, error: error) else { return }
             // Non-fatal — the dashboard can still show stats without setup status.
             providerStatuses = []
         }
     }
 
     private func loadDailyDetail(date: String) async {
+        guard let server = selectedServer else { return }
+        let requestedId = server.id
+
         if let cached = dailyDetailCache[date] {
+            guard shouldApplyHostResult(requestedId: requestedId) else { return }
             withAnimation(.easeInOut(duration: 0.2)) {
                 dailyDetail = cached
             }
             return
         }
 
-        guard let server = selectedServer,
-              let client = await apiClient(for: server)
-        else { return }
+        guard let client = await apiClient(for: server) else { return }
+        guard shouldApplyHostResult(requestedId: requestedId) else { return }
 
         isLoadingDetail = true
 
         do {
             let result = try await client.fetchDailyDetail(date: date)
+            guard shouldApplyHostResult(requestedId: requestedId) else { return }
             dailyDetailCache[date] = result
             withAnimation(.easeInOut(duration: 0.2)) {
                 dailyDetail = result
             }
         } catch {
+            guard shouldApplyHostResult(requestedId: requestedId, error: error) else { return }
             // Silently fail — the tooltip still shows summary data
         }
 
+        guard shouldApplyHostResult(requestedId: requestedId) else { return }
         isLoadingDetail = false
     }
 }
+
+#if DEBUG
+struct UsageChromePreview: View {
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Picker("Range", selection: .constant(7)) {
+                    Text("7d").tag(7)
+                    Text("30d").tag(30)
+                    Text("90d").tag(90)
+                }
+                .pickerStyle(.segmented)
+                Spacer()
+            }
+            .padding()
+            .navigationTitle(HostSwitcherDestination.usage.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Image(systemName: "gearshape")
+                        .accessibilityLabel(HostSwitcherDestination.serverSettings.menuTitle)
+                        .accessibilityIdentifier("server.settings.gear")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    ServerSwitcherPill(
+                        server: HostSwitcherPreviewData.server,
+                        connectionState: .connected
+                    )
+                    .accessibilityLabel("Current server: \(HostSwitcherPreviewData.server.name)")
+                }
+            }
+        }
+        .accessibilityIdentifier(
+            ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
+        )
+    }
+}
+#endif

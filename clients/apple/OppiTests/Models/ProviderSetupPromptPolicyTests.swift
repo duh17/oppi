@@ -25,6 +25,14 @@ struct ProviderSetupPromptPolicyTests {
         #expect(ProviderSetupPromptPolicy.shouldShow(for: .needsConfiguration))
     }
 
+    @Test func modelProvidersRowUsesNeedsSetupAndConnectedCount() {
+        let needsSetup = ProviderConfigurationPresentation(state: .needsConfiguration)
+        let configured = ProviderConfigurationPresentation(state: .configured)
+
+        #expect(needsSetup.summary(connectedCount: 0) == "Needs setup")
+        #expect(configured.summary(connectedCount: 2) == "2 connected")
+    }
+
     @Test func successfulEmptyOrUnauthenticatedStatusNeedsConfiguration() {
         #expect(ProviderSetupState(providerStatuses: []) == .needsConfiguration)
         #expect(ProviderSetupState(providerStatuses: [provider(authenticated: false)]) == .needsConfiguration)

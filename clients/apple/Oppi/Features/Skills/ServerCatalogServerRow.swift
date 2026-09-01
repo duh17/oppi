@@ -38,10 +38,11 @@ struct ServerCatalogServerRow: View {
                 Divider()
 
                 Button {
-                    navigation.openWorkspaceUtility(.manageServers)
+                    navigation.openHostSwitcherDestination(.usage, serverId: selectedServer.id)
                 } label: {
-                    Label("Manage Servers", systemImage: "server.rack")
+                    Label(HostSwitcherDestination.usage.menuTitle, systemImage: HostSwitcherDestination.usage.systemImage)
                 }
+                .accessibilityIdentifier(HostSwitcherDestination.usage.accessibilityIdentifier)
             } label: {
                 rowLabel(showsDisclosure: true)
             }

@@ -92,7 +92,7 @@ struct ProviderConfigurationPresentation: Equatable {
         case .unavailable:
             "Unavailable"
         case .needsConfiguration:
-            "Setup required"
+            "Needs setup"
         case .configured:
             "\(connectedCount) connected"
         }
@@ -109,12 +109,22 @@ struct ModelProvidersView: View {
 
 struct ServerDetailsScopedDestinationView: View {
     @Environment(ServerStore.self) private var serverStore
+    @Environment(ConnectionCoordinator.self) private var coordinator
 
     let target: ServerDetailsNavTarget
 
+    private var server: PairedServer? {
+        ServerSelection.resolveVisible(
+            activeId: coordinator.activeServerId,
+            frozenId: target.serverId,
+            from: serverStore.servers
+        )
+    }
+
     var body: some View {
-        if let server = serverStore.server(for: target.serverId) {
+        if let server {
             ServerDetailView(server: server)
+                .id(server.id)
         } else {
             unavailableServerView
         }
@@ -126,26 +136,36 @@ struct ServerDetailsScopedDestinationView: View {
             systemImage: "server.rack",
             description: Text("This paired server is no longer available.")
         )
-        .navigationTitle("Server Details")
+        .navigationTitle(HostSwitcherDestination.serverSettings.title)
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 struct ModelProvidersScopedDestinationView: View {
     @Environment(ServerStore.self) private var serverStore
+    @Environment(ConnectionCoordinator.self) private var coordinator
 
     let target: ModelProvidersNavTarget
 
+    private var server: PairedServer? {
+        ServerSelection.resolveVisible(
+            activeId: coordinator.activeServerId,
+            frozenId: target.serverId,
+            from: serverStore.servers
+        )
+    }
+
     var body: some View {
-        if let server = serverStore.server(for: target.serverId) {
+        if let server {
             ModelProvidersView(server: server)
+                .id(server.id)
         } else {
             ContentUnavailableView(
                 "Server Unavailable",
                 systemImage: "server.rack",
                 description: Text("This paired server is no longer available.")
             )
-            .navigationTitle("Model Providers")
+            .navigationTitle(HostSwitcherDestination.modelProviders.title)
             .navigationBarTitleDisplayMode(.inline)
         }
     }

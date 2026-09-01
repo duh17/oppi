@@ -449,7 +449,14 @@ struct OppiApp: App {
             } else if UIHangHarnessConfig.isEnabled {
                 UIHangHarnessView()
             } else if ScreenshotPreviewConfig.isEnabled {
-                ScreenshotPreviewView()
+                switch ScreenshotPreviewConfig.screen {
+                case "usage":
+                    UsageChromePreview()
+                case "server-settings":
+                    ServerSettingsChromePreview()
+                default:
+                    ScreenshotPreviewView()
+                }
             } else {
                 appRootView
             }

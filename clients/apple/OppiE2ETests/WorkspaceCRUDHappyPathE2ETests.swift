@@ -34,7 +34,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         stopAndDeleteSession(id: sessionId)
 
         navigateToWorkspaceHome()
-        deleteWorkspaceFromManageList(named: updatedWorkspaceName)
+        try deleteWorkspace(named: updatedWorkspaceName)
     }
 
     // MARK: - Workspace Create
@@ -141,50 +141,16 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         )
     }
 
-    private func deleteWorkspaceFromManageList(named workspaceName: String) {
-        guard openServerWorkspaceManagement() else { return }
+    private func deleteWorkspace(named workspaceName: String) throws {
+        navigateToWorkspaceHome()
+        let workspaceId = try e2eWorkspaceId(named: workspaceName)
+        _ = try e2eLabAPIJSON(method: "DELETE", path: "/workspaces/\(workspaceId)")
 
-        let row = app.cells.containing(.staticText, identifier: workspaceName).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 15), "Workspace row \(workspaceName) not found in manage list")
-        row.swipeLeft()
-
-        let deleteButton = app.buttons["Delete"]
-        XCTAssertTrue(deleteButton.waitForExistence(timeout: 5), "Workspace delete button not exposed")
-        tap(deleteButton, named: "workspace delete button")
-
+        let openButton = app.buttons["workspace.open.\(workspaceName)"]
         XCTAssertTrue(
-            waitForElementToDisappear(app.staticTexts[workspaceName], timeout: 15),
+            waitForElementToDisappear(openButton, timeout: 15) || !openButton.exists,
             "Workspace \(workspaceName) still visible after delete"
         )
-    }
-
-    private func openServerWorkspaceManagement() -> Bool {
-        navigateToWorkspaceHome()
-
-        let serverSwitcher = app.buttons
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:"))
-            .firstMatch
-        guard serverSwitcher.waitForExistence(timeout: 10) else { return false }
-        tap(serverSwitcher, named: "server switcher", timeout: 1)
-
-        let manageServers = app.buttons["Manage Servers"]
-        guard manageServers.waitForExistence(timeout: 5) else { return false }
-        tap(manageServers, named: "manage servers button", timeout: 1)
-
-        let serverRow = app.buttons
-            .matching(NSPredicate(format: "label CONTAINS %@", "e2e-server"))
-            .firstMatch
-        guard serverRow.waitForExistence(timeout: 10) else { return false }
-        tap(serverRow, named: "e2e server row", timeout: 1)
-
-        let manageWorkspaces = app.buttons["server.manageWorkspaces"]
-        tap(manageWorkspaces, named: "manage workspaces button", timeout: 15)
-
-        XCTAssertTrue(
-            app.collectionViews["server.workspaceList"].waitForExistence(timeout: 10),
-            "Server workspace management list did not appear"
-        )
-        return true
     }
 
     // MARK: - Session Cleanup

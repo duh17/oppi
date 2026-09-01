@@ -5,16 +5,20 @@ final class ModelProvidersNavigationE2ETests: E2ETestCase {
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
-    func testModelProvidersOpensDirectlyFromInboxAndManageServers() {
+    func testModelProvidersOpensDirectlyFromInboxAndUsage() {
         openServerSwitcher()
         tap(app.buttons["workspace.modelProviders.open"], named: "inbox model providers", timeout: 5)
         assertModelProvidersVisible()
 
         navigateBack()
         openServerSwitcher()
-        tap(app.buttons["Manage Servers"], named: "manage servers", timeout: 5)
-        tap(app.buttons["server.menu"], named: "manage servers menu", timeout: 10)
-        tap(app.buttons["server.modelProviders.menu"], named: "manage servers model providers", timeout: 5)
+        tap(app.buttons["hostSwitcher.usage"], named: "usage", timeout: 5)
+        XCTAssertTrue(
+            app.navigationBars["Usage"].waitForExistence(timeout: 10),
+            "Usage navigation title did not appear"
+        )
+        openServerSwitcher()
+        tap(app.buttons["workspace.modelProviders.open"], named: "usage model providers", timeout: 5)
         assertModelProvidersVisible()
     }
 

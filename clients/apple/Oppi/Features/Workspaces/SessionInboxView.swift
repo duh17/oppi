@@ -99,6 +99,22 @@ enum WorkspaceSidebarPrimaryUtilities {
     ]
 }
 
+/// Inbox-local search and stopped-group expansion belong to the visible host.
+/// Compact host jobs stay mounted over inbox, so a host change must reset these
+/// without popping to All Sessions.
+enum SessionInboxHostChange {
+    @MainActor
+    static func reset(
+        searchText _: String,
+        expandedStoppedGroupIDs _: Set<String>,
+        collapsedStoppedGroupIDs _: Set<String>,
+        searchStore: SessionSearchStore
+    ) -> (searchText: String, expandedStoppedGroupIDs: Set<String>, collapsedStoppedGroupIDs: Set<String>) {
+        searchStore.clear()
+        return ("", [], [])
+    }
+}
+
 enum SessionInboxSessionRouting {
     static func routeScope(for session: Session) -> SessionRouteScope? {
         if session.control != nil { return .control }
@@ -310,6 +326,7 @@ struct SessionInboxView: View {
             _ = await (refresh, providers)
         }
         .task(id: activeServerId) {
+            resetLocalHostState()
             providerSetupState = .unknown
             async let refresh: () = refreshVisibleServer()
             async let providers: () = loadProviderSetupState()
@@ -495,63 +512,13 @@ struct SessionInboxView: View {
     }
 
     private func serverSwitcher(_ current: PairedServer) -> some View {
-        Menu {
-            ForEach(servers) { server in
-                Button {
-                    Task { await switchVisibleServer(to: server) }
-                } label: {
-                    Label(
-                        serverMenuTitle(server),
-                        systemImage: server.id == current.id ? "checkmark.circle.fill" : server.resolvedBadgeIcon.symbolName
-                    )
-                }
-                .accessibilityValue(serverBadgeConnectionState(for: server).title)
+        HostSwitcherMenu(
+            current: current,
+            destination: .inbox,
+            onSwitch: { server in
+                await switchVisibleServer(to: server)
             }
-
-            Section("Connection") {
-                let state = serverBadgeConnectionState(for: current)
-                Label(
-                    ServerConnectionLanePresentation.title(
-                        server: current,
-                        connection: coordinator.connection(for: current.id),
-                        state: state,
-                        isPreparing: coordinator.preparingServerIds.contains(current.id)
-                    ),
-                    systemImage: state.systemImage
-                )
-
-                if state != .connected {
-                    Button {
-                        Task { await coordinator.retryServerConnection(current.id) }
-                    } label: {
-                        Label("Retry Connection", systemImage: "arrow.clockwise")
-                    }
-                }
-            }
-
-            Divider()
-
-            Button {
-                navigation.openModelProviders(ModelProvidersNavTarget(serverId: current.id))
-            } label: {
-                Label("Model Providers", systemImage: "cpu")
-            }
-            .accessibilityIdentifier("workspace.modelProviders.open")
-
-            Button {
-                navigation.openWorkspaceUtility(.manageServers)
-            } label: {
-                Label("Manage Servers", systemImage: "server.rack")
-            }
-
-        } label: {
-            ServerSwitcherPill(
-                server: current,
-                connectionState: serverBadgeConnectionState(for: current)
-            )
-        }
-        .accessibilityLabel("Current server: \(current.name)")
-        .accessibilityValue(serverBadgeConnectionState(for: current).title)
+        )
     }
 
     private func providerSetupPrompt(for server: PairedServer) -> some View {
@@ -584,58 +551,27 @@ struct SessionInboxView: View {
         }
     }
 
+    private func resetLocalHostState() {
+        let reset = SessionInboxHostChange.reset(
+            searchText: searchText,
+            expandedStoppedGroupIDs: expandedStoppedGroupIDs,
+            collapsedStoppedGroupIDs: collapsedStoppedGroupIDs,
+            searchStore: searchStore
+        )
+        searchText = reset.searchText
+        expandedStoppedGroupIDs = reset.expandedStoppedGroupIDs
+        collapsedStoppedGroupIDs = reset.collapsedStoppedGroupIDs
+    }
+
     private func switchVisibleServer(to server: PairedServer) async {
         guard await coordinator.switchToServerReady(server) else { return }
-        searchText = ""
-        searchStore.clear()
         error = nil
-        expandedStoppedGroupIDs.removeAll()
-        collapsedStoppedGroupIDs.removeAll()
         navigation.showAllWorkspaceSessions()
     }
 
     private func refreshVisibleServer() async {
         guard let activeServerId else { return }
         await coordinator.refreshServer(activeServerId, force: true)
-    }
-
-    private func serverMenuTitle(_ server: PairedServer) -> String {
-        let state = serverBadgeConnectionState(for: server)
-        guard state != .connected else { return server.name }
-        return "\(server.name) — \(state.title)"
-    }
-
-    private func serverBadgeConnectionState(for server: PairedServer) -> ServerBadgeConnectionState {
-        guard let connection = coordinator.connection(for: server.id) else {
-            return ServerBadgeConnectionState(
-                serverStatusPresentation(for: server),
-                isPreparing: coordinator.preparingServerIds.contains(server.id)
-            )
-        }
-        return ServerBadgeConnectionState(
-            serverStatusPresentation(for: server),
-            hasSyncFailure: connection.workspaceStore.lastSyncFailed
-                || connection.sessionStore.lastSyncFailed,
-            isPreparing: coordinator.preparingServerIds.contains(server.id),
-            isFocusedStreamRecovering: connection.isFocusedSessionStreamRecovering
-        )
-    }
-
-    private func serverStatusPresentation(for server: PairedServer) -> WorkspaceServerStatusPresentation {
-        if let serverConn = coordinator.connection(for: server.id) {
-            return WorkspaceServerStatusPresentation.derive(
-                health: serverConn.serverHealth(forServer: server.id)
-            )
-        }
-
-        return WorkspaceServerStatusPresentation.derive(
-            health: ServerHealth.derive(
-                freshnessState: .offline,
-                freshnessLabel: "Offline",
-                transportStates: [.disconnected],
-                hasCachedCatalog: !(coordinator.connection(for: server.id)?.workspaceStore.workspaces ?? []).isEmpty
-            )
-        )
     }
 
     private var selectedServerRefreshFailed: Bool {

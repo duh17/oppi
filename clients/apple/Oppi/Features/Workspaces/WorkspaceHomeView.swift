@@ -493,6 +493,179 @@ extension View {
 
 // MARK: - Server Switcher
 
+enum HostSwitcherDestination: Hashable {
+    case inbox
+    case usage
+    case modelProviders
+    case serverSettings
+
+    static let menuItems: [HostSwitcherDestination] = [
+        .modelProviders,
+        .usage,
+        .serverSettings,
+    ]
+
+    var title: String {
+        switch self {
+        case .inbox: "All Sessions"
+        case .usage: "Usage"
+        case .modelProviders: "Model Providers"
+        case .serverSettings: "Server"
+        }
+    }
+
+    var menuTitle: String {
+        switch self {
+        case .inbox: title
+        case .usage: "Usage"
+        case .modelProviders: "Model Providers"
+        case .serverSettings: "Server Settings"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .inbox: "tray.full"
+        case .usage: "chart.bar"
+        case .modelProviders: "cpu"
+        case .serverSettings: "gearshape"
+        }
+    }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .inbox: "hostSwitcher.inbox"
+        case .usage: "hostSwitcher.usage"
+        case .modelProviders: "workspace.modelProviders.open"
+        case .serverSettings: "hostSwitcher.serverSettings"
+        }
+    }
+
+    func shouldNavigate(from current: HostSwitcherDestination) -> Bool {
+        self != current
+    }
+}
+
+struct HostSwitcherMenu: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(ServerStore.self) private var serverStore
+    @Environment(AppNavigation.self) private var navigation
+
+    let current: PairedServer
+    let destination: HostSwitcherDestination
+    var onSwitch: ((PairedServer) async -> Void)?
+
+    private var servers: [PairedServer] {
+        serverStore.servers
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(servers) { server in
+                Button {
+                    Task { await switchHost(server) }
+                } label: {
+                    Label(
+                        menuTitle(for: server),
+                        systemImage: server.id == current.id
+                            ? "checkmark.circle.fill"
+                            : server.resolvedBadgeIcon.symbolName
+                    )
+                }
+                .accessibilityValue(badgeState(for: server).title)
+            }
+
+            Section("Connection") {
+                let state = badgeState(for: current)
+                Label(
+                    ServerConnectionLanePresentation.title(
+                        server: current,
+                        connection: coordinator.connection(for: current.id),
+                        state: state,
+                        isPreparing: coordinator.preparingServerIds.contains(current.id)
+                    ),
+                    systemImage: state.systemImage
+                )
+
+                if state != .connected {
+                    Button {
+                        Task { await coordinator.retryServerConnection(current.id) }
+                    } label: {
+                        Label("Retry Connection", systemImage: "arrow.clockwise")
+                    }
+                }
+            }
+
+            Divider()
+
+            ForEach(HostSwitcherDestination.menuItems, id: \.self) { item in
+                Button {
+                    guard item.shouldNavigate(from: destination) else { return }
+                    navigation.openHostSwitcherDestination(item, serverId: current.id)
+                } label: {
+                    Label(item.menuTitle, systemImage: item.systemImage)
+                }
+                .accessibilityIdentifier(item.accessibilityIdentifier)
+            }
+        } label: {
+            ServerSwitcherPill(
+                server: current,
+                connectionState: badgeState(for: current)
+            )
+        }
+        .accessibilityLabel("Current server: \(current.name)")
+        .accessibilityValue(badgeState(for: current).title)
+    }
+
+    private func switchHost(_ server: PairedServer) async {
+        if let onSwitch {
+            await onSwitch(server)
+            return
+        }
+        _ = await coordinator.switchToServerReady(server)
+    }
+
+    private func menuTitle(for server: PairedServer) -> String {
+        let state = badgeState(for: server)
+        return state == .connected ? server.name : "\(server.name) — \(state.title)"
+    }
+
+    private func badgeState(for server: PairedServer) -> ServerBadgeConnectionState {
+        HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
+    }
+}
+
+enum HostSwitcherBadgeState {
+    @MainActor
+    static func make(
+        for server: PairedServer,
+        coordinator: ConnectionCoordinator
+    ) -> ServerBadgeConnectionState {
+        guard let connection = coordinator.connection(for: server.id) else {
+            return ServerBadgeConnectionState(
+                WorkspaceServerStatusPresentation.derive(
+                    health: ServerHealth.derive(
+                        freshnessState: .offline,
+                        freshnessLabel: "Offline",
+                        transportStates: [.disconnected],
+                        hasCachedCatalog: false
+                    )
+                ),
+                isPreparing: coordinator.preparingServerIds.contains(server.id)
+            )
+        }
+        return ServerBadgeConnectionState(
+            WorkspaceServerStatusPresentation.derive(
+                health: connection.serverHealth(forServer: server.id)
+            ),
+            hasSyncFailure: connection.workspaceStore.lastSyncFailed
+                || connection.sessionStore.lastSyncFailed,
+            isPreparing: coordinator.preparingServerIds.contains(server.id),
+            isFocusedStreamRecovering: connection.isFocusedSessionStreamRecovering
+        )
+    }
+}
+
 struct ServerSwitcherPill: View {
     let server: PairedServer
     let connectionState: ServerBadgeConnectionState
@@ -531,3 +704,21 @@ struct ServerSwitcherPill: View {
         .background(.themeComment.opacity(0.14), in: Capsule())
     }
 }
+
+#if DEBUG
+enum HostSwitcherPreviewData {
+    static let server: PairedServer = {
+        let credentials = ServerCredentials(
+            host: "mac-studio.local",
+            port: 7749,
+            token: "sk_preview",
+            name: "mac-studio",
+            serverFingerprint: "sha256:preview-host"
+        )
+        guard let server = PairedServer(from: credentials, sortOrder: 0) else {
+            preconditionFailure("HostSwitcherPreviewData requires a server fingerprint")
+        }
+        return server
+    }()
+}
+#endif

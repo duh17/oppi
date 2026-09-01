@@ -1627,6 +1627,82 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitDetailPath.count == 1)
     }
 
+    @Test func hostSwitcherOpensUsageThroughManageServersUtility() {
+        let navigation = readyNavigation()
+
+        navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
+
+        #expect(navigation.visibleHostSwitcherDestination == .usage)
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_manage_servers")
+    }
+
+    @Test func hostSwitcherSameDestinationDoesNotPushAgain() {
+        let navigation = readyNavigation()
+        navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
+
+        navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.visibleHostSwitcherDestination == .usage)
+    }
+
+    @Test func hostSwitcherReplacesSiblingJobsOnStack() {
+        let navigation = readyNavigation()
+        navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
+
+        navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-a")
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_details")
+
+        navigation.openHostSwitcherDestination(.modelProviders, serverId: "server-a")
+
+        #expect(navigation.workspacePath.count == 1)
+        #expect(navigation.visibleHostSwitcherDestination == .modelProviders)
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "model_providers")
+    }
+
+    @Test func hostSwitcherUsageInSplitReplacesInboxWithoutPath() {
+        let navigation = readyNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
+
+        #expect(navigation.visibleHostSwitcherDestination == .usage)
+        #expect(navigation.splitDetailTarget == .utility(.manageServers))
+        #expect(navigation.splitDetailPath.count == 0)
+    }
+
+    @Test func hostSwitcherSiblingsReplaceSplitPath() {
+        let navigation = readyNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
+
+        navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-a")
+
+        #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
+        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailPath.count == 1)
+
+        navigation.openHostSwitcherDestination(.modelProviders, serverId: "server-a")
+
+        #expect(navigation.visibleHostSwitcherDestination == .modelProviders)
+        #expect(navigation.splitDetailPath.count == 1)
+    }
+
+    @Test func hostSwitcherDoesNotPopWhenOpeningTheVisibleJob() {
+        let navigation = readyNavigation()
+        navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-a")
+        let count = navigation.workspacePath.count
+
+        navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-b")
+
+        #expect(navigation.workspacePath.count == count)
+        #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
+    }
+
     private func readyNavigation() -> AppNavigation {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready

@@ -65,9 +65,18 @@ struct ServerDetailView: View {
 
     @State private var apiKeyEditorProvider: ProviderAuthProviderStatus?
     @State private var apiKeyDraft = ""
+    @State private var showAddServer = false
 
     private var pairedServer: PairedServer {
-        serverStore.server(for: server.id) ?? server
+        ServerSelection.resolveVisible(
+            activeId: coordinator.activeServerId,
+            frozenId: server.id,
+            from: serverStore.servers
+        ) ?? serverStore.server(for: server.id) ?? server
+    }
+
+    private var hostSwitcherDestination: HostSwitcherDestination {
+        presentation == .modelProviders ? .modelProviders : .serverSettings
     }
 
     var body: some View {
@@ -75,102 +84,7 @@ struct ServerDetailView: View {
             if presentation == .modelProviders {
                 providerManagementSections
             } else {
-                if isLoading {
-                    Section {
-                        HStack {
-                            Spacer()
-                            ProgressView("Loading server info…")
-                            Spacer()
-                        }
-                    }
-                } else if let error {
-                    Section {
-                        VStack(spacing: 8) {
-                            Label("Unable to reach server", systemImage: "exclamationmark.triangle")
-                                .foregroundStyle(.themeOrange)
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                        }
-                    }
-                }
-
-                if let info {
-                    Section("Server") {
-                        LabeledContent("Host", value: "\(pairedServer.host):\(pairedServer.port)")
-                        LabeledContent("Uptime", value: info.uptimeLabel)
-                        LabeledContent("Platform", value: info.platformLabel)
-                    }
-
-                    Section("Stats") {
-                        LabeledContent("Workspaces", value: String(info.stats.workspaceCount))
-                        LabeledContent("Active Sessions", value: String(info.stats.activeSessionCount))
-                        LabeledContent("Skills", value: String(info.stats.skillCount))
-                    }
-
-                    workspaceManagementSection
-
-                    Section("Runtime") {
-                        LabeledContent("Agent", value: info.piVersion)
-                        LabeledContent("Server", value: info.version)
-                    }
-                }
-
-                Section("Configuration") {
-                    Button {
-                        navigation.openModelProviders(ModelProvidersNavTarget(serverId: pairedServer.id))
-                    } label: {
-                        HStack {
-                            Label("Model Providers", systemImage: "cpu")
-                            Spacer()
-                            Text(providerConfigurationSummary)
-                                .font(.caption)
-                                .foregroundStyle(providerConfigurationSummaryStyle)
-                        }
-                    }
-                    .accessibilityIdentifier("server.modelProviders.open")
-
-                    mobileOutputGuideControl
-                }
-
-                Section {
-                    HStack {
-                        Text("Preview")
-                        Spacer()
-                        RuntimeBadge(
-                            compact: false,
-                            icon: pairedServer.resolvedBadgeIcon,
-                            tint: badgePreviewConnectionState.tintColor
-                        )
-                    }
-
-                    BadgeIconGrid(selection: badgeIconSelection, tint: .themeBlue)
-                } header: {
-                    Text("Badge")
-                } footer: {
-                    Text("Badge color reflects connection status: green connected, blue connecting, red disconnected.")
-                }
-
-                Section {
-                    LabeledContent("Transport", value: "HTTPS/WSS")
-                    LabeledContent("Paired", value: pairedServer.addedAt.formatted(date: .abbreviated, time: .shortened))
-                } header: {
-                    Text("Connection")
-                } footer: {
-                    Text("Uses HTTPS/WSS, normally through Tailscale or a directly reachable TLS endpoint.")
-                }
-
-                Section {
-                    Button(role: .destructive) {
-                        showRemoveConfirmation = true
-                    } label: {
-                        Label("Remove Server", systemImage: "trash")
-                    }
-                } header: {
-                    Text("Remove Server")
-                } footer: {
-                    Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
-                }
+                serverSettingsSections
             }
         }
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.detail)
@@ -178,8 +92,17 @@ struct ServerDetailView: View {
         .accessibilityIdentifier(
             presentation == .modelProviders ? "server.modelProviders.list" : "server.details.list"
         )
-        .navigationTitle(presentation == .modelProviders ? "Model Providers" : pairedServer.name)
+        .navigationTitle(
+            presentation == .modelProviders
+                ? HostSwitcherDestination.modelProviders.title
+                : HostSwitcherDestination.serverSettings.title
+        )
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                HostSwitcherMenu(current: pairedServer, destination: hostSwitcherDestination)
+            }
+        }
         .refreshable {
             if presentation == .modelProviders {
                 await loadProviderConfiguration()
@@ -187,12 +110,23 @@ struct ServerDetailView: View {
                 await load()
             }
         }
-        .task {
+        .task(id: pairedServer.id) {
             if presentation == .modelProviders {
+                providerStatuses = []
+                providerSetupState = .unknown
+                providerQuotas = nil
                 await loadProviderConfiguration()
             } else {
+                info = nil
+                error = nil
+                isLoading = true
+                mobileOutputGuide = nil
+                mobileOutputGuideError = nil
                 await load()
             }
+        }
+        .sheet(isPresented: $showAddServer) {
+            OnboardingView(mode: .addServer)
         }
         .onDisappear {
             flowPollTask?.cancel()
@@ -272,7 +206,99 @@ struct ServerDetailView: View {
     }
 
     @ViewBuilder
-    private var mobileOutputGuideControl: some View {
+    private var serverSettingsSections: some View {
+        Section {
+            if isLoading {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                }
+            } else if let error, info == nil {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.themeOrange)
+                    .font(.footnote)
+            }
+
+            LabeledContent("Connection", value: connectionStatusTitle)
+            if let info {
+                LabeledContent("Uptime", value: info.uptimeLabel)
+                LabeledContent("Agent", value: info.piVersion)
+                LabeledContent("Server", value: info.version)
+            }
+        } header: {
+            Text("Status")
+        }
+
+        Section {
+            Button {
+                navigation.openModelProviders(ModelProvidersNavTarget(serverId: pairedServer.id))
+            } label: {
+                HStack {
+                    Text(HostSwitcherDestination.modelProviders.menuTitle)
+                    Spacer()
+                    Text(providerConfigurationSummary)
+                        .font(.caption)
+                        .foregroundStyle(providerConfigurationSummaryStyle)
+                }
+            }
+            .accessibilityIdentifier("server.modelProviders.open")
+        }
+
+        Section {
+            mobileOutputGuideRow
+        } footer: {
+            Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
+        }
+
+        Section {
+            HStack {
+                Text("Preview")
+                Spacer()
+                RuntimeBadge(
+                    compact: false,
+                    icon: pairedServer.resolvedBadgeIcon,
+                    tint: badgePreviewConnectionState.tintColor
+                )
+            }
+
+            BadgeIconGrid(selection: badgeIconSelection, tint: .themeBlue)
+        } header: {
+            Text("Badge")
+        } footer: {
+            Text("Badge color reflects connection status: green connected, blue connecting, red disconnected.")
+        }
+
+        Section {
+            Button {
+                showAddServer = true
+            } label: {
+                Label("Add Server", systemImage: "plus")
+            }
+            .accessibilityIdentifier("server.addServer")
+
+            Button(role: .destructive) {
+                showRemoveConfirmation = true
+            } label: {
+                Label("Remove Server", systemImage: "trash")
+            }
+        } footer: {
+            Text("This only removes pairing from this iPhone. It does not delete the server or its data.")
+        }
+    }
+
+    private var connectionStatusTitle: String {
+        let state = HostSwitcherBadgeState.make(for: pairedServer, coordinator: coordinator)
+        return ServerConnectionLanePresentation.title(
+            server: pairedServer,
+            connection: coordinator.connection(for: pairedServer.id),
+            state: state,
+            isPreparing: coordinator.preparingServerIds.contains(pairedServer.id)
+        )
+    }
+
+    @ViewBuilder
+    private var mobileOutputGuideRow: some View {
         switch ServerDetailMobileOutputGuideState.resolve(
             configuration: mobileOutputGuide,
             isLoading: isLoadingMobileOutputGuide,
@@ -299,10 +325,6 @@ struct ServerDetailView: View {
                 )
                 .disabled(isSavingMobileOutputGuide)
                 .accessibilityIdentifier("server.mobileOutputGuide.enabled")
-                Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
-                    .font(.footnote)
-                    .foregroundStyle(.themeComment)
-                    .fixedSize(horizontal: false, vertical: true)
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.footnote)
@@ -313,11 +335,15 @@ struct ServerDetailView: View {
             }
         case .failed(let message):
             VStack(alignment: .leading, spacing: 6) {
-                Label("Mobile Output Guide unavailable", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.themeOrange)
-                Text(message)
+                HStack {
+                    Text("Mobile Output Guide")
+                    Spacer()
+                    Text("Unavailable")
+                        .foregroundStyle(.themeOrange)
+                }
+                Label(message, systemImage: "exclamationmark.triangle")
                     .font(.footnote)
-                    .foregroundStyle(.themeComment)
+                    .foregroundStyle(.themeOrange)
                 Button("Retry") {
                     Task {
                         guard let api = await prepareAPIClient() else { return }
@@ -334,17 +360,6 @@ struct ServerDetailView: View {
               quota.hasAnyUsageWindow || quota.error != nil || quota.planLabel != nil
         else { return nil }
         return quota
-    }
-
-    private var workspaceManagementSection: some View {
-        Section("Workspaces") {
-            NavigationLink {
-                WorkspaceListView(server: pairedServer)
-            } label: {
-                Label("Manage Workspaces", systemImage: "square.grid.2x2")
-            }
-            .accessibilityIdentifier("server.manageWorkspaces")
-        }
     }
 
     private var badgeIconSelection: Binding<ServerBadgeIcon> {
@@ -1387,6 +1402,65 @@ struct ModelProvidersQuotaPreview: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+struct ServerSettingsChromePreview: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    LabeledContent("Connection", value: "Connected via paired HTTPS")
+                    LabeledContent("Uptime", value: "2d 4h")
+                    LabeledContent("Agent", value: "pi")
+                    LabeledContent("Server", value: "oppi")
+                } header: {
+                    Text("Status")
+                }
+
+                Section {
+                    HStack {
+                        Text(HostSwitcherDestination.modelProviders.menuTitle)
+                        Spacer()
+                        Text("Needs setup")
+                            .font(.caption)
+                            .foregroundStyle(.themeOrange)
+                    }
+                    .accessibilityIdentifier("server.modelProviders.open")
+                }
+
+                Section {
+                    Toggle("Mobile Output Guide", isOn: .constant(true))
+                        .accessibilityIdentifier("server.mobileOutputGuide.enabled")
+                } footer: {
+                    Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
+                }
+
+                Section("Badge") {
+                    Text("Preview")
+                }
+
+                Section {
+                    Label("Add Server", systemImage: "plus")
+                        .accessibilityIdentifier("server.addServer")
+                    Label("Remove Server", systemImage: "trash")
+                }
+            }
+            .navigationTitle(HostSwitcherDestination.serverSettings.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ServerSwitcherPill(
+                        server: HostSwitcherPreviewData.server,
+                        connectionState: .connected
+                    )
+                    .accessibilityLabel("Current server: \(HostSwitcherPreviewData.server.name)")
+                }
+            }
+        }
+        .accessibilityIdentifier(
+            ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
+        )
     }
 }
 #endif

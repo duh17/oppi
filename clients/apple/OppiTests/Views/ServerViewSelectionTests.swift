@@ -94,6 +94,45 @@ struct ServerSelectionTests {
         #expect(a != b)
     }
 
+    // MARK: - Host-follow apply guard
+
+    @Test func applyGuardRejectsWrongHost() {
+        #expect(!ServerSelection.shouldApplyHostResult(
+            requestedId: "sha256:aaa",
+            visibleId: "sha256:bbb"
+        ))
+    }
+
+    @Test func applyGuardRejectsNilVisibleHost() {
+        #expect(!ServerSelection.shouldApplyHostResult(
+            requestedId: "sha256:aaa",
+            visibleId: nil
+        ))
+    }
+
+    @Test func applyGuardAcceptsMatchingHost() {
+        #expect(ServerSelection.shouldApplyHostResult(
+            requestedId: "sha256:aaa",
+            visibleId: "sha256:aaa"
+        ))
+    }
+
+    @Test func applyGuardIgnoresCancellationEvenWhenHostMatches() {
+        #expect(!ServerSelection.shouldApplyHostResult(
+            requestedId: "sha256:aaa",
+            visibleId: "sha256:aaa",
+            error: CancellationError()
+        ))
+    }
+
+    @Test func applyGuardStillAppliesMatchingHostFailure() {
+        #expect(ServerSelection.shouldApplyHostResult(
+            requestedId: "sha256:aaa",
+            visibleId: "sha256:aaa",
+            error: URLError(.timedOut)
+        ))
+    }
+
     // MARK: - Helpers
 
     private func makeServer(id: String, sortOrder: Int = 0) -> PairedServer {
