@@ -38,6 +38,10 @@ Example:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Server:** `npm pack` / `release-npm` clean-build from current source and fail if packed JS has no matching `server/src` file or if `/server/mobile-output-guide` is missing. npm `0.47.3` shipped stale `dist` (deleted Oppi agent files, and no Mobile Output Guide route), including Cursor Cloud packs.
+
 ## [0.47.3] - 2026-08-27
 
 Target: iOS `1.1.2` build `47`, `oppi-server@0.47.3` with bundled Pi runtime `0.84.3`, and `oppi-mirror@0.47.3`.
