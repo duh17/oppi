@@ -1074,23 +1074,26 @@ export class Server {
     if (this.shuttingDown || this.httpServer?.listening) return;
     const config = this.storage.getConfig();
     try {
-      if (!this.httpServer) {
-        const tls = await prepareTlsForServerOffMainThread(
-          { tls: config.tls },
-          this.storage.getDataDir(),
-          { additionalHosts: [config.host] },
-        );
-        if (this.shuttingDown) return;
-        const transport = this.createTransportServer(tls);
-        this.httpServer = transport.server;
-        this.transportScheme = transport.scheme;
-        this.transportCertPath = transport.certPath;
-        this.httpServer.on("upgrade", (req, socket, head) => {
-          this.handleUpgrade(req, socket, head);
-        });
-      }
+      // Always rebuild from current TLS material. A leftover httpServer from
+      // the first EADDRNOTAVAIL would keep startup cert bytes, including an
+      // expired Tailscale leaf, after the bind address returns.
+      await closeListeningServer(this.httpServer).catch(() => {});
+      this.httpServer = undefined;
+
+      const tls = await prepareTlsForServerOffMainThread(
+        { tls: config.tls },
+        this.storage.getDataDir(),
+        { additionalHosts: [config.host] },
+      );
+      if (this.shuttingDown) return;
+      const transport = this.createTransportServer(tls);
+      this.httpServer = transport.server;
+      this.transportScheme = transport.scheme;
+      this.transportCertPath = transport.certPath;
+      this.httpServer.on("upgrade", (req, socket, head) => {
+        this.handleUpgrade(req, socket, head);
+      });
       const server = this.httpServer;
-      if (!server) return;
       await listenOnHost(server, config.port, config.host);
       if (this.shuttingDown) {
         await closeListeningServer(server).catch(() => {});

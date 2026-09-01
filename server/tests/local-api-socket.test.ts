@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -113,6 +114,84 @@ exit 1
       chmodSync(join(dataDir, "tailscale"), 0o755);
       process.env.PATH = `${dataDir}:${originalPath}`;
 
+      await waitFor(() => server.remoteAvailable, 8_000);
+      expect(server.remoteAvailable).toBe(true);
+      await expect(localApiRequest<Record<string, unknown>>(storage, "/me")).resolves.toEqual(
+        expect.objectContaining({}),
+      );
+    } finally {
+      process.env.PATH = originalPath;
+      if (previousRetryMs === undefined) delete process.env.OPPI_REMOTE_BIND_RETRY_MS;
+      else process.env.OPPI_REMOTE_BIND_RETRY_MS = previousRetryMs;
+      await server.stop().catch(() => {});
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("rebuilds Tailscale TLS material on each remote-listener retry", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-tls-rebuild-"));
+    const storage = new Storage(dataDir);
+    storage.ensurePaired();
+    storage.updateConfig({
+      host: "192.0.2.1",
+      port: 0,
+      tls: { mode: "tailscale" },
+    });
+
+    const certCallsPath = join(dataDir, "cert-calls");
+    writeFileSync(certCallsPath, "0\n");
+    writeFileSync(
+      join(dataDir, "tailscale"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+cmd="\${1:-}"
+case "\$cmd" in
+  status)
+    if [[ "\${2:-}" == "--json" ]]; then
+      echo '{"Self":{"DNSName":"my-server.tail00000.ts.net."}}'
+      exit 0
+    fi
+    ;;
+  cert)
+    echo $(( $(cat "${certCallsPath}") + 1 )) > "${certCallsPath}"
+    cert_file=""; key_file=""; host=""
+    while [[ \$# -gt 0 ]]; do
+      case "\$1" in
+        --cert-file) cert_file="\$2"; shift 2 ;;
+        --key-file) key_file="\$2"; shift 2 ;;
+        --min-validity) shift 2 ;;
+        *) host="\$1"; shift ;;
+      esac
+    done
+    mkdir -p "\$(dirname "\$cert_file")" "\$(dirname "\$key_file")"
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes \\
+      -keyout "\$key_file" -out "\$cert_file" -subj "/CN=\$host" \\
+      -addext "subjectAltName=DNS:\$host" -days 1 >/dev/null 2>&1
+    exit 0
+    ;;
+esac
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    chmodSync(join(dataDir, "tailscale"), 0o755);
+
+    const previousRetryMs = process.env.OPPI_REMOTE_BIND_RETRY_MS;
+    process.env.OPPI_REMOTE_BIND_RETRY_MS = "80";
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${dataDir}:${originalPath}`;
+    const server = new Server(storage);
+    try {
+      await server.start();
+      expect(server.remoteAvailable).toBe(false);
+      const afterStart = Number(readFileSync(certCallsPath, "utf8"));
+      expect(afterStart).toBeGreaterThanOrEqual(1);
+
+      // A leftover httpServer from the first EADDRNOTAVAIL must not skip TLS prep.
+      await waitFor(() => Number(readFileSync(certCallsPath, "utf8")) > afterStart, 8_000);
+      expect(server.remoteAvailable).toBe(false);
+
+      storage.updateConfig({ host: "127.0.0.1" });
       await waitFor(() => server.remoteAvailable, 8_000);
       expect(server.remoteAvailable).toBe(true);
       await expect(localApiRequest<Record<string, unknown>>(storage, "/me")).resolves.toEqual(
