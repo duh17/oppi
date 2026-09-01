@@ -12,7 +12,7 @@
  */
 
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
-import { statSync } from "node:fs";
+import { chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Session } from "./types.js";
@@ -280,6 +280,7 @@ export class SearchIndex {
     this.getSession = getSession;
     const dbPath = join(dataDir, "session-search.db");
     this.db = openDatabase(dbPath);
+    chmodSync(dbPath, 0o600);
     // Use exec() for pragmas — bun:sqlite lacks the .pragma() method
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");

@@ -84,7 +84,7 @@ Server-global Skills and Extensions are managed from the Apple app (**Skills** /
 Useful companion docs:
 
 - [extension-native-ui.md](extension-native-ui.md) — mobile-safe extension UI surfaces
-- [onboarding.md](onboarding.md) — install, pair, LAN vs Tailscale, and `oppi status` / `oppi doctor`
+- [onboarding.md](onboarding.md) — install, pair, bind vs pairing host, LAN vs Tailscale, and `oppi status` / `oppi doctor`
 
 Provider API keys use `pi auth`, not Oppi config.
 
@@ -92,8 +92,9 @@ Provider API keys use `pi auth`, not Oppi config.
 
 | Key                                     | Notes                                                               |
 | --------------------------------------- | ------------------------------------------------------------------- |
-| `port` / `host`                         | Listen address (restart)                                            |
-| `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart)          |
+| `port`                                  | Listen port (restart)                                               |
+| `host`                                  | HTTP/TLS **bind** address (restart). Do not use `0.0.0.0` on npm/VPS installs; bind a Tailscale `100.x` or LAN IP. Pairing advertise is `--host` / `OPPI_PAIR_HOST`, not this key. |
+| `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart). Use `tailscale` when MagicDNS is the remote path. |
 | `asr.backend`                           | `http` or `pi-extension` (restart)                                  |
 | `asr.extension`                         | Pi STT package name, `npm:` spec, or absolute package dir (restart) |
 | `asr.sttEndpoint`                       | HTTP dictation STT backend (restart)                                |

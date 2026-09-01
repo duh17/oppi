@@ -379,14 +379,17 @@ describe("JsonlMetricWriter", () => {
   });
 
   it("creates telemetry directory if it doesn't exist", () => {
-    const nestedDir = join(tempDir, "deep", "nested", "telemetry");
+    const nestedDir = join(tempDir, "diagnostics", "telemetry");
     const writer = new JsonlMetricWriter(nestedDir);
 
     writer.writeBatch([{ ts: Date.now(), metric: "server.ws_ping_rtt_ms", value: 5 }]);
 
     expect(existsSync(nestedDir)).toBe(true);
+    expect(statSync(join(tempDir, "diagnostics")).mode & 0o777).toBe(0o700);
+    expect(statSync(nestedDir).mode & 0o777).toBe(0o700);
     const files = readdirSync(nestedDir);
     expect(files).toHaveLength(1);
+    expect(statSync(join(nestedDir, files[0]!)).mode & 0o777).toBe(0o600);
   });
 
   it("prunes files older than retention period", () => {

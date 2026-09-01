@@ -32,19 +32,23 @@ Oppi does not create starter workspaces. Manual connection requires host and tok
 
 After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the server over LAN, Tailscale, or a public hostname. Tailscale HTTPS is supported. The local CLI stays on an owner-only Unix socket.
 
-For remote pairing, include the host in the invite:
+`host` in config is the HTTP/TLS **bind** address. Do not bind `0.0.0.0` on an npm or VPS install. Bind a Tailscale `100.x` address or a LAN IP:
 
 ```bash
-oppi pair --host <hostname-or-ip>
+oppi config set host <tailscale-ip-or-lan>
 ```
 
-`--host` accepts a host or IP only: no scheme and no port. To include a Tailscale host in the first QR code from `serve`:
+`oppi serve --host`, `oppi pair --host`, and `OPPI_PAIR_HOST` are the **advertised pairing hostname**. Use a MagicDNS name such as `cos-1.taila3ebc.ts.net` there. Binding `0.0.0.0` is not how you advertise MagicDNS.
+
+When Tailscale MagicDNS is the remote path, set `tls.mode=tailscale` (`tailscale cert`) so the phone can use `https://<machine>.ts.net:7749` with a real certificate. `tls.mode=self-signed` plus MagicDNS is a mismatch; `oppi doctor` warns.
 
 ```bash
-oppi serve --host <your-host>.ts.net
+oppi config set tls.mode tailscale
+oppi pair --host <machine>.<tailnet>.ts.net
+oppi doctor
 ```
 
-Before pairing, the app probes HTTPS health and then sends exactly one pair request. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
+`--host` accepts a host or IP only: no scheme and no port. Before pairing, the app probes HTTPS health and then sends exactly one pair request. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
 
 ## Pair another device
 

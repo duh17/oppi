@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import type { IncomingMessage } from "node:http";
 
@@ -210,19 +210,24 @@ function tmpPathFor(rootPath: string, uploadId: string): string {
   return join(rootPath, "tmp", `${uploadId}.part`);
 }
 
+async function ensurePrivateDir(path: string): Promise<void> {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  await chmod(path, 0o700);
+}
+
 async function ensureDirs(rootPath: string): Promise<void> {
-  await mkdir(join(rootPath, "records"), { recursive: true });
-  await mkdir(join(rootPath, "tmp"), { recursive: true });
-  await mkdir(join(rootPath, "blobs", "sha256"), { recursive: true });
+  await ensurePrivateDir(rootPath);
+  await ensurePrivateDir(join(rootPath, "records"));
+  await ensurePrivateDir(join(rootPath, "tmp"));
+  await ensurePrivateDir(join(rootPath, "blobs", "sha256"));
 }
 
 async function writeRecord(rootPath: string, record: UploadRecord): Promise<void> {
   await ensureDirs(rootPath);
-  await writeFile(
-    recordPathFor(rootPath, record.id),
-    `${JSON.stringify(record, null, 2)}\n`,
-    "utf8",
-  );
+  await writeFile(recordPathFor(rootPath, record.id), `${JSON.stringify(record, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
 }
 
 async function rmIfExists(path: string): Promise<boolean> {
@@ -366,7 +371,7 @@ export async function writeUploadContent(args: {
 
   await ensureDirs(args.config.rootPath);
   const tmpPath = tmpPathFor(args.config.rootPath, args.uploadId);
-  const writer = createWriteStream(tmpPath, { flags: "w" });
+  const writer = createWriteStream(tmpPath, { flags: "w", mode: 0o600 });
   const hash = createHash("sha256");
   const headerChunks: Buffer[] = [];
   let totalBytes = 0;
@@ -426,7 +431,7 @@ export async function writeUploadContent(args: {
 
   const sha256 = hash.digest("hex");
   const blobPath = blobPathFor(args.config.rootPath, sha256);
-  await mkdir(dirname(blobPath), { recursive: true });
+  await ensurePrivateDir(dirname(blobPath));
   if (existsSync(blobPath)) {
     await rm(tmpPath, { force: true }).catch(() => undefined);
   } else {

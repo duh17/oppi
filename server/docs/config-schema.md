@@ -19,7 +19,7 @@ Settings appear in config-file order. Auth state is documented separately: it li
 | --------------- | ------ | ------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `configVersion` | number | `2`                | Schema version. Managed automatically — do not edit.                                                            |
 | `port`          | number | `7749`             | Remote HTTP(S) + WebSocket listen port. Range: 0-65535.                                                         |
-| `host`          | string | `"0.0.0.0"`        | Remote bind address. Use `"127.0.0.1"` to restrict network clients to localhost.                                |
+| `host`          | string | `"0.0.0.0"`        | HTTP/TLS bind address, not the pairing advertise host. Do not use `0.0.0.0` on npm/VPS installs; bind a Tailscale `100.x` or LAN IP (`oppi config set host <ip>`). Pairing QR/invite host is `oppi serve --host` / `oppi pair --host` or `OPPI_PAIR_HOST` (MagicDNS such as `machine.ts.net`). Use `"127.0.0.1"` for loopback-only. |
 | `dataDir`       | string | `"~/.config/oppi"` | Root state directory. Contains sessions, workspaces, config, TLS material, and the local CLI runtime directory. |
 
 Remote clients use authenticated HTTPS/WSS, including HTTPS through Tailscale.

@@ -125,13 +125,23 @@ const HELP_TOPICS: HelpTopic[] = [
     summary: "Start the Oppi server in the foreground.",
     usage: "oppi serve [--host <host>]",
     flags: [
-      { name: "--host", value: "<host>", summary: "hostname/IP encoded in first-run pairing QR" },
+      {
+        name: "--host",
+        value: "<host>",
+        summary: "advertised pairing hostname (MagicDNS or LAN); not the bind address",
+      },
     ],
     notes: [
       "On first run, serve creates owner credentials, enables self-signed TLS, and prints a pairing QR.",
+      "config host is the HTTP/TLS bind address. --host and OPPI_PAIR_HOST advertise the pairing name.",
+      "Do not bind 0.0.0.0 to advertise MagicDNS. Bind a Tailscale or LAN IP: oppi config set host <ip>.",
       "Press Ctrl+C to stop the foreground server.",
     ],
-    examples: [{ command: "oppi serve" }, { command: "oppi serve --host mac-studio.local" }],
+    examples: [
+      { command: "oppi serve" },
+      { command: "oppi serve --host mac-studio.local" },
+      { command: "oppi serve --host cos-1.taila3ebc.ts.net" },
+    ],
   },
   {
     path: ["start"],
@@ -139,7 +149,11 @@ const HELP_TOPICS: HelpTopic[] = [
     summary: "Alias for 'oppi serve'.",
     usage: "oppi start [--host <host>]",
     flags: [
-      { name: "--host", value: "<host>", summary: "hostname/IP encoded in first-run pairing QR" },
+      {
+        name: "--host",
+        value: "<host>",
+        summary: "advertised pairing hostname (MagicDNS or LAN); not the bind address",
+      },
     ],
     examples: [{ command: "oppi start" }],
   },
@@ -150,17 +164,23 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi pair [name] [flags]",
     arguments: [{ name: "name", summary: "optional display name for the pairing invite" }],
     flags: [
-      { name: "--host", value: "<host>", summary: "hostname/IP encoded in the invite" },
+      {
+        name: "--host",
+        value: "<host>",
+        summary: "advertised pairing hostname (MagicDNS or LAN); not the bind address",
+      },
       { name: "--json", summary: "write the invite payload as JSON" },
       { name: "--show-token", summary: "print the owner bearer token in human output; unsafe" },
     ],
     notes: [
       "The QR and link carry the same signed invite.",
+      "config host is the HTTP/TLS bind address. --host and OPPI_PAIR_HOST advertise the pairing name.",
       "Use --show-token only for manual recovery; it exposes the owner token in the terminal.",
     ],
     examples: [
       { command: 'oppi pair "Chen"' },
       { command: "oppi pair --host mac-studio.local" },
+      { command: "oppi pair --host cos-1.taila3ebc.ts.net" },
       { command: "oppi pair --json" },
     ],
   },
@@ -213,6 +233,8 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi doctor",
     notes: [
       "Doctor exits non-zero for critical failures.",
+      "Wildcard bind (host=0.0.0.0 or ::) fails. Bind a Tailscale or LAN IP instead.",
+      "MagicDNS plus tls.mode=self-signed is a warning; remote Tailscale should use tls.mode=tailscale.",
       "It inspects TLS files but does not generate missing certificate material.",
     ],
     examples: [{ command: "oppi doctor" }],
@@ -303,7 +325,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     keys: [
       { name: "port", summary: "number; server port" },
-      { name: "host", summary: "string; bind address" },
+      { name: "host", summary: "string; HTTP/TLS bind address, not the pairing advertise host" },
       { name: "maxSessionsGlobal", summary: "number; global concurrent session limit" },
       { name: "runtimePathEntries", summary: "JSON array; runtime PATH entries" },
       { name: "runtimeEnv.<NAME>", summary: "string; one runtime environment variable" },

@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   closeSync,
   existsSync,
   fsyncSync,
@@ -59,6 +60,7 @@ function createDefaultConfig(dataDir: string): ServerConfig {
   return {
     configVersion: CONFIG_VERSION,
     port: 7749,
+    // Bind address only. Pairing advertise is --host / OPPI_PAIR_HOST.
     host: "0.0.0.0",
     dataDir,
     sessionIdleTimeoutMs: 10 * 60 * 1000,
@@ -776,9 +778,18 @@ export class ConfigStore {
   }
 
   private ensureDirectories(): void {
-    for (const dir of [this.dataDir, this.workspacesDir]) {
+    // uploads/ and diagnostics/ are created at first run so new installs
+    // are not world-readable (0700). session-search.db is chmod'd 0600
+    // when SearchIndex opens it.
+    for (const dir of [
+      this.dataDir,
+      this.workspacesDir,
+      join(this.dataDir, "uploads"),
+      join(this.dataDir, "diagnostics"),
+    ]) {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
+        chmodSync(dir, 0o700);
       }
     }
   }

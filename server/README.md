@@ -105,7 +105,8 @@ Quick start:
 ```bash
 cd server
 
-# Optional: host/ip or tailnet host encoded into pairing links
+# Optional: advertised pairing hostname (MagicDNS or LAN). Not the bind address.
+# Bind with `oppi config set host <tailscale-ip-or-lan>`; do not use 0.0.0.0.
 export OPPI_PAIR_HOST=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
 # export OPPI_PAIR_HOST=<machine>.<tailnet>.ts.net
 

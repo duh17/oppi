@@ -64,7 +64,9 @@ import {
 import { localApiRequest } from "./cli/local-api-client.js";
 import { isNpmVersionNewer } from "./cli/npm-version.js";
 import { cmdConfig } from "./cli/commands/config.js";
+import { magicDnsSelfSignedDoctorCheck, wildcardBindDoctorCheck } from "./cli/doctor-checks.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
+import { resolvePairingAdvertiseHost } from "./cli/pairing-host.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -87,14 +89,7 @@ function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
 }
 
 function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
-  if (hostOverride?.trim()) return hostOverride.trim();
-
-  if (config.tls?.mode === "tailscale") {
-    return getTailscaleHostname();
-  }
-
-  // Prefer local network; fall back to Tailscale if no LAN host found.
-  return getLocalHostname() || getLocalIp() || getTailscaleHostname() || getTailscaleIp();
+  return resolvePairingAdvertiseHost(config, hostOverride);
 }
 
 function shortHostLabel(host: string): string {
@@ -336,6 +331,11 @@ function cmdDoctor(storage: CliConnectionConfig): void {
   const host = config.host;
   const loopback = isLoopbackHost(host);
 
+  const wildcardBind = wildcardBindDoctorCheck(host);
+  if (wildcardBind) {
+    checks.push(wildcardBind);
+  }
+
   if (!loopback && !config.token) {
     checks.push({
       level: "fail",
@@ -394,6 +394,13 @@ function cmdDoctor(storage: CliConnectionConfig): void {
   }
 
   const tls = resolveTlsConfig(config, storage.getDataDir());
+  const magicDnsSelfSigned = magicDnsSelfSignedDoctorCheck(
+    config.tls?.mode ?? tls.mode,
+    getTailscaleHostname(),
+  );
+  if (magicDnsSelfSigned) {
+    checks.push(magicDnsSelfSigned);
+  }
   if (!tls.enabled) {
     checks.push({
       level: loopback ? "pass" : "warn",

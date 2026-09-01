@@ -3,8 +3,26 @@
  * server-stats). Extracted to eliminate copy-paste across metric modules.
  */
 
-import { appendFileSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
+
+/** Create `path` as 0700. If the parent is `diagnostics/`, tighten that too. */
+export function ensurePrivateDiagnosticsDir(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  chmodSync(path, 0o700);
+  const parent = dirname(path);
+  if (basename(parent) === "diagnostics") {
+    chmodSync(parent, 0o700);
+  }
+}
 
 /** Format epoch-ms as "YYYY-MM-DD" in UTC. */
 export function dateString(ts: number): string {

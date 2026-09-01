@@ -8,12 +8,13 @@
  * File pattern: server-metrics-YYYY-MM-DD.jsonl
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { monitorEventLoopDelay, type IntervalHistogram } from "node:perf_hooks";
 import { join } from "node:path";
 import {
   appendJsonlLineWithByteLimit,
   dateString,
+  ensurePrivateDiagnosticsDir,
   jsonlMaxBytesFromEnv,
   pruneOldJsonlFiles,
   retentionDaysFromEnv,
@@ -225,7 +226,7 @@ export class ServerResourceSampler {
   private appendToFile(ts: number, record: unknown): void {
     const dir = this.deps.telemetryDir;
     if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+      ensurePrivateDiagnosticsDir(dir);
     }
     const fileName = `${FILE_PREFIX}${dateString(ts)}${FILE_SUFFIX}`;
     const filePath = join(dir, fileName);

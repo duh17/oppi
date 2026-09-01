@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { appendJsonlLineWithByteLimit, jsonlMaxBytesFromEnv } from "../src/metric-utils.js";
+import {
+  appendJsonlLineWithByteLimit,
+  ensurePrivateDiagnosticsDir,
+  jsonlMaxBytesFromEnv,
+} from "../src/metric-utils.js";
 
 describe("metric JSONL byte caps", () => {
   let tempDir: string;
@@ -59,5 +63,24 @@ describe("metric JSONL byte caps", () => {
       if (previous === undefined) delete process.env.OPPI_TEST_JSONL_MAX_BYTES;
       else process.env.OPPI_TEST_JSONL_MAX_BYTES = previous;
     }
+  });
+});
+
+describe("ensurePrivateDiagnosticsDir", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-diagnostics-mode-"));
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("creates diagnostics and telemetry as owner-only", () => {
+    const telemetryDir = join(tempDir, "diagnostics", "telemetry");
+    ensurePrivateDiagnosticsDir(telemetryDir);
+    expect(statSync(join(tempDir, "diagnostics")).mode & 0o777).toBe(0o700);
+    expect(statSync(telemetryDir).mode & 0o777).toBe(0o700);
   });
 });

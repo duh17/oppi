@@ -41,4 +41,11 @@ describe("storage file permissions", () => {
     expect(() => statSync(sessionPath)).toThrow();
     expect(statSync(workspacePath).mode & 0o777).toBe(0o600);
   });
+
+  it("creates uploads and diagnostics as owner-only on first run", () => {
+    new Storage(dir);
+
+    expect(statSync(join(dir, "uploads")).mode & 0o777).toBe(0o700);
+    expect(statSync(join(dir, "diagnostics")).mode & 0o777).toBe(0o700);
+  });
 });

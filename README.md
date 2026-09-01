@@ -77,17 +77,17 @@ npm install -g oppi-server@latest
 npm uninstall -g oppi-server
 ```
 
-With the default HTTP/TLS transport, the phone must reach the server over LAN, Tailscale, or a public hostname. For remote HTTP pairing, include the host in the invite:
+With the default HTTP/TLS transport, the phone must reach the server over LAN, Tailscale, or a public hostname. `config host` is the bind address — do not use `0.0.0.0` on npm/VPS installs. Bind a Tailscale or LAN IP (`oppi config set host <ip>`). For remote pairing, advertise MagicDNS or a hostname with `--host` / `OPPI_PAIR_HOST` (not by binding all interfaces):
 
 ```bash
 oppi pair --host <hostname-or-ip>
 ```
 
-Supported remote access is authenticated HTTPS/WSS, including through Tailscale.
+When MagicDNS is the remote path, use `tls.mode=tailscale`. Supported remote access is authenticated HTTPS/WSS, including through Tailscale. `oppi doctor` fails on a wildcard bind and warns when MagicDNS is present with self-signed TLS.
 
 Notes:
 
-- `--host` expects host/IP only (no `https://`, no `:port`).
+- `--host` is the advertised pairing hostname, not the bind address. Host/IP only (no `https://`, no `:port`).
 - Invites are single-use and short-lived (90 seconds by default). If pairing fails, generate a fresh invite.
 - Invite port comes from server config (`oppi config get port`).
 

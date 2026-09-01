@@ -8,12 +8,13 @@
  * Retention default: 30 days, configurable via OPPI_SERVER_OPS_METRICS_RETENTION_DAYS.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerMetricSample } from "./server-metric-collector.js";
 import {
   appendJsonlLineWithByteLimit,
   dateString,
+  ensurePrivateDiagnosticsDir,
   jsonlMaxBytesFromEnv,
   pruneOldJsonlFiles,
   retentionDaysFromEnv,
@@ -61,7 +62,7 @@ export class JsonlMetricWriter implements MetricWriter {
       };
 
       if (!existsSync(this.telemetryDir)) {
-        mkdirSync(this.telemetryDir, { recursive: true });
+        ensurePrivateDiagnosticsDir(this.telemetryDir);
       }
 
       const fileName = `${FILE_PREFIX}${dateString(now)}${FILE_SUFFIX}`;

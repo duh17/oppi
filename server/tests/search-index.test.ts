@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { rmSync, unlinkSync, utimesSync, writeFileSync, mkdtempSync } from "node:fs";
+import { rmSync, statSync, unlinkSync, utimesSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -82,6 +82,20 @@ afterEach(() => {
     rmSync(path, { recursive: true, force: true });
   }
   cleanupPaths.clear();
+});
+
+describe("SearchIndex file modes", () => {
+  it("creates session-search.db as owner-only", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-mode-"));
+    cleanupPaths.add(dataDir);
+    const index = new SearchIndex(dataDir, () => undefined);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+    try {
+      expect(statSync(join(dataDir, "session-search.db")).mode & 0o777).toBe(0o600);
+    } finally {
+      index.close();
+    }
+  });
 });
 
 describe("SearchIndex indexes transcript content only", () => {

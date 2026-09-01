@@ -428,7 +428,10 @@ describe("oppi help", () => {
       { args: ["serve", "--help"], expected: ["Usage: oppi serve", "--host <host>"] },
       { args: ["pair", "--help"], expected: ["Usage: oppi pair", "--show-token"] },
       { args: ["status", "--help"], expected: ["Usage: oppi status", "Local Network"] },
-      { args: ["doctor", "--help"], expected: ["Usage: oppi doctor", "diagnostics"] },
+      {
+        args: ["doctor", "--help"],
+        expected: ["Usage: oppi doctor", "diagnostics", "0.0.0.0", "tls.mode=tailscale"],
+      },
       { args: ["update", "--help"], expected: ["Usage: oppi update", "npm-installed"] },
       { args: ["token", "help"], expected: ["Usage: oppi token rotate", "Existing clients"] },
       { args: ["config", "help"], expected: ["Usage: oppi config", "Subcommands"] },
@@ -732,6 +735,33 @@ describe("oppi help", () => {
         },
       },
     });
+  });
+});
+
+describe("oppi doctor bind posture", () => {
+  it("fails when host binds all interfaces", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-doctor-wildcard-"));
+    try {
+      const { stdout, exitCode } = run(["doctor"], { OPPI_DATA_DIR: dir });
+      expect(exitCode).toBe(1);
+      const text = stripAnsi(stdout);
+      expect(text).toContain("host=0.0.0.0");
+      expect(text).toContain("oppi config set host");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fail wildcard bind when host is a specific IP", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-doctor-lan-"));
+    try {
+      const set = run(["config", "set", "host", "100.64.1.20"], { OPPI_DATA_DIR: dir });
+      expect(set.exitCode).toBe(0);
+      const { stdout } = run(["doctor"], { OPPI_DATA_DIR: dir });
+      expect(stripAnsi(stdout)).not.toContain("binds all interfaces");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

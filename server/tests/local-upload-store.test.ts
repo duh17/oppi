@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -55,6 +56,33 @@ function jpegBytes(): Buffer {
 describe("local upload store", () => {
   let root: string;
 
+  it("creates uploads directories as owner-only when the store path is new", async () => {
+    root = mkdtempSync(join(tmpdir(), "oppi-upload-parent-"));
+    const storeRoot = join(root, "uploads");
+    const config: UploadStoreConfigResolved = {
+      rootPath: storeRoot,
+      maxFileBytes: 1024 * 1024,
+      maxTurnBytes: 2 * 1024 * 1024,
+      unusedTtlMs: 60_000,
+      retainedTtlMs: 120_000,
+      allowedMimeTypes: [],
+    };
+
+    await createUploadRecord({
+      config,
+      workspaceId: "ws-1",
+      name: "note.txt",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      purpose: "chat_attachment",
+    });
+
+    expect(statSync(storeRoot).mode & 0o777).toBe(0o700);
+    expect(statSync(join(storeRoot, "records")).mode & 0o777).toBe(0o700);
+    expect(statSync(join(storeRoot, "tmp")).mode & 0o777).toBe(0o700);
+    expect(statSync(join(storeRoot, "blobs", "sha256")).mode & 0o777).toBe(0o700);
+  });
+
   afterEach(() => {
     if (root) {
       rmSync(root, { recursive: true, force: true });
@@ -91,6 +119,11 @@ describe("local upload store", () => {
 
     expect(completed.status).toBe("complete");
     expect(completed.mimeType).toBe("image/png");
+    expect(statSync(root).mode & 0o777).toBe(0o700);
+    expect(statSync(join(root, "records")).mode & 0o777).toBe(0o700);
+    expect(statSync(join(root, "tmp")).mode & 0o777).toBe(0o700);
+    expect(statSync(join(root, "blobs", "sha256")).mode & 0o777).toBe(0o700);
+    expect(statSync(join(root, "records", `${record.id}.json`)).mode & 0o777).toBe(0o600);
     expect(completed.detectedMimeType).toBe("image/png");
     expect(completed.sizeBytes).toBe(body.length);
     expect(completed.expiresAt).toBeGreaterThan(completed.completedAt ?? 0);

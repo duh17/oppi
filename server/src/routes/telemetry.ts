@@ -1,9 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { isSensitiveLogKey, redactLogString, REDACTED } from "../log-redact.js";
-import { appendJsonlLineWithByteLimit, jsonlMaxBytesFromEnv } from "../metric-utils.js";
+import {
+  appendJsonlLineWithByteLimit,
+  ensurePrivateDiagnosticsDir,
+  jsonlMaxBytesFromEnv,
+} from "../metric-utils.js";
 import { createLogger } from "../logger.js";
 import {
   CHAT_METRIC_NAME_VALUES,
@@ -320,7 +324,7 @@ function appendTelemetryRecord(kind: string, path: string, record: unknown): voi
 function appendMetricKitRecord(ctx: RouteContext, request: MetricKitUploadRequest): void {
   const dir = telemetryDir(ctx);
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    ensurePrivateDiagnosticsDir(dir);
   }
 
   const record = {
@@ -482,7 +486,7 @@ function parseChatMetricRequest(body: unknown): ChatMetricUploadRequest | null {
 function appendChatMetricRecord(ctx: RouteContext, request: ChatMetricUploadRequest): void {
   const dir = telemetryDir(ctx);
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    ensurePrivateDiagnosticsDir(dir);
   }
 
   const record = {
@@ -643,7 +647,7 @@ function parseClientLogRequest(body: unknown): ClientLogUploadRequest | null {
 function appendClientLogRecord(ctx: RouteContext, request: ClientLogUploadRequest): void {
   const dir = telemetryDir(ctx);
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    ensurePrivateDiagnosticsDir(dir);
   }
 
   const receivedAt = Date.now();

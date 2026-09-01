@@ -18,6 +18,8 @@ Configure TLS for network HTTP/WebSocket transport as self-signed (with certific
 
 Remote Apple/server routing uses authenticated HTTPS/WSS, including HTTPS through Tailscale.
 
+On npm or VPS installs, bind the HTTP/TLS listener to a Tailscale `100.x` or LAN IP (`oppi config set host <tailscale-ip-or-lan>`). Do not bind `0.0.0.0`. `config host` is the bind address; `oppi serve --host`, `oppi pair --host`, and `OPPI_PAIR_HOST` advertise the pairing hostname (MagicDNS such as `machine.ts.net`). When MagicDNS is the remote path, use `tls.mode=tailscale`. `oppi doctor` fails on a wildcard bind and warns when MagicDNS is present with `tls.mode=self-signed`.
+
 A plain network HTTP listener can be used for health-only development, but pairing, device-auth, `dt_`/`at_` API authentication, and remote WebSockets require HTTPS/WSS. Binding HTTP to a non-loopback interface still requires the explicit `tls.allowInsecureNetworkHttp=true` escape hatch. Owner HTTP and the bearer-free Mirror bridge stay on the owner-only Unix socket.
 
 ## Privacy
