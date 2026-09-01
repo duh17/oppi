@@ -167,6 +167,12 @@ function isRemoteBindUnavailableError(error: unknown): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === "EADDRNOTAVAIL";
 }
 
+function isTransientRemoteListenError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EADDRNOTAVAIL" || code === "EADDRINUSE";
+}
+
 function remoteBindRetryMs(): number {
   const raw = process.env.OPPI_REMOTE_BIND_RETRY_MS;
   if (raw === undefined || raw.trim().length === 0) return 5_000;
@@ -1128,12 +1134,17 @@ export class Server {
       this.notifyRemoteListenerReady();
     } catch (error: unknown) {
       if (this.shuttingDown) return;
-      if (error instanceof TailscaleRemoteUnavailableError || isRemoteBindUnavailableError(error)) {
-        this.remoteTransportError = safeErrorMessage(error);
-        this.scheduleRemoteBindRetry();
-        return;
+      this.remoteTransportError = safeErrorMessage(error);
+      // Stay in the recovery loop. EADDRINUSE and similar transients must
+      // not drop retries: the local socket is up, so a supervisor will not
+      // restart us when the remote listener is still down.
+      if (
+        !(error instanceof TailscaleRemoteUnavailableError) &&
+        !isTransientRemoteListenError(error)
+      ) {
+        log.error("server.remote_listener_retry.failed", { error: this.remoteTransportError });
       }
-      log.error("server.remote_listener_retry.failed", { error: safeErrorMessage(error) });
+      this.scheduleRemoteBindRetry();
     }
   }
 

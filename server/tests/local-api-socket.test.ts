@@ -318,6 +318,49 @@ exit 1
     }
   }, 30_000);
 
+  it("keeps retrying the remote listener after a transient EADDRINUSE", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-eaddrinuse-retry-"));
+    const storage = new Storage(dataDir);
+    storage.ensurePaired();
+    const port = await getFreePort();
+    storage.updateConfig({
+      host: "192.0.2.1",
+      port,
+      tls: { mode: "disabled", allowInsecureNetworkHttp: true },
+    });
+
+    const occupant = createHttpServer();
+    const previousRetryMs = process.env.OPPI_REMOTE_BIND_RETRY_MS;
+    process.env.OPPI_REMOTE_BIND_RETRY_MS = "40";
+    const server = new Server(storage);
+    try {
+      await listenOnPort(occupant, port);
+      await server.start();
+      expect(server.remoteAvailable).toBe(false);
+      expect(existsSync(server.socketPath)).toBe(true);
+
+      storage.updateConfig({ host: "127.0.0.1" });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(server.remoteAvailable).toBe(false);
+      await expect(localApiRequest<Record<string, unknown>>(storage, "/me")).resolves.toEqual(
+        expect.objectContaining({}),
+      );
+
+      await close(occupant);
+      await waitFor(() => server.remoteAvailable, 3_000);
+      expect(server.remoteAvailable).toBe(true);
+      await expect(localApiRequest<Record<string, unknown>>(storage, "/me")).resolves.toEqual(
+        expect.objectContaining({}),
+      );
+    } finally {
+      if (previousRetryMs === undefined) delete process.env.OPPI_REMOTE_BIND_RETRY_MS;
+      else process.env.OPPI_REMOTE_BIND_RETRY_MS = previousRetryMs;
+      await close(occupant);
+      await server.stop().catch(() => {});
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("keeps the local API when the configured bind address is missing", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-eaddrnotavail-"));
     const storage = new Storage(dataDir);
@@ -503,6 +546,35 @@ exit 1
 async function close(server: HttpServer): Promise<void> {
   if (!server.listening) return;
   await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createHttpServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate test port")));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+function listenOnPort(server: HttpServer, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
 }
 
 async function waitFor(condition: () => boolean, timeoutMs = 2_000): Promise<void> {
