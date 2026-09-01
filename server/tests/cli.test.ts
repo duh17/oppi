@@ -2481,6 +2481,23 @@ describe("oppi token", () => {
 // ── Pair ──
 
 describe("oppi pair", () => {
+  it("does not persist a rejected Tailscale --host as pairHost", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-bad-host-"));
+    try {
+      expect(run(["config", "set", "tls.mode", "tailscale"], { OPPI_DATA_DIR: dir }).exitCode).toBe(
+        0,
+      );
+      const pair = run(["pair", "--host", "not-a-tailnet.example"], { OPPI_DATA_DIR: dir });
+      expect(pair.exitCode).toBe(1);
+      const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
+      expect(stored.exitCode).toBe(1);
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("not-a-tailnet.example");
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).toMatch(/unset/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("generates QR code output", () => {
     const { stdout, exitCode } = run(["pair"]);
     // Pair should succeed or at least output something
@@ -2532,6 +2549,10 @@ describe.skipIf(
 
       expect(payload.scheme).toBe("https");
       expect(payload.tlsCertFingerprint?.startsWith("sha256:")).toBe(true);
+
+      const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: tlsDataDir });
+      expect(stored.exitCode).toBe(0);
+      expect(stripAnsi(stored.stdout)).toContain("127.0.0.1");
     } finally {
       rmSync(tlsDataDir, { recursive: true, force: true });
     }

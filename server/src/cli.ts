@@ -101,7 +101,6 @@ function shortHostLabel(host: string): string {
 // ─── Commands ───
 
 async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
-  rememberPairingAdvertiseHost(storage, pairHost);
   const wasPaired = storage.isPaired();
 
   // Auto-init: generate owner token + identity keys if this is a fresh install.
@@ -223,12 +222,17 @@ function generatePairInvite(
   hostOverride?: string,
   requestedName?: string,
 ): GeneratedInvite {
-  return generateInvite(
+  const invite = generateInvite(
     storage,
     (override) => resolveInviteHost(storage.getConfig(), override),
     shortHostLabel,
     { hostOverride, requestedName },
   );
+  // Persist only after the invite is valid so a rejected --host cannot stick.
+  if (hostOverride?.trim()) {
+    rememberPairingAdvertiseHost(storage, invite.host);
+  }
+  return invite;
 }
 
 /**
@@ -301,7 +305,6 @@ async function cmdPair(
   showToken = false,
   jsonOutput = false,
 ): Promise<void> {
-  rememberPairingAdvertiseHost(storage, hostOverride);
   if (jsonOutput) {
     try {
       const invite = generatePairInvite(storage, hostOverride, requestedName);

@@ -69,6 +69,14 @@ describe("MagicDNS + self-signed doctor check", () => {
     expect(check?.message).not.toContain(":7749");
   });
 
+  it("warns on beta Tailscale MagicDNS the same way as *.ts.net", () => {
+    const beta = "node.beta.tailscale.net";
+    expect(isMagicDnsHostname(beta)).toBe(true);
+    const check = magicDnsSelfSignedDoctorCheck("self-signed", beta, 8443);
+    expect(check?.level).toBe("warn");
+    expect(check?.message).toContain(`https://${beta}:8443`);
+  });
+
   it("does not warn when the advertised host is LAN or mDNS", () => {
     expect(isMagicDnsHostname("192.168.1.44")).toBe(false);
     expect(isMagicDnsHostname("studio.local")).toBe(false);

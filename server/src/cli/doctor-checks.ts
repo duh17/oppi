@@ -3,6 +3,8 @@
  * cmdDoctor in cli.ts still owns I/O (files, launchd, certs).
  */
 
+import { isTailscaleHostname } from "../tls.js";
+
 export type DoctorCheckLevel = "pass" | "warn" | "fail";
 export type DoctorCheck = { level: DoctorCheckLevel; message: string };
 
@@ -45,13 +47,10 @@ export function wildcardBindDoctorCheck(host: string): DoctorCheck | null {
   };
 }
 
-/** Advertised pairing host is MagicDNS (`*.ts.net`), not merely that Tailscale is up. */
+/** Advertised pairing host is MagicDNS (`*.ts.net` / `*.beta.tailscale.net`). */
 export function isMagicDnsHostname(host: string | null | undefined): boolean {
-  if (!host) return false;
-  const trimmed = host.trim().toLowerCase();
-  const unbracketed =
-    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
-  return unbracketed.endsWith(".ts.net");
+  if (!host?.trim()) return false;
+  return isTailscaleHostname(host);
 }
 
 /**
