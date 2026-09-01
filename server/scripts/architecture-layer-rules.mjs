@@ -4,11 +4,11 @@ import path from "node:path";
 import ts from "typescript";
 
 export const SERVER_ARCHITECTURE_GUIDE =
-  "docs/architecture-server.md#server-boundary-rules-current-code";
+  "dev/architecture-server.md#server-boundary-rules-current-code";
 export const IOS_ARCHITECTURE_GUIDE =
-  "docs/architecture-client.md#client-boundary-rules-current-code";
+  "dev/architecture-client.md#client-boundary-rules-current-code";
 export const MAC_ARCHITECTURE_GUIDE =
-  "docs/architecture-client.md#client-boundary-rules-current-code";
+  "dev/architecture-client.md#client-boundary-rules-current-code";
 
 const SERVER_COMPOSITION_ROOT = "server/src/server.ts";
 const SERVER_ENTRY_FILE = "server/src/cli.ts";

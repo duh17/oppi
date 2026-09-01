@@ -2,7 +2,7 @@
 
 Oppi records diagnostics to answer one question: **does the app feel fast, reliable, and safe while someone supervises a Pi session from Apple clients?**
 
-This page is the public source of truth for available telemetry, its gates and storage, and the metrics that matter to user experience.
+This page is the in-repo source of truth for available telemetry, its gates and storage, and the metrics that matter to user experience. It is not part of the public user docs.
 
 ## Scope
 

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(serverRoot, "..");
+// Public user docs only. Contributor architecture, telemetry, and testing live in repo-root dev/.
 const sourceDocs = join(repoRoot, "docs");
 const buildRoot = process.env.OPPI_BUILD_DIR
   ? resolve(process.env.OPPI_BUILD_DIR)

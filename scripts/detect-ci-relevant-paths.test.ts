@@ -50,7 +50,7 @@ describe("detect-ci-relevant-paths", () => {
     ["Apple app source", ["clients/apple/Oppi/App/OppiApp.swift"], true],
     ["Apple workflow", [".github/workflows/apple.yml"], true],
     ["protocol snapshot", ["protocol/server-messages.json"], true],
-    ["docs only", ["docs/testing/README.md"], false],
+    ["docs only", ["dev/testing/README.md"], false],
     ["server-only change", ["server/src/server.ts"], false],
   ] as const)("Apple PR %s", (_name, files, relevant) => {
     const result = detect("pull_request", [...files], applePatterns);

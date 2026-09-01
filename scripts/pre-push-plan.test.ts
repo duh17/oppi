@@ -3,7 +3,7 @@ import { planForPaths } from "./pre-push-plan";
 
 describe("pre-push gate planning", () => {
   test.each([
-    ["docs only", ["README.md", "docs/architecture.md"], ["none", "none", false, false]],
+    ["docs only", ["README.md", "docs/usage.md"], ["none", "none", false, false]],
     ["server source", ["server/src/server.ts"], ["changed", "none", false, false]],
     ["server tests", ["server/tests/server.test.ts"], ["changed", "none", false, false]],
     ["server config", ["server/vitest.config.ts"], ["full", "none", false, false]],

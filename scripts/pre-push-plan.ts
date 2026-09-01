@@ -23,7 +23,7 @@ const gatePolicyPaths = new Set([
   "server/testing-policy.json",
   "server/scripts/testing-gates.ts",
   "server/tests/testing-policy-gate.test.ts",
-  "docs/testing/README.md",
+  "dev/testing/README.md",
 ]);
 
 function strongerServer(lhs: ServerGateMode, rhs: ServerGateMode): ServerGateMode {
@@ -42,6 +42,7 @@ function isDocumentation(path: string): boolean {
     || path === "CHANGELOG.md"
     || path === "README.md"
     || path.startsWith("docs/")
+    || path.startsWith("dev/")
     || path.endsWith(".md");
 }
 

@@ -24,17 +24,27 @@ Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.
 
 4. Oppi opens **Workspaces** at **All Sessions**. If the server has no workspaces, it opens guided **Create Workspace** setup.
 
+From here, [Using Oppi](usage.md) covers the session list, prompting, steer vs follow-up, Quick Session, files, and voice.
+
 Oppi does not create starter workspaces. Manual connection requires host and token; an invalid manual port uses `7749`.
 
-## HTTPS/WSS connections
+## Reach the server
 
-After pairing, Oppi uses authenticated HTTPS/WSS. Automatic routing evaluates verified LAN HTTPS and paired HTTPS; Tailscale HTTPS is supported. The local CLI remains owner-only over its Unix socket.
+After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the server over LAN, Tailscale, or a public hostname. Tailscale HTTPS is supported. The local CLI stays on an owner-only Unix socket.
 
-Before pairing, the app uses a read-only HTTPS `GET /health` probe and then sends exactly one `POST /pair` with the device's P-256 public key. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
+For remote pairing, include the host in the invite:
 
-Existing `dt_` pairings stay usable if the app or server updates first. During a mixed update, `/pair` still issues a `dt_` when the client has no device key, and a new app keeps a `dt_` from an older server until it can migrate.
+```bash
+oppi pair --host <hostname-or-ip>
+```
 
-After pairing, the client keeps HTTPS route health evidence. Availability failures suppress a route only for that pass; authentication and transport-integrity failures remain fail-closed. See [Networking and connection routing](networking.md) for recovery details.
+`--host` accepts a host or IP only: no scheme and no port. To include a Tailscale host in the first QR code from `serve`:
+
+```bash
+oppi serve --host <your-host>.ts.net
+```
+
+Before pairing, the app probes HTTPS health and then sends exactly one pair request. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
 
 ## Pair another device
 
@@ -85,20 +95,20 @@ Do not retry a `/pair` mutation after a lost response.
 
 ### Could not reach the server
 
-1. Check server state:
+1. Check server state on the host:
 
    ```bash
    oppi status
    oppi doctor
    ```
 
-2. For HTTPS, confirm phone-to-server connectivity through LAN, Tailscale, or public DNS. Regenerate an explicit-host invite if needed:
+2. Confirm the phone can reach the server the same way you paired: LAN, Tailscale, or public DNS. A LAN invite does not work from outside that network. For Tailscale or a public hostname, regenerate an explicit-host invite:
 
    ```bash
    oppi pair --host <hostname-or-ip>
    ```
 
-3. Retry with a fresh invite.
+3. Retry with a fresh invite. Invites expire after 90 seconds by default and are single-use.
 
 ### Secure connection failed
 

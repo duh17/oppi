@@ -8,10 +8,10 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
 - Do not use the word `legacy`. Add compatibility layers only when asked. Before making a breaking change, explain what may stop working. Ask first when the impact might surprise the user.
 - Use a small function or local type instead of adding a new layer.
 - Keep important context in comments next to the code.
-- Before changing server or Apple client structure, network connections, state stores, or extension UI, read `docs/architecture.md`. Then read the relevant split page: `docs/architecture-server.md` or `docs/architecture-client.md`. `server/scripts/check-architecture-boundaries.ts` (`--scope server`, `--scope ios`, `--scope mac`) and local ESLint rules enforce these boundaries.
+- Before changing server or Apple client structure, network connections, state stores, or extension UI, read `dev/architecture.md`. Then read the relevant split page: `dev/architecture-server.md` or `dev/architecture-client.md`. `server/scripts/check-architecture-boundaries.ts` (`--scope server`, `--scope ios`, `--scope mac`) and local ESLint rules enforce these boundaries.
 - Mac is an Apple client target (`OppiMac`). Include it when the work names Mac, macOS, desktop, or OppiMac, or when it changes `OppiCore` or other shared Apple code.
-- `OppiCore` changes need relevant proof on both Apple clients. Canonical Mac validation is `docs/testing/README.md`; do not duplicate those commands here.
-- For protocol changes, follow the "Protocol boundary" checklist in `docs/architecture-server.md`. Update these files and add tests on both sides:
+- `OppiCore` changes need relevant proof on both Apple clients. Canonical Mac validation is `dev/testing/README.md`; do not duplicate those commands here.
+- For protocol changes, follow the "Protocol boundary" checklist in `dev/architecture-server.md`. Update these files and add tests on both sides:
   - `server/src/types/protocol.ts`
   - the matching Apple models in `clients/apple/OppiCore/Models/`
   - directly decoded server type modules required by the changed fixture (for this bundle, `server/src/types/session.ts`, `server/src/types/icon.ts`, `server/src/types/git.ts`, `server/src/types/shared.ts`, and `server/src/thinking-levels.ts`; do not mechanically include every `server/src/types/*` file)
@@ -23,7 +23,8 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
 - Store files by purpose:
   - `.internal/` for lasting private work such as reports, research, and diagrams
   - `.pi/` for session state, todos, attachments, prompts, worktrees, and temporary caches
-  - `docs/` for public documentation
+  - `docs/` for public documentation (daily use and extension authoring only)
+  - `dev/` for contributor architecture, leftover transport notes, telemetry, and testing docs
 - Keep unrelated changes from other sessions. If you cannot separate overlapping edits safely, stop and ask the user.
 - Commit only when asked. Stage only paths or hunks changed in this session unless the user asks for more. Never use `git add .` or `git add -A`.
 - After committing, run `npm run check` in `server/` and the relevant tests, then ask before pushing. Prefer one push per finished change; small pushes make CI failures easier to find.
@@ -44,7 +45,7 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
 ## Build and Test Rules
 
 - `Oppi.xcodeproj` is generated. Edit `project.yml`, put plist keys under `info.properties`, and run `xcodegen generate`.
-- Run simulator builds and tests through `clients/apple/scripts/sim-pool.sh`. Bare `xcodebuild` requires a unique `-derivedDataPath`; see `docs/testing/README.md`.
+- Run simulator builds and tests through `clients/apple/scripts/sim-pool.sh`. Bare `xcodebuild` requires a unique `-derivedDataPath`; see `dev/testing/README.md`.
 - Use normal `sim-pool.sh` runs without video for builds, unit tests, and changes to networking or backend logic. Use `oppi_simulator_recording` only when a recording helps check UI appearance, animation, or interaction.
 - Read the `sim-pool.sh` summary and its printed log path. Do not pipe its output through `grep`, `tail`, or `head`.
 - If an Apple build fails or stalls, read the `sim-pool.sh` log and check for active `xcodebuild` or sim-pool processes before trying again.
@@ -52,7 +53,7 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
 - Swift Testing removes one trailing `()` from `xcodebuild -only-testing` filters. Use double parentheses for a function:
   - Suite: `-only-testing:OppiTests/MySuiteStruct`
   - Function: `-only-testing:'OppiTests/MySuiteStruct/myTestFunc()()'`
-- Use `docs/testing/README.md` for server, Apple, simulator, E2E, coverage, and test-gate commands. Run the smallest documented check that proves the change.
+- Use `dev/testing/README.md` for server, Apple, simulator, E2E, coverage, and test-gate commands. Run the smallest documented check that proves the change.
 
 ### Commands
 
