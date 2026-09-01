@@ -90,8 +90,9 @@ export function isRetryablePairingHostMaterialError(error: unknown): boolean {
 
 /**
  * Persist an explicit serve --host after the same Tailscale suffix + cert SAN
- * checks generateInvite uses. Call this after Server.start() so cert prep/renewal
- * can run first.
+ * checks generateInvite uses. Call this only when the remote HTTP listener is
+ * up (after start() or listener recovery). Missing Tailscale material is
+ * retryable; a SAN mismatch on a live listener is not.
  */
 export function rememberValidatedPairingAdvertiseHost(
   storage: {

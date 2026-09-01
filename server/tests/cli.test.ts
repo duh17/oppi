@@ -2610,7 +2610,8 @@ describe("oppi pair", () => {
         { OPPI_DATA_DIR: dir, PATH: `${dir}:${process.env.PATH ?? ""}` },
         20_000,
       );
-      expect(stripAnsi(stdout)).toMatch(/certificate not found|Local API is up/i);
+      expect(stripAnsi(stdout)).toMatch(/Remote TLS is not ready yet|Local API is up/i);
+      expect(stripAnsi(stdout)).not.toMatch(/certificate not found/i);
       expect(stripAnsi(stdout)).not.toContain("Scan QR above");
       const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
       expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("my-server.tail00000.ts.net");

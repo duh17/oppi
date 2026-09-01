@@ -68,7 +68,6 @@ import { magicDnsSelfSignedDoctorCheck, wildcardBindDoctorCheck } from "./cli/do
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
 import {
   assertPairingAdvertiseHostSuffix,
-  isRetryablePairingHostMaterialError,
   rememberPairingAdvertiseHost,
   rememberValidatedPairingAdvertiseHost,
   resolvePairingAdvertiseHost,
@@ -186,19 +185,30 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   });
 
   await server.start();
-  try {
-    if (wasPaired) {
+  // start() may return with only the local socket while Tailscale certs
+  // renew. Do not reread missing material here — that throws and would
+  // cancel the retry. Persist after the remote listener is up.
+  if (wasPaired && pairHost?.trim()) {
+    const persistServeHost = (): void => {
       rememberValidatedPairingAdvertiseHost(storage, pairHost);
-    }
-  } catch (error: unknown) {
-    // start() may return with only the local socket while Tailscale certs
-    // renew. Do not persist or tear down that retry path.
-    if (!server.hasPublicHttpListener && isRetryablePairingHostMaterialError(error)) {
-      console.log(c.yellow(`  ! ${safeErrorMessage(error)}`));
-      console.log(c.dim("  Local API is up. pairHost will be stored after remote TLS is ready."));
+    };
+    if (server.hasPublicHttpListener) {
+      try {
+        persistServeHost();
+      } catch (error: unknown) {
+        await shutdown(1, safeErrorMessage(error));
+        return;
+      }
     } else {
-      await shutdown(1, safeErrorMessage(error));
-      return;
+      console.log(c.yellow("  ! Remote TLS is not ready yet."));
+      console.log(c.dim("  Local API is up. pairHost will be stored after remote TLS is ready."));
+      server.onRemoteListenerReady(() => {
+        try {
+          persistServeHost();
+        } catch (error: unknown) {
+          void shutdown(1, safeErrorMessage(error));
+        }
+      });
     }
   }
 

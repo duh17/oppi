@@ -20,6 +20,7 @@ import {
   localApiSocketPath,
   type LocalApiSocketBinding,
 } from "../src/local-api-socket.js";
+import { rememberValidatedPairingAdvertiseHost } from "../src/cli/pairing-host.js";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 
@@ -116,6 +117,85 @@ exit 1
 
       await waitFor(() => server.remoteAvailable, 8_000);
       expect(server.remoteAvailable).toBe(true);
+      await expect(localApiRequest<Record<string, unknown>>(storage, "/me")).resolves.toEqual(
+        expect.objectContaining({}),
+      );
+    } finally {
+      process.env.PATH = originalPath;
+      if (previousRetryMs === undefined) delete process.env.OPPI_REMOTE_BIND_RETRY_MS;
+      else process.env.OPPI_REMOTE_BIND_RETRY_MS = previousRetryMs;
+      await server.stop().catch(() => {});
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("persists serve --host only after remote TLS listener recovery", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-pairhost-ready-"));
+    const storage = new Storage(dataDir);
+    storage.ensurePaired();
+    storage.updateConfig({
+      host: "127.0.0.1",
+      port: 0,
+      tls: { mode: "tailscale" },
+    });
+
+    const previousRetryMs = process.env.OPPI_REMOTE_BIND_RETRY_MS;
+    process.env.OPPI_REMOTE_BIND_RETRY_MS = "80";
+    const originalPath = process.env.PATH;
+    process.env.PATH = dataDir;
+    const server = new Server(storage);
+    const pairHost = "my-server.tail00000.ts.net";
+    try {
+      await server.start();
+      expect(server.hasPublicHttpListener).toBe(false);
+      expect(() => rememberValidatedPairingAdvertiseHost(storage, pairHost)).toThrow(
+        /certificate not found/,
+      );
+      expect(storage.getConfig().pairHost).toBeUndefined();
+
+      server.onRemoteListenerReady(() => {
+        rememberValidatedPairingAdvertiseHost(storage, pairHost);
+      });
+
+      writeFileSync(
+        join(dataDir, "tailscale"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+cmd="\${1:-}"
+case "\$cmd" in
+  status)
+    if [[ "\${2:-}" == "--json" ]]; then
+      echo '{"Self":{"DNSName":"my-server.tail00000.ts.net."}}'
+      exit 0
+    fi
+    ;;
+  cert)
+    cert_file=""; key_file=""; host=""
+    while [[ \$# -gt 0 ]]; do
+      case "\$1" in
+        --cert-file) cert_file="\$2"; shift 2 ;;
+        --key-file) key_file="\$2"; shift 2 ;;
+        --min-validity) shift 2 ;;
+        *) host="\$1"; shift ;;
+      esac
+    done
+    mkdir -p "\$(dirname "\$cert_file")" "\$(dirname "\$key_file")"
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes \\
+      -keyout "\$key_file" -out "\$cert_file" -subj "/CN=\$host" \\
+      -addext "subjectAltName=DNS:\$host" -days 1 >/dev/null 2>&1
+    exit 0
+    ;;
+esac
+exit 1
+`,
+        { mode: 0o755 },
+      );
+      chmodSync(join(dataDir, "tailscale"), 0o755);
+      process.env.PATH = `${dataDir}:${originalPath}`;
+
+      await waitFor(() => server.hasPublicHttpListener && storage.getConfig().pairHost === pairHost, 8_000);
+      expect(server.remoteAvailable).toBe(true);
+      expect(storage.getConfig().pairHost).toBe(pairHost);
       await expect(localApiRequest<Record<string, unknown>>(storage, "/me")).resolves.toEqual(
         expect.objectContaining({}),
       );

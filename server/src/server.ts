@@ -434,6 +434,7 @@ export class Server {
   private transportCertPath?: string;
   private remoteTransportError?: string;
   private remoteBindRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private remoteListenerReadyHandler?: () => void;
   private shuttingDown = false;
   private wss: WebSocketServer;
   private localWss: WebSocketServer;
@@ -972,8 +973,14 @@ export class Server {
     return this.httpServer?.listening === true;
   }
 
+  /** One-shot hook for serve --host persistence after TLS/listener recovery. */
+  onRemoteListenerReady(handler: () => void): void {
+    this.remoteListenerReadyHandler = handler;
+  }
+
   async stop(): Promise<void> {
     this.shuttingDown = true;
+    this.remoteListenerReadyHandler = undefined;
     this.clearRemoteBindRetry();
     this.stopUploadGcLoop();
     this.scheduleRunner.stop();
@@ -1062,6 +1069,13 @@ export class Server {
     this.remoteBindRetryTimer = null;
   }
 
+  private notifyRemoteListenerReady(): void {
+    if (this.shuttingDown) return;
+    const handler = this.remoteListenerReadyHandler;
+    this.remoteListenerReadyHandler = undefined;
+    handler?.();
+  }
+
   private scheduleRemoteBindRetry(): void {
     if (this.shuttingDown || this.remoteBindRetryTimer) return;
     this.remoteBindRetryTimer = setTimeout(() => {
@@ -1111,6 +1125,7 @@ export class Server {
       } catch (err: unknown) {
         log.warn("bonjour.advertisement_disabled", { error: safeErrorMessage(err) });
       }
+      this.notifyRemoteListenerReady();
     } catch (error: unknown) {
       if (this.shuttingDown) return;
       if (error instanceof TailscaleRemoteUnavailableError || isRemoteBindUnavailableError(error)) {
