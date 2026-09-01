@@ -2517,6 +2517,25 @@ describe("oppi pair", () => {
     }
   });
 
+  it("rejects an already-paired serve --host that does not match Tailscale cert material", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-cert-mismatch-"));
+    try {
+      expect(run(["pair"], { OPPI_DATA_DIR: dir }).exitCode).toBe(0);
+      expect(run(["config", "set", "tls.mode", "tailscale"], { OPPI_DATA_DIR: dir }).exitCode).toBe(
+        0,
+      );
+      const serve = run(["serve", "--host", "typo.tail00000.ts.net"], { OPPI_DATA_DIR: dir });
+      expect(serve.exitCode).toBe(1);
+      expect(stripAnsi(`${serve.stdout}${serve.stderr}`)).toMatch(
+        /Tailscale TLS certificate|does not cover/,
+      );
+      const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("typo.tail00000.ts.net");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("generates QR code output", () => {
     const { stdout, exitCode } = run(["pair"]);
     // Pair should succeed or at least output something

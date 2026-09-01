@@ -935,6 +935,7 @@ export class Server {
           mode: config.tls?.mode ?? "disabled",
           error: this.remoteTransportError ?? "remote transport unavailable",
         });
+        this.scheduleRemoteBindRetry();
       }
 
       await finishStartup();
@@ -1070,10 +1071,26 @@ export class Server {
   }
 
   private async retryRemoteBind(): Promise<void> {
-    const server = this.httpServer;
-    if (this.shuttingDown || !server || server.listening) return;
+    if (this.shuttingDown || this.httpServer?.listening) return;
     const config = this.storage.getConfig();
     try {
+      if (!this.httpServer) {
+        const tls = await prepareTlsForServerOffMainThread(
+          { tls: config.tls },
+          this.storage.getDataDir(),
+          { additionalHosts: [config.host] },
+        );
+        if (this.shuttingDown) return;
+        const transport = this.createTransportServer(tls);
+        this.httpServer = transport.server;
+        this.transportScheme = transport.scheme;
+        this.transportCertPath = transport.certPath;
+        this.httpServer.on("upgrade", (req, socket, head) => {
+          this.handleUpgrade(req, socket, head);
+        });
+      }
+      const server = this.httpServer;
+      if (!server) return;
       await listenOnHost(server, config.port, config.host);
       if (this.shuttingDown) {
         await closeListeningServer(server).catch(() => {});
@@ -1093,7 +1110,7 @@ export class Server {
       }
     } catch (error: unknown) {
       if (this.shuttingDown) return;
-      if (isRemoteBindUnavailableError(error)) {
+      if (error instanceof TailscaleRemoteUnavailableError || isRemoteBindUnavailableError(error)) {
         this.remoteTransportError = safeErrorMessage(error);
         this.scheduleRemoteBindRetry();
         return;

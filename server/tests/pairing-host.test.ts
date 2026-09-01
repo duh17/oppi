@@ -5,11 +5,15 @@ const {
   mockGetLocalIp,
   mockGetTailscaleHostname,
   mockGetTailscaleIp,
+  mockResolveTlsConfig,
+  mockValidateTailscaleMaterial,
 } = vi.hoisted(() => ({
   mockGetLocalHostname: vi.fn(),
   mockGetLocalIp: vi.fn(),
   mockGetTailscaleHostname: vi.fn(),
   mockGetTailscaleIp: vi.fn(),
+  mockResolveTlsConfig: vi.fn(),
+  mockValidateTailscaleMaterial: vi.fn(),
 }));
 
 vi.mock("../src/cli/status.js", () => ({
@@ -18,6 +22,15 @@ vi.mock("../src/cli/status.js", () => ({
   getTailscaleHostname: (...args: unknown[]) => mockGetTailscaleHostname(...args),
   getTailscaleIp: (...args: unknown[]) => mockGetTailscaleIp(...args),
 }));
+
+vi.mock("../src/tls.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/tls.js")>();
+  return {
+    ...actual,
+    resolveTlsConfig: (...args: unknown[]) => mockResolveTlsConfig(...args),
+    validateTailscaleMaterial: (...args: unknown[]) => mockValidateTailscaleMaterial(...args),
+  };
+});
 
 import {
   rememberPairingAdvertiseHost,
@@ -82,24 +95,41 @@ describe("resolvePairingAdvertiseHost", () => {
 
   it("validates and persists serve --host when already paired", () => {
     const updateConfig = vi.fn();
+    const getDataDir = () => "/tmp/oppi-pair-host-test";
     rememberValidatedPairingAdvertiseHost(
-      { getConfig: () => ({ tls: { mode: "self-signed" } }), updateConfig },
+      { getConfig: () => ({ tls: { mode: "self-signed" } }), getDataDir, updateConfig },
       "  studio.local  ",
     );
     expect(updateConfig).toHaveBeenCalledWith({ pairHost: "studio.local" });
+    expect(mockValidateTailscaleMaterial).not.toHaveBeenCalled();
 
     expect(() =>
       rememberValidatedPairingAdvertiseHost(
-        { getConfig: () => ({ tls: { mode: "tailscale" } }), updateConfig },
+        { getConfig: () => ({ tls: { mode: "tailscale" } }), getDataDir, updateConfig },
         "not-a-tailnet.example",
       ),
     ).toThrow(/Tailscale TLS mode requires a \*\.ts\.net pairing host/);
     expect(updateConfig).toHaveBeenCalledTimes(1);
+    expect(mockValidateTailscaleMaterial).not.toHaveBeenCalled();
 
+    mockResolveTlsConfig.mockReturnValue({ mode: "tailscale", certPath: "/tmp/server.crt" });
+    mockValidateTailscaleMaterial.mockImplementation(() => {
+      throw new Error("Tailscale TLS certificate does not cover typo.tail00000.ts.net");
+    });
+    expect(() =>
+      rememberValidatedPairingAdvertiseHost(
+        { getConfig: () => ({ tls: { mode: "tailscale" } }), getDataDir, updateConfig },
+        "typo.tail00000.ts.net",
+      ),
+    ).toThrow(/does not cover typo\.tail00000\.ts\.net/);
+    expect(updateConfig).toHaveBeenCalledTimes(1);
+
+    mockValidateTailscaleMaterial.mockReturnValue("cos-1.taila3ebc.ts.net");
     rememberValidatedPairingAdvertiseHost(
-      { getConfig: () => ({ tls: { mode: "tailscale" } }), updateConfig },
+      { getConfig: () => ({ tls: { mode: "tailscale" } }), getDataDir, updateConfig },
       "cos-1.taila3ebc.ts.net",
     );
+    expect(mockValidateTailscaleMaterial).toHaveBeenCalled();
     expect(updateConfig).toHaveBeenCalledWith({ pairHost: "cos-1.taila3ebc.ts.net" });
   });
 });
