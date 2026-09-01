@@ -374,11 +374,10 @@ function cmdDoctor(storage: CliConnectionConfig, hostOverride?: string): void {
   const host = config.host;
   const loopback = isLoopbackHost(host);
 
-  // Compose/entrypoint keeps host=0.0.0.0 for port publish. Detect the
-  // official container (env or /.dockerenv) so doctor does not fail closed
-  // on that required in-container bind.
-  const containerListener =
-    process.env.OPPI_CONTAINER_LISTENER === "1" || existsSync("/.dockerenv");
+  // Official image/Compose set OPPI_CONTAINER_LISTENER=1. Do not key this
+  // on /.dockerenv: a generic container with host networking or -p 7750:7750
+  // still needs the wildcard-bind failure.
+  const containerListener = process.env.OPPI_CONTAINER_LISTENER === "1";
   const wildcardBind = wildcardBindDoctorCheck(host, { containerListener });
   if (wildcardBind) {
     checks.push(wildcardBind);
