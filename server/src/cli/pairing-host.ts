@@ -140,7 +140,6 @@ export function resolvePairingAdvertiseHost(
     return tailscale ? normalizePairingAdvertiseHost(tailscale) : tailscale;
   }
 
-  const detected =
-    getLocalHostname() || getLocalIp() || getTailscaleHostname() || getTailscaleIp();
+  const detected = getLocalHostname() || getLocalIp() || getTailscaleHostname() || getTailscaleIp();
   return detected ? normalizePairingAdvertiseHost(detected) : detected;
 }
