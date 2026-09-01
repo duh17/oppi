@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "LANDiscovery")
@@ -127,45 +126,6 @@ final class LANDiscovery: NSObject {
             serverFingerprintPrefix: sid,
             tlsCertFingerprintPrefix: tfp?.isEmpty == true ? nil : tfp
         )
-    }
-
-    // Keep NWBrowser parsing helpers for test compatibility
-    // periphery:ignore - intentional API surface; retained for NWBrowser test compat
-    nonisolated static func txtRecordMap(from result: NWBrowser.Result) -> [String: String]? {
-        switch result.metadata {
-        case let .bonjour(txtRecord):
-            let map = parseTXTRecord(txtRecord)
-            return map.isEmpty ? nil : map
-        case .none:
-            return nil
-        @unknown default:
-            return nil
-        }
-    }
-
-    // periphery:ignore - used by LANDiscoveryTests via @testable import
-    nonisolated static func parseTXTRecord(_ txtRecord: NWTXTRecord) -> [String: String] {
-        var map: [String: String] = [:]
-        map.reserveCapacity(txtRecord.count)
-
-        for (key, value) in txtRecord {
-            switch value {
-            case .string(let text):
-                map[key] = text
-            case .data(let data):
-                if let text = String(data: data, encoding: .utf8) {
-                    map[key] = text
-                }
-            case .empty:
-                map[key] = ""
-            case .none:
-                continue
-            @unknown default:
-                continue
-            }
-        }
-
-        return map
     }
 
     nonisolated static func parseTXTRecordData(_ data: Data) -> [String: String] {
