@@ -17,10 +17,12 @@ if (!existsSync(sourceDocs)) {
   process.exit(0);
 }
 
-rmSync(targetDocs, { recursive: true, force: true });
-copyMarkdownDocs(sourceDocs, targetDocs);
+const PUBLIC_DOC_EXTENSIONS = new Set([".md", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4"]);
 
-function copyMarkdownDocs(sourceDir, targetDir) {
+rmSync(targetDocs, { recursive: true, force: true });
+copyPublicDocs(sourceDocs, targetDocs);
+
+function copyPublicDocs(sourceDir, targetDir) {
   for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
     if (entry.name.startsWith(".")) continue;
 
@@ -28,11 +30,13 @@ function copyMarkdownDocs(sourceDir, targetDir) {
     const targetPath = join(targetDir, entry.name);
 
     if (entry.isDirectory()) {
-      copyMarkdownDocs(sourcePath, targetPath);
+      copyPublicDocs(sourcePath, targetPath);
       continue;
     }
 
-    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) {
+    const dot = entry.name.lastIndexOf(".");
+    const extension = dot >= 0 ? entry.name.slice(dot).toLowerCase() : "";
+    if (!entry.isFile() || !PUBLIC_DOC_EXTENSIONS.has(extension)) {
       continue;
     }
 
