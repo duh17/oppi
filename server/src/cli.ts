@@ -66,7 +66,11 @@ import { isNpmVersionNewer } from "./cli/npm-version.js";
 import { cmdConfig } from "./cli/commands/config.js";
 import { magicDnsSelfSignedDoctorCheck, wildcardBindDoctorCheck } from "./cli/doctor-checks.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
-import { rememberPairingAdvertiseHost, resolvePairingAdvertiseHost } from "./cli/pairing-host.js";
+import {
+  rememberPairingAdvertiseHost,
+  rememberValidatedPairingAdvertiseHost,
+  resolvePairingAdvertiseHost,
+} from "./cli/pairing-host.js";
 
 function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
   const dataDir = storage.getDataDir();
@@ -113,6 +117,9 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
 
     storage.rotateToken();
     console.log(c.green("  ✓ First run — owner token generated"));
+  }
+  if (wasPaired) {
+    rememberValidatedPairingAdvertiseHost(storage, pairHost);
   }
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
 

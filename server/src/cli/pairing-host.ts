@@ -8,6 +8,7 @@
  */
 
 import type { ServerConfig } from "../types.js";
+import { isTailscaleHostname } from "../tls.js";
 import { getLocalHostname, getLocalIp, getTailscaleHostname, getTailscaleIp } from "./status.js";
 
 export function rememberPairingAdvertiseHost(
@@ -17,6 +18,28 @@ export function rememberPairingAdvertiseHost(
   const trimmed = host?.trim();
   if (!trimmed) return;
   storage.updateConfig({ pairHost: trimmed });
+}
+
+/**
+ * Persist an explicit serve/pair --host after the same Tailscale check
+ * generateInvite uses. Call this when no invite is generated (already paired).
+ */
+export function rememberValidatedPairingAdvertiseHost(
+  storage: {
+    getConfig: () => Pick<ServerConfig, "tls">;
+    updateConfig: (updates: Partial<ServerConfig>) => void;
+  },
+  host?: string,
+): void {
+  const trimmed = host?.trim();
+  if (!trimmed) return;
+  if (storage.getConfig().tls?.mode === "tailscale" && !isTailscaleHostname(trimmed)) {
+    throw new Error(
+      "Tailscale TLS mode requires a *.ts.net pairing host. " +
+        "Use --host <machine>.<tailnet>.ts.net or disable tls.mode=tailscale",
+    );
+  }
+  rememberPairingAdvertiseHost(storage, trimmed);
 }
 
 export function resolvePairingAdvertiseHost(

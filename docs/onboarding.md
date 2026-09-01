@@ -38,7 +38,7 @@ After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the serve
 oppi config set host <tailscale-ip-or-lan>
 ```
 
-`oppi serve --host`, `oppi pair --host`, and `OPPI_PAIR_HOST` are the **advertised pairing hostname**. Use a MagicDNS name such as `cos-1.taila3ebc.ts.net` there. Binding `0.0.0.0` is not how you advertise MagicDNS. An explicit `--host` is stored as `pairHost` so later `oppi doctor` and `oppi pair` see it.
+`oppi serve --host`, `oppi pair --host`, and `OPPI_PAIR_HOST` are the **advertised pairing hostname**. Use a MagicDNS name such as `cos-1.taila3ebc.ts.net` there. Binding `0.0.0.0` is not how you advertise MagicDNS. A valid explicit `--host` is stored as `pairHost` so later `oppi doctor` and `oppi pair` see it, including `oppi serve --host` on an already-paired install.
 
 When the advertised pairing host is MagicDNS (`*.ts.net`), set `tls.mode=tailscale` (`tailscale cert`) so the phone can use `https://<machine>.ts.net:<port>` with a real certificate (`<port>` is `config.port`). `tls.mode=self-signed` plus an advertised MagicDNS host is a mismatch; `oppi doctor` warns (`oppi doctor --host` overrides). LAN or mDNS pairing on a Tailscale-connected machine does not trigger that warning.
 

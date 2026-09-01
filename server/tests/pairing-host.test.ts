@@ -19,7 +19,11 @@ vi.mock("../src/cli/status.js", () => ({
   getTailscaleIp: (...args: unknown[]) => mockGetTailscaleIp(...args),
 }));
 
-import { rememberPairingAdvertiseHost, resolvePairingAdvertiseHost } from "../src/cli/pairing-host.js";
+import {
+  rememberPairingAdvertiseHost,
+  rememberValidatedPairingAdvertiseHost,
+  resolvePairingAdvertiseHost,
+} from "../src/cli/pairing-host.js";
 
 describe("resolvePairingAdvertiseHost", () => {
   afterEach(() => {
@@ -74,5 +78,28 @@ describe("resolvePairingAdvertiseHost", () => {
     expect(updateConfig).toHaveBeenCalledWith({ pairHost: "cos-1.taila3ebc.ts.net" });
     rememberPairingAdvertiseHost({ updateConfig }, "  ");
     expect(updateConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and persists serve --host when already paired", () => {
+    const updateConfig = vi.fn();
+    rememberValidatedPairingAdvertiseHost(
+      { getConfig: () => ({ tls: { mode: "self-signed" } }), updateConfig },
+      "  studio.local  ",
+    );
+    expect(updateConfig).toHaveBeenCalledWith({ pairHost: "studio.local" });
+
+    expect(() =>
+      rememberValidatedPairingAdvertiseHost(
+        { getConfig: () => ({ tls: { mode: "tailscale" } }), updateConfig },
+        "not-a-tailnet.example",
+      ),
+    ).toThrow(/Tailscale TLS mode requires a \*\.ts\.net pairing host/);
+    expect(updateConfig).toHaveBeenCalledTimes(1);
+
+    rememberValidatedPairingAdvertiseHost(
+      { getConfig: () => ({ tls: { mode: "tailscale" } }), updateConfig },
+      "cos-1.taila3ebc.ts.net",
+    );
+    expect(updateConfig).toHaveBeenCalledWith({ pairHost: "cos-1.taila3ebc.ts.net" });
   });
 });

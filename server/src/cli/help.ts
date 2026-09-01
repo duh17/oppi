@@ -134,6 +134,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "On first run, serve creates owner credentials, enables self-signed TLS, and prints a pairing QR.",
       "config host is the HTTP/TLS bind address. --host, OPPI_PAIR_HOST, and pairHost advertise the pairing name.",
+      "On an already-paired install, serve --host still validates and stores pairHost.",
       "Do not bind 0.0.0.0 to advertise MagicDNS. Bind a Tailscale or LAN IP: oppi config set host <ip>.",
       "Press Ctrl+C to stop the foreground server.",
     ],
