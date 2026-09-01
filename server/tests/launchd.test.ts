@@ -39,6 +39,7 @@ vi.mock("node:os", () => ({
 const originalGetuid = process.getuid;
 beforeEach(() => {
   process.getuid = () => 501;
+  mockHomedir.mockImplementation(() => "/Users/testuser");
   mockUnlinkSync.mockImplementation(() => undefined);
   mockRealpathSync.mockImplementation((path: string) => path);
   mockReadFileSync.mockImplementation((path: string) => {
@@ -47,12 +48,7 @@ beforeEach(() => {
     }
     return "";
   });
-  mockExecSync.mockImplementation((cmd: string) => {
-    if (cmd.includes("--version")) {
-      return "v25.0.0";
-    }
-    return "";
-  });
+  mockExecSync.mockImplementation((cmd: string) => defaultLaunchctlOutput(cmd));
 });
 
 afterEach(() => {
@@ -70,6 +66,41 @@ import {
   stopService,
   uninstallService,
 } from "../src/launchd.js";
+
+function isPrintDomain(cmd: string, domain: string): boolean {
+  return cmd.includes(`launchctl print ${domain}`) && !cmd.includes(`launchctl print ${domain}/`);
+}
+
+function isPrintService(cmd: string, domain: string, label = "dev.chaosdonkey.oppi"): boolean {
+  return cmd.includes(`launchctl print ${domain}/${label}`);
+}
+
+function isPrintAnyService(cmd: string): boolean {
+  return /launchctl print (?:gui|user)\/\d+\//.test(cmd);
+}
+
+function defaultLaunchctlOutput(cmd: string): string {
+  if (cmd.includes("--version")) return "v25.0.0";
+  if (isPrintAnyService(cmd)) {
+    throw new Error("Could not find service");
+  }
+  return "";
+}
+
+function execError(message: string, status?: number): Error {
+  const err = new Error(message) as Error & { status?: number };
+  if (status !== undefined) err.status = status;
+  return err;
+}
+
+function setupValidInstall() {
+  mockExistsSync.mockImplementation((p: string) => {
+    if (p === "/opt/homebrew/bin/node") return true;
+    if (p === "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js") return true;
+    if (p.endsWith(".plist")) return false;
+    return false;
+  });
+}
 
 // ── Plist path ─────────────────────────────────────────────────────────────
 
@@ -170,6 +201,14 @@ describe("plist XML generation", () => {
     const xml = captureWrittenPlist("/tmp/test-oppi");
     expect(xml).toContain("<key>WorkingDirectory</key>");
     expect(xml).toContain("<string>/Users/testuser</string>");
+  });
+
+  it("allows Aqua and Background session types", () => {
+    const xml = captureWrittenPlist("/tmp/test-oppi");
+
+    expect(xml).toContain("<key>LimitLoadToSessionType</key>");
+    expect(xml).toContain("<string>Aqua</string>");
+    expect(xml).toContain("<string>Background</string>");
   });
 
   it("defaults dataDir to ~/.config/oppi when not provided", () => {
@@ -300,15 +339,6 @@ describe("CLI resolution", () => {
 // ── installService flow ────────────────────────────────────────────────────
 
 describe("installService", () => {
-  function setupValidInstall() {
-    mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/opt/homebrew/bin/node") return true;
-      if (p === "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js") return true;
-      if (p.endsWith(".plist")) return false;
-      return false;
-    });
-  }
-
   it("creates LaunchAgents directory", () => {
     setupValidInstall();
     installService("/tmp/data");
@@ -356,64 +386,19 @@ describe("installService", () => {
       "launchctl bootout gui/501 /Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist 2>/dev/null",
       { stdio: "pipe" },
     );
-  });
-
-  it("disables legacy dev.chenda LaunchAgent before installing", () => {
-    mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/opt/homebrew/bin/node") return true;
-      if (p === "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js") return true;
-      if (p === "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist") return true;
-      if (p === "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist") return false;
-      return false;
-    });
-
-    const result = installService("/tmp/data");
-
-    expect(result.ok).toBe(true);
-    expect(result.legacyRemoved).toEqual([
-      "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist",
-    ]);
     expect(mockExecSync).toHaveBeenCalledWith(
-      "launchctl bootout gui/501/dev.chenda.oppi 2>/dev/null",
+      "launchctl bootout user/501 /Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist 2>/dev/null",
       { stdio: "pipe" },
     );
-    expect(mockExecSync).toHaveBeenCalledWith(
-      "launchctl bootout gui/501 /Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist 2>/dev/null",
-      { stdio: "pipe" },
-    );
-    expect(mockUnlinkSync).toHaveBeenCalledWith(
-      "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist",
-    );
-  });
-
-  it("fails install when legacy LaunchAgent plist cannot be removed", () => {
-    mockExistsSync.mockImplementation((p: string) => {
-      if (p === "/opt/homebrew/bin/node") return true;
-      if (p === "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js") return true;
-      if (p === "/Users/testuser/Library/LaunchAgents/dev.chenda.oppi.plist") return true;
-      return false;
-    });
-    mockUnlinkSync.mockImplementation(() => {
-      throw new Error("EACCES: permission denied");
-    });
-
-    const result = installService("/tmp/data");
-
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain("Failed to disable legacy LaunchAgent");
-    expect(result.message).toContain("EACCES");
   });
 
   it("handles error 37 (already loaded) by kickstarting", () => {
     setupValidInstall();
     mockExecSync.mockImplementation((cmd: string) => {
-      if (cmd.includes("--version")) {
-        return "v25.0.0";
-      }
       if (cmd.includes("bootstrap")) {
         throw new Error("37: Service is already loaded");
       }
-      return "";
+      return defaultLaunchctlOutput(cmd);
     });
 
     const result = installService("/tmp/data");
@@ -429,13 +414,10 @@ describe("installService", () => {
   it("returns error on non-37 bootstrap failure", () => {
     setupValidInstall();
     mockExecSync.mockImplementation((cmd: string) => {
-      if (cmd.includes("--version")) {
-        return "v25.0.0";
-      }
       if (cmd.includes("bootstrap")) {
         throw new Error("5: Some other error");
       }
-      return "";
+      return defaultLaunchctlOutput(cmd);
     });
 
     const result = installService("/tmp/data");
@@ -468,7 +450,6 @@ describe("uninstallService", () => {
 
   it("bootouts and removes plist when installed", () => {
     mockExistsSync.mockReturnValue(true);
-    mockExecSync.mockReturnValue("");
 
     const result = uninstallService();
 
@@ -486,8 +467,11 @@ describe("uninstallService", () => {
 
   it("still removes plist if bootout fails", () => {
     mockExistsSync.mockReturnValue(true);
-    mockExecSync.mockImplementation(() => {
-      throw new Error("already unloaded");
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout")) {
+        throw new Error("already unloaded");
+      }
+      return defaultLaunchctlOutput(cmd);
     });
 
     const result = uninstallService();
@@ -497,7 +481,6 @@ describe("uninstallService", () => {
 
   it("returns error if plist removal fails", () => {
     mockExistsSync.mockReturnValue(true);
-    mockExecSync.mockReturnValue("");
     mockUnlinkSync.mockImplementation(() => {
       throw new Error("EACCES: permission denied");
     });
@@ -559,21 +542,36 @@ describe("stopService", () => {
 
   it("bootouts by label on stop", () => {
     mockExistsSync.mockReturnValue(true);
-    mockExecSync.mockReturnValue("");
 
     const result = stopService();
 
     expect(result.ok).toBe(true);
-    expect(result.message).toContain("stopped");
-    expect(mockExecSync).toHaveBeenCalledWith("launchctl bootout gui/501/dev.chaosdonkey.oppi", {
-      stdio: "pipe",
-    });
+    expect(result.message).toContain("not running");
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout gui/501/dev.chaosdonkey.oppi 2>/dev/null",
+      { stdio: "pipe" },
+    );
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout user/501/dev.chaosdonkey.oppi 2>/dev/null",
+      { stdio: "pipe" },
+    );
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout gui/501 /Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist 2>/dev/null",
+      { stdio: "pipe" },
+    );
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout user/501 /Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist 2>/dev/null",
+      { stdio: "pipe" },
+    );
   });
 
   it("treats 'No such process' as success (already stopped)", () => {
     mockExistsSync.mockReturnValue(true);
-    mockExecSync.mockImplementation(() => {
-      throw new Error("No such process");
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout")) {
+        throw new Error("No such process");
+      }
+      return defaultLaunchctlOutput(cmd);
     });
 
     const result = stopService();
@@ -594,13 +592,20 @@ describe("stopService", () => {
 
   it("returns error on unexpected stop failure", () => {
     mockExistsSync.mockReturnValue(true);
-    mockExecSync.mockImplementation(() => {
-      throw new Error("unexpected launchctl error");
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintAnyService(cmd)) {
+        return ["dev.chaosdonkey.oppi = {", "  pid = 12345", "  state = running", "}"].join("\n");
+      }
+      if (cmd.includes("bootout")) {
+        throw new Error("unexpected launchctl error");
+      }
+      return defaultLaunchctlOutput(cmd);
     });
 
     const result = stopService();
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Stop failed");
+    expect(result.message).toMatch(/loaded/i);
   });
 });
 
@@ -754,6 +759,548 @@ describe("readInstalledPlist", () => {
     mockReadFileSync.mockReturnValue(plistXml);
 
     expect(readInstalledPlist()).toBeNull();
+  });
+});
+
+// ── Domain selection (gui vs user) ─────────────────────────────────────────
+
+describe("launchd domain selection", () => {
+  const plist = "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist";
+  const runningPrint = ["dev.chaosdonkey.oppi = {", "  pid = 12345", "  state = running", "}"].join(
+    "\n",
+  );
+
+  it("installs into user domain when gui is unavailable", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintDomain(cmd, "gui/501")) {
+        throw new Error("Could not find domain gui/501");
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(true);
+
+    const bootstrapCalls = mockExecSync.mock.calls
+      .map(([cmd]) => cmd as string)
+      .filter((cmd) => cmd.includes("bootstrap"));
+    expect(bootstrapCalls).toEqual([`launchctl bootstrap user/501 ${plist}`]);
+  });
+
+  it("installs into gui domain when both domains exist", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => defaultLaunchctlOutput(cmd));
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(true);
+
+    const bootstrapCalls = mockExecSync.mock.calls
+      .map(([cmd]) => cmd as string)
+      .filter((cmd) => cmd.includes("bootstrap"));
+    expect(bootstrapCalls).toEqual([`launchctl bootstrap gui/501 ${plist}`]);
+  });
+
+  it("bootouts the current job in both domains before loading", () => {
+    setupValidInstall();
+    installService("/tmp/data");
+
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout gui/501/dev.chaosdonkey.oppi 2>/dev/null",
+      { stdio: "pipe" },
+    );
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout user/501/dev.chaosdonkey.oppi 2>/dev/null",
+      { stdio: "pipe" },
+    );
+  });
+
+  it("fails with a useful error when neither domain exists", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintDomain(cmd, "gui/501") || isPrintDomain(cmd, "user/501")) {
+        throw new Error("Could not find domain");
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("No launchd user domain available");
+    expect(result.message).toContain("gui/501");
+    expect(result.message).toContain("user/501");
+    expect(mockExecSync.mock.calls.some(([cmd]) => (cmd as string).includes("bootstrap"))).toBe(
+      false,
+    );
+  });
+
+  it("kickstarts the user domain on error 37 when gui is unavailable", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintDomain(cmd, "gui/501")) {
+        throw new Error("Could not find domain gui/501");
+      }
+      if (cmd.includes("bootstrap")) {
+        throw new Error("37: Service is already loaded");
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(true);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl kickstart -k user/501/dev.chaosdonkey.oppi",
+      { stdio: "pipe" },
+    );
+  });
+
+  it("status finds a user-domain job even when the gui domain exists", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintService(cmd, "gui/501")) {
+        throw new Error("Could not find service");
+      }
+      if (isPrintService(cmd, "user/501")) {
+        return runningPrint;
+      }
+      if (isPrintDomain(cmd, "gui/501")) {
+        return ["gui/501 = {", "  pid = 1", "  state = running", "}"].join("\n");
+      }
+      return "";
+    });
+
+    const status = getServiceStatus();
+    expect(status.installed).toBe(true);
+    expect(status.running).toBe(true);
+    expect(status.pid).toBe(12345);
+  });
+
+  it("restart kickstarts the loaded domain, not merely the preferred domain", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintService(cmd, "gui/501")) {
+        throw new Error("Could not find service");
+      }
+      if (isPrintService(cmd, "user/501")) {
+        return runningPrint;
+      }
+      if (isPrintDomain(cmd, "gui/501")) {
+        return "gui domain available";
+      }
+      return "";
+    });
+
+    const result = restartService();
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("restarted");
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl kickstart -k user/501/dev.chaosdonkey.oppi",
+      { stdio: "pipe" },
+    );
+    expect(mockExecSync).not.toHaveBeenCalledWith(
+      "launchctl kickstart -k gui/501/dev.chaosdonkey.oppi",
+      { stdio: "pipe" },
+    );
+  });
+
+  it("stops a user-domain job when gui bootout is unsupported", () => {
+    mockExistsSync.mockReturnValue(true);
+    let userLoaded = true;
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout gui/501")) {
+        throw new Error("125: Domain does not support specified action");
+      }
+      if (cmd.includes("bootout user/501")) {
+        userLoaded = false;
+        return "";
+      }
+      if (isPrintService(cmd, "gui/501")) {
+        throw new Error("Could not find service");
+      }
+      if (isPrintService(cmd, "user/501")) {
+        if (userLoaded) return runningPrint;
+        throw new Error("Could not find service");
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = stopService();
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("stopped");
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout user/501/dev.chaosdonkey.oppi 2>/dev/null",
+      { stdio: "pipe" },
+    );
+  });
+
+  it("uninstall bootouts the job in both domains", () => {
+    mockExistsSync.mockReturnValue(true);
+
+    const result = uninstallService();
+    expect(result.ok).toBe(true);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout gui/501/dev.chaosdonkey.oppi 2>/dev/null",
+      { stdio: "pipe" },
+    );
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl bootout user/501/dev.chaosdonkey.oppi 2>/dev/null",
+      { stdio: "pipe" },
+    );
+  });
+});
+
+// ── launchctl 125 leftover jobs ────────────────────────────────────────────
+
+describe("launchctl leftover jobs", () => {
+  const plist = "/Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist";
+  const runningPrint = ["dev.chaosdonkey.oppi = {", "  pid = 12345", "  state = running", "}"].join(
+    "\n",
+  );
+  const error125 = new Error("125: Domain does not support specified action");
+  const notFound = new Error("Could not find service");
+
+  it("stop fails when owning-domain bootout returns 125 and the other domain is empty", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout")) throw error125;
+      if (isPrintService(cmd, "gui/501")) return runningPrint;
+      if (isPrintService(cmd, "user/501")) throw notFound;
+      return "";
+    });
+
+    const result = stopService();
+    expect(result.ok).toBe(false);
+    expect(result.message).not.toMatch(/not running/i);
+    expect(result.message).toMatch(/loaded/i);
+    expect(
+      mockExecSync.mock.calls.some(
+        ([cmd]) => typeof cmd === "string" && isPrintService(cmd, "gui/501"),
+      ),
+    ).toBe(true);
+    expect(
+      mockExecSync.mock.calls.some(
+        ([cmd]) => typeof cmd === "string" && isPrintService(cmd, "user/501"),
+      ),
+    ).toBe(true);
+  });
+
+  it("stop fails when a user-domain job survives GUI-preferred bootout 125", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout")) throw error125;
+      if (isPrintService(cmd, "gui/501")) throw notFound;
+      if (isPrintService(cmd, "user/501")) return runningPrint;
+      return "";
+    });
+
+    const result = stopService();
+    expect(result.ok).toBe(false);
+    expect(result.message).not.toMatch(/not running/i);
+    expect(result.message).toMatch(/loaded/i);
+  });
+
+  it("install does not bootstrap GUI or kickstart while a user-domain job remains loaded", () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === "/opt/homebrew/bin/node") return true;
+      if (p === "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js") return true;
+      if (p === plist) return true;
+      return false;
+    });
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("--version")) return "v25.0.0";
+      if (cmd.includes("bootout")) throw error125;
+      if (cmd.includes("bootstrap")) throw new Error("37: Service is already loaded");
+      if (isPrintService(cmd, "user/501")) return runningPrint;
+      if (isPrintAnyService(cmd)) throw notFound;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/unload|loaded/i);
+    expect(result.message).toContain("user/501");
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("bootstrap"))).toBe(false);
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("kickstart"))).toBe(false);
+  });
+
+  it("uninstall does not unlink the plist when a job remains loaded after bootout 125", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout")) throw error125;
+      if (isPrintService(cmd, "gui/501")) return runningPrint;
+      if (isPrintService(cmd, "user/501")) throw notFound;
+      return "";
+    });
+
+    const result = uninstallService();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/unload|loaded/i);
+    expect(result.message).toContain("gui/501");
+    expect(mockUnlinkSync).not.toHaveBeenCalled();
+  });
+
+  it("keeps bootstrap 125 fail-closed when GUI probing succeeded", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("--version")) return "v25.0.0";
+      if (cmd.includes("bootstrap")) throw error125;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Failed to load LaunchAgent");
+    const bootstrapCalls = mockExecSync.mock.calls
+      .map(([cmd]) => cmd as string)
+      .filter((cmd) => cmd.includes("bootstrap"));
+    expect(bootstrapCalls).toEqual([`launchctl bootstrap gui/501 ${plist}`]);
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("kickstart"))).toBe(false);
+  });
+
+  it("uninstall fails closed on a missing-plist orphan that remains loaded", () => {
+    mockExistsSync.mockReturnValue(false);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout")) throw error125;
+      if (isPrintService(cmd, "user/501")) return runningPrint;
+      if (isPrintService(cmd, "gui/501")) throw notFound;
+      return "";
+    });
+
+    const result = uninstallService();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/unload|loaded/i);
+    expect(result.message).toContain("user/501");
+    expect(result.message).not.toMatch(/not installed/i);
+    expect(mockUnlinkSync).not.toHaveBeenCalled();
+  });
+
+  it("status reports a loaded job even when the plist is missing", () => {
+    mockExistsSync.mockReturnValue(false);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintService(cmd, "gui/501")) throw notFound;
+      if (isPrintService(cmd, "user/501")) return runningPrint;
+      return "";
+    });
+
+    const status = getServiceStatus();
+    expect(status.installed).toBe(false);
+    expect(status.running).toBe(true);
+    expect(status.pid).toBe(12345);
+  });
+
+  it("stop still succeeds when GUI bootout is 125 but the job is then absent", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootout gui/501/")) throw error125;
+      if (cmd.includes("bootout user/501/")) return "";
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = stopService();
+    expect(result.ok).toBe(true);
+    expect(result.message).not.toMatch(/loaded/i);
+  });
+
+  it("stop unloads a GUI job that stays loaded after a successful label bootout by booting out the plist", () => {
+    let guiLoaded = true;
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes(`launchctl bootout gui/501 ${plist}`)) {
+        guiLoaded = false;
+        return "";
+      }
+      if (cmd.includes("launchctl bootout")) return "";
+      if (isPrintService(cmd, "gui/501")) {
+        if (guiLoaded) return runningPrint;
+        throw notFound;
+      }
+      if (isPrintService(cmd, "user/501")) throw notFound;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = stopService();
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("stopped");
+    expect(result.message).not.toMatch(/not running/i);
+    expect(
+      mockExecSync.mock.calls.some(
+        ([cmd]) => typeof cmd === "string" && cmd.includes("bootout gui/501/dev.chaosdonkey.oppi"),
+      ),
+    ).toBe(true);
+    expect(
+      mockExecSync.mock.calls.some(
+        ([cmd]) => typeof cmd === "string" && cmd.includes("bootout user/501/dev.chaosdonkey.oppi"),
+      ),
+    ).toBe(true);
+    expect(
+      mockExecSync.mock.calls.some(
+        ([cmd]) => typeof cmd === "string" && cmd.includes(`bootout gui/501 ${plist}`),
+      ),
+    ).toBe(true);
+    expect(
+      mockExecSync.mock.calls.some(
+        ([cmd]) => typeof cmd === "string" && cmd.includes(`bootout user/501 ${plist}`),
+      ),
+    ).toBe(true);
+  });
+});
+
+// ── launchctl error classification ─────────────────────────────────────────
+
+describe("launchctl error classification", () => {
+  const unexpectedPrint = execError("5: Input/output error", 5);
+  const error125 = new Error("125: Domain does not support specified action");
+
+  it("does not treat bootstrap 125 as already-loaded when uid or path contains 37", () => {
+    process.getuid = () => 537;
+    mockHomedir.mockReturnValue("/Users/chen37");
+    setupValidInstall();
+    const plist = "/Users/chen37/Library/LaunchAgents/dev.chaosdonkey.oppi.plist";
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootstrap")) {
+        throw execError(
+          `Command failed: ${cmd}\nBootstrap failed: 125: Domain does not support specified action`,
+          125,
+        );
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Failed to load LaunchAgent");
+    expect(result.message).toContain("125");
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("kickstart"))).toBe(false);
+    const bootstrapCalls = mockExecSync.mock.calls
+      .map(([cmd]) => cmd as string)
+      .filter((cmd) => cmd.includes("bootstrap"));
+    expect(bootstrapCalls).toEqual([`launchctl bootstrap gui/537 ${plist}`]);
+  });
+
+  it("still kickstarts on bootstrap 37 when uid or path contains 37", () => {
+    process.getuid = () => 537;
+    mockHomedir.mockReturnValue("/Users/chen37");
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("bootstrap")) {
+        throw execError(
+          `Command failed: ${cmd}\nBootstrap failed: 37: Operation already in progress`,
+          37,
+        );
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(true);
+    expect(mockExecSync).toHaveBeenCalledWith(
+      "launchctl kickstart -k gui/537/dev.chaosdonkey.oppi",
+      { stdio: "pipe" },
+    );
+  });
+
+  it("install does not bootstrap after an unexpected service print failure", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintService(cmd, "gui/501") || isPrintService(cmd, "user/501")) {
+        throw unexpectedPrint;
+      }
+      if (cmd.includes("bootout")) throw error125;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Failed to load LaunchAgent");
+    expect(result.message).not.toMatch(/not running|not installed/i);
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("bootstrap"))).toBe(false);
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("kickstart"))).toBe(false);
+  });
+
+  it("uninstall does not unlink after an unexpected service print failure", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintAnyService(cmd)) throw unexpectedPrint;
+      if (cmd.includes("bootout")) throw error125;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = uninstallService();
+    expect(result.ok).toBe(false);
+    expect(result.message).not.toMatch(/not installed/i);
+    expect(mockUnlinkSync).not.toHaveBeenCalled();
+  });
+
+  it("stop does not report absence after an unexpected service print failure", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintAnyService(cmd)) throw unexpectedPrint;
+      if (cmd.includes("bootout")) throw error125;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = stopService();
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Stop failed");
+    expect(result.message).not.toMatch(/not running/i);
+  });
+
+  it("does not fall back to user domain when GUI print fails unexpectedly", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintDomain(cmd, "gui/501")) throw unexpectedPrint;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Failed to load LaunchAgent");
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("bootstrap"))).toBe(false);
+  });
+
+  it("status does not treat an unexpected print failure as not running", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintAnyService(cmd)) throw unexpectedPrint;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    expect(() => getServiceStatus()).toThrow(/Input\/output error/);
+  });
+
+  it("treats launchctl print exit 113 without stderr text as service absence", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintAnyService(cmd)) {
+        throw execError(`Command failed: ${cmd}`, 113);
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(true);
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("bootstrap"))).toBe(true);
+  });
+
+  it("treats launchctl print exit 112 without stderr text as GUI domain absence", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintDomain(cmd, "gui/501")) {
+        throw execError(`Command failed: ${cmd}`, 112);
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(true);
+    const bootstrapCalls = mockExecSync.mock.calls
+      .map(([cmd]) => cmd as string)
+      .filter((cmd) => cmd.includes("bootstrap"));
+    expect(bootstrapCalls).toEqual([
+      "launchctl bootstrap user/501 /Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
+    ]);
   });
 });
 

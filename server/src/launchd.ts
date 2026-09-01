@@ -27,7 +27,6 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 const LABEL = "dev.chaosdonkey.oppi";
-const LEGACY_LABELS = ["dev.chenda.oppi"] as const;
 
 function uid(): number {
   const id = process.getuid?.();
@@ -35,47 +34,101 @@ function uid(): number {
   return id;
 }
 
-function plistPathForLabel(label: string): string {
-  return join(homedir(), "Library", "LaunchAgents", `${label}.plist`);
+type LaunchdDomain = `gui/${number}` | `user/${number}`;
+
+function domainsForUid(id: number): LaunchdDomain[] {
+  return [`gui/${id}`, `user/${id}`];
+}
+
+function launchctlStatus(err: unknown): number | undefined {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status = (err as { status: unknown }).status;
+    return typeof status === "number" ? status : undefined;
+  }
+  return undefined;
+}
+
+function launchctlMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isAlreadyLoadedError(err: unknown): boolean {
+  // Do not search the whole execSync message for "37": uid 537 or a path like
+  // /Users/chen37 would turn bootstrap 125 into a false already-loaded hit.
+  return launchctlStatus(err) === 37 || /\b37:/.test(launchctlMessage(err));
+}
+
+function isLaunchctlNotFound(err: unknown): boolean {
+  const status = launchctlStatus(err);
+  // 112 = missing domain, 113 = missing service. Other print failures are not absence.
+  if (status === 112 || status === 113) return true;
+  return /Could not find (?:service|domain)/.test(launchctlMessage(err));
+}
+
+function isDomainAvailable(domain: LaunchdDomain): boolean {
+  try {
+    execSync(`launchctl print ${domain} 2>/dev/null`, { stdio: "pipe" });
+    return true;
+  } catch (err: unknown) {
+    if (isLaunchctlNotFound(err)) return false;
+    throw err;
+  }
+}
+
+// Domain print success is not where an existing job is loaded.
+function preferredDomain(): LaunchdDomain {
+  const id = uid();
+  const [guiDomain, userDomain] = domainsForUid(id);
+  if (isDomainAvailable(guiDomain)) return guiDomain;
+  if (isDomainAvailable(userDomain)) return userDomain;
+  throw new Error(`No launchd user domain available (tried ${guiDomain} and ${userDomain})`);
+}
+
+function loadedDomains(label: string): LaunchdDomain[] {
+  const loaded: LaunchdDomain[] = [];
+  let unexpected: unknown;
+  for (const domain of domainsForUid(uid())) {
+    try {
+      execSync(`launchctl print ${domain}/${label} 2>/dev/null`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      loaded.push(domain);
+    } catch (err: unknown) {
+      if (isLaunchctlNotFound(err)) continue;
+      unexpected ??= err;
+    }
+  }
+  if (loaded.length === 0 && unexpected !== undefined) throw unexpected;
+  return loaded;
+}
+
+function findLoadedDomain(label: string): LaunchdDomain | null {
+  return loadedDomains(label)[0] ?? null;
 }
 
 function plistPath(): string {
-  return plistPathForLabel(LABEL);
+  return join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
 }
 
 function bootoutLabel(label: string): void {
-  try {
-    execSync(`launchctl bootout gui/${uid()}/${label} 2>/dev/null`, { stdio: "pipe" });
-  } catch {
-    // Not loaded — fine.
+  for (const domain of domainsForUid(uid())) {
+    try {
+      execSync(`launchctl bootout ${domain}/${label} 2>/dev/null`, { stdio: "pipe" });
+    } catch {
+      // 125 is domain refused, not absent; callers verify with print.
+    }
   }
 }
 
 function bootoutPlist(path: string): void {
-  try {
-    execSync(`launchctl bootout gui/${uid()} ${path} 2>/dev/null`, { stdio: "pipe" });
-  } catch {
-    // Not loaded — fine.
-  }
-}
-
-function disableLegacyLaunchAgents(): string[] {
-  const removed: string[] = [];
-
-  for (const legacyLabel of LEGACY_LABELS) {
-    const legacyPlist = plistPathForLabel(legacyLabel);
-    bootoutLabel(legacyLabel);
-
-    if (!existsSync(legacyPlist)) {
-      continue;
+  for (const domain of domainsForUid(uid())) {
+    try {
+      execSync(`launchctl bootout ${domain} ${path} 2>/dev/null`, { stdio: "pipe" });
+    } catch {
+      // 125 is domain refused, not absent; callers verify with print.
     }
-
-    bootoutPlist(legacyPlist);
-    unlinkSync(legacyPlist);
-    removed.push(legacyPlist);
   }
-
-  return removed;
 }
 
 export interface LaunchdStatus {
@@ -288,6 +341,11 @@ function buildPlistXML(runtimePath: string, cliPath: string, dataDir: string): s
     <string>${logPath}</string>
     <key>ProcessType</key>
     <string>Standard</string>
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+        <string>Background</string>
+    </array>
 </dict>
 </plist>`;
 }
@@ -302,7 +360,6 @@ export function installService(dataDir?: string): {
   message: string;
   runtimePath?: string;
   cliPath?: string;
-  legacyRemoved?: string[];
 } {
   const cliPath = resolveCLIAbsolute();
   const runtimePath = resolveRuntimeAbsolute(cliPath);
@@ -323,49 +380,57 @@ export function installService(dataDir?: string): {
   const resolvedDataDir = dataDir || join(homedir(), ".config", "oppi");
   const plist = plistPath();
   const launchAgentsDir = join(homedir(), "Library", "LaunchAgents");
-  let legacyRemoved: string[];
 
+  // Unload both domains first. Kickstart does not pick up a rewritten plist,
+  // and bootstrapping the other domain would create a duplicate.
   try {
-    legacyRemoved = disableLegacyLaunchAgents();
+    bootoutLabel(LABEL);
+    if (existsSync(plist)) {
+      bootoutPlist(plist);
+    }
+    const remaining = loadedDomains(LABEL);
+    if (remaining.length > 0) {
+      return {
+        ok: false,
+        message: `Failed to unload existing LaunchAgent from ${remaining.join(", ")}`,
+        runtimePath,
+        cliPath,
+      };
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return {
-      ok: false,
-      message: `Failed to disable legacy LaunchAgent: ${msg}`,
-      runtimePath,
-      cliPath,
-    };
+    return { ok: false, message: `Failed to load LaunchAgent: ${msg}`, runtimePath, cliPath };
   }
 
-  // Unload existing if present
-  if (existsSync(plist)) {
-    bootoutPlist(plist);
-  }
-
-  // Ensure LaunchAgents directory exists
   mkdirSync(launchAgentsDir, { recursive: true });
 
-  // Write plist
   const xml = buildPlistXML(runtimePath, cliPath, resolvedDataDir);
   writeFileSync(plist, xml, { mode: 0o644 });
 
-  // Load the service
   try {
-    execSync(`launchctl bootstrap gui/${uid()} ${plist}`, {
-      stdio: "pipe",
-    });
+    const domain = preferredDomain();
+    try {
+      execSync(`launchctl bootstrap ${domain} ${plist}`, {
+        stdio: "pipe",
+      });
+    } catch (err: unknown) {
+      const msg = launchctlMessage(err);
+      // 37 after confirmed unload: kickstart. Kickstart does not reload a still-loaded
+      // old definition; that case is rejected above. 125 after a successful GUI probe
+      // is fail-closed — do not bootstrap user/<uid> as a second copy.
+      if (isAlreadyLoadedError(err)) {
+        try {
+          execSync(`launchctl kickstart -k ${domain}/${LABEL}`, { stdio: "pipe" });
+        } catch {
+          // kickstart is best-effort after already-loaded
+        }
+      } else {
+        return { ok: false, message: `Failed to load LaunchAgent: ${msg}`, runtimePath, cliPath };
+      }
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Error 37 = already loaded — that's fine, just restart
-    if (msg.includes("37")) {
-      try {
-        execSync(`launchctl kickstart -k gui/${uid()}/${LABEL}`, { stdio: "pipe" });
-      } catch {
-        // Ignore restart failure
-      }
-    } else {
-      return { ok: false, message: `Failed to load LaunchAgent: ${msg}`, runtimePath, cliPath };
-    }
+    return { ok: false, message: `Failed to load LaunchAgent: ${msg}`, runtimePath, cliPath };
   }
 
   return {
@@ -373,7 +438,6 @@ export function installService(dataDir?: string): {
     message: `LaunchAgent installed and started`,
     runtimePath,
     cliPath,
-    legacyRemoved,
   };
 }
 
@@ -382,27 +446,40 @@ export function installService(dataDir?: string): {
  */
 export function uninstallService(): { ok: boolean; message: string } {
   const plist = plistPath();
-
-  if (!existsSync(plist)) {
-    return { ok: true, message: "LaunchAgent not installed (nothing to remove)" };
-  }
-
-  // Unload
   try {
-    execSync(`launchctl bootout gui/${uid()} ${plist}`, { stdio: "pipe" });
-  } catch {
-    // May already be unloaded
-  }
+    const hadPlist = existsSync(plist);
+    const hadJob = findLoadedDomain(LABEL) !== null;
 
-  // Remove plist
-  try {
-    unlinkSync(plist);
+    if (!hadPlist && !hadJob) {
+      return { ok: true, message: "LaunchAgent not installed (nothing to remove)" };
+    }
+
+    bootoutLabel(LABEL);
+    if (hadPlist) {
+      bootoutPlist(plist);
+    }
+
+    const remaining = loadedDomains(LABEL);
+    if (remaining.length > 0) {
+      return {
+        ok: false,
+        message: `Failed to unload LaunchAgent from ${remaining.join(", ")}`,
+      };
+    }
+
+    if (hadPlist) {
+      try {
+        unlinkSync(plist);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, message: `Failed to remove plist: ${msg}` };
+      }
+    }
+
+    return { ok: true, message: "LaunchAgent uninstalled" };
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, message: `Failed to remove plist: ${msg}` };
+    return { ok: false, message: `Failed to unload LaunchAgent: ${launchctlMessage(err)}` };
   }
-
-  return { ok: true, message: "LaunchAgent uninstalled" };
 }
 
 /**
@@ -415,7 +492,8 @@ export function restartService(): { ok: boolean; message: string } {
   }
 
   try {
-    execSync(`launchctl kickstart -k gui/${uid()}/${LABEL}`, { stdio: "pipe" });
+    const domain = findLoadedDomain(LABEL) ?? preferredDomain();
+    execSync(`launchctl kickstart -k ${domain}/${LABEL}`, { stdio: "pipe" });
     return { ok: true, message: "Service restarted" };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -436,16 +514,25 @@ export function stopService(): { ok: boolean; message: string } {
   }
 
   try {
-    execSync(`launchctl bootout gui/${uid()}/${LABEL}`, { stdio: "pipe" });
-    return {
-      ok: true,
-      message: "Service stopped (will start again on next login or 'oppi server install')",
-    };
+    const hadJob = findLoadedDomain(LABEL) !== null;
+    bootoutLabel(LABEL);
+    bootoutPlist(plist);
+    const remaining = loadedDomains(LABEL);
+    if (remaining.length > 0) {
+      return {
+        ok: false,
+        message: `Stop failed: job still loaded in ${remaining.join(", ")}`,
+      };
+    }
+    if (hadJob) {
+      return {
+        ok: true,
+        message: "Service stopped (will start again on next login or 'oppi server install')",
+      };
+    }
+    return { ok: true, message: "Service was not running" };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("No such process") || msg.includes("Could not find")) {
-      return { ok: true, message: "Service was not running" };
-    }
     return { ok: false, message: `Stop failed: ${msg}` };
   }
 }
@@ -459,9 +546,10 @@ export function getServiceStatus(): LaunchdStatus {
   let running = false;
   let pid: number | null = null;
 
-  if (installed) {
+  let unexpected: unknown;
+  for (const domain of domainsForUid(uid())) {
     try {
-      const output = execSync(`launchctl print gui/${uid()}/${LABEL} 2>/dev/null`, {
+      const output = execSync(`launchctl print ${domain}/${LABEL} 2>/dev/null`, {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -477,10 +565,14 @@ export function getServiceStatus(): LaunchdStatus {
       if (output.includes("state = running")) {
         running = true;
       }
-    } catch {
-      // Service not loaded
+      unexpected = undefined;
+      break;
+    } catch (err: unknown) {
+      if (isLaunchctlNotFound(err)) continue;
+      unexpected ??= err;
     }
   }
+  if (unexpected !== undefined) throw unexpected;
 
   return { installed, running, pid, plistPath: plist, label: LABEL };
 }
