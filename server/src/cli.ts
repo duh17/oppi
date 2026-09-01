@@ -518,41 +518,51 @@ function cmdDoctor(storage: CliConnectionConfig): void {
   });
 
   // ── LaunchAgent checks ──
+  // launchctl is macOS-only. On npm/VPS Linux hosts the lookup throws; keep
+  // bind/TLS diagnostics visible instead of aborting doctor.
 
-  const svcStatus = getServiceStatus();
-  if (svcStatus.installed) {
-    checks.push({ level: "pass", message: "LaunchAgent installed" });
-    if (svcStatus.running) {
-      checks.push({
-        level: "pass",
-        message: `LaunchAgent running (PID ${svcStatus.pid})`,
-      });
+  try {
+    const svcStatus = getServiceStatus();
+    if (svcStatus.installed) {
+      checks.push({ level: "pass", message: "LaunchAgent installed" });
+      if (svcStatus.running) {
+        checks.push({
+          level: "pass",
+          message: `LaunchAgent running (PID ${svcStatus.pid})`,
+        });
+      } else {
+        checks.push({
+          level: "warn",
+          message: "LaunchAgent installed but not running (oppi server restart)",
+        });
+      }
+
+      const paths = readInstalledPlist();
+      if (paths) {
+        if (!existsSync(paths.runtimePath)) {
+          checks.push({
+            level: "fail",
+            message: `LaunchAgent runtime missing: ${paths.runtimePath} (oppi server install to fix)`,
+          });
+        }
+        if (!existsSync(paths.cliPath)) {
+          checks.push({
+            level: "fail",
+            message: `LaunchAgent CLI missing: ${paths.cliPath} (oppi server install to fix)`,
+          });
+        }
+      }
     } else {
       checks.push({
         level: "warn",
-        message: "LaunchAgent installed but not running (oppi server restart)",
+        message: "LaunchAgent not installed (oppi server install for background service)",
       });
     }
-
-    const paths = readInstalledPlist();
-    if (paths) {
-      if (!existsSync(paths.runtimePath)) {
-        checks.push({
-          level: "fail",
-          message: `LaunchAgent runtime missing: ${paths.runtimePath} (oppi server install to fix)`,
-        });
-      }
-      if (!existsSync(paths.cliPath)) {
-        checks.push({
-          level: "fail",
-          message: `LaunchAgent CLI missing: ${paths.cliPath} (oppi server install to fix)`,
-        });
-      }
-    }
-  } else {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
     checks.push({
       level: "warn",
-      message: "LaunchAgent not installed (oppi server install for background service)",
+      message: `could not inspect LaunchAgent (${message})`,
     });
   }
 
