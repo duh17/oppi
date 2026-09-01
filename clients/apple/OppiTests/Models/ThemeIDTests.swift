@@ -284,32 +284,6 @@ struct ThemeIDTests {
     }
 }
 
-// MARK: - ThemePalette convenience init
-
-@Suite("ThemePalette convenience init")
-struct ThemePaletteConvenienceInitTests {
-
-    @Test func convenienceInitDerivesSemanticTokensFromBase() {
-        let palette = ThemePalette(
-            bg: .black, bgDark: .black, bgHighlight: .gray,
-            fg: .white, fgDim: .gray, comment: .gray,
-            blue: .blue, cyan: .cyan, green: .green,
-            orange: .orange, purple: .purple, red: .red, yellow: .yellow
-        )
-        // The convenience init derives all semantic tokens.
-        // Verify a sample of derived values exist (they're derived from base colors).
-        // We can't compare Color equality reliably, but we can verify
-        // the palette was constructed without crashing and has all fields.
-        _ = palette.thinkingText
-        _ = palette.userMessageBg
-        _ = palette.toolPendingBg
-        _ = palette.mdHeading
-        _ = palette.syntaxKeyword
-        _ = palette.thinkingOff
-        _ = palette.toolDiffAdded
-    }
-}
-
 // MARK: - ThemeRuntimeState
 
 @Suite("ThemeRuntimeState")
@@ -332,17 +306,6 @@ struct ThemeRuntimeStateTests {
 
         ThemeRuntimeState.setThemeID(.dark)
         // Palette should be cached and match the dark theme
-        let palette = ThemeRuntimeState.currentPalette()
-        _ = palette.bg
-    }
-
-    @Test func invalidateCacheRecomputesPalette() {
-        let original = ThemeRuntimeState.currentThemeID()
-        defer { ThemeRuntimeState.setThemeID(original) }
-
-        ThemeRuntimeState.setThemeID(.dark)
-        ThemeRuntimeState.invalidateCache()
-        // After invalidation, palette should still be valid
         let palette = ThemeRuntimeState.currentPalette()
         _ = palette.bg
     }

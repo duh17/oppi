@@ -208,16 +208,10 @@ struct AppThemeFactoryTests {
         _ = theme.bg.primary
     }
 
-    // MARK: - Convenience init → factory round-trip
+    // MARK: - Builtin palette → factory round-trip
 
-    @Test func convenienceInitPaletteProducesValidAppTheme() {
-        let palette = ThemePalette(
-            bg: .black, bgDark: .black, bgHighlight: .gray,
-            fg: .white, fgDim: .gray, comment: .gray,
-            blue: .blue, cyan: .cyan, green: .green,
-            orange: .orange, purple: .purple, red: .red, yellow: .yellow
-        )
-        let theme = AppTheme.from(palette: palette)
+    @Test func builtinPaletteProducesValidAppTheme() {
+        let theme = AppTheme.from(palette: ThemePalettes.dark)
         #expect(theme.code.fontSize == 11)
         _ = theme.bg.primary
         _ = theme.syntax.keyword

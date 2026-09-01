@@ -78,68 +78,6 @@ struct ThemePalette: Sendable, ProviderIconTintPalette {
     let thinkingXhigh: Color
 }
 
-// MARK: - Convenience Initializer (base 13 → derive rest)
-
-// periphery:ignore - used by ThemeImportView for custom theme creation
-extension ThemePalette {
-    /// Create a palette from 13 base colors, deriving all semantic tokens.
-    /// Used when importing themes that only specify core colors.
-    init(
-        bg: Color, bgDark: Color, bgHighlight: Color,
-        fg: Color, fgDim: Color, comment: Color,
-        blue: Color, cyan: Color, green: Color,
-        orange: Color, purple: Color, red: Color, yellow: Color
-    ) {
-        self.bg = bg; self.bgDark = bgDark; self.bgHighlight = bgHighlight
-        self.fg = fg; self.fgDim = fgDim; self.comment = comment
-        self.blue = blue; self.cyan = cyan; self.green = green
-        self.orange = orange; self.purple = purple; self.red = red; self.yellow = yellow
-
-        self.thinkingText = fgDim
-
-        self.userMessageBg = bgHighlight
-        self.userMessageText = fg
-
-        self.toolPendingBg = blue.opacity(0.12)
-        self.toolSuccessBg = green.opacity(0.08)
-        self.toolErrorBg = red.opacity(0.10)
-        self.toolTitle = fg
-        self.toolOutput = fgDim
-
-        self.mdHeading = blue
-        self.mdLink = cyan
-        self.mdLinkUrl = comment
-        self.mdCode = cyan
-        self.mdCodeBlock = green
-        self.mdCodeBlockBorder = fgDim
-        self.mdQuote = fgDim
-        self.mdQuoteBorder = fgDim
-        self.mdHr = fgDim
-        self.mdListBullet = orange
-
-        self.toolDiffAdded = green
-        self.toolDiffRemoved = red
-        self.toolDiffContext = fgDim
-
-        self.syntaxComment = comment
-        self.syntaxKeyword = purple
-        self.syntaxFunction = blue
-        self.syntaxVariable = fg
-        self.syntaxString = green
-        self.syntaxNumber = orange
-        self.syntaxType = cyan
-        self.syntaxOperator = fg
-        self.syntaxPunctuation = fgDim
-
-        self.thinkingOff = comment
-        self.thinkingMinimal = fgDim
-        self.thinkingLow = blue
-        self.thinkingMedium = cyan
-        self.thinkingHigh = purple
-        self.thinkingXhigh = red
-    }
-}
-
 // MARK: - Theme IDs
 
 enum ThemeID: Hashable, Codable, Sendable {
@@ -601,12 +539,6 @@ enum ThemeRuntimeState {
 
     static func currentRenderTheme() -> RenderTheme {
         currentPalette().renderTheme
-    }
-
-    // periphery:ignore - API surface for future custom theme editing
-    /// Force palette recomputation (e.g. after editing a custom theme's colors).
-    static func invalidateCache() {
-        state.withLock { $0.palette = $0.themeID.palette }
     }
 }
 

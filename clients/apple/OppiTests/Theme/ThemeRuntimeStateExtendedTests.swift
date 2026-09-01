@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// Extended tests for ThemeRuntimeState — theme switching, palette caching,
-/// and invalidation across all built-in themes.
+/// Extended tests for ThemeRuntimeState — theme switching and palette caching
+/// across all built-in themes.
 ///
 /// The basic set/get tests live in ThemeIDTests.swift (ThemeRuntimeStateTests suite).
 /// These tests exercise more thorough switching scenarios and edge cases.
@@ -52,31 +52,6 @@ struct ThemeRuntimeStateExtendedTests {
         ThemeRuntimeState.setThemeID(.night)
         ThemeRuntimeState.setThemeID(.night)  // redundant set
         #expect(ThemeRuntimeState.currentThemeID() == .night)
-    }
-
-    // MARK: - invalidateCache preserves theme ID
-
-    @Test func invalidateCacheKeepsCurrentThemeID() {
-        let original = ThemeRuntimeState.currentThemeID()
-        defer { ThemeRuntimeState.setThemeID(original) }
-
-        ThemeRuntimeState.setThemeID(.light)
-        ThemeRuntimeState.invalidateCache()
-        #expect(ThemeRuntimeState.currentThemeID() == .light, "invalidateCache should not change the theme ID")
-    }
-
-    @Test func invalidateCacheProducesValidPalette() {
-        let original = ThemeRuntimeState.currentThemeID()
-        defer { ThemeRuntimeState.setThemeID(original) }
-
-        for themeID in ThemeID.builtins {
-            ThemeRuntimeState.setThemeID(themeID)
-            ThemeRuntimeState.invalidateCache()
-            let palette = ThemeRuntimeState.currentPalette()
-            _ = palette.bg
-            _ = palette.fg
-            _ = palette.syntaxKeyword
-        }
     }
 
     // MARK: - Palette matches theme ID after switch
