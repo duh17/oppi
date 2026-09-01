@@ -1284,6 +1284,84 @@ describe("agent routes", () => {
     }
   });
 
+  it("stamps launch.autoStop on saved-Agent create and rejects a non-boolean", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-autostop-routes-"));
+    const store = new AgentDefinitionStore(dataDir);
+    const sessions: Session[] = [];
+    try {
+      const agent = store.createAgent({ name: "Reviewer" });
+      const startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
+      const sendPrompt = vi.fn(async () => undefined);
+      const saveSession = vi.fn((session: Session) => {
+        const index = sessions.findIndex((candidate) => candidate.id === session.id);
+        if (index >= 0) sessions[index] = structuredClone(session);
+        else sessions.push(structuredClone(session));
+      });
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+          getWorkspace: vi.fn((workspaceId: string) =>
+            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+          ),
+          getDataDir: vi.fn(() => dataDir),
+          createSession: vi.fn((name?: string, model?: string) => {
+            const session = makeSession({ id: `sess-${sessions.length + 1}`, name, model });
+            sessions.push(structuredClone(session));
+            return session;
+          }),
+          saveSession,
+          deleteSession: vi.fn(() => false),
+          getSession: vi.fn((sessionId: string) =>
+            sessions.find((candidate) => candidate.id === sessionId),
+          ),
+          listSessions: vi.fn(() => sessions),
+          findSessionByLaunchIdempotencyKey: vi.fn(),
+          claimSessionLaunchRecovery: vi.fn(),
+        },
+        sessions: { startSession, sendPrompt },
+        ensureSessionContextWindow: vi.fn((session: Session) => session),
+        appEvents: { emitSessionCreated: vi.fn(), emitSessionSummary: vi.fn() },
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+
+      const invalid = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: `/agents/${agent.id}/sessions`,
+        url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+        req: makeRequest({
+          prompt: { text: "Review this" },
+          target: { workspaceId: "ws-1" },
+          autoStop: "true",
+        }) as never,
+        res: invalid as never,
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(JSON.parse(invalid.body)).toEqual({ error: "autoStop must be a boolean" });
+      expect(sessions).toHaveLength(0);
+
+      const res = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: `/agents/${agent.id}/sessions`,
+        url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+        req: makeRequest({
+          prompt: { text: "Review this" },
+          target: { workspaceId: "ws-1" },
+          autoStop: true,
+        }) as never,
+        res: res as never,
+      });
+      expect(res.statusCode).toBe(201);
+      expect(JSON.parse(res.body)).toMatchObject({
+        session: { launch: { autoStop: true } },
+      });
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [{ parentSessionId: 42 }, "parentSessionId must be a non-empty string"],
     [{ parentSessionId: "   " }, "parentSessionId must be a non-empty string"],

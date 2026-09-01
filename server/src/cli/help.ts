@@ -1634,6 +1634,10 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "authorize this child to spawn sessions; the grant propagates down the subtree",
       },
       {
+        name: "--auto-stop",
+        summary: "stop the session when the turn is done instead of calling session stop",
+      },
+      {
         name: "--idempotency-key",
         value: "<key>",
         summary: "reuse one launch/session across retries of the same request",
@@ -1647,6 +1651,8 @@ const HELP_TOPICS: HelpTopic[] = [
       "Managed sessions can create only direct children by default. A root may pass --allow-nested-delegation to authorize a child to spawn its own children; the grant then propagates down the subtree, so explicitly requested grandchild sessions work without re-authorizing at every level.",
       "With --idempotency-key, retrying the same create request reuses the existing launch instead of creating a duplicate session.",
       "If another launcher still owns the active lease for that key, the server can report launch_in_progress; retry with the same key.",
+      "--auto-stop stamps launch.autoStop so callers can skip session stop. The session stops as soon as the agent settles and is ready, with no idle wait. Pending ask/select/confirm/input dialogs keep the session alive until they are answered and the next settle. Prompt, steer, and follow-up start a new turn.",
+      "With --idempotency-key, retrying the same create request must keep the same --auto-stop value or the server reports a conflict.",
       "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",
       "--model also accepts an optional :thinking suffix such as sonnet:high. --thinking wins if both are present.",
       "Without --agent, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write inline sessionDefaults. With --agent, the same flags go to saved-Agent overrides.",

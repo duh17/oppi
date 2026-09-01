@@ -725,6 +725,167 @@ describe("AgentLaunchService", () => {
     expect(findSessionByLaunchIdempotencyKey).not.toHaveBeenCalled();
   });
 
+  it("stamps launch.autoStop when requested and omits it by default", async () => {
+    const { service } = makeService();
+
+    const stopped = await service.launch({
+      agent: { name: "Scout" },
+      target: { workspace: makeWorkspace() },
+      prompt: "go",
+      autoStop: true,
+    });
+    expect(stopped.kind).toBe("created");
+    if (stopped.kind === "created") {
+      expect(stopped.session.launch?.autoStop).toBe(true);
+    }
+
+    const { service: defaultService } = makeService();
+    const defaulted = await defaultService.launch({
+      agent: { name: "Scout" },
+      target: { workspace: makeWorkspace() },
+      prompt: "go",
+    });
+    expect(defaulted.kind).toBe("created");
+    if (defaulted.kind === "created") {
+      expect(defaulted.session.launch?.autoStop).toBeUndefined();
+    }
+  });
+
+  it("reuses an idempotent retry when autoStop matches", async () => {
+    const existing = makeSession({
+      id: "existing-1",
+      firstMessage: "hello",
+      launch: {
+        idempotencyKey: "launch-autostop",
+        status: "accepted",
+        requestedAt: 900,
+        completedAt: 950,
+        promptDispatch: "delivered",
+        autoStop: true,
+      },
+    });
+    const { service, createSession, startSession } = makeService({ sessions: [existing] });
+
+    const result = await service.launch({
+      agent: { name: "Ignored" },
+      target: { workspace: makeWorkspace() },
+      prompt: "hello",
+      idempotencyKey: "launch-autostop",
+      autoStop: true,
+    });
+
+    expect(result.kind).toBe("existing");
+    if (result.kind === "existing") {
+      expect(result.session.id).toBe("existing-1");
+      expect(result.session.launch?.autoStop).toBe(true);
+    }
+    expect(createSession).not.toHaveBeenCalled();
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an idempotent retry when autoStop differs", async () => {
+    const existing = makeSession({
+      id: "existing-1",
+      firstMessage: "hello",
+      launch: {
+        idempotencyKey: "launch-autostop",
+        status: "accepted",
+        requestedAt: 900,
+        completedAt: 950,
+        promptDispatch: "delivered",
+        autoStop: true,
+      },
+    });
+    const { service, createSession } = makeService({ sessions: [existing] });
+
+    await expect(
+      service.launch({
+        agent: { name: "Ignored" },
+        target: { workspace: makeWorkspace() },
+        prompt: "hello",
+        idempotencyKey: "launch-autostop",
+      }),
+    ).rejects.toThrow("Idempotency key is already associated with a different autoStop value");
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an idempotent retry that adds autoStop the existing launch lacks", async () => {
+    const existing = makeSession({
+      id: "existing-1",
+      firstMessage: "hello",
+      launch: {
+        idempotencyKey: "launch-autostop",
+        status: "accepted",
+        requestedAt: 900,
+        completedAt: 950,
+        promptDispatch: "delivered",
+      },
+    });
+    const { service, createSession } = makeService({ sessions: [existing] });
+
+    await expect(
+      service.launch({
+        agent: { name: "Ignored" },
+        target: { workspace: makeWorkspace() },
+        prompt: "hello",
+        idempotencyKey: "launch-autostop",
+        autoStop: true,
+      }),
+    ).rejects.toThrow("Idempotency key is already associated with a different autoStop value");
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects a persistence-race idempotency recovery with a different autoStop value", async () => {
+    const winner = makeSession({
+      id: "winner-1",
+      workspaceId: "ws-1",
+      launch: {
+        idempotencyKey: "launch-race",
+        status: "launching",
+        requestedAt: 1_000,
+        autoStop: true,
+        lease: { owner: "other-worker", acquiredAt: 1_000, expiresAt: 61_000 },
+      },
+    });
+    let persistedWinner: Session | undefined;
+    const saveSession = vi.fn(() => {
+      persistedWinner = winner;
+      throw new Error("UNIQUE constraint failed: launch.idempotency_key");
+    });
+    const startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
+    const sendPrompt = vi.fn(async () => undefined);
+    const service = new AgentLaunchService({
+      storage: {
+        createSession: vi.fn(),
+        saveSession,
+        deleteSession: vi.fn(() => false),
+        getDataDir: vi.fn(() => process.cwd()),
+        getSession: vi.fn(),
+        getWorkspace: vi.fn(),
+        listSessions: vi.fn(() => (persistedWinner ? [persistedWinner] : [])),
+        findSessionByLaunchIdempotencyKey: vi.fn(() => persistedWinner),
+        claimSessionLaunchRecovery: vi.fn(() => undefined),
+      },
+      sessions: { startSession, sendPrompt },
+      ensureSessionContextWindow: (session) => session,
+      nowMs: () => 2_000,
+      leaseTtlMs: 60_000,
+    });
+
+    await expect(
+      service.launch({
+        agent: { name: "Race loser" },
+        target: { workspace: makeWorkspace() },
+        prompt: "must not be sent",
+        idempotencyKey: "launch-race",
+        leaseOwner: "this-worker",
+      }),
+    ).rejects.toThrow("Idempotency key is already associated with a different autoStop value");
+    expect(saveSession).toHaveBeenCalledTimes(1);
+    expect(startSession).not.toHaveBeenCalled();
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
   it("reuses one session for the same idempotency key and reports existing", async () => {
     const existing = makeSession({
       id: "existing-1",

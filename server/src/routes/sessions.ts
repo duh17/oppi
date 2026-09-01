@@ -175,6 +175,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       launchLeaseOwner?: string;
       parentSessionId?: string;
       allowNestedDelegation?: boolean;
+      autoStop?: boolean;
     }>(req);
     const delegationFieldError = invalidDelegationFields(
       body.parentSessionId,
@@ -182,6 +183,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     );
     if (delegationFieldError) {
       helpers.error(res, 400, delegationFieldError);
+      return;
+    }
+    if (body.autoStop !== undefined && typeof body.autoStop !== "boolean") {
+      helpers.error(res, 400, "autoStop must be a boolean");
       return;
     }
     if (Array.isArray(body.images) && body.images.length > 0) {
@@ -256,6 +261,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         leaseOwner: body.launchLeaseOwner,
         parentSessionId: body.parentSessionId,
         allowNestedDelegation: body.allowNestedDelegation === true,
+        autoStop: body.autoStop === true,
       });
       const requiredModelFailure = requiredModelLaunchFailureMessage(result.session);
       if (requiredModelFailure) {

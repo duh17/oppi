@@ -84,7 +84,7 @@ describe("SessionAgentEventCoordinator", () => {
 
   function makeCoordinator(
     active: SessionAgentEventState,
-    options?: { dataDir?: string },
+    options?: { dataDir?: string; handleSessionSettled?: (key: string) => void },
   ): {
     broadcast: ReturnType<typeof vi.fn>;
     coordinator: SessionAgentEventCoordinator;
@@ -123,6 +123,9 @@ describe("SessionAgentEventCoordinator", () => {
       } as never,
       broadcast,
       resetIdleTimer,
+      ...(options?.handleSessionSettled
+        ? { handleSessionSettled: options.handleSessionSettled }
+        : {}),
       ...(options?.dataDir ? { dataDir: options.dataDir } : {}),
     });
 
@@ -719,6 +722,51 @@ describe("SessionAgentEventCoordinator", () => {
     });
     expect(updateSessionFromEvent).not.toHaveBeenCalled();
     expect(resetIdleTimer).toHaveBeenCalledWith("child-1");
+  });
+
+  it("calls handleSessionSettled on agent_settled, prompt_error, and dialog settle", () => {
+    const active = makeActiveSession({ status: "busy" });
+    const handleSessionSettled = vi.fn();
+    const { coordinator, resetIdleTimer } = makeCoordinator(active, {
+      handleSessionSettled,
+    });
+
+    coordinator.handlePiEvent(active.session.id, { type: "agent_settled" });
+    coordinator.handlePiEvent(active.session.id, {
+      type: "prompt_error",
+      error: "boom",
+    });
+    coordinator.handlePiEvent(active.session.id, {
+      type: "extension_ui_request_settled",
+      id: "ui-1",
+    });
+    coordinator.handlePiEvent(active.session.id, {
+      type: "extension_error",
+      extensionPath: "ext.ts",
+      error: "failed",
+    });
+
+    expect(handleSessionSettled.mock.calls).toEqual([["child-1"], ["child-1"], ["child-1"]]);
+    expect(resetIdleTimer).toHaveBeenCalledTimes(1);
+    expect(resetIdleTimer).toHaveBeenCalledWith("child-1");
+  });
+
+  it("invokes handleSessionSettled when updateSessionFromEvent throws after setting ready", () => {
+    const active = makeActiveSession({ status: "busy" });
+    const handleSessionSettled = vi.fn();
+    const { coordinator, updateSessionFromEvent } = makeCoordinator(active, {
+      handleSessionSettled,
+    });
+    updateSessionFromEvent.mockImplementation(() => {
+      active.session.status = "ready";
+      throw new Error("persist failed");
+    });
+
+    expect(() =>
+      coordinator.handlePiEvent(active.session.id, { type: "agent_settled" }),
+    ).toThrow("persist failed");
+    expect(handleSessionSettled).toHaveBeenCalledTimes(1);
+    expect(handleSessionSettled).toHaveBeenCalledWith("child-1");
   });
 
   it("logs the raw prompt_error payload alongside the normalized user-facing message", () => {

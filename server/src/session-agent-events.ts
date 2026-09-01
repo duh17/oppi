@@ -63,6 +63,7 @@ export interface SessionAgentEventCoordinatorDeps {
   turnCoordinator: SessionTurnCoordinator;
   broadcast: (key: string, message: ServerMessage) => void;
   resetIdleTimer: (key: string) => void;
+  handleSessionSettled?: (key: string) => void;
   markQueuedMessageStarted?: (key: string, message: PiMessage) => void;
   schedulePostCompactionQueueFlush?: (key: string) => void;
   resumeQueuedCompactions?: (key: string) => void;
@@ -126,7 +127,7 @@ export class SessionAgentEventCoordinator {
         broadcastSettled: (message) => this.deps.broadcast(key, message),
         broadcastIfMissing: true,
       });
-      this.deps.resetIdleTimer(key);
+      this.handleSessionSettled(key);
       return;
     }
 
@@ -148,7 +149,7 @@ export class SessionAgentEventCoordinator {
         rawError: data.error,
       });
       this.deps.broadcast(key, { type: "error", error });
-      this.deps.resetIdleTimer(key);
+      this.handleSessionSettled(key);
       return;
     }
 
@@ -273,6 +274,7 @@ export class SessionAgentEventCoordinator {
       // Do not strand a compact that was accepted during the active turn.
       if (event.type === "agent_settled") {
         this.deps.resumeQueuedCompactions?.(key);
+        this.handleSessionSettled(key);
       }
     }
 
@@ -295,7 +297,13 @@ export class SessionAgentEventCoordinator {
       this.broadcastSessionSummaryIfChanged(key, active, event.type);
     }
 
-    this.deps.resetIdleTimer(key);
+    if (event.type !== "agent_settled") {
+      this.deps.resetIdleTimer(key);
+    }
+  }
+
+  private handleSessionSettled(key: string): void {
+    (this.deps.handleSessionSettled ?? this.deps.resetIdleTimer)(key);
   }
 
   private sessionTreeFor(active: SessionAgentEventState): CanonicalSessionTree | undefined {

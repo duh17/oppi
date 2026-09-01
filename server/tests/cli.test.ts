@@ -332,6 +332,7 @@ describe("oppi help", () => {
     expect(text).not.toContain("sess_123");
     expect(text).toContain("--allow-nested-delegation");
     expect(text).toContain("grant then propagates down the subtree");
+    expect(text).toContain("--auto-stop");
     expect(text).toContain("--idempotency-key <key>");
     expect(text).toContain("reuses the existing launch");
   });

@@ -113,14 +113,19 @@ function dialogSnapshotFromRequest(
   };
 }
 
-function isPendingUserReplyRequest(message: ServerMessage): boolean {
+export function isPendingUserReplyRequest(message: {
+  type?: string;
+  method?: string;
+  questions?: unknown;
+  options?: unknown;
+}): boolean {
   if (message.type !== "extension_ui_request") {
     return false;
   }
 
   switch (message.method) {
     case "ask":
-      return isPendingAskMessage(message);
+      return Array.isArray(message.questions) && message.questions.length > 0;
     case "select":
       return Array.isArray(message.options) && message.options.length > 0;
     case "confirm":

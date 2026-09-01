@@ -539,6 +539,7 @@ async function createSession(
   const thinking = resolveThinkingFromFlags(flags, resolvedModel?.thinkingLevel);
   const savedAgent = savedAgentReference(flags.agent);
   const allowNestedDelegation = flags["allow-nested-delegation"] === "true";
+  const autoStop = flags["auto-stop"] === "true";
   const result = savedAgent
     ? await localApiRequest<{ session: Session; receipt?: Record<string, unknown> }>(
         storage,
@@ -563,6 +564,7 @@ async function createSession(
               : {}),
             ...(parentSessionId ? { parentSessionId } : {}),
             ...(allowNestedDelegation ? { allowNestedDelegation: true } : {}),
+            ...(autoStop ? { autoStop: true } : {}),
             ...(flags["idempotency-key"] ? { idempotencyKey: flags["idempotency-key"] } : {}),
           },
         },
@@ -581,6 +583,7 @@ async function createSession(
             ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
             ...(parentSessionId ? { parentSessionId } : {}),
             ...(allowNestedDelegation ? { allowNestedDelegation: true } : {}),
+            ...(autoStop ? { autoStop: true } : {}),
             ...(flags["idempotency-key"] ? { launchIdempotencyKey: flags["idempotency-key"] } : {}),
           },
         },
@@ -603,6 +606,7 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   create: [
     "agent",
     "allow-nested-delegation",
+    "auto-stop",
     "exclude-tools",
     "idempotency-key",
     "json",

@@ -2,6 +2,7 @@ import { clearExtensionUIState, type ExtensionUIState } from "./extension-ui-sta
 import type { PendingStop, PendingStopSessionState } from "./session-stop.js";
 import type { SdkBackend } from "./sdk-backend.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
+import { isPendingUserReplyRequest } from "./session-attention.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -143,23 +144,61 @@ export class SessionLifecycleCoordinator {
     }
   }
 
+  handleSessionSettled(key: string): void {
+    const active = this.deps.getActiveSession(key);
+    if (!active) {
+      return;
+    }
+
+    if (active.session.launch?.autoStop !== true) {
+      this.resetIdleTimer(key);
+      return;
+    }
+
+    this.clearIdleTimer(key);
+    if (active.session.status !== "ready" || hasPendingUserReplyDialog(active)) {
+      return;
+    }
+
+    log.info("session_lifecycle.auto_stop", {
+      sessionId: active.session.id,
+      key,
+    });
+    this.stopSessionObserved(active.session.id);
+  }
+
   resetIdleTimer(key: string): void {
     this.clearIdleTimer(key);
 
+    const active = this.deps.getActiveSession(key);
+    if (active?.session.launch?.autoStop === true) {
+      return;
+    }
+
     const timeoutMs = this.deps.getSessionIdleTimeoutMs();
     const timer = setTimeout(() => {
-      const active = this.deps.getActiveSession(key);
-      if (!active) {
+      const idleActive = this.deps.getActiveSession(key);
+      if (!idleActive) {
+        return;
+      }
+
+      if (hasPendingUserReplyDialog(idleActive)) {
+        log.info("session_lifecycle.idle_timeout.held_for_dialog", {
+          sessionId: idleActive.session.id,
+          key,
+          timeoutMs,
+        });
+        this.resetIdleTimer(key);
         return;
       }
 
       log.info("session_lifecycle.idle_timeout", {
-        sessionId: active.session.id,
+        sessionId: idleActive.session.id,
         key,
         timeoutMs,
       });
       this.pendingIdleTimeoutKeys.add(key);
-      void this.deps.stopSession(active.session.id);
+      this.stopSessionObserved(idleActive.session.id);
     }, timeoutMs);
 
     this.idleTimers.set(key, timer);
@@ -172,6 +211,24 @@ export class SessionLifecycleCoordinator {
       this.idleTimers.delete(key);
     }
   }
+
+  private stopSessionObserved(sessionId: string): void {
+    void this.deps.stopSession(sessionId).catch((error) => {
+      log.error("session_lifecycle.stop_session.failed", {
+        sessionId,
+        error: safeErrorMessage(error),
+      });
+    });
+  }
+}
+
+function hasPendingUserReplyDialog(active: SessionLifecycleSessionState): boolean {
+  for (const request of active.pendingUIRequests.values()) {
+    if (isPendingUserReplyRequest(request)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Map SDK/server reason strings to metric tag values. */

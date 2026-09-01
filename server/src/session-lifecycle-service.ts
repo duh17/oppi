@@ -161,6 +161,7 @@ export class SessionLifecycleService {
     leaseOwner?: string;
     parentSessionId?: string;
     allowNestedDelegation?: boolean;
+    autoStop?: boolean;
   }): Promise<CreateWorkspaceSessionResult> {
     const inlineAgent: AgentDefinition = {
       name: params.name?.trim() || params.workspace.name || "Workspace session",
@@ -189,6 +190,7 @@ export class SessionLifecycleService {
         leaseOwner: params.leaseOwner,
         parentSessionId: params.parentSessionId,
         allowNestedDelegation: params.allowNestedDelegation,
+        autoStop: params.autoStop,
         sessionName: params.name,
         ephemeral: params.ephemeral,
         source: "workspace-wrapper",

@@ -410,6 +410,50 @@ describe("session command dispatch and output boundaries", () => {
     });
   });
 
+  it("posts autoStop on workspace and saved-Agent create when --auto-stop is set", async () => {
+    request
+      .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
+      .mockResolvedValueOnce({ session: { id: "child-1", workspaceId: "ws-1" } })
+      .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
+      .mockResolvedValueOnce({ session: { id: "child-2", workspaceId: "ws-1" } });
+
+    await withCallerSessionEnv(undefined, async () => {
+      await captureCliOutput(() =>
+        cmdSession(storage, "create", [], {
+          workspace: "ws-1",
+          prompt: "Inspect the repo",
+          "auto-stop": "true",
+          json: "true",
+        }),
+      );
+      await captureCliOutput(() =>
+        cmdSession(storage, "create", [], {
+          agent: "reviewer",
+          workspace: "ws-1",
+          prompt: "Review this",
+          "auto-stop": "true",
+          json: "true",
+        }),
+      );
+    });
+
+    expect(request).toHaveBeenNthCalledWith(2, storage, "/workspaces/ws-1/sessions", {
+      method: "POST",
+      body: {
+        prompt: "Inspect the repo",
+        autoStop: true,
+      },
+    });
+    expect(request).toHaveBeenNthCalledWith(4, storage, "/agents/reviewer/sessions", {
+      method: "POST",
+      body: {
+        prompt: { text: "Review this" },
+        target: { workspaceId: "ws-1" },
+        autoStop: true,
+      },
+    });
+  });
+
   it("posts workspace tool policy from Pi create flags", async () => {
     request
       .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })

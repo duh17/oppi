@@ -660,6 +660,63 @@ describe("POST /workspaces/:id/sessions", () => {
     expect(mock.storage.createSession).not.toHaveBeenCalled();
   });
 
+  it("stamps launch.autoStop when requested and omits it by default", async () => {
+    const autoStopMock = createMockContext();
+    await dispatchCreate(autoStopMock, { prompt: "Inspect", autoStop: true });
+    expect(autoStopMock.errors).toEqual([]);
+    expect(autoStopMock.responses).toHaveLength(1);
+    const autoStopResponse = autoStopMock.responses[0]!.data as { session: Session };
+    expect(autoStopResponse.session.launch?.autoStop).toBe(true);
+
+    const defaultMock = createMockContext();
+    await dispatchCreate(defaultMock, { prompt: "Inspect" });
+    expect(defaultMock.errors).toEqual([]);
+    const defaultResponse = defaultMock.responses[0]!.data as { session: Session };
+    expect(defaultResponse.session.launch?.autoStop).toBeUndefined();
+  });
+
+  it("rejects non-boolean autoStop with HTTP 400", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, { autoStop: "true" });
+
+    expect(mock.responses).toEqual([]);
+    expect(mock.errors).toEqual([{ status: 400, message: "autoStop must be a boolean" }]);
+    expect(mock.storage.createSession).not.toHaveBeenCalled();
+  });
+
+  it("maps autoStop idempotency mismatches to HTTP 409", async () => {
+    const mock = createMockContext();
+    const existing = makeSession({
+      id: "existing-1",
+      firstMessage: "Inspect",
+      launch: {
+        idempotencyKey: "cli-autostop",
+        status: "accepted",
+        requestedAt: 1,
+        autoStop: true,
+      },
+    });
+    mock.storage.listSessions.mockReturnValue([existing]);
+    mock.storage.getSession.mockImplementation((sessionId: string) =>
+      sessionId === existing.id ? existing : undefined,
+    );
+
+    await dispatchCreate(mock, {
+      prompt: "Inspect",
+      launchIdempotencyKey: "cli-autostop",
+    });
+
+    expect(mock.responses).toEqual([]);
+    expect(mock.errors).toEqual([
+      {
+        status: 409,
+        message: "Idempotency key is already associated with a different autoStop value",
+      },
+    ]);
+    expect(mock.storage.createSession).not.toHaveBeenCalled();
+  });
+
   it("maps delegation policy rejections to HTTP 409", async () => {
     const mock = createMockContext();
     const nestedCaller = makeSession({

@@ -16,6 +16,7 @@ import {
 import { EventRing } from "../src/event-ring.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager, type ExtensionUIResponse } from "../src/sessions.js";
+import type { ExtensionUIRequest } from "../src/extension-ui-state.js";
 import {
   SessionLifecycleCoordinator,
   type SessionLifecycleCoordinatorDeps,
@@ -1408,6 +1409,21 @@ describe("SessionManager follow_up", () => {
   });
 });
 
+describe("SessionManager idle timer resets on send", () => {
+  it("resets the idle timer for prompt, steer, and follow-up", async () => {
+    const { manager } = makeManagerHarness({ status: "busy" });
+    const resetIdleTimer = vi.fn();
+    (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer =
+      resetIdleTimer;
+
+    await manager.sendPrompt("s1", "hello", { streamingBehavior: "steer" });
+    await manager.sendSteer("s1", "focus on X");
+    await manager.sendFollowUp("s1", "also do Y");
+
+    expect(resetIdleTimer.mock.calls).toEqual([["s1"], ["s1"], ["s1"]]);
+  });
+});
+
 describe("SessionManager message queue", () => {
   it("tracks steering and follow-up queue state", async () => {
     const { manager } = makeManagerHarness({ status: "busy" });
@@ -2250,5 +2266,237 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
 
     vi.advanceTimersByTime(100_000);
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it.each([
+    [
+      "ask",
+      {
+        type: "extension_ui_request",
+        id: "ask-1",
+        method: "ask",
+        questions: [{ id: "q1", question: "Continue?", options: [] }],
+      },
+    ],
+    [
+      "select",
+      {
+        type: "extension_ui_request",
+        id: "select-1",
+        method: "select",
+        title: "Pick one",
+        options: ["A", "B"],
+      },
+    ],
+    [
+      "confirm",
+      {
+        type: "extension_ui_request",
+        id: "confirm-1",
+        method: "confirm",
+        title: "Proceed?",
+      },
+    ],
+    [
+      "input",
+      {
+        type: "extension_ui_request",
+        id: "input-1",
+        method: "input",
+        title: "Name",
+        placeholder: "agent",
+      },
+    ],
+  ] as const)(
+    "resets the idle timer instead of stopping when a pending %s dialog is waiting",
+    (_method, request) => {
+      const active = makeLifecycleActiveSession();
+      active.pendingUIRequests.set(request.id, request as ExtensionUIRequest);
+      const deps = makeLifecycleDeps(active);
+      const coordinator = new SessionLifecycleCoordinator(deps);
+
+      coordinator.resetIdleTimer("key");
+      vi.advanceTimersByTime(300_000);
+
+      expect(deps.stopSession).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(300_000);
+      expect(deps.stopSession).not.toHaveBeenCalled();
+
+      active.pendingUIRequests.clear();
+      vi.advanceTimersByTime(300_000);
+      expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+    },
+  );
+
+  it("still stops when a pending UI request is not a user-reply dialog", () => {
+    const active = makeLifecycleActiveSession();
+    active.pendingUIRequests.set("notify-1", {
+      type: "extension_ui_request",
+      id: "notify-1",
+      method: "notify",
+      message: "working",
+    } as ExtensionUIRequest);
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    vi.advanceTimersByTime(300_000);
+
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it("still stops when a pending ask has no questions", () => {
+    const active = makeLifecycleActiveSession();
+    active.pendingUIRequests.set("ask-empty", {
+      type: "extension_ui_request",
+      id: "ask-empty",
+      method: "ask",
+      questions: [],
+    } as ExtensionUIRequest);
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    vi.advanceTimersByTime(300_000);
+
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+});
+
+describe("SessionLifecycleCoordinator auto-stop settle", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("when autoStop and agent settles with no pending user-reply dialog, stopSession is called immediately", () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+
+    expect(deps.stopSession).toHaveBeenCalledTimes(1);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+
+    vi.advanceTimersByTime(300_000);
+    expect(deps.stopSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("when autoStop and pending ask, do not stop", () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    active.pendingUIRequests.set("ask-1", {
+      type: "extension_ui_request",
+      id: "ask-1",
+      method: "ask",
+      questions: [{ id: "q1", question: "Continue?", options: [] }],
+    } as ExtensionUIRequest);
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+    vi.advanceTimersByTime(300_000);
+
+    expect(deps.stopSession).not.toHaveBeenCalled();
+  });
+
+  it("when autoStop is absent, idle timer still used", () => {
+    const active = makeLifecycleActiveSession({ status: "ready" });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(299_999);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it("when autoStop and session is busy, do not stop", () => {
+    const active = makeLifecycleActiveSession({
+      status: "busy",
+      launch: { autoStop: true },
+    });
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+    coordinator.resetIdleTimer("key");
+    vi.advanceTimersByTime(300_000);
+
+    expect(deps.stopSession).not.toHaveBeenCalled();
+  });
+
+  it("when autoStop and pending ask is answered while ready, stopSession is called immediately", () => {
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    active.pendingUIRequests.set("ask-1", {
+      type: "extension_ui_request",
+      id: "ask-1",
+      method: "ask",
+      questions: [{ id: "q1", question: "Continue?", options: [] }],
+    } as ExtensionUIRequest);
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.handleSessionSettled("key");
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    active.pendingUIRequests.clear();
+    coordinator.handleSessionSettled("key");
+
+    expect(deps.stopSession).toHaveBeenCalledTimes(1);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it("when stopSession rejects, it does not become an unhandled rejection", async () => {
+    vi.useRealTimers();
+    const active = makeLifecycleActiveSession({
+      status: "ready",
+      launch: { autoStop: true },
+    });
+    const stopError = new Error("stop boom");
+    const stopCalls: string[] = [];
+    // A plain rejecting stub: vi.fn() attaches .then() for settledResults and
+    // would hide an unhandledRejection that `oppi serve` would still crash on.
+    const deps = makeLifecycleDeps(active, {
+      stopSession: (sessionId) => {
+        stopCalls.push(sessionId);
+        return Promise.reject(stopError);
+      },
+    });
+    const coordinator = new SessionLifecycleCoordinator(deps);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      coordinator.handleSessionSettled("key");
+      expect(stopCalls).toEqual(["session-1"]);
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });

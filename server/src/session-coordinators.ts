@@ -237,6 +237,7 @@ export function createSessionCoordinatorBundle(
     turnCoordinator,
     broadcast: (key, message) => deps.broadcast(key, message),
     resetIdleTimer: (key) => deps.resetIdleTimer(key),
+    handleSessionSettled: (key) => lifecycleCoordinator.handleSessionSettled(key),
     markQueuedMessageStarted: (key, message) =>
       queueCoordinator.markQueuedMessageStarted(key, message),
     schedulePostCompactionQueueFlush: (key) =>

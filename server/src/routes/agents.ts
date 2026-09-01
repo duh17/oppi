@@ -145,6 +145,10 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(res, 400, delegationFieldError);
         return true;
       }
+      if (body.autoStop !== undefined && typeof body.autoStop !== "boolean") {
+        helpers.error(res, 400, "autoStop must be a boolean");
+        return true;
+      }
       const parsedPrompt = parsePrompt(body.prompt);
       if (parsedPrompt.error) {
         helpers.error(res, 400, parsedPrompt.error);
@@ -187,6 +191,7 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         agentVersion: agent.version,
         parentSessionId: body.parentSessionId,
         allowNestedDelegation: body.allowNestedDelegation === true,
+        autoStop: body.autoStop === true,
         target: { workspace, worktreeId: worktreeSelection.worktreeId },
         prompt,
         attachments: parsedPrompt.attachments,
@@ -397,6 +402,7 @@ interface CreateAgentSessionRequest {
   };
   parentSessionId?: string;
   allowNestedDelegation?: boolean;
+  autoStop?: boolean;
   idempotencyKey?: string;
   ephemeral?: boolean;
   sessionName?: string;

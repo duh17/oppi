@@ -97,6 +97,8 @@ export interface SessionLaunchMetadata {
   allowsNestedDelegation?: boolean;
   /** Client-supplied key used to make agent launch retries create at most one session. */
   idempotencyKey?: string;
+  /** Stop this session as soon as a turn settles with no pending user-reply dialog. */
+  autoStop?: boolean;
   schedule?: {
     scheduleId: string;
     runId: string;

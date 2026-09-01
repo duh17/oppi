@@ -60,6 +60,7 @@ export interface AgentLaunchRequest {
   prompt?: string;
   attachments?: ChatAttachmentRef[];
   idempotencyKey?: string;
+  autoStop?: boolean;
   leaseOwner?: string;
   source?: NonNullable<Session["launch"]>["source"];
   schedule?: NonNullable<Session["launch"]>["schedule"];
@@ -157,6 +158,7 @@ export class AgentLaunchService {
       const existing = this.findSessionByIdempotencyKey(idempotencyKey);
       if (existing) {
         this.assertIdempotentDelegationMatches(existing, delegation);
+        this.assertIdempotentAutoStopMatches(existing, request.autoStop);
         const existingResult = this.resultForExistingLaunch(existing, now);
         if (
           existingResult.kind === "existing" &&
@@ -177,6 +179,7 @@ export class AgentLaunchService {
         : undefined;
       if (existing) {
         this.assertIdempotentDelegationMatches(existing, delegation);
+        this.assertIdempotentAutoStopMatches(existing, request.autoStop);
         return this.resultForExistingLaunch(existing, now);
       }
       throw error;
@@ -312,6 +315,7 @@ export class AgentLaunchService {
       parentSessionId: delegation.parentSessionId,
       allowsNestedDelegation: delegation.allowsNestedDelegation,
       idempotencyKey,
+      ...(request.autoStop === true ? { autoStop: true } : {}),
       schedule: request.schedule,
       target: {
         workspaceId: request.target.workspace.id,
@@ -455,6 +459,16 @@ export class AgentLaunchService {
     if (existingParentSessionId !== delegation.parentSessionId || grantMismatch) {
       throw new DelegationPolicyError(
         "Idempotency key is already associated with a different delegation lineage",
+      );
+    }
+  }
+
+  private assertIdempotentAutoStopMatches(existing: Session, autoStop?: boolean): void {
+    const existingAutoStop = existing.launch?.autoStop === true;
+    const requestedAutoStop = autoStop === true;
+    if (existingAutoStop !== requestedAutoStop) {
+      throw new DelegationPolicyError(
+        "Idempotency key is already associated with a different autoStop value",
       );
     }
   }
