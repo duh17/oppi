@@ -218,12 +218,12 @@ struct TimelineLifecycleBench {
                 tool: "bash",
                 args: ["command": .string("echo benchmark")]
             ),
-            .toolOutput(
+            .toolOutput(.init(
                 sessionId: "bench",
                 toolEventId: toolId,
                 output: "benchmark output line\n",
                 isError: false
-            ),
+            )),
             .toolEnd(sessionId: "bench", toolEventId: toolId, isError: false),
         ])
         harness.items = reducer.items

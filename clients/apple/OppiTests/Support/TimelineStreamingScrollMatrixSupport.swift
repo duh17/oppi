@@ -221,12 +221,12 @@ final class TimelineStreamingScrollScenarioRunner {
         for (index, chunk) in toolSpec.outputChunks.enumerated() {
             process(
                 [
-                    .toolOutput(
+                    .toolOutput(.init(
                         sessionId: sessionId,
                         toolEventId: toolEventID,
                         output: chunk,
                         isError: false
-                    ),
+                    )),
                 ],
                 step: "\(token)-tool-output-\(index)",
                 isBusy: true
@@ -241,12 +241,12 @@ final class TimelineStreamingScrollScenarioRunner {
 
         process(
             [
-                .toolOutput(
+                .toolOutput(.init(
                     sessionId: sessionId,
                     toolEventId: toolEventID,
                     output: "",
                     isError: false
-                ),
+                )),
             ],
             step: "\(token)-no-op-output",
             isBusy: true,

@@ -58,7 +58,7 @@ struct TimelineReducerTests {
 
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "ls"]))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "file1.txt\nfile2.txt", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: toolId, output: "file1.txt\nfile2.txt", isError: false)))
         reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
         reducer.process(.agentEnd(sessionId: "s1"))
 
@@ -392,7 +392,7 @@ struct TimelineReducerTests {
 
         reducer.process(.agentStart(sessionId: "s1"))
         // toolOutput with no matching toolStart — output is stored but no item update
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "orphan", output: "data", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "orphan", output: "data", isError: false)))
         reducer.process(.agentEnd(sessionId: "s1"))
 
         // The output was stored in toolOutputStore but no toolCall item exists
@@ -427,7 +427,7 @@ struct TimelineReducerTests {
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.textDelta(sessionId: "s1", delta: "hello"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "result", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "result", isError: false)))
         reducer.process(.toolEnd(
             sessionId: "s1",
             toolEventId: "t1",
@@ -453,7 +453,7 @@ struct TimelineReducerTests {
 
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: toolID, tool: "bash", args: ["command": "ls"]))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolID, output: "file1\nfile2", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: toolID, output: "file1\nfile2", isError: false)))
         reducer.process(.toolEnd(
             sessionId: "s1",
             toolEventId: toolID,
@@ -552,7 +552,7 @@ struct TimelineReducerTests {
             .textDelta(sessionId: "s1", delta: "Answer: "),
             .textDelta(sessionId: "s1", delta: "42"),
             .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": "echo hi"]),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "hi\n", isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "hi\n", isError: false)),
             .toolEnd(sessionId: "s1", toolEventId: "t1"),
             .textDelta(sessionId: "s1", delta: "Done."),
             .agentEnd(sessionId: "s1"),
@@ -989,9 +989,9 @@ struct TimelineReducerTests {
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
 
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line1\n", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line2\n", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line3\n", isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "line1\n", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "line2\n", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "line3\n", isError: false)),
         ])
 
         let fullOutput = reducer.toolOutputStore.fullOutput(for: "t1")
@@ -1005,8 +1005,8 @@ struct TimelineReducerTests {
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
 
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "err\n", isError: true),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "err\n", isError: true)),
         ])
 
         guard case .toolCall(_, _, _, _, _, let isError, _) = reducer.items[0] else {

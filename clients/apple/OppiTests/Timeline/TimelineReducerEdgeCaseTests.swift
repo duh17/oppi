@@ -261,7 +261,7 @@ struct TimelineReducerEdgeCaseTests {
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.textDelta(sessionId: "s1", delta: "hello"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "result", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "result", isError: false)))
         reducer.process(.toolEnd(
             sessionId: "s1",
             toolEventId: "t1",
@@ -300,7 +300,7 @@ struct TimelineReducerEdgeCaseTests {
 
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: toolID, tool: "bash", args: ["command": "ls"]))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolID, output: "file1\nfile2", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: toolID, output: "file1\nfile2", isError: false)))
         reducer.process(.toolEnd(
             sessionId: "s1",
             toolEventId: toolID,
@@ -462,7 +462,7 @@ struct TimelineReducerEdgeCaseTests {
             sessionId: "s1", toolEventId: "t1", tool: "bash",
             args: ["command": "cmd1"]
         ))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false)))
         reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t1"))
         reducer.process(.messageEnd(sessionId: "s1", content: "Let me look at the spans"))
 
@@ -472,7 +472,7 @@ struct TimelineReducerEdgeCaseTests {
             sessionId: "s1", toolEventId: "t2", tool: "bash",
             args: ["command": "cmd2"]
         ))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t2", output: "ok\n", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "t2", output: "ok\n", isError: false)))
         reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t2"))
         reducer.process(.messageEnd(sessionId: "s1", content: "That's fast. Let me find a slow one"))
 

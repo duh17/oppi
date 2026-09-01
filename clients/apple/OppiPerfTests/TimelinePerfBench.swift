@@ -87,12 +87,12 @@ struct TimelinePerfBench {
 
             // 3 output chunks per tool
             for c in 0..<3 {
-                events.append(.toolOutput(
+                events.append(.toolOutput(.init(
                     sessionId: sessionId,
                     toolEventId: toolId,
                     output: toolOutputChunk(toolIndex: t, chunkIndex: c),
                     isError: false
-                ))
+                )))
             }
 
             events.append(.toolEnd(
@@ -134,12 +134,12 @@ struct TimelinePerfBench {
     /// Generate a batch of tool output deltas (coalescer hot path).
     private static func toolOutputBatch(count: Int, toolId: String = "tool-0", sessionId: String = "bench") -> [AgentEvent] {
         (0..<count).map { i in
-            .toolOutput(
+            .toolOutput(.init(
                 sessionId: sessionId,
                 toolEventId: toolId,
                 output: "Line \(i): processing result with some typical output data\n",
                 isError: false
-            )
+            ))
         }
     }
 
@@ -426,12 +426,12 @@ struct TimelinePerfBench {
         }
         events.append(.toolStart(sessionId: "bench", toolEventId: "t1", tool: "bash", args: [:]))
         for i in 0..<10 {
-            events.append(.toolOutput(
+            events.append(.toolOutput(.init(
                 sessionId: "bench",
                 toolEventId: "t1",
                 output: "line \(i)\n",
                 isError: false
-            ))
+            )))
         }
         events.append(.toolEnd(sessionId: "bench", toolEventId: "t1"))
         events.append(.agentEnd(sessionId: "bench"))

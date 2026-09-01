@@ -9,6 +9,26 @@ struct ToolOutputEventPayload: Sendable {
     let truncated: Bool
     let totalBytes: Int?
     let details: JSONValue?
+
+    init(
+        sessionId: String,
+        toolEventId: String,
+        output: String,
+        isError: Bool,
+        mode: ToolOutputMode = .append,
+        truncated: Bool = false,
+        totalBytes: Int? = nil,
+        details: JSONValue? = nil
+    ) {
+        self.sessionId = sessionId
+        self.toolEventId = toolEventId
+        self.output = output
+        self.isError = isError
+        self.mode = mode
+        self.truncated = truncated
+        self.totalBytes = totalBytes
+        self.details = details
+    }
 }
 
 /// Transport-agnostic domain events from the agent.
@@ -51,29 +71,6 @@ enum AgentEvent: Sendable {
 
     case sessionEnded(sessionId: String, reason: String)
     case error(sessionId: String, message: String)
-
-    // periphery:ignore - convenience factory used by timeline tests via @testable import
-    static func toolOutput(
-        sessionId: String,
-        toolEventId: String,
-        output: String,
-        isError: Bool,
-        mode: ToolOutputMode = .append,
-        truncated: Bool = false,
-        totalBytes: Int? = nil,
-        details: JSONValue? = nil
-    ) -> Self {
-        .toolOutput(.init(
-            sessionId: sessionId,
-            toolEventId: toolEventId,
-            output: output,
-            isError: isError,
-            mode: mode,
-            truncated: truncated,
-            totalBytes: totalBytes,
-            details: details
-        ))
-    }
 
     // periphery:ignore - used by OppiTests via @testable import
     var typeLabel: String {

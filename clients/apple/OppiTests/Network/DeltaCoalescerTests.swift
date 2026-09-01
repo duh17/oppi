@@ -184,7 +184,7 @@ struct DeltaCoalescerTests {
         var flushed: [[AgentEvent]] = []
         coalescer.onFlush = { flushed.append($0) }
 
-        coalescer.receive(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "data", isError: false))
+        coalescer.receive(.toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "data", isError: false)))
 
         #expect(flushed.isEmpty)
     }
@@ -195,7 +195,7 @@ struct DeltaCoalescerTests {
         coalescer.onFlush = { flushed.append($0) }
         let firstDetails = JSONValue.object(["phase": .string("first")])
 
-        coalescer.receive(.toolOutput(
+        coalescer.receive(.toolOutput(.init(
             sessionId: "s1",
             toolEventId: "t1",
             output: "first",
@@ -204,8 +204,8 @@ struct DeltaCoalescerTests {
             truncated: true,
             totalBytes: 100,
             details: firstDetails
-        ))
-        coalescer.receive(.toolOutput(
+        )))
+        coalescer.receive(.toolOutput(.init(
             sessionId: "s1",
             toolEventId: "t1",
             output: "latest",
@@ -213,7 +213,7 @@ struct DeltaCoalescerTests {
             mode: .replace,
             truncated: false,
             totalBytes: 200
-        ))
+        )))
         coalescer.flushNow()
 
         #expect(flushed.count == 1)
@@ -235,18 +235,18 @@ struct DeltaCoalescerTests {
         var flushed: [[AgentEvent]] = []
         coalescer.onFlush = { flushed.append($0) }
 
-        coalescer.receive(.toolOutput(
+        coalescer.receive(.toolOutput(.init(
             sessionId: "s1", toolEventId: "t1", output: "t1-first",
             isError: false, mode: .replace
-        ))
-        coalescer.receive(.toolOutput(
+        )))
+        coalescer.receive(.toolOutput(.init(
             sessionId: "s1", toolEventId: "t2", output: "t2",
             isError: false, mode: .replace
-        ))
-        coalescer.receive(.toolOutput(
+        )))
+        coalescer.receive(.toolOutput(.init(
             sessionId: "s1", toolEventId: "t1", output: "t1-latest",
             isError: false, mode: .replace
-        ))
+        )))
         coalescer.flushNow()
 
         let outputs = flushed.flatMap { $0 }.compactMap { event -> String? in
@@ -333,7 +333,7 @@ struct DeltaCoalescerTests {
 
         coalescer.receive(.textDelta(sessionId: "s1", delta: "a"))
         coalescer.receive(.thinkingDelta(sessionId: "s1", delta: "b"))
-        coalescer.receive(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "c", isError: false))
+        coalescer.receive(.toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "c", isError: false)))
 
         coalescer.receive(.toolStart(
             sessionId: "s1",
@@ -385,7 +385,7 @@ struct DeltaCoalescerTests {
         coalescer.onFlush = { flushed.append($0) }
 
         let oversized = String(repeating: "z", count: (DeltaCoalescer.maxBufferedBytesForTesting * 2) + 17)
-        coalescer.receive(.toolOutput(sessionId: "s1", toolEventId: "t1", output: oversized, isError: false))
+        coalescer.receive(.toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: oversized, isError: false)))
         coalescer.flushNow()
 
         let outputs = flushed.flatMap { $0 }.compactMap { event -> String? in
@@ -739,7 +739,7 @@ struct DeltaCoalescerTests {
 
         coalescer.receive(.textDelta(sessionId: "s1", delta: "a"))
         coalescer.receive(.thinkingDelta(sessionId: "s1", delta: "b"))
-        coalescer.receive(.toolOutput(sessionId: "s1", toolEventId: "t1", output: "c", isError: false))
+        coalescer.receive(.toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "c", isError: false)))
 
         let didFlush = await waitForMainActorCondition(timeout: .milliseconds(300), poll: .milliseconds(10)) {
             flushed.count == 1

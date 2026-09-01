@@ -16,7 +16,7 @@ struct TimelineReducerStreamingTests {
             .textDelta(sessionId: "s1", delta: "Answer: "),
             .textDelta(sessionId: "s1", delta: "42"),
             .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: ["command": "echo hi"]),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "hi\n", isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "hi\n", isError: false)),
             .toolEnd(sessionId: "s1", toolEventId: "t1"),
             .textDelta(sessionId: "s1", delta: "Done."),
             .agentEnd(sessionId: "s1"),
@@ -125,9 +125,9 @@ struct TimelineReducerStreamingTests {
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
 
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line1\n", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line2\n", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "line3\n", isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "line1\n", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "line2\n", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "line3\n", isError: false)),
         ])
 
         let fullOutput = reducer.toolOutputStore.fullOutput(for: "t1")
@@ -141,8 +141,8 @@ struct TimelineReducerStreamingTests {
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]))
 
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "err\n", isError: true),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "err\n", isError: true)),
         ])
 
         guard case .toolCall(_, _, _, _, _, let isError, _) = reducer.items[0] else {
@@ -161,7 +161,7 @@ struct TimelineReducerStreamingTests {
 
         let firstChunk = String(repeating: "x", count: ToolOutputStore.totalCap + 1_024)
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: toolID, output: firstChunk, isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: toolID, output: firstChunk, isError: false)),
         ])
 
         let versionAfterFirstChunk = reducer.renderVersion
@@ -170,7 +170,7 @@ struct TimelineReducerStreamingTests {
         #expect(outputAfterFirstChunk == firstChunk)
 
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "appended-after-large-output", isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: toolID, output: "appended-after-large-output", isError: false)),
         ])
 
         #expect(

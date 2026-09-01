@@ -82,21 +82,21 @@ struct TimelineReducerInvariantTests {
 
         let huge = String(repeating: "x", count: ToolOutputStore.totalCap + 512)
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: toolID, output: huge, isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: toolID, output: huge, isError: false)),
         ])
 
         let baselineVersion = reducer.renderVersion
         let baselineSnapshot = snapshot(of: reducer)
 
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "", isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: toolID, output: "", isError: false)),
         ])
 
         #expect(reducer.renderVersion == baselineVersion)
         #expect(snapshot(of: reducer) == baselineSnapshot)
 
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: toolID, output: "appended-after-large-output", isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: toolID, output: "appended-after-large-output", isError: false)),
         ])
 
         #expect(reducer.renderVersion > baselineVersion)
@@ -136,7 +136,7 @@ struct TimelineReducerInvariantTests {
                 .thinkingDelta(sessionId: "s1", delta: "plan"),
                 .textDelta(sessionId: "s1", delta: "before "),
                 .toolStart(sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]),
-                .toolOutput(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false),
+                .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "ok\n", isError: false)),
                 .toolEnd(sessionId: "s1", toolEventId: "t1"),
                 .textDelta(sessionId: "s1", delta: "after"),
                 terminalEvent,
@@ -282,7 +282,7 @@ private func makeSeededBatches(seed: UInt64, count: Int) -> [[AgentEvent]] {
 
             case 5:
                 if let openToolID {
-                    batch.append(.toolOutput(sessionId: sessionId, toolEventId: openToolID, output: "o\(step)\n", isError: false))
+                    batch.append(.toolOutput(.init(sessionId: sessionId, toolEventId: openToolID, output: "o\(step)\n", isError: false)))
                 }
 
             case 6:
@@ -301,7 +301,7 @@ private func makeSeededBatches(seed: UInt64, count: Int) -> [[AgentEvent]] {
 
             case 9:
                 if let openToolID {
-                    batch.append(.toolOutput(sessionId: sessionId, toolEventId: openToolID, output: "", isError: false))
+                    batch.append(.toolOutput(.init(sessionId: sessionId, toolEventId: openToolID, output: "", isError: false)))
                 }
 
             default:
@@ -337,7 +337,7 @@ private func timelinePermutationCases() -> [TimelinePermutationCase] {
                 .agentStart(sessionId: sessionId),
                 .textDelta(sessionId: sessionId, delta: "before "),
                 .toolStart(sessionId: sessionId, toolEventId: "t1", tool: "bash", args: [:]),
-                .toolOutput(sessionId: sessionId, toolEventId: "t1", output: "ok\n", isError: false),
+                .toolOutput(.init(sessionId: sessionId, toolEventId: "t1", output: "ok\n", isError: false)),
                 .toolEnd(sessionId: sessionId, toolEventId: "t1"),
                 .textDelta(sessionId: sessionId, delta: "after"),
                 .agentEnd(sessionId: sessionId),
@@ -362,7 +362,7 @@ private func timelinePermutationCases() -> [TimelinePermutationCase] {
                 .agentStart(sessionId: sessionId),
                 .toolStart(sessionId: sessionId, toolEventId: "t3", tool: "bash", args: [:]),
                 .toolStart(sessionId: sessionId, toolEventId: "t3", tool: "bash", args: [:]),
-                .toolOutput(sessionId: sessionId, toolEventId: "t3", output: "x", isError: false),
+                .toolOutput(.init(sessionId: sessionId, toolEventId: "t3", output: "x", isError: false)),
                 .toolEnd(sessionId: sessionId, toolEventId: "t3"),
                 .agentEnd(sessionId: sessionId),
             ],

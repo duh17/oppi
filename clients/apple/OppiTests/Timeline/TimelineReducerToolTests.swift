@@ -12,7 +12,7 @@ struct TimelineReducerToolTests {
 
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "ls"]))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "file1.txt\nfile2.txt", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: toolId, output: "file1.txt\nfile2.txt", isError: false)))
         reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
         reducer.process(.agentEnd(sessionId: "s1"))
 
@@ -275,13 +275,13 @@ struct TimelineReducerToolTests {
 
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: "t1", tool: "read", args: ["path": .string("plot.png")]))
-        reducer.process(.toolOutput(
+        reducer.process(.toolOutput(.init(
             sessionId: "s1",
             toolEventId: "t1",
             output: "",
             isError: false,
             details: mediaDetails
-        ))
+        )))
         reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t1"))
 
         #expect(reducer.toolDetailsStore.details(for: "t1") == mediaDetails)
@@ -300,7 +300,7 @@ struct TimelineReducerToolTests {
         let reducer = TimelineReducer()
 
         reducer.process(.agentStart(sessionId: "s1"))
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: "orphan", output: "data", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "orphan", output: "data", isError: false)))
         reducer.process(.agentEnd(sessionId: "s1"))
 
         let toolItems = reducer.items.filter {
@@ -654,7 +654,7 @@ struct TimelineReducerToolTests {
         #expect(reducer.toolStartTime(for: toolId) != nil)
 
         // Tool completes
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "Wrote 28 bytes", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: toolId, output: "Wrote 28 bytes", isError: false)))
         reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
 
         // Args should still be available after tool completion
@@ -785,11 +785,11 @@ struct TimelineReducerToolTests {
         reducer.process(.agentStart(sessionId: "s1"))
         reducer.process(.toolStart(sessionId: "s1", toolEventId: toolId, tool: "bash", args: ["command": "find /"]))
         // Normal append
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "line1\nline2\n", isError: false))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: toolId, output: "line1\nline2\n", isError: false)))
         #expect(reducer.toolOutputStore.fullOutput(for: toolId) == "line1\nline2\n")
 
         // Replace mode (server switched to tail preview)
-        reducer.process(.toolOutput(sessionId: "s1", toolEventId: toolId, output: "line99\nline100\n", isError: false, mode: .replace, truncated: true, totalBytes: 50000))
+        reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: toolId, output: "line99\nline100\n", isError: false, mode: .replace, truncated: true, totalBytes: 50000)))
         #expect(reducer.toolOutputStore.fullOutput(for: toolId) == "line99\nline100\n")
 
         reducer.process(.toolEnd(sessionId: "s1", toolEventId: toolId))
@@ -821,8 +821,8 @@ struct TimelineReducerToolTests {
 
         // Batch with mixed append and replace — replace should win
         reducer.processBatch([
-            .toolOutput(sessionId: "s1", toolEventId: toolId, output: "early\n", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: toolId, output: "tail preview\n", isError: false, mode: .replace, truncated: true, totalBytes: 10000),
+            .toolOutput(.init(sessionId: "s1", toolEventId: toolId, output: "early\n", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: toolId, output: "tail preview\n", isError: false, mode: .replace, truncated: true, totalBytes: 10000)),
         ])
 
         #expect(reducer.toolOutputStore.fullOutput(for: toolId) == "tail preview\n")

@@ -170,11 +170,11 @@ struct TimelineStressTests {
         let lineCount = 500
         var batch: [AgentEvent] = []
         for i in 0..<lineCount {
-            batch.append(.toolOutput(
+            batch.append(.toolOutput(.init(
                 sessionId: "s1", toolEventId: "t1",
                 output: "line \(i): " + String(repeating: "x", count: 80) + "\n",
                 isError: false
-            ))
+            )))
         }
 
         let start = ContinuousClock.now
@@ -256,7 +256,7 @@ struct TimelineStressTests {
         for i in 0..<120 {
             reducer.appendUserMessage("user-\(i)")
             reducer.process(.toolStart(sessionId: "s1", toolEventId: "tool-\(i)", tool: "bash", args: [:]))
-            reducer.process(.toolOutput(sessionId: "s1", toolEventId: "tool-\(i)", output: "output-\(i)", isError: false))
+            reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "tool-\(i)", output: "output-\(i)", isError: false)))
             reducer.process(.toolEnd(sessionId: "s1", toolEventId: "tool-\(i)"))
         }
 
@@ -277,8 +277,8 @@ struct TimelineStressTests {
         for i in 0..<300 {
             reducer.process(.agentStart(sessionId: "s1"))
             reducer.process(.toolStart(sessionId: "s1", toolEventId: "tool-\(i)", tool: "bash", args: [:]))
-            reducer.process(.toolOutput(sessionId: "s1", toolEventId: "tool-\(i)",
-                output: String(repeating: "x", count: 200), isError: false))
+            reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "tool-\(i)",
+                output: String(repeating: "x", count: 200), isError: false)))
             reducer.process(.toolEnd(sessionId: "s1", toolEventId: "tool-\(i)"))
             reducer.process(.agentEnd(sessionId: "s1"))
         }
@@ -418,7 +418,7 @@ struct TimelineStressTests {
             reducer.process(.agentStart(sessionId: "s1"))
             reducer.process(.textDelta(sessionId: "s1", delta: "live-\(i)"))
             reducer.process(.toolStart(sessionId: "s1", toolEventId: "lt-\(i)", tool: "bash", args: [:]))
-            reducer.process(.toolOutput(sessionId: "s1", toolEventId: "lt-\(i)", output: "out-\(i)", isError: false))
+            reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "lt-\(i)", output: "out-\(i)", isError: false)))
             reducer.process(.toolEnd(sessionId: "s1", toolEventId: "lt-\(i)"))
             reducer.process(.agentEnd(sessionId: "s1"))
         }
@@ -472,8 +472,8 @@ struct TimelineStressTests {
         for i in 0..<100 {
             reducer.process(.agentStart(sessionId: "s1"))
             reducer.process(.toolStart(sessionId: "s1", toolEventId: "t-\(i)", tool: "bash", args: [:]))
-            reducer.process(.toolOutput(sessionId: "s1", toolEventId: "t-\(i)",
-                output: String(repeating: "x", count: 1000), isError: false))
+            reducer.process(.toolOutput(.init(sessionId: "s1", toolEventId: "t-\(i)",
+                output: String(repeating: "x", count: 1000), isError: false)))
             reducer.process(.toolEnd(sessionId: "s1", toolEventId: "t-\(i)"))
             reducer.process(.agentEnd(sessionId: "s1"))
             reducer.expandedItemIDs.insert("t-\(i)")
@@ -546,9 +546,9 @@ struct TimelineStressTests {
         let batch: [AgentEvent] = [
             .toolStart(sessionId: "s1", toolEventId: "t1", tool: "read", args: ["path": "/a"]),
             .toolStart(sessionId: "s1", toolEventId: "t2", tool: "bash", args: ["command": "ls"]),
-            .toolOutput(sessionId: "s1", toolEventId: "t1", output: "content-a", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: "t2", output: "file1\n", isError: false),
-            .toolOutput(sessionId: "s1", toolEventId: "t2", output: "file2\n", isError: false),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t1", output: "content-a", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t2", output: "file1\n", isError: false)),
+            .toolOutput(.init(sessionId: "s1", toolEventId: "t2", output: "file2\n", isError: false)),
             .toolEnd(sessionId: "s1", toolEventId: "t1"),
             .toolEnd(sessionId: "s1", toolEventId: "t2"),
         ]
