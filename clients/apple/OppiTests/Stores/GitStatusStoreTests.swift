@@ -71,19 +71,7 @@ struct GitStatusStoreTests {
         #expect(store.isLoading == false)
     }
 
-    // MARK: - reset
-
-    @Test func resetClearsAllState() {
-        let store = GitStatusStore()
-        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
-        store.handleGitStatusPush(workspaceId: "ws-1", status: makeGitStatus(branch: "main", dirtyCount: 1))
-
-        store.reset()
-
-        #expect(store.gitStatus == nil)
-        #expect(store.workspaceId == nil)
-        #expect(store.isLoading == false)
-    }
+    // MARK: - invalidate
 
     @Test func invalidationPreservesVisibleStatusWhenRefreshCannotStart() {
         let store = GitStatusStore()
@@ -105,15 +93,6 @@ struct GitStatusStoreTests {
 
         #expect(store.gitStatus == nil)
         #expect(store.isLoading == false)
-    }
-
-    @Test func pushAfterResetIsIgnored() {
-        let store = GitStatusStore()
-        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: false)
-        store.reset()
-
-        store.handleGitStatusPush(workspaceId: "ws-1", status: makeGitStatus(branch: "main", dirtyCount: 1))
-        #expect(store.gitStatus == nil, "Push after reset should be ignored (workspaceId is nil)")
     }
 
     // MARK: - Workspace switch

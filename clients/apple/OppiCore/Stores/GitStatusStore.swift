@@ -160,15 +160,4 @@ final class GitStatusStore {
             self?.isLoading = false
         }
     }
-
-    // periphery:ignore - API surface for git status lifecycle management
-    /// Clear state when leaving the chat view.
-    func reset() {
-        invalidationRefreshTask?.cancel()
-        invalidationRefreshTask = nil
-        gitStatus = nil
-        workspaceId = nil
-        worktreeId = nil
-        isLoading = false
-    }
 }
