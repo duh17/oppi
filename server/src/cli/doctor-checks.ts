@@ -36,9 +36,23 @@ export function isWildcardBindHost(host: string): boolean {
 /**
  * Listening on all interfaces is the npm/VPS footgun. Fail closed with a
  * one-line bind fix. Loopback binds are not this check.
+ * Compose/Docker must listen on 0.0.0.0 in-container; that is a warning
+ * that points at the host-side publish bind instead.
  */
-export function wildcardBindDoctorCheck(host: string): DoctorCheck | null {
+export function wildcardBindDoctorCheck(
+  host: string,
+  opts: { containerListener?: boolean } = {},
+): DoctorCheck | null {
   if (!isWildcardBindHost(host)) return null;
+  if (opts.containerListener) {
+    return {
+      level: "warn",
+      message:
+        `host=${host} is the in-container listener (required for Docker port publish). ` +
+        "Bind the published host port to a Tailscale or LAN IP in compose, " +
+        'e.g. ports: ["100.x.x.x:7750:7750"]. Do not oppi config set host inside the container.',
+    };
+  }
   return {
     level: "fail",
     message:

@@ -16,6 +16,7 @@ services:
       PI_AGENT_SYNC_MODE: ${PI_AGENT_SYNC_MODE:-copy-once}
       OPPI_PORT: ${OPPI_PORT:-7750}
       OPPI_PAIR_HOST: ${OPPI_PAIR_HOST:-}
+      OPPI_CONTAINER_LISTENER: "1"
       # Default to host-side SearXNG (e.g. :8888) for search skill.
       SEARXNG_URL: ${SEARXNG_URL:-http://host.docker.internal:8888}
     extra_hosts:

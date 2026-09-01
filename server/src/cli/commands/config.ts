@@ -22,7 +22,7 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   host: { type: "string", desc: "HTTP/TLS bind address (not pairing advertise host)" },
   pairHost: {
     type: "string",
-    desc: "Advertised pairing hostname (MagicDNS or LAN); not the bind address",
+    desc: "Advertised pairing hostname or IP (no scheme, no port); not the bind address",
   },
   maxSessionsGlobal: { type: "number", desc: "Max concurrent sessions" },
   maxSessionsPerWorkspace: { type: "number", desc: "Max sessions per workspace" },

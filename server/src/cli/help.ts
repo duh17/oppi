@@ -241,7 +241,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Doctor exits non-zero for critical failures.",
-      "Wildcard bind (host=0.0.0.0 or ::) fails. Bind a Tailscale or LAN IP instead.",
+      "Wildcard bind (host=0.0.0.0 or ::) fails on npm/VPS. Docker Compose keeps the in-container 0.0.0.0 listener and warns to bind the published host port instead.",
       "An advertised MagicDNS pairing host plus tls.mode=self-signed is a warning; use tls.mode=tailscale.",
       "Advertise host is --host, then OPPI_PAIR_HOST, then the last pair/serve --host (config pairHost).",
       "It inspects TLS files but does not generate missing certificate material.",
@@ -340,7 +340,8 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "host", summary: "string; HTTP/TLS bind address, not the pairing advertise host" },
       {
         name: "pairHost",
-        summary: "string; last advertised pairing hostname; not the bind address",
+        summary:
+          "string; last advertised pairing hostname or IP (no scheme, no port); not the bind address",
       },
       { name: "maxSessionsGlobal", summary: "number; global concurrent session limit" },
       { name: "runtimePathEntries", summary: "JSON array; runtime PATH entries" },

@@ -41,6 +41,14 @@ describe("wildcard bind doctor check", () => {
     }
   });
 
+  it("warns instead of failing when the wildcard bind is the Compose listener", () => {
+    const check = wildcardBindDoctorCheck("0.0.0.0", { containerListener: true });
+    expect(check?.level).toBe("warn");
+    expect(check?.message).toContain("in-container listener");
+    expect(check?.message).toContain("ports:");
+    expect(wildcardBindDoctorCheck("0.0.0.0")?.level).toBe("fail");
+  });
+
   it("does not flag loopback or specific LAN/Tailscale binds", () => {
     expect(isWildcardBindHost("127.0.0.1")).toBe(false);
     expect(isWildcardBindHost("0x7f000001")).toBe(false);

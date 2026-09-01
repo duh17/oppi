@@ -83,7 +83,7 @@ With the default HTTP/TLS transport, the phone must reach the server over LAN, T
 oppi pair --host <hostname-or-ip>
 ```
 
-When the advertised pairing host is MagicDNS, use `tls.mode=tailscale`. Supported remote access is authenticated HTTPS/WSS, including through Tailscale. `oppi doctor` fails on a wildcard bind and warns when the advertised pairing host is MagicDNS with self-signed TLS.
+When the advertised pairing host is MagicDNS, use `tls.mode=tailscale`. Supported remote access is authenticated HTTPS/WSS, including through Tailscale. `oppi doctor` fails on a wildcard bind on npm/VPS. Docker Compose keeps the in-container `0.0.0.0` listener; doctor warns there and the compose port mapping should bind a Tailscale or LAN IP. Doctor warns when the advertised pairing host is MagicDNS with self-signed TLS.
 
 Notes:
 

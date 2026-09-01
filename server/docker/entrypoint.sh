@@ -98,6 +98,8 @@ expose_recovered_scripts() {
 
 ensure_server_config() {
   # Keep container bind host safe for docker port publishing.
+  # OPPI_CONTAINER_LISTENER tells doctor this wildcard bind is required.
+  export OPPI_CONTAINER_LISTENER=1
   oppi config set host 0.0.0.0 >/tmp/oppi-config-host.log 2>&1 || true
 
   if [[ -z "$OPPI_PORT" ]]; then

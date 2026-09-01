@@ -453,6 +453,40 @@ describe("Storage config validation", () => {
     expect(config.asr).toEqual({ sttEndpoint: "http://localhost:9847" });
   });
 
+  it("rejects a pairHost that includes a scheme or port", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      pairHost: "server.local:7749",
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("config.pairHost"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("hostname or IP only"))).toBe(true);
+    expect(result.config?.pairHost).toBeUndefined();
+  });
+
+  it("does not apply an invalid pairHost already present on disk", () => {
+    const first = new Storage(dir);
+    const raw = JSON.parse(readFileSync(first.getConfigPath(), "utf8")) as Record<string, unknown>;
+    raw.pairHost = "server.local:7749";
+    writeFileSync(first.getConfigPath(), JSON.stringify(raw, null, 2));
+
+    const reloaded = new Storage(dir);
+    expect(reloaded.getConfig().pairHost).toBeUndefined();
+  });
+
+  it("accepts a hostname pairHost", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      pairHost: "studio.local",
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.pairHost).toBe("studio.local");
+  });
+
   it("validateConfigFile reports parse errors with file path", () => {
     const configPath = join(dir, "bad-config.json");
     writeFileSync(configPath, "{ invalid json }");

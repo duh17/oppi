@@ -24,6 +24,7 @@ services:
       PI_AGENT_SYNC_MODE: skip
       OPPI_PORT: ${E2E_PORT:-17760}
       OPPI_PAIR_HOST: ${E2E_PAIR_HOST:-host.docker.internal}
+      OPPI_CONTAINER_LISTENER: "1"
       OPPI_E2E_UI_HARNESS: ${OPPI_E2E_UI_HARNESS:-0}
       # Use the real pi binary from node_modules (installed via npm ci in Dockerfile)
       OPPI_PI_BIN: /opt/oppi-server/node_modules/.bin/pi

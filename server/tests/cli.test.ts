@@ -752,6 +752,28 @@ describe("oppi doctor bind posture", () => {
     }
   });
 
+  it("warns instead of failing wildcard bind inside a container listener", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-doctor-container-"));
+    try {
+      expect(run(["pair"], { OPPI_DATA_DIR: dir }).exitCode).toBe(0);
+      const npm = run(["doctor"], { OPPI_DATA_DIR: dir });
+      expect(npm.exitCode).toBe(1);
+      expect(stripAnsi(npm.stdout)).toContain("binds all interfaces");
+
+      const { stdout, exitCode } = run(["doctor"], {
+        OPPI_DATA_DIR: dir,
+        OPPI_CONTAINER_LISTENER: "1",
+      });
+      const text = stripAnsi(stdout);
+      expect(exitCode).toBe(0);
+      expect(text).toContain("in-container listener");
+      expect(text).not.toContain("binds all interfaces");
+      expect(text).toContain("Doctor passed");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not fail wildcard bind when host is a specific IP", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-doctor-lan-"));
     try {
@@ -905,6 +927,19 @@ describe("oppi config", () => {
       "http://127.0.0.1:7937",
     );
   }, 45_000);
+
+  it("rejects config set pairHost values that include a port", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-config-pairhost-port-"));
+    try {
+      const set = run(["config", "set", "pairHost", "server.local:7749"], { OPPI_DATA_DIR: dir });
+      expect(set.exitCode).toBe(1);
+      expect(stripAnsi(`${set.stdout}${set.stderr}`)).toMatch(/hostname or IP only/);
+      const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("server.local:7749");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it("config validate succeeds on valid config", () => {
     const { stdout, exitCode } = run(["config", "validate"]);

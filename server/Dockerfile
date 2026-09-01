@@ -44,6 +44,8 @@ ENV PI_CODING_AGENT_DIR=/data/pi-agent
 ENV PI_AGENT_SEED_DIR=/seed/pi-agent
 ENV PI_AGENT_SYNC_MODE=copy-once
 ENV SEARXNG_URL=http://host.docker.internal:8888
+# In-container 0.0.0.0 is required for port publish; doctor must not fail it.
+ENV OPPI_CONTAINER_LISTENER=1
 
 EXPOSE 7750
 

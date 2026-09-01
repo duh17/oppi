@@ -107,8 +107,9 @@ cd server
 
 # Advertised pairing hostname (MagicDNS or LAN). Not the in-container bind.
 # The entrypoint keeps host=0.0.0.0 so Docker can publish the port. Do not
-# `oppi config set host` inside the container. To avoid publishing on every
-# host interface, map the compose port to a Tailscale or LAN IP:
+# `oppi config set host` inside the container. `oppi doctor` inside the
+# container warns on that bind instead of failing. To avoid publishing on
+# every host interface, map the compose port to a Tailscale or LAN IP:
 #   ports: ["100.64.1.20:7750:7750"]
 export OPPI_PAIR_HOST=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
 # export OPPI_PAIR_HOST=<machine>.<tailnet>.ts.net

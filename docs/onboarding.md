@@ -32,7 +32,7 @@ Oppi does not create starter workspaces. Manual connection requires host and tok
 
 After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the server over LAN, Tailscale, or a public hostname. Tailscale HTTPS is supported. The local CLI stays on an owner-only Unix socket.
 
-`host` in config is the HTTP/TLS **bind** address. Do not bind `0.0.0.0` on an npm or VPS install. Bind a Tailscale `100.x` address or a LAN IP:
+`host` in config is the HTTP/TLS **bind** address. Do not bind `0.0.0.0` on an npm or VPS install. Bind a Tailscale `100.x` address or a LAN IP. Docker Compose keeps the in-container `0.0.0.0` listener for port publish; `oppi doctor` warns there instead of failing. Constrain exposure with the compose host-side port mapping.
 
 ```bash
 oppi config set host <tailscale-ip-or-lan>
