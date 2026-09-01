@@ -53,7 +53,7 @@ const localPlugin = {
         schema: [],
         messages: {
           fileTooLarge:
-            "Large files are hard for agents to reason about. Consider splitting — see docs/architecture-server.md or docs/architecture-client.md for boundary rules. ({{lineCount}} lines)",
+            "Large files are hard for agents to reason about. Consider splitting — see dev/architecture-server.md or dev/architecture-client.md for boundary rules. ({{lineCount}} lines)",
         },
       },
       create(context) {
@@ -80,7 +80,7 @@ const localPlugin = {
         schema: [],
         messages: {
           noAny:
-            "types.ts is the protocol contract — use explicit types. See docs/architecture.md#protocol-boundary",
+            "types.ts is the protocol contract — use explicit types. See dev/architecture-server.md#protocol-boundary",
         },
       },
       create(context) {
@@ -133,7 +133,7 @@ const localPlugin = {
       meta: {
         type: "problem",
         docs: {
-          description: "Enforce server dependency directions from docs/architecture-server.md",
+          description: "Enforce server dependency directions from dev/architecture-server.md",
         },
         schema: [],
       },

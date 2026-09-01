@@ -1120,7 +1120,7 @@ e^{i\pi} + 1 = 0
 ### Wiki and host links
 
 Gallery file: [[.internal/diagrams/mermaid-rendering-gallery.md|this file]].
-Architecture: [[docs/architecture-client.md#L1-L20|client architecture head]].
+Architecture: [[dev/architecture-client.md#L1-L20|client architecture head]].
 Existing stress corpus: [[clients/apple/OppiTests/Fixtures/mixed-markdown-stress-corpus.md|mixed markdown corpus]].
 
 ### HTML that should stay inert

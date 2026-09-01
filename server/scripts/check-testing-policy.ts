@@ -94,7 +94,7 @@ export function checkTestingPolicy(
   const policyPath = path.join(serverRoot, "testing-policy.json");
   const packageJsonPath = path.join(serverRoot, "package.json");
   const gateRunnerPath = path.join(serverRoot, "scripts", "testing-gates.ts");
-  const docsReadmePath = path.join(repoRoot, "docs", "testing", "README.md");
+  const docsReadmePath = path.join(repoRoot, "dev", "testing", "README.md");
 
   const policy = readJson<TestingPolicy>(policyPath);
   const packageJson = readJson<PackageJson>(packageJsonPath);
@@ -191,7 +191,7 @@ export function checkTestingPolicy(
   }
 
   // 5. Canonical docs must reference policy-as-code, coverage gate, and PR gate.
-  check(existsSync(docsReadmePath), "canonical testing docs missing: docs/testing/README.md");
+  check(existsSync(docsReadmePath), "canonical testing docs missing: dev/testing/README.md");
   if (existsSync(docsReadmePath)) {
     const testingReadme = readFileSync(docsReadmePath, "utf8");
     check(

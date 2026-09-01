@@ -158,34 +158,46 @@ npm install -g oppi-server@latest
 
 ## Docs
 
-- [Contributing](CONTRIBUTING.md) - open an issue before proposing code changes
-- [Changelog](CHANGELOG.md) - release history and versioning policy
-- [Server README](server/README.md) - server setup, Docker, development
-- [Onboarding and pairing](docs/onboarding.md) - first-run flow
-- [Deep links](docs/deeplinks.md) - custom URL schemes for pairing, workspaces, and sessions
-- [Config schema](server/docs/config-schema.md) - all config options
-- [Dictation / ASR](server/docs/asr.md) - server dictation setup
-- [Voice replies / TTS](server/docs/tts.md) - voice extension setup
-- [Extensions](docs/extensions.md) - Oppi-specific extension behavior, workspace filtering, and mobile rendering rules
-- [Attachment rendering](docs/attachment-rendering.md) - message and tool-output rendering for image, audio, video, and file attachments
-- [Document viewers](docs/document-viewers.md) - full-screen reading controls for markdown, code, diffs, terminal output, and rendered documents
-- [TUI session bridge](docs/oppi-mirror.md) - live terminal Pi sessions in Oppi and the separate `oppi-mirror` package
-- [Sandbox workspaces](docs/sandbox.md) - Gondolin VM isolation, network boundaries, tools, and safe defaults
-- [Custom themes](server/docs/themes.md) - creating color themes for the iOS app
-- [Telemetry and diagnostics](docs/telemetry.md) - privacy controls, storage paths, latency, and reliability metrics
-- [Provider quotas](docs/provider-quotas.md) - remaining usage windows and snapshot pace
-- [Security](SECURITY.md) - security model and privacy
+Start at [docs/index.md](docs/index.md). Public docs are two tracks: daily use and extension authoring. Pi slash commands, skills, compaction, and the TUI stay in [Pi's usage guide](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/usage.md).
 
-### Development docs
+### Daily use
 
-- [Architecture](docs/architecture.md) - cross-system architecture map
-- [Server architecture](docs/architecture-server.md) - routes, streams, runtime ownership, and storage
-- [Client architecture](docs/architecture-client.md) - Apple stores, transports, and the chat timeline pipeline
-- [Extension native UI](docs/extension-native-ui.md) - native extension UI contract
-- [Testing](docs/testing/README.md) - standard test commands
-- [Model selection](server/docs/model-selection.md) - chat model selection precedence
-- [Session tree semantics](server/docs/session-tree-semantics.md) - session tree and fork semantics
-- [Protocol snapshots](protocol/README.md) - wire fixtures and stream topology
+- [Using Oppi](docs/usage.md) — screens, prompt vs steer vs follow-up, Quick Session, files, voice
+- [Onboarding and pairing](docs/onboarding.md)
+- [Deep links](docs/deeplinks.md)
+- [Document viewers](docs/document-viewers.md)
+- [Sandbox workspaces](docs/sandbox.md)
+- [Oppi Mirror](docs/oppi-mirror.md)
+- [Provider quotas](docs/provider-quotas.md)
+- [Server configuration](docs/server-configuration.md)
+- [Support](docs/support.md)
+- [Privacy](docs/privacy.md)
+- [Screenshots](docs/demo/)
+
+### Extension authoring
+
+- [Extensions](docs/extensions.md) — Oppi overlay and mobile don'ts; Pi owns the tool API
+- [Extension native UI](docs/extension-native-ui.md)
+- [Attachment rendering](docs/attachment-rendering.md)
+- [Pi extensions](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)
+
+## Contributor docs
+
+- [Contributor docs](dev/README.md) — architecture, leftover transport notes, telemetry, and testing
+- [Architecture](dev/architecture.md)
+- [Testing](dev/testing/README.md)
+- [Telemetry](dev/telemetry.md)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+- [Server README](server/README.md)
+- [Config schema](server/docs/config-schema.md)
+- [Dictation / ASR](server/docs/asr.md)
+- [Voice replies / TTS](server/docs/tts.md)
+- [Custom themes](server/docs/themes.md)
+- [Model selection](server/docs/model-selection.md)
+- [Session tree semantics](server/docs/session-tree-semantics.md)
+- [Protocol snapshots](protocol/README.md)
+- [Security](SECURITY.md)
 
 ## License
 

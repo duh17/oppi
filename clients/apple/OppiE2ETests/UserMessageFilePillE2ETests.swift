@@ -14,7 +14,7 @@ final class UserMessageFilePillE2ETests: E2ETestCase {
         Commit prompt regression
 
         Extra focus:
-        Referenced workspace files: - clients/apple/Oppi/App/ContentView.swift - docs/architecture.md
+        Referenced workspace files: - clients/apple/Oppi/App/ContentView.swift - docs/usage.md
 
         Git hygiene:
         - Do not commit unless explicitly asked.
@@ -22,7 +22,7 @@ final class UserMessageFilePillE2ETests: E2ETestCase {
 
         Referenced workspace files:
         - README.md
-        - docs/architecture.md
+        - docs/usage.md
         """
         typeIntoChatInput(prompt)
         tap(app.buttons["chat.send"], named: "file pill regression prompt send button", timeout: 5)
@@ -37,9 +37,9 @@ final class UserMessageFilePillE2ETests: E2ETestCase {
         )
 
         let readmePill = app.descendants(matching: .any)["chat.user.path-pill.README.md"]
-        let architecturePill = app.descendants(matching: .any)["chat.user.path-pill.docs/architecture.md"]
+        let usagePill = app.descendants(matching: .any)["chat.user.path-pill.docs/usage.md"]
         XCTAssertTrue(waitForElementToExist(readmePill, timeout: 10), "README Repo pill did not render")
-        XCTAssertTrue(waitForElementToExist(architecturePill, timeout: 10), "Architecture Repo pill did not render")
+        XCTAssertTrue(waitForElementToExist(usagePill, timeout: 10), "Usage Repo pill did not render")
 
         let tipDismissButton = app.buttons["feature-tip.dismiss"]
         if tipDismissButton.waitForExistence(timeout: 1) {
@@ -66,11 +66,11 @@ final class UserMessageFilePillE2ETests: E2ETestCase {
             "Keyboard still obscured screenshot evidence"
         )
 
-        for _ in 0..<3 where !readmePill.isHittable || !architecturePill.isHittable {
+        for _ in 0..<3 where !readmePill.isHittable || !usagePill.isHittable {
             timeline.swipeDown()
         }
         XCTAssertTrue(readmePill.isHittable, "README Repo pill was not visible for screenshot evidence")
-        XCTAssertTrue(architecturePill.isHittable, "Architecture Repo pill was not visible for screenshot evidence")
+        XCTAssertTrue(usagePill.isHittable, "Usage Repo pill was not visible for screenshot evidence")
         XCTAssertEqual(
             app.descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.user.path-pill."))

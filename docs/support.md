@@ -34,9 +34,8 @@ A short description of the action, the expected result, the observed result, the
 
 ## Common paths
 
+- [Using Oppi](usage.md)
 - [Onboarding and pairing](onboarding.md)
-- [Networking and connection routing](networking.md)
-- [Telemetry and diagnostics](telemetry.md)
 - [Dictation / ASR](../server/docs/asr.md)
 - [Privacy Policy](privacy.md)
 

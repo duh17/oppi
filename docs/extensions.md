@@ -8,15 +8,21 @@ For Oppi's public native UI block contract and Apple presentation mapping, see [
 
 This is not a general Pi extension-authoring guide. For pi package layout, lifecycle hooks, tool APIs, and terminal UI rendering, use pi's docs instead:
 
-- pi extension docs: `@earendil-works/pi-coding-agent/docs/extensions.md`
-- pi package docs: `@earendil-works/pi-coding-agent/docs/packages.md`
-- pi examples: `@earendil-works/pi-coding-agent/examples/extensions/`
+- [Pi extensions](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md) (`@earendil-works/pi-coding-agent/docs/extensions.md`)
+- [Pi packages](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/packages.md) (`@earendil-works/pi-coding-agent/docs/packages.md`)
+- Pi examples: `@earendil-works/pi-coding-agent/examples/extensions/`
 
 ## Core rule
 
 Pi owns ordinary skills and extensions. Normal Oppi-managed sessions resolve them for the session cwd through Pi's resource system; there is no `workspace.extensions` allowlist. Installing or running Oppi does not write `~/.pi/agent/settings.json`, run `pi install`, or enable anything in standalone Pi.
 
 Oppi does not register a server-owned extension or tool. Managed workspace sessions and workspace-less Pi Control sessions use Pi's normal global and cwd-scoped configuration. This includes `SYSTEM.md`, `APPEND_SYSTEM.md`, settings, tools, Skills, prompt templates, and Extensions. A Pi extension can still register a tool named `oppi`, but Oppi does not reserve or manage that name.
+
+## Mobile don'ts
+
+- Do not use `ctx.ui.custom()` for a decision the user must answer from the phone. Use `ctx.ui.ask()`, `ctx.ui.select()`, `ctx.ui.confirm()`, `ctx.ui.input()`, or `ctx.ui.editor()`.
+- Put readable mobile output in `details.expandedText` (with `details.presentationFormat` when it applies). Collapsed summaries stay one line.
+- Keep a terminal or text fallback. Oppi must show something readable when a native block is unsupported.
 
 ## Server Skills and Extensions
 
@@ -332,20 +338,6 @@ Expanded output uses this order:
 Sidecars are for short collapsed summaries only. Segment style is a closed semantic set: `bold`, `muted`, `dim`, `accent`, `success`, `warning`, or `error`. Invalid sidecar output is omitted and logged by the server because the Apple protocol mirror decodes this set strictly. Put rich readable output in `details.expandedText` instead of sidecar summary lines.
 
 Mirror mode uses the same semantic request payloads from an interactive terminal Pi process. Mirror-specific first-wins dialog behavior lives in [`oppi-mirror.md`](oppi-mirror.md#extension-ui-compatibility-matrix).
-
-## Relevant implementation files
-
-| File                                     | Why it matters                                                              |
-| ---------------------------------------- | --------------------------------------------------------------------------- |
-| `pi-extensions/ask`                      | Ask extension example with multi-select support                             |
-| Standalone `pi-goal` package             | Canonical active goal extension repository                                  |
-| `pi-extensions/goal`                     | Disabled prototype retained for the documented migration audit              |
-| `pi-extensions/browser-automation-video` | Oppi-compatible Pi extension package using the documented attachment helper |
-| `server/src/routes/skills.ts`            | Workspace extension picker (`GET /extensions`)                              |
-| `server/src/sdk-backend.ts`              | Pi resource loading and SDK session setup                                   |
-| `server/src/sdk-ui-bridge.ts`            | Extension UI bridge from pi APIs to Oppi protocol events                    |
-| `server/src/extension-ui-contract.ts`    | Shared extension UI request, notification, and settled message builders     |
-| `server/src/mobile-renderer.ts`          | Mobile tool-row rendering                                                   |
 
 ## When to read pi docs instead
 

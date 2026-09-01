@@ -84,8 +84,7 @@ Server-global Skills and Extensions are managed from the Apple app (**Skills** /
 Useful companion docs:
 
 - [extension-native-ui.md](extension-native-ui.md) — mobile-safe extension UI surfaces
-- [onboarding.md](onboarding.md) — install and pair over HTTPS/WSS
-- [networking.md](networking.md) — supported HTTPS/WSS routing
+- [onboarding.md](onboarding.md) — install, pair, LAN vs Tailscale, and `oppi status` / `oppi doctor`
 
 Provider API keys use `pi auth`, not Oppi config.
 

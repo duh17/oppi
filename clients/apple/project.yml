@@ -184,7 +184,7 @@ targets:
           mkdir -p "$DERIVED_FILE_DIR"
           STAMP_FILE="$DERIVED_FILE_DIR/architecture-boundaries.stamp"
           CHECK_SCRIPT="$SRCROOT/../../server/scripts/check-architecture-boundaries.ts"
-          ARCH_RULES="$SRCROOT/../../docs/architecture-client.md"
+          ARCH_RULES="$SRCROOT/../../dev/architecture-client.md"
           WATCH_DIRS=(
             "$SRCROOT/Oppi"
             "$SRCROOT/OppiCore"

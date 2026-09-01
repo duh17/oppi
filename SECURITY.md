@@ -26,7 +26,7 @@ Oppi has no hosted account service or external analytics. Session data stays on 
 
 Diagnostics upload only to the paired Oppi server. Public builds require **Settings → Privacy & Security → Send Diagnostics to Server** before they upload MetricKit, resource, or client-log diagnostics. Internal/debug builds upload diagnostics to the configured server automatically.
 
-See [`docs/telemetry.md`](docs/telemetry.md) for the full telemetry policy.
+See [`dev/telemetry.md`](dev/telemetry.md) for the full telemetry policy.
 
 ## Reporting issues
 
