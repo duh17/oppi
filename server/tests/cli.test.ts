@@ -2481,6 +2481,22 @@ describe("oppi token", () => {
 // ── Pair ──
 
 describe("oppi pair", () => {
+  it("does not persist a pairing --host that includes a port", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-host-port-"));
+    try {
+      expect(run(["config", "set", "tls.mode", "self-signed"], { OPPI_DATA_DIR: dir }).exitCode).toBe(
+        0,
+      );
+      const pair = run(["pair", "--host", "server.local:7749"], { OPPI_DATA_DIR: dir });
+      expect(pair.exitCode).toBe(1);
+      expect(stripAnsi(`${pair.stdout}${pair.stderr}`)).toMatch(/hostname or IP only/);
+      const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("server.local:7749");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not persist a rejected Tailscale --host as pairHost", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-bad-host-"));
     try {
@@ -2493,6 +2509,20 @@ describe("oppi pair", () => {
       expect(stored.exitCode).toBe(1);
       expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("not-a-tailnet.example");
       expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).toMatch(/unset/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an already-paired serve --host that includes a port", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-host-port-"));
+    try {
+      expect(run(["pair"], { OPPI_DATA_DIR: dir }).exitCode).toBe(0);
+      const serve = run(["serve", "--host", "server.local:7749"], { OPPI_DATA_DIR: dir });
+      expect(serve.exitCode).toBe(1);
+      expect(stripAnsi(`${serve.stdout}${serve.stderr}`)).toMatch(/hostname or IP only/);
+      const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("server.local:7749");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

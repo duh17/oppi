@@ -33,6 +33,7 @@ vi.mock("../src/tls.js", async (importOriginal) => {
 });
 
 import {
+  assertPairingAdvertiseHostGrammar,
   assertPairingAdvertiseHostSuffix,
   rememberPairingAdvertiseHost,
   rememberValidatedPairingAdvertiseHost,
@@ -132,6 +133,47 @@ describe("resolvePairingAdvertiseHost", () => {
     );
     expect(mockValidateTailscaleMaterial).toHaveBeenCalled();
     expect(updateConfig).toHaveBeenCalledWith({ pairHost: "cos-1.taila3ebc.ts.net" });
+  });
+
+  it("rejects scheme, port, and path in an advertised pairing host", () => {
+    const updateConfig = vi.fn();
+    for (const host of [
+      "server.local:7749",
+      "https://server.local",
+      "http://127.0.0.1",
+      "server.local/path",
+      "user@server.local",
+      "[::1]:7749",
+    ]) {
+      expect(() => assertPairingAdvertiseHostGrammar(host)).toThrow(/hostname or IP only/);
+      expect(() => rememberPairingAdvertiseHost({ updateConfig }, host)).toThrow(
+        /hostname or IP only/,
+      );
+      expect(() =>
+        rememberValidatedPairingAdvertiseHost(
+          {
+            getConfig: () => ({ tls: { mode: "self-signed" } }),
+            getDataDir: () => "/tmp/oppi-pair-host-test",
+            updateConfig,
+          },
+          host,
+        ),
+      ).toThrow(/hostname or IP only/);
+    }
+    expect(updateConfig).not.toHaveBeenCalled();
+  });
+
+  it("accepts hostname, IPv4, and bracketed IPv6 advertise hosts", () => {
+    for (const host of [
+      "studio.local",
+      "cos-1.taila3ebc.ts.net",
+      "127.0.0.1",
+      "192.168.1.44",
+      "[::1]",
+      "[2001:db8::1]",
+    ]) {
+      expect(() => assertPairingAdvertiseHostGrammar(host)).not.toThrow();
+    }
   });
 
   it("checks Tailscale suffix without requiring cert material", () => {

@@ -7,9 +7,48 @@
  * `--host` or `OPPI_PAIR_HOST`.
  */
 
+import { isIP } from "node:net";
+
 import type { ServerConfig } from "../types.js";
 import { isTailscaleHostname, resolveTlsConfig, validateTailscaleMaterial } from "../tls.js";
 import { getLocalHostname, getLocalIp, getTailscaleHostname, getTailscaleIp } from "./status.js";
+
+const PAIRING_HOST_GRAMMAR_ERROR =
+  "Pairing --host must be a hostname or IP only (no scheme, no port). " +
+  "The invite port comes from config.port. Example: --host my-mac.local";
+
+/**
+ * Apple builds `https://<host>:<config.port>`, so a scheme or :port in the
+ * advertised host makes the invite unusable and must not be persisted.
+ */
+export function assertPairingAdvertiseHostGrammar(host?: string): void {
+  const trimmed = host?.trim();
+  if (!trimmed) return;
+  if (isPairingAdvertiseHost(trimmed)) return;
+  throw new Error(PAIRING_HOST_GRAMMAR_ERROR);
+}
+
+export function isPairingAdvertiseHost(host: string): boolean {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(host)) return false;
+  if (/[/\\?#@\s]/.test(host)) return false;
+
+  if (host.startsWith("[")) {
+    if (!host.endsWith("]")) return false;
+    return isIP(host.slice(1, -1)) === 6;
+  }
+  if (isIP(host)) return true;
+  if (host.includes(":")) return false;
+  return isDnsHostname(host);
+}
+
+function isDnsHostname(host: string): boolean {
+  if (host.length === 0 || host.length > 253) return false;
+  if (host.startsWith(".") || host.endsWith(".") || host.includes("..")) return false;
+  return host.split(".").every((label) => {
+    if (label.length === 0 || label.length > 63) return false;
+    return /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$/.test(label);
+  });
+}
 
 export function rememberPairingAdvertiseHost(
   storage: { updateConfig: (updates: Partial<ServerConfig>) => void },
@@ -17,6 +56,7 @@ export function rememberPairingAdvertiseHost(
 ): void {
   const trimmed = host?.trim();
   if (!trimmed) return;
+  assertPairingAdvertiseHostGrammar(trimmed);
   storage.updateConfig({ pairHost: trimmed });
 }
 
@@ -27,6 +67,7 @@ export function assertPairingAdvertiseHostSuffix(
 ): void {
   const trimmed = host?.trim();
   if (!trimmed) return;
+  assertPairingAdvertiseHostGrammar(trimmed);
   if (config.tls?.mode === "tailscale" && !isTailscaleHostname(trimmed)) {
     throw new Error(
       "Tailscale TLS mode requires a *.ts.net pairing host. " +

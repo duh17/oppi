@@ -172,6 +172,23 @@ describe("generateInvite", () => {
     expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
   });
 
+  it("rejects a pairing host that includes a port before TLS setup", () => {
+    const storage = makeStorage({
+      port: 7777,
+      host: "0.0.0.0",
+      tls: { mode: "self-signed" },
+    });
+
+    expect(() =>
+      generateInvite(
+        storage as Storage,
+        () => "server.local:7749",
+        () => "unused",
+      ),
+    ).toThrowError(/hostname or IP only/);
+    expect(mockPrepareTlsForServer).not.toHaveBeenCalled();
+  });
+
   it("rejects non-tailnet hosts in tailscale TLS mode before TLS setup", () => {
     const storage = makeStorage({
       port: 7777,

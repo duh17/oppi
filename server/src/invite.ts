@@ -3,6 +3,7 @@
 import { sign } from "node:crypto";
 import type { InviteData, InvitePayloadV3, ServerConfig, SignedInviteEnvelopeV3 } from "./types.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
+import { assertPairingAdvertiseHostGrammar } from "./cli/pairing-host.js";
 import {
   isTailscaleHostname,
   prepareTlsForServer,
@@ -72,6 +73,8 @@ export function generateInvite(
         : "Pass --host <hostname-or-ip>, e.g. --host my-mac.local";
     throw new Error(`Could not determine pairing host. ${hint}`);
   }
+
+  assertPairingAdvertiseHostGrammar(inviteHost);
 
   if (config.tls?.mode === "tailscale" && !isTailscaleHostname(inviteHost)) {
     throw new Error(
