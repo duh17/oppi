@@ -2621,33 +2621,46 @@ describe("oppi pair", () => {
 
   it.skipIf(!hasOpenSSL)(
     "rejects an already-paired serve --host that does not match Tailscale cert material",
-    () => {
+    async () => {
       const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-cert-mismatch-"));
       try {
         expect(run(["pair"], { OPPI_DATA_DIR: dir }).exitCode).toBe(0);
         expect(run(["config", "set", "tls.mode", "tailscale"], { OPPI_DATA_DIR: dir }).exitCode).toBe(
           0,
         );
+        expect(run(["config", "set", "host", "127.0.0.1"], { OPPI_DATA_DIR: dir }).exitCode).toBe(0);
+        const freePort = await getFreePort();
+        expect(run(["config", "set", "port", String(freePort)], { OPPI_DATA_DIR: dir }).exitCode).toBe(
+          0,
+        );
         const tlsDir = join(dir, "tls", "tailscale");
         mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
-        execFileSync("openssl", [
-          "req",
-          "-x509",
-          "-newkey",
-          "rsa:2048",
-          "-nodes",
-          "-keyout",
-          join(tlsDir, "server.key"),
-          "-out",
-          join(tlsDir, "server.crt"),
-          "-subj",
-          "/CN=my-server.tail00000.ts.net",
-          "-addext",
-          "subjectAltName=DNS:my-server.tail00000.ts.net",
-          "-days",
-          "1",
-        ]);
-        const serve = run(["serve", "--host", "typo.tail00000.ts.net"], { OPPI_DATA_DIR: dir });
+        execFileSync(
+          "openssl",
+          [
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            join(tlsDir, "server.key"),
+            "-out",
+            join(tlsDir, "server.crt"),
+            "-subj",
+            "/CN=my-server.tail00000.ts.net",
+            "-addext",
+            "subjectAltName=DNS:my-server.tail00000.ts.net",
+            "-days",
+            "1",
+          ],
+          { stdio: ["ignore", "ignore", "ignore"] },
+        );
+        writeFileSync(join(dir, "tailscale"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+        const serve = run(["serve", "--host", "typo.tail00000.ts.net"], {
+          OPPI_DATA_DIR: dir,
+          PATH: `${dir}:${process.env.PATH ?? ""}`,
+        });
         expect(serve.exitCode).toBe(1);
         expect(stripAnsi(`${serve.stdout}${serve.stderr}`)).toMatch(/does not cover/);
         const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
