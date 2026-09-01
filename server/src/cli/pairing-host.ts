@@ -76,6 +76,18 @@ export function assertPairingAdvertiseHostSuffix(
   }
 }
 
+/** Missing/expired Tailscale material can be renewed; a SAN mismatch cannot. */
+export function isRetryablePairingHostMaterialError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /certificate not found/i.test(message) ||
+    /certificate is expired/i.test(message) ||
+    /not yet valid/i.test(message) ||
+    /unavailable/i.test(message) ||
+    /no usable existing certificate/i.test(message)
+  );
+}
+
 /**
  * Persist an explicit serve --host after the same Tailscale suffix + cert SAN
  * checks generateInvite uses. Call this after Server.start() so cert prep/renewal

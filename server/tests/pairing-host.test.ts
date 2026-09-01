@@ -35,6 +35,7 @@ vi.mock("../src/tls.js", async (importOriginal) => {
 import {
   assertPairingAdvertiseHostGrammar,
   assertPairingAdvertiseHostSuffix,
+  isRetryablePairingHostMaterialError,
   rememberPairingAdvertiseHost,
   rememberValidatedPairingAdvertiseHost,
   resolvePairingAdvertiseHost,
@@ -174,6 +175,25 @@ describe("resolvePairingAdvertiseHost", () => {
     ]) {
       expect(() => assertPairingAdvertiseHostGrammar(host)).not.toThrow();
     }
+  });
+
+  it("treats missing Tailscale material as retryable and SAN mismatch as fatal", () => {
+    expect(
+      isRetryablePairingHostMaterialError(new Error("Tailscale TLS certificate not found")),
+    ).toBe(true);
+    expect(
+      isRetryablePairingHostMaterialError(new Error("Tailscale TLS certificate is expired: /tmp/c")),
+    ).toBe(true);
+    expect(
+      isRetryablePairingHostMaterialError(
+        new Error("Tailscale TLS certificate does not cover typo.tail00000.ts.net"),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryablePairingHostMaterialError(
+        new Error("Tailscale TLS mode requires a *.ts.net pairing host"),
+      ),
+    ).toBe(false);
   });
 
   it("checks Tailscale suffix without requiring cert material", () => {

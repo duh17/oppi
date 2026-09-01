@@ -2549,6 +2549,20 @@ describe("oppi pair", () => {
     }
   });
 
+  it("rejects a first-run serve --host that includes a port before starting", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-first-host-port-"));
+    try {
+      const serve = run(["serve", "--host", "server.local:7749"], { OPPI_DATA_DIR: dir });
+      expect(serve.exitCode).toBe(1);
+      expect(stripAnsi(`${serve.stdout}${serve.stderr}`)).toMatch(/hostname or IP only/);
+      expect(stripAnsi(`${serve.stdout}${serve.stderr}`)).not.toContain("Scan QR above");
+      const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("server.local:7749");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an already-paired serve --host that includes a port", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-host-port-"));
     try {
@@ -2582,24 +2596,67 @@ describe("oppi pair", () => {
     }
   });
 
-  it("rejects an already-paired serve --host that does not match Tailscale cert material", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-cert-mismatch-"));
+  it("keeps an already-paired serve up when Tailscale certs are not ready yet", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-cert-retry-"));
     try {
       expect(run(["pair"], { OPPI_DATA_DIR: dir }).exitCode).toBe(0);
       expect(run(["config", "set", "tls.mode", "tailscale"], { OPPI_DATA_DIR: dir }).exitCode).toBe(
         0,
       );
-      const serve = run(["serve", "--host", "typo.tail00000.ts.net"], { OPPI_DATA_DIR: dir });
-      expect(serve.exitCode).toBe(1);
-      expect(stripAnsi(`${serve.stdout}${serve.stderr}`)).toMatch(
-        /Tailscale TLS certificate|does not cover/,
+      writeFileSync(join(dir, "tailscale"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const stdout = await runUntilOutput(
+        ["serve", "--host", "my-server.tail00000.ts.net"],
+        "Waiting for connections",
+        { OPPI_DATA_DIR: dir, PATH: `${dir}:${process.env.PATH ?? ""}` },
+        20_000,
       );
+      expect(stripAnsi(stdout)).toMatch(/certificate not found|Local API is up/i);
+      expect(stripAnsi(stdout)).not.toContain("Scan QR above");
       const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
-      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("typo.tail00000.ts.net");
+      expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("my-server.tail00000.ts.net");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
+
+  it.skipIf(!hasOpenSSL)(
+    "rejects an already-paired serve --host that does not match Tailscale cert material",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-cert-mismatch-"));
+      try {
+        expect(run(["pair"], { OPPI_DATA_DIR: dir }).exitCode).toBe(0);
+        expect(run(["config", "set", "tls.mode", "tailscale"], { OPPI_DATA_DIR: dir }).exitCode).toBe(
+          0,
+        );
+        const tlsDir = join(dir, "tls", "tailscale");
+        mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
+        execFileSync("openssl", [
+          "req",
+          "-x509",
+          "-newkey",
+          "rsa:2048",
+          "-nodes",
+          "-keyout",
+          join(tlsDir, "server.key"),
+          "-out",
+          join(tlsDir, "server.crt"),
+          "-subj",
+          "/CN=my-server.tail00000.ts.net",
+          "-addext",
+          "subjectAltName=DNS:my-server.tail00000.ts.net",
+          "-days",
+          "1",
+        ]);
+        const serve = run(["serve", "--host", "typo.tail00000.ts.net"], { OPPI_DATA_DIR: dir });
+        expect(serve.exitCode).toBe(1);
+        expect(stripAnsi(`${serve.stdout}${serve.stderr}`)).toMatch(/does not cover/);
+        const stored = run(["config", "get", "pairHost"], { OPPI_DATA_DIR: dir });
+        expect(stripAnsi(`${stored.stdout}${stored.stderr}`)).not.toContain("typo.tail00000.ts.net");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("generates QR code output", () => {
     const { stdout, exitCode } = run(["pair"]);

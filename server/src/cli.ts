@@ -68,6 +68,7 @@ import { magicDnsSelfSignedDoctorCheck, wildcardBindDoctorCheck } from "./cli/do
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
 import {
   assertPairingAdvertiseHostSuffix,
+  isRetryablePairingHostMaterialError,
   rememberPairingAdvertiseHost,
   rememberValidatedPairingAdvertiseHost,
   resolvePairingAdvertiseHost,
@@ -107,6 +108,10 @@ function shortHostLabel(host: string): string {
 
 async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   const wasPaired = storage.isPaired();
+  // Grammar/suffix before start on first-run and paired installs so a
+  // malformed --host cannot boot a server that then prints "Scan QR above"
+  // with no QR.
+  assertPairingAdvertiseHostSuffix(storage.getConfig(), pairHost);
 
   // Auto-init: generate owner token + identity keys if this is a fresh install.
   if (!wasPaired) {
@@ -118,9 +123,6 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
 
     storage.rotateToken();
     console.log(c.green("  ✓ First run — owner token generated"));
-  }
-  if (wasPaired) {
-    assertPairingAdvertiseHostSuffix(storage.getConfig(), pairHost);
   }
   ensureIdentityMaterial(identityConfigForDataDir(storage.getDataDir()));
 
@@ -189,8 +191,15 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
       rememberValidatedPairingAdvertiseHost(storage, pairHost);
     }
   } catch (error: unknown) {
-    await shutdown(1, safeErrorMessage(error));
-    return;
+    // start() may return with only the local socket while Tailscale certs
+    // renew. Do not persist or tear down that retry path.
+    if (!server.hasPublicHttpListener && isRetryablePairingHostMaterialError(error)) {
+      console.log(c.yellow(`  ! ${safeErrorMessage(error)}`));
+      console.log(c.dim("  Local API is up. pairHost will be stored after remote TLS is ready."));
+    } else {
+      await shutdown(1, safeErrorMessage(error));
+      return;
+    }
   }
 
   console.log("");
@@ -223,7 +232,10 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
   } else {
     // First run: show pairing QR inline so user doesn't need a separate command.
     console.log("");
-    showPairingQR(storage, undefined, pairHost);
+    if (!showPairingQR(storage, undefined, pairHost)) {
+      await shutdown(1);
+      return;
+    }
     console.log(c.green("  Server is running. Scan QR above, then Ctrl+C when done."));
     console.log("");
   }
