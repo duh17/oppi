@@ -2835,6 +2835,28 @@ struct SessionFileFullScreenContentBuilderTests {
         #expect(context.workspaceID == "workspace-1")
         #expect(context.sessionID == "session-1")
         #expect(context.fetchSessionFile == nil)
+        #expect(context.fetchHostFile != nil)
+    }
+
+    @Test func sessionTouchedMarkdownThreadsFetchHostFile() throws {
+        let serverBaseURL = try #require(URL(string: "https://server.example.com"))
+        let content = SessionFileFullScreenContentBuilder.content(
+            text: "![Generated chart](/tmp/chart.png)",
+            filePath: "/tmp/session-report.md",
+            workspaceID: "workspace-1",
+            serverBaseURL: serverBaseURL,
+            workspaceHostMount: "/Users/example/workspace/oppi",
+            workspaceRuntime: .host,
+            fetchSessionFileData: { _ in Data([1]) },
+            sessionID: "session-1"
+        )
+
+        guard case .markdown(_, _, let workspaceContext) = content else {
+            Issue.record("Expected markdown full-screen content")
+            return
+        }
+        let context = try #require(workspaceContext)
+        #expect(context.fetchHostFile != nil)
     }
 
     @Test func hostFileMarkdownKeepsAbsoluteDisplayPath() throws {
@@ -3404,6 +3426,105 @@ struct MarkdownBangEmbedUnificationTests {
         }
         #expect(String(text.characters).contains("!"))
         #expect(String(text.characters).contains("[[https://example.com/a.png]]"))
+    }
+
+    @Test func hostFileURLIdentityDiffersByServer() throws {
+        let otherBaseURL = try #require(URL(string: "https://other.example.com"))
+        let serverA = FlatSegment.build(
+            from: parseCommonMark("![a](/tmp/a.png)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        let serverB = FlatSegment.build(
+            from: parseCommonMark("![a](/tmp/a.png)"),
+            serverID: "server-b",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: otherBaseURL
+        )
+        let otherSession = FlatSegment.build(
+            from: parseCommonMark("![a](/tmp/a.png)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-b",
+            serverBaseURL: baseURL
+        )
+
+        guard case .image(_, let urlA) = serverA.first else {
+            Issue.record("Expected host image for server A, got \(serverA)")
+            return
+        }
+        guard case .image(_, let urlB) = serverB.first else {
+            Issue.record("Expected host image for server B, got \(serverB)")
+            return
+        }
+        guard case .image(_, let urlSession) = otherSession.first else {
+            Issue.record("Expected host image for other session, got \(otherSession)")
+            return
+        }
+
+        #expect(HostFileURL.parse(urlA) == "/tmp/a.png")
+        #expect(HostFileURL.parse(urlB) == "/tmp/a.png")
+        #expect(HostFileURL.parse(urlSession) == "/tmp/a.png")
+        #expect(urlA != urlB)
+        #expect(urlA != urlSession)
+
+        let keyedA = try #require(HostFileURL.make(
+            filePath: "/tmp/a.png",
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a"
+        ))
+        let keyedB = try #require(HostFileURL.make(
+            filePath: "/tmp/a.png",
+            serverID: "server-b",
+            workspaceID: "workspace-a",
+            sessionID: "session-a"
+        ))
+        #expect(keyedA != keyedB)
+        #expect(HostFileURL.parse(keyedA) == "/tmp/a.png")
+        #expect(HostFileURL.parse(keyedB) == "/tmp/a.png")
+    }
+
+    @Test func networkPathMarkdownBangIsNotAHostFile() throws {
+        let markdown = FlatSegment.build(
+            from: parseCommonMark("![x](//example.com/a.png)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        let wiki = FlatSegment.build(
+            from: parseCommonMark("![[//example.com/a.png]]"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        let fileLink = FlatSegment.build(
+            from: parseCommonMark("[x](//example.com/a.png)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+
+        for segments in [markdown, wiki] {
+            for segment in segments {
+                if case .image(_, let url) = segment {
+                    #expect(HostFileURL.parse(url) == nil, "network-path must not become a host file: \(url)")
+                    #expect(WorkspaceFileURL.parse(url) == nil)
+                }
+            }
+        }
+
+        let fileLinkRefs = fileLink.compactMap { segment -> [ResourceReference] in
+            guard case .text(let text) = segment else { return [] }
+            return text.runs.compactMap(\.link).compactMap(ResourceReferenceURL.parse)
+        }.flatMap { $0 }
+        #expect(fileLinkRefs.allSatisfy { $0.kind != .hostFile })
     }
 }
 

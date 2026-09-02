@@ -889,6 +889,8 @@ enum MarkdownWikiLinkRewriter {
         _ target: String,
         sourceDirectory: String? = nil
     ) -> ClassifiedWikiTarget? {
+        let trimmedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isRFC3986NetworkPath(trimmedTarget) else { return nil }
         guard let parsed = parseWikiTarget(target) else { return nil }
 
         var path = parsed.path.replacingOccurrences(of: "\\", with: "/")
@@ -922,7 +924,8 @@ enum MarkdownWikiLinkRewriter {
         let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               !trimmed.contains("?"),
-              !trimmed.contains("\0") else {
+              !trimmed.contains("\0"),
+              !isRFC3986NetworkPath(trimmed) else {
             return nil
         }
 
@@ -1205,6 +1208,11 @@ enum MarkdownWikiLinkRewriter {
             return .failClosed
         }
 
+        // RFC 3986 network-path (`//host/path`) is not a POSIX file.
+        if isRFC3986NetworkPath(trimmed) {
+            return .failClosed
+        }
+
         let classified: ClassifiedWikiTarget?
         switch dialect {
         case .wiki:
@@ -1453,6 +1461,8 @@ enum MarkdownWikiLinkRewriter {
         _ destination: String,
         sourceDirectory: String?
     ) -> ClassifiedWikiTarget? {
+        let trimmedDestination = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isRFC3986NetworkPath(trimmedDestination) else { return nil }
         guard !destination.contains("?"),
               let parsed = parseMarkdownLinkTarget(destination) else {
             return nil
@@ -1496,6 +1506,12 @@ enum MarkdownWikiLinkRewriter {
         }
         // Heading fragments are not anchors. Open the file and ignore the heading.
         return ParsedWikiTarget(path: path, lineAnchor: nil)
+    }
+
+    /// RFC 3986 network-path reference. Not a POSIX file and must not become
+    /// owner-host `/files/raw`.
+    private static func isRFC3986NetworkPath(_ destination: String) -> Bool {
+        destination.hasPrefix("//")
     }
 
     private static func rfc3986Scheme(of destination: String) -> String? {

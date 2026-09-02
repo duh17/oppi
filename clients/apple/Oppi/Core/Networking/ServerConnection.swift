@@ -156,6 +156,30 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
             )
         }
     }
+
+    /// Cache-first rows snapshot runtime at build time. Refresh at fetch time
+    /// so a nil catalog cannot select owner GET `/files/raw` for sandbox.
+    static func resolveHostFile(
+        path: String,
+        workspaceID: String?,
+        sessionID: String?,
+        worktreeID: String?,
+        capturedRuntime: WorkspaceRuntime?,
+        currentRuntime: WorkspaceRuntime?
+    ) -> Self? {
+        resolve(
+            filePath: path,
+            kind: .hostFile,
+            referenceWorkspaceID: workspaceID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            worktreeID: worktreeID,
+            workspaceRuntime: MarkdownVideoWorkspaceContext.resolvedRuntime(
+                captured: capturedRuntime,
+                current: currentRuntime
+            )
+        )
+    }
 }
 
 /// Top-level connection coordinator.
@@ -1110,6 +1134,53 @@ final class ServerConnection {
                 worktreeId: worktreeID,
                 contentTypeHint: contentType,
                 sourceFileExtension: pathExtension
+            )
+        }
+    }
+
+    func fetchHostFileWhenReady(
+        path: String,
+        workspaceId: String?,
+        sessionId: String?,
+        worktreeId: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) async throws -> Data {
+        let apiClient = try await waitForAPIClient()
+        let currentRuntime = MarkdownVideoWorkspaceContext.runtime(
+            workspaceId: workspaceId,
+            serverId: currentServerId,
+            workspacesByServer: workspaceStore.workspacesByServer,
+            workspaces: workspaceStore.workspaces
+        )
+        let session = sessionId.flatMap { sessionStore.session(id: $0) }
+        let resolvedWorktree = worktreeId ?? MarkdownVideoWorkspaceContext.firstCheckout(
+            session: session,
+            workspaceId: workspaceId
+        )
+        guard let route = MarkdownVideoMediaSourceRoute.resolveHostFile(
+            path: path,
+            workspaceID: workspaceId,
+            sessionID: sessionId,
+            worktreeID: resolvedWorktree,
+            capturedRuntime: workspaceRuntime,
+            currentRuntime: currentRuntime
+        ) else {
+            throw APIError.server(status: 404, message: "Host image is unavailable")
+        }
+        switch route {
+        case .host(let hostPath):
+            return try await apiClient.browseHostFile(path: hostPath)
+        case .session(let workspaceID, let sessionID, let sessionPath):
+            return try await apiClient.getSessionFileData(
+                workspaceId: workspaceID,
+                sessionId: sessionID,
+                path: sessionPath
+            )
+        case .workspace(let workspaceID, let workspacePath, let worktreeID):
+            return try await apiClient.fetchWorkspaceFile(
+                workspaceID: workspaceID,
+                path: workspacePath,
+                worktreeId: worktreeID
             )
         }
     }

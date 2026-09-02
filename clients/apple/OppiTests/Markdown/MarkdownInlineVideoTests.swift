@@ -714,6 +714,39 @@ struct MarkdownInlineVideoTests {
         ) == .host(path: "/tmp/demo.mov"))
     }
 
+    @Test("sandbox nil-runtime host image does not browseHostFile")
+    func sandboxNilRuntimeHostImageDoesNotBrowseHostFile() {
+        let captured: WorkspaceRuntime? = nil
+        let current: WorkspaceRuntime? = .sandbox
+        let route = MarkdownVideoMediaSourceRoute.resolveHostFile(
+            path: "/tmp/a.png",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            worktreeID: nil,
+            capturedRuntime: captured,
+            currentRuntime: current
+        )
+        #expect(route == .session(
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            path: "/tmp/a.png"
+        ))
+        if case .host = route {
+            Issue.record("sandbox nil-runtime must not call browseHostFile")
+        }
+
+        let stillUnknown = MarkdownVideoMediaSourceRoute.resolve(
+            filePath: "/tmp/a.png",
+            kind: .hostFile,
+            referenceWorkspaceID: "workspace-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            worktreeID: nil,
+            workspaceRuntime: captured
+        )
+        #expect(stillUnknown == .host(path: "/tmp/a.png"))
+    }
+
     @MainActor
     @Test("player hosting controller is contained and removed from a real parent")
     func playerHostingControllerUsesValidContainment() async throws {

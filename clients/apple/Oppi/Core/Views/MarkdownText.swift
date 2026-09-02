@@ -271,19 +271,40 @@ enum SessionFileURL {
 /// full-byte GET `/files/raw`. Distinct from workspace/session file URLs so
 /// sandbox remapping can reuse the AV host-file route instead of pretending
 /// the image is a workspace path.
+///
+/// Cache identity includes server and route context so `/tmp/a.png` from
+/// two servers or two sessions cannot share NativeMarkdownImageView's cache.
 enum HostFileURL {
     private static let scheme = "oppi-host-file"
 
-    static func make(filePath: String) -> URL? {
+    static func make(
+        filePath: String,
+        serverID: String? = nil,
+        serverBaseURL: URL? = nil,
+        workspaceID: String? = nil,
+        sessionID: String? = nil,
+        worktreeId: String? = nil
+    ) -> URL? {
         let path = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else { return nil }
 
         var components = URLComponents()
         components.scheme = scheme
         components.host = "host-file"
-        components.queryItems = [
-            URLQueryItem(name: "path", value: path),
-        ]
+        var items = [URLQueryItem(name: "path", value: path)]
+        if let server = scopedQueryValue(serverID) ?? scopedQueryValue(serverBaseURL?.absoluteString) {
+            items.append(URLQueryItem(name: "server", value: server))
+        }
+        if let workspaceID = scopedQueryValue(workspaceID) {
+            items.append(URLQueryItem(name: "workspaceID", value: workspaceID))
+        }
+        if let sessionID = scopedQueryValue(sessionID) {
+            items.append(URLQueryItem(name: "sessionID", value: sessionID))
+        }
+        if let worktreeId = scopedQueryValue(worktreeId), worktreeId != "main" {
+            items.append(URLQueryItem(name: "worktreeId", value: worktreeId))
+        }
+        components.queryItems = items
         return components.url
     }
 
@@ -296,6 +317,11 @@ enum HostFileURL {
             return nil
         }
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func scopedQueryValue(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
     }
 }
@@ -632,6 +658,7 @@ enum FlatSegment: Sendable {
                            let imageSegments = resolveParagraphImageSegments(
                             inlines: inlines,
                             palette: palette,
+                            serverID: serverID,
                             workspaceID: workspaceID,
                             sessionID: sessionID,
                             serverBaseURL: serverBaseURL,
@@ -718,6 +745,7 @@ enum FlatSegment: Sendable {
                 } else if let imageSegments = resolveParagraphImageSegments(
                     inlines: inlines,
                     palette: palette,
+                    serverID: serverID,
                     workspaceID: workspaceID,
                     sessionID: sessionID,
                     serverBaseURL: serverBaseURL,
@@ -789,6 +817,7 @@ enum FlatSegment: Sendable {
                            let imageSegments = resolveParagraphImageSegments(
                             inlines: inlines,
                             palette: palette,
+                            serverID: serverID,
                             workspaceID: workspaceID,
                             sessionID: sessionID,
                             serverBaseURL: serverBaseURL,
@@ -1704,6 +1733,7 @@ enum FlatSegment: Sendable {
     private static func resolveParagraphImageSegments(
         inlines: [MarkdownInline],
         palette: ThemePalette,
+        serverID: String?,
         workspaceID: String?,
         sessionID: String?,
         serverBaseURL: URL?,
@@ -1743,6 +1773,7 @@ enum FlatSegment: Sendable {
             } else if case .image(let alt, let source) = inline,
                let imageURL = resolveImageURL(
                    source: source,
+                   serverID: serverID,
                    workspaceID: workspaceID,
                    sessionID: sessionID,
                    serverBaseURL: serverBaseURL,
@@ -1821,6 +1852,7 @@ enum FlatSegment: Sendable {
     /// Skips `data:` URIs and other non-file schemes.
     private static func resolveImageURL(
         source: String?,
+        serverID: String?,
         workspaceID: String?,
         sessionID: String?,
         serverBaseURL: URL?,
@@ -1829,7 +1861,6 @@ enum FlatSegment: Sendable {
     ) -> URL? {
         guard let source, !source.isEmpty else { return nil }
         _ = sourceDirectory
-        _ = sessionID
 
         // Skip data: URIs — they can be huge and aren't practical inline.
         if source.hasPrefix("data:") {
@@ -1843,7 +1874,14 @@ enum FlatSegment: Sendable {
         }
 
         if let hostPath = MarkdownWikiLinkRewriter.resolvedHostPath(source) {
-            return HostFileURL.make(filePath: hostPath)
+            return HostFileURL.make(
+                filePath: hostPath,
+                serverID: serverID,
+                serverBaseURL: serverBaseURL,
+                workspaceID: workspaceID,
+                sessionID: sessionID,
+                worktreeId: worktreeId
+            )
         }
 
         if let url = URL(string: source), let scheme = url.scheme, scheme != "file" {

@@ -234,9 +234,11 @@ enum MacMarkdownImageLoader {
         if source.hasPrefix("data:") {
             return dataURIData(source)
         }
+        // Host POSIX / local file: sources must not read the owner filesystem.
+        // There is no sandbox-remapped authenticated image fetch on Mac yet.
         if let url = URL(string: source) {
             if url.isFileURL {
-                return try? Data(contentsOf: url)
+                return nil
             }
             if url.scheme == "https" || url.scheme == "http" {
                 guard allowRemote else { return nil }
@@ -244,8 +246,7 @@ enum MacMarkdownImageLoader {
             }
         }
         if source.hasPrefix("/") || source.hasPrefix("~") {
-            let expanded = (source as NSString).expandingTildeInPath
-            return try? Data(contentsOf: URL(fileURLWithPath: expanded))
+            return nil
         }
         if MacMarkdownPaintDispatch.isRelativeImageSource(source) {
             let path = MacMarkdownWorkspaceFileLoader.resolvedPath(source, sourceDirectory: sourceDirectory)

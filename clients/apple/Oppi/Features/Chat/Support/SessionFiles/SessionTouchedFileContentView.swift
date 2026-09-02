@@ -32,6 +32,7 @@ enum SessionFileFullScreenContentBuilder {
                 },
                 sessionID: sessionID,
                 fetchSessionFile: nil,
+                fetchHostFile: fetchSessionFileData,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
                 audioPlayer: audioPlayer
