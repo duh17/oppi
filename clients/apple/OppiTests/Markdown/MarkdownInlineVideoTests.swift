@@ -735,16 +735,54 @@ struct MarkdownInlineVideoTests {
             Issue.record("sandbox nil-runtime must not call browseHostFile")
         }
 
-        let stillUnknown = MarkdownVideoMediaSourceRoute.resolve(
-            filePath: "/tmp/a.png",
-            kind: .hostFile,
-            referenceWorkspaceID: "workspace-a",
+        let stillUnknown = MarkdownVideoMediaSourceRoute.resolveHostFile(
+            path: "/tmp/a.png",
             workspaceID: "workspace-a",
             sessionID: "session-a",
             worktreeID: nil,
-            workspaceRuntime: captured
+            capturedRuntime: nil,
+            currentRuntime: nil
         )
-        #expect(stillUnknown == .host(path: "/tmp/a.png"))
+        #expect(stillUnknown == nil)
+        if case .host = stillUnknown {
+            Issue.record("nil/nil with workspace id must not call browseHostFile")
+        }
+    }
+
+    @Test("nil/nil host image with workspace id does not browseHostFile")
+    func unknownRuntimeHostImageWithWorkspaceIdDoesNotBrowseHostFile() {
+        let stillUnknown = MarkdownVideoMediaSourceRoute.resolveHostFile(
+            path: "/tmp/a.png",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            worktreeID: nil,
+            capturedRuntime: nil,
+            currentRuntime: nil
+        )
+        #expect(stillUnknown == nil)
+        if case .host = stillUnknown {
+            Issue.record("nil/nil with workspace id must not select browseHostFile")
+        }
+
+        let ownerOnly = MarkdownVideoMediaSourceRoute.resolveHostFile(
+            path: "/tmp/a.png",
+            workspaceID: nil,
+            sessionID: nil,
+            worktreeID: nil,
+            capturedRuntime: nil,
+            currentRuntime: nil
+        )
+        #expect(ownerOnly == .host(path: "/tmp/a.png"))
+
+        let knownHost = MarkdownVideoMediaSourceRoute.resolveHostFile(
+            path: "/tmp/a.png",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            worktreeID: nil,
+            capturedRuntime: .host,
+            currentRuntime: nil
+        )
+        #expect(knownHost == .host(path: "/tmp/a.png"))
     }
 
     @MainActor

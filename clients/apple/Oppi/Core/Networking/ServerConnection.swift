@@ -159,6 +159,8 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
 
     /// Cache-first rows snapshot runtime at build time. Refresh at fetch time
     /// so a nil catalog cannot select owner GET `/files/raw` for sandbox.
+    /// Image-only: this helper feeds `fetchHostFileWhenReady`. AV still uses
+    /// `resolve()`, which may return `.host` while runtime is unknown.
     static func resolveHostFile(
         path: String,
         workspaceID: String?,
@@ -167,17 +169,24 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
         capturedRuntime: WorkspaceRuntime?,
         currentRuntime: WorkspaceRuntime?
     ) -> Self? {
-        resolve(
+        let workspaceRuntime = MarkdownVideoWorkspaceContext.resolvedRuntime(
+            captured: capturedRuntime,
+            current: currentRuntime
+        )
+        let workspace = workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Fail closed while a workspace context exists but the catalog has not
+        // arrived. Owner-only (no workspace id) may still use `.host`.
+        if workspaceRuntime == nil, let workspace, !workspace.isEmpty {
+            return nil
+        }
+        return resolve(
             filePath: path,
             kind: .hostFile,
             referenceWorkspaceID: workspaceID,
             workspaceID: workspaceID,
             sessionID: sessionID,
             worktreeID: worktreeID,
-            workspaceRuntime: MarkdownVideoWorkspaceContext.resolvedRuntime(
-                captured: capturedRuntime,
-                current: currentRuntime
-            )
+            workspaceRuntime: workspaceRuntime
         )
     }
 }
