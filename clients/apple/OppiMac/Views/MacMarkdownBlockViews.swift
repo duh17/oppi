@@ -522,6 +522,9 @@ struct MacMarkdownInlineContent: View {
                         }
                     case .video(let embed):
                         MacMarkdownVideoView(embed: embed, worktreeId: worktreeId)
+                    case .audio(let embed):
+                        Text(embed.displayLabel)
+                            .foregroundStyle(.secondary)
                     case .latexFormula(let code):
                         MacLatexFormulaView(code: code, isInline: true)
                     }
@@ -583,6 +586,10 @@ private struct MacMarkdownInlineText: View {
         case .image(let alt, _):
             return AttributedString(alt)
         case .videoEmbed(let embed):
+            var result = AttributedString(embed.displayLabel)
+            result.foregroundColor = theme.markdown.link
+            return result
+        case .audioEmbed(let embed):
             var result = AttributedString(embed.displayLabel)
             result.foregroundColor = theme.markdown.link
             return result

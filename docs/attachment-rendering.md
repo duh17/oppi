@@ -18,7 +18,7 @@ Expanded tool rows understand `details.media[]` for stored image and video attac
 
 Attachments combine structured metadata with server-owned bytes. They are not markdown URLs.
 
-Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` resolves image file paths and remote images. Markdown `![[video-file]]` embeds an existing Oppi-backed file; it does not address stored attachments. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
+Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` resolves image file paths and remote images. Markdown `![[video-file]]` and `![[audio-file]]` embed an existing Oppi-backed file; they do not address stored attachments. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
 
 ## Deployment model and trust boundary
 
@@ -212,6 +212,12 @@ Use `![[video-file]]` to embed a current workspace, worktree, session-reported, 
 Inline video uses Oppi's authenticated range-streaming player. Playback never starts automatically. The player keeps native controls, full-screen presentation, Picture in Picture, and an open-file fallback when playback fails. Oppi does not embed remote video sites, arbitrary URLs, HTML `<video>`, or stored attachment IDs through this syntax.
 
 The player always reserves 16:9 geometry because wiki-file syntax has no dimensions. Playback metadata never resizes an embed, including later remounts. Portrait and landscape clips letterbox inside that slot. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
+
+## Markdown inline audio
+
+Use `![[audio-file]]` to embed a current workspace, worktree, session-reported, or exact owner host audio file as a compact native player strip. Use `[[audio-file]]` when the file must remain an ordinary navigable link that opens the lyrics-first full-screen player.
+
+Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. Wiki audio without a transcript shows “No lyrics”. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, or stored attachment IDs through this syntax. Failure keeps the strip up with “Audio unavailable” and an open-file fallback. Voice `audio_presentation` rows use the same strip plus the transcript as message text.
 
 ## Extension authoring API
 

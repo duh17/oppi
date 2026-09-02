@@ -80,9 +80,47 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
         worktreeID: String?,
         workspaceRuntime: WorkspaceRuntime? = nil
     ) -> Self? {
-        let path = embed.filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        resolve(
+            filePath: embed.filePath,
+            kind: embed.reference.kind,
+            referenceWorkspaceID: embed.reference.workspaceID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            worktreeID: worktreeID,
+            workspaceRuntime: workspaceRuntime
+        )
+    }
+
+    static func resolve(
+        embed: MarkdownAudioEmbed,
+        workspaceID: String?,
+        sessionID: String?,
+        worktreeID: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) -> Self? {
+        resolve(
+            filePath: embed.filePath,
+            kind: embed.reference.kind,
+            referenceWorkspaceID: embed.reference.workspaceID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            worktreeID: worktreeID,
+            workspaceRuntime: workspaceRuntime
+        )
+    }
+
+    static func resolve(
+        filePath: String,
+        kind: ResourceReferenceKind,
+        referenceWorkspaceID: String?,
+        workspaceID: String?,
+        sessionID: String?,
+        worktreeID: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) -> Self? {
+        let path = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else { return nil }
-        switch embed.reference.kind {
+        switch kind {
         case .hostFile:
             if workspaceRuntime == .sandbox {
                 let workspace = workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -104,7 +142,7 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
             }
             return .host(path: path)
         case .workspaceFile:
-            let workspace = (embed.reference.workspaceID ?? workspaceID)?
+            let workspace = (referenceWorkspaceID ?? workspaceID)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard let workspace, !workspace.isEmpty else { return nil }
             if let session = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -988,6 +1026,67 @@ final class ServerConnection {
         }
         let pathExtension = (embed.filePath as NSString).pathExtension
         let contentType = MediaMimeType.videoMimeType(forPathExtension: pathExtension)
+
+        switch route {
+        case .host(let path):
+            return try await apiClient.makeHostFileMediaSource(
+                path: path,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        case .session(let workspaceID, let sessionID, let path):
+            return try await apiClient.makeSessionFileMediaSource(
+                workspaceId: workspaceID,
+                sessionId: sessionID,
+                path: path,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        case .workspace(let workspaceID, let path, let worktreeID):
+            return try await apiClient.makeWorkspaceMediaSource(
+                workspaceId: workspaceID,
+                path: path,
+                worktreeId: worktreeID,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        }
+    }
+
+    func makeMarkdownAudioMediaSourceWhenReady(
+        embed: MarkdownAudioEmbed,
+        workspaceId: String?,
+        sessionId: String?,
+        worktreeId: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) async throws -> AuthenticatedMediaSource {
+        let apiClient = try await waitForAPIClient()
+        let currentRuntime = MarkdownVideoWorkspaceContext.runtime(
+            workspaceId: workspaceId,
+            serverId: currentServerId,
+            workspacesByServer: workspaceStore.workspacesByServer,
+            workspaces: workspaceStore.workspaces
+        )
+        let resolvedRuntime = MarkdownVideoWorkspaceContext.resolvedRuntime(
+            captured: workspaceRuntime,
+            current: currentRuntime
+        )
+        let session = sessionId.flatMap { sessionStore.session(id: $0) }
+        let resolvedWorktree = worktreeId ?? MarkdownVideoWorkspaceContext.firstCheckout(
+            session: session,
+            workspaceId: workspaceId
+        )
+        guard let route = MarkdownVideoMediaSourceRoute.resolve(
+            embed: embed,
+            workspaceID: workspaceId,
+            sessionID: sessionId,
+            worktreeID: resolvedWorktree,
+            workspaceRuntime: resolvedRuntime
+        ) else {
+            throw APIError.server(status: 404, message: "Audio source is unavailable")
+        }
+        let pathExtension = (embed.filePath as NSString).pathExtension
+        let contentType = MediaMimeType.audioMimeType(forPathExtension: pathExtension)
 
         switch route {
         case .host(let path):

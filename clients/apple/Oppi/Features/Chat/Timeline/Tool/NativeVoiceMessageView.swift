@@ -4,12 +4,8 @@ import UIKit
 final class NativeAudioMessageView: UIView {
     private let container = UIView()
     private let stack = UIStackView()
-    private let headerRow = UIStackView()
-    private let headerIconView = UIImageView(image: UIImage(systemName: "speaker.wave.2.fill"))
-    private let headerLabel = UILabel()
+    private let strip = NativeAudioPlayerStripView()
     private let messageLabel = UILabel()
-    private let transcriptStack = UIStackView()
-    private let progressView = UIProgressView(progressViewStyle: .default)
     private let spinner = UIActivityIndicatorView(style: .medium)
 
     private var id: String?
@@ -23,6 +19,8 @@ final class NativeAudioMessageView: UIView {
     private var decodeTask: Task<Void, Never>?
     private var fetchTask: Task<Void, Never>?
     private var suppressAutoplay = false
+    private var durationSeconds: TimeInterval?
+    private var isUnavailable = false
     nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
@@ -70,9 +68,18 @@ final class NativeAudioMessageView: UIView {
         sessionId: String?,
         audioPlayer: AudioPlayerService?,
         palette: ThemePalette,
-        suppressAutoplay: Bool = false
+        suppressAutoplay: Bool = false,
+        durationSeconds: TimeInterval? = nil
     ) {
-        prepareForApply(id: id, message: message, playbackBehavior: playbackBehavior, sessionId: sessionId, audioPlayer: audioPlayer, palette: palette)
+        prepareForApply(
+            id: id,
+            message: message,
+            playbackBehavior: playbackBehavior,
+            sessionId: sessionId,
+            audioPlayer: audioPlayer,
+            palette: palette,
+            durationSeconds: durationSeconds
+        )
         self.suppressAutoplay = suppressAutoplay
         attachmentId = nil
         attachmentFetcher = nil
@@ -80,17 +87,15 @@ final class NativeAudioMessageView: UIView {
 
         guard MediaMimeType.normalized(mimeType) == "audio/wav" else {
             decodedData = nil
-            progressView.isHidden = true
-            updateButton(palette: palette)
+            isUnavailable = true
+            refreshStrip()
             return
         }
 
+        isUnavailable = false
+        refreshStrip()
+
         let compactBase64 = base64.filter { !$0.isWhitespace }
-
-        progressView.progress = 0
-        progressView.isHidden = false
-        updateButton(palette: palette)
-
         decodeTask?.cancel()
         decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
             let data = Data(base64Encoded: compactBase64, options: .ignoreUnknownCharacters)
@@ -98,12 +103,12 @@ final class NativeAudioMessageView: UIView {
                 guard let self, self.id == id else { return }
                 if let data {
                     self.decodedData = data
-                    self.progressView.progress = 0
-                    self.maybeAutoplayDecodedDataIfNeeded(palette: palette)
+                    self.isUnavailable = false
+                    self.maybeAutoplayDecodedDataIfNeeded()
                 } else {
-                    self.progressView.isHidden = true
+                    self.isUnavailable = true
                 }
-                self.updateButton(palette: palette)
+                self.refreshStrip()
                 ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
             }
         }
@@ -120,9 +125,18 @@ final class NativeAudioMessageView: UIView {
         attachmentFetcher: ((String) async throws -> Data)?,
         attachmentMediaSourceProvider: ((String, String?, String?) async throws -> AuthenticatedMediaSource)? = nil,
         palette: ThemePalette,
-        suppressAutoplay: Bool = false
+        suppressAutoplay: Bool = false,
+        durationSeconds: TimeInterval? = nil
     ) {
-        prepareForApply(id: id, message: message, playbackBehavior: playbackBehavior, sessionId: sessionId, audioPlayer: audioPlayer, palette: palette)
+        prepareForApply(
+            id: id,
+            message: message,
+            playbackBehavior: playbackBehavior,
+            sessionId: sessionId,
+            audioPlayer: audioPlayer,
+            palette: palette,
+            durationSeconds: durationSeconds
+        )
         self.suppressAutoplay = suppressAutoplay
         self.attachmentId = attachmentId
         self.attachmentFetcher = attachmentFetcher
@@ -131,15 +145,14 @@ final class NativeAudioMessageView: UIView {
         guard MediaMimeType.normalized(mimeType) == "audio/wav", attachmentMediaSourceProvider != nil else {
             self.attachmentFetcher = nil
             self.attachmentMediaSourceProvider = nil
-            progressView.isHidden = true
-            updateButton(palette: palette)
+            isUnavailable = true
+            refreshStrip()
             return
         }
 
-        progressView.progress = 0
-        progressView.isHidden = true
-        updateButton(palette: palette)
-        maybeAutoplayAttachmentIfNeeded(palette: palette)
+        isUnavailable = false
+        refreshStrip()
+        maybeAutoplayAttachmentIfNeeded()
     }
 
     private func prepareForApply(
@@ -148,12 +161,14 @@ final class NativeAudioMessageView: UIView {
         playbackBehavior: AudioPlaybackBehavior?,
         sessionId: String?,
         audioPlayer: AudioPlayerService?,
-        palette: ThemePalette
+        palette: ThemePalette,
+        durationSeconds: TimeInterval?
     ) {
         self.id = id
         self.audioPlayer = audioPlayer
         self.playbackBehavior = playbackBehavior
         self.sessionId = sessionId
+        self.durationSeconds = durationSeconds
         accessibilityIdentifier = "chat.timeline.row.\(id).audio.message"
         messageLabel.accessibilityIdentifier = "chat.timeline.row.\(id).audio.message.transcript"
         self.decodedData = nil
@@ -166,14 +181,8 @@ final class NativeAudioMessageView: UIView {
 
         container.backgroundColor = UIColor(palette.bgDark)
         container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
-        headerIconView.tintColor = UIColor(palette.purple)
-        headerLabel.textColor = UIColor(palette.purple)
         messageLabel.textColor = UIColor(palette.fg)
         spinner.color = UIColor(palette.purple)
-        progressView.progressTintColor = UIColor(palette.purple)
-        progressView.trackTintColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        headerLabel.text = nil
-        headerRow.isHidden = true
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
@@ -189,6 +198,7 @@ final class NativeAudioMessageView: UIView {
                 ]
             )
         messageLabel.isHidden = trimmedMessage.isEmpty
+        refreshStrip()
         invalidateIntrinsicContentSize()
         setNeedsLayout()
     }
@@ -204,45 +214,20 @@ final class NativeAudioMessageView: UIView {
         stack.alignment = .fill
         stack.spacing = 10
 
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
-        headerRow.axis = .horizontal
-        headerRow.alignment = .center
-        headerRow.spacing = 8
-
-        headerIconView.translatesAutoresizingMaskIntoConstraints = false
-        headerIconView.contentMode = .scaleAspectFit
-        headerIconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-
-        headerLabel.font = ToolFont.smallBold
-        headerLabel.numberOfLines = 1
-        headerLabel.lineBreakMode = .byTruncatingTail
-
         messageLabel.font = AppFont.messageBody
         messageLabel.numberOfLines = 0
         messageLabel.lineBreakMode = .byWordWrapping
         messageLabel.setContentCompressionResistancePriority(.required, for: .vertical)
         messageLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        transcriptStack.translatesAutoresizingMaskIntoConstraints = false
-        transcriptStack.axis = .vertical
-        transcriptStack.alignment = .fill
-        transcriptStack.spacing = 10
-        transcriptStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        transcriptStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.hidesWhenStopped = true
-        progressView.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(container)
         container.addSubview(stack)
         container.addSubview(spinner)
-        headerRow.addArrangedSubview(headerIconView)
-        headerRow.addArrangedSubview(headerLabel)
-        transcriptStack.addArrangedSubview(progressView)
-        transcriptStack.addArrangedSubview(messageLabel)
-        stack.addArrangedSubview(headerRow)
-        stack.addArrangedSubview(transcriptStack)
+        stack.addArrangedSubview(strip)
+        stack.addArrangedSubview(messageLabel)
 
         NSLayoutConstraint.activate([
             container.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -253,9 +238,6 @@ final class NativeAudioMessageView: UIView {
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
-            transcriptStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 0),
-            headerIconView.widthAnchor.constraint(equalToConstant: 16),
-            headerIconView.heightAnchor.constraint(equalToConstant: 16),
             spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
@@ -270,32 +252,97 @@ final class NativeAudioMessageView: UIView {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.updateButton(palette: ThemeRuntimeState.currentPalette())
+                if let id = self.id, self.audioPlayer?.loadingItemID == id {
+                    self.spinner.startAnimating()
+                } else {
+                    self.spinner.stopAnimating()
+                }
             }
         }
     }
 
-    private func updateButton(palette _: ThemePalette) {
+    private func refreshStrip() {
         guard let id else { return }
-        if audioPlayer?.loadingItemID == id {
-            spinner.startAnimating()
-        } else {
-            spinner.stopAnimating()
+        strip.apply(
+            itemID: id,
+            title: nil,
+            durationSeconds: durationSeconds,
+            audioPlayer: audioPlayer,
+            showsTitle: false,
+            isUnavailable: isUnavailable,
+            onPlay: { [weak self] in self?.togglePlayback() },
+            onExpand: { [weak self] in self?.expand() }
+        )
+    }
+
+    private func togglePlayback() {
+        guard let id, let audioPlayer else { return }
+        if audioPlayer.playingItemID == id {
+            if audioPlayer.isPaused {
+                audioPlayer.resume()
+            } else {
+                audioPlayer.pause()
+            }
+            return
+        }
+        if let decodedData {
+            audioPlayer.toggleDataPlayback(data: decodedData, itemID: id)
+            return
+        }
+        guard let attachmentId, let attachmentMediaSourceProvider else { return }
+        spinner.startAnimating()
+        fetchTask?.cancel()
+        fetchTask = Task { [weak self, attachmentId, id, weak audioPlayer] in
+            do {
+                let source = try await attachmentMediaSourceProvider(attachmentId, "audio/wav", "wav")
+                await MainActor.run { [weak self] in
+                    guard let self, self.id == id else { return }
+                    audioPlayer?.toggleMediaPlayback(source: source, itemID: id)
+                    self.refreshStrip()
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.id == id else { return }
+                    self.isUnavailable = true
+                    self.spinner.stopAnimating()
+                    self.refreshStrip()
+                }
+            }
         }
     }
 
-    private func maybeAutoplayDecodedDataIfNeeded(palette: ThemePalette) {
+    private func expand() {
+        guard let id else { return }
+        AudioLyricsPlayerPresenter.present(
+            from: self,
+            title: String(localized: "Voice message"),
+            lyrics: messageLabel.attributedText?.string,
+            itemID: id,
+            audioPlayer: audioPlayer,
+            play: { [weak self] in
+                guard let self else { return }
+                if self.audioPlayer?.playingItemID != id {
+                    self.togglePlayback()
+                } else if self.audioPlayer?.isPaused == true {
+                    self.audioPlayer?.resume()
+                }
+            },
+            openFile: isUnavailable ? { [weak self] in self?.togglePlayback() } : nil
+        )
+    }
+
+    private func maybeAutoplayDecodedDataIfNeeded() {
         guard !suppressAutoplay,
               let id, let decodedData, let audioPlayer,
               audioPlayer.shouldAutoplayAudioMessage(itemID: id, playbackBehavior: playbackBehavior, sessionId: sessionId) else {
             return
         }
         audioPlayer.markVoiceReplyAutoplayed(itemID: id)
-        audioPlayer.toggleDataPlayback(data: decodedData, itemID: id)
-        updateButton(palette: palette)
+        audioPlayer.toggleDataPlayback(data: decodedData, itemID: id, mode: "autoplay")
+        refreshStrip()
     }
 
-    private func maybeAutoplayAttachmentIfNeeded(palette: ThemePalette) {
+    private func maybeAutoplayAttachmentIfNeeded() {
         guard !suppressAutoplay,
               let id, let attachmentId, let audioPlayer, let attachmentMediaSourceProvider,
               audioPlayer.shouldAutoplayAudioMessage(itemID: id, playbackBehavior: playbackBehavior, sessionId: sessionId) else {
@@ -310,13 +357,14 @@ final class NativeAudioMessageView: UIView {
                     guard let self, self.id == id else { return }
                     audioPlayer?.markVoiceReplyAutoplayed(itemID: id)
                     audioPlayer?.toggleMediaPlayback(source: source, itemID: id, mode: "autoplay")
-                    self.updateButton(palette: ThemeRuntimeState.currentPalette())
+                    self.refreshStrip()
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self, self.id == id else { return }
+                    self.isUnavailable = true
                     self.spinner.stopAnimating()
-                    self.updateButton(palette: ThemeRuntimeState.currentPalette())
+                    self.refreshStrip()
                 }
             }
         }
@@ -325,23 +373,19 @@ final class NativeAudioMessageView: UIView {
     private func fittedSize(forWidth width: CGFloat) -> CGSize {
         let outerInsets: CGFloat = 24
         let innerWidth = max(1, width - outerInsets)
-        let transcriptWidth = max(1, innerWidth)
-
-        let progressHeight: CGFloat = progressView.isHidden ? 0 : 2
+        let stripHeight = MarkdownInlineAudioLayout.compactHeight
         let messageHeight: CGFloat
         if messageLabel.isHidden {
             messageHeight = 0
         } else {
             messageHeight = ceil(
                 messageLabel.sizeThatFits(
-                    CGSize(width: transcriptWidth, height: .greatestFiniteMagnitude)
+                    CGSize(width: innerWidth, height: .greatestFiniteMagnitude)
                 ).height
             )
         }
-
-        let transcriptSpacing: CGFloat = (!progressView.isHidden && !messageLabel.isHidden) ? transcriptStack.spacing : 0
-        let transcriptHeight = progressHeight + transcriptSpacing + messageHeight
-        let totalHeight = outerInsets + transcriptHeight
+        let spacing: CGFloat = messageLabel.isHidden ? 0 : stack.spacing
+        let totalHeight = outerInsets + stripHeight + spacing + messageHeight
         return CGSize(width: width, height: ceil(totalHeight))
     }
 }

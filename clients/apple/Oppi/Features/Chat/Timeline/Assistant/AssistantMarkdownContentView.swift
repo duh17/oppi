@@ -251,6 +251,14 @@ final class AssistantMarkdownContentView: UIView {
         didSet { segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource }
     }
 
+    var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? {
+        didSet { segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource }
+    }
+
+    var audioPlayer: AudioPlayerService? {
+        didSet { segmentApplier.audioPlayer = audioPlayer }
+    }
+
     func setVideoPlaybackVisible(_ visible: Bool) {
         segmentApplier.setVideoPlaybackVisible(visible)
     }

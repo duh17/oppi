@@ -455,7 +455,7 @@ struct MacMarkdownPaintDispatchTests {
                 return [destination].compactMap { $0 } + linkDestinations(in: children)
             case .emphasis(let children), .strong(let children), .strikethrough(let children):
                 return linkDestinations(in: children)
-            case .text, .code, .image, .videoEmbed, .softBreak, .hardBreak, .html:
+            case .text, .code, .image, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
                 return []
             }
         }

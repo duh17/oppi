@@ -3163,6 +3163,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             return 180
         case .video:
             return MarkdownInlineVideoLayout.reservedHeight(forWidth: contentWidth)
+        case .audio:
+            return MarkdownInlineAudioLayout.reservedHeight(forWidth: contentWidth)
         case .mermaidDiagram(let code):
             // Mermaid parsing is too expensive for first paint. Estimate
             // from diagram source lines; the background prefetch renders
@@ -3748,6 +3750,7 @@ extension NativeFullScreenMarkdownBody {
             case .thematicBreak: "break"
             case .image: "image"
             case .video: "video"
+            case .audio: "audio"
             case .mermaidDiagram: "mermaid"
             case .latexBlock: "latex"
             }

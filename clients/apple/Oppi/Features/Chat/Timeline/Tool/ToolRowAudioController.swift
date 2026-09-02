@@ -33,7 +33,7 @@ final class ToolRowAudioController: NSObject {
         let hasReplayableVoiceAudio = (collapsedVoiceAudioAttachment(in: configuration) != nil && configuration.sessionAttachmentMediaSourceProvider != nil)
             || collapsedVoiceAudioBase64(in: configuration) != nil
         let hasLiveStreamPlayback = configuration.audioPlayer?.isStreamingPlaybackActive(itemID: configuration.itemID) ?? false
-        guard hasReplayableVoiceAudio || hasLiveStreamPlayback else {
+        guard !configuration.isExpanded, hasReplayableVoiceAudio || hasLiveStreamPlayback else {
             button.isHidden = true
             button.accessibilityIdentifier = nil
             button.accessibilityLabel = nil

@@ -275,7 +275,7 @@ Cross-session extension UI responses use HTTP when the focused WebSocket is not 
 File previews and media playback use authenticated HTTP routes. The focused session WebSocket does not carry raw media bytes.
 
 - `APIClient` fetches workspace files, session files, session attachments, tool output, and exact-path host files through authenticated `GET/HEAD /files/raw`. Host-file HEAD/GET responses carry percent-encoded `X-Oppi-Resolved-Path`; `HostRawFileHeaders` decodes it so tap disclosure and the viewer title can show the canonical realpath.
-- `AuthenticatedMediaSource` and media playback views translate local media asset requests into bearer-authenticated HTTP range requests. Markdown `![[video-file]]` reuses this path for native inline playback; `[[video-file]]` keeps the normal file-navigation path.
+- `AuthenticatedMediaSource` and media playback views translate local media asset requests into bearer-authenticated HTTP range requests. Markdown `![[video-file]]` and `![[audio-file]]` reuse this path for native inline playback; `[[video-file]]` and `[[audio-file]]` keep the normal file-navigation path.
 - `ToolOutputStore` holds large tool output outside hot timeline row state.
 - File browser views use workspace path/list/raw endpoints and client-side cached file indexes for search. Host wiki-link taps skip those workspace listings and open `/files/raw` on the source server. Relative links inside host Markdown resolve against the source directory before classification. Pushed host text files keep the SwiftUI navigation bar as the only chrome owner. Host HTML/SVG stay on fetch → `loadHTMLString` + CSP; WKWebView must not URL-load `/files/raw`.
 - Sharing and export code uses redaction and file-rendering services outside the transport layer.

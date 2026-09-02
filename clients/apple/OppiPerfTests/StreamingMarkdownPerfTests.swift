@@ -193,6 +193,7 @@ struct IncrementalParseCorrectnessTests {
             case .thematicBreak: return .thematicBreak
             case .image: return .text
             case .video: return .text
+            case .audio: return .text
             case .mermaidDiagram: return .codeBlock(language: "mermaid")
             case .latexBlock: return .codeBlock(language: "latex")
             }

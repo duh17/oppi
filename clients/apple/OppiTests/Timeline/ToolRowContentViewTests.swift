@@ -1434,10 +1434,14 @@ struct ToolTimelineRowContentViewTests {
         view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
         view.layoutIfNeeded()
 
-        let button = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first { !$0.isHidden })
-        let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: view)
-
-        #expect(view.hitTest(point, with: nil) === button)
+        let strip = try #require(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: view))
+        let button = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
+            !$0.isHidden && $0.accessibilityIdentifier == "chat.timeline.row.\(config.itemID).audio.play"
+        })
+        let pointInStrip = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: strip)
+        #expect(strip.hitTest(pointInStrip, with: nil) === button)
+        let pointInRow = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: view)
+        #expect(view.hitTest(pointInRow, with: nil) === button)
     }
 
     @MainActor
@@ -1475,7 +1479,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedVoiceMessageOnlyShowsHeaderPlaybackControl() throws {
+    @Test func expandedVoiceMessagePlayLivesOnStripAndKeepsTranscript() throws {
         let source = AuthenticatedMediaSource(
             url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
@@ -1502,8 +1506,19 @@ struct ToolTimelineRowContentViewTests {
         view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
         view.layoutIfNeeded()
 
-        let visibleButtons = timelineAllViews(in: view).compactMap { $0 as? UIButton }.filter { !$0.isHidden }
-        #expect(visibleButtons.count == 1)
+        let strip = try #require(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: view))
+        let playButton = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
+            !$0.isHidden && $0.accessibilityIdentifier == "chat.timeline.row.\(config.itemID).audio.play"
+        })
+        let pointInStrip = playButton.convert(CGPoint(x: playButton.bounds.midX, y: playButton.bounds.midY), to: strip)
+        #expect(strip.hitTest(pointInStrip, with: nil) === playButton)
+        let pointInRow = playButton.convert(CGPoint(x: playButton.bounds.midX, y: playButton.bounds.midY), to: view)
+        #expect(view.hitTest(pointInRow, with: nil) === playButton)
+
+        let transcript = try #require(timelineAllLabels(in: view).first {
+            $0.accessibilityIdentifier == "chat.timeline.row.\(config.itemID).audio.message.transcript"
+        })
+        #expect(timelineRenderedText(of: transcript).contains("Got it."))
 
         let voiceMessageLabels = timelineAllLabels(in: view).filter {
             timelineRenderedText(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) == "Voice message"

@@ -234,6 +234,24 @@ struct MarkdownVideoEmbed: Hashable, Sendable {
     }
 }
 
+/// Authenticated file reference carried by a native Markdown audio segment.
+///
+/// Remote URLs, HTML audio, and stored attachment IDs fail wiki-link
+/// classification before an embed is constructed.
+struct MarkdownAudioEmbed: Hashable, Sendable {
+    let reference: ResourceReference
+
+    var displayLabel: String {
+        let label = reference.visibleLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let label, !label.isEmpty { return label }
+        return reference.target
+    }
+
+    var filePath: String {
+        reference.fileCandidatePath ?? reference.target
+    }
+}
+
 struct SessionResourceReference: Hashable, Sendable {
     let serverID: String
     let sessionID: String
@@ -1018,7 +1036,7 @@ enum MarkdownWikiLinkRewriter {
                     destination: destination,
                     context: context
                 ))
-            case .code, .image, .videoEmbed, .softBreak, .hardBreak, .html:
+            case .code, .image, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
                 result.append(inline)
             }
         }
@@ -1054,6 +1072,9 @@ enum MarkdownWikiLinkRewriter {
             if bangIndex != nil,
                let embed = videoEmbed(forWikiLinkContent: rawContent, context: context) {
                 result.append(.videoEmbed(embed))
+            } else if bangIndex != nil,
+                      let embed = audioEmbed(forWikiLinkContent: rawContent, context: context) {
+                result.append(.audioEmbed(embed))
             } else {
                 if bangIndex != nil { result.append(.text("!")) }
                 if let rewritten = inline(forWikiLinkContent: rawContent, context: context) {
@@ -1113,6 +1134,39 @@ enum MarkdownWikiLinkRewriter {
             return MarkdownVideoEmbed(reference: reference)
         }
         return MarkdownVideoEmbed(reference: ResourceReference(
+            target: reference.target,
+            sourceServerID: reference.sourceServerID,
+            workspaceID: reference.workspaceID,
+            sourceSessionID: reference.sourceSessionID,
+            fileCandidatePath: candidate,
+            kind: reference.kind,
+            lineAnchor: nil,
+            visibleLabel: reference.visibleLabel
+        ))
+    }
+
+    private static func audioEmbed(
+        forWikiLinkContent rawContent: String,
+        context: RewriteContext
+    ) -> MarkdownAudioEmbed? {
+        guard let reference = resourceReference(
+            forWikiLinkContent: rawContent,
+            context: context
+        ), reference.lineAnchor == nil else {
+            return nil
+        }
+
+        let candidate = reference.fileCandidatePath
+            ?? resolvedWorkspacePath(target: reference.target, sourceDirectory: context.sourceDirectory)
+            ?? resolvedHostPath(reference.target)
+        guard let candidate,
+              FileType.detect(from: candidate).previewCategory == .audio else {
+            return nil
+        }
+        if reference.fileCandidatePath == candidate {
+            return MarkdownAudioEmbed(reference: reference)
+        }
+        return MarkdownAudioEmbed(reference: ResourceReference(
             target: reference.target,
             sourceServerID: reference.sourceServerID,
             workspaceID: reference.workspaceID,

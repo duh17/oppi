@@ -259,6 +259,8 @@ final class AssistantMarkdownSegmentApplier {
     /// References to native inline video views for in-place updates.
     private var videoViews: [Int: NativeMarkdownVideoView] = [:]
     private var reusableVideoViews: [ResourceReference: NativeMarkdownVideoView] = [:]
+    /// Compact audio strips for `![[audio-file]]`.
+    private var audioViews: [Int: NativeMarkdownAudioView] = [:]
     /// References to mermaid diagram views for in-place updates.
     private var mermaidViews: [Int: NativeMermaidBlockView] = [:]
     /// References to LaTeX block views for in-place updates.
@@ -294,6 +296,12 @@ final class AssistantMarkdownSegmentApplier {
 
     /// Authenticated file-backed media resolver for `![[video-file]]`.
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
+
+    /// Authenticated file-backed media resolver for `![[audio-file]]`.
+    var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+
+    /// Shared playback owner for markdown audio strips.
+    var audioPlayer: AudioPlayerService?
 
     /// Full-screen runway probes resolve sources but keep playback torn down
     /// until a real cell owns the segment.
@@ -389,6 +397,7 @@ final class AssistantMarkdownSegmentApplier {
         tableViews.removeAll()
         imageViews.removeAll()
         videoViews.removeAll()
+        audioViews.removeAll()
         mermaidViews.removeAll()
         latexViews.removeAll()
         renderedSegmentSignatures = []
@@ -681,6 +690,18 @@ final class AssistantMarkdownSegmentApplier {
             stackView.addArrangedSubview(videoView)
             videoViews[index] = videoView
 
+        case .audio(let embed):
+            let audioView = NativeMarkdownAudioView()
+            audioView.apply(
+                embed: embed,
+                sourceProvider: makeMarkdownAudioSource,
+                audioPlayer: audioPlayer,
+                renderingMode: config.renderingMode,
+                preferredDisplayWidth: preparationWidth
+            )
+            stackView.addArrangedSubview(audioView)
+            audioViews[index] = audioView
+
         case .mermaidDiagram(let code):
             let mermaidView = NativeMermaidBlockView()
             let isOpen = isOpenStreamingCodeFence(
@@ -793,6 +814,9 @@ final class AssistantMarkdownSegmentApplier {
             if let video = view as? NativeMarkdownVideoView {
                 video.prepareForRemoval()
             }
+            if let audio = view as? NativeMarkdownAudioView {
+                audio.prepareForRemoval()
+            }
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
@@ -804,6 +828,7 @@ final class AssistantMarkdownSegmentApplier {
             tableViews.removeValue(forKey: index)
             imageViews.removeValue(forKey: index)
             videoViews.removeValue(forKey: index)
+            audioViews.removeValue(forKey: index)
             mermaidViews.removeValue(forKey: index)
             latexViews.removeValue(forKey: index)
             highlightTasks[index]?.cancel()
@@ -962,6 +987,15 @@ final class AssistantMarkdownSegmentApplier {
                     preferredDisplayWidth: preparationWidth
                 )
                 videoViews[index]?.setPlaybackVisible(videoPlaybackVisible)
+
+            case .audio(let embed):
+                audioViews[index]?.apply(
+                    embed: embed,
+                    sourceProvider: makeMarkdownAudioSource,
+                    audioPlayer: audioPlayer,
+                    renderingMode: config.renderingMode,
+                    preferredDisplayWidth: preparationWidth
+                )
 
             case .mermaidDiagram(let code):
                 if let mermaidView = mermaidViews[index] {
@@ -1321,6 +1355,7 @@ private enum SegmentSignature: Equatable {
     case thematicBreak
     case image(url: URL)
     case video(reference: ResourceReference)
+    case audio(reference: ResourceReference)
     case mermaidDiagram
     case latexBlock
 
@@ -1329,7 +1364,7 @@ private enum SegmentSignature: Equatable {
         switch self {
         case .text, .codeBlock, .mermaidDiagram, .latexBlock:
             true
-        case .table, .thematicBreak, .image, .video:
+        case .table, .thematicBreak, .image, .video, .audio:
             false
         }
     }
@@ -1348,6 +1383,8 @@ private enum SegmentSignature: Equatable {
             self = .image(url: url)
         case .video(let embed):
             self = .video(reference: embed.reference)
+        case .audio(let embed):
+            self = .audio(reference: embed.reference)
         case .mermaidDiagram:
             self = .mermaidDiagram
         case .latexBlock:

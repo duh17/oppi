@@ -35,6 +35,9 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
     /// Existing authenticated/range-capable source path for inline wiki videos.
     let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
+    /// Existing authenticated/range-capable source path for inline wiki audio.
+    let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    let audioPlayer: AudioPlayerService?
 
     init(
         text: String,
@@ -53,7 +56,9 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         serverBaseURL: URL? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
+        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        audioPlayer: AudioPlayerService? = nil
     ) {
         self.text = text
         self.isStreaming = isStreaming
@@ -72,6 +77,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
+        self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.audioPlayer = audioPlayer
     }
 
     func makeContentView() -> any UIView & UIContentView {
@@ -304,6 +311,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
         markdownView.fetchSessionFile = configuration.fetchSessionFile
         markdownView.makeMarkdownVideoSource = configuration.makeMarkdownVideoSource
+        markdownView.makeMarkdownAudioSource = configuration.makeMarkdownAudioSource
+        markdownView.audioPlayer = configuration.audioPlayer
         let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .assistantProse,
             timelineItemId: configuration.itemID

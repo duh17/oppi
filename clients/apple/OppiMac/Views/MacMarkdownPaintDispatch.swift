@@ -8,6 +8,7 @@ enum MacMarkdownPaintKind: Equatable, Sendable {
     case codeListing(language: String?, code: String)
     case image(alt: String, source: String?, workspaceID: String?, sessionID: String?)
     case video(MarkdownVideoEmbed)
+    case audio(MarkdownAudioEmbed)
     case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
     case html(source: String)
     case svg(source: String)
@@ -19,6 +20,7 @@ enum MacMarkdownInlineRun: Equatable, Sendable {
     case text([MarkdownInline])
     case image(alt: String, source: String?, workspaceID: String?, sessionID: String?)
     case video(MarkdownVideoEmbed)
+    case audio(MarkdownAudioEmbed)
     case latexFormula(String)
 }
 
@@ -89,7 +91,7 @@ enum MacMarkdownPaintDispatch {
             sourceDirectory: sourceDirectory
         ).contains { kind in
             switch kind {
-            case .mermaidDiagram, .codeListing, .image, .video, .latexFormula, .table, .html, .svg:
+            case .mermaidDiagram, .codeListing, .image, .video, .audio, .latexFormula, .table, .html, .svg:
                 return true
             case .prose:
                 return false
@@ -226,6 +228,9 @@ enum MacMarkdownPaintDispatch {
             case .videoEmbed(let embed):
                 flushPending()
                 runs.append(.video(embed))
+            case .audioEmbed(let embed):
+                flushPending()
+                runs.append(.audio(embed))
             case .text(let string):
                 let fragments = splitInlineMath(in: string)
                 if fragments.count == 1, case .text(let piece) = fragments[0], piece == string {
@@ -323,6 +328,8 @@ enum MacMarkdownPaintDispatch {
                 )
             case .video(let embed):
                 kinds.append(.video(embed))
+            case .audio(let embed):
+                kinds.append(.audio(embed))
             case .latexFormula(let code):
                 kinds.append(.latexFormula(code: code))
             }
@@ -362,7 +369,7 @@ enum MacMarkdownPaintDispatch {
                 if inlineChunkHasVisibleText(children) {
                     return true
                 }
-            case .image, .videoEmbed, .softBreak, .hardBreak:
+            case .image, .videoEmbed, .audioEmbed, .softBreak, .hardBreak:
                 continue
             }
         }
@@ -387,6 +394,8 @@ enum MacMarkdownPaintDispatch {
             case .image(let alt, _):
                 result.append(alt)
             case .videoEmbed(let embed):
+                result.append(embed.displayLabel)
+            case .audioEmbed(let embed):
                 result.append(embed.displayLabel)
             case .softBreak, .hardBreak:
                 result.append("\n")

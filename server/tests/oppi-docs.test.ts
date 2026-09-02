@@ -44,7 +44,9 @@ describe("Oppi documentation prompt hint", () => {
     expect(guide).toContain("images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, Graphviz");
     expect(guide).toContain("![[path/to/video.mp4]]");
     expect(guide).toContain("[[path/to/video.mp4]] stays a file link");
-    expect(guide).toContain("Remote URLs, HTML <video>, and attachment IDs are not embeds");
+    expect(guide).toContain("![[path/to/clip.m4a]]");
+    expect(guide).toContain("[[path/to/clip.m4a]] stays a file link");
+    expect(guide).toContain("Remote URLs, HTML <video>, HTML <audio>, and attachment IDs are not embeds");
     expect(guide).toContain("[Label](oppi://session/<session-id>)");
     expect(guide).toContain("oppi://session/<session-id>");
     expect(guide).not.toContain("[[oppi://session");

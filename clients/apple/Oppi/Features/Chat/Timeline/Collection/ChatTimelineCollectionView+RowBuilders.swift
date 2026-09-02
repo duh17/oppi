@@ -86,7 +86,19 @@ extension ChatTimelineCollectionHost.Controller {
                         workspaceRuntime: sourceWorkspaceRuntime
                     )
                 }
-            }
+            },
+            makeMarkdownAudioSource: connection.map { connection in
+                { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
+                    try await connection.makeMarkdownAudioMediaSourceWhenReady(
+                        embed: embed,
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        worktreeId: firstCheckout,
+                        workspaceRuntime: sourceWorkspaceRuntime
+                    )
+                }
+            },
+            audioPlayer: audioPlayer
         )
     }
 

@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import Foundation
 import MediaPlayer
 import os.log
@@ -72,6 +73,15 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     /// ID of the ChatItem currently loading/decoding audio.
     private(set) var loadingItemID: String?
 
+    /// Elapsed playback time for the active item.
+    private(set) var currentTime: TimeInterval = 0
+
+    /// Known duration for the active item. Nil for live streams.
+    private(set) var duration: TimeInterval?
+
+    /// True when the active item is paused rather than stopped.
+    private(set) var isPaused = false
+
     var hasActivePlayback: Bool {
         playingItemID != nil || loadingItemID != nil || streamID != nil
     }
@@ -106,6 +116,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private var playbackSuppressedForCapture = false
     private var streamPendingBuffers = 0
     private var streamReceivedDone = false
+    private var progressTimer: Timer?
+    private var mediaTimeObserver: Any?
 
     override init() {
         super.init()
@@ -210,6 +222,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         player?.stop()
         player = nil
         playbackDelegate = nil
+        stopProgressUpdates()
+        currentTime = 0
+        duration = nil
+        isPaused = false
         stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
         if let activeStreamID {
@@ -218,6 +234,49 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         deactivatePlaybackAudioSessionIfPossible()
         setPlaybackState(playing: nil, loading: nil)
         clearGlobalPlaybackOwnershipIfNeeded()
+    }
+
+    func pause() {
+        guard playingItemID != nil, !isPaused else { return }
+        player?.pause()
+        mediaPlaybackSession?.player.pause()
+        streamNode?.pause()
+        isPaused = true
+        stopProgressUpdates()
+        publishProgress()
+        updateNowPlayingInfo(
+            durationSeconds: duration ?? lastNowPlayingDurationSeconds,
+            isLiveStream: lastNowPlayingIsLiveStream,
+            playbackRate: 0
+        )
+    }
+
+    func resume() {
+        guard playingItemID != nil, isPaused else { return }
+        player?.play()
+        mediaPlaybackSession?.player.play()
+        streamNode?.play()
+        isPaused = false
+        startProgressUpdates()
+        publishProgress()
+        updateNowPlayingInfo(
+            durationSeconds: duration ?? lastNowPlayingDurationSeconds,
+            isLiveStream: lastNowPlayingIsLiveStream
+        )
+    }
+
+    func seek(to time: TimeInterval) {
+        guard playingItemID != nil, time.isFinite, time >= 0 else { return }
+        if let player {
+            player.currentTime = min(time, player.duration)
+        }
+        if let mediaPlayer = mediaPlaybackSession?.player {
+            let duration = mediaPlayer.currentItem?.duration.seconds
+            let clamped = duration?.isFinite == true ? min(time, duration ?? time) : time
+            mediaPlayer.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
+        }
+        currentTime = time
+        publishProgress()
     }
 
     func shouldAutoplayAudioMessage(itemID: String, playbackBehavior: AudioPlaybackBehavior?, sessionId: String? = nil) -> Bool {
@@ -301,6 +360,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     // MARK: - Private
 
     private func stopMediaPlaybackSession() {
+        stopProgressUpdates()
         mediaStatusObservation?.invalidate()
         mediaStatusObservation = nil
         if let mediaEndObserver {
@@ -378,12 +438,15 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 switch item.status {
                 case .readyToPlay:
                     let duration = item.duration.seconds
+                    self.isPaused = false
+                    self.duration = duration.isFinite && duration > 0 ? duration : nil
                     self.setPlaybackState(playing: itemID, loading: nil)
                     self.updateNowPlayingInfo(
                         durationSeconds: duration.isFinite ? duration : nil,
                         isLiveStream: false
                     )
                     player.play()
+                    self.startProgressUpdates()
                     self.recordVoicePlaybackStart(
                         source: "media",
                         mode: mode,
@@ -424,10 +487,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         self.player = audioPlayer
         self.playbackDelegate = delegate
         activePlaybackContext = sessionContext
+        isPaused = false
+        currentTime = 0
+        duration = audioPlayer.duration.isFinite && audioPlayer.duration > 0 ? audioPlayer.duration : nil
         setPlaybackState(playing: itemID, loading: nil)
         updateNowPlayingInfo(durationSeconds: audioPlayer.duration, isLiveStream: false)
 
         audioPlayer.play()
+        startProgressUpdates()
     }
 
     private func handleWAVAudioStream(_ stream: AudioStreamMessage) {
@@ -704,7 +771,66 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
-    private func updateNowPlayingInfo(durationSeconds: Double?, isLiveStream: Bool) {
+    private func startProgressUpdates() {
+        stopProgressUpdates()
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.publishProgress()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        progressTimer = timer
+        if let mediaPlayer = mediaPlaybackSession?.player {
+            mediaTimeObserver = mediaPlayer.addPeriodicTimeObserver(
+                forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+                queue: .main
+            ) { [weak self] time in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if time.seconds.isFinite {
+                        self.currentTime = time.seconds
+                    }
+                    self.publishProgress()
+                }
+            }
+        }
+        publishProgress()
+    }
+
+    private func stopProgressUpdates() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+        if let mediaTimeObserver, let mediaPlayer = mediaPlaybackSession?.player {
+            mediaPlayer.removeTimeObserver(mediaTimeObserver)
+        }
+        mediaTimeObserver = nil
+    }
+
+    private func publishProgress() {
+        if let player {
+            currentTime = player.currentTime
+            duration = player.duration.isFinite && player.duration > 0 ? player.duration : duration
+        } else if let mediaPlayer = mediaPlaybackSession?.player {
+            let elapsed = mediaPlayer.currentTime().seconds
+            if elapsed.isFinite {
+                currentTime = elapsed
+            }
+            let itemDuration = mediaPlayer.currentItem?.duration.seconds
+            if let itemDuration, itemDuration.isFinite, itemDuration > 0 {
+                duration = itemDuration
+            }
+        }
+        NotificationCenter.default.post(
+            name: Self.stateDidChangeNotification,
+            object: self,
+            userInfo: [
+                Self.playingItemIDUserInfoKey: playingItemID ?? "",
+                Self.loadingItemIDUserInfoKey: loadingItemID ?? "",
+            ]
+        )
+    }
+
+    private func updateNowPlayingInfo(durationSeconds: Double?, isLiveStream: Bool, playbackRate: Float = 1.0) {
         lastNowPlayingDurationSeconds = durationSeconds
         lastNowPlayingIsLiveStream = isLiveStream
 
@@ -721,7 +847,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             MPMediaItemPropertyTitle: presentation?.title ?? Self.nowPlayingFallbackTitle,
             MPMediaItemPropertyArtist: presentation?.subtitle ?? Self.nowPlayingFallbackArtist,
             MPMediaItemPropertyAlbumTitle: "Voice reply",
-            MPNowPlayingInfoPropertyPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyPlaybackRate: playbackRate,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedPlaybackTime,
         ]
         if let durationSeconds {
@@ -745,13 +871,34 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return .success
         }
 
-        center.playCommand.isEnabled = false
+        center.playCommand.isEnabled = true
         center.pauseCommand.isEnabled = true
         center.stopCommand.isEnabled = true
         center.togglePlayPauseCommand.isEnabled = true
-        center.pauseCommand.addTarget(handler: stopHandler)
+        center.playCommand.addTarget { _ in
+            Task { @MainActor in
+                Self.activePlaybackOwner?.resume()
+            }
+            return .success
+        }
+        center.pauseCommand.addTarget { _ in
+            Task { @MainActor in
+                Self.activePlaybackOwner?.pause()
+            }
+            return .success
+        }
         center.stopCommand.addTarget(handler: stopHandler)
-        center.togglePlayPauseCommand.addTarget(handler: stopHandler)
+        center.togglePlayPauseCommand.addTarget { _ in
+            Task { @MainActor in
+                guard let owner = Self.activePlaybackOwner else { return }
+                if owner.isPaused {
+                    owner.resume()
+                } else {
+                    owner.pause()
+                }
+            }
+            return .success
+        }
     }
 
     private static func streamingPlaybackItemID(for streamID: String) -> String {

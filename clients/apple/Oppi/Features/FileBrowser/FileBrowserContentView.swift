@@ -84,7 +84,7 @@ enum FileBrowserMediaLoadPolicy {
 /// - Code: syntax-highlighted source with line numbers
 /// - JSON: pretty-printed with colored tokens
 /// - Images: inline preview
-/// - Audio: native AVPlayer with playback controls
+/// - Audio: lyrics-first full-screen player
 /// - Video: system video player with playback controls
 /// - PDF: PDFKit with scroll, zoom, and text selection
 /// - Plain text: monospaced with line numbers
@@ -137,6 +137,7 @@ struct FileBrowserContentView: View {
 #endif
 
     @Environment(\.apiClient) private var apiClient
+    @Environment(AudioPlayerService.self) private var audioPlayer
     @Environment(\.dismiss) private var dismiss
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
@@ -401,13 +402,21 @@ struct FileBrowserContentView: View {
 
     @ViewBuilder
     private func audioView(_ source: AuthenticatedMediaSource) -> some View {
-        AuthenticatedMediaPlayerView(
-            source: source,
-            height: 220,
-            unavailableTitle: "Audio preview unavailable",
-            unavailableSystemImage: "speaker.slash"
+        AudioLyricsPlayerView(
+            title: currentFileName,
+            lyrics: nil,
+            itemID: "file-audio:\(currentFilePath)",
+            audioPlayer: audioPlayer,
+            play: {
+                audioPlayer.toggleMediaPlayback(
+                    source: source,
+                    itemID: "file-audio:\(currentFilePath)"
+                )
+            },
+            openFile: nil,
+            autoplayOnAppear: false,
+            showsCloseButton: false
         )
-        .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.themeBg)
     }
