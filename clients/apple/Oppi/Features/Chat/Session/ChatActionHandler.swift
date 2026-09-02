@@ -84,53 +84,6 @@ final class ChatActionHandler {
 
     // MARK: - Prompt / Steer
 
-    /// Legacy adapter kept for test harnesses still passing `PendingImage`.
-    /// Base64 image transport is intentionally disabled in this path.
-    func sendPrompt(
-        text: String,
-        images: [PendingImage],
-        isBusy: Bool,
-        busyStreamingBehavior: StreamingBehavior = .steer,
-        connection: ServerConnection,
-        reducer: TimelineReducer,
-        sessionId: String,
-        sessionStore: SessionStore? = nil,
-        sessionManager: ChatSessionManager? = nil,
-        onDispatchStarted: (() -> Void)? = nil,
-        onSendSucceeded: (() -> Void)? = nil,
-        onAsyncFailure: ((_ text: String, _ images: [PendingImage]) -> Void)? = nil,
-        onNeedsReconnect: (() -> Void)? = nil
-    ) -> String {
-        if !images.isEmpty {
-            reducer.process(
-                .error(
-                    sessionId: sessionId,
-                    message: "Legacy image payloads are not supported. Upload images as attachments and try again."
-                )
-            )
-            onAsyncFailure?(text, images)
-            return text
-        }
-
-        return sendPrompt(
-            text: text,
-            attachments: [],
-            isBusy: isBusy,
-            busyStreamingBehavior: busyStreamingBehavior,
-            connection: connection,
-            reducer: reducer,
-            sessionId: sessionId,
-            sessionStore: sessionStore,
-            sessionManager: sessionManager,
-            onDispatchStarted: onDispatchStarted,
-            onSendSucceeded: onSendSucceeded,
-            onAsyncFailure: { failedText, _ in
-                onAsyncFailure?(failedText, images)
-            },
-            onNeedsReconnect: onNeedsReconnect
-        )
-    }
-
     /// Send a user prompt or steer the running agent.
     ///
     /// Returns the input text to restore on failure, or empty string on success.

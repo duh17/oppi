@@ -157,10 +157,10 @@ struct ChatActionHandlerTests {
         let reducer = TimelineReducer()
         let connection = ServerConnection()
 
-        // Whitespace-only text with no images should return the original text (guard fails)
+        // Whitespace-only text with no attachments should return the original text (guard fails)
         let result = handler.sendPrompt(
             text: "   ",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -179,7 +179,7 @@ struct ChatActionHandlerTests {
 
         let result = handler.sendPrompt(
             text: "Hello agent",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -211,7 +211,7 @@ struct ChatActionHandlerTests {
 
         let result = handler.sendPrompt(
             text: "queued message",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -256,7 +256,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "first",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -267,7 +267,7 @@ struct ChatActionHandlerTests {
 
         let blocked = handler.sendPrompt(
             text: "second",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -339,7 +339,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "stage me",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -384,7 +384,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "fail me",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -427,7 +427,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "steer this way",
-            images: [],
+            attachments: [],
             isBusy: true,
             connection: connection,
             reducer: reducer,
@@ -483,7 +483,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "continue this",
-            images: [],
+            attachments: [],
             isBusy: true,
             busyStreamingBehavior: .followUp,
             connection: connection,
@@ -522,7 +522,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "steer this way",
-            images: [],
+            attachments: [],
             isBusy: true,
             connection: connection,
             reducer: reducer,
@@ -549,7 +549,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "steer this way",
-            images: [],
+            attachments: [],
             isBusy: true,
             connection: connection,
             reducer: reducer,
@@ -622,7 +622,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "steer this way",
-            images: [],
+            attachments: [],
             isBusy: true,
             connection: connection,
             reducer: reducer,
@@ -638,48 +638,6 @@ struct ChatActionHandlerTests {
         #expect(queue.steering.count == 1)
     }
 
-    @Test func sendPromptWithImageReportsUploadRefBlocker() async {
-        let handler = ChatActionHandler()
-        let reducer = TimelineReducer()
-        let connection = ServerConnection()
-        _ = connection.configure(credentials: .init(host: "localhost", port: 7749, token: "sk_test", name: "Test"))
-
-        let image = makePendingImage()
-        var restoredText: String?
-        var restoredImageCount = 0
-
-        let returned = handler.sendPrompt(
-            text: "hello",
-            images: [image],
-            isBusy: false,
-            connection: connection,
-            reducer: reducer,
-            sessionId: "s1",
-            onAsyncFailure: { text, images in
-                restoredText = text
-                restoredImageCount = images.count
-            }
-        )
-
-        #expect(returned == "hello")
-        #expect(restoredText == "hello")
-        #expect(restoredImageCount == 1)
-
-        let hasUserRow = reducer.items.contains { item in
-            if case .userMessage = item { return true }
-            return false
-        }
-        #expect(!hasUserRow)
-
-        let hasError = reducer.items.contains { item in
-            if case .error(_, let message) = item {
-                return message.contains("Legacy image payloads are not supported")
-            }
-            return false
-        }
-        #expect(hasError)
-    }
-
     @Test func sendPromptFailureTriggersReconnectCallbackOnce() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -690,7 +648,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "reconnect me",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -752,7 +710,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "please fix websocket reconnect state drift",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -814,7 +772,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "debug reconnect flow",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -876,7 +834,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "follow up work",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -939,7 +897,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "write migration plan",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -1006,7 +964,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "implement loopback bridge for local process",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -1086,7 +1044,7 @@ struct ChatActionHandlerTests {
         // firstMessage, not this text.
         _ = handler.sendPrompt(
             text: "also check the retry logic",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -1147,7 +1105,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "hello world",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -1212,7 +1170,7 @@ struct ChatActionHandlerTests {
 
         _ = handler1.sendPrompt(
             text: "in context view we shouldnt show these make sure add tests",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: TimelineReducer(),
@@ -1256,7 +1214,7 @@ struct ChatActionHandlerTests {
         // Second prompt text is completely different from firstMessage
         _ = handler2.sendPrompt(
             text: "can you check if pi supports register tool on demand",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: TimelineReducer(),
@@ -1325,7 +1283,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "fix timeline message ordering bug",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: TimelineReducer(),
@@ -1396,7 +1354,7 @@ struct ChatActionHandlerTests {
 
         _ = handler.sendPrompt(
             text: "commit everything",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: TimelineReducer(),
@@ -1665,14 +1623,4 @@ struct ChatActionHandlerTests {
         #expect(hasRenameError)
     }
 
-    // MARK: - Helpers
-
-    private func makePendingImage() -> PendingImage {
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8))
-        let image = renderer.image { context in
-            UIColor.systemBlue.setFill()
-            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
-        }
-        return PendingImage.from(image)
-    }
 }

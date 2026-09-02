@@ -35,7 +35,7 @@ struct ChatActionHandlerReconnectTests {
 
         let first = handler.sendPrompt(
             text: "first message",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -52,7 +52,7 @@ struct ChatActionHandlerReconnectTests {
         // Second send while first is waiting for ack
         let second = handler.sendPrompt(
             text: "try again",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -63,7 +63,7 @@ struct ChatActionHandlerReconnectTests {
         // Third send
         let third = handler.sendPrompt(
             text: "?",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -130,7 +130,7 @@ struct ChatActionHandlerReconnectTests {
         // First send — will timeout
         _ = handler.sendPrompt(
             text: "first attempt",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -146,7 +146,7 @@ struct ChatActionHandlerReconnectTests {
         // Second send — should work now
         let result = handler.sendPrompt(
             text: "retry after reconnect",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -184,7 +184,7 @@ struct ChatActionHandlerReconnectTests {
 
         _ = handler.sendPrompt(
             text: "steer while busy",
-            images: [],
+            attachments: [],
             isBusy: true,
             connection: connection,
             reducer: reducer,
@@ -237,7 +237,7 @@ struct ChatActionHandlerReconnectTests {
 
         _ = handler.sendPrompt(
             text: "steer while busy",
-            images: [],
+            attachments: [],
             isBusy: true,
             connection: connection,
             reducer: reducer,
@@ -274,7 +274,7 @@ struct ChatActionHandlerReconnectTests {
 
         _ = handler.sendPrompt(
             text: "sent during nil window",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -340,7 +340,7 @@ struct ChatActionHandlerReconnectTests {
         // Now send — should work
         _ = handler.sendPrompt(
             text: "after reconnect",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -387,7 +387,7 @@ struct ChatActionHandlerReconnectTests {
         for text in ["first", "second", "third"] {
             let result = handler.sendPrompt(
                 text: text,
-                images: [],
+                attachments: [],
                 isBusy: false,
                 connection: connection,
                 reducer: reducer,
@@ -427,7 +427,7 @@ struct ChatActionHandlerReconnectTests {
 
         _ = handler.sendPrompt(
             text: "lost in the void",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -506,7 +506,7 @@ struct ChatActionHandlerReconnectTests {
 
         _ = handler.sendPrompt(
             text: "first",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -526,7 +526,7 @@ struct ChatActionHandlerReconnectTests {
         // Second send — blocked by isSending
         let restored = handler.sendPrompt(
             text: "blocked",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,
@@ -567,7 +567,7 @@ struct ChatActionHandlerReconnectTests {
 
         _ = handler.sendPrompt(
             text: "reconnect me",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: reducer,

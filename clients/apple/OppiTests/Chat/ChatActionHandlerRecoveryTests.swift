@@ -80,7 +80,7 @@ struct ChatActionHandlerRecoveryTests {
         var reconnectCalls = 0
         _ = handler.sendPrompt(
             text: "send once",
-            images: [],
+            attachments: [],
             isBusy: false,
             connection: connection,
             reducer: sessionManager.reducer,
