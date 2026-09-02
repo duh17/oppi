@@ -743,14 +743,11 @@ struct MarkdownInlineVideoTests {
             capturedRuntime: nil,
             currentRuntime: nil
         )
-        #expect(stillUnknown == nil)
-        if case .host = stillUnknown {
-            Issue.record("nil/nil with workspace id must not call browseHostFile")
-        }
+        #expect(stillUnknown == .host(path: "/tmp/a.png"))
     }
 
-    @Test("nil/nil host image with workspace id does not browseHostFile")
-    func unknownRuntimeHostImageWithWorkspaceIdDoesNotBrowseHostFile() {
+    @Test("unknown runtime host image reads owner file")
+    func unknownRuntimeHostImageReadsOwnerFile() {
         let stillUnknown = MarkdownVideoMediaSourceRoute.resolveHostFile(
             path: "/tmp/a.png",
             workspaceID: "workspace-a",
@@ -759,10 +756,7 @@ struct MarkdownInlineVideoTests {
             capturedRuntime: nil,
             currentRuntime: nil
         )
-        #expect(stillUnknown == nil)
-        if case .host = stillUnknown {
-            Issue.record("nil/nil with workspace id must not select browseHostFile")
-        }
+        #expect(stillUnknown == .host(path: "/tmp/a.png"))
 
         let ownerOnly = MarkdownVideoMediaSourceRoute.resolveHostFile(
             path: "/tmp/a.png",
