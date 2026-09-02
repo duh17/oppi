@@ -68,6 +68,8 @@ final class DictationStreamClient: DictationTransport {
     private var continuation: AsyncStream<ServerMessage>.Continuation?
     /// Queued until the current socket is writable, then replayed after a 401
     /// refresh or leftover-token rotate so start lands on the surviving socket.
+    /// Cleared once the server accepts or completes the take so a later 4001
+    /// cannot start a phantom second recording.
     private var pendingDictationStart = false
     /// True only while a 401 refresh or leftover-token rotate is replacing the
     /// current socket. sendDictation may requeue dictation_start in that window.
@@ -243,6 +245,15 @@ final class DictationStreamClient: DictationTransport {
         if status == .connecting { status = .connected }
     }
 
+    private func clearPendingStartIfAcceptedOrCompleted(_ message: ServerMessage) {
+        switch message {
+        case .dictationReady, .dictationFinal:
+            pendingDictationStart = false
+        default:
+            break
+        }
+    }
+
     private func replayPendingDictationStart() async {
         guard pendingDictationStart, let task, status != .disconnected, continuation != nil else {
             return
@@ -291,11 +302,13 @@ final class DictationStreamClient: DictationTransport {
                 case .string(let text):
                     let decoded = try decodeMessage(from: text)
                     if status == .connecting { status = .connected }
+                    clearPendingStartIfAcceptedOrCompleted(decoded)
                     continuation?.yield(decoded)
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
                         let decoded = try decodeMessage(from: text)
                         if status == .connecting { status = .connected }
+                        clearPendingStartIfAcceptedOrCompleted(decoded)
                         continuation?.yield(decoded)
                     }
                 @unknown default:

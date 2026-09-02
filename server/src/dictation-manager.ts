@@ -69,7 +69,7 @@ export class DictationManager {
 
   // ─── Public API ───
 
-  /** True while a recording has started and has not yet stopped, canceled, or disconnected. */
+  /** True from dictation_start until final/error is sent, or the take is canceled/disconnected. */
   isActive(): boolean {
     return this.session !== null;
   }
@@ -97,8 +97,9 @@ export class DictationManager {
         this.startSession();
         break;
 
-      case "dictation_stop":
-        if (!this.session) {
+      case "dictation_stop": {
+        const session = this.session;
+        if (!session) {
           this.send({
             type: "dictation_error",
             error: "No active dictation session",
@@ -106,13 +107,10 @@ export class DictationManager {
           });
           return;
         }
-        this.session.stopping = true;
-        {
-          const sessionToFinalize = this.session;
-          this.session = null;
-          this.finalizeSession(sessionToFinalize);
-        }
+        session.stopping = true;
+        void this.finalizeSession(session);
         break;
+      }
 
       case "dictation_cancel":
         if (this.session) {
@@ -132,7 +130,7 @@ export class DictationManager {
 
   /** Handle an incoming binary audio frame. */
   handleAudioData(buf: Buffer): void {
-    if (!this.session) return;
+    if (!this.session || this.session.stopping) return;
 
     if (buf.length > 0 && this.session.firstAudioHrMs === undefined) {
       this.session.firstAudioHrMs = performance.now();
@@ -150,7 +148,10 @@ export class DictationManager {
   /** Clean up on transport disconnect. */
   handleDisconnect(): void {
     if (this.session) {
-      this.cancelSession();
+      // Stop already owns provider shutdown once dictation_stop has been accepted.
+      if (!this.session.stopping) {
+        this.cancelSession();
+      }
       this.session = null;
     }
     this.sendFn = null;
@@ -244,85 +245,92 @@ export class DictationManager {
     const finalizeT0 = performance.now();
     const langTag = "auto";
 
-    // Emit session-level metrics
-    const sessionMs = Math.round(performance.now() - session.startHrMs);
-    const audioDurationMs = Math.round(
-      (session.totalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS)) * 1000,
-    );
-    this.metrics?.record(
-      "server.dictation_session_ms",
-      sessionMs,
-      this.metricTags({ language: langTag }),
-    );
-    this.metrics?.record(
-      "server.dictation_audio_duration_ms",
-      audioDurationMs,
-      this.metricTags({ language: langTag }),
-    );
-    this.metrics?.record(
-      "server.dictation_result_updates",
-      session.resultUpdateCount,
-      this.metricTags({ language: langTag }),
-    );
-
-    if (session.totalBytes === 0) {
-      await this.sttProvider.stop().catch(() => {});
-      this.send({ type: "dictation_final", text: "" });
-      return;
-    }
-
-    // Final STT — close audio stream, get final text
-    const audioSeconds = session.totalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS);
-    let finalTranscript;
-    let finalSttMs: number;
-    const sttT0 = performance.now();
     try {
-      finalTranscript = await this.sttProvider.stop();
-      finalSttMs = Math.round(performance.now() - sttT0);
-      this.metrics?.record(
-        "server.dictation_stt_ms",
-        finalSttMs,
-        this.metricTags({
-          phase: "finalize",
-          audio_seconds: String(Math.round(audioSeconds)),
-          language: langTag,
-        }),
+      // Emit session-level metrics
+      const sessionMs = Math.round(performance.now() - session.startHrMs);
+      const audioDurationMs = Math.round(
+        (session.totalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS)) * 1000,
       );
-      if (audioSeconds > 0) {
-        this.metrics?.record(
-          "server.dictation_stt_audio_ratio",
-          Math.round((finalSttMs / (audioSeconds * 1000)) * 100) / 100,
-          this.metricTags({ phase: "finalize", language: langTag }),
-        );
+      this.metrics?.record(
+        "server.dictation_session_ms",
+        sessionMs,
+        this.metricTags({ language: langTag }),
+      );
+      this.metrics?.record(
+        "server.dictation_audio_duration_ms",
+        audioDurationMs,
+        this.metricTags({ language: langTag }),
+      );
+      this.metrics?.record(
+        "server.dictation_result_updates",
+        session.resultUpdateCount,
+        this.metricTags({ language: langTag }),
+      );
+
+      if (session.totalBytes === 0) {
+        await this.sttProvider.stop().catch(() => {});
+        this.send({ type: "dictation_final", text: "" });
+        return;
       }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+
+      // Final STT — close audio stream, get final text
+      const audioSeconds = session.totalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS);
+      let finalTranscript;
+      let finalSttMs: number;
+      const sttT0 = performance.now();
+      try {
+        finalTranscript = await this.sttProvider.stop();
+        finalSttMs = Math.round(performance.now() - sttT0);
+        this.metrics?.record(
+          "server.dictation_stt_ms",
+          finalSttMs,
+          this.metricTags({
+            phase: "finalize",
+            audio_seconds: String(Math.round(audioSeconds)),
+            language: langTag,
+          }),
+        );
+        if (audioSeconds > 0) {
+          this.metrics?.record(
+            "server.dictation_stt_audio_ratio",
+            Math.round((finalSttMs / (audioSeconds * 1000)) * 100) / 100,
+            this.metricTags({ phase: "finalize", language: langTag }),
+          );
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        this.metrics?.record(
+          "server.dictation_error",
+          1,
+          this.metricTags({ phase: "stt", fatal: "true", error_kind: "stt", language: langTag }),
+        );
+        this.send({ type: "dictation_error", error: `STT failed: ${errorMsg}`, fatal: true });
+        return;
+      }
+
+      const finalizeMs = Math.round(performance.now() - finalizeT0);
       this.metrics?.record(
-        "server.dictation_error",
-        1,
-        this.metricTags({ phase: "stt", fatal: "true", error_kind: "stt", language: langTag }),
+        "server.dictation_finalize_ms",
+        finalizeMs,
+        this.metricTags({ language: langTag }),
       );
-      this.send({ type: "dictation_error", error: `STT failed: ${errorMsg}`, fatal: true });
-      return;
+
+      this.send({
+        type: "dictation_final",
+        text: finalTranscript.text,
+        ...(finalTranscript.committedText !== undefined
+          ? { committedText: finalTranscript.committedText }
+          : {}),
+        ...(finalTranscript.activeText !== undefined
+          ? { activeText: finalTranscript.activeText }
+          : {}),
+      });
+    } finally {
+      // Keep isActive() true until the terminal frame has been handed to send().
+      if (this.session === session) {
+        this.session = null;
+      }
     }
-
-    const finalizeMs = Math.round(performance.now() - finalizeT0);
-    this.metrics?.record(
-      "server.dictation_finalize_ms",
-      finalizeMs,
-      this.metricTags({ language: langTag }),
-    );
-
-    this.send({
-      type: "dictation_final",
-      text: finalTranscript.text,
-      ...(finalTranscript.committedText !== undefined
-        ? { committedText: finalTranscript.committedText }
-        : {}),
-      ...(finalTranscript.activeText !== undefined
-        ? { activeText: finalTranscript.activeText }
-        : {}),
-    });
   }
 
   // ─── Metrics ───

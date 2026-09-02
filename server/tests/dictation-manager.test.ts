@@ -206,6 +206,20 @@ describe("DictationManager", () => {
       expect(finals[0]).toEqual({ type: "dictation_final", text: "" });
     });
 
+    it("stays active until dictation_final is sent", async () => {
+      manager.handleControlMessage({ type: "dictation_start" }, sendFn);
+      await drain();
+      expect(manager.isActive()).toBe(true);
+
+      manager.handleControlMessage({ type: "dictation_stop" }, sendFn);
+      expect(manager.isActive()).toBe(true);
+      expect(messagesOfType(sent, "dictation_final")).toHaveLength(0);
+
+      await drain();
+      expect(messagesOfType(sent, "dictation_final")).toHaveLength(1);
+      expect(manager.isActive()).toBe(false);
+    });
+
     it("handles dictation_cancel silently", () => {
       manager.handleControlMessage({ type: "dictation_start" }, sendFn);
       manager.handleControlMessage({ type: "dictation_cancel" }, sendFn);
@@ -382,6 +396,8 @@ describe("DictationManager", () => {
       await drain();
       mgr.handleAudioData(silencePcm(500));
       mgr.handleControlMessage({ type: "dictation_stop" }, mgrSendFn);
+      expect(mgr.isActive()).toBe(true);
+      expect(messagesOfType(mgrSent, "dictation_error")).toHaveLength(0);
       vi.advanceTimersByTime(10);
       await drain();
 
@@ -389,6 +405,7 @@ describe("DictationManager", () => {
       expect(errors).toHaveLength(1);
       expect(errors[0].error).toContain("STT failed");
       expect(errors[0].fatal).toBe(true);
+      expect(mgr.isActive()).toBe(false);
     });
   });
 

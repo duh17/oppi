@@ -512,6 +512,10 @@ private final class ScriptedDictationSocket {
         resolve(.failure(URLError(.networkConnectionLost)))
     }
 
+    func deliverString(_ text: String) {
+        resolve(.success(.string(text)))
+    }
+
     func failSend(_ error: Error) {
         sendFailure = error
     }
@@ -692,6 +696,110 @@ struct DictationDeviceAuthTests {
         #expect(refreshCalls.get() == 1)
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
         #expect(factory.sockets.last?.sentDictationStartCount == 1)
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func acceptedDictationReadyDoesNotReplayStartAfterAuthExpiredClose() async throws {
+        let factory = ScriptedDictationFactory()
+        let refreshCalls = LockedCallCount()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_stale",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in "at_stale" },
+            refreshTokenProvider: { @Sendable in
+                refreshCalls.increment()
+                return "at_refreshed"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+        var receivedReady = false
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await message in stream {
+                if case .dictationReady = message {
+                    receivedReady = true
+                }
+            }
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        try await client.sendDictation(.dictationStart)
+        #expect(factory.sockets.first?.sentDictationStartCount == 1)
+
+        let first = try #require(factory.sockets.first)
+        first.deliverString(#"{"type":"dictation_ready","sttProvider":"test","sttModel":"mock"}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { receivedReady })
+
+        first.failAuthExpired()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+        #expect(refreshCalls.get() == 1)
+        #expect(
+            factory.sockets.last?.sentDictationStartCount == 0,
+            "Accepted dictation_ready must not replay dictation_start after 4001"
+        )
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func completedDictationFinalDoesNotReplayStartAfterAuthExpiredClose() async throws {
+        let factory = ScriptedDictationFactory()
+        let refreshCalls = LockedCallCount()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_stale",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in "at_stale" },
+            refreshTokenProvider: { @Sendable in
+                refreshCalls.increment()
+                return "at_refreshed"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+        var receivedFinal = false
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await message in stream {
+                if case .dictationFinal = message {
+                    receivedFinal = true
+                }
+            }
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        try await client.sendDictation(.dictationStart)
+        #expect(factory.sockets.first?.sentDictationStartCount == 1)
+
+        let first = try #require(factory.sockets.first)
+        first.deliverString(#"{"type":"dictation_final","text":"hello"}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { receivedFinal })
+
+        first.failAuthExpired()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+        #expect(refreshCalls.get() == 1)
+        #expect(
+            factory.sockets.last?.sentDictationStartCount == 0,
+            "Completed dictation_final must not replay dictation_start after 4001"
+        )
         #expect(client.status != .disconnected)
 
         client.disconnect()

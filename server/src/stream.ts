@@ -777,6 +777,15 @@ export class DictationStreamMux {
         level,
         path: pathTag,
       });
+      const connection = this.connections.get(ws);
+      // Accepted audio must deliver dictation_final (or a fatal error) before 4001.
+      if (
+        connection?.authExpired &&
+        (msg.type === "dictation_final" || (msg.type === "dictation_error" && msg.fatal)) &&
+        ws.readyState === WebSocket.OPEN
+      ) {
+        ws.close(WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED);
+      }
     };
 
     if (!dictationManager) {

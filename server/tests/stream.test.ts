@@ -958,4 +958,50 @@ describe("DictationStreamMux", () => {
     expect(manager.handleControlMessage).toHaveBeenCalledTimes(2);
     expect(ws.closeCode).toBe(4001);
   });
+
+  it("delivers dictation_final before closing 4001 after expiry", async () => {
+    const { ctx } = createMockContext([]);
+    let active = true;
+    const manager = {
+      handleControlMessage: vi.fn(
+        (msg: { type: string }, send: (m: { type: string; text?: string }) => void) => {
+          if (msg.type === "dictation_stop") {
+            queueMicrotask(() => {
+              send({ type: "dictation_final", text: "hello" });
+              active = false;
+            });
+          }
+        },
+      ),
+      handleAudioData: vi.fn(),
+      handleDisconnect: vi.fn(),
+      isActive: vi.fn(() => active),
+    };
+    ctx.createDictationManager = () =>
+      manager as unknown as ReturnType<NonNullable<StreamContext["createDictationManager"]>>;
+
+    const mux = new DictationStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    mux.handleServerWebSocket(ws as unknown as WebSocket, undefined, {
+      expiresAt: Date.now() + 60_000,
+    });
+    ws.receive({ type: "dictation_start" } as ClientMessage);
+    mux.markAuthExpired(ws as unknown as WebSocket);
+    expect(ws.closeCode).toBeUndefined();
+
+    const order: string[] = [];
+    ws.onSend = (message) => {
+      order.push(message.type);
+      if (ws.closeCode !== undefined) order.push("closed");
+    };
+
+    ws.receive({ type: "dictation_stop" } as ClientMessage);
+    expect(ws.closeCode).toBeUndefined();
+    expect(ws.sentOfType("dictation_final")).toHaveLength(0);
+
+    await drain();
+    expect(order).toEqual(["dictation_final"]);
+    expect(ws.sentOfType("dictation_final")).toHaveLength(1);
+    expect(ws.closeCode).toBe(4001);
+  });
 });
