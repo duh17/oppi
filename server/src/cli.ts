@@ -675,16 +675,37 @@ async function cmdDevices(
   process.exit(1);
 }
 
+/** Operator-facing dt_ migration copy. Ordinary HTTP/WS always rejects dt_. */
+export function formatAuthMigrationCopy(opts: { kind: "status" | "updated"; finalized: boolean }): {
+  headline: string;
+  warning?: string;
+} {
+  if (opts.kind === "status") {
+    return {
+      headline: opts.finalized
+        ? "  Legacy device-token migration: finalized (migration disabled; ordinary HTTP/WS always rejects dt_)"
+        : "  Legacy device-token migration: compat (/auth/migrate only; ordinary HTTP/WS always rejects dt_)",
+    };
+  }
+  if (opts.finalized) {
+    return {
+      headline: "  ✓ Finalized device-key migration. /auth/migrate is now disabled.",
+      warning:
+        "  Devices still holding dt_ need to update and migrate before finalization, or re-pair after.",
+    };
+  }
+  return {
+    headline:
+      "  ✓ Restored dt_ compatibility for /auth/migrate only. Ordinary HTTP/WS still rejects dt_.",
+  };
+}
+
 async function cmdAuth(connection: CliConnectionConfig, action: string | undefined): Promise<void> {
   const mode = action || "status";
 
   if (mode === "status") {
     const finalized = connection.getConfig().authMigrationMode === "finalized";
-    console.log(
-      c.bold(
-        `  Legacy device-token migration: ${finalized ? "finalized (dt_ rejected on network)" : "compat (dt_ still accepted)"}`,
-      ),
-    );
+    console.log(c.bold(formatAuthMigrationCopy({ kind: "status", finalized }).headline));
     console.log("");
     return;
   }
@@ -700,15 +721,10 @@ async function cmdAuth(connection: CliConnectionConfig, action: string | undefin
       console.log("");
       process.exit(1);
     }
-    console.log(
-      c.green(
-        finalized
-          ? "  ✓ Finalized device-key migration. Legacy dt_ tokens are now rejected immediately."
-          : "  ✓ Restored legacy dt_ compatibility window.",
-      ),
-    );
-    if (finalized) {
-      console.log(c.yellow("  Existing Apple clients must be on a device-key build or re-pair."));
+    const copy = formatAuthMigrationCopy({ kind: "updated", finalized });
+    console.log(c.green(copy.headline));
+    if (copy.warning) {
+      console.log(c.yellow(copy.warning));
     }
     console.log("");
     return;
