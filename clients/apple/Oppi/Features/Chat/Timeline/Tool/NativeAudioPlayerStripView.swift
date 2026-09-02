@@ -61,11 +61,11 @@ final class NativeAudioPlayerStripView: UIView {
         let palette = ThemeRuntimeState.currentPalette()
         backgroundColor = UIColor(palette.bgDark)
         layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
-        playButton.tintColor = UIColor(palette.purple)
-        expandButton.tintColor = UIColor(palette.purple)
+        playButton.tintColor = UIColor(palette.fg)
+        expandButton.tintColor = UIColor(palette.fg)
         titleLabel.textColor = UIColor(palette.fg)
-        timeLabel.textColor = UIColor(palette.purple)
-        progressView.progressTintColor = UIColor(palette.purple)
+        timeLabel.textColor = UIColor(palette.comment)
+        progressView.progressTintColor = UIColor(palette.fg)
         progressView.trackTintColor = UIColor(palette.comment).withAlphaComponent(0.25)
         unavailableLabel.textColor = UIColor(palette.comment)
 

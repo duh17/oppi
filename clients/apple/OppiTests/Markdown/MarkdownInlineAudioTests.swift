@@ -307,8 +307,8 @@ struct MarkdownInlineAudioTests {
     }
 
     @MainActor
-    @Test("time and expand use purple rather than comment")
-    func timeAndExpandUsePurpleNotComment() throws {
+    @Test("strip controls use fg and comment, not purple")
+    func stripControlsUseForegroundNotPurple() throws {
         let strip = NativeAudioPlayerStripView()
         strip.apply(
             itemID: "audio-1",
@@ -325,14 +325,19 @@ struct MarkdownInlineAudioTests {
         let time = try #require(timelineAllLabels(in: strip).first {
             $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.time"
         })
+        let play = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.play"
+        })
         let expand = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
             $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.expand"
         })
 
-        #expect(inlineAudioColor(time.textColor, approximatelyEquals: UIColor(palette.purple)))
-        #expect(inlineAudioColor(expand.tintColor, approximatelyEquals: UIColor(palette.purple)))
-        #expect(!inlineAudioColor(time.textColor, approximatelyEquals: UIColor(palette.comment)))
-        #expect(!inlineAudioColor(expand.tintColor, approximatelyEquals: UIColor(palette.comment)))
+        #expect(inlineAudioColor(play.tintColor, approximatelyEquals: UIColor(palette.fg)))
+        #expect(inlineAudioColor(expand.tintColor, approximatelyEquals: UIColor(palette.fg)))
+        #expect(inlineAudioColor(time.textColor, approximatelyEquals: UIColor(palette.comment)))
+        #expect(!inlineAudioColor(play.tintColor, approximatelyEquals: UIColor(palette.purple)))
+        #expect(!inlineAudioColor(expand.tintColor, approximatelyEquals: UIColor(palette.purple)))
+        #expect(!inlineAudioColor(time.textColor, approximatelyEquals: UIColor(palette.purple)))
     }
 
     @MainActor
