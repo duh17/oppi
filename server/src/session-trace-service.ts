@@ -29,7 +29,9 @@ import {
   readSessionTraceByUuid,
   readSessionTraceFromFile,
   readSessionTraceFromFiles,
+  type LiveEntryRendererSet,
   type TraceEvent,
+  type TraceReadOptions,
   type TraceViewMode,
 } from "./trace.js";
 import {
@@ -112,7 +114,9 @@ export type SessionRawFileResult =
 
 export interface SessionTraceServiceDeps {
   storage: Pick<Storage, "getDataDir" | "getSession" | "getWorkspace">;
-  sessionRuntimes: Pick<SessionRuntimes, "getToolFullOutputPath" | "refreshSessionState">;
+  sessionRuntimes: Pick<SessionRuntimes, "getToolFullOutputPath" | "refreshSessionState"> & {
+    getEntryRenderers?: SessionRuntimes["getEntryRenderers"];
+  };
   ensureSessionContextWindow: (session: Session) => Session;
   mobileRenderers?: Pick<MobileRendererRegistry, "renderCall" | "renderResult">;
 }
@@ -142,16 +146,17 @@ export class SessionTraceService {
     const refreshedSession = this.deps.storage.getSession(params.session.id) || params.session;
     const hydratedSession = this.deps.ensureSessionContextWindow(refreshedSession);
     const baseDir = this.traceBaseDir();
+    const entryRenderers = this.liveEntryRenderers(params.session.id);
 
-    let trace = this.loadSessionTrace(hydratedSession, traceView, liveLeafId);
+    let trace = this.loadSessionTrace(hydratedSession, traceView, liveLeafId, entryRenderers);
 
     if (!trace || trace.length === 0) {
-      const traceOptions = {
+      const traceOptions = this.traceReadOptions({
+        sessionId: params.session.id,
         view: traceView,
-        attachmentDataDir: baseDir,
-        attachmentSessionId: params.session.id,
-        ...(liveLeafId !== undefined ? { leafId: liveLeafId } : {}),
-      };
+        leafId: liveLeafId,
+        entryRenderers,
+      });
 
       if (live?.sessionFile) {
         trace = readSessionTraceFromFile(live.sessionFile, traceOptions);
@@ -168,7 +173,7 @@ export class SessionTraceService {
       const refreshed = this.deps.storage.getSession(params.session.id);
       if (refreshed && (!trace || trace.length === 0)) {
         this.deps.ensureSessionContextWindow(refreshed);
-        trace = this.loadSessionTrace(refreshed, traceView, liveLeafId);
+        trace = this.loadSessionTrace(refreshed, traceView, liveLeafId, entryRenderers);
       }
     }
 
@@ -224,6 +229,7 @@ export class SessionTraceService {
       };
     }
 
+    const entryRenderers = this.liveEntryRenderers(params.session.id);
     const result = readSessionTracePageFromFiles(jsonlPaths, {
       cursor: params.cursor,
       aroundEntryId: params.aroundEntryId,
@@ -234,6 +240,7 @@ export class SessionTraceService {
       ...(!params.cursor && !params.aroundEntryId && live?.leafId !== undefined
         ? { leafId: live.leafId }
         : {}),
+      ...(entryRenderers ? { entryRenderers } : {}),
     });
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
@@ -254,7 +261,10 @@ export class SessionTraceService {
       hydratedSession,
       typeof live?.sessionFile === "string" ? live.sessionFile : undefined,
     );
-    const result = await readSessionTraceOutlineFromFiles(jsonlPaths);
+    const entryRenderers = this.liveEntryRenderers(params.session.id);
+    const result = await readSessionTraceOutlineFromFiles(jsonlPaths, {
+      ...(entryRenderers ? { entryRenderers } : {}),
+    });
     const latestSession = this.deps.storage.getSession(params.session.id) || hydratedSession;
     return {
       session: this.deps.ensureSessionContextWindow(latestSession),
@@ -267,14 +277,15 @@ export class SessionTraceService {
     session: Session,
     traceView: SessionTraceViewMode = "context",
     leafId?: string | null,
+    entryRenderers?: LiveEntryRendererSet,
   ): TraceEvent[] | null {
     const baseDir = this.traceBaseDir();
-    const traceOptions = {
+    const traceOptions = this.traceReadOptions({
+      sessionId: session.id,
       view: traceView,
-      attachmentDataDir: baseDir,
-      attachmentSessionId: session.id,
-      ...(leafId !== undefined ? { leafId } : {}),
-    };
+      leafId,
+      entryRenderers: entryRenderers ?? this.liveEntryRenderers(session.id),
+    });
     let trace = readSessionTrace(baseDir, session.id, session.workspaceId, traceOptions);
 
     if ((!trace || trace.length === 0) && session.piSessionFiles?.length) {
@@ -563,6 +574,25 @@ export class SessionTraceService {
       }
       return event;
     });
+  }
+
+  private liveEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {
+    return this.deps.sessionRuntimes?.getEntryRenderers?.(sessionId);
+  }
+
+  private traceReadOptions(params: {
+    sessionId: string;
+    view?: SessionTraceViewMode;
+    leafId?: string | null;
+    entryRenderers?: LiveEntryRendererSet;
+  }): TraceReadOptions {
+    return {
+      view: params.view ?? "context",
+      attachmentDataDir: this.traceBaseDir(),
+      attachmentSessionId: params.sessionId,
+      ...(params.leafId !== undefined ? { leafId: params.leafId } : {}),
+      ...(params.entryRenderers ? { entryRenderers: params.entryRenderers } : {}),
+    };
   }
 
   private traceBaseDir(): string {

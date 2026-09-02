@@ -16,8 +16,15 @@
  *   thinking_level_change, branch_summary, custom_message
  */
 
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+  COLLAPSED_SNAPSHOT_MAX_BYTES,
+  COLLAPSED_SNAPSHOT_MAX_LINES,
+  COLLAPSED_SNAPSHOT_WIDTH,
+  sanitizeCollapsedSnapshotLines,
+} from "./ansi.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
 import { createLogger } from "./logger.js";
@@ -36,6 +43,21 @@ export interface TraceReadOptions {
   leafId?: string | null;
   attachmentDataDir?: string;
   attachmentSessionId?: string;
+  /** Live registerEntryRenderer set for this process. Absent = hide custom cards. */
+  entryRenderers?: LiveEntryRendererSet | null;
+}
+
+export interface CollapsedEntryRenderer {
+  (
+    entry: SessionEntry,
+    options: { expanded: boolean },
+    theme: unknown,
+  ): { render: (width: number) => string[] } | undefined | null;
+}
+
+export interface LiveEntryRendererSet {
+  get(customType: string): CollapsedEntryRenderer | undefined;
+  version: string;
 }
 
 const log = createLogger({ base: { component: "trace" } });
@@ -44,6 +66,187 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+const RESERVED_CUSTOM_TYPE_PREFIX = "oppi-";
+
+const rendererGenerationIds = new WeakMap<CollapsedEntryRenderer, number>();
+let nextRendererGenerationId = 1;
+
+function rendererGenerationId(renderer: CollapsedEntryRenderer): number {
+  let id = rendererGenerationIds.get(renderer);
+  if (id === undefined) {
+    id = nextRendererGenerationId;
+    nextRendererGenerationId += 1;
+    rendererGenerationIds.set(renderer, id);
+  }
+  return id;
+}
+
+function hashRendererSetFingerprint(parts: string[]): string {
+  if (parts.length === 0) return "";
+  return createHash("sha256").update(parts.join("\0")).digest("base64url").slice(0, 12);
+}
+
+export function createLiveEntryRendererSet(
+  renderers: Iterable<readonly [string, CollapsedEntryRenderer]>,
+): LiveEntryRendererSet {
+  const map = new Map<string, CollapsedEntryRenderer>();
+  for (const [customType, renderer] of renderers) {
+    if (!customType || map.has(customType)) continue;
+    map.set(customType, renderer);
+  }
+  const fingerprint = [...map.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([customType, renderer]) => `${customType}:${rendererGenerationId(renderer)}`);
+  return {
+    get: (customType) => map.get(customType),
+    version: hashRendererSetFingerprint(fingerprint),
+  };
+}
+
+export function createLiveEntryRendererLookup(
+  runner: { getEntryRenderer(customType: string): unknown } | undefined,
+  generation: number,
+): LiveEntryRendererSet | undefined {
+  if (!runner || generation <= 0) return undefined;
+  return {
+    get: (customType) => {
+      const renderer = runner.getEntryRenderer(customType);
+      return typeof renderer === "function" ? (renderer as CollapsedEntryRenderer) : undefined;
+    },
+    version: hashRendererSetFingerprint([String(generation)]),
+  };
+}
+
+const projectionCache = new WeakMap<LiveEntryRendererSet, Map<string, TraceEvent | null>>();
+
+function collapsedSnapshotTheme(): unknown {
+  const passthrough = (value: string): string => value;
+  return {
+    fg: (_color: unknown, text: string): string => text,
+    bg: (_color: unknown, text: string): string => text,
+    bold: passthrough,
+    dim: passthrough,
+    italic: passthrough,
+    underline: passthrough,
+    inverse: passthrough,
+    gray: (_level: unknown, text: string): string => text,
+    hex: (_hex: unknown, text: string): string => text,
+    rgb: (_r: unknown, _g: unknown, _b: unknown, text: string): string => text,
+    parseInline: passthrough,
+  };
+}
+
+function hideCustomEntry(entry: SessionEntry, customType: string, reason: string): void {
+  log.warn("trace.custom_entry_hidden", {
+    customType,
+    entryId: entry.id,
+    reason,
+  });
+}
+
+/**
+ * Project a Pi CustomEntry to the existing system + custom presentation card.
+ * JSONL is not mutated. Raw `data` is never copied onto the returned event.
+ */
+export function projectCustomEntry(
+  entry: SessionEntry,
+  renderers?: LiveEntryRendererSet | null,
+): TraceEvent | null {
+  if (entry.type !== "custom") return null;
+  if (renderers) {
+    let cached = projectionCache.get(renderers);
+    if (!cached) {
+      cached = new Map();
+      projectionCache.set(renderers, cached);
+    }
+    if (cached.has(entry.id)) return cached.get(entry.id) ?? null;
+    const result = computeCustomEntryProjection(entry, renderers);
+    cached.set(entry.id, result);
+    return result;
+  }
+  return computeCustomEntryProjection(entry, renderers);
+}
+
+function computeCustomEntryProjection(
+  entry: SessionEntry,
+  renderers?: LiveEntryRendererSet | null,
+): TraceEvent | null {
+  const customType = entry.customType;
+  if (typeof customType !== "string" || customType.length === 0) return null;
+  if (customType === OPPI_LIFECYCLE_CUSTOM_TYPE) return null;
+  if (customType.startsWith(RESERVED_CUSTOM_TYPE_PREFIX)) {
+    if (renderers?.get(customType)) {
+      hideCustomEntry(entry, customType, "reserved");
+    }
+    return null;
+  }
+
+  const renderer = renderers?.get(customType);
+  if (!renderer) return null;
+
+  try {
+    const component = renderer(entry, { expanded: false }, collapsedSnapshotTheme());
+    if (!component || typeof component.render !== "function") {
+      hideCustomEntry(entry, customType, "empty");
+      return null;
+    }
+
+    const rawLines = component.render(COLLAPSED_SNAPSHOT_WIDTH);
+    if (!Array.isArray(rawLines)) {
+      hideCustomEntry(entry, customType, "empty");
+      return null;
+    }
+
+    const strings: string[] = [];
+    let rawBytes = 0;
+    for (const line of rawLines) {
+      if (typeof line !== "string") {
+        hideCustomEntry(entry, customType, "empty");
+        return null;
+      }
+      rawBytes += Buffer.byteLength(line, "utf8");
+      if (rawBytes > COLLAPSED_SNAPSHOT_MAX_BYTES) {
+        hideCustomEntry(entry, customType, "oversize");
+        return null;
+      }
+      strings.push(line);
+    }
+
+    const lines = sanitizeCollapsedSnapshotLines(strings);
+    if (lines.length === 0) {
+      hideCustomEntry(entry, customType, "empty");
+      return null;
+    }
+    if (lines.length > COLLAPSED_SNAPSHOT_MAX_LINES) {
+      hideCustomEntry(entry, customType, "oversize");
+      return null;
+    }
+    const visibleBytes = lines.reduce((sum, line) => sum + Buffer.byteLength(line, "utf8"), 0);
+    if (visibleBytes > COLLAPSED_SNAPSHOT_MAX_BYTES) {
+      hideCustomEntry(entry, customType, "oversize");
+      return null;
+    }
+
+    const title = lines[0] ?? "";
+    const body = lines.slice(1).join("\n").trim();
+    const presentation: TraceEventPresentation = {
+      kind: "custom",
+      title,
+      ...(body ? { body } : {}),
+    };
+    return {
+      id: entry.id,
+      type: "system",
+      timestamp: entry.timestamp || new Date().toISOString(),
+      text: textFromPresentation(presentation),
+      presentation,
+    };
+  } catch {
+    hideCustomEntry(entry, customType, "throw");
+    return null;
+  }
 }
 
 /**
@@ -424,10 +627,12 @@ export function buildSessionContext(
         const lifecycle = formatLifecycleEvent(entry, timestamp);
         if (lifecycle) {
           pendingLifecycle.push(lifecycle);
+          break;
         }
-        // Other Pi CustomEntry records are extension persistence state from
-        // appendEntry(). They do not participate in LLM context or timeline
-        // presentation.
+        const projected = projectCustomEntry(entry, options.entryRenderers);
+        if (projected) {
+          events.push(projected);
+        }
         break;
       }
 

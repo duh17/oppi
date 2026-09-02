@@ -2,6 +2,7 @@ import type { AgentRuntimeTransport } from "./agent-runtime-transport.js";
 import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
+import type { LiveEntryRendererSet } from "./trace.js";
 import type { Session } from "./types.js";
 
 /**
@@ -85,6 +86,11 @@ export class SessionRuntimes implements AgentRuntimeTransport {
       sessionFile: snapshot.piSessionFile,
       sessionId: snapshot.id,
     };
+  }
+
+  getEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {
+    if (this.isPiTui(this.storage.getSession(sessionId))) return undefined;
+    return this.oppi.getEntryRenderers(sessionId);
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

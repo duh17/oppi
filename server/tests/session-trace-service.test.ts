@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { materializeToolMediaContentBlocks } from "../src/session-attachments.js";
 import { SessionTraceService, type SessionTraceServiceDeps } from "../src/session-trace-service.js";
+import type { LiveEntryRendererSet } from "../src/trace.js";
 import type { Session, Workspace } from "../src/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
 
@@ -56,6 +57,7 @@ function makeService(options: {
   fullOutputPath?: string | null;
   workspace?: Workspace;
   workspaces?: Workspace[];
+  entryRenderers?: LiveEntryRendererSet;
 }): { service: SessionTraceService; deps: SessionTraceServiceDeps } {
   const deps: SessionTraceServiceDeps = {
     storage: {
@@ -69,6 +71,7 @@ function makeService(options: {
     sessionRuntimes: {
       refreshSessionState: vi.fn(async () => options.liveState ?? null),
       getToolFullOutputPath: vi.fn(() => options.fullOutputPath ?? null),
+      getEntryRenderers: vi.fn(() => options.entryRenderers),
     },
     ensureSessionContextWindow: vi.fn((session) => ({
       ...session,
@@ -212,7 +215,9 @@ describe("SessionTraceService", () => {
     const { service } = makeService({ dataDir, storedSession: session });
 
     const rawResult = await service.getSessionWithTrace({ session });
-    expect(rawResult.trace.every((event) => !event.callSegments && !event.resultSegments)).toBe(true);
+    expect(rawResult.trace.every((event) => !event.callSegments && !event.resultSegments)).toBe(
+      true,
+    );
 
     const result = await service.getSessionWithTrace({
       session,
@@ -221,9 +226,7 @@ describe("SessionTraceService", () => {
     const call = result.trace.find((event) => event.type === "toolCall");
     const toolResult = result.trace.find((event) => event.type === "toolResult");
 
-    expect(call?.callSegments?.map((segment) => segment.text).join("")).toBe(
-      "oppi session search",
-    );
+    expect(call?.callSegments?.map((segment) => segment.text).join("")).toBe("oppi session search");
     expect(toolResult?.resultSegments?.map((segment) => segment.text).join("")).toBe("2 results");
   });
 
@@ -278,10 +281,7 @@ describe("SessionTraceService", () => {
           role: "toolResult",
           toolCallId: "tc-image",
           toolName: "read",
-          content: [
-            { type: "text", text: "Read image file [image/png]" },
-            imageBlock,
-          ],
+          content: [{ type: "text", text: "Read image file [image/png]" }, imageBlock],
         },
       },
     ]);
@@ -769,5 +769,101 @@ describe("SessionTraceService", () => {
       contentType: "application/octet-stream",
       size: 11,
     });
+  });
+
+  it("hides custom entries on the file-only path when no live renderer exists", async () => {
+    const dataDir = tempDir("oppi-session-trace-custom-hidden-");
+    const liveTrace = join(dataDir, "live.jsonl");
+    const sentinel = "SECRET_SENTINEL_DO_NOT_LEAK_service";
+    writeJsonl(liveTrace, [
+      { type: "session", id: "pi-live", cwd: dataDir },
+      {
+        type: "message",
+        id: "u1",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        message: { role: "user", content: "hello" },
+      },
+      {
+        type: "custom",
+        id: "c1",
+        parentId: "u1",
+        timestamp: "2026-05-03T00:00:02.000Z",
+        customType: "demo:card",
+        data: { secret: sentinel },
+      },
+    ]);
+    const { service, deps } = makeService({
+      dataDir,
+      storedSession: makeSession({ id: "sess-1", workspaceId: "ws-1" }),
+      liveState: { sessionFile: liveTrace, sessionId: "pi-live" },
+    });
+
+    const result = await service.getSessionWithTrace({ session: makeSession({ id: "sess-1" }) });
+
+    expect(deps.sessionRuntimes.getEntryRenderers).toHaveBeenCalledWith("sess-1");
+    expect(result.trace.map((event) => event.id)).toEqual(["u1"]);
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+  });
+
+  it("projects a live registerEntryRenderer onto HTTP full, page, and outline", async () => {
+    const dataDir = tempDir("oppi-session-trace-custom-live-");
+    const liveTrace = join(dataDir, "live.jsonl");
+    const sentinel = "SECRET_SENTINEL_DO_NOT_LEAK_service";
+    writeJsonl(liveTrace, [
+      { type: "session", id: "pi-live", cwd: dataDir },
+      {
+        type: "message",
+        id: "u1",
+        timestamp: "2026-05-03T00:00:01.000Z",
+        message: { role: "user", content: "hello" },
+      },
+      {
+        type: "custom",
+        id: "c1",
+        parentId: "u1",
+        timestamp: "2026-05-03T00:00:02.000Z",
+        customType: "demo:card",
+        data: { secret: sentinel },
+      },
+    ]);
+    const entryRenderers: LiveEntryRendererSet = {
+      get: (customType) =>
+        customType === "demo:card"
+          ? () => ({ render: () => ["Live title", "Live body"] })
+          : undefined,
+      version: "demo:card",
+    };
+    const { service } = makeService({
+      dataDir,
+      storedSession: makeSession({ id: "sess-1", workspaceId: "ws-1" }),
+      liveState: { sessionFile: liveTrace, sessionId: "pi-live" },
+      entryRenderers,
+    });
+
+    const full = await service.getSessionWithTrace({ session: makeSession({ id: "sess-1" }) });
+    const page = await service.getSessionTracePage({
+      session: makeSession({ id: "sess-1" }),
+      targetEvents: 10,
+    });
+    const outline = await service.getSessionTraceOutline({
+      session: makeSession({ id: "sess-1" }),
+    });
+
+    expect(full.trace.find((event) => event.id === "c1")).toMatchObject({
+      type: "system",
+      presentation: { kind: "custom", title: "Live title", body: "Live body" },
+    });
+    expect(page?.trace.find((event) => event.id === "c1")?.presentation).toEqual({
+      kind: "custom",
+      title: "Live title",
+      body: "Live body",
+    });
+    expect(outline.outline.entries.find((entry) => entry.id === "c1")).toMatchObject({
+      kind: "custom",
+      summary: "Live title",
+    });
+    expect(page?.page.traceVersion).toContain("demo:card");
+    expect(outline.outline.traceVersion).toContain("demo:card");
+    expect(JSON.stringify({ full, page, outline })).not.toContain(sentinel);
   });
 });

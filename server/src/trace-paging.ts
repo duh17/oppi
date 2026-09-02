@@ -2,7 +2,13 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
-import { buildSessionContext, type SessionEntry, type TraceEvent } from "./trace.js";
+import {
+  buildSessionContext,
+  projectCustomEntry,
+  type LiveEntryRendererSet,
+  type SessionEntry,
+  type TraceEvent,
+} from "./trace.js";
 
 export interface TracePageOptions {
   cursor?: string;
@@ -14,6 +20,7 @@ export interface TracePageOptions {
   attachmentSessionId?: string;
   /// Current in-memory tree leaf for the initial page. Omit for cursor and around-entry pages.
   leafId?: string | null;
+  entryRenderers?: LiveEntryRendererSet | null;
 }
 
 export interface TracePageMetadata {
@@ -66,6 +73,7 @@ interface TraceCursor {
   entryId: string;
   lineHash: string;
   branchLeafId?: string | null;
+  rendererVersion?: string;
 }
 
 interface ToolPreviewMetadata {
@@ -104,18 +112,21 @@ export function readSessionTracePageFromFiles(
     options.maxInitialReadBytes ?? DEFAULT_INITIAL_READ_BYTES,
   );
   const sources = traceSources(jsonlPaths);
-  const traceVersion = traceVersionFor(sources);
+  const rendererVersion = options.entryRenderers?.version ?? "";
+  const traceVersion = appendRendererVersion(traceVersionFor(sources), rendererVersion);
   const jsonlBytes = sources.reduce((sum, source) => sum + source.size, 0);
   const aroundEntryId = options.aroundEntryId?.trim();
   if (aroundEntryId) {
     return readAroundTracePage(sources, aroundEntryId, {
       traceVersion,
+      rendererVersion,
       jsonlBytes,
       targetEvents,
       previewBytes,
       maxInitialReadBytes,
       attachmentDataDir: options.attachmentDataDir,
       attachmentSessionId: options.attachmentSessionId,
+      entryRenderers: options.entryRenderers,
     });
   }
 
@@ -163,7 +174,7 @@ export function readSessionTracePageFromFiles(
 
   const readStart = performance.now();
   const cursorValidation = cursor
-    ? validateCursor(sources[cursorSourceIndex as number], cursor)
+    ? validateCursor(sources[cursorSourceIndex as number], cursor, rendererVersion)
     : true;
   let readMs = elapsed(readStart);
   if (!cursorValidation) {
@@ -206,8 +217,10 @@ export function readSessionTracePageFromFiles(
       parsed.filter((line) => isBeforeCursor(line, cursor, cursorSourceIndex)),
       targetEvents,
       requestedLeafId,
+      options.entryRenderers,
     );
-    const selectEnough = selectedTraceEventEstimate(selected) >= targetEvents;
+    const selectEnough =
+      selectedTraceEventEstimate(selected, options.entryRenderers) >= targetEvents;
     if (selectEnough || window.baseByteOffset > 0) {
       break;
     }
@@ -218,6 +231,7 @@ export function readSessionTracePageFromFiles(
     parsed.filter((line) => isBeforeCursor(line, cursor, cursorSourceIndex)),
     targetEvents,
     requestedLeafId,
+    options.entryRenderers,
   );
   const selectMs = elapsed(selectStart);
 
@@ -227,6 +241,7 @@ export function readSessionTracePageFromFiles(
   ) {
     return readAroundTracePage(sources, requestedLeafId, {
       traceVersion,
+      rendererVersion,
       jsonlBytes,
       targetEvents,
       previewBytes,
@@ -234,6 +249,7 @@ export function readSessionTracePageFromFiles(
       attachmentDataDir: options.attachmentDataDir,
       attachmentSessionId: options.attachmentSessionId,
       leafId: requestedLeafId,
+      entryRenderers: options.entryRenderers,
     });
   }
 
@@ -263,6 +279,7 @@ export function readSessionTracePageFromFiles(
           ? encodeCursor(
               firstSelected,
               typeof requestedLeafId === "string" ? firstSelected.entry.parentId : undefined,
+              rendererVersion,
             )
           : null,
       traceVersion,
@@ -323,6 +340,7 @@ function readAroundTracePage(
   aroundEntryId: string,
   params: {
     traceVersion: string;
+    rendererVersion: string;
     jsonlBytes: number;
     targetEvents: number;
     previewBytes: number;
@@ -330,12 +348,21 @@ function readAroundTracePage(
     attachmentDataDir?: string;
     attachmentSessionId?: string;
     leafId?: string;
+    entryRenderers?: LiveEntryRendererSet | null;
   },
 ): TracePageResult {
   const readStart = performance.now();
   const found = findLineForEntryId(sources, aroundEntryId);
   let readMs = elapsed(readStart);
-  if (!found.line) {
+  if (
+    !found.line ||
+    isHiddenCustomAroundTarget(
+      sources,
+      found.line.entry,
+      params.entryRenderers,
+      params.leafId,
+    )
+  ) {
     return emptyPage({
       traceVersion: params.traceVersion,
       previewBytes: params.previewBytes,
@@ -367,8 +394,9 @@ function readAroundTracePage(
         parsed.filter((line) => compareLines(line, found.line as ParsedLine) <= 0),
         params.targetEvents,
         params.leafId,
+        params.entryRenderers,
       )
-    : selectAroundPageEntries(parsed, found.line, params.targetEvents);
+    : selectAroundPageEntries(parsed, found.line, params.targetEvents, params.entryRenderers);
   const selectMs = elapsed(selectStart);
   const previewStart = performance.now();
   const prepared = prepareEntriesForFormatting(selected, params.previewBytes);
@@ -390,7 +418,11 @@ function readAroundTracePage(
       hasOlder,
       olderCursor:
         hasOlder && firstSelected
-          ? encodeCursor(firstSelected, params.leafId ? firstSelected.entry.parentId : undefined)
+          ? encodeCursor(
+              firstSelected,
+              params.leafId ? firstSelected.entry.parentId : undefined,
+              params.rendererVersion,
+            )
           : null,
       traceVersion: params.traceVersion,
       previewBytes: params.previewBytes,
@@ -455,6 +487,35 @@ function traceVersionFor(sources: TraceSource[]): string {
     .digest("base64url")
     .slice(0, 12);
   return `${sources.length}:${totalBytes}:${latestMtime}:${identity}`;
+}
+
+function appendRendererVersion(base: string, rendererVersion: string): string {
+  if (!rendererVersion) return base;
+  return base ? `${base}:r${rendererVersion}` : `r${rendererVersion}`;
+}
+
+function isHiddenCustomAroundTarget(
+  sources: TraceSource[],
+  entry: SessionEntry,
+  renderers?: LiveEntryRendererSet | null,
+  leafId?: string,
+): boolean {
+  if (entry.type !== "custom") return false;
+  const branchIds = readBranchMembership(sources, leafId);
+  if (!branchIds.has(entry.id)) return true;
+  return projectCustomEntry(entry, renderers) === null;
+}
+
+function readBranchMembership(
+  sources: TraceSource[],
+  leafId?: string | null,
+): Set<string> {
+  if (leafId === null) return new Set();
+  const lines: ParsedLine[] = [];
+  for (const source of sources) {
+    lines.push(...parseJsonlBuffer(readRangeWindow(source, 0, source.size)));
+  }
+  return branchEntryIdsFromLines(lines.sort(compareLines), leafId);
 }
 
 function pageSourceIndexes(
@@ -601,8 +662,13 @@ function resolveCursorSourceIndex(sources: TraceSource[], cursor: TraceCursor): 
   return sources.length === 1 ? 0 : undefined;
 }
 
-function validateCursor(source: TraceSource | undefined, cursor: TraceCursor): boolean {
+function validateCursor(
+  source: TraceSource | undefined,
+  cursor: TraceCursor,
+  rendererVersion: string,
+): boolean {
   if (!source) return false;
+  if ((cursor.rendererVersion ?? "") !== rendererVersion) return false;
   const line = readLineAt(source, cursor.byteStart);
   return line?.entry.id === cursor.entryId && line.hash === cursor.lineHash;
 }
@@ -794,9 +860,10 @@ function selectEligiblePageEntries(
   lines: ParsedLine[],
   targetEvents: number,
   leafId: string | null | undefined,
+  renderers?: LiveEntryRendererSet | null,
 ): ParsedLine[] {
   if (leafId === null) return [];
-  if (typeof leafId !== "string") return selectPageEntries(lines, targetEvents);
+  if (typeof leafId !== "string") return selectPageEntries(lines, targetEvents, renderers);
 
   const byId = new Map(lines.map((line) => [line.entry.id, line]));
   const branch: ParsedLine[] = [];
@@ -811,12 +878,18 @@ function selectEligiblePageEntries(
     currentId = typeof line.entry.parentId === "string" ? line.entry.parentId : null;
   }
 
-  return selectPageEntries(branch.reverse(), targetEvents);
+  return selectPageEntries(branch.reverse(), targetEvents, renderers, leafId);
 }
 
-function selectPageEntries(lines: ParsedLine[], targetEvents: number): ParsedLine[] {
+function selectPageEntries(
+  lines: ParsedLine[],
+  targetEvents: number,
+  renderers?: LiveEntryRendererSet | null,
+  leafId?: string | null,
+): ParsedLine[] {
   const eligible = [...lines].sort(compareLines);
   if (eligible.length === 0) return [];
+  const branchIds = branchEntryIdsFromLines(eligible, leafId);
 
   const toolGroups = buildToolLineGroups(eligible);
   const selected = new Set<string>();
@@ -833,7 +906,7 @@ function selectPageEntries(lines: ParsedLine[], targetEvents: number): ParsedLin
 
     for (const grouped of group) selected.add(lineKey(grouped));
     selectedTraceCount += group.reduce(
-      (sum, grouped) => sum + estimateTraceEventCount(grouped.entry),
+      (sum, grouped) => sum + estimateTraceEventCount(grouped.entry, renderers, branchIds),
       0,
     );
     if (selectedTraceCount >= targetEvents) break;
@@ -846,9 +919,11 @@ function selectAroundPageEntries(
   lines: ParsedLine[],
   targetLine: ParsedLine,
   targetEvents: number,
+  renderers?: LiveEntryRendererSet | null,
 ): ParsedLine[] {
   const eligible = uniqueLines(lines).sort(compareLines);
   if (eligible.length === 0) return [];
+  const branchIds = branchEntryIdsFromLines(eligible);
 
   const toolGroups = buildToolLineGroups(eligible);
   const selected = new Set<string>();
@@ -862,7 +937,7 @@ function selectAroundPageEntries(
     if (group.length === 0) return;
     for (const grouped of group) selected.add(lineKey(grouped));
     selectedTraceCount += group.reduce(
-      (sum, grouped) => sum + estimateTraceEventCount(grouped.entry),
+      (sum, grouped) => sum + estimateTraceEventCount(grouped.entry, renderers, branchIds),
       0,
     );
   }
@@ -896,8 +971,46 @@ function uniqueLines(lines: ParsedLine[]): ParsedLine[] {
   });
 }
 
-function selectedTraceEventEstimate(lines: ParsedLine[]): number {
-  return lines.reduce((sum, line) => sum + estimateTraceEventCount(line.entry), 0);
+function selectedTraceEventEstimate(
+  lines: ParsedLine[],
+  renderers?: LiveEntryRendererSet | null,
+): number {
+  const branchIds = branchEntryIdsFromLines(lines);
+  return lines.reduce(
+    (sum, line) => sum + estimateTraceEventCount(line.entry, renderers, branchIds),
+    0,
+  );
+}
+
+function latestNonSessionEntryId(lines: ParsedLine[]): string | undefined {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const entry = lines[index]?.entry;
+    if (entry && entry.type !== "session" && entry.id) return entry.id;
+  }
+  return undefined;
+}
+
+function branchEntryIdsFromLines(
+  lines: ParsedLine[],
+  leafId?: string | null,
+): Set<string> {
+  if (leafId === null) return new Set();
+  const byId = new Map<string, SessionEntry>();
+  for (const line of lines) {
+    if (line.entry.id) byId.set(line.entry.id, line.entry);
+  }
+  let currentId: string | null | undefined =
+    typeof leafId === "string" ? leafId : latestNonSessionEntryId(lines);
+  const ids = new Set<string>();
+  const seen = new Set<string>();
+  while (currentId && !seen.has(currentId)) {
+    seen.add(currentId);
+    ids.add(currentId);
+    const entry = byId.get(currentId);
+    if (!entry) break;
+    currentId = typeof entry.parentId === "string" ? entry.parentId : null;
+  }
+  return ids;
 }
 
 interface ToolLineGroup {
@@ -947,7 +1060,11 @@ function groupForLine(line: ParsedLine, toolGroups: Map<string, ToolLineGroup>):
   return group ? group.lines.slice(group.startIndex, group.endIndex + 1) : [];
 }
 
-function estimateTraceEventCount(entry: SessionEntry): number {
+function estimateTraceEventCount(
+  entry: SessionEntry,
+  renderers?: LiveEntryRendererSet | null,
+  branchIds?: Set<string>,
+): number {
   switch (entry.type) {
     case "message":
       return estimateMessageEventCount(entry.message);
@@ -962,9 +1079,10 @@ function estimateTraceEventCount(entry: SessionEntry): number {
     case "custom_message":
       return entry.content && entry.display !== false ? 1 : 0;
     case "custom":
-      // Lifecycle is metadata on a nearby original trace event, not a standalone
-      // wire event, so it does not consume the page's renderable event budget.
-      return 0;
+      // Abandoned-branch and lifecycle custom records count 0. Project only after
+      // the selected JSONL branch is known.
+      if (branchIds && !branchIds.has(entry.id)) return 0;
+      return projectCustomEntry(entry, renderers) ? 1 : 0;
     default:
       return 0;
   }
@@ -1039,13 +1157,17 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function formatEntries(
   entries: SessionEntry[],
-  options: Pick<TracePageOptions, "attachmentDataDir" | "attachmentSessionId" | "leafId">,
+  options: Pick<
+    TracePageOptions,
+    "attachmentDataDir" | "attachmentSessionId" | "leafId" | "entryRenderers"
+  >,
 ): TraceEvent[] {
   return buildSessionContext(entries, {
     view: "full",
     attachmentDataDir: options.attachmentDataDir,
     attachmentSessionId: options.attachmentSessionId,
     ...(options.leafId !== undefined ? { leafId: options.leafId } : {}),
+    ...(options.entryRenderers ? { entryRenderers: options.entryRenderers } : {}),
   });
 }
 
@@ -1117,13 +1239,18 @@ function utf8Prefix(text: string, maxBytes: number): string {
     .replace(/\uFFFD$/, "");
 }
 
-function encodeCursor(line: ParsedLine, branchLeafId?: string | null): string {
+function encodeCursor(
+  line: ParsedLine,
+  branchLeafId?: string | null,
+  rendererVersion?: string,
+): string {
   const cursor: TraceCursor = {
     sourceId: line.sourceId,
     byteStart: line.byteStart,
     entryId: line.entry.id,
     lineHash: line.hash,
     ...(branchLeafId !== undefined ? { branchLeafId } : {}),
+    ...(rendererVersion ? { rendererVersion } : {}),
   };
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
@@ -1143,6 +1270,9 @@ function decodeCursor(encoded: string): TraceCursor | null {
       lineHash: record.lineHash,
       ...(typeof record.branchLeafId === "string" || record.branchLeafId === null
         ? { branchLeafId: record.branchLeafId as string | null }
+        : {}),
+      ...(typeof record.rendererVersion === "string"
+        ? { rendererVersion: record.rendererVersion }
         : {}),
     };
   } catch {

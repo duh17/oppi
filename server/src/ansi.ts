@@ -325,3 +325,19 @@ export function terminalLineVisibleText(input: string): string {
     .map((span) => span.text)
     .join("");
 }
+
+/** Width used for collapsed widget and custom-entry snapshots. */
+export const COLLAPSED_SNAPSHOT_WIDTH = 88;
+
+/** Visible line budget for collapsed widget and custom-entry snapshots. */
+export const COLLAPSED_SNAPSHOT_MAX_LINES = 8;
+
+/** Visible UTF-8 byte budget for collapsed widget and custom-entry snapshots. */
+export const COLLAPSED_SNAPSHOT_MAX_BYTES = 4096;
+
+/** Strip OSC/ANSI and drop blank lines from a collapsed TUI snapshot. */
+export function sanitizeCollapsedSnapshotLines(lines: string[]): string[] {
+  return lines
+    .map((line) => terminalLineVisibleText(line).trimEnd())
+    .filter((line) => line.length > 0);
+}

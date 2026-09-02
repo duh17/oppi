@@ -25,7 +25,11 @@ import {
   type ExtensionUINativeRenderableComponent,
   type ExtensionUIResponsePayload,
 } from "./extension-ui-contract.js";
-import { terminalLineVisibleText } from "./ansi.js";
+import {
+  COLLAPSED_SNAPSHOT_MAX_LINES,
+  COLLAPSED_SNAPSHOT_WIDTH,
+  sanitizeCollapsedSnapshotLines,
+} from "./ansi.js";
 import type { AskQuestion, ExtensionUINativeSurface, ExtensionUIWidgetPlacement } from "./types.js";
 
 type ExtensionAudioStreamInput = Omit<ExtensionAudioStreamEvent, "type">;
@@ -79,9 +83,9 @@ const EXTENSION_AUDIO_MIME_TYPES = new Set<ExtensionAudioStreamEvent["mimeType"]
   "audio/wav",
   "audio/pcm; codecs=s16le",
 ]);
-const CUSTOM_UI_SNAPSHOT_WIDTH = 88;
+const CUSTOM_UI_SNAPSHOT_WIDTH = COLLAPSED_SNAPSHOT_WIDTH;
 const CUSTOM_UI_SNAPSHOT_ROWS = 40;
-const CUSTOM_UI_SNAPSHOT_WIDGET_MAX_LINES = 8;
+const CUSTOM_UI_SNAPSHOT_WIDGET_MAX_LINES = COLLAPSED_SNAPSHOT_MAX_LINES;
 const log = createLogger({ base: { component: "sdk_ui_bridge" } });
 
 function titleCaseIdentifier(value: string): string {
@@ -209,9 +213,7 @@ function renderWidgetSnapshotLines(component: ExtensionUINativeRenderableCompone
     lines = [`[render error] ${safeErrorMessage(error)}`];
   }
 
-  const safeLines = lines
-    .map((line) => terminalLineVisibleText(line).trimEnd())
-    .filter((line) => line.length > 0);
+  const safeLines = sanitizeCollapsedSnapshotLines(lines);
 
   const limited = safeLines.slice(0, CUSTOM_UI_SNAPSHOT_WIDGET_MAX_LINES);
   if (safeLines.length > CUSTOM_UI_SNAPSHOT_WIDGET_MAX_LINES) {

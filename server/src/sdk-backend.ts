@@ -78,6 +78,7 @@ import {
   SessionRuntimeTransaction,
   type SessionRuntimeTransactionPermit,
 } from "./session-runtime-transaction.js";
+import { createLiveEntryRendererLookup, type LiveEntryRendererSet } from "./trace.js";
 
 type AttachmentToolExecute = ToolDefinition["execute"] & {
   __oppiAttachmentHelperWrapped?: true;
@@ -657,6 +658,7 @@ export class SdkBackend {
   private readonly getMobileOutputGuideSettings?: () => MobileOutputGuideSettingsSnapshot;
   private readonly assertSelectedResourcesAvailableBeforeReload?: () => void;
   private readonly consumeSelectedResourceReloadError?: () => Error | undefined;
+  private entryRendererGeneration = 0;
   private selectedResourceInvariantError?: string;
   private runtimeTransaction = new SessionRuntimeTransaction();
   private requestedExclusiveOperations: Array<{ name: string }> = [];
@@ -1258,6 +1260,13 @@ export class SdkBackend {
     return this.piSession;
   }
 
+  getEntryRenderers(): LiveEntryRendererSet | undefined {
+    return createLiveEntryRendererLookup(
+      this.piSession.extensionRunner,
+      this.entryRendererGeneration,
+    );
+  }
+
   get showCacheMissNotices(): boolean {
     return this.runtime.services.settingsManager.getShowCacheMissNotices();
   }
@@ -1292,6 +1301,7 @@ export class SdkBackend {
         this.emitEvent(event);
       },
     });
+    this.entryRendererGeneration += 1;
     this.installSessionAttachmentToolHelpers();
   }
 

@@ -45,6 +45,7 @@ import type { SearchIndex } from "./search-index.js";
 import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS, SdkBackend } from "./sdk-backend.js";
+import type { LiveEntryRendererSet } from "./trace.js";
 import type { SessionStopTimers } from "./session-stop.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
 
@@ -599,6 +600,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       deliver: (payload) => active.sdkBackend.respondToExtensionUIRequest(payload),
       broadcastSettled: (message) => this.broadcast(key, message),
     });
+  }
+
+  getEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {
+    return this.active.get(this.sessionKey(sessionId))?.sdkBackend.getEntryRenderers();
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

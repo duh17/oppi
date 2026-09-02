@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { performance } from "node:perf_hooks";
-import type { SessionEntry } from "./trace.js";
+import { projectCustomEntry, type LiveEntryRendererSet, type SessionEntry } from "./trace.js";
 
 export type TraceOutlineEntryKind =
   | "user"
@@ -59,6 +59,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 export async function readSessionTraceOutlineFromFiles(
   jsonlPaths: string[],
+  options: { entryRenderers?: LiveEntryRendererSet | null } = {},
 ): Promise<TraceOutlineResult> {
   const sources = traceOutlineSources(jsonlPaths);
   const jsonlBytes = sources.reduce((sum, source) => sum + source.size, 0);
@@ -97,13 +98,16 @@ export async function readSessionTraceOutlineFromFiles(
 
   const projectStart = performance.now();
   for (const entry of currentSessionEntryPath(sessionEntries)) {
-    projectEntry(entry, entries, toolRowsByCallId);
+    projectEntry(entry, entries, toolRowsByCallId, options.entryRenderers);
   }
   projectMs += elapsed(projectStart);
 
   return {
     outline: {
-      traceVersion: traceVersionFor(sources),
+      traceVersion: appendRendererVersion(
+        traceVersionFor(sources),
+        options.entryRenderers?.version ?? "",
+      ),
       entries,
       itemCount: entries.length,
       sourceCount: sources.length,
@@ -151,6 +155,11 @@ function traceVersionFor(sources: TraceOutlineSource[]): string {
     .digest("base64url")
     .slice(0, 12);
   return `${sources.length}:${totalBytes}:${latestMtime}:${identity}`;
+}
+
+function appendRendererVersion(base: string, rendererVersion: string): string {
+  if (!rendererVersion) return base;
+  return base ? `${base}:r${rendererVersion}` : `r${rendererVersion}`;
 }
 
 function parseOutlineEntryLine(line: string): SessionEntry | null {
@@ -235,6 +244,7 @@ function projectEntry(
   entry: SessionEntry,
   entries: TraceOutlineEntry[],
   toolRowsByCallId: Map<string, TraceOutlineEntry>,
+  renderers?: LiveEntryRendererSet | null,
 ): void {
   if (typeof entry.id !== "string" || entry.id.length === 0) return;
 
@@ -281,6 +291,23 @@ function projectEntry(
       if (!summary) return;
       entries.push({
         id: entry.id,
+        kind: "custom",
+        summary,
+        timestamp,
+        isMessage: false,
+        isTool: false,
+        passesAllFilter: true,
+      });
+      return;
+    }
+
+    case "custom": {
+      const projected = projectCustomEntry(entry, renderers);
+      if (!projected) return;
+      const summary = previewText(projected.presentation?.title ?? projected.text ?? "");
+      if (!summary) return;
+      entries.push({
+        id: projected.id,
         kind: "custom",
         summary,
         timestamp,
