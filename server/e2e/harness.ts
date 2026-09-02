@@ -12,7 +12,16 @@
 
 import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { createPrivateKey, generateKeyPairSync, randomUUID, sign as cryptoSign } from "node:crypto";
-import { existsSync, mkdtempSync, writeFileSync, renameSync, rmSync, openSync, closeSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  writeFileSync,
+  chmodSync,
+  renameSync,
+  rmSync,
+  openSync,
+  closeSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -98,9 +107,7 @@ export function applyAppleE2EBootstrapEnv(env: NodeJS.ProcessEnv = process.env):
   env.OPPI_E2E_UI_HARNESS ??= "1";
 }
 
-export function nativeE2ETlsPosture(
-  env: NodeJS.ProcessEnv = process.env,
-): NativeE2ETlsPosture {
+export function nativeE2ETlsPosture(env: NodeJS.ProcessEnv = process.env): NativeE2ETlsPosture {
   const tlsMode: NativeE2ETlsMode = env.E2E_TLS_MODE === "disabled" ? "disabled" : "self-signed";
   return {
     tlsMode,
@@ -361,8 +368,7 @@ async function startNativeServer(): Promise<void> {
   process.env.E2E_NATIVE_DATA_DIR = nativeDataDir;
 
   // Pre-configure. ConfigStore merges this minimal file with defaults at startup.
-  const { tlsMode: nativeTlsMode, transportScheme: nativeTransportScheme } =
-    nativeE2ETlsPosture();
+  const { tlsMode: nativeTlsMode, transportScheme: nativeTransportScheme } = nativeE2ETlsPosture();
   writeFileSync(
     join(nativeDataDir, "config.json"),
     JSON.stringify(
@@ -651,10 +657,15 @@ export function bindE2EAccessTokenFile(token: string, file: string): void {
     throw new Error("No harness auth session for this device token");
   }
   const persist = (accessToken: string): void => {
-    const temporaryPath = join(dirname(file), `.${basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+    const temporaryPath = join(
+      dirname(file),
+      `.${basename(file)}.${process.pid}.${randomUUID()}.tmp`,
+    );
     try {
-      writeFileSync(temporaryPath, accessToken);
+      writeFileSync(temporaryPath, accessToken, { mode: 0o600 });
+      chmodSync(temporaryPath, 0o600);
       renameSync(temporaryPath, file);
+      chmodSync(file, 0o600);
     } catch (error) {
       rmSync(temporaryPath, { force: true });
       throw error;
