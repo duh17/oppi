@@ -340,6 +340,169 @@ struct TimedTextTests {
         #expect(TimedText.join("media/", fileName: "clip.lrc") == "media/clip.lrc")
         #expect(TimedText.join("", fileName: "clip.lrc") == "clip.lrc")
     }
+
+    @Test("chat workspace media lists language sidecars even when sessionID would collapse media bytes")
+    func chatWorkspaceOriginListsLanguageSidecars() async {
+        let mediaRoute = MarkdownVideoMediaSourceRoute.resolve(
+            filePath: "media/clip.mp4",
+            kind: .workspaceFile,
+            referenceWorkspaceID: "workspace-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            worktreeID: "wt-a"
+        )
+        #expect(mediaRoute == .session(
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            path: "media/clip.mp4"
+        ))
+        #expect(TimedText.sidecarSourceKind(
+            fileKind: .workspaceFile,
+            sessionID: "session-a",
+            workspaceRuntime: nil
+        ) == .workspace)
+        #expect(TimedText.sidecarSourceKind(
+            fileKind: .hostFile,
+            sessionID: "session-a",
+            workspaceRuntime: nil
+        ) == .host)
+        #expect(TimedText.sidecarSourceKind(
+            fileKind: .hostFile,
+            sessionID: "session-a",
+            workspaceRuntime: .sandbox
+        ) == .session)
+
+        let recorder = TimedTextPathRecorder()
+        let files = [
+            "media/clip.en.srt": "1\n00:00:00,000 --> 00:00:01,000\nEN\n",
+            "media/clip.zh.vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nZH\n",
+        ]
+        let access = TimedText.Access(
+            sourceKind: TimedText.sidecarSourceKind(
+                fileKind: .workspaceFile,
+                sessionID: "session-a",
+                workspaceRuntime: nil
+            ),
+            listDirectory: { path in
+                recorder.listed.append(path)
+                return ["clip.en.srt", "clip.zh.vtt", "clip.mp4"]
+            },
+            fetchFile: { path in
+                recorder.fetched.append(path)
+                if let text = files[path] {
+                    return Data(text.utf8)
+                }
+                throw APIError.server(status: 404, message: "missing")
+            }
+        )
+        let result = await TimedText.load(
+            mediaPath: "media/clip.mp4",
+            kind: .video,
+            locale: Locale(identifier: "en"),
+            access: access
+        )
+        #expect(recorder.listed == ["media/"])
+        #expect(!recorder.fetched.contains("media/clip.vtt"))
+        #expect(result.showsLanguageControl)
+        #expect(Set(result.tracks.map(\.candidate.fileName)) == ["clip.en.srt", "clip.zh.vtt"])
+    }
+
+    @Test("locale match does not treat zh-Hans as zh-Hant")
+    func localeMatchRequiresPrimaryAndScript() {
+        let hansAndHant = TimedText.candidates(
+            mediaPath: "clip.mp4",
+            directoryNames: ["clip.zh-Hans.vtt", "clip.zh-Hant.vtt"],
+            kind: .video
+        )
+        #expect(TimedText.pick(hansAndHant, locale: Locale(identifier: "zh-Hans"))?.fileName == "clip.zh-Hans.vtt")
+        #expect(TimedText.pick(hansAndHant, locale: Locale(identifier: "zh-Hant"))?.fileName == "clip.zh-Hant.vtt")
+
+        let hantAndEnglish = TimedText.candidates(
+            mediaPath: "clip.mp4",
+            directoryNames: ["clip.zh-Hant.srt", "clip.en.srt"],
+            kind: .video
+        )
+        #expect(TimedText.pick(hantAndEnglish, locale: Locale(identifier: "zh-Hans"))?.fileName == "clip.en.srt")
+    }
+
+    @Test("session probe keeps going after empty, undecodable, or zero-cue bodies")
+    func sessionProbeSkipsEmptyUndecodableAndZeroCue() async {
+        let recorder = TimedTextPathRecorder()
+        let files: [String: Data] = [
+            "clip.vtt": Data(),
+            "clip.srt": Data([0x80]),
+            "clip.ass": Data("NOTE only, no dialogue\n".utf8),
+            "clip.ssa": Data("Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hi\n".utf8),
+        ]
+        let access = TimedText.Access(
+            sourceKind: .session,
+            fetchFile: { path in
+                recorder.fetched.append(path)
+                if let data = files[path] {
+                    return data
+                }
+                throw APIError.server(status: 404, message: "missing")
+            }
+        )
+        let result = await TimedText.load(
+            mediaPath: "clip.mp4",
+            kind: .video,
+            locale: Locale(identifier: "en"),
+            access: access
+        )
+        #expect(recorder.fetched == ["clip.vtt", "clip.srt", "clip.ass", "clip.ssa"])
+        #expect(result.tracks.count == 1)
+        #expect(result.tracks[0].candidate.fileName == "clip.ssa")
+        #expect(result.tracks[0].cues.map(\.text) == ["Hi"])
+    }
+
+    @Test("workspace load drops zero-cue tracks")
+    func workspaceDropsZeroCueTracks() async {
+        let files = [
+            "clip.en.srt": "1\n00:00:00,000 --> 00:00:01,000\n\n",
+            "clip.zh.vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nZH\n",
+        ]
+        let access = TimedText.Access(
+            sourceKind: .workspace,
+            listDirectory: { _ in ["clip.en.srt", "clip.zh.vtt"] },
+            fetchFile: { path in
+                if let text = files[path] {
+                    return Data(text.utf8)
+                }
+                throw APIError.server(status: 404, message: "missing")
+            }
+        )
+        let result = await TimedText.load(
+            mediaPath: "clip.mp4",
+            kind: .video,
+            locale: Locale(identifier: "en"),
+            access: access
+        )
+        #expect(result.tracks.map(\.candidate.fileName) == ["clip.zh.vtt"])
+        #expect(!result.showsLanguageControl)
+        #expect(result.selected?.cues.map(\.text) == ["ZH"])
+    }
+
+    @Test("open-ended cues use the latest startTime at or before now")
+    func currentCueUsesLatestStartForNonMonotonicLRC() {
+        let cues = [
+            TimedText.Cue(text: "First in file", startTime: 5, endTime: nil),
+            TimedText.Cue(text: "Later start", startTime: 12, endTime: nil),
+            TimedText.Cue(text: "Out of order older", startTime: 8, endTime: nil),
+        ]
+        #expect(TimedText.currentCue(in: cues, at: 4)?.text == nil)
+        #expect(TimedText.currentCue(in: cues, at: 11)?.text == "Out of order older")
+        #expect(TimedText.currentCue(in: cues, at: 12)?.text == "Later start")
+
+        let lines = [
+            AudioLyrics.Line(text: "First in file", startTime: 5),
+            AudioLyrics.Line(text: "Later start", startTime: 12),
+            AudioLyrics.Line(text: "Out of order older", startTime: 8),
+        ]
+        #expect(AudioLyrics.currentIndex(in: lines, at: 4) == nil)
+        #expect(AudioLyrics.currentIndex(in: lines, at: 11) == 2)
+        #expect(AudioLyrics.currentIndex(in: lines, at: 12) == 1)
+    }
 }
 
 private final class TimedTextPathRecorder: @unchecked Sendable {

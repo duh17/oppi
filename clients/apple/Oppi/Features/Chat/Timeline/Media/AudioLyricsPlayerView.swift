@@ -24,7 +24,8 @@ enum AudioLyricsPlayerPresenter {
         play: @escaping () -> Void,
         openFile: (() -> Void)?,
         autoplayOnAppear: Bool,
-        timedText: TimedText.LoadResult? = nil
+        timedText: TimedText.LoadResult? = nil,
+        sidecarLoader: (() async -> TimedText.LoadResult)? = nil
     ) {
         // Expand starts playback only when the caller opts in: already playing
         // this item, or a voice `playNow` reply. Markdown and file browser pass false.
@@ -38,7 +39,8 @@ enum AudioLyricsPlayerPresenter {
             openFile: openFile,
             autoplayOnAppear: autoplayOnAppear,
             showsCloseButton: true,
-            timedText: timedText
+            timedText: timedText,
+            sidecarLoader: sidecarLoader
         )
         let host = UIHostingController(rootView: root)
         host.modalPresentationStyle = .fullScreen
@@ -68,18 +70,24 @@ struct AudioLyricsPlayerView: View {
     var autoplayOnAppear = false
     var showsCloseButton = true
     var timedText: TimedText.LoadResult? = nil
+    var sidecarLoader: (() async -> TimedText.LoadResult)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var progressTick = 0
     @State private var selectedTrackIndex: Int?
+    @State private var loadedTimedText: TimedText.LoadResult?
+
+    private var resolvedTimedText: TimedText.LoadResult? {
+        loadedTimedText ?? timedText
+    }
 
     private var resolvedTrackIndex: Int {
-        selectedTrackIndex ?? timedText?.selectedIndex ?? 0
+        selectedTrackIndex ?? resolvedTimedText?.selectedIndex ?? 0
     }
 
     private var lines: [AudioLyrics.Line] {
-        if let timedText, timedText.tracks.indices.contains(resolvedTrackIndex) {
-            return TimedText.lyricsLines(from: timedText.tracks[resolvedTrackIndex].cues)
+        if let resolvedTimedText, resolvedTimedText.tracks.indices.contains(resolvedTrackIndex) {
+            return TimedText.lyricsLines(from: resolvedTimedText.tracks[resolvedTrackIndex].cues)
         }
         return AudioLyrics.lines(from: lyrics)
     }
@@ -122,6 +130,10 @@ struct AudioLyricsPlayerView: View {
                 transport
             }
         }
+        .task {
+            guard let sidecarLoader else { return }
+            loadedTimedText = await sidecarLoader()
+        }
         .onAppear {
             if autoplayOnAppear {
                 play()
@@ -158,22 +170,23 @@ struct AudioLyricsPlayerView: View {
 
     @ViewBuilder
     private var languageControl: some View {
-        if let timedText, timedText.showsLanguageControl {
+        if let resolvedTimedText, resolvedTimedText.showsLanguageControl {
             Menu {
-                ForEach(timedText.tracks.indices, id: \.self) { index in
-                    Button(timedText.tracks[index].languageLabel) {
+                ForEach(resolvedTimedText.tracks.indices, id: \.self) { index in
+                    Button(resolvedTimedText.tracks[index].languageLabel) {
                         selectedTrackIndex = index
                     }
                 }
             } label: {
-                Text(timedText.tracks.indices.contains(resolvedTrackIndex)
-                     ? timedText.tracks[resolvedTrackIndex].languageLabel
+                Text(resolvedTimedText.tracks.indices.contains(resolvedTrackIndex)
+                     ? resolvedTimedText.tracks[resolvedTrackIndex].languageLabel
                      : "Language")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themePurple)
                     .lineLimit(1)
             }
             .accessibilityLabel("Lyrics language")
+            .accessibilityIdentifier("audioLyrics.language")
         } else {
             Color.clear.frame(width: 72, height: 1)
         }
@@ -187,6 +200,7 @@ struct AudioLyricsPlayerView: View {
             Text("No lyrics")
                 .font(.title2)
                 .foregroundStyle(.themeComment)
+                .accessibilityIdentifier("audioLyrics.empty")
             Spacer()
         } else if AudioLyrics.allowsKaraoke(verses) {
             ScrollViewReader { proxy in

@@ -1,4 +1,6 @@
+import AVKit
 import Foundation
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -477,6 +479,87 @@ struct MarkdownInlineAudioTests {
         #expect(worktreeB.contains("wt-b"))
     }
 
+    @MainActor
+    @Test("one caption renderer on the player overlay keeps language control")
+    func singleCaptionSurfaceKeepsLanguageControl() async throws {
+        let model = AuthenticatedMediaPlayerModel()
+        _ = model.debugInstallStandalonePlayerForTesting()
+        model.currentTime = 1
+        let timedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.en.srt",
+                        path: "clip.en.srt",
+                        format: .srt,
+                        language: "en"
+                    ),
+                    cues: [TimedText.Cue(text: "Hello", startTime: 0, endTime: 10)]
+                ),
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.zh.vtt",
+                        path: "clip.zh.vtt",
+                        format: .vtt,
+                        language: "zh"
+                    ),
+                    cues: [TimedText.Cue(text: "你好", startTime: 0, endTime: 10)]
+                ),
+            ],
+            selectedIndex: 0
+        )
+        let host = UIHostingController(
+            rootView: AuthenticatedMediaPlayerView(
+                source: AuthenticatedMediaSource(
+                    url: URL(fileURLWithPath: "/tmp/oppi-missing-inline-video.mp4"),
+                    authorizationHeaderValue: "Bearer test",
+                    tlsCertFingerprint: nil,
+                    contentTypeHint: "video/mp4",
+                    sourceFileExtension: "mp4"
+                ),
+                height: 180,
+                isActive: false,
+                model: model,
+                timedText: timedText
+            )
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 220))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+
+        let playerController = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            captionPlayerController(in: host) != nil
+        }
+        #expect(playerController)
+        let player = try #require(captionPlayerController(in: host))
+        let overlay = try #require(player.contentOverlayView)
+        overlay.layoutIfNeeded()
+
+        let overlayLanguage = timelineAllViews(in: overlay).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityLabel == "Caption language"
+        }
+        #expect(overlayLanguage != nil, "language control must live on contentOverlayView for fullscreen")
+        #expect(overlayLanguage?.menu != nil)
+
+        let overlayCaptions = timelineAllViews(in: overlay).compactMap { $0 as? UILabel }.filter {
+            $0.text?.contains("Hello") == true && !$0.isHidden
+        }
+        #expect(overlayCaptions.count == 1)
+
+        let allLanguageControls = timelineAllViews(in: host.view).filter {
+            $0.accessibilityLabel == "Caption language" && !$0.isHidden
+        }
+        #expect(allLanguageControls.count == 1)
+
+        let allCaptionLabels = timelineAllViews(in: host.view).compactMap { $0 as? UILabel }.filter {
+            $0.text?.contains("Hello") == true && !$0.isHidden
+        }
+        #expect(allCaptionLabels.count == 1, "inline SwiftUI overlay must not duplicate the player caption")
+    }
+
     private func audioEmbeds(in segments: [FlatSegment]) -> [MarkdownAudioEmbed] {
         segments.compactMap { segment in
             guard case .audio(let embed) = segment else { return nil }
@@ -525,4 +608,27 @@ private func inlineAudioColor(_ lhs: UIColor?, approximatelyEquals rhs: UIColor,
         abs(lg - rg) <= tolerance &&
         abs(lb - rb) <= tolerance &&
         abs(la - ra) <= tolerance
+}
+
+@MainActor
+private func captionPlayerController(in host: UIViewController) -> AVPlayerViewController? {
+    if let player = host as? AVPlayerViewController {
+        return player
+    }
+    for child in host.children {
+        if let found = captionPlayerController(in: child) {
+            return found
+        }
+    }
+    return timelineAllViews(in: host.view).compactMap { $0.next as? AVPlayerViewController }.first
+        ?? timelineAllViews(in: host.view).compactMap { view -> AVPlayerViewController? in
+            var responder: UIResponder? = view.next
+            while let current = responder {
+                if let player = current as? AVPlayerViewController {
+                    return player
+                }
+                responder = current.next
+            }
+            return nil
+        }.first
 }

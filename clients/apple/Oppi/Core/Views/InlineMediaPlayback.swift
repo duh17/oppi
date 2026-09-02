@@ -1178,70 +1178,33 @@ struct FullScreenEndHandoff: @unchecked Sendable {
     }
 }
 
-struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
-    let player: AVPlayer
-    var captionText: String? = nil
-    var onFullScreenChange: ((Bool) -> Void)?
-    var onFullScreenWillEnd: (() -> Void)?
-    var onFullScreenDidEnd: ((Bool) -> Void)?
-    var onFullScreenTransitionFinished: (() -> Void)?
-    var onPictureInPictureChange: ((Bool) -> Void)?
-    var onPictureInPictureDidStop: ((Bool) -> Void)?
+enum TimedTextCaptionOverlay {
+    static let captionTag = 0x0C4D
+    static let languageTag = 0x0C4E
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(
-            onFullScreenChange: onFullScreenChange,
-            onFullScreenWillEnd: onFullScreenWillEnd,
-            onFullScreenDidEnd: onFullScreenDidEnd,
-            onFullScreenTransitionFinished: onFullScreenTransitionFinished,
-            onPictureInPictureChange: onPictureInPictureChange,
-            onPictureInPictureDidStop: onPictureInPictureDidStop
+    static func apply(
+        caption: String?,
+        tracks: [TimedText.Track],
+        selectedIndex: Int,
+        onSelectTrack: ((Int) -> Void)?,
+        to overlay: UIView
+    ) {
+        applyCaption(caption, to: overlay)
+        applyLanguageControl(
+            tracks: tracks,
+            selectedIndex: selectedIndex,
+            onSelectTrack: onSelectTrack,
+            to: overlay
         )
     }
 
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.delegate = context.coordinator
-        configure(controller)
-        controller.player = player
-        return controller
-    }
-
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
-        context.coordinator.onFullScreenChange = onFullScreenChange
-        context.coordinator.onFullScreenWillEnd = onFullScreenWillEnd
-        context.coordinator.onFullScreenDidEnd = onFullScreenDidEnd
-        context.coordinator.onFullScreenTransitionFinished = onFullScreenTransitionFinished
-        context.coordinator.onPictureInPictureChange = onPictureInPictureChange
-        context.coordinator.onPictureInPictureDidStop = onPictureInPictureDidStop
-        if uiViewController.player !== player {
-            uiViewController.player = player
-        }
-        uiViewController.delegate = context.coordinator
-        configure(uiViewController)
-        applyCaption(captionText, to: uiViewController)
-    }
-
-    private func configure(_ controller: AVPlayerViewController) {
-        controller.showsPlaybackControls = true
-        controller.allowsPictureInPicturePlayback = true
-        controller.canStartPictureInPictureAutomaticallyFromInline = true
-        controller.entersFullScreenWhenPlaybackBegins = false
-        controller.exitsFullScreenWhenPlaybackEnds = false
-        controller.view.accessibilityIdentifier = "videoPlayer.native"
-        // Overlay captions instead of injecting AVPlayer closed captions.
-        applyCaption(captionText, to: controller)
-    }
-
-    private func applyCaption(_ text: String?, to controller: AVPlayerViewController) {
-        let tag = 0x0C4D
-        guard let overlay = controller.contentOverlayView else { return }
+    private static func applyCaption(_ text: String?, to overlay: UIView) {
         let label: UILabel
-        if let existing = overlay.viewWithTag(tag) as? UILabel {
+        if let existing = overlay.viewWithTag(captionTag) as? UILabel {
             label = existing
         } else {
             label = UILabel()
-            label.tag = tag
+            label.tag = captionTag
             label.numberOfLines = 3
             label.textAlignment = .center
             label.font = .preferredFont(forTextStyle: .subheadline)
@@ -1263,6 +1226,137 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         label.isHidden = trimmed.isEmpty
     }
 
+    private static func applyLanguageControl(
+        tracks: [TimedText.Track],
+        selectedIndex: Int,
+        onSelectTrack: ((Int) -> Void)?,
+        to overlay: UIView
+    ) {
+        let button: CaptionLanguageButton
+        if let existing = overlay.viewWithTag(languageTag) as? CaptionLanguageButton {
+            button = existing
+        } else {
+            button = CaptionLanguageButton(frame: .zero)
+            button.tag = languageTag
+            button.accessibilityLabel = "Caption language"
+            button.tintColor = .white
+            button.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+            button.layer.cornerRadius = 18
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setImage(UIImage(systemName: "captions.bubble"), for: .normal)
+            button.showsMenuAsPrimaryAction = true
+            overlay.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.topAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.topAnchor, constant: 10),
+                button.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -10),
+                button.widthAnchor.constraint(equalToConstant: 36),
+                button.heightAnchor.constraint(equalToConstant: 36),
+            ])
+        }
+        button.handler.onSelectTrack = onSelectTrack
+        let showsControl = tracks.count > 1
+        button.isHidden = !showsControl
+        guard showsControl else {
+            button.menu = nil
+            button.menuSignature = ""
+            return
+        }
+        let signature = "\(selectedIndex)|" + tracks.map(\.languageLabel).joined(separator: "\u{1f}")
+        guard button.menuSignature != signature else { return }
+        button.menuSignature = signature
+        let handler = button.handler
+        button.menu = UIMenu(children: tracks.indices.map { index in
+            UIAction(
+                title: tracks[index].languageLabel,
+                state: index == selectedIndex ? .on : .off
+            ) { _ in
+                handler.select(index)
+            }
+        })
+    }
+
+    private final class CaptionLanguageButton: UIButton {
+        let handler = TrackSelectionHandler()
+        var menuSignature = ""
+    }
+
+    private final class TrackSelectionHandler: @unchecked Sendable {
+        var onSelectTrack: ((Int) -> Void)?
+
+        func select(_ index: Int) {
+            onSelectTrack?(index)
+        }
+    }
+}
+
+struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
+    let player: AVPlayer
+    var captionText: String? = nil
+    var captionTracks: [TimedText.Track] = []
+    var selectedCaptionTrackIndex: Int = 0
+    var onSelectCaptionTrack: ((Int) -> Void)? = nil
+    var onFullScreenChange: ((Bool) -> Void)?
+    var onFullScreenWillEnd: (() -> Void)?
+    var onFullScreenDidEnd: ((Bool) -> Void)?
+    var onFullScreenTransitionFinished: (() -> Void)?
+    var onPictureInPictureChange: ((Bool) -> Void)?
+    var onPictureInPictureDidStop: ((Bool) -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            onFullScreenChange: onFullScreenChange,
+            onFullScreenWillEnd: onFullScreenWillEnd,
+            onFullScreenDidEnd: onFullScreenDidEnd,
+            onFullScreenTransitionFinished: onFullScreenTransitionFinished,
+            onPictureInPictureChange: onPictureInPictureChange,
+            onPictureInPictureDidStop: onPictureInPictureDidStop,
+            onSelectCaptionTrack: onSelectCaptionTrack
+        )
+    }
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.delegate = context.coordinator
+        configure(controller)
+        controller.player = player
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
+        context.coordinator.onFullScreenChange = onFullScreenChange
+        context.coordinator.onFullScreenWillEnd = onFullScreenWillEnd
+        context.coordinator.onFullScreenDidEnd = onFullScreenDidEnd
+        context.coordinator.onFullScreenTransitionFinished = onFullScreenTransitionFinished
+        context.coordinator.onPictureInPictureChange = onPictureInPictureChange
+        context.coordinator.onPictureInPictureDidStop = onPictureInPictureDidStop
+        context.coordinator.onSelectCaptionTrack = onSelectCaptionTrack
+        if uiViewController.player !== player {
+            uiViewController.player = player
+        }
+        uiViewController.delegate = context.coordinator
+        configure(uiViewController, onSelectTrack: context.coordinator.onSelectCaptionTrack)
+    }
+
+    private func configure(
+        _ controller: AVPlayerViewController,
+        onSelectTrack: ((Int) -> Void)? = nil
+    ) {
+        controller.showsPlaybackControls = true
+        controller.allowsPictureInPicturePlayback = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.entersFullScreenWhenPlaybackBegins = false
+        controller.exitsFullScreenWhenPlaybackEnds = false
+        controller.view.accessibilityIdentifier = "videoPlayer.native"
+        guard let overlay = controller.contentOverlayView else { return }
+        TimedTextCaptionOverlay.apply(
+            caption: captionText,
+            tracks: captionTracks,
+            selectedIndex: selectedCaptionTrackIndex,
+            onSelectTrack: onSelectTrack ?? onSelectCaptionTrack,
+            to: overlay
+        )
+    }
+
     final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
         var onFullScreenChange: ((Bool) -> Void)?
         var onFullScreenWillEnd: (() -> Void)?
@@ -1270,6 +1364,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         var onFullScreenTransitionFinished: (() -> Void)?
         var onPictureInPictureChange: ((Bool) -> Void)?
         var onPictureInPictureDidStop: ((Bool) -> Void)?
+        var onSelectCaptionTrack: ((Int) -> Void)?
         private var wasPlayingBeforeFullScreen = false
 
         init(
@@ -1278,7 +1373,8 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             onFullScreenDidEnd: ((Bool) -> Void)?,
             onFullScreenTransitionFinished: (() -> Void)?,
             onPictureInPictureChange: ((Bool) -> Void)?,
-            onPictureInPictureDidStop: ((Bool) -> Void)?
+            onPictureInPictureDidStop: ((Bool) -> Void)?,
+            onSelectCaptionTrack: ((Int) -> Void)?
         ) {
             self.onFullScreenChange = onFullScreenChange
             self.onFullScreenWillEnd = onFullScreenWillEnd
@@ -1286,6 +1382,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             self.onFullScreenTransitionFinished = onFullScreenTransitionFinished
             self.onPictureInPictureChange = onPictureInPictureChange
             self.onPictureInPictureDidStop = onPictureInPictureDidStop
+            self.onSelectCaptionTrack = onSelectCaptionTrack
         }
 
         func playerViewController(

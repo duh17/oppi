@@ -203,18 +203,20 @@ enum TimedText {
 
     static func currentCue(in cues: [Cue], at time: TimeInterval) -> Cue? {
         guard time.isFinite else { return nil }
-        var openEnded: Cue?
+        var best: Cue?
+        var bestStart: TimeInterval?
         for cue in cues {
             guard let start = cue.startTime, start.isFinite, start <= time else { continue }
             if let end = cue.endTime {
-                if end.isFinite, time < end {
-                    return cue
-                }
+                guard end.isFinite, time < end else { continue }
+            }
+            if let bestStart, start < bestStart {
                 continue
             }
-            openEnded = cue
+            best = cue
+            bestStart = start
         }
-        return openEnded
+        return best
     }
 
     static func load(
@@ -233,11 +235,17 @@ enum TimedText {
         }
     }
 
-    static func sourceKind(for route: MarkdownVideoMediaSourceRoute) -> SourceKind {
-        switch route {
-        case .host: return .host
-        case .session: return .session
-        case .workspace: return .workspace
+    /// Sidecar loading follows file origin, not the media-byte session collapse.
+    static func sidecarSourceKind(
+        fileKind: ResourceReferenceKind,
+        sessionID _: String?,
+        workspaceRuntime: WorkspaceRuntime?
+    ) -> SourceKind {
+        switch fileKind {
+        case .workspaceFile:
+            return .workspace
+        case .hostFile:
+            return workspaceRuntime == .sandbox ? .session : .host
         }
     }
 
@@ -283,16 +291,48 @@ enum TimedText {
     static func load(
         mediaPath: String,
         kind: MediaKind,
-        route: MarkdownVideoMediaSourceRoute,
+        fileKind: ResourceReferenceKind,
+        workspaceID: String?,
+        sessionID: String?,
+        worktreeID: String?,
+        workspaceRuntime: WorkspaceRuntime?,
         locale: Locale = .current,
         api: APIClient
     ) async -> LoadResult {
-        await load(
-            mediaPath: route.path,
-            kind: kind,
-            locale: locale,
-            access: access(for: route, api: api)
+        let sourceKind = sidecarSourceKind(
+            fileKind: fileKind,
+            sessionID: sessionID,
+            workspaceRuntime: workspaceRuntime
         )
+        let workspace = workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let session = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch sourceKind {
+        case .host:
+            return .empty
+        case .workspace:
+            guard let workspace, !workspace.isEmpty else { return .empty }
+            return await load(
+                mediaPath: mediaPath,
+                kind: kind,
+                locale: locale,
+                access: access(
+                    for: .workspace(workspaceID: workspace, path: mediaPath, worktreeID: worktreeID),
+                    api: api
+                )
+            )
+        case .session:
+            guard let workspace, !workspace.isEmpty,
+                  let session, !session.isEmpty else { return .empty }
+            return await load(
+                mediaPath: mediaPath,
+                kind: kind,
+                locale: locale,
+                access: access(
+                    for: .session(workspaceID: workspace, sessionID: session, path: mediaPath),
+                    api: api
+                )
+            )
+        }
     }
 
     // MARK: - Matching helpers
@@ -317,16 +357,30 @@ enum TimedText {
     }
 
     private static func matches(language: String, locale: Locale) -> Bool {
-        let lang = language.lowercased()
-        let code = locale.language.languageCode?.identifier.lowercased() ?? ""
-        let identifier = locale.identifier.lowercased().replacingOccurrences(of: "_", with: "-")
-        if !code.isEmpty {
-            if lang == code { return true }
-            if lang.hasPrefix(code + "-") { return true }
+        let candidate = languageTagParts(language)
+        let localeFromIdentifier = languageTagParts(locale.identifier)
+        let localePrimary = locale.language.languageCode?.identifier.lowercased()
+            ?? localeFromIdentifier.primary
+        guard !localePrimary.isEmpty, candidate.primary == localePrimary else { return false }
+        let localeScript = locale.language.script?.identifier.lowercased()
+            ?? localeFromIdentifier.script
+        if let candidateScript = candidate.script, let localeScript {
+            return candidateScript == localeScript
         }
-        if identifier == lang { return true }
-        if identifier.hasPrefix(lang + "-") { return true }
-        return false
+        return true
+    }
+
+    private static func languageTagParts(_ tag: String) -> (primary: String, script: String?) {
+        let parts = tag.replacingOccurrences(of: "_", with: "-")
+            .split(separator: "-")
+            .map { String($0) }
+        guard let primary = parts.first?.lowercased(), !primary.isEmpty else {
+            return ("", nil)
+        }
+        if parts.count >= 2, parts[1].count == 4, parts[1].allSatisfy(\.isLetter) {
+            return (primary, parts[1].lowercased())
+        }
+        return (primary, nil)
     }
 
     // MARK: - Load
@@ -339,10 +393,14 @@ enum TimedText {
         for path in sessionProbePaths(mediaPath: mediaPath, kind: kind) {
             do {
                 let data = try await access.fetchFile(path)
+                guard !data.isEmpty,
+                      let text = decodeText(data),
+                      !text.isEmpty else { continue }
                 let fileName = (path as NSString).lastPathComponent
                 let ext = (fileName as NSString).pathExtension.lowercased()
                 guard let format = Format(rawValue: ext) else { continue }
-                let text = decodeText(data)
+                let cues = parse(text, format: format)
+                guard !cues.isEmpty else { continue }
                 let candidate = Candidate(
                     fileName: fileName,
                     path: path,
@@ -350,7 +408,7 @@ enum TimedText {
                     language: nil
                 )
                 return LoadResult(
-                    tracks: [Track(candidate: candidate, cues: parse(text, format: format))],
+                    tracks: [Track(candidate: candidate, cues: cues)],
                     selectedIndex: 0
                 )
             } catch {
@@ -384,12 +442,12 @@ enum TimedText {
         for candidate in matches {
             do {
                 let data = try await access.fetchFile(candidate.path)
-                tracks.append(
-                    Track(
-                        candidate: candidate,
-                        cues: parse(decodeText(data), format: candidate.format)
-                    )
-                )
+                guard !data.isEmpty,
+                      let text = decodeText(data),
+                      !text.isEmpty else { continue }
+                let cues = parse(text, format: candidate.format)
+                guard !cues.isEmpty else { continue }
+                tracks.append(Track(candidate: candidate, cues: cues))
             } catch {
                 continue
             }
@@ -400,11 +458,11 @@ enum TimedText {
         return LoadResult(tracks: tracks, selectedIndex: selectedIndex)
     }
 
-    private static func decodeText(_ data: Data) -> String {
+    private static func decodeText(_ data: Data) -> String? {
         if let text = String(data: data, encoding: .utf8) {
             return text
         }
-        return String(data: data, encoding: .utf16) ?? ""
+        return String(data: data, encoding: .utf16)
     }
 
     // MARK: - LRC

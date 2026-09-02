@@ -1169,21 +1169,14 @@ final class ServerConnection {
             session: session,
             workspaceId: workspaceId
         )
-        guard let route = MarkdownVideoMediaSourceRoute.resolve(
-            filePath: mediaPath,
-            kind: reference.kind,
-            referenceWorkspaceID: reference.workspaceID,
-            workspaceID: workspaceId,
-            sessionID: sessionId,
-            worktreeID: resolvedWorktree,
-            workspaceRuntime: resolvedRuntime
-        ) else {
-            return .empty
-        }
         return await TimedText.load(
             mediaPath: mediaPath,
             kind: kind,
-            route: route,
+            fileKind: reference.kind,
+            workspaceID: reference.workspaceID ?? workspaceId,
+            sessionID: sessionId,
+            worktreeID: resolvedWorktree,
+            workspaceRuntime: resolvedRuntime,
             api: apiClient
         )
     }

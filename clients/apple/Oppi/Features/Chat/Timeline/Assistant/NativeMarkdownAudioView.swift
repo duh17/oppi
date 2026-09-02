@@ -258,32 +258,28 @@ final class NativeMarkdownAudioView: UIView {
         }
         let title = (embed.filePath as NSString).lastPathComponent
         let itemID = playbackItemID(for: embed)
-        let present: (TimedText.LoadResult?) -> Void = { [weak self] timedText in
-            guard let self else { return }
-            AudioLyricsPlayerPresenter.present(
-                from: self,
-                title: title,
-                lyrics: nil,
-                itemID: itemID,
-                audioPlayer: self.audioPlayer,
-                play: { [weak self] in self?.ensurePlaying() },
-                openFile: { [weak self] in
-                    guard let reference = self?.currentEmbed?.reference else { return }
-                    NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
-                },
-                autoplayOnAppear: false,
-                timedText: timedText
-            )
+        let filePath = embed.filePath
+        let reference = embed.reference
+        let loader: (() async -> TimedText.LoadResult)? = sidecarProvider.map { provider in
+            {
+                await provider(filePath, .audio, reference)
+            }
         }
-        guard let sidecarProvider else {
-            present(nil)
-            return
-        }
-        Task { @MainActor [weak self] in
-            let timedText = await sidecarProvider(embed.filePath, .audio, embed.reference)
-            guard let self, self.currentEmbed?.filePath == embed.filePath else { return }
-            present(timedText)
-        }
+        AudioLyricsPlayerPresenter.present(
+            from: self,
+            title: title,
+            lyrics: nil,
+            itemID: itemID,
+            audioPlayer: audioPlayer,
+            play: { [weak self] in self?.ensurePlaying() },
+            openFile: { [weak self] in
+                guard let reference = self?.currentEmbed?.reference else { return }
+                NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
+            },
+            autoplayOnAppear: false,
+            timedText: nil,
+            sidecarLoader: loader
+        )
     }
 
     private func ensurePlaying() {

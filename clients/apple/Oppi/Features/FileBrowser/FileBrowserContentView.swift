@@ -665,21 +665,14 @@ struct FileBrowserContentView: View {
                     }
                 },
                 makeTimedTextSidecar: { [workspaceId, worktreeId, sessionId, workspaceRuntime] mediaPath, kind, reference in
-                    guard let route = MarkdownVideoMediaSourceRoute.resolve(
-                        filePath: mediaPath,
-                        kind: reference.kind,
-                        referenceWorkspaceID: reference.workspaceID,
-                        workspaceID: workspaceId,
-                        sessionID: sessionId,
-                        worktreeID: worktreeId,
-                        workspaceRuntime: workspaceRuntime
-                    ) else {
-                        return .empty
-                    }
                     return await TimedText.load(
                         mediaPath: mediaPath,
                         kind: kind,
-                        route: route,
+                        fileKind: reference.kind,
+                        workspaceID: reference.workspaceID ?? workspaceId,
+                        sessionID: sessionId,
+                        worktreeID: worktreeId,
+                        workspaceRuntime: workspaceRuntime,
                         api: api
                     )
                 },

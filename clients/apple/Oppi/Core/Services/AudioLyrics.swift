@@ -35,16 +35,18 @@ enum AudioLyrics {
     }
 
     static func currentIndex(in lines: [Line], at time: TimeInterval) -> Int? {
-        let timed = lines.enumerated().compactMap { index, line -> (Int, TimeInterval)? in
-            guard let start = line.startTime, start.isFinite else { return nil }
-            return (index, start)
+        guard time.isFinite else { return nil }
+        var bestIndex: Int?
+        var bestStart: TimeInterval?
+        for (index, line) in lines.enumerated() {
+            guard let start = line.startTime, start.isFinite, start <= time else { continue }
+            if let bestStart, start < bestStart {
+                continue
+            }
+            bestIndex = index
+            bestStart = start
         }
-        guard !timed.isEmpty else { return nil }
-        var current = timed[0].0
-        for (index, start) in timed where start <= time {
-            current = index
-        }
-        return current
+        return bestIndex
     }
 
     private static func splitSentences(_ text: String) -> [String] {

@@ -1256,6 +1256,11 @@ private struct AuthenticatedMediaPlayerSurface: View {
                 AVPlayerViewControllerContainer(
                     player: player,
                     captionText: currentCaptionText,
+                    captionTracks: timedText.tracks,
+                    selectedCaptionTrackIndex: resolvedTrackIndex,
+                    onSelectCaptionTrack: { index in
+                        selectedTrackIndex = index
+                    },
                     onFullScreenChange: { fullScreen in
                         if fullScreen {
                             model.setFullScreen(true)
@@ -1281,13 +1286,6 @@ private struct AuthenticatedMediaPlayerSurface: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: height)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-                    .overlay(alignment: .bottom) {
-                        captionOverlay
-                    }
-                    .overlay(alignment: .topTrailing) {
-                        captionLanguageControl
-                            .padding(10)
-                    }
             } else if let errorMessage = model.errorMessage {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color.themeBgHighlight)
@@ -1357,42 +1355,6 @@ private struct AuthenticatedMediaPlayerSurface: View {
             in: timedText.tracks[resolvedTrackIndex].cues,
             at: model.currentTime
         )?.text
-    }
-
-    @ViewBuilder
-    private var captionOverlay: some View {
-        if let currentCaptionText, !currentCaptionText.isEmpty {
-            Text(currentCaptionText)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal, 16)
-                .padding(.bottom, 46)
-                .allowsHitTesting(false)
-        }
-    }
-
-    @ViewBuilder
-    private var captionLanguageControl: some View {
-        if timedText.showsLanguageControl {
-            Menu {
-                ForEach(timedText.tracks.indices, id: \.self) { index in
-                    Button(timedText.tracks[index].languageLabel) {
-                        selectedTrackIndex = index
-                    }
-                }
-            } label: {
-                Image(systemName: "captions.bubble")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(8)
-                    .background(.black.opacity(0.45), in: Circle())
-            }
-            .accessibilityLabel("Caption language")
-        }
     }
 }
 
