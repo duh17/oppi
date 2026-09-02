@@ -356,12 +356,7 @@ function readAroundTracePage(
   let readMs = elapsed(readStart);
   if (
     !found.line ||
-    isHiddenCustomAroundTarget(
-      sources,
-      found.line.entry,
-      params.entryRenderers,
-      params.leafId,
-    )
+    isHiddenCustomAroundTarget(sources, found.line.entry, params.entryRenderers, params.leafId)
   ) {
     return emptyPage({
       traceVersion: params.traceVersion,
@@ -506,10 +501,7 @@ function isHiddenCustomAroundTarget(
   return projectCustomEntry(entry, renderers) === null;
 }
 
-function readBranchMembership(
-  sources: TraceSource[],
-  leafId?: string | null,
-): Set<string> {
+function readBranchMembership(sources: TraceSource[], leafId?: string | null): Set<string> {
   if (leafId === null) return new Set();
   const lines: ParsedLine[] = [];
   for (const source of sources) {
@@ -990,10 +982,7 @@ function latestNonSessionEntryId(lines: ParsedLine[]): string | undefined {
   return undefined;
 }
 
-function branchEntryIdsFromLines(
-  lines: ParsedLine[],
-  leafId?: string | null,
-): Set<string> {
+function branchEntryIdsFromLines(lines: ParsedLine[], leafId?: string | null): Set<string> {
   if (leafId === null) return new Set();
   const byId = new Map<string, SessionEntry>();
   for (const line of lines) {
