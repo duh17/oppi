@@ -176,6 +176,47 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
+    @Test func authExpiredCloseForcesOneRefreshThenOneReconnect() async throws {
+        let factory = ScriptedAppEventSocketFactory()
+        let refreshCounter = RefreshCounter()
+        let client = try makeClient(
+            factory: factory,
+            reconnectDelay: { _ in 0 },
+            refreshTokenProvider: {
+                refreshCounter.increment()
+                return "at_fresh"
+            }
+        )
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await _ in stream {}
+        }
+
+        let socket = try #require(factory.sockets.first)
+        socket.fail(
+            URLError(.networkConnectionLost),
+            closeCode: URLSessionWebSocketTask.CloseCode(
+                rawValue: WebSocketRecoveryPolicy.authExpiredCloseCodeRawValue
+            ) ?? .goingAway
+        )
+
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            factory.sockets.count == 2
+        })
+        #expect(refreshCounter.current() == 1)
+        #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_fresh")
+        #expect(client.status != .disconnected)
+
+        let reconnected = try #require(factory.sockets.last)
+        reconnected.yield(.string(Self.connectedJSON))
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            client.status == .connected
+        })
+
+        client.disconnect()
+        await consumer.value
+    }
+
     @Test func auth401ForcesOneRefreshThenOneReconnect() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()

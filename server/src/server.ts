@@ -19,6 +19,11 @@ import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { URL } from "node:url";
 import type { Storage } from "./storage.js";
+import {
+  CLOCK_SKEW_MS,
+  WS_CLOSE_AUTH_EXPIRED,
+  WS_CLOSE_REASON_AUTH_EXPIRED,
+} from "./storage/device-auth.js";
 import { SessionManager } from "./sessions.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import { AppEventStreamMux } from "./app-event-stream.js";
@@ -157,7 +162,7 @@ const MAX_UPLOAD_GC_INTERVAL_MS = 60 * 60 * 1000;
 
 type SocketPrincipal =
   | { kind: "owner" }
-  | { kind: "device"; deviceId: string; tokenClass: "at_" | "dt_" };
+  | { kind: "device"; deviceId: string; tokenClass: "at_" | "dt_"; expiresAt?: number };
 
 const log = createLogger({ base: { component: "server" } });
 
@@ -426,6 +431,7 @@ export class Server {
   // Track all WebSocket connections for lifecycle/resource accounting.
   private connections: Set<WebSocket> = new Set();
   private socketPrincipals: Map<WebSocket, SocketPrincipal> = new Map();
+  private accessExpiryTimers: Map<WebSocket, ReturnType<typeof setTimeout>> = new Map();
 
   // Server resource utilization sampler (CPU, memory, sessions)
   private resourceSampler: ServerResourceSampler;
@@ -1213,6 +1219,33 @@ export class Server {
     }
   }
 
+  private clearAccessExpiryTimer(ws: WebSocket): void {
+    const timer = this.accessExpiryTimers.get(ws);
+    if (timer) clearTimeout(timer);
+    this.accessExpiryTimers.delete(ws);
+  }
+
+  private closeSocketForAccessExpiry(ws: WebSocket): void {
+    if (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING) {
+      return;
+    }
+    if (this.dictationStreamMux.isRecording(ws)) {
+      this.dictationStreamMux.markAuthExpired(ws);
+      return;
+    }
+    ws.close(WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED);
+  }
+
+  private scheduleAccessTokenExpiry(ws: WebSocket, expiresAt: number): void {
+    this.clearAccessExpiryTimer(ws);
+    const delay = Math.max(0, expiresAt + CLOCK_SKEW_MS - Date.now());
+    const timer = setTimeout(() => {
+      this.accessExpiryTimers.delete(ws);
+      this.closeSocketForAccessExpiry(ws);
+    }, delay);
+    this.accessExpiryTimers.set(ws, timer);
+  }
+
   private closeWebSocketServer(): Promise<void> {
     this.closeActiveConnections(WS_CLOSE_GOING_AWAY, "Server shutting down");
     const closeLocal = new Promise<void>((resolve) => {
@@ -1299,21 +1332,13 @@ export class Server {
       }
       return {
         ok: true,
-        principal: { kind: "device", deviceId: access.deviceId, tokenClass: "at_" },
+        principal: {
+          kind: "device",
+          deviceId: access.deviceId,
+          tokenClass: "at_",
+          expiresAt: access.expiresAt,
+        },
       };
-    }
-    if (!this.storage.isMigrationFinalized()) {
-      for (const dt of this.storage.getAuthDeviceTokens()) {
-        if (secureTokenEquals(dt, candidate) && this.storage.hasAuthToken(dt)) {
-          const deviceId = this.storage.deviceIdForLegacyToken(dt);
-          if (deviceId) {
-            return {
-              ok: true,
-              principal: { kind: "device", deviceId, tokenClass: "dt_" },
-            };
-          }
-        }
-      }
     }
     return {
       ok: false,
@@ -1521,7 +1546,13 @@ export class Server {
     const upgradeReceivedAt = Date.now();
     wss.handleUpgrade(req, socket, head, (ws) => {
       this.socketPrincipals.set(ws, principal);
-      ws.on("close", () => this.socketPrincipals.delete(ws));
+      ws.on("close", () => {
+        this.clearAccessExpiryTimer(ws);
+        this.socketPrincipals.delete(ws);
+      });
+      if (principal.kind === "device" && principal.tokenClass === "at_" && principal.expiresAt) {
+        this.scheduleAccessTokenExpiry(ws, principal.expiresAt);
+      }
       this.routeAuthenticatedUpgrade(ws, {
         sessionStreamMatch,
         appEventStreamMatch,
@@ -1572,7 +1603,14 @@ export class Server {
       return;
     }
     if (route.dictationStreamMatch) {
-      this.dictationStreamMux.handleServerWebSocket(ws, route.upgradeReceivedAt);
+      const principal = this.socketPrincipals.get(ws);
+      this.dictationStreamMux.handleServerWebSocket(
+        ws,
+        route.upgradeReceivedAt,
+        principal?.kind === "device" && principal.tokenClass === "at_" && principal.expiresAt
+          ? { expiresAt: principal.expiresAt }
+          : undefined,
+      );
       return;
     }
     ws.close(1008, "Unsupported WebSocket endpoint");

@@ -787,10 +787,12 @@ final class WebSocketClient {
                     if let statusCode {
                         self.lastHTTPStatusCode = statusCode
                     }
-                    if statusCode == 401, self.authSession != nil {
-                        // Expired/unknown device token: force-refresh exactly once, then
+                    if self.authSession != nil,
+                       statusCode == 401 || WebSocketRecoveryPolicy.isAuthExpiredCloseCode(ws.closeCode()) {
+                        // Expired access token: HTTP 401 on handshake or private
+                        // 4001 on a live socket. Force-refresh exactly once, then
                         // reconnect exactly once. Revoked/unknown device or a repeated
-                        // 401 is terminal. Never call `disconnect()` on the success path.
+                        // auth failure is terminal. Never call `disconnect()` on success.
                         shouldAttemptReconnect = false
                         if await self.handleAuthFailure(ws: ws) {
                             return

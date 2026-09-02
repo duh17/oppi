@@ -219,9 +219,19 @@ struct PathChangeReconnectDelaySanityTests {
             .goingAway,
             .abnormalClosure,
             .internalServerError,
+            URLSessionWebSocketTask.CloseCode(
+                rawValue: WebSocketRecoveryPolicy.authExpiredCloseCodeRawValue
+            ) ?? .goingAway,
         ] {
             #expect(!WebSocketRecoveryPolicy.isNonRetryableCloseCode(closeCode))
         }
+        #expect(
+            WebSocketRecoveryPolicy.isAuthExpiredCloseCode(
+                URLSessionWebSocketTask.CloseCode(
+                    rawValue: WebSocketRecoveryPolicy.authExpiredCloseCodeRawValue
+                ) ?? .goingAway
+            )
+        )
     }
 
     @Test func reconnectAttemptTelemetryTagHasBoundedCardinality() {

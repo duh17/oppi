@@ -25,10 +25,10 @@ function makeDeviceKey(): DevicePublicKey {
 
 function enroll(storage: Storage): { id: string; token: string } {
   const pairingToken = storage.issuePairingToken(60_000);
-  const result = storage.enrollViaPairing(
-    pairingToken,
-    { publicKey: makeDeviceKey(), name: "WS close test device" },
-  );
+  const result = storage.enrollViaPairing(pairingToken, {
+    publicKey: makeDeviceKey(),
+    name: "WS close test device",
+  });
   if (!result) throw new Error("enrollment failed");
   return { id: result.deviceId, token: result.accessToken };
 }
@@ -197,21 +197,22 @@ describe("authenticated WebSocket termination on revoke/finalize", { timeout: 30
     expect(wsB.hasFrame("app_events_connected")).toBe(true);
   });
 
-  it("finalization closes legacy dt_ sockets but leaves device-key sockets connected", async () => {
+  it("rejects leftover dt_ on ordinary WebSocket upgrades even before finalization", async () => {
     const legacyToken = "dt_ws_finalize_legacy";
     storage.updateConfig({ authDeviceTokens: [legacyToken] });
     const device = enroll(storage);
 
-    const legacyWs = await connectStream(legacyToken);
+    const wsUrl = `${baseUrl.replace(/^https:/, "wss:")}/app/events/stream`;
+    const rejected = new WsProbe(
+      new WebSocket(wsUrl, {
+        headers: { Authorization: `Bearer ${legacyToken}` },
+        rejectUnauthorized: false,
+      }),
+    );
+    probes.push(rejected);
+    await expect(rejected.opened).rejects.toThrow(/401|unexpected|error/);
+
     const deviceWs = await connectStream(device.token);
-
-    const finalize = await localRequest("/auth/finalize", "POST");
-    expect(finalize.status).toBe(200);
-
-    const closed = await legacyWs.closed;
-    expect(closed.code).toBe(1008);
-
-    // Device-key socket stays connected.
     expect(deviceWs.ws.readyState).toBe(WebSocket.OPEN);
   });
 
@@ -232,28 +233,24 @@ describe("authenticated WebSocket termination on revoke/finalize", { timeout: 30
     await expect(rejected.opened).rejects.toThrow(/401|unexpected|error/);
   });
 
-  it("revoking a pending dt_ device closes its live socket and removes its token", async () => {
+  it("revoking a pending dt_ device removes its token without a live ordinary socket", async () => {
     const token = "dt_ws_pending_revoke";
     storage.updateConfig({ authDeviceTokens: [token] });
-    const socket = await connectStream(token);
     const pending = storage.listDevices().find((device) => device.legacyTokenHash);
     expect(pending).toBeDefined();
     if (!pending) return;
 
     const revoke = await localRequest(`/auth/devices/${pending.id}`, "DELETE");
     expect(revoke.status).toBe(200);
-    expect((await socket.closed).code).toBe(1008);
     expect(storage.getAuthDeviceTokens()).not.toContain(token);
     expect(await networkGet("/me", token)).toBe(401);
   });
 
-  it("first replacement at_ use closes only the matching live dt_ socket", async () => {
+  it("first replacement at_ use still commits the matching leftover dt_", async () => {
     const oldToken = "dt_ws_migration_cutoff";
     const unrelatedToken = "dt_ws_unrelated";
     storage.updateConfig({ authDeviceTokens: [oldToken, unrelatedToken] });
 
-    const oldSocket = await connectStream(oldToken);
-    const unrelatedSocket = await connectStream(unrelatedToken);
     const migrated = storage.migrateLegacyDevice(oldToken, {
       publicKey: makeDeviceKey(),
       name: "Migrated socket",
@@ -262,27 +259,24 @@ describe("authenticated WebSocket termination on revoke/finalize", { timeout: 30
     if (!migrated) return;
 
     expect(await networkGet("/me", migrated.accessToken)).toBe(200);
-    expect((await oldSocket.closed).code).toBe(1008);
-    expect(unrelatedSocket.ws.readyState).toBe(WebSocket.OPEN);
     expect(storage.getAuthDeviceTokens()).not.toContain(oldToken);
     expect(storage.getAuthDeviceTokens()).toContain(unrelatedToken);
+    expect(await networkGet("/me", oldToken)).toBe(401);
+    expect(await networkGet("/me", unrelatedToken)).toBe(401);
   });
 
-  it("owner-token rotation closes every device/legacy network socket and leaves the local UDS usable", async () => {
+  it("owner-token rotation closes every device network socket and leaves the local UDS usable", async () => {
     const deviceA = enroll(storage);
     const deviceB = enroll(storage);
-    const legacyToken = "dt_ws_rotate_legacy";
-    storage.updateConfig({ authDeviceTokens: [legacyToken] });
 
     const wsA = await connectStream(deviceA.token);
     const wsB = await connectStream(deviceB.token);
-    const legacyWs = await connectStream(legacyToken);
 
     const rotate = await localRequest("/auth/rotate", "POST");
     expect(rotate.status).toBe(200);
 
-    // Every remote device/legacy socket is severed immediately.
-    for (const probe of [wsA, wsB, legacyWs]) {
+    // Every remote device socket is severed immediately.
+    for (const probe of [wsA, wsB]) {
       const closed = await probe.closed;
       expect(closed.code).toBe(1008);
     }

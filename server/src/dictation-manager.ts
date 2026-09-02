@@ -69,6 +69,11 @@ export class DictationManager {
 
   // ─── Public API ───
 
+  /** True while a recording has started and has not yet stopped, canceled, or disconnected. */
+  isActive(): boolean {
+    return this.session !== null;
+  }
+
   /** Handle a parsed dictation control message from the transport layer. */
   handleControlMessage(msg: DictationClientMessage, send: DictationSendFn): void {
     this.sendFn = send;

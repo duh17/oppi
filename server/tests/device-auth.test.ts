@@ -355,7 +355,7 @@ describe("legacy dt_ migration", () => {
     expect(devices).toHaveLength(1);
     expect(devices[0]?.id).toBe(first.deviceId);
     expect(devices[0]?.publicKey).toEqual(firstKey.publicKeyJwk);
-    expect(storage.validateAccessToken(first.accessToken)).toEqual({
+    expect(storage.validateAccessToken(first.accessToken)).toMatchObject({
       ok: true,
       deviceId: first.deviceId,
       scope: "device",

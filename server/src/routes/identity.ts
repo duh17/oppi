@@ -79,18 +79,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
 
-    // Mixed-update window: a shipped app without a device key still pairs by
-    // exchanging the one-time token for a dt_. New clients send a P-256 key
-    // and receive a short-lived at_. Existing pairings keep working either way.
+    // Pairing issues short-lived at_ credentials bound to a device P-256 key.
+    // Leftover dt_ tokens are migration-only; pre-migration clients must update.
     if (body.devicePublicKey === undefined) {
-      const pairing = ctx.storage.consumePairingToken(pairingToken);
-      if (!pairing) {
-        recordPairingFailure(source, now);
-        helpers.error(res, 401, "Invalid or expired pairing token");
-        return;
-      }
-      clearPairingFailures(source);
-      helpers.json(res, pairing);
+      helpers.error(res, 400, "devicePublicKey required");
       return;
     }
 

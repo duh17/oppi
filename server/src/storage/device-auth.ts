@@ -15,6 +15,9 @@ export const REFRESH_AUDIENCE = "oppi:refresh:v1";
 export const ACCESS_TOKEN_TTL_MS = 10 * 60 * 1000;
 export const CHALLENGE_TTL_MS = 60 * 1000;
 export const CLOCK_SKEW_MS = 30 * 1000;
+/** Private WebSocket close code: live stream authority expired. */
+export const WS_CLOSE_AUTH_EXPIRED = 4001;
+export const WS_CLOSE_REASON_AUTH_EXPIRED = "auth_expired";
 export const MAX_OUTSTANDING_CHALLENGES = 10_000;
 export const MAX_CHALLENGES_PER_DEVICE = 4;
 export const MAX_ACTIVE_ACCESS_TOKENS_PER_DEVICE = 8;
@@ -25,7 +28,7 @@ type ChallengeNonceState = { deviceId: string; expiresAt: number; used: boolean 
 type PairingTokenValidation = { ok: true } | { ok: false; status: 400 | 401; error: string };
 
 export type AccessTokenValidation =
-  | { ok: true; deviceId: string; scope: DeviceRecord["scope"] }
+  | { ok: true; deviceId: string; scope: DeviceRecord["scope"]; expiresAt: number }
   | {
       ok: false;
       code: "unknown_token" | "expired" | "revoked" | "evicted";
@@ -451,7 +454,12 @@ export class DeviceAuthStore {
     if (!device || device.revokedAt !== undefined) {
       return { ok: false, code: "revoked", deviceId: access.deviceId };
     }
-    return { ok: true, deviceId: device.id, scope: device.scope };
+    return {
+      ok: true,
+      deviceId: device.id,
+      scope: device.scope,
+      expiresAt: access.expiresAt,
+    };
   }
 
   commitLegacyRevocation(deviceId: string): boolean {

@@ -16,6 +16,7 @@ struct DictationWebSocketTransport {
     let send: (Message) async throws -> Void
     let cancel: (CloseCode, Data?) -> Void
     let response: () -> URLResponse?
+    let closeCode: () -> CloseCode
 
     init(task: URLSessionWebSocketTask) {
         identity = ObjectIdentifier(task)
@@ -24,6 +25,7 @@ struct DictationWebSocketTransport {
         send = { message in try await task.send(message) }
         cancel = { code, reason in task.cancel(with: code, reason: reason) }
         response = { task.response }
+        closeCode = { task.closeCode }
     }
 
     init(
@@ -32,7 +34,8 @@ struct DictationWebSocketTransport {
         receive: @escaping () async throws -> Message,
         send: @escaping (Message) async throws -> Void,
         cancel: @escaping (CloseCode, Data?) -> Void,
-        response: @escaping () -> URLResponse?
+        response: @escaping () -> URLResponse?,
+        closeCode: @escaping () -> CloseCode
     ) {
         self.identity = ObjectIdentifier(identity)
         self.resume = resume
@@ -40,6 +43,7 @@ struct DictationWebSocketTransport {
         self.send = send
         self.cancel = cancel
         self.response = response
+        self.closeCode = closeCode
     }
 }
 
@@ -299,7 +303,8 @@ final class DictationStreamClient: DictationTransport {
                 }
             } catch {
                 let statusCode = (task.response() as? HTTPURLResponse)?.statusCode
-                if statusCode == 401, let refreshTokenProvider {
+                if let refreshTokenProvider,
+                   statusCode == 401 || WebSocketRecoveryPolicy.isAuthExpiredCloseCode(task.closeCode()) {
                     // Expired/unknown device token: force exactly one refresh, then
                     // install exactly one replacement socket and end THIS loop.
                     // Revoked/unknown device, an empty token, or a repeated 401 is

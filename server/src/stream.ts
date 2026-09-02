@@ -19,6 +19,11 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isDeclaredControlSession } from "./control-session.js";
 import { parseClientCommand, type ClientCommandParseErrorCode } from "./session-command-parse.js";
+import {
+  CLOCK_SKEW_MS,
+  WS_CLOSE_AUTH_EXPIRED,
+  WS_CLOSE_REASON_AUTH_EXPIRED,
+} from "./storage/device-auth.js";
 
 /** Services needed by the stream mux — injected by Server. */
 export interface StreamContext {
@@ -661,8 +666,17 @@ export class BoundSessionStreamMux {
 
 // ─── Dictation Stream Mux ───
 
+type DictationStreamAccess = { expiresAt: number };
+
+type DictationConnectionState = {
+  manager: DictationManager;
+  authExpired: boolean;
+  expiresAt?: number;
+};
+
 export class DictationStreamMux {
   private connectionSeq = 0;
+  private readonly connections = new Map<WebSocket, DictationConnectionState>();
 
   constructor(
     private ctx: Pick<
@@ -676,15 +690,43 @@ export class DictationStreamMux {
     return `${pathTag}_${this.connectionSeq}`;
   }
 
-  handleServerWebSocket(ws: WebSocket, upgradeReceivedAt?: number): void {
+  isRecording(ws: WebSocket): boolean {
+    return Boolean(this.connections.get(ws)?.manager.isActive());
+  }
+
+  markAuthExpired(ws: WebSocket): void {
+    const state = this.connections.get(ws);
+    if (!state) {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close(WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED);
+      }
+      return;
+    }
+    state.authExpired = true;
+    if (!state.manager.isActive()) {
+      ws.close(WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED);
+    }
+  }
+
+  handleServerWebSocket(
+    ws: WebSocket,
+    upgradeReceivedAt?: number,
+    access?: DictationStreamAccess,
+  ): void {
     this.handleDictationWebSocket({
       ws,
       path: "/dictation/stream",
       pathTag: "dictation_stream",
       level: "dictation",
       upgradeReceivedAt,
+      access,
       logMetadata: {},
     });
+  }
+
+  private accessExpired(state: DictationConnectionState): boolean {
+    if (state.authExpired) return true;
+    return state.expiresAt !== undefined && Date.now() - CLOCK_SKEW_MS > state.expiresAt;
   }
 
   private handleDictationWebSocket({
@@ -693,6 +735,7 @@ export class DictationStreamMux {
     pathTag,
     level,
     upgradeReceivedAt,
+    access,
     logMetadata,
   }: {
     ws: WebSocket;
@@ -700,6 +743,7 @@ export class DictationStreamMux {
     pathTag: string;
     level: string;
     upgradeReceivedAt?: number;
+    access?: DictationStreamAccess;
     logMetadata: Record<string, unknown>;
   }): void {
     const dictationManager = this.ctx.createDictationManager?.();
@@ -751,6 +795,13 @@ export class DictationStreamMux {
       return;
     }
 
+    const state: DictationConnectionState = {
+      manager: dictationManager,
+      authExpired: false,
+      expiresAt: access?.expiresAt,
+    };
+    this.connections.set(ws, state);
+
     ws.on("message", (data, isBinary) => {
       msgRecv += 1;
       if (isBinary) {
@@ -779,9 +830,22 @@ export class DictationStreamMux {
       });
       switch (msg.type) {
         case "dictation_start":
+          if (this.accessExpired(state)) {
+            send({
+              type: "dictation_error",
+              error: "Access token expired",
+              fatal: false,
+            });
+            return;
+          }
+          dictationManager.handleControlMessage(msg as DictationClientMessage, send);
+          return;
         case "dictation_stop":
         case "dictation_cancel":
           dictationManager.handleControlMessage(msg as DictationClientMessage, send);
+          if (state.authExpired && !dictationManager.isActive()) {
+            ws.close(WS_CLOSE_AUTH_EXPIRED, WS_CLOSE_REASON_AUTH_EXPIRED);
+          }
           return;
         default:
           metrics?.record("server.dictation_error", 1, {
@@ -797,6 +861,7 @@ export class DictationStreamMux {
     });
 
     ws.on("close", (code) => {
+      this.connections.delete(ws);
       dictationManager.handleDisconnect();
       stopPing();
       this.ctx.untrackConnection(ws);

@@ -135,10 +135,10 @@ describe("identity module", () => {
     });
 
     expect(handled).toBe(true);
-    expect(enrollViaPairing).toHaveBeenCalledWith(
-      "pt_dual",
-        { publicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" }, name: undefined },
-    );
+    expect(enrollViaPairing).toHaveBeenCalledWith("pt_dual", {
+      publicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
+      name: undefined,
+    });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({
       deviceId: "dev_bound",
@@ -148,7 +148,7 @@ describe("identity module", () => {
     });
   });
 
-  it("issues a dt_ for pairing requests that omit a device public key", async () => {
+  it("rejects pairing requests that omit a device public key without issuing dt_", async () => {
     const consumePairingToken = vi.fn(() => ({ deviceToken: "dt_old_client" }));
     const enrollViaPairing = vi.fn();
     const ctx = {
@@ -168,9 +168,9 @@ describe("identity module", () => {
 
     expect(handled).toBe(true);
     expect(enrollViaPairing).not.toHaveBeenCalled();
-    expect(consumePairingToken).toHaveBeenCalledWith("pt_old");
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ deviceToken: "dt_old_client" });
+    expect(consumePairingToken).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "devicePublicKey required" });
   });
 
   it("includes uploadProtocol in GET /server/info", async () => {

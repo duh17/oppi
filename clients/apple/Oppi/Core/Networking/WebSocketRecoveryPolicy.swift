@@ -57,6 +57,16 @@ enum WebSocketRecoveryPolicy {
         return base * jitterFactor
     }
 
+    /// Private server close code: the socket's access token expired. Refresh
+    /// and reconnect; this is not a protocol-model message.
+    static let authExpiredCloseCodeRawValue = 4001
+
+    nonisolated static func isAuthExpiredCloseCode(
+        _ closeCode: URLSessionWebSocketTask.CloseCode
+    ) -> Bool {
+        closeCode.rawValue == authExpiredCloseCodeRawValue
+    }
+
     nonisolated static func isNonRetryableHandshakeStatus(_ statusCode: Int) -> Bool {
         [400, 401, 403, 404, 410, 426].contains(statusCode)
     }

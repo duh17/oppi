@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 import { AgentConfigurationError } from "../src/agent-launch-errors.js";
+import { CLOCK_SKEW_MS } from "../src/storage/device-auth.js";
 import { BoundSessionStreamMux, DictationStreamMux, type StreamContext } from "../src/stream.js";
 import type { SessionCatchUpResponse } from "../src/session-broadcast.js";
 import { Storage } from "../src/storage.js";
@@ -894,5 +895,67 @@ describe("DictationStreamMux", () => {
       "Unsupported dictation stream message",
     );
     expect(manager.handleControlMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects dictation_start on an expired access token without starting STT", () => {
+    const { ctx } = createMockContext([]);
+    const manager = {
+      handleControlMessage: vi.fn(),
+      handleAudioData: vi.fn(),
+      handleDisconnect: vi.fn(),
+      isActive: vi.fn(() => false),
+    };
+    ctx.createDictationManager = () =>
+      manager as unknown as ReturnType<NonNullable<StreamContext["createDictationManager"]>>;
+
+    const mux = new DictationStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    mux.handleServerWebSocket(ws as unknown as WebSocket, undefined, {
+      expiresAt: Date.now() - CLOCK_SKEW_MS - 1,
+    });
+
+    ws.receive({ type: "dictation_start" } as ClientMessage);
+
+    const errors = ws.sentOfType("dictation_error");
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as { error?: string }).error).toContain("Access token expired");
+    expect(manager.handleControlMessage).not.toHaveBeenCalled();
+  });
+
+  it("lets an active recording finish after expiry and rejects a later start", () => {
+    const { ctx } = createMockContext([]);
+    let active = true;
+    const manager = {
+      handleControlMessage: vi.fn((msg: { type: string }) => {
+        if (msg.type === "dictation_stop" || msg.type === "dictation_cancel") {
+          active = false;
+        }
+      }),
+      handleAudioData: vi.fn(),
+      handleDisconnect: vi.fn(),
+      isActive: vi.fn(() => active),
+    };
+    ctx.createDictationManager = () =>
+      manager as unknown as ReturnType<NonNullable<StreamContext["createDictationManager"]>>;
+
+    const mux = new DictationStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    mux.handleServerWebSocket(ws as unknown as WebSocket, undefined, {
+      expiresAt: Date.now() + 60_000,
+    });
+    ws.receive({ type: "dictation_start" } as ClientMessage);
+    expect(manager.handleControlMessage).toHaveBeenCalledTimes(1);
+
+    mux.markAuthExpired(ws as unknown as WebSocket);
+    expect(ws.closeCode).toBeUndefined();
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+
+    ws.receive({ type: "dictation_start" } as ClientMessage);
+    expect(manager.handleControlMessage).toHaveBeenCalledTimes(1);
+    expect(ws.sentOfType("dictation_error")).toHaveLength(1);
+
+    ws.receive({ type: "dictation_stop" } as ClientMessage);
+    expect(manager.handleControlMessage).toHaveBeenCalledTimes(2);
+    expect(ws.closeCode).toBe(4001);
   });
 });

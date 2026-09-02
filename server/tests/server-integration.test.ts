@@ -105,7 +105,13 @@ beforeAll(async () => {
     authDeviceTokens: [authDeviceToken],
     pushDeviceTokens: [pushOnlyToken],
   });
-  token = authDeviceToken;
+  storage.ensurePaired();
+  const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
+    publicKey: devicePublicKey(),
+    name: "integration",
+  });
+  if (!enrolled) throw new Error("enrollment failed");
+  token = enrolled.accessToken;
   server = new Server(storage);
   await server.start();
   baseUrl = `https://127.0.0.1:${server.port}`;
@@ -1466,11 +1472,11 @@ describe("error handling", () => {
 // ── Auth Token Separation ──
 
 describe("auth token separation", () => {
-  it("accepts pair-issued auth device token", async () => {
+  it("rejects leftover dt_ on ordinary HTTP routes", async () => {
     const res = await fetch(`${baseUrl}/me`, {
       headers: { Authorization: `Bearer ${authDeviceToken}` },
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
   });
 
   it("rejects push-only device token for API auth", async () => {

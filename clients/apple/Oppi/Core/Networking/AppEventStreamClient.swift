@@ -322,11 +322,13 @@ final class AppEventStreamClient {
                     let statusCode = (ws.response() as? HTTPURLResponse)?.statusCode
                     reconnectReason = "receive_error"
                     reconnectCloseCode = String(ws.closeCode().rawValue)
-                    if statusCode == 401, let self, self.refreshTokenProvider != nil {
-                        // Expired/unknown device token: force-refresh exactly once, then
+                    if let self, self.refreshTokenProvider != nil,
+                       statusCode == 401 || WebSocketRecoveryPolicy.isAuthExpiredCloseCode(ws.closeCode()) {
+                        // Expired access token: HTTP 401 on handshake or private
+                        // 4001 on a live socket. Force-refresh exactly once, then
                         // reconnect exactly once. A failed/empty refresh or a repeated
-                        // 401 disconnects terminally without a retry loop. Never call
-                        // `disconnect()` on the success path.
+                        // auth failure disconnects terminally. Never call `disconnect()`
+                        // on the success path.
                         shouldAttemptReconnect = false
                         if await self.handleAuthFailure(ws: ws) {
                             return
