@@ -513,6 +513,7 @@ class E2EAuthSession {
   readonly deviceId: string;
   private readonly privateKeyPem: string;
   private refreshInFlight: Promise<string> | null = null;
+  onAccessTokenChange: ((token: string) => void) | null = null;
 
   constructor(enrollment: E2EDeviceEnrollment) {
     this.accessToken = enrollment.accessToken;
@@ -561,11 +562,14 @@ class E2EAuthSession {
     this.accessToken = accessToken;
     this.expiresAt = expiresAt;
     e2eAuthSessions.set(accessToken, this);
+    this.onAccessTokenChange?.(accessToken);
     return accessToken;
   }
 }
 
 const e2eAuthSessions = new Map<string, E2EAuthSession>();
+const e2eAccessTokenFileKeepers = new Set<() => void>();
+const E2E_ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
 
 function signE2ERefresh(privateKeyPem: string, nonce: string): string {
   return cryptoSign("sha256", Buffer.from(`${E2E_REFRESH_AUDIENCE}.${nonce}`), {
@@ -596,7 +600,15 @@ function isAuthHandshakeFailure(error: unknown): boolean {
 }
 
 export function resetE2EAuthSessions(): void {
+  for (const stop of e2eAccessTokenFileKeepers) stop();
+  e2eAccessTokenFileKeepers.clear();
   e2eAuthSessions.clear();
+}
+
+export async function currentE2EAccessToken(token: string, now = Date.now()): Promise<string> {
+  const session = lookupE2EAuthSession(token);
+  if (!session) return token;
+  return session.currentToken(now);
 }
 
 export async function refreshE2EAccessToken(token: string): Promise<string> {
@@ -605,6 +617,38 @@ export async function refreshE2EAccessToken(token: string): Promise<string> {
     throw new Error("No harness auth session for this device token");
   }
   return session.refresh();
+}
+
+/** Keep a cross-process script bearer file in sync with the in-process auth session. */
+export function bindE2EAccessTokenFile(token: string, file: string): void {
+  const session = lookupE2EAuthSession(token);
+  if (!session) {
+    throw new Error("No harness auth session for this device token");
+  }
+  const persist = (accessToken: string): void => {
+    writeFileSync(file, accessToken);
+  };
+  persist(session.accessToken);
+  session.onAccessTokenChange = persist;
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  const arm = (): void => {
+    if (stopped) return;
+    const delay = Math.max(
+      1_000,
+      session.expiresAt - Date.now() - E2E_ACCESS_TOKEN_REFRESH_SKEW_MS,
+    );
+    timer = setTimeout(() => {
+      void session.refresh().then(arm, arm);
+    }, delay);
+    timer.unref?.();
+  };
+  arm();
+  e2eAccessTokenFileKeepers.add(() => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  });
 }
 
 async function rawApi(
@@ -807,11 +851,20 @@ export async function enrollE2EDevice(
   const jwk = publicKey.export({ format: "jwk" }) as { x?: string; y?: string };
   if (!jwk.x || !jwk.y) throw new Error("failed to export P-256 public key");
   const devicePublicKey = { kty: "EC" as const, crv: "P-256" as const, x: jwk.x, y: jwk.y };
-  const res = await api("POST", "/pair", undefined, {
-    pairingToken,
-    deviceName,
-    devicePublicKey,
-  });
+  let res: APIResponse;
+  try {
+    res = await api("POST", "/pair", undefined, {
+      pairingToken,
+      deviceName,
+      devicePublicKey,
+    });
+  } catch (error) {
+    // The POST may already have enrolled a device. Do not silently pair again.
+    throw new E2EPairingError(
+      `Pairing transport failed; the invite may already have been consumed (${error instanceof Error ? error.message : String(error)})`,
+      false,
+    );
+  }
   const accessToken = res.json?.accessToken;
   const deviceId = res.json?.deviceId;
   const expiresAt = res.json?.expiresAt;
@@ -871,6 +924,8 @@ export async function bootstrapAppleE2E(opts?: {
   inviteFile?: string;
   deviceTokenFile?: string;
 }): Promise<E2EAppleBootstrapResult> {
+  // Script device: XCTest lab API bearer. The app pairs separately via the
+  // invite file so it owns a P-256 DeviceAuthSession and can refresh.
   const scriptInvite = await generateTestInvite({ pairingTokenTtlMs: 600_000 });
   const deviceToken = await pairDevice(scriptInvite.pairingToken, "e2e-script-bootstrap");
   const workspace = await createWorkspace(deviceToken, {
@@ -886,7 +941,7 @@ export async function bootstrapAppleE2E(opts?: {
     pairingTokenTtlMs: 600_000,
   });
   writeFileSync(opts?.inviteFile ?? DEFAULT_APP_INVITE_FILE, appInvite.inviteURL);
-  writeFileSync(opts?.deviceTokenFile ?? DEFAULT_APP_DEVICE_TOKEN_FILE, deviceToken);
+  bindE2EAccessTokenFile(deviceToken, opts?.deviceTokenFile ?? DEFAULT_APP_DEVICE_TOKEN_FILE);
 
   return {
     deviceToken,

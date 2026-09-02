@@ -1,7 +1,12 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   api,
+  bindE2EAccessTokenFile,
+  currentE2EAccessToken,
   dockerStartupCleanupCommand,
   E2EPairingError,
   enrollE2EDevice,
@@ -312,5 +317,97 @@ describe("E2E harness helpers", () => {
     );
     expect(error).toBeInstanceOf(E2EPairingError);
     expect((error as E2EPairingError).retryable).toBe(true);
+  });
+
+  it("does not retry /pair after a transport failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      }),
+    );
+
+    const error = await enrollE2EDevice("pt_test", "e2e-pair-transport").catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(E2EPairingError);
+    expect((error as E2EPairingError).retryable).toBe(false);
+    expect(isRetryablePairingFailure(error)).toBe(false);
+  });
+
+  it("resolves the current harness bearer before a WebSocket handshake caller uses it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const path = requestPath(url);
+        if (path === "/pair") {
+          return jsonResponse({
+            accessToken: "at_old",
+            deviceId: "dev_1",
+            expiresAt: Date.now() - 1_000,
+          });
+        }
+        if (path === "/auth/challenge") {
+          return jsonResponse({
+            nonce: "nonce-ws",
+            audience: "oppi:refresh:v1",
+            expiresAt: Date.now() + 60_000,
+          });
+        }
+        if (path === "/auth/refresh") {
+          return jsonResponse({
+            accessToken: "at_handshake",
+            expiresAt: Date.now() + 600_000,
+          });
+        }
+        return new Response("missing stub", { status: 500 });
+      }),
+    );
+
+    const token = await pairDevice("pt_test", "e2e-ws-bearer");
+    expect(token).toBe("at_old");
+    await expect(currentE2EAccessToken(token)).resolves.toBe("at_handshake");
+  });
+
+  it("rewrites the Apple script-bearer file when the harness rotates at_", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "e2e-at-"));
+    const file = join(dir, "device-token.txt");
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL) => {
+          const path = requestPath(url);
+          if (path === "/pair") {
+            return jsonResponse({
+              accessToken: "at_old",
+              deviceId: "dev_1",
+              expiresAt: Date.now() - 1_000,
+            });
+          }
+          if (path === "/auth/challenge") {
+            return jsonResponse({
+              nonce: "nonce-file",
+              audience: "oppi:refresh:v1",
+              expiresAt: Date.now() + 60_000,
+            });
+          }
+          if (path === "/auth/refresh") {
+            return jsonResponse({
+              accessToken: "at_file",
+              expiresAt: Date.now() + 600_000,
+            });
+          }
+          return new Response("missing stub", { status: 500 });
+        }),
+      );
+
+      const token = await pairDevice("pt_test", "e2e-file-bearer");
+      bindE2EAccessTokenFile(token, file);
+      expect(readFileSync(file, "utf8")).toBe("at_old");
+      await expect(currentE2EAccessToken(token)).resolves.toBe("at_file");
+      expect(readFileSync(file, "utf8")).toBe("at_file");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

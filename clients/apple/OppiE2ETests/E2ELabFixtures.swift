@@ -441,24 +441,23 @@ extension E2ETestCase {
     }
 
     private func e2eLabDeviceToken() throws -> String {
-        if let token = Self.e2eDeviceTokenCache, !token.isEmpty {
-            return token
+        let path = "/tmp/oppi-e2e-device-token.txt"
+        if FileManager.default.fileExists(atPath: path) {
+            let token = try String(contentsOfFile: path, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !token.isEmpty {
+                return token
+            }
         }
 
         if let token = E2ELabServerContext.environmentValue(for: [
             "OPPI_E2E_DEVICE_TOKEN",
             "SIMCTL_CHILD_OPPI_E2E_DEVICE_TOKEN",
         ]) {
-            Self.e2eDeviceTokenCache = token
             return token
         }
 
-        let path = "/tmp/oppi-e2e-device-token.txt"
-        let token = try String(contentsOfFile: path, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedToken = try XCTUnwrap(token.isEmpty ? nil : token, "E2E device token file is empty")
-        Self.e2eDeviceTokenCache = resolvedToken
-        return resolvedToken
+        throw E2ELabAPIError.missingDeviceToken
     }
 }
 
@@ -558,6 +557,7 @@ private final class E2ELabHTTPResultBox: @unchecked Sendable {
 
 private enum E2ELabAPIError: Error, CustomStringConvertible {
     case invalidInvite
+    case missingDeviceToken
     case missingHTTPResponse
     case httpStatus(Int, String)
     case timeout(String)
@@ -567,6 +567,8 @@ private enum E2ELabAPIError: Error, CustomStringConvertible {
         switch self {
         case .invalidInvite:
             return "E2E invite URL did not contain a valid signed payload"
+        case .missingDeviceToken:
+            return "E2E device token file is empty"
         case .missingHTTPResponse:
             return "Missing HTTP response"
         case .httpStatus(let status, let body):

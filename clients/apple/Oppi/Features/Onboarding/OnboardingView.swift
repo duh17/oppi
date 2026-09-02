@@ -447,3 +447,73 @@ enum InviteBootstrapService {
         fingerprint.count > 24 ? String(fingerprint.prefix(24)) + "…" : fingerprint
     }
 }
+
+#if DEBUG
+/// Apple E2E must pair with a real P-256 DeviceAuthSession. The harness script
+/// `at_` is for XCTest lab API only and cannot refresh inside the app.
+@MainActor
+enum E2EAppAuthBootstrap {
+    static func shouldPreserveServer(_ server: PairedServer, matching invite: ServerCredentials) -> Bool {
+        shouldReuseExistingPairing(existing: server.credentials, invite: invite)
+    }
+
+    static func shouldReuseExistingPairing(
+        existing: ServerCredentials?,
+        invite: ServerCredentials
+    ) -> Bool {
+        guard let existing,
+              existing.deviceCredential != nil,
+              let existingFingerprint = existing.normalizedServerFingerprint,
+              let inviteFingerprint = invite.normalizedServerFingerprint,
+              existingFingerprint == inviteFingerprint,
+              existing.host == invite.host,
+              existing.port == invite.port else {
+            return false
+        }
+        return true
+    }
+
+    static func pairInvite(
+        credentials: ServerCredentials,
+        deviceKeyProvider: () throws -> any DeviceKey = {
+            try DeviceKeyProvider.shared.loadOrCreate()
+        },
+        apiFactory: (URL, String, String?) -> any InviteBootstrapAPI = { baseURL, token, tlsCertFingerprint in
+            APIClient(baseURL: baseURL, token: token, tlsCertFingerprint: tlsCertFingerprint)
+        }
+    ) async throws -> InviteBootstrapResult {
+        guard let pairingToken = credentials.pairingToken, !pairingToken.isEmpty else {
+            throw InviteBootstrapError.message("E2E invite is missing a pairing token")
+        }
+        guard let baseURL = credentials.baseURL else {
+            throw InviteBootstrapError.message("Invalid E2E invite URL")
+        }
+        let pairingAPI = apiFactory(baseURL, "", credentials.normalizedTLSCertFingerprint)
+        let pairResult: PairDeviceResponse
+        do {
+            pairResult = try await pairingAPI.pairDevice(
+                pairingToken: pairingToken,
+                deviceName: nil,
+                devicePublicKey: try deviceKeyProvider().publicKey
+            )
+        } catch {
+            throw InviteBootstrapError.message(
+                InviteBootstrapService.pairingFailureMessage(for: error, host: credentials.host)
+            )
+        }
+        guard let deviceCredential = pairResult.deviceCredential else {
+            throw InviteBootstrapError.message(
+                "Server returned an invalid pairing response. Request a fresh invite and try again."
+            )
+        }
+        let effective = credentials.withDeviceCredential(deviceCredential)
+        let authed = apiFactory(
+            baseURL,
+            deviceCredential.accessToken,
+            credentials.normalizedTLSCertFingerprint
+        )
+        let sessions = try await authed.listSessionsFromWorkspaces(recentDays: 3)
+        return InviteBootstrapResult(effectiveCredentials: effective, sessions: sessions)
+    }
+}
+#endif

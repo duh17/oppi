@@ -624,6 +624,7 @@
 		67D01348D22AACA4E1C0DB4A /* AssistantRowContentViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C7A1F1C83E8BC9D04AC406 /* AssistantRowContentViewTests.swift */; };
 		67E2776D45C5DD69A7035221 /* FocusedSessionRuntimePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6017BD7FB6680E1F0B4A45CC /* FocusedSessionRuntimePolicyTests.swift */; };
 		6829E0DB3F76E782F5158CBE /* SyntaxLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 088F078E3443736CC8735B6D /* SyntaxLanguage.swift */; };
+		6835A9E02A71A0CFDFB06959 /* E2EAppAuthBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F45DEC19977C9606C4DCE48 /* E2EAppAuthBootstrapTests.swift */; };
 		686ABB3A61FD4049DD305577 /* VoiceTestDoubles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D8D402064DD6BCAD6377175 /* VoiceTestDoubles.swift */; };
 		68769C35E5E9CC7AFDA47DB4 /* TurnSendTracking.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72A5E67A4BF2CBC123584FD0 /* TurnSendTracking.swift */; };
 		6881BC8298401A5B53D56FFC /* SharedConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70F4B7C1B3CA7399E365AA80 /* SharedConstants.swift */; };
@@ -2040,6 +2041,7 @@
 		4F0FDB1D4069DE3DA87923DF /* MermaidParserErrorRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidParserErrorRecoveryTests.swift; sourceTree = "<group>"; };
 		4F1CBA0EA04860B545044247 /* ServerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerStore.swift; sourceTree = "<group>"; };
 		4F3BD780DCD81FAC6DFE18F8 /* QuickSessionOpenIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickSessionOpenIntent.swift; sourceTree = "<group>"; };
+		4F45DEC19977C9606C4DCE48 /* E2EAppAuthBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EAppAuthBootstrapTests.swift; sourceTree = "<group>"; };
 		4F5FDDD24D3D58CDACF27DDD /* BashEmbeddedLanguageDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BashEmbeddedLanguageDetector.swift; sourceTree = "<group>"; };
 		4F63CD7097552FDF80941DF3 /* StreamingAutoFollowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingAutoFollowTests.swift; sourceTree = "<group>"; };
 		4FB286B4533D13ED155B1967 /* ANSIAttributedStringRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ANSIAttributedStringRenderer.swift; sourceTree = "<group>"; };
@@ -4063,6 +4065,7 @@
 		7DC2C0055EF0ED2A84314FD6 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
+				4F45DEC19977C9606C4DCE48 /* E2EAppAuthBootstrapTests.swift */,
 				5349C0C3596BB6C4B601F58F /* InviteBootstrapServiceTests.swift */,
 				EAB46CCB959126E31064677F /* NearbyPairingInviteCodecTests.swift */,
 				BA73C175255E12B9DC0E3CA4 /* OnboardingIdlePairingCTATests.swift */,
@@ -6388,6 +6391,7 @@
 				1D07DD9DD43D2C48D32A39EB /* DocumentRenderCacheTests.swift in Sources */,
 				76D3CD4E8E7D63B8A117454C /* DoubleTapZoomTests.swift in Sources */,
 				0E8059FE9636BE583FFFCD1F /* DragSelectStateTests.swift in Sources */,
+				6835A9E02A71A0CFDFB06959 /* E2EAppAuthBootstrapTests.swift in Sources */,
 				15F1D0AEC361B4FC3D0020F3 /* E2ELifecycleDiagnosticsTests.swift in Sources */,
 				284EBB337482A486864B7DC0 /* ElevatedSurfaceOpacityTests.swift in Sources */,
 				C140B81760C07173365D5D12 /* ExtensionSurfaceReducerTests.swift in Sources */,

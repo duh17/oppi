@@ -617,12 +617,21 @@ struct OppiApp: App {
                 navigation.launchPhase = .ready
                 navigation.showOnboarding = false
             } else {
-                // Wipe all stale servers before connecting anything
-                let staleCount = serverStore.servers.count
+                // Drop leftover simulator pairings. Keep a DeviceAuthSession for
+                // this invite identity so a relaunch can refresh instead of
+                // replaying a consumed pairing token.
+                let inviteCredentials = ServerCredentials.decodeInviteURL(e2eURL)
+                var removed = 0
                 for server in serverStore.servers {
-                    await coordinator.removeServer(id: server.id)
+                    let preserve = inviteCredentials.map {
+                        E2EAppAuthBootstrap.shouldPreserveServer(server, matching: $0)
+                    } ?? false
+                    if !preserve {
+                        await coordinator.removeServer(id: server.id)
+                        removed += 1
+                    }
                 }
-                os_log(.error, "[E2E] Cleared %{public}d stale servers", staleCount)
+                os_log(.error, "[E2E] Cleared %{public}d stale servers", removed)
 
                 os_log(.error, "[E2E] Processing invite URL: %{public}@", e2eInvite.prefix(80).description)
                 await handleIncomingURL(e2eURL)
@@ -1308,27 +1317,23 @@ struct OppiApp: App {
         do {
 #if DEBUG
             let bootstrap: InviteBootstrapResult
-            if let e2eDeviceToken = ProcessInfo.processInfo.environment["OPPI_E2E_DEVICE_TOKEN"],
-               !e2eDeviceToken.isEmpty {
-                let effectiveCredentials = credentials.withAuthToken(e2eDeviceToken)
-                guard let baseURL = effectiveCredentials.baseURL else {
-                    throw InviteBootstrapError.message("Invalid E2E invite URL")
+            if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
+                if E2EAppAuthBootstrap.shouldReuseExistingPairing(
+                    existing: existingCredentials,
+                    invite: credentials
+                ), let existingCredentials {
+                    bootstrap = InviteBootstrapResult(
+                        effectiveCredentials: existingCredentials,
+                        sessions: []
+                    )
+                } else {
+                    bootstrap = try await E2EAppAuthBootstrap.pairInvite(credentials: credentials)
                 }
-                let api = APIClient(
-                    baseURL: baseURL,
-                    token: e2eDeviceToken,
-                    tlsCertFingerprint: effectiveCredentials.normalizedTLSCertFingerprint
-                )
-                let sessions = try await api.listSessionsFromWorkspaces()
-                bootstrap = InviteBootstrapResult(effectiveCredentials: effectiveCredentials, sessions: sessions)
             } else {
                 bootstrap = try await InviteBootstrapService.validateAndBootstrap(
                     credentials: credentials,
                     existingCredentials: existingCredentials
                 ) { reason in
-                    if ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil {
-                        return true
-                    }
                     return await BiometricService.shared.authenticate(reason: reason)
                 }
             }

@@ -14,22 +14,22 @@ struct E2ELifecycleDiagnosticSnapshot: Equatable {
 /// Launches the app and pairs with the E2E server once per test process,
 /// then each test method reuses the same app instance.
 ///
-/// Pairing invite tokens are single-use, so relaunching and re-pairing for
-/// each test class makes later classes fail with an already-consumed invite.
+/// Pairing invite tokens are single-use. The app performs normal P-256 pairing
+/// on first launch and relaunches reuse the persisted DeviceAuthSession for
+/// this invite identity instead of injecting a static harness `at_`.
 class E2ETestCase: XCTestCase {
 
     /// Shared app instance — persists across E2E test classes.
     /// nonisolated(unsafe) is required for Swift 6 strict concurrency — XCTest
     /// runs these UI tests serially in the harness.
     nonisolated(unsafe) private static var _app: XCUIApplication?
-    nonisolated(unsafe) static var e2eDeviceTokenCache: String?
 
     var app: XCUIApplication {
         Self._app!
     }
 
     /// Terminates the shared app and invalidates the process-wide handle.
-    /// The next E2E setup relaunches with the same paired device token.
+    /// The next E2E setup relaunches and reuses the persisted DeviceAuthSession.
     func terminateSharedApp() {
         Self._app?.terminate()
         Self._app = nil
@@ -106,9 +106,6 @@ class E2ETestCase: XCTestCase {
         let application = XCUIApplication()
         application.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         application.launchEnvironment["PI_E2E_INVITE_URL"] = inviteURL
-        if let deviceToken = try? readDeviceToken() {
-            application.launchEnvironment["OPPI_E2E_DEVICE_TOKEN"] = deviceToken
-        }
         if !e2eLaunchesWorkspaceHomeOnly && !e2eLaunchesSessionsInboxOnly {
             application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = "e2e-workspace"
             if e2eAutoCreatesSessionOnLaunch {
@@ -279,30 +276,6 @@ class E2ETestCase: XCTestCase {
     private func workspaceListElement(in application: XCUIApplication) -> XCUIElement {
         let sidebarScroll = application.scrollViews["workspace.sidebar.scroll"]
         return sidebarScroll.exists ? sidebarScroll : application.collectionViews["workspace.list"]
-    }
-
-    private func readDeviceToken() throws -> String {
-        if let token = Self.e2eDeviceTokenCache, !token.isEmpty {
-            return token
-        }
-
-        for key in ["OPPI_E2E_DEVICE_TOKEN", "SIMCTL_CHILD_OPPI_E2E_DEVICE_TOKEN"] {
-            if let token = ProcessInfo.processInfo.environment[key]?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                !token.isEmpty {
-                Self.e2eDeviceTokenCache = token
-                return token
-            }
-        }
-
-        let path = "/tmp/oppi-e2e-device-token.txt"
-        guard FileManager.default.fileExists(atPath: path) else { return "" }
-        let token = try String(contentsOfFile: path, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !token.isEmpty {
-            Self.e2eDeviceTokenCache = token
-        }
-        return token
     }
 
     /// Reads the invite URL provided by the E2E server harness.

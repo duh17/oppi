@@ -26,6 +26,8 @@ import {
   isSecureTransport,
   listWorkspaceSessions,
   pairFreshDevice,
+  currentE2EAccessToken,
+  refreshE2EAccessToken,
   waitForEvent,
 } from "./harness.js";
 
@@ -36,26 +38,70 @@ declare module "vitest" {
   }
 }
 
+function isAuthHandshakeFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Unexpected server response:\s*401\b/i.test(message);
+}
+
 async function waitForPolicyClose(url: string, deviceToken: string): Promise<number | null> {
   const WebSocket = (await import("ws")).default;
-  return new Promise((resolve) => {
-    const ws = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${deviceToken}` },
-      ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
+  const attempt = (bearer: string): Promise<number | null> =>
+    new Promise((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = (code: number | null): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(code);
+      };
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      };
+      const ws = new WebSocket(url, {
+        headers: { Authorization: `Bearer ${bearer}` },
+        ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
+      });
+      timer = setTimeout(() => {
+        ws.terminate();
+        finish(null);
+      }, 120_000);
+      ws.once("unexpected-response", (_req, res) => {
+        res.resume();
+        if (res.statusCode === 401) {
+          fail(new Error(`Unexpected server response: ${res.statusCode}`));
+          return;
+        }
+        finish(null);
+      });
+      ws.once("close", (code) => {
+        finish(code);
+      });
+      ws.once("error", (error) => {
+        if (isAuthHandshakeFailure(error)) {
+          fail(error);
+          return;
+        }
+        finish(null);
+      });
     });
-    const timer = setTimeout(() => {
-      ws.terminate();
-      resolve(null);
-    }, 120_000);
-    ws.once("close", (code) => {
-      clearTimeout(timer);
-      resolve(code);
-    });
-    ws.once("error", () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
-  });
+
+  const bearer = await currentE2EAccessToken(deviceToken);
+  try {
+    return await attempt(bearer);
+  } catch (error) {
+    if (!isAuthHandshakeFailure(error)) return null;
+    const refreshed = await refreshE2EAccessToken(deviceToken);
+    if (refreshed === bearer) return null;
+    try {
+      return await attempt(refreshed);
+    } catch {
+      return null;
+    }
+  }
 }
 
 describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
