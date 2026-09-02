@@ -21,6 +21,7 @@ import {
   closeStream,
   pairDevice,
   pairFreshDevice,
+  refreshE2EAccessToken,
   sessionStreamURL,
   isSecureTransport,
 } from "./harness.js";
@@ -271,5 +272,22 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
     const models = await api("GET", "/models", token);
     expect(models.status).toBe(200);
     expect(Array.isArray(models.json?.models)).toBe(true);
+  });
+
+  it("refreshes the paired at_ through the harness auth session", async () => {
+    if (!lmsReady()) return;
+
+    const token = await pairFreshDevice("e2e-auth-refresh");
+    const before = await api("GET", "/me", token);
+    expect(before.status).toBe(200);
+
+    const next = await refreshE2EAccessToken(token);
+    expect(next.startsWith("at_")).toBe(true);
+    expect(next).not.toBe(token);
+
+    const viaOriginal = await api("GET", "/me", token);
+    expect(viaOriginal.status).toBe(200);
+    const viaNext = await api("GET", "/me", next);
+    expect(viaNext.status).toBe(200);
   });
 });

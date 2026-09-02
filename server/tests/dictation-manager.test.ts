@@ -116,6 +116,44 @@ function mockSttProvider(tokens: string[]) {
   return Object.assign(provider, { start: startFn, feedAudio: feedAudioFn, stop: stopFn });
 }
 
+/** Create a mock SttProvider whose start() stays pending until released. */
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function deferredStartSttProvider() {
+  let releaseStart: (() => void) | undefined;
+  let rejectStart: ((error: Error) => void) | undefined;
+  const startFn = vi.fn<() => Promise<void>>(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        releaseStart = resolve;
+        rejectStart = reject;
+      }),
+  );
+  const feedAudioFn = vi.fn<(pcm: Buffer) => void>();
+  const stopFn = vi.fn<() => Promise<{ text: string }>>().mockResolvedValue({ text: "" });
+
+  const provider: SttProvider = {
+    name: "mock",
+    model: "mock-model",
+    start: startFn,
+    feedAudio: feedAudioFn,
+    onToken() {},
+    stop: stopFn,
+  };
+  return Object.assign(provider, {
+    start: startFn,
+    feedAudio: feedAudioFn,
+    stop: stopFn,
+    releaseStart() {
+      if (!releaseStart) throw new Error("start() has not been called yet");
+      releaseStart();
+    },
+    failStart(message: string) {
+      if (!rejectStart) throw new Error("start() has not been called yet");
+      rejectStart(new Error(message));
+    },
+  });
+}
+
 /** Create a mock SttProvider whose stop() stays pending until released. */
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function deferredSttProvider() {
@@ -331,6 +369,55 @@ describe("DictationManager", () => {
       expect(errors[0].error).toContain("STT failed to start");
       // No dictation_ready should have been sent
       expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
+    });
+
+    it("does not emit late dictation_ready after cancel during STT start", async () => {
+      const deferred = deferredStartSttProvider();
+      const mgr = new DictationManager(deferred);
+      const mgrSent: DictationServerMessage[] = [];
+
+      mgr.handleControlMessage({ type: "dictation_start" }, (m) => mgrSent.push(m));
+      await drain();
+      expect(deferred.start).toHaveBeenCalledTimes(1);
+      expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
+
+      mgr.handleControlMessage({ type: "dictation_cancel" }, (m) => mgrSent.push(m));
+      deferred.releaseStart();
+      await drain();
+
+      expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
+      expect(messagesOfType(mgrSent, "dictation_error")).toHaveLength(0);
+      expect(mgr.isActive()).toBe(false);
+    });
+
+    it("does not emit late dictation_ready after stop during STT start", async () => {
+      const deferred = deferredStartSttProvider();
+      const mgr = new DictationManager(deferred);
+      const mgrSent: DictationServerMessage[] = [];
+
+      mgr.handleControlMessage({ type: "dictation_start" }, (m) => mgrSent.push(m));
+      await drain();
+      mgr.handleControlMessage({ type: "dictation_stop" }, (m) => mgrSent.push(m));
+      deferred.releaseStart();
+      await drain();
+
+      expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
+    });
+
+    it("does not emit late fatal after STT start fails on a canceled session", async () => {
+      const deferred = deferredStartSttProvider();
+      const mgr = new DictationManager(deferred);
+      const mgrSent: DictationServerMessage[] = [];
+
+      mgr.handleControlMessage({ type: "dictation_start" }, (m) => mgrSent.push(m));
+      await drain();
+      mgr.handleControlMessage({ type: "dictation_cancel" }, (m) => mgrSent.push(m));
+      deferred.failStart("STT backend unreachable");
+      await drain();
+
+      expect(messagesOfType(mgrSent, "dictation_error")).toHaveLength(0);
+      expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
+      expect(mgr.isActive()).toBe(false);
     });
   });
 

@@ -11,7 +11,7 @@
  */
 
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
+import { createPrivateKey, generateKeyPairSync, sign as cryptoSign } from "node:crypto";
 import { existsSync, mkdtempSync, writeFileSync, rmSync, openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
@@ -494,7 +494,120 @@ export interface E2EAppleBootstrapResult {
   transportScheme: E2ETransportScheme;
 }
 
-export async function api(
+/** Must match server `REFRESH_AUDIENCE` / Apple `DeviceAuthSession.refreshAudience`. */
+const E2E_REFRESH_AUDIENCE = "oppi:refresh:v1";
+
+export class E2EPairingError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = "E2EPairingError";
+    this.retryable = retryable;
+  }
+}
+
+class E2EAuthSession {
+  accessToken: string;
+  expiresAt: number;
+  readonly deviceId: string;
+  private readonly privateKeyPem: string;
+  private refreshInFlight: Promise<string> | null = null;
+
+  constructor(enrollment: E2EDeviceEnrollment) {
+    this.accessToken = enrollment.accessToken;
+    this.expiresAt = enrollment.expiresAt;
+    this.deviceId = enrollment.deviceId;
+    this.privateKeyPem = enrollment.privateKeyPem;
+  }
+
+  currentToken(now: number): Promise<string> {
+    if (now < this.expiresAt) return Promise.resolve(this.accessToken);
+    return this.refresh();
+  }
+
+  refresh(): Promise<string> {
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = this.performRefresh().finally(() => {
+        this.refreshInFlight = null;
+      });
+    }
+    return this.refreshInFlight;
+  }
+
+  private async performRefresh(): Promise<string> {
+    const challengeRes = await rawApi("POST", "/auth/challenge", undefined, {
+      deviceId: this.deviceId,
+    });
+    const nonce = challengeRes.json?.nonce;
+    if (challengeRes.status !== 200 || typeof nonce !== "string" || nonce.length === 0) {
+      return this.accessToken;
+    }
+    const refreshRes = await rawApi("POST", "/auth/refresh", undefined, {
+      deviceId: this.deviceId,
+      nonce,
+      signature: signE2ERefresh(this.privateKeyPem, nonce),
+    });
+    const accessToken = refreshRes.json?.accessToken;
+    const expiresAt = refreshRes.json?.expiresAt;
+    if (
+      refreshRes.status !== 200 ||
+      typeof accessToken !== "string" ||
+      accessToken.length === 0 ||
+      typeof expiresAt !== "number"
+    ) {
+      return this.accessToken;
+    }
+    this.accessToken = accessToken;
+    this.expiresAt = expiresAt;
+    e2eAuthSessions.set(accessToken, this);
+    return accessToken;
+  }
+}
+
+const e2eAuthSessions = new Map<string, E2EAuthSession>();
+
+function signE2ERefresh(privateKeyPem: string, nonce: string): string {
+  return cryptoSign("sha256", Buffer.from(`${E2E_REFRESH_AUDIENCE}.${nonce}`), {
+    key: createPrivateKey(privateKeyPem),
+    dsaEncoding: "ieee-p1363",
+  }).toString("base64url");
+}
+
+function lookupE2EAuthSession(token: string): E2EAuthSession | undefined {
+  return e2eAuthSessions.get(token);
+}
+
+function registerE2EAuthSession(enrollment: E2EDeviceEnrollment): E2EAuthSession {
+  const existing = e2eAuthSessions.get(enrollment.accessToken);
+  if (existing) return existing;
+  const session = new E2EAuthSession(enrollment);
+  e2eAuthSessions.set(enrollment.accessToken, session);
+  return session;
+}
+
+function isRetryablePairingFailure(error: unknown): boolean {
+  return !(error instanceof E2EPairingError) || error.retryable;
+}
+
+function isAuthHandshakeFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Unexpected server response:\s*401\b/i.test(message);
+}
+
+export function resetE2EAuthSessions(): void {
+  e2eAuthSessions.clear();
+}
+
+export async function refreshE2EAccessToken(token: string): Promise<string> {
+  const session = lookupE2EAuthSession(token);
+  if (!session) {
+    throw new Error("No harness auth session for this device token");
+  }
+  return session.refresh();
+}
+
+async function rawApi(
   method: string,
   path: string,
   token?: string,
@@ -520,6 +633,22 @@ export async function api(
   }
 
   return { status: res.status, json, text };
+}
+
+export async function api(
+  method: string,
+  path: string,
+  token?: string,
+  body?: unknown,
+): Promise<APIResponse> {
+  if (!token) return rawApi(method, path, token, body);
+  const session = lookupE2EAuthSession(token);
+  const bearer = session ? await session.currentToken(Date.now()) : token;
+  const res = await rawApi(method, path, bearer, body);
+  if (res.status !== 401 || !session) return res;
+  const refreshed = await session.refresh();
+  if (refreshed === bearer) return res;
+  return rawApi(method, path, refreshed, body);
 }
 
 export async function createWorkspace(
@@ -686,22 +815,29 @@ export async function enrollE2EDevice(
   const accessToken = res.json?.accessToken;
   const deviceId = res.json?.deviceId;
   const expiresAt = res.json?.expiresAt;
-  if (
-    res.status !== 200 ||
-    typeof accessToken !== "string" ||
-    accessToken.length === 0 ||
-    typeof deviceId !== "string" ||
-    typeof expiresAt !== "number"
-  ) {
-    throw new Error(`Pairing failed (${res.status}): ${res.text}`);
+  if (res.status === 200) {
+    if (
+      typeof accessToken !== "string" ||
+      accessToken.length === 0 ||
+      typeof deviceId !== "string" ||
+      typeof expiresAt !== "number"
+    ) {
+      throw new E2EPairingError(
+        "Pairing enrolled a device but the response was missing accessToken, deviceId, or expiresAt",
+        false,
+      );
+    }
+    const enrollment: E2EDeviceEnrollment = {
+      accessToken,
+      deviceId,
+      expiresAt,
+      publicKey: devicePublicKey,
+      privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    };
+    registerE2EAuthSession(enrollment);
+    return enrollment;
   }
-  return {
-    accessToken,
-    deviceId,
-    expiresAt,
-    publicKey: devicePublicKey,
-    privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-  };
+  throw new E2EPairingError(`Pairing failed (${res.status})`, true);
 }
 
 export async function pairDevice(pairingToken: string, deviceName = "e2e-device"): Promise<string> {
@@ -709,6 +845,9 @@ export async function pairDevice(pairingToken: string, deviceName = "e2e-device"
 }
 
 export async function pairFreshDevice(deviceName = "e2e-device"): Promise<string> {
+  // Each attempt uses a fresh invite. Retry only when /pair did not enroll a
+  // device (transport error or non-200). A 200 with a malformed body already
+  // created a device — do not pair again.
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const invite = await generateTestInvite();
@@ -716,6 +855,9 @@ export async function pairFreshDevice(deviceName = "e2e-device"): Promise<string
       return await pairDevice(invite.pairingToken, deviceName);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      if (!isRetryablePairingFailure(error)) {
+        throw lastError;
+      }
       console.warn(
         `[e2e] Pairing attempt ${attempt + 1} failed (${lastError.message}), retrying...`,
       );
@@ -790,9 +932,9 @@ export interface StreamEvent {
   seq: number;
 }
 
-async function openStreamAt(url: string, deviceToken: string): Promise<StreamConnection> {
+async function openStreamWithBearer(url: string, bearer: string): Promise<StreamConnection> {
   const ws = new WebSocket(url, {
-    headers: { Authorization: `Bearer ${deviceToken}` },
+    headers: { Authorization: `Bearer ${bearer}` },
     ...(isSecureTransport() ? { rejectUnauthorized: false } : {}),
   });
 
@@ -844,6 +986,19 @@ async function openStreamAt(url: string, deviceToken: string): Promise<StreamCon
   await waitForEvent(connection, (e) => e.type === "stream_connected", "stream_connected");
 
   return connection;
+}
+
+async function openStreamAt(url: string, deviceToken: string): Promise<StreamConnection> {
+  const session = lookupE2EAuthSession(deviceToken);
+  const bearer = session ? await session.currentToken(Date.now()) : deviceToken;
+  try {
+    return await openStreamWithBearer(url, bearer);
+  } catch (error) {
+    if (!session || !isAuthHandshakeFailure(error)) throw error;
+    const refreshed = await session.refresh();
+    if (refreshed === bearer) throw error;
+    return openStreamWithBearer(url, refreshed);
+  }
 }
 
 export async function openSessionStream(

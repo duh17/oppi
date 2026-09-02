@@ -173,9 +173,12 @@ export class DictationManager {
   }
 
   private async startSttAndSignalReady(): Promise<void> {
+    const session = this.session;
+    if (!session) return;
     try {
       await this.sttProvider.start();
     } catch (err) {
+      if (this.session !== session || session.stopping) return;
       const errorMsg = err instanceof Error ? err.message : String(err);
       log.error("dictation.stt_start.failed", { error: errorMsg });
       this.send({
@@ -187,6 +190,9 @@ export class DictationManager {
       this.session = null;
       return;
     }
+
+    // Cancel/stop during start() must not emit ready for a stale take.
+    if (this.session !== session || session.stopping) return;
 
     // STT session is confirmed — now tell the client
     this.send({

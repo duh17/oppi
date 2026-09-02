@@ -470,6 +470,7 @@ private final class ScriptedDictationSocket {
     private var queuedResults: [Result<Message, Error>] = []
     private var response: URLResponse?
     private var sendFailure: Error?
+    private var sendGate: LateTokenGate?
     private(set) var closeCode: URLSessionWebSocketTask.CloseCode?
     private(set) var sentTexts: [String] = []
 
@@ -520,6 +521,10 @@ private final class ScriptedDictationSocket {
         sendFailure = error
     }
 
+    func holdSends(_ gate: LateTokenGate) {
+        sendGate = gate
+    }
+
     private func receive() async throws -> Message {
         if !queuedResults.isEmpty {
             return try queuedResults.removeFirst().get()
@@ -541,7 +546,10 @@ private final class ScriptedDictationSocket {
         }
     }
 
-    private func recordSend(_ message: URLSessionWebSocketTask.Message) throws {
+    private func recordSend(_ message: URLSessionWebSocketTask.Message) async throws {
+        if let sendGate {
+            await sendGate.wait()
+        }
         if let sendFailure {
             throw sendFailure
         }
@@ -854,6 +862,67 @@ struct DictationDeviceAuthTests {
         )
         #expect(client.status != .disconnected)
 
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func cancelBeforeReadyDoesNotReplayStartAfterAuthExpiredClose() async throws {
+        try await assertStopOrCancelBeforeReadyDoesNotReplayStart(.dictationCancel)
+    }
+
+    @Test func stopBeforeReadyDoesNotReplayStartAfterAuthExpiredClose() async throws {
+        try await assertStopOrCancelBeforeReadyDoesNotReplayStart(.dictationStop)
+    }
+
+    private func assertStopOrCancelBeforeReadyDoesNotReplayStart(
+        _ terminal: ClientMessage
+    ) async throws {
+        let factory = ScriptedDictationFactory()
+        let refreshCalls = LockedCallCount()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_stale",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in "at_stale" },
+            refreshTokenProvider: { @Sendable in
+                refreshCalls.increment()
+                return "at_refreshed"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        try await client.sendDictation(.dictationStart)
+        #expect(factory.sockets.first?.sentDictationStartCount == 1)
+
+        let first = try #require(factory.sockets.first)
+        let sendGate = LateTokenGate()
+        first.holdSends(sendGate)
+        let terminalTask = Task { @MainActor in
+            try await client.sendDictation(terminal)
+        }
+        await sendGate.waitUntilEntered()
+
+        first.failAuthExpired()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+        #expect(refreshCalls.get() == 1)
+        #expect(
+            factory.sockets.last?.sentDictationStartCount == 0,
+            "Stop/cancel before dictation_ready must not replay dictation_start after 4001"
+        )
+        #expect(client.status != .disconnected)
+
+        await sendGate.release()
+        _ = await terminalTask.result
         client.disconnect()
         await consumer.value
     }

@@ -211,8 +211,15 @@ final class DictationStreamClient: DictationTransport {
     }
 
     func sendDictation(_ message: ClientMessage) async throws {
-        if case .dictationStart = message {
+        switch message {
+        case .dictationStart:
             pendingDictationStart = true
+        case .dictationStop, .dictationCancel:
+            // User stop/cancel is terminal for replay even if the send later
+            // suspends and a 4001 refresh installs a replacement socket.
+            pendingDictationStart = false
+        default:
+            break
         }
         guard let task else {
             // Queue dictation_start until the first writable socket exists.
