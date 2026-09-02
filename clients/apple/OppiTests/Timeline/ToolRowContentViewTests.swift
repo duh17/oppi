@@ -1717,4 +1717,41 @@ struct ToolTimelineRowContentViewTests {
         #expect(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: view) != nil)
     }
 
+    @MainActor
+    @Test func expandedVoiceStripControlsInFlightStream() throws {
+        let player = AudioPlayerService()
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .audioMessage(
+                text: "Speaking now.",
+                attachmentId: "",
+                mimeType: "audio/wav",
+                durationSeconds: nil,
+                playbackBehavior: .playNow
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+            .withAudioPlayer(player)
+        player._setPlaybackStateForTesting(
+            playing: "audio-stream-\(config.itemID)",
+            loading: nil
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
+
+        let strip = try #require(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: view))
+        let playButton = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "chat.timeline.row.\(config.itemID).audio.play"
+        })
+        #expect(playButton.accessibilityLabel == "Pause audio")
+
+        playButton.sendActions(for: .touchUpInside)
+
+        #expect(player.isPaused)
+        #expect(player.playingItemID == "audio-stream-\(config.itemID)")
+    }
+
 }

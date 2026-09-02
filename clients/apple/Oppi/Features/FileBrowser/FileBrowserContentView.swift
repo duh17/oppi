@@ -543,6 +543,7 @@ struct FileBrowserContentView: View {
             workspaceContext: .init(
                 workspaceID: workspaceId,
                 serverID: serverId,
+                worktreeId: worktreeId,
                 serverBaseURL: api.baseURL,
                 fetchWorkspaceFile: { [workspaceId, worktreeId, source] wsID, filePath in
                     if source == .hostFile {

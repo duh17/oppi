@@ -77,23 +77,29 @@ struct AudioLyricsPlayerView: View {
         AudioLyrics.presentationCurrentIndex(in: lines, at: karaokeTime)
     }
 
+    private var matchesPlayback: Bool {
+        guard let audioPlayer else { return false }
+        return audioPlayer.playingItemID == itemID
+            || audioPlayer.isStreamingPlaybackActive(itemID: itemID)
+    }
+
     private var karaokeTime: TimeInterval? {
-        guard let audioPlayer, audioPlayer.playingItemID == itemID else { return nil }
-        return audioPlayer.currentTime
+        guard matchesPlayback else { return nil }
+        return audioPlayer?.currentTime
     }
 
     private var elapsed: TimeInterval {
         _ = progressTick
-        guard let audioPlayer, audioPlayer.playingItemID == itemID else { return 0 }
-        return audioPlayer.currentTime
+        guard matchesPlayback else { return 0 }
+        return audioPlayer?.currentTime ?? 0
     }
 
     private var duration: TimeInterval? {
-        audioPlayer?.playingItemID == itemID ? audioPlayer?.duration : nil
+        matchesPlayback ? audioPlayer?.duration : nil
     }
 
     private var isPlaying: Bool {
-        audioPlayer?.playingItemID == itemID && audioPlayer?.isPaused == false
+        matchesPlayback && audioPlayer?.isPaused == false
     }
 
     var body: some View {
@@ -216,7 +222,7 @@ struct AudioLyricsPlayerView: View {
                     .frame(width: 56, height: 56)
             }
             .accessibilityLabel(isPlaying ? "Pause" : "Play")
-            if audioPlayer?.playingItemID != itemID, openFile != nil {
+            if !matchesPlayback, openFile != nil {
                 Button("Open file", action: { openFile?() })
                     .font(.subheadline)
                     .foregroundStyle(.themePurple)
@@ -237,7 +243,8 @@ struct AudioLyricsPlayerView: View {
             play()
             return
         }
-        if audioPlayer.playingItemID == itemID {
+        if audioPlayer.playingItemID == itemID
+            || audioPlayer.isStreamingPlaybackActive(itemID: itemID) {
             if audioPlayer.isPaused {
                 audioPlayer.resume()
             } else {

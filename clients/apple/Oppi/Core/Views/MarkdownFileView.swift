@@ -18,6 +18,7 @@ struct MarkdownFileView: View {
     let filePath: String?
     let presentation: FileContentPresentation
     var workspaceID: String?
+    var worktreeId: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
@@ -51,6 +52,7 @@ struct MarkdownFileView: View {
         guard let workspaceID, let serverBaseURL, let fetchWorkspaceFile else { return nil }
         return .init(
             workspaceID: workspaceID,
+            worktreeId: worktreeId,
             serverBaseURL: serverBaseURL,
             fetchWorkspaceFile: fetchWorkspaceFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
@@ -78,7 +80,7 @@ struct MarkdownFileView: View {
                 workspaceContext: fullScreenWorkspaceContext
             ),
             reviewCommentSelectionContext: reviewContext,
-            renderedViewFactory: { [content, filePath, workspaceID, serverBaseURL, fetchWorkspaceFile, makeMarkdownVideoSource, makeMarkdownAudioSource, audioPlayer, presentation, reviewContext, reviewSourceContext] in
+            renderedViewFactory: { [content, filePath, workspaceID, worktreeId, serverBaseURL, fetchWorkspaceFile, makeMarkdownVideoSource, makeMarkdownAudioSource, audioPlayer, presentation, reviewContext, reviewSourceContext] in
                 let themeID = ThemeRuntimeState.currentThemeID()
                 if presentation == .document {
                     return NativeFullScreenMarkdownBody(
@@ -88,6 +90,7 @@ struct MarkdownFileView: View {
                         reviewCommentSelectionRouter: reviewContext?.dispatcher,
                         reviewCommentSourceContext: reviewSourceContext,
                         workspaceID: workspaceID,
+                        worktreeId: worktreeId,
                         serverBaseURL: serverBaseURL,
                         sourceFilePath: filePath,
                         fetchWorkspaceFile: fetchWorkspaceFile,
@@ -111,6 +114,7 @@ struct MarkdownFileView: View {
                     reviewCommentSelectionRouter: reviewContext?.dispatcher,
                     reviewCommentSourceContext: reviewSourceContext,
                     workspaceID: workspaceID,
+                    worktreeId: worktreeId,
                     serverBaseURL: serverBaseURL,
                     sourceFilePath: filePath
                 ))

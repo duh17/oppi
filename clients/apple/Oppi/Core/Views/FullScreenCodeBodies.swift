@@ -1856,6 +1856,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private var textSelectionEnabled: Bool
     private let serverID: String?
     private let workspaceID: String?
+    private let worktreeId: String?
     private let sessionID: String?
     private let serverBaseURL: URL?
     private let sourceFilePath: String?
@@ -1924,6 +1925,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         textSelectionEnabled: Bool = true,
         serverID: String? = nil,
         workspaceID: String? = nil,
+        worktreeId: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
@@ -1948,6 +1950,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.textSelectionEnabled = textSelectionEnabled
         self.serverID = serverID
         self.workspaceID = workspaceID
+        self.worktreeId = worktreeId
         self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
@@ -2316,6 +2319,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             reviewCommentSourceContext: reviewCommentSourceContext,
             serverID: serverID,
             workspaceID: workspaceID,
+            worktreeId: worktreeId,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,

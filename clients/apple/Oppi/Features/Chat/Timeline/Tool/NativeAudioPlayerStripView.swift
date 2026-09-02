@@ -184,9 +184,9 @@ final class NativeAudioPlayerStripView: UIView {
 
         let elapsed: TimeInterval
         let duration: TimeInterval?
-        if let itemID, let audioPlayer, audioPlayer.playingItemID == itemID {
-            elapsed = audioPlayer.currentTime
-            duration = audioPlayer.duration ?? durationSeconds
+        if isMatchingPlayback() {
+            elapsed = audioPlayer?.currentTime ?? 0
+            duration = audioPlayer?.duration ?? durationSeconds
         } else {
             elapsed = 0
             duration = durationSeconds
@@ -199,9 +199,14 @@ final class NativeAudioPlayerStripView: UIView {
         }
     }
 
-    private func isActivePlaying() -> Bool {
+    private func isMatchingPlayback() -> Bool {
         guard let itemID, let audioPlayer else { return false }
-        return audioPlayer.playingItemID == itemID && !audioPlayer.isPaused
+        return audioPlayer.playingItemID == itemID
+            || audioPlayer.isStreamingPlaybackActive(itemID: itemID)
+    }
+
+    private func isActivePlaying() -> Bool {
+        isMatchingPlayback() && audioPlayer?.isPaused == false
     }
 
     private func playAccessibilityLabel() -> String {

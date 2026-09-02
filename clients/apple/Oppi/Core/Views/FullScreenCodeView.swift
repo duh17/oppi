@@ -281,6 +281,7 @@ indirect enum FullScreenCodeContent {
     struct WorkspaceContext: @unchecked Sendable {
         let workspaceID: String
         let serverID: String?
+        let worktreeId: String?
         let serverBaseURL: URL
         let fetchWorkspaceFile: (_ workspaceID: String, _ path: String) async throws -> Data
         let sessionID: String?
@@ -292,6 +293,7 @@ indirect enum FullScreenCodeContent {
         init(
             workspaceID: String,
             serverID: String? = nil,
+            worktreeId: String? = nil,
             serverBaseURL: URL,
             fetchWorkspaceFile: @escaping (_ workspaceID: String, _ path: String) async throws -> Data,
             sessionID: String? = nil,
@@ -302,6 +304,7 @@ indirect enum FullScreenCodeContent {
         ) {
             self.workspaceID = workspaceID
             self.serverID = serverID
+            self.worktreeId = worktreeId
             self.serverBaseURL = serverBaseURL
             self.fetchWorkspaceFile = fetchWorkspaceFile
             self.sessionID = sessionID

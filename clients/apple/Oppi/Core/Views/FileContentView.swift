@@ -19,6 +19,7 @@ struct FileContentView: View {
     let isError: Bool
     let presentation: FileContentPresentation
     var workspaceID: String?
+    var worktreeId: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
@@ -35,6 +36,7 @@ struct FileContentView: View {
         isError: Bool = false,
         presentation: FileContentPresentation = .inline,
         workspaceID: String? = nil,
+        worktreeId: String? = nil,
         serverBaseURL: URL? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
@@ -47,6 +49,7 @@ struct FileContentView: View {
         self.isError = isError
         self.presentation = presentation
         self.workspaceID = workspaceID
+        self.worktreeId = worktreeId
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
@@ -73,6 +76,7 @@ struct FileContentView: View {
                 filePath: filePath,
                 presentation: presentation,
                 workspaceID: workspaceID,
+                worktreeId: worktreeId,
                 serverBaseURL: serverBaseURL,
                 fetchWorkspaceFile: fetchWorkspaceFile,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,

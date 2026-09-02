@@ -224,8 +224,33 @@ struct MarkdownInlineAudioTests {
             sessionID: "session-a",
             worktreeID: "wt-b"
         )
+        let markdownWorktreeA = AudioPlaybackItemID.markdown(
+            embed: MarkdownAudioEmbed(
+                reference: ResourceReference(
+                    target: path,
+                    sourceServerID: "server-a",
+                    workspaceID: "workspace-a",
+                    sourceSessionID: "session-a",
+                    fileCandidatePath: path
+                )
+            ),
+            worktreeID: "wt-a"
+        )
+        let markdownWorktreeB = AudioPlaybackItemID.markdown(
+            embed: MarkdownAudioEmbed(
+                reference: ResourceReference(
+                    target: path,
+                    sourceServerID: "server-a",
+                    workspaceID: "workspace-a",
+                    sourceSessionID: "session-a",
+                    fileCandidatePath: path
+                )
+            ),
+            worktreeID: "wt-b"
+        )
         #expect(workspaceA != workspaceB)
         #expect(worktreeA != worktreeB)
+        #expect(markdownWorktreeA != markdownWorktreeB)
     }
 
     @MainActor
@@ -317,6 +342,45 @@ struct MarkdownInlineAudioTests {
         }
         #expect(didResolve)
         #expect(resolved >= 1)
+    }
+
+    @MainActor
+    @Test("full-screen markdown audio IDs include worktree")
+    func fullScreenMarkdownAudioIDsIncludeWorktree() async throws {
+        func stripIdentifier(worktreeId: String) async throws -> String {
+            let body = NativeFullScreenMarkdownBody(
+                content: "Listen.\n\n![[clip.m4a]]\n\nDone.",
+                palette: ThemeID.dark.palette,
+                reviewCommentSelectionRouter: nil,
+                reviewCommentSourceContext: nil,
+                serverID: "server-a",
+                workspaceID: "workspace-a",
+                worktreeId: worktreeId,
+                sessionID: "session-a",
+                serverBaseURL: try #require(URL(string: "https://server.example.com")),
+                makeMarkdownAudioSource: { _ in throw CocoaError(.fileNoSuchFile) },
+                audioPlayer: AudioPlayerService()
+            )
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+            window.addSubview(body)
+            body.frame = window.bounds
+            window.makeKeyAndVisible()
+            defer { window.isHidden = true }
+
+            body.layoutIfNeeded()
+            let mounted = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+                timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: body) != nil
+            }
+            #expect(mounted)
+            let strip = try #require(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: body))
+            return try #require(strip.accessibilityIdentifier)
+        }
+
+        let worktreeA = try await stripIdentifier(worktreeId: "wt-a")
+        let worktreeB = try await stripIdentifier(worktreeId: "wt-b")
+        #expect(worktreeA != worktreeB)
+        #expect(worktreeA.contains("wt-a"))
+        #expect(worktreeB.contains("wt-b"))
     }
 
     private func audioEmbeds(in segments: [FlatSegment]) -> [MarkdownAudioEmbed] {

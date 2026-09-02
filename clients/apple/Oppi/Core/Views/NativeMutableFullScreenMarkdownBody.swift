@@ -67,6 +67,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private var textSelectionEnabled: Bool
     private var serverID: String?
     private var workspaceID: String?
+    private var worktreeId: String?
     private var sessionID: String?
     private var serverBaseURL: URL?
     private var sourceFilePath: String?
@@ -110,6 +111,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         textSelectionEnabled: Bool = true,
         serverID: String? = nil,
         workspaceID: String? = nil,
+        worktreeId: String? = nil,
         sessionID: String? = nil,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
@@ -129,6 +131,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.textSelectionEnabled = textSelectionEnabled
         self.serverID = serverID
         self.workspaceID = workspaceID
+        self.worktreeId = worktreeId
         self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
@@ -213,6 +216,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             reviewCommentSourceContext: reviewCommentSourceContext,
             serverID: serverID,
             workspaceID: workspaceID,
+            worktreeId: worktreeId,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
@@ -231,6 +235,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         serverID: String?,
         workspaceID: String?,
+        worktreeId: String? = nil,
         sessionID: String?,
         serverBaseURL: URL?,
         sourceFilePath: String?,
@@ -248,6 +253,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             || self.reviewCommentSourceContext != reviewCommentSourceContext
             || self.serverID != serverID
             || self.workspaceID != workspaceID
+            || self.worktreeId != worktreeId
             || self.sessionID != sessionID
             || self.serverBaseURL != serverBaseURL
             || self.sourceFilePath != sourceFilePath
@@ -256,6 +262,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.reviewCommentSourceContext = reviewCommentSourceContext
         self.serverID = serverID
         self.workspaceID = workspaceID
+        self.worktreeId = worktreeId
         self.sessionID = sessionID
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
@@ -307,6 +314,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             reviewCommentSourceContext: reviewCommentSourceContext,
             serverID: serverID,
             workspaceID: workspaceID,
+            worktreeId: worktreeId,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
@@ -340,6 +348,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             textSelectionEnabled: textSelectionEnabled,
             serverID: serverID,
             workspaceID: workspaceID,
+            worktreeId: worktreeId,
             sessionID: sessionID,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,

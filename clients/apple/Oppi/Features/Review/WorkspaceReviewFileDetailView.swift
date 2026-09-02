@@ -370,7 +370,8 @@ struct WorkspaceReviewFileDetailView: View {
                 FileContentView(
                     content: diff.currentText,
                     filePath: currentFile.path,
-                    presentation: .document
+                    presentation: .document,
+                    worktreeId: worktreeId
                 )
                 .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -420,7 +421,8 @@ struct WorkspaceReviewFileDetailView: View {
         FileContentView(
             content: diff.currentText,
             filePath: currentFile.path,
-            presentation: .document
+            presentation: .document,
+            worktreeId: worktreeId
         )
         .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
     }
