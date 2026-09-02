@@ -18,7 +18,7 @@ Expanded tool rows understand `details.media[]` for stored image and video attac
 
 Attachments combine structured metadata with server-owned bytes. They are not markdown URLs.
 
-Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` resolves image file paths and remote images. Markdown `![[video-file]]` and `![[audio-file]]` embed an existing Oppi-backed file; they do not address stored attachments. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
+Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` and `![[]]` both embed an existing Oppi-backed file when the file type is image, audio, or video. They do not address stored attachments. File `[label](path)` and `[[path]]` stay ordinary resource links. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
 
 ## Deployment model and trust boundary
 
@@ -188,18 +188,20 @@ Current client behavior:
 
 ## Markdown image resolution
 
-Markdown `![]()` continues to resolve images through the existing image resolver.
+Markdown `![]()` and `![[]]` embed Oppi-backed images through the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load. Owner-host files use authenticated full-byte GET `/files/raw` (not range). Sandbox sessions remap guest POSIX paths the same way inline AV does and never use owner `/files/raw` for guest paths.
 
 | Markdown source                        | Current behavior                                                                                            |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `![x](images/a.png)`                   | Resolves as a workspace-relative file when the renderer has workspace context.                              |
+| `![[docs/a.png]]`                      | Same native image view as `![]()` for an Oppi-backed image.                                                 |
 | `![x](../images/a.png)`                | Resolves relative to the markdown file directory when the source file path is known.                        |
-| `![x](/abs/path.png)`                  | Not fetched. Use a workspace-relative path or stored attachment.                                            |
-| `![x](~/a.png)`                        | Not fetched. Use a workspace-relative path or stored attachment.                                            |
-| `![x](file:///abs/path.png)`           | Not fetched. Use a workspace-relative path or stored attachment.                                            |
+| `![x](/abs/path.png)`                  | Owner-host image. Authenticated GET `/files/raw` on render.                                                 |
+| `![x](~/a.png)`                        | Owner-host image. Authenticated GET `/files/raw` on render.                                                 |
+| `![x](file:///abs/path.png)`           | Local `file://` owner-host image. Authenticated GET `/files/raw` on render.                                 |
 | `![x](https://example.com/a.png)`      | Shows a tap-to-load remote image prompt before fetching.                                                    |
 | `![x](http://...)`, localhost, LAN IPs | Blocked by the remote image policy.                                                                         |
 | `![x](data:...)`                       | Skipped by the markdown image resolver.                                                                     |
+| `![x](doc.pdf)`, `![[readme.md]]`      | File link. No leftover visible `!`.                                                                         |
 
 Image-only paragraphs become standalone image views. Mixed paragraphs split into text/image/text segments. Raster images are downsampled. SVG uses the existing SVG image path on clients that implement it.
 
@@ -207,17 +209,17 @@ Markdown image syntax does not resolve stored tool attachments. A tool that retu
 
 ## Markdown inline video
 
-Use `![[video-file]]` to embed a current workspace, worktree, session-reported, or exact owner host video file in assistant Markdown and the full-screen Markdown reader. Use `[[video-file]]` when the file must remain an ordinary navigable link.
+Use `![[video-file]]` or `![label](video-file)` to embed a current workspace, worktree, session-reported, or exact owner host video file in assistant Markdown and the full-screen Markdown reader. Use `[[video-file]]` or `[label](video-file)` when the file must remain an ordinary navigable link.
 
-Inline video uses Oppi's authenticated range-streaming player. Playback never starts automatically. The player keeps native controls, full-screen presentation, Picture in Picture, and an open-file fallback when playback fails. Oppi does not embed remote video sites, arbitrary URLs, HTML `<video>`, or stored attachment IDs through this syntax.
+Inline video uses Oppi's authenticated range-streaming player. Playback never starts automatically. The player keeps native controls, full-screen presentation, Picture in Picture, and an open-file fallback when playback fails. Oppi does not embed remote video sites, arbitrary URLs, HTML `<video>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become a video segment and do not start a fetch. Export still classifies Oppi-backed video without live workspace context so the static card appears; source export keeps the original Markdown.
 
 The player always reserves 16:9 geometry because wiki-file syntax has no dimensions. Playback metadata never resizes an embed, including later remounts. Portrait and landscape clips letterbox inside that slot. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
 
 ## Markdown inline audio
 
-Use `![[audio-file]]` to embed a current workspace, worktree, session-reported, or exact owner host audio file as a compact native player strip. Use `[[audio-file]]` when the file must remain an ordinary navigable link that opens the lyrics-first full-screen player.
+Use `![[audio-file]]` or `![label](audio-file)` to embed a current workspace, worktree, session-reported, or exact owner host audio file as a compact native player strip. Use `[[audio-file]]` or `[label](audio-file)` when the file must remain an ordinary navigable link that opens the lyrics-first full-screen player.
 
-Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. Wiki audio without a transcript shows “No lyrics”. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, or stored attachment IDs through this syntax. Failure keeps the strip up with “Audio unavailable” and an open-file fallback. Voice `audio_presentation` rows use the same strip plus the transcript as message text.
+Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. Wiki audio without a transcript shows “No lyrics”. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with “Audio unavailable” and an open-file fallback. Voice `audio_presentation` rows use the same strip plus the transcript as message text.
 
 ## Extension authoring API
 

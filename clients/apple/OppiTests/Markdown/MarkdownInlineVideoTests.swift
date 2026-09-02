@@ -33,7 +33,71 @@ struct MarkdownInlineVideoTests {
         }
         let uniqueLinkTargets = Set(renderedText.flatMap { $0.runs.compactMap(\.link) })
         #expect(uniqueLinkTargets.count == 2)
-        #expect(renderedText.map { String($0.characters) }.joined().contains("!"))
+        #expect(!renderedText.map { String($0.characters) }.joined().contains("!"))
+    }
+
+    @Test("markdown bang video embeds the same native player as wiki bang")
+    func markdownBangVideoEmbedsLikeWikiBang() throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let wiki = build("![[clip.mp4]]", baseURL: baseURL)
+        let markdown = build("![x](clip.mp4)", baseURL: baseURL)
+        let hostMarkdown = build("![x](/tmp/clip.mp4)", baseURL: baseURL)
+
+        let wikiVideos = wiki.segments.compactMap { segment -> MarkdownVideoEmbed? in
+            guard case .video(let embed) = segment else { return nil }
+            return embed
+        }
+        let markdownVideos = markdown.segments.compactMap { segment -> MarkdownVideoEmbed? in
+            guard case .video(let embed) = segment else { return nil }
+            return embed
+        }
+        let hostVideos = hostMarkdown.segments.compactMap { segment -> MarkdownVideoEmbed? in
+            guard case .video(let embed) = segment else { return nil }
+            return embed
+        }
+        #expect(wikiVideos.count == 1)
+        #expect(markdownVideos.count == 1)
+        #expect(hostVideos.count == 1)
+        #expect(wikiVideos.first?.reference.fileCandidatePath == "clip.mp4")
+        #expect(markdownVideos.first?.reference.fileCandidatePath == "clip.mp4")
+        #expect(markdownVideos.first?.reference.kind == .workspaceFile)
+        #expect(hostVideos.first?.reference.kind == .hostFile)
+        #expect(hostVideos.first?.reference.fileCandidatePath == "/tmp/clip.mp4")
+        #expect(markdown.segments.allSatisfy { if case .image = $0 { return false }; return true })
+    }
+
+    @Test("remote AV markdown bang, LAN, data, attachment, and HTML make no video and no image fetch URL")
+    func remoteAndUnsafeTargetsNeverBecomeVideoOrLoadableImage() throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let markdown = """
+        ![x](https://example.com/a.mp4)
+
+        ![x](http://192.168.1.20/a.mp4)
+
+        ![x](data:video/mp4;base64,AAAA)
+
+        ![x](attachment:stored-video)
+
+        <video src="https://example.com/demo.mp4"></video>
+        """
+        let segments = FlatSegment.build(
+            from: parseCommonMark(markdown),
+            themeID: .dark,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        #expect(segments.allSatisfy { segment in
+            if case .video = segment { return false }
+            if case .audio = segment { return false }
+            return true
+        })
+        let imageURLs = segments.compactMap { segment -> URL? in
+            guard case .image(_, let url) = segment else { return nil }
+            return url
+        }
+        #expect(imageURLs.isEmpty)
     }
 
     @Test("host files are eligible but remote and attachment-like targets never embed")

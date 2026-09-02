@@ -245,6 +245,11 @@ final class AssistantMarkdownContentView: UIView {
         didSet { segmentApplier.fetchSessionFile = fetchSessionFile }
     }
 
+    /// Owner-host image fetcher. Sandbox callers remap guest POSIX paths.
+    var fetchHostFile: ((_ path: String) async throws -> Data)? {
+        didSet { segmentApplier.fetchHostFile = fetchHostFile }
+    }
+
     /// Resolves policy-checked wiki-file video embeds through existing
     /// authenticated media endpoints.
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? {

@@ -2653,7 +2653,7 @@ struct FlatSegmentImageResolutionTests {
         }
     }
 
-    @Test func absolutePathWithoutSessionContextFallsBackToAltText() {
+    @Test func absoluteHostPathEmbedsAsAuthenticatedHostImage() throws {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Fig", source: "/absolute/path/image.png")])
         ]
@@ -2662,11 +2662,15 @@ struct FlatSegmentImageResolutionTests {
             workspaceID: workspaceID,
             serverBaseURL: baseURL
         )
-        if case .text = segments[0] {
-            // Without session context, absolute filesystem paths cannot be resolved safely.
-        } else {
-            Issue.record("Expected fallback to text without session context")
+        #expect(segments.count == 1)
+        guard case .image(let alt, let url) = segments[0] else {
+            Issue.record("Expected host image segment, got \(segments[0])")
+            return
         }
+        #expect(alt == "Fig")
+        #expect(HostFileURL.parse(url) == "/absolute/path/image.png")
+        #expect(WorkspaceFileURL.parse(url) == nil)
+        #expect(RemoteMarkdownImagePolicy.decision(for: url) == .internalImageURL)
     }
 
     @Test func imageAndTextParagraphsAreSeparatedCorrectly() {
@@ -2732,7 +2736,7 @@ struct FlatSegmentImageResolutionTests {
         }
     }
 
-    @Test func absolutePathWithSessionContextDoesNotResolveImage() {
+    @Test func absoluteHostPathWithSessionContextEmbedsAsHostImage() throws {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Fig", source: "/absolute/image.png")])
         ]
@@ -2743,13 +2747,16 @@ struct FlatSegmentImageResolutionTests {
             serverBaseURL: baseURL,
             sourceDirectory: "docs"
         )
-        #expect(segments.allSatisfy { segment in
-            if case .image = segment { return false }
-            return true
-        })
+        #expect(segments.count == 1)
+        guard case .image(_, let url) = segments[0] else {
+            Issue.record("Expected host image segment, got \(segments[0])")
+            return
+        }
+        #expect(HostFileURL.parse(url) == "/absolute/image.png")
+        #expect(WorkspaceFileURL.parse(url) == nil)
     }
 
-    @Test func fileURLWithSessionContextDoesNotResolveImage() {
+    @Test func localFileURLEmbedsAsHostImage() throws {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Local", source: "file:///Users/example/workspace/oppi/downloads/local.jpeg")])
         ]
@@ -2759,10 +2766,13 @@ struct FlatSegmentImageResolutionTests {
             sessionID: "sess-123",
             serverBaseURL: baseURL
         )
-        #expect(segments.allSatisfy { segment in
-            if case .image = segment { return false }
-            return true
-        })
+        #expect(segments.count == 1)
+        guard case .image(_, let url) = segments[0] else {
+            Issue.record("Expected host image segment, got \(segments[0])")
+            return
+        }
+        #expect(HostFileURL.parse(url) == "/Users/example/workspace/oppi/downloads/local.jpeg")
+        #expect(WorkspaceFileURL.parse(url) == nil)
     }
 
     @Test func httpsURLIgnoresSourceDirectory() {
@@ -3245,6 +3255,158 @@ struct AssistantMarkdownInlineImageRenderingTests {
     }
 }
 
+// MARK: - Bang-embed unification
+
+@Suite("Markdown bang embed unification")
+struct MarkdownBangEmbedUnificationTests {
+    private let baseURL = URL(string: "https://server.example.com")! // swiftlint:disable:this force_unwrapping
+
+    @Test func wikiBangImageEmbedsLikeMarkdownBang() throws {
+        let wiki = FlatSegment.build(
+            from: parseCommonMark("![[docs/a.png]]"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        let markdown = FlatSegment.build(
+            from: parseCommonMark("![a](docs/a.png)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+
+        guard case .image(let wikiAlt, let wikiURL) = wiki.first else {
+            Issue.record("Expected wiki bang image, got \(wiki)")
+            return
+        }
+        guard case .image(let markdownAlt, let markdownURL) = markdown.first else {
+            Issue.record("Expected markdown bang image, got \(markdown)")
+            return
+        }
+        #expect(wikiAlt == "docs/a.png" || wikiAlt == "a.png")
+        #expect(markdownAlt == "a")
+        #expect(WorkspaceFileURL.parse(wikiURL)?.filePath == "docs/a.png")
+        #expect(WorkspaceFileURL.parse(markdownURL)?.filePath == "docs/a.png")
+        #expect(wiki.allSatisfy { if case .text = $0 { return false }; return true })
+    }
+
+    @Test func hostWikiAndMarkdownBangImagesUseHostFileURL() throws {
+        let wiki = FlatSegment.build(
+            from: parseCommonMark("![[/tmp/a.png]]"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        let markdown = FlatSegment.build(
+            from: parseCommonMark("![a](/tmp/a.png)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        let home = FlatSegment.build(
+            from: parseCommonMark("![home](~/Pictures/a.png)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+
+        guard case .image(_, let wikiURL) = wiki.first else {
+            Issue.record("Expected host wiki image, got \(wiki)")
+            return
+        }
+        guard case .image(_, let markdownURL) = markdown.first else {
+            Issue.record("Expected host markdown image, got \(markdown)")
+            return
+        }
+        guard case .image(_, let homeURL) = home.first else {
+            Issue.record("Expected home markdown image, got \(home)")
+            return
+        }
+        #expect(HostFileURL.parse(wikiURL) == "/tmp/a.png")
+        #expect(HostFileURL.parse(markdownURL) == "/tmp/a.png")
+        #expect(HostFileURL.parse(homeURL) == "~/Pictures/a.png")
+        #expect(WorkspaceFileURL.parse(wikiURL) == nil)
+        #expect(RemoteMarkdownImagePolicy.decision(for: wikiURL) == .internalImageURL)
+    }
+
+    @Test func nonMediaBangBecomesFileLinkWithoutLeftoverBang() throws {
+        let wiki = FlatSegment.build(
+            from: parseCommonMark("![[notes/readme.md]]"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        let markdown = FlatSegment.build(
+            from: parseCommonMark("![x](doc.pdf)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+
+        #expect(wiki.count == 1)
+        #expect(markdown.count == 1)
+        guard case .text(let wikiText) = wiki[0] else {
+            Issue.record("Expected wiki file link, got \(wiki)")
+            return
+        }
+        guard case .text(let markdownText) = markdown[0] else {
+            Issue.record("Expected markdown file link, got \(markdown)")
+            return
+        }
+        #expect(!String(wikiText.characters).contains("!"))
+        #expect(!String(markdownText.characters).contains("!"))
+        #expect(wikiText.runs.contains { $0.link != nil })
+        #expect(markdownText.runs.contains { $0.link != nil })
+        let wikiRef = try #require(wikiText.runs.compactMap(\.link).compactMap(ResourceReferenceURL.parse).first)
+        let markdownRef = try #require(markdownText.runs.compactMap(\.link).compactMap(ResourceReferenceURL.parse).first)
+        #expect(wikiRef.fileCandidatePath == "notes/readme.md")
+        #expect(markdownRef.fileCandidatePath == "doc.pdf")
+    }
+
+    @Test func ordinaryWikiVideoStaysAFileLink() throws {
+        let segments = FlatSegment.build(
+            from: parseCommonMark("[[clip.mp4]]"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        #expect(segments.allSatisfy { segment in
+            if case .video = segment { return false }
+            if case .image = segment { return false }
+            return true
+        })
+        guard case .text(let text) = segments.first else {
+            Issue.record("Expected file link, got \(segments)")
+            return
+        }
+        #expect(text.runs.contains { $0.link != nil })
+    }
+
+    @Test func unsupportedWikiBangKeepsLiteralBang() throws {
+        let segments = FlatSegment.build(
+            from: parseCommonMark("![[https://example.com/a.png]]"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        guard case .text(let text) = segments.first else {
+            Issue.record("Expected literal fail-closed text, got \(segments)")
+            return
+        }
+        #expect(String(text.characters).contains("!"))
+        #expect(String(text.characters).contains("[[https://example.com/a.png]]"))
+    }
+}
+
 // MARK: - Remote markdown image policy
 
 @Suite("Remote markdown image policy")
@@ -3253,6 +3415,14 @@ struct RemoteMarkdownImagePolicyTests {
     @Test func allowsPublicHTTPSHosts() throws {
         let url = try #require(URL(string: "https://images.example.com/photo.png"))
         #expect(RemoteMarkdownImagePolicy.decision(for: url) == .loadableRemote)
+    }
+
+    @Test func hostFileURLsAreInternalAndNeverRemote() throws {
+        let url = try #require(HostFileURL.make(filePath: "/tmp/a.png"))
+        #expect(RemoteMarkdownImagePolicy.decision(for: url) == .internalImageURL)
+        #expect(HostFileURL.parse(url) == "/tmp/a.png")
+        #expect(WorkspaceFileURL.parse(url) == nil)
+        #expect(SessionFileURL.parse(url) == nil)
     }
 
     @Test func blocksPlainHTTPHosts() throws {
@@ -3357,6 +3527,44 @@ struct NativeMarkdownImageViewTests {
 
         let labels = timelineAllViews(in: view).compactMap { $0 as? UILabel }
         #expect(labels.contains { $0.text?.contains("remote image blocked") == true && !$0.isHidden })
+    }
+
+    @Test func hostFileURLUsesAuthenticatedFetchAndNeverRemote() async throws {
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 160)
+        view.layoutIfNeeded()
+
+        let imageData = try #require(Self.makeRedGreenImage().pngData())
+        var hostFetchCount = 0
+        var remoteFetchCount = 0
+        view.fetchRemoteImage = { _ in
+            remoteFetchCount += 1
+            Issue.record("Host file images must not use the remote image fetcher")
+            return Data()
+        }
+
+        let url = try #require(HostFileURL.make(filePath: "/tmp/a.png"))
+        view.apply(
+            url: url,
+            alt: "Host",
+            fetchWorkspaceFile: { _, _ in
+                Issue.record("Host file images must not use the workspace fetcher")
+                return Data()
+            },
+            fetchSessionFile: nil,
+            fetchHostFile: { path in
+                hostFetchCount += 1
+                #expect(path == "/tmp/a.png")
+                return imageData
+            }
+        )
+
+        let loaded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            timelineAllImageViews(in: view).contains { !$0.isHidden && $0.image != nil }
+        }
+        #expect(loaded)
+        #expect(hostFetchCount == 1)
+        #expect(remoteFetchCount == 0)
     }
 
     @Test func loadedRasterIsAnAltLabeledImageButtonAndAccessibilityActivationOpensPreview() async throws {
@@ -3563,7 +3771,9 @@ struct NativeMarkdownImageViewTests {
         #expect(!view.isHidden)
     }
 
-    @Test func fullScreenMarkdownBodyDoesNotFetchSessionAbsolutePaths() {
+    @Test func fullScreenMarkdownBodyEmbedsHostAbsolutePathsWithoutSessionFetcher() async throws {
+        let imageData = try #require(Self.makeRedGreenImage().pngData())
+        var hostFetchCount = 0
         let body = NativeFullScreenMarkdownBody(
             content: "![Generated chart](/tmp/chart.png)",
             palette: ThemeID.dark.palette,
@@ -3572,10 +3782,18 @@ struct NativeMarkdownImageViewTests {
             workspaceID: "workspace-1",
             sessionID: "session-1",
             serverBaseURL: URL(string: "https://example.com/api")!,
-            fetchWorkspaceFile: nil,
+            fetchWorkspaceFile: { _, _ in
+                Issue.record("Host markdown images must not use the workspace fetcher")
+                return Data()
+            },
             fetchSessionFile: { _, _, _ in
                 Issue.record("Absolute markdown images must not use the session raw-file fetcher")
                 return Data()
+            },
+            fetchHostFile: { path in
+                hostFetchCount += 1
+                #expect(path == "/tmp/chart.png")
+                return imageData
             }
         )
 
@@ -3590,7 +3808,12 @@ struct NativeMarkdownImageViewTests {
         ])
         host.layoutIfNeeded()
 
-        #expect(timelineFirstView(ofType: NativeMarkdownImageView.self, in: body) == nil)
+        #expect(timelineFirstView(ofType: NativeMarkdownImageView.self, in: body) != nil)
+        let loaded = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            timelineAllImageViews(in: body).contains { !$0.isHidden && $0.image != nil }
+        }
+        #expect(loaded)
+        #expect(hostFetchCount == 1)
     }
 
     private static func makeRedGreenImage() -> UIImage {

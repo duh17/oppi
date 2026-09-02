@@ -76,6 +76,37 @@ extension ChatTimelineCollectionHost.Controller {
                 }
             },
             fetchSessionFile: nil,
+            fetchHostFile: connection?.apiClient.map { client in
+                return { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] path in
+                    let route = MarkdownVideoMediaSourceRoute.resolve(
+                        filePath: path,
+                        kind: .hostFile,
+                        referenceWorkspaceID: workspaceId,
+                        workspaceID: workspaceId,
+                        sessionID: sessionId,
+                        worktreeID: firstCheckout,
+                        workspaceRuntime: sourceWorkspaceRuntime
+                    )
+                    switch route {
+                    case .host(let hostPath):
+                        return try await client.browseHostFile(path: hostPath)
+                    case .session(let workspaceID, let sessionID, let sessionPath):
+                        return try await client.getSessionFileData(
+                            workspaceId: workspaceID,
+                            sessionId: sessionID,
+                            path: sessionPath
+                        )
+                    case .workspace(let workspaceID, let workspacePath, let worktreeID):
+                        return try await client.fetchWorkspaceFile(
+                            workspaceID: workspaceID,
+                            path: workspacePath,
+                            worktreeId: worktreeID
+                        )
+                    case nil:
+                        throw APIError.server(status: 404, message: "Host image is unavailable")
+                    }
+                }
+            },
             makeMarkdownVideoSource: connection.map { connection in
                 { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
                     try await connection.makeMarkdownVideoMediaSourceWhenReady(

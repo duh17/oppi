@@ -219,7 +219,7 @@ struct ResourceReference: Hashable, Sendable {
 /// Authenticated file reference carried by a native Markdown video segment.
 ///
 /// This type cannot represent a remote URL or stored attachment ID: those
-/// targets fail wiki-link classification before an embed is constructed.
+/// targets fail origin classification before an embed is constructed.
 struct MarkdownVideoEmbed: Hashable, Sendable {
     let reference: ResourceReference
 
@@ -236,7 +236,7 @@ struct MarkdownVideoEmbed: Hashable, Sendable {
 
 /// Authenticated file reference carried by a native Markdown audio segment.
 ///
-/// Remote URLs, HTML audio, and stored attachment IDs fail wiki-link
+/// Remote URLs, HTML audio, and stored attachment IDs fail origin
 /// classification before an embed is constructed.
 struct MarkdownAudioEmbed: Hashable, Sendable {
     let reference: ResourceReference
@@ -665,11 +665,12 @@ enum ResourceReferenceURL {
 }
 
 /// Rewrites wiki links and GitHub-style Markdown file links onto the shared
-/// `ResourceReference` pipeline.
+/// `ResourceReference` pipeline, and classifies bang embeds after origin checks.
 ///
 /// Supported wiki syntax:
 /// - `[[target]]`
 /// - `[[target|label]]`
+/// - `![[target]]` / `![alt](path)` embed Oppi-backed image, audio, or video
 ///
 /// The raw target stays unresolved. A workspace-relative file candidate travels
 /// beside it so tap-time resolution can compare that candidate with exact Oppi
@@ -1036,7 +1037,13 @@ enum MarkdownWikiLinkRewriter {
                     destination: destination,
                     context: context
                 ))
-            case .code, .image, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
+            case .image(let alt, let source):
+                result.append(contentsOf: rewriteMarkdownImage(
+                    alt: alt,
+                    source: source,
+                    context: context
+                ))
+            case .code, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
                 result.append(inline)
             }
         }
@@ -1069,19 +1076,16 @@ enum MarkdownWikiLinkRewriter {
             }
 
             let rawContent = String(text[contentStart ..< close.lowerBound])
-            if bangIndex != nil,
-               let embed = videoEmbed(forWikiLinkContent: rawContent, context: context) {
-                result.append(.videoEmbed(embed))
-            } else if bangIndex != nil,
-                      let embed = audioEmbed(forWikiLinkContent: rawContent, context: context) {
-                result.append(.audioEmbed(embed))
+            if bangIndex != nil {
+                result.append(contentsOf: rewriteWikiBang(
+                    rawContent: rawContent,
+                    literal: String(text[open.lowerBound ..< close.upperBound]),
+                    context: context
+                ))
+            } else if let rewritten = inline(forWikiLinkContent: rawContent, context: context) {
+                result.append(rewritten)
             } else {
-                if bangIndex != nil { result.append(.text("!")) }
-                if let rewritten = inline(forWikiLinkContent: rawContent, context: context) {
-                    result.append(rewritten)
-                } else {
-                    result.append(.text(String(text[open.lowerBound ..< close.upperBound])))
-                }
+                result.append(.text(String(text[open.lowerBound ..< close.upperBound])))
             }
             cursor = close.upperBound
         }
@@ -1110,72 +1114,230 @@ enum MarkdownWikiLinkRewriter {
         )
     }
 
-    private static func videoEmbed(
-        forWikiLinkContent rawContent: String,
-        context: RewriteContext
-    ) -> MarkdownVideoEmbed? {
-        guard let reference = resourceReference(
-            forWikiLinkContent: rawContent,
-            context: context
-        ), reference.lineAnchor == nil else {
-            return nil
-        }
-
-        // Classification, not workspace scope, decides embed eligibility so
-        // image/PDF export without chat context still gets a static video card.
-        let candidate = reference.fileCandidatePath
-            ?? resolvedWorkspacePath(target: reference.target, sourceDirectory: context.sourceDirectory)
-            ?? resolvedHostPath(reference.target)
-        guard let candidate,
-              FileType.detect(from: candidate).previewCategory == .video else {
-            return nil
-        }
-        if reference.fileCandidatePath == candidate {
-            return MarkdownVideoEmbed(reference: reference)
-        }
-        return MarkdownVideoEmbed(reference: ResourceReference(
-            target: reference.target,
-            sourceServerID: reference.sourceServerID,
-            workspaceID: reference.workspaceID,
-            sourceSessionID: reference.sourceSessionID,
-            fileCandidatePath: candidate,
-            kind: reference.kind,
-            lineAnchor: nil,
-            visibleLabel: reference.visibleLabel
-        ))
+    private enum BangEmbedDialect {
+        case wiki
+        case markdown
     }
 
-    private static func audioEmbed(
-        forWikiLinkContent rawContent: String,
+    /// Shared bang-embed decision: dialect parse → origin/scheme → allowed
+    /// ResourceReference or remote-image → FileType category.
+    private enum BangEmbedOutcome {
+        case image(source: String)
+        case video(MarkdownVideoEmbed)
+        case audio(MarkdownAudioEmbed)
+        case fileLink(MarkdownInline)
+        case remoteImage(source: String)
+        case failClosed
+    }
+
+    private static func rewriteWikiBang(
+        rawContent: String,
+        literal: String,
         context: RewriteContext
-    ) -> MarkdownAudioEmbed? {
-        guard let reference = resourceReference(
-            forWikiLinkContent: rawContent,
+    ) -> [MarkdownInline] {
+        let parsed = wikiLinkParts(rawContent)
+        switch bangEmbedOutcome(
+            rawTarget: parsed.target,
+            visibleLabel: parsed.label,
+            dialect: .wiki,
             context: context
-        ), reference.lineAnchor == nil else {
-            return nil
+        ) {
+        case .image(let source):
+            return [.image(alt: parsed.label, source: source)]
+        case .video(let embed):
+            return [.videoEmbed(embed)]
+        case .audio(let embed):
+            return [.audioEmbed(embed)]
+        case .fileLink(let inline):
+            return [inline]
+        case .remoteImage, .failClosed:
+            if let rewritten = inline(forWikiLinkContent: rawContent, context: context) {
+                return [.text("!"), rewritten]
+            }
+            return [.text("!"), .text(literal)]
+        }
+    }
+
+    private static func rewriteMarkdownImage(
+        alt: String,
+        source: String?,
+        context: RewriteContext
+    ) -> [MarkdownInline] {
+        guard let source, !source.isEmpty else {
+            return [.image(alt: alt, source: source)]
+        }
+        let trimmedAlt = alt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let visibleLabel = trimmedAlt.isEmpty ? source : trimmedAlt
+        switch bangEmbedOutcome(
+            rawTarget: source,
+            visibleLabel: visibleLabel,
+            dialect: .markdown,
+            context: context
+        ) {
+        case .image(let resolvedSource):
+            return [.image(alt: alt, source: resolvedSource)]
+        case .video(let embed):
+            return [.videoEmbed(embed)]
+        case .audio(let embed):
+            return [.audioEmbed(embed)]
+        case .fileLink(let inline):
+            return [inline]
+        case .remoteImage(let remoteSource):
+            return [.image(alt: alt, source: remoteSource)]
+        case .failClosed:
+            return [.image(alt: alt, source: nil)]
+        }
+    }
+
+    private static func bangEmbedOutcome(
+        rawTarget: String,
+        visibleLabel: String,
+        dialect: BangEmbedDialect,
+        context: RewriteContext
+    ) -> BangEmbedOutcome {
+        let trimmed = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failClosed }
+
+        if let scheme = rfc3986Scheme(of: trimmed), scheme != "file" {
+            if scheme == "https" || scheme == "http" {
+                return remoteImageOrFailClosedAV(trimmed)
+            }
+            return .failClosed
         }
 
-        let candidate = reference.fileCandidatePath
-            ?? resolvedWorkspacePath(target: reference.target, sourceDirectory: context.sourceDirectory)
-            ?? resolvedHostPath(reference.target)
-        guard let candidate,
-              FileType.detect(from: candidate).previewCategory == .audio else {
-            return nil
+        let classified: ClassifiedWikiTarget?
+        switch dialect {
+        case .wiki:
+            classified = classifyWikiTarget(trimmed, sourceDirectory: context.sourceDirectory)
+        case .markdown:
+            classified = classifyMarkdownLinkTarget(trimmed, sourceDirectory: context.sourceDirectory)
         }
-        if reference.fileCandidatePath == candidate {
-            return MarkdownAudioEmbed(reference: reference)
+        guard let classified else { return .failClosed }
+
+        if classified.parsed.lineAnchor != nil {
+            return .fileLink(fileLinkInline(
+                rawTarget: trimmed,
+                classified: classified,
+                visibleLabel: visibleLabel,
+                context: context
+            ))
         }
-        return MarkdownAudioEmbed(reference: ResourceReference(
-            target: reference.target,
-            sourceServerID: reference.sourceServerID,
-            workspaceID: reference.workspaceID,
-            sourceSessionID: reference.sourceSessionID,
-            fileCandidatePath: candidate,
-            kind: reference.kind,
-            lineAnchor: nil,
-            visibleLabel: reference.visibleLabel
-        ))
+
+        // Origin is an allowed workspace or owner-host file. FileType decides
+        // the embed category only after that origin check.
+        switch FileType.detect(from: classified.path).previewCategory {
+        case .image:
+            return .image(source: classified.path)
+        case .video:
+            return .video(MarkdownVideoEmbed(reference: embedReference(
+                rawTarget: trimmed,
+                classified: classified,
+                visibleLabel: visibleLabel,
+                context: context
+            )))
+        case .audio:
+            return .audio(MarkdownAudioEmbed(reference: embedReference(
+                rawTarget: trimmed,
+                classified: classified,
+                visibleLabel: visibleLabel,
+                context: context
+            )))
+        default:
+            return .fileLink(fileLinkInline(
+                rawTarget: trimmed,
+                classified: classified,
+                visibleLabel: visibleLabel,
+                context: context
+            ))
+        }
+    }
+
+    private static func remoteImageOrFailClosedAV(_ source: String) -> BangEmbedOutcome {
+        let typePath = URL(string: source)?.path ?? source
+        switch FileType.detect(from: typePath).previewCategory {
+        case .video, .audio:
+            return .failClosed
+        default:
+            return .remoteImage(source: source)
+        }
+    }
+
+    private static func wikiLinkParts(_ rawContent: String) -> (target: String, label: String) {
+        let normalizedContent = rawContent.replacingOccurrences(of: #"\|"#, with: "|")
+        let pieces = normalizedContent.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+        let target = pieces.first.map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        let rawLabel = pieces.count == 2 ? String(pieces[1]) : target
+        let label = rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (target, label.isEmpty ? target : label)
+    }
+
+    private static func fileLinkInline(
+        rawTarget: String,
+        classified: ClassifiedWikiTarget,
+        visibleLabel: String,
+        context: RewriteContext
+    ) -> MarkdownInline {
+        let reference = resourceReference(
+            rawTarget: rawTarget,
+            classified: classified,
+            visibleLabel: visibleLabel,
+            context: context,
+            includeWorkspaceCandidateWithoutScope: false
+        )
+        guard let url = ResourceReferenceURL.make(reference) else {
+            return .text(visibleLabel)
+        }
+        return .link(
+            children: [.text(visibleLabel)],
+            destination: url.absoluteString
+        )
+    }
+
+    private static func embedReference(
+        rawTarget: String,
+        classified: ClassifiedWikiTarget,
+        visibleLabel: String,
+        context: RewriteContext
+    ) -> ResourceReference {
+        // Classification, not workspace scope, decides embed eligibility so
+        // image/PDF export without chat context still gets a static AV card.
+        resourceReference(
+            rawTarget: rawTarget,
+            classified: classified,
+            visibleLabel: visibleLabel,
+            context: context,
+            includeWorkspaceCandidateWithoutScope: true
+        )
+    }
+
+    private static func resourceReference(
+        rawTarget: String,
+        classified: ClassifiedWikiTarget,
+        visibleLabel: String,
+        context: RewriteContext,
+        includeWorkspaceCandidateWithoutScope: Bool
+    ) -> ResourceReference {
+        let workspaceID = context.workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasWorkspaceScope = workspaceID?.isEmpty == false
+        let fileCandidatePath: String?
+        switch classified.kind {
+        case .hostFile:
+            fileCandidatePath = classified.path
+        case .workspaceFile:
+            fileCandidatePath = (hasWorkspaceScope || includeWorkspaceCandidateWithoutScope)
+                ? classified.path
+                : nil
+        }
+        return ResourceReference(
+            target: rawTarget,
+            sourceServerID: context.serverID,
+            workspaceID: hasWorkspaceScope ? workspaceID : nil,
+            sourceSessionID: context.sessionID,
+            fileCandidatePath: fileCandidatePath,
+            kind: classified.kind,
+            lineAnchor: classified.parsed.lineAnchor,
+            visibleLabel: visibleLabel
+        )
     }
 
     private static func resourceReference(

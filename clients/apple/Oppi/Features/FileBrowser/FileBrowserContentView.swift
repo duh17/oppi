@@ -555,6 +555,35 @@ struct FileBrowserContentView: View {
                         worktreeId: worktreeId
                     )
                 },
+                fetchHostFile: { [workspaceId, worktreeId, sessionId, workspaceRuntime] path in
+                    let route = MarkdownVideoMediaSourceRoute.resolve(
+                        filePath: path,
+                        kind: .hostFile,
+                        referenceWorkspaceID: workspaceId,
+                        workspaceID: workspaceId,
+                        sessionID: sessionId,
+                        worktreeID: worktreeId,
+                        workspaceRuntime: workspaceRuntime
+                    )
+                    switch route {
+                    case .host(let hostPath):
+                        return try await api.browseHostFile(path: hostPath)
+                    case .session(let workspaceID, let sessionID, let sessionPath):
+                        return try await api.getSessionFileData(
+                            workspaceId: workspaceID,
+                            sessionId: sessionID,
+                            path: sessionPath
+                        )
+                    case .workspace(let workspaceID, let workspacePath, let worktreeID):
+                        return try await api.fetchWorkspaceFile(
+                            workspaceID: workspaceID,
+                            path: workspacePath,
+                            worktreeId: worktreeID
+                        )
+                    case nil:
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                },
                 makeMarkdownVideoSource: { [workspaceId, worktreeId, sessionId, workspaceRuntime] embed in
                     guard let route = MarkdownVideoMediaSourceRoute.resolve(
                         embed: embed,

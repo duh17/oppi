@@ -92,22 +92,23 @@ When citing a relevant file the owner can open, use a real relative, absolute, o
 
 Inline Markdown images support workspace-relative raster paths, source-relative paths when source context is known, and the existing client SVG path for SVG. See [Markdown image resolution](attachment-rendering.md#markdown-image-resolution).
 
-Inline Markdown video uses wiki-embed syntax:
+Inline Markdown video uses bang-embed syntax. `![]()` and `![[]]` both embed an Oppi-backed video:
 
 ```text
 ![[recordings/demo.mp4]]
+![demo](recordings/demo.mp4)
 ![[/tmp/oppi-demo.mov]]
 ```
 
-`![[video-file]]` renders a native, non-autoplaying player in assistant messages and the full-screen Markdown reader. `[[video-file]]` remains an ordinary file link. Eligible files use existing authenticated workspace, worktree, session-file, or exact owner host-file routes. Remote video sites, arbitrary URLs, HTML video, and attachment IDs remain readable fallback text and never start a new network route. Export uses a static video card and does not modify the source. See [Markdown inline video](attachment-rendering.md#markdown-inline-video).
+`![[video-file]]` and `![label](video-file)` render a native, non-autoplaying player in assistant messages and the full-screen Markdown reader. `[[video-file]]` remains an ordinary file link. Eligible files use existing authenticated workspace, worktree, session-file, or exact owner host-file routes. Remote video sites, arbitrary URLs, HTML video, `data:`, and attachment IDs remain readable fallback text and never start a new network route. Export uses a static video card and does not modify the source. See [Markdown inline video](attachment-rendering.md#markdown-inline-video).
 
-`![[audio-file]]` renders a compact non-autoplaying player strip. `[[audio-file]]` remains an ordinary file link and opens the lyrics-first full-screen audio player. Remote URLs, HTML audio, and attachment IDs are not embeds. See [Markdown inline audio](attachment-rendering.md#markdown-inline-audio).
+`![[audio-file]]` and `![label](audio-file)` render a compact non-autoplaying player strip. `[[audio-file]]` remains an ordinary file link and opens the lyrics-first full-screen audio player. Remote URLs, HTML audio, `data:`, and attachment IDs are not embeds. See [Markdown inline audio](attachment-rendering.md#markdown-inline-audio).
 
 ### Copyable `AGENTS.md` guidance for other projects
 
 ````markdown
 - When pointing the user to a relevant file the owner can open, use a real relative, absolute, or `~` wiki link such as `[[path/to/file.ext|Short label]]` or `[[/tmp/notes.md|Debug log]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
-- When the image or SVG itself should appear inline, use `![Short description](path/to/image.png)`. When a real Oppi-backed video should play inline, use `![[path/to/video.mp4]]`. Keep `[[path/to/video.mp4|Video]]` for file navigation. When a real Oppi-backed audio file should play inline, use `![[path/to/clip.m4a]]`; keep `[[path/to/clip.m4a]]` as a file link that opens the full-screen player.
+- When the image or SVG itself should appear inline, use `![Short description](path/to/image.png)` or `![[path/to/image.png]]`. When a real Oppi-backed video should play inline, use `![[path/to/video.mp4]]` or `![Video](path/to/video.mp4)`. Keep `[[path/to/video.mp4|Video]]` for file navigation. When a real Oppi-backed audio file should play inline, use `![[path/to/clip.m4a]]` or `![Clip](path/to/clip.m4a)`; keep `[[path/to/clip.m4a]]` as a file link that opens the full-screen player.
 - Fenced `mermaid` blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban. Other Mermaid types show an unsupported placeholder.
 - LaTeX renders inline, display, and fenced `latex` blocks.
 - Reuse a real existing path; never fabricate a path or expose secrets. Sandbox sessions should keep using sandbox-visible paths.

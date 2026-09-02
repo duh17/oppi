@@ -21,6 +21,7 @@ struct MarkdownFileView: View {
     var worktreeId: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil
     var audioPlayer: AudioPlayerService? = nil
@@ -55,6 +56,7 @@ struct MarkdownFileView: View {
             worktreeId: worktreeId,
             serverBaseURL: serverBaseURL,
             fetchWorkspaceFile: fetchWorkspaceFile,
+            fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
             audioPlayer: audioPlayer
@@ -80,7 +82,7 @@ struct MarkdownFileView: View {
                 workspaceContext: fullScreenWorkspaceContext
             ),
             reviewCommentSelectionContext: reviewContext,
-            renderedViewFactory: { [content, filePath, workspaceID, worktreeId, serverBaseURL, fetchWorkspaceFile, makeMarkdownVideoSource, makeMarkdownAudioSource, audioPlayer, presentation, reviewContext, reviewSourceContext] in
+            renderedViewFactory: { [content, filePath, workspaceID, worktreeId, serverBaseURL, fetchWorkspaceFile, fetchHostFile, makeMarkdownVideoSource, makeMarkdownAudioSource, audioPlayer, presentation, reviewContext, reviewSourceContext] in
                 let themeID = ThemeRuntimeState.currentThemeID()
                 if presentation == .document {
                     return NativeFullScreenMarkdownBody(
@@ -94,6 +96,7 @@ struct MarkdownFileView: View {
                         serverBaseURL: serverBaseURL,
                         sourceFilePath: filePath,
                         fetchWorkspaceFile: fetchWorkspaceFile,
+                        fetchHostFile: fetchHostFile,
                         makeMarkdownVideoSource: makeMarkdownVideoSource,
                         makeMarkdownAudioSource: makeMarkdownAudioSource,
                         audioPlayer: audioPlayer
@@ -103,6 +106,7 @@ struct MarkdownFileView: View {
                 let view = AssistantMarkdownContentView()
                 view.backgroundColor = .clear
                 view.fetchWorkspaceFile = fetchWorkspaceFile
+                view.fetchHostFile = fetchHostFile
                 view.makeMarkdownVideoSource = makeMarkdownVideoSource
                 view.makeMarkdownAudioSource = makeMarkdownAudioSource
                 view.audioPlayer = audioPlayer

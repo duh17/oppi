@@ -35,11 +35,11 @@ indirect enum MarkdownInline: Equatable, Sendable {
     case code(String)
     case link(children: [Self], destination: String?)
     case image(alt: String, source: String?)
-    /// Oppi-native `![[video-file]]` embed. Produced only by the wiki-link
-    /// rewriter after source policy and file-type checks succeed.
+    /// Oppi-native `![[video-file]]` / `![](video-file)` embed. Produced by the
+    /// wiki-link rewriter after origin and file-type checks succeed.
     case videoEmbed(MarkdownVideoEmbed)
-    /// Oppi-native `![[audio-file]]` embed. Produced only by the wiki-link
-    /// rewriter after source policy and file-type checks succeed.
+    /// Oppi-native `![[audio-file]]` / `![](audio-file)` embed. Produced by the
+    /// wiki-link rewriter after origin and file-type checks succeed.
     case audioEmbed(MarkdownAudioEmbed)
     case softBreak
     case hardBreak

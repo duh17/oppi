@@ -267,6 +267,39 @@ enum SessionFileURL {
     }
 }
 
+/// Client-local URL for an owner-host image fetched with authenticated
+/// full-byte GET `/files/raw`. Distinct from workspace/session file URLs so
+/// sandbox remapping can reuse the AV host-file route instead of pretending
+/// the image is a workspace path.
+enum HostFileURL {
+    private static let scheme = "oppi-host-file"
+
+    static func make(filePath: String) -> URL? {
+        let path = filePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = "host-file"
+        components.queryItems = [
+            URLQueryItem(name: "path", value: path),
+        ]
+        return components.url
+    }
+
+    static func parse(_ url: URL) -> String? {
+        guard url.scheme == scheme,
+              url.host == "host-file",
+              let query = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let path = query.queryItems?.first(where: { $0.name == "path" })?.value
+        else {
+            return nil
+        }
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 /// Segment types for the flat renderer.
 ///
 /// Built once from `[MarkdownBlock]` via `build(from:)`, then cached in `@State`.
@@ -278,11 +311,11 @@ enum FlatSegment: Sendable {
     case table(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]])
     case thematicBreak
     /// A standalone image paragraph. The URL is fully resolved at build time
-    /// using the workspace context. Rendered by `NativeMarkdownImageView`.
+    /// using the workspace context or a host-file source. Rendered by `NativeMarkdownImageView`.
     case image(alt: String, url: URL)
-    /// An Oppi-authenticated native video embed from `![[video-file]]`.
+    /// An Oppi-authenticated native video embed from `![[video-file]]` or `![](video-file)`.
     case video(MarkdownVideoEmbed)
-    /// An Oppi-authenticated native audio embed from `![[audio-file]]`.
+    /// An Oppi-authenticated native audio embed from `![[audio-file]]` or `![](audio-file)`.
     case audio(MarkdownAudioEmbed)
     /// A mermaid diagram code block. The applier decides whether to render
     /// the diagram or show as a code block based on streaming state.
@@ -1774,16 +1807,18 @@ enum FlatSegment: Sendable {
 
     /// Resolve a markdown image source to a loadable URL.
     ///
-    /// Handles two cases:
-    /// - **Relative paths** (e.g. `screenshots/img.jpeg`): resolved against
-    ///   the workspace file API when `workspaceID` and `serverBaseURL` are set.
-    ///   `worktreeId` is the source-session firstCheckout; nil/main omit the
-    ///   query so NativeMarkdownImageView cache identity stays checkout-aware.
-    /// - **Absolute URLs** (e.g. `https://example.com/photo.jpg`): passed
-    ///   through directly for `NativeMarkdownImageView` to show as tap-to-load
-    ///   remote images.
+    /// The wiki rewriter classifies origin first and already joins markdown
+    /// image destinations against `sourceDirectory`. This resolver only maps
+    /// an allowed source onto a fetch URL:
+    /// - **Workspace-relative paths**: workspace file API when `workspaceID`
+    ///   and `serverBaseURL` are set. `worktreeId` is the source-session
+    ///   firstCheckout; nil/main omit the query so cache identity stays
+    ///   checkout-aware.
+    /// - **Owner-host paths** (`/`, `~/`, local `file://`): `HostFileURL`,
+    ///   fetched later with authenticated GET `/files/raw`.
+    /// - **Absolute http(s) URLs**: passed through for tap-to-load / block.
     ///
-    /// Skips `data:` URIs, `file://`, and absolute `/` or `~` filesystem paths.
+    /// Skips `data:` URIs and other non-file schemes.
     private static func resolveImageURL(
         source: String?,
         workspaceID: String?,
@@ -1793,6 +1828,8 @@ enum FlatSegment: Sendable {
         worktreeId: String? = nil
     ) -> URL? {
         guard let source, !source.isEmpty else { return nil }
+        _ = sourceDirectory
+        _ = sessionID
 
         // Skip data: URIs — they can be huge and aren't practical inline.
         if source.hasPrefix("data:") {
@@ -1805,29 +1842,25 @@ enum FlatSegment: Sendable {
             return url
         }
 
-        // Local and absolute filesystem paths are intentionally not previewed.
-        // Tools should return stored attachments or workspace-relative paths.
-        if (URL(string: source)?.scheme == "file") || source.hasPrefix("/") || source.hasPrefix("~") {
+        if let hostPath = MarkdownWikiLinkRewriter.resolvedHostPath(source) {
+            return HostFileURL.make(filePath: hostPath)
+        }
+
+        if let url = URL(string: source), let scheme = url.scheme, scheme != "file" {
             return nil
         }
 
         // Relative path — resolve against workspace file API.
+        // Source-directory join already happened in the rewriter.
         guard let workspaceID, !workspaceID.isEmpty,
               let baseURL = serverBaseURL else {
             return nil
         }
 
-        // Resolve relative path against the markdown file's directory.
-        // e.g. sourceDirectory="docs/", source="images/foo.png" → "docs/images/foo.png"
-        var resolvedPath = source
-        if let dir = sourceDirectory, !dir.isEmpty {
-            resolvedPath = (dir as NSString).appendingPathComponent(source)
-        }
-
         return WorkspaceFileURL.make(
             baseURL: baseURL,
             workspaceID: workspaceID,
-            filePath: resolvedPath,
+            filePath: source,
             worktreeId: worktreeId
         )
     }

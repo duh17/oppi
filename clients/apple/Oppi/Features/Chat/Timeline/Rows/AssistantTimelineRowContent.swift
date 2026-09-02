@@ -33,6 +33,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     /// Closure for fetching a file from the active session working directory.
     let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+    /// Owner-host image fetcher. Sandbox callers remap guest POSIX paths.
+    let fetchHostFile: ((_ path: String) async throws -> Data)?
     /// Existing authenticated/range-capable source path for inline wiki videos.
     let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     /// Existing authenticated/range-capable source path for inline wiki audio.
@@ -56,6 +58,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         serverBaseURL: URL? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
+        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
@@ -76,6 +79,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
+        self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
         self.audioPlayer = audioPlayer
@@ -318,6 +322,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         // The segment applier settles only the newly appended TextKit range.
         markdownView.fetchWorkspaceFile = configuration.fetchWorkspaceFile
         markdownView.fetchSessionFile = configuration.fetchSessionFile
+        markdownView.fetchHostFile = configuration.fetchHostFile
         markdownView.makeMarkdownVideoSource = configuration.makeMarkdownVideoSource
         markdownView.makeMarkdownAudioSource = configuration.makeMarkdownAudioSource
         markdownView.audioPlayer = configuration.audioPlayer

@@ -226,9 +226,21 @@ struct MacMarkdownPaintDispatchTests {
             sessionID: "sess-1",
             sourceDirectory: directory
         )
-        let reference = try #require(firstResourceReference(in: blocks))
-        #expect(reference.fileCandidatePath == "docs/images/foo.png")
-        #expect(reference.target == "./images/foo.png")
+        let image = try #require(firstImage(in: blocks))
+        #expect(image.source == "docs/images/foo.png")
+        #expect(image.alt == "./images/foo.png")
+        #expect(firstResourceReference(in: blocks) == nil)
+        let kinds = MacMarkdownPaintDispatch.kinds(
+            from: blocks,
+            workspaceID: "ws-1",
+            sessionID: "sess-1"
+        )
+        #expect(kinds.contains { kind in
+            if case .image(_, let source, _, _) = kind {
+                return source == "docs/images/foo.png"
+            }
+            return false
+        })
     }
 
     @Test func documentViewThreadsDerivedSourceDirectoryIntoParseAndImageLoad() throws {
@@ -414,6 +426,45 @@ struct MacMarkdownPaintDispatchTests {
             bitsPerPixel: 0
         )
         return bitmap?.representation(using: .png, properties: [:])
+    }
+
+    private func firstImage(in blocks: [MarkdownBlock]) -> (alt: String, source: String?)? {
+        images(in: blocks).first
+    }
+
+    private func images(in blocks: [MarkdownBlock]) -> [(alt: String, source: String?)] {
+        blocks.flatMap(images(in:))
+    }
+
+    private func images(in block: MarkdownBlock) -> [(alt: String, source: String?)] {
+        switch block {
+        case .heading(_, let inlines), .paragraph(let inlines):
+            return images(in: inlines)
+        case .blockQuote(let children):
+            return children.flatMap(images(in:))
+        case .unorderedList(let items), .orderedList(_, let items):
+            return items.flatMap { $0.flatMap(images(in:)) }
+        case .taskList(let items):
+            return items.flatMap { $0.content.flatMap(images(in:)) }
+        case .table(let headers, let rows):
+            return headers.flatMap(images(in:))
+                + rows.flatMap { $0.flatMap(images(in:)) }
+        case .codeBlock, .thematicBreak, .htmlBlock:
+            return []
+        }
+    }
+
+    private func images(in inlines: [MarkdownInline]) -> [(alt: String, source: String?)] {
+        inlines.flatMap { inline -> [(alt: String, source: String?)] in
+            switch inline {
+            case .image(let alt, let source):
+                return [(alt, source)]
+            case .emphasis(let children), .strong(let children), .strikethrough(let children), .link(let children, _):
+                return images(in: children)
+            case .text, .code, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
+                return []
+            }
+        }
     }
 
     private func firstResourceReference(in blocks: [MarkdownBlock]) -> ResourceReference? {

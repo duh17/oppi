@@ -294,6 +294,10 @@ final class AssistantMarkdownSegmentApplier {
     /// Closure for fetching files from the active session working directory.
     var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
 
+    /// Closure for fetching owner-host images through GET `/files/raw`.
+    /// Sandbox injection remaps guest POSIX paths the same way AV does.
+    var fetchHostFile: ((_ path: String) async throws -> Data)?
+
     /// Authenticated file-backed media resolver for `![[video-file]]`.
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
 
@@ -672,6 +676,7 @@ final class AssistantMarkdownSegmentApplier {
                 alt: alt,
                 fetchWorkspaceFile: fetchWorkspaceFile,
                 fetchSessionFile: fetchSessionFile,
+                fetchHostFile: fetchHostFile,
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth,
                 preparesForDisplay: preparesImagesForDisplay
@@ -975,6 +980,7 @@ final class AssistantMarkdownSegmentApplier {
                         alt: alt,
                         fetchWorkspaceFile: fetchWorkspaceFile,
                         fetchSessionFile: fetchSessionFile,
+                        fetchHostFile: fetchHostFile,
                         renderingMode: config.renderingMode,
                         preferredDisplayWidth: preparationWidth,
                         preparesForDisplay: preparesImagesForDisplay

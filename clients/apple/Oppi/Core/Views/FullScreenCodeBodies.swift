@@ -1587,6 +1587,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         doubleTapActivation: (() -> Void)?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
+        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
@@ -1600,6 +1601,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         self.doubleTapActivation = doubleTapActivation
         segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
         segmentApplier.fetchSessionFile = fetchSessionFile
+        segmentApplier.fetchHostFile = fetchHostFile
         segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
         segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource
         segmentApplier.audioPlayer = audioPlayer
@@ -1615,6 +1617,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         doubleTapActivation: (() -> Void)?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
+        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
         canonicalWidth: CGFloat? = nil,
         preparesImagesForDisplay: Bool = true,
@@ -1629,6 +1632,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         self.doubleTapActivation = doubleTapActivation
         segmentApplier.fetchWorkspaceFile = fetchWorkspaceFile
         segmentApplier.fetchSessionFile = fetchSessionFile
+        segmentApplier.fetchHostFile = fetchHostFile
         segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
         segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource
         segmentApplier.audioPlayer = audioPlayer
@@ -1864,6 +1868,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     private let fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
+    private let fetchHostFile: ((_ path: String) async throws -> Data)?
     private let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     private let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
     private let audioPlayer: AudioPlayerService?
@@ -1938,6 +1943,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         allowsVerticalScrolling: Bool = true,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
+        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
@@ -1961,6 +1967,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.maximumViewportHeight = maximumViewportHeight
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
+        self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
         self.audioPlayer = audioPlayer
@@ -2617,6 +2624,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
+            fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
             audioPlayer: audioPlayer
@@ -2653,6 +2661,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 doubleTapActivation: viewportDoubleTapActivation,
                 fetchWorkspaceFile: fetchWorkspaceFile,
                 fetchSessionFile: fetchSessionFile,
+                fetchHostFile: fetchHostFile,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,
                 canonicalWidth: preparedCanonicalWidth,
                 preparesImagesForDisplay: true,
@@ -3091,6 +3100,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
+            fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
             audioPlayer: audioPlayer
@@ -3111,6 +3121,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
+            fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             canonicalWidth: canonicalWidth,
             preparesImagesForDisplay: false,
@@ -3945,6 +3956,7 @@ extension NativeFullScreenMarkdownBody {
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
+            fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
             audioPlayer: audioPlayer
@@ -3961,6 +3973,7 @@ extension NativeFullScreenMarkdownBody {
             doubleTapActivation: viewportDoubleTapActivation,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
+            fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             canonicalWidth: canonicalWidth,
             preparesImagesForDisplay: false,

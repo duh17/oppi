@@ -35,6 +35,9 @@ describe("Oppi documentation prompt hint", () => {
     expect(guide).toMatch(/^You are running in Oppi\.\n\nOppi rendering capabilities:/);
     expect(guide).toContain("[[path/to/file.ext#L12-L18|Label]]");
     expect(guide).toContain("![Description](path/to/image.svg)");
+    expect(guide).toContain("![[path/to/image.svg]]");
+    expect(guide).toContain("![Video](path/to/video.mp4)");
+    expect(guide).toContain("![Clip](path/to/clip.m4a)");
     expect(guide).toContain(
       "flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban",
     );

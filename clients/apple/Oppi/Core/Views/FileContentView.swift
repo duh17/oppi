@@ -22,6 +22,7 @@ struct FileContentView: View {
     var worktreeId: String?
     var serverBaseURL: URL?
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
+    var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil
     var audioPlayer: AudioPlayerService? = nil
@@ -39,6 +40,7 @@ struct FileContentView: View {
         worktreeId: String? = nil,
         serverBaseURL: URL? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
+        fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
@@ -52,6 +54,7 @@ struct FileContentView: View {
         self.worktreeId = worktreeId
         self.serverBaseURL = serverBaseURL
         self.fetchWorkspaceFile = fetchWorkspaceFile
+        self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
         self.audioPlayer = audioPlayer
@@ -79,6 +82,7 @@ struct FileContentView: View {
                 worktreeId: worktreeId,
                 serverBaseURL: serverBaseURL,
                 fetchWorkspaceFile: fetchWorkspaceFile,
+                fetchHostFile: fetchHostFile,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
                 audioPlayer: audioPlayer

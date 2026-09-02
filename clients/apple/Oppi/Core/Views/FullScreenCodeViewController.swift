@@ -910,6 +910,7 @@ final class FullScreenCodeViewController: UIViewController {
                 perfSurface: .fullScreenMarkdown,
                 fetchWorkspaceFile: wsContext?.fetchWorkspaceFile,
                 fetchSessionFile: wsContext?.fetchSessionFile,
+                fetchHostFile: wsContext?.fetchHostFile,
                 makeMarkdownVideoSource: wsContext?.makeMarkdownVideoSource,
                 makeMarkdownAudioSource: wsContext?.makeMarkdownAudioSource,
                 audioPlayer: wsContext?.audioPlayer
@@ -1115,6 +1116,7 @@ final class FullScreenCodeViewController: UIViewController {
             perfSurface: .fullScreenMarkdown,
             fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
             fetchSessionFile: workspaceContext?.fetchSessionFile,
+            fetchHostFile: workspaceContext?.fetchHostFile,
             makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
             makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
             audioPlayer: workspaceContext?.audioPlayer
@@ -1194,6 +1196,7 @@ final class FullScreenCodeViewController: UIViewController {
                     sourceFilePath: filePath,
                     fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
                     fetchSessionFile: workspaceContext?.fetchSessionFile,
+                    fetchHostFile: workspaceContext?.fetchHostFile,
                     makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
                     makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
                     audioPlayer: workspaceContext?.audioPlayer
@@ -1265,6 +1268,7 @@ final class FullScreenCodeViewController: UIViewController {
                     sourceFilePath: filePath,
                     fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
                     fetchSessionFile: workspaceContext?.fetchSessionFile,
+                    fetchHostFile: workspaceContext?.fetchHostFile,
                     makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
                     makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
                     audioPlayer: workspaceContext?.audioPlayer

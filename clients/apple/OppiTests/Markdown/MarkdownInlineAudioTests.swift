@@ -34,7 +34,53 @@ struct MarkdownInlineAudioTests {
         }
         let uniqueLinkTargets = Set(renderedText.flatMap { $0.runs.compactMap(\.link) })
         #expect(uniqueLinkTargets.count == 2)
-        #expect(renderedText.map { String($0.characters) }.joined().contains("!"))
+        #expect(!renderedText.map { String($0.characters) }.joined().contains("!"))
+    }
+
+    @Test("markdown bang audio embeds the same native strip as wiki bang")
+    func markdownBangAudioEmbedsLikeWikiBang() throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let wiki = audioEmbeds(in: build("![[clip.m4a]]", baseURL: baseURL).segments)
+        let markdown = audioEmbeds(in: build("![x](clip.m4a)", baseURL: baseURL).segments)
+        let host = audioEmbeds(in: build("![x](/tmp/clip.m4a)", baseURL: baseURL).segments)
+        #expect(wiki.count == 1)
+        #expect(markdown.count == 1)
+        #expect(host.count == 1)
+        #expect(wiki.first?.reference.fileCandidatePath == "clip.m4a")
+        #expect(markdown.first?.reference.fileCandidatePath == "clip.m4a")
+        #expect(markdown.first?.reference.kind == .workspaceFile)
+        #expect(host.first?.reference.kind == .hostFile)
+        #expect(host.first?.reference.fileCandidatePath == "/tmp/clip.m4a")
+    }
+
+    @Test("remote audio markdown bang, LAN, data, attachment, and HTML make no audio segment")
+    func remoteAndUnsafeTargetsNeverBecomeAudio() throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let markdown = """
+        ![x](https://example.com/a.mp3)
+
+        ![x](http://192.168.1.20/a.m4a)
+
+        ![x](data:audio/mpeg;base64,AAAA)
+
+        ![x](attachment:stored-audio)
+
+        <audio src="https://example.com/demo.mp3"></audio>
+        """
+        let segments = FlatSegment.build(
+            from: parseCommonMark(markdown),
+            themeID: .dark,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        #expect(audioEmbeds(in: segments).isEmpty)
+        #expect(videoEmbeds(in: segments).isEmpty)
+        #expect(segments.allSatisfy { segment in
+            if case .image = segment { return false }
+            return true
+        })
     }
 
     @Test("recognized audio extensions embed and non-audio bang-wiki does not")

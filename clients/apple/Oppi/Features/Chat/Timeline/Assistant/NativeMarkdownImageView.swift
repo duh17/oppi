@@ -82,6 +82,7 @@ final class NativeMarkdownImageView: UIView {
 
     typealias FetchWorkspaceFile = (_ workspaceID: String, _ path: String) async throws -> Data
     typealias FetchSessionFile = (_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data
+    typealias FetchHostFile = (_ path: String) async throws -> Data
     typealias FetchRemoteImage = (_ url: URL) async throws -> Data
 
     var fetchRemoteImage: FetchRemoteImage = { url in
@@ -107,6 +108,7 @@ final class NativeMarkdownImageView: UIView {
         let alt: String
         let fetchWorkspaceFile: FetchWorkspaceFile?
         let fetchSessionFile: FetchSessionFile?
+        let fetchHostFile: FetchHostFile?
     }
 
     override init(frame: CGRect) {
@@ -239,6 +241,7 @@ final class NativeMarkdownImageView: UIView {
         alt: String,
         fetchWorkspaceFile: FetchWorkspaceFile?,
         fetchSessionFile: FetchSessionFile?,
+        fetchHostFile: FetchHostFile? = nil,
         renderingMode: ContentRenderingMode = .live,
         preferredDisplayWidth: CGFloat? = nil,
         preparesForDisplay: Bool = true
@@ -291,13 +294,20 @@ final class NativeMarkdownImageView: UIView {
         case .live, .staticReader:
             switch RemoteMarkdownImagePolicy.decision(for: url) {
             case .internalImageURL, .unsupported:
-                startImageLoad(url: url, alt: alt, fetchWorkspaceFile: fetchWorkspaceFile, fetchSessionFile: fetchSessionFile)
+                startImageLoad(
+                    url: url,
+                    alt: alt,
+                    fetchWorkspaceFile: fetchWorkspaceFile,
+                    fetchSessionFile: fetchSessionFile,
+                    fetchHostFile: fetchHostFile
+                )
             case .loadableRemote:
                 pendingRemoteLoad = PendingImageLoad(
                     url: url,
                     alt: alt,
                     fetchWorkspaceFile: fetchWorkspaceFile,
-                    fetchSessionFile: fetchSessionFile
+                    fetchSessionFile: fetchSessionFile,
+                    fetchHostFile: fetchHostFile
                 )
                 showRemoteLoadPrompt(alt: alt)
             case .blockedRemote:
@@ -311,7 +321,8 @@ final class NativeMarkdownImageView: UIView {
         url: URL,
         alt: String,
         fetchWorkspaceFile: FetchWorkspaceFile?,
-        fetchSessionFile: FetchSessionFile?
+        fetchSessionFile: FetchSessionFile?,
+        fetchHostFile: FetchHostFile?
     ) {
         pendingRemoteLoad = nil
         showLoadingState(alt: alt)
@@ -320,7 +331,8 @@ final class NativeMarkdownImageView: UIView {
                 url: url,
                 alt: alt,
                 fetchWorkspaceFile: fetchWorkspaceFile,
-                fetchSessionFile: fetchSessionFile
+                fetchSessionFile: fetchSessionFile,
+                fetchHostFile: fetchHostFile
             )
         }
     }
@@ -332,7 +344,8 @@ final class NativeMarkdownImageView: UIView {
             url: pending.url,
             alt: pending.alt,
             fetchWorkspaceFile: pending.fetchWorkspaceFile,
-            fetchSessionFile: pending.fetchSessionFile
+            fetchSessionFile: pending.fetchSessionFile,
+            fetchHostFile: pending.fetchHostFile
         )
     }
 
@@ -346,13 +359,15 @@ final class NativeMarkdownImageView: UIView {
         url: URL,
         alt: String,
         fetchWorkspaceFile: FetchWorkspaceFile?,
-        fetchSessionFile: FetchSessionFile?
+        fetchSessionFile: FetchSessionFile?,
+        fetchHostFile: FetchHostFile?
     ) async {
         do {
             let prepared = try await joinedPreparedImage(
                 url: url,
                 fetchWorkspaceFile: fetchWorkspaceFile,
                 fetchSessionFile: fetchSessionFile,
+                fetchHostFile: fetchHostFile,
                 onRasterMetadata: { [weak self] pixelSize in
                     self?.publishChatRasterMetadataIfNeeded(pixelSize)
                 }
@@ -374,6 +389,7 @@ final class NativeMarkdownImageView: UIView {
         url: URL,
         fetchWorkspaceFile: FetchWorkspaceFile?,
         fetchSessionFile: FetchSessionFile?,
+        fetchHostFile: FetchHostFile?,
         onRasterMetadata: @escaping (CGSize) -> Void
     ) async throws -> PreparedImageResult {
         let waiterID = UUID()
@@ -405,6 +421,9 @@ final class NativeMarkdownImageView: UIView {
                     components.filePath
                 )
                 filePath = components.filePath
+            } else if let hostPath = HostFileURL.parse(url), let fetchHostFile {
+                data = try await fetchHostFile(hostPath)
+                filePath = hostPath
             } else {
                 guard RemoteMarkdownImagePolicy.decision(for: url) == .loadableRemote else {
                     throw JoinedLoadError.unavailable
@@ -1127,7 +1146,9 @@ enum RemoteMarkdownImagePolicy {
     typealias ResolveHost = @Sendable (_ host: String) async throws -> [String]
 
     static func decision(for url: URL) -> Decision {
-        if SessionFileURL.parse(url) != nil || WorkspaceFileURL.parse(url) != nil {
+        if SessionFileURL.parse(url) != nil
+            || WorkspaceFileURL.parse(url) != nil
+            || HostFileURL.parse(url) != nil {
             return .internalImageURL
         }
 
