@@ -402,15 +402,21 @@ struct FileBrowserContentView: View {
 
     @ViewBuilder
     private func audioView(_ source: AuthenticatedMediaSource) -> some View {
+        let itemID = AudioPlaybackItemID.fileBrowser(
+            path: currentFilePath,
+            workspaceID: workspaceId,
+            sessionID: sessionId,
+            worktreeID: worktreeId
+        )
         AudioLyricsPlayerView(
             title: currentFileName,
             lyrics: nil,
-            itemID: "file-audio:\(currentFilePath)",
+            itemID: itemID,
             audioPlayer: audioPlayer,
             play: {
                 audioPlayer.toggleMediaPlayback(
                     source: source,
-                    itemID: "file-audio:\(currentFilePath)"
+                    itemID: itemID
                 )
             },
             openFile: nil,
@@ -584,7 +590,45 @@ struct FileBrowserContentView: View {
                             sourceFileExtension: pathExtension
                         )
                     }
-                }
+                },
+                makeMarkdownAudioSource: { [workspaceId, worktreeId, sessionId, workspaceRuntime] embed in
+                    guard let route = MarkdownVideoMediaSourceRoute.resolve(
+                        embed: embed,
+                        workspaceID: workspaceId,
+                        sessionID: sessionId,
+                        worktreeID: worktreeId,
+                        workspaceRuntime: workspaceRuntime
+                    ) else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                    let pathExtension = (route.path as NSString).pathExtension
+                    let contentType = MediaMimeType.audioMimeType(forPathExtension: pathExtension)
+                    switch route {
+                    case .host(let path):
+                        return try await api.makeHostFileMediaSource(
+                            path: path,
+                            contentTypeHint: contentType,
+                            sourceFileExtension: pathExtension
+                        )
+                    case .session(let workspaceID, let sessionID, let path):
+                        return try await api.makeSessionFileMediaSource(
+                            workspaceId: workspaceID,
+                            sessionId: sessionID,
+                            path: path,
+                            contentTypeHint: contentType,
+                            sourceFileExtension: pathExtension
+                        )
+                    case .workspace(let workspaceID, let path, let worktreeID):
+                        return try await api.makeWorkspaceMediaSource(
+                            workspaceId: workspaceID,
+                            path: path,
+                            worktreeId: worktreeID,
+                            contentTypeHint: contentType,
+                            sourceFileExtension: pathExtension
+                        )
+                    }
+                },
+                audioPlayer: audioPlayer
             )
         )
     }

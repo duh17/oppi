@@ -142,6 +142,13 @@ final class NativeAudioMessageView: UIView {
         self.attachmentFetcher = attachmentFetcher
         self.attachmentMediaSourceProvider = attachmentMediaSourceProvider
 
+        if attachmentId.isEmpty {
+            // Live stream / speaking card: empty attachment is loading/playing, not failure.
+            isUnavailable = false
+            refreshStrip()
+            return
+        }
+
         guard MediaMimeType.normalized(mimeType) == "audio/wav", attachmentMediaSourceProvider != nil else {
             self.attachmentFetcher = nil
             self.attachmentMediaSourceProvider = nil
@@ -179,8 +186,8 @@ final class NativeAudioMessageView: UIView {
         fetchTask = nil
         bindAudioStateObservationIfNeeded()
 
-        container.backgroundColor = UIColor(palette.bgDark)
-        container.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
+        container.backgroundColor = .clear
+        container.layer.borderColor = UIColor.clear.cgColor
         messageLabel.textColor = UIColor(palette.fg)
         spinner.color = UIColor(palette.purple)
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -206,8 +213,7 @@ final class NativeAudioMessageView: UIView {
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.layer.cornerRadius = 12
-        container.layer.borderWidth = 1
+        container.backgroundColor = .clear
 
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -234,10 +240,10 @@ final class NativeAudioMessageView: UIView {
             container.trailingAnchor.constraint(equalTo: trailingAnchor),
             container.topAnchor.constraint(equalTo: topAnchor),
             container.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
@@ -327,7 +333,12 @@ final class NativeAudioMessageView: UIView {
                     self.audioPlayer?.resume()
                 }
             },
-            openFile: isUnavailable ? { [weak self] in self?.togglePlayback() } : nil
+            openFile: isUnavailable ? { [weak self] in self?.togglePlayback() } : nil,
+            autoplayOnAppear: AudioLyricsPlayerPresenter.shouldAutoplayOnAppear(
+                itemID: id,
+                audioPlayer: audioPlayer,
+                playNow: playbackBehavior == .playNow
+            )
         )
     }
 
@@ -371,8 +382,7 @@ final class NativeAudioMessageView: UIView {
     }
 
     private func fittedSize(forWidth width: CGFloat) -> CGSize {
-        let outerInsets: CGFloat = 24
-        let innerWidth = max(1, width - outerInsets)
+        let innerWidth = max(1, width)
         let stripHeight = MarkdownInlineAudioLayout.compactHeight
         let messageHeight: CGFloat
         if messageLabel.isHidden {
@@ -385,7 +395,7 @@ final class NativeAudioMessageView: UIView {
             )
         }
         let spacing: CGFloat = messageLabel.isHidden ? 0 : stack.spacing
-        let totalHeight = outerInsets + stripHeight + spacing + messageHeight
+        let totalHeight = stripHeight + spacing + messageHeight
         return CGSize(width: width, height: ceil(totalHeight))
     }
 }

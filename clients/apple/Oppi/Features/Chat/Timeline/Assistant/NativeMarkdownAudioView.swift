@@ -5,6 +5,52 @@ typealias MarkdownAudioMediaSourceProvider = (
     _ embed: MarkdownAudioEmbed
 ) async throws -> AuthenticatedMediaSource
 
+/// Playback identity for markdown embeds and file-browser audio. Same relative
+/// path in different workspace/session/worktree scopes must not share an item ID.
+enum AudioPlaybackItemID {
+    static func markdown(embed: MarkdownAudioEmbed, worktreeID: String?) -> String {
+        scoped(
+            prefix: "markdown-audio",
+            kind: embed.reference.kind.rawValue,
+            serverID: embed.reference.sourceServerID,
+            workspaceID: embed.reference.workspaceID,
+            sessionID: embed.reference.sourceSessionID,
+            worktreeID: worktreeID,
+            path: embed.filePath
+        )
+    }
+
+    static func fileBrowser(
+        path: String,
+        workspaceID: String,
+        sessionID: String?,
+        worktreeID: String?
+    ) -> String {
+        scoped(
+            prefix: "file-audio",
+            kind: "workspaceFile",
+            serverID: nil,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            worktreeID: worktreeID,
+            path: path
+        )
+    }
+
+    static func scoped(
+        prefix: String,
+        kind: String,
+        serverID: String?,
+        workspaceID: String?,
+        sessionID: String?,
+        worktreeID: String?,
+        path: String
+    ) -> String {
+        [prefix, kind, serverID ?? "", workspaceID ?? "", sessionID ?? "", worktreeID ?? "", path]
+            .joined(separator: "|")
+    }
+}
+
 enum MarkdownInlineAudioLayout {
     static let autoplay = false
     static let compactHeight: CGFloat = 64
@@ -32,6 +78,7 @@ final class NativeMarkdownAudioView: UIView {
     private var renderingMode: ContentRenderingMode = .live
     private(set) var reservedHeight: CGFloat = MarkdownInlineAudioLayout.reservedHeight(forWidth: .nan)
     private var isUnavailable = false
+    private var worktreeID: String?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -57,13 +104,17 @@ final class NativeMarkdownAudioView: UIView {
         sourceProvider: MarkdownAudioMediaSourceProvider?,
         audioPlayer: AudioPlayerService?,
         renderingMode: ContentRenderingMode,
-        preferredDisplayWidth: CGFloat?
+        preferredDisplayWidth: CGFloat?,
+        worktreeID: String? = nil
     ) {
         let width = preferredDisplayWidth.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
             ?? (bounds.width > 0 ? bounds.width : 320)
         let identity = [
             embed.reference.target,
             embed.reference.fileCandidatePath ?? "",
+            embed.reference.workspaceID ?? "",
+            embed.reference.sourceSessionID ?? "",
+            worktreeID ?? "",
             String(describing: renderingMode),
         ].joined(separator: "|")
         let nextHeight = MarkdownInlineAudioLayout.reservedHeight(forWidth: width)
@@ -79,6 +130,7 @@ final class NativeMarkdownAudioView: UIView {
         self.renderingMode = renderingMode
         self.sourceProvider = sourceProvider
         self.audioPlayer = audioPlayer
+        self.worktreeID = worktreeID
         currentSource = nil
         isUnavailable = false
         resolutionTask?.cancel()
@@ -151,7 +203,7 @@ final class NativeMarkdownAudioView: UIView {
     }
 
     private func playbackItemID(for embed: MarkdownAudioEmbed) -> String {
-        "markdown-audio:\(embed.reference.kind):\(embed.filePath)"
+        AudioPlaybackItemID.markdown(embed: embed, worktreeID: worktreeID)
     }
 
     private func refreshStrip() {
@@ -211,7 +263,8 @@ final class NativeMarkdownAudioView: UIView {
             openFile: { [weak self] in
                 guard let reference = self?.currentEmbed?.reference else { return }
                 NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
-            }
+            },
+            autoplayOnAppear: false
         )
     }
 

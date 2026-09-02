@@ -11,6 +11,8 @@ enum SessionFileFullScreenContentBuilder {
         workspaceRuntime: WorkspaceRuntime?,
         fetchSessionFileData: ((String) async throws -> Data)?,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
+        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        audioPlayer: AudioPlayerService? = nil,
         sessionID: String
     ) -> FullScreenCodeContent {
         guard let workspaceID,
@@ -30,7 +32,9 @@ enum SessionFileFullScreenContentBuilder {
                 },
                 sessionID: sessionID,
                 fetchSessionFile: nil,
-                makeMarkdownVideoSource: makeMarkdownVideoSource
+                makeMarkdownVideoSource: makeMarkdownVideoSource,
+                makeMarkdownAudioSource: makeMarkdownAudioSource,
+                audioPlayer: audioPlayer
             )
         )
     }
@@ -51,12 +55,14 @@ struct SessionTouchedFileContentView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
     @Environment(WorkspaceStore.self) private var workspaceStore
+    @Environment(AudioPlayerService.self) private var audioPlayer
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var phase: Phase = .loading
     @State private var loadedServerBaseURL: URL?
     @State private var fetchSessionFileData: ((String) async throws -> Data)?
     @State private var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
+    @State private var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
 
     /// Whether the UIKit file viewer is active (text content loaded).
     private var isUsingFileViewer: Bool {
@@ -107,6 +113,8 @@ struct SessionTouchedFileContentView: View {
             workspaceRuntime: currentWorkspaceRuntime,
             fetchSessionFileData: fetchSessionFileData,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
+            makeMarkdownAudioSource: makeMarkdownAudioSource,
+            audioPlayer: audioPlayer,
             sessionID: sessionId
         )
     }
@@ -250,6 +258,30 @@ struct SessionTouchedFileContentView: View {
                     sessionId: sessionId,
                     path: rawPath,
                     contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
+                    sourceFileExtension: pathExtension
+                )
+            }
+        }
+        makeMarkdownAudioSource = { [api, workspaceId, sessionId, workspaceRuntime, workspaceHostMount] embed in
+            let route = SessionTouchedFileLoadRoute.resolve(
+                path: embed.filePath,
+                workspaceRuntime: workspaceRuntime,
+                hostMount: workspaceHostMount
+            )
+            let pathExtension = (route.requestPath as NSString).pathExtension
+            switch route {
+            case .hostFile(let hostPath):
+                return try await api.makeHostFileMediaSource(
+                    path: hostPath,
+                    contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: pathExtension),
+                    sourceFileExtension: pathExtension
+                )
+            case .sessionRaw(let rawPath):
+                return try await api.makeSessionFileMediaSource(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    path: rawPath,
+                    contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: pathExtension),
                     sourceFileExtension: pathExtension
                 )
             }

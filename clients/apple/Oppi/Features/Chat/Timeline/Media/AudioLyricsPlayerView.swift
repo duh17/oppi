@@ -3,6 +3,18 @@ import SwiftUI
 
 enum AudioLyricsPlayerPresenter {
     @MainActor
+    static func shouldAutoplayOnAppear(
+        itemID: String,
+        audioPlayer: AudioPlayerService?,
+        playNow: Bool
+    ) -> Bool {
+        if playNow { return true }
+        guard let audioPlayer else { return false }
+        return audioPlayer.playingItemID == itemID
+            || audioPlayer.isStreamingPlaybackActive(itemID: itemID)
+    }
+
+    @MainActor
     static func present(
         from view: UIView,
         title: String,
@@ -10,8 +22,11 @@ enum AudioLyricsPlayerPresenter {
         itemID: String,
         audioPlayer: AudioPlayerService?,
         play: @escaping () -> Void,
-        openFile: (() -> Void)?
+        openFile: (() -> Void)?,
+        autoplayOnAppear: Bool
     ) {
+        // Expand starts playback only when the caller opts in: already playing
+        // this item, or a voice `playNow` reply. Markdown and file browser pass false.
         guard let presenter = nearestViewController(from: view) else { return }
         let root = AudioLyricsPlayerView(
             title: title,
@@ -20,7 +35,7 @@ enum AudioLyricsPlayerPresenter {
             audioPlayer: audioPlayer,
             play: play,
             openFile: openFile,
-            autoplayOnAppear: true,
+            autoplayOnAppear: autoplayOnAppear,
             showsCloseButton: true
         )
         let host = UIHostingController(rootView: root)
@@ -48,7 +63,7 @@ struct AudioLyricsPlayerView: View {
     let audioPlayer: AudioPlayerService?
     let play: () -> Void
     let openFile: (() -> Void)?
-    var autoplayOnAppear = true
+    var autoplayOnAppear = false
     var showsCloseButton = true
 
     @Environment(\.dismiss) private var dismiss
@@ -59,8 +74,12 @@ struct AudioLyricsPlayerView: View {
     }
 
     private var currentIndex: Int? {
-        guard let audioPlayer, AudioLyrics.allowsKaraoke(lines) else { return nil }
-        return AudioLyrics.currentIndex(in: lines, at: audioPlayer.currentTime)
+        AudioLyrics.presentationCurrentIndex(in: lines, at: karaokeTime)
+    }
+
+    private var karaokeTime: TimeInterval? {
+        guard let audioPlayer, audioPlayer.playingItemID == itemID else { return nil }
+        return audioPlayer.currentTime
     }
 
     private var elapsed: TimeInterval {
@@ -156,7 +175,7 @@ struct AudioLyricsPlayerView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     ForEach(Array(verses.enumerated()), id: \.offset) { index, line in
-                        lyricLine(line, index: index, current: index == 0 ? 0 : nil)
+                        lyricLine(line, index: index, current: nil)
                     }
                 }
                 .padding(.horizontal, 28)

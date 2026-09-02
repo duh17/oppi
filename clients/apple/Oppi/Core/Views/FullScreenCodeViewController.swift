@@ -909,7 +909,9 @@ final class FullScreenCodeViewController: UIViewController {
                 perfSurface: .fullScreenMarkdown,
                 fetchWorkspaceFile: wsContext?.fetchWorkspaceFile,
                 fetchSessionFile: wsContext?.fetchSessionFile,
-                makeMarkdownVideoSource: wsContext?.makeMarkdownVideoSource
+                makeMarkdownVideoSource: wsContext?.makeMarkdownVideoSource,
+                makeMarkdownAudioSource: wsContext?.makeMarkdownAudioSource,
+                audioPlayer: wsContext?.audioPlayer
             )
             body.accessibilityIdentifier = "full-screen.markdown.body"
             return body
@@ -1111,7 +1113,9 @@ final class FullScreenCodeViewController: UIViewController {
             perfSurface: .fullScreenMarkdown,
             fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
             fetchSessionFile: workspaceContext?.fetchSessionFile,
-            makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource
+            makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
+            makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
+            audioPlayer: workspaceContext?.audioPlayer
         )
     }
 
@@ -1187,7 +1191,9 @@ final class FullScreenCodeViewController: UIViewController {
                     sourceFilePath: filePath,
                     fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
                     fetchSessionFile: workspaceContext?.fetchSessionFile,
-                    makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource
+                    makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
+                    makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
+                    audioPlayer: workspaceContext?.audioPlayer
                 )
             } else {
                 let body = makeLiveSourceMarkdownBody(
@@ -1255,7 +1261,9 @@ final class FullScreenCodeViewController: UIViewController {
                     sourceFilePath: filePath,
                     fetchWorkspaceFile: workspaceContext?.fetchWorkspaceFile,
                     fetchSessionFile: workspaceContext?.fetchSessionFile,
-                    makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource
+                    makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
+                    makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
+                    audioPlayer: workspaceContext?.audioPlayer
                 )
                 liveSourceMarkdownBodyView = nil
                 liveSourceBodyView = nil

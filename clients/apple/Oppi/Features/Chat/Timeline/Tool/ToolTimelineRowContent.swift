@@ -721,7 +721,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         attachmentId: String,
         mimeType: String,
         playbackBehavior: AudioPlaybackBehavior?,
-        suppressAutoplay: Bool
+        suppressAutoplay: Bool,
+        durationSeconds: TimeInterval?
     ) {
         let native: NativeAudioMessageView
         if let existing = expandedReadMediaContentView as? NativeAudioMessageView {
@@ -744,7 +745,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 attachmentFetcher: nil,
                 attachmentMediaSourceProvider: nil,
                 palette: ThemeRuntimeState.currentPalette(),
-                suppressAutoplay: suppressAutoplay
+                suppressAutoplay: suppressAutoplay,
+                durationSeconds: durationSeconds
             )
         } else {
             native.apply(
@@ -758,7 +760,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 attachmentFetcher: currentConfiguration.sessionAttachmentFetcher,
                 attachmentMediaSourceProvider: currentConfiguration.sessionAttachmentMediaSourceProvider,
                 palette: ThemeRuntimeState.currentPalette(),
-                suppressAutoplay: suppressAutoplay
+                suppressAutoplay: suppressAutoplay,
+                durationSeconds: durationSeconds
             )
         }
         native.setNeedsLayout()
@@ -1801,12 +1804,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 viewportPolicy: viewportPolicy
             )
 
-        case .audioMessage(let text, let attachmentId, let mimeType, _, let playbackBehavior):
+        case .audioMessage(let text, let attachmentId, let mimeType, let durationSeconds, let playbackBehavior):
             let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             var hasher = Hasher()
             hasher.combine(trimmedText)
             hasher.combine(attachmentId)
             hasher.combine(mimeType)
+            hasher.combine(durationSeconds)
             return ExpandedRenderOutput(
                 renderSignature: hasher.finalize(),
                 renderedText: trimmedText,
@@ -1818,7 +1822,13 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 horizontalScroll: false,
                 deferredHighlight: nil,
                 invalidateLayout: true,
-                installAction: trimmedText.isEmpty ? .none : .audioMessage(text: trimmedText, attachmentId: attachmentId, mimeType: mimeType, playbackBehavior: playbackBehavior)
+                installAction: .audioMessage(
+                    text: trimmedText,
+                    attachmentId: attachmentId,
+                    mimeType: mimeType,
+                    durationSeconds: durationSeconds,
+                    playbackBehavior: playbackBehavior
+                )
             )
 
         case .status(let message):
@@ -1874,14 +1884,15 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             break
         case .readMedia(let mediaOutput, let isError, let filePath, let startLine, let attachments):
             installExpandedReadMediaView(output: mediaOutput, isError: isError, filePath: filePath, startLine: startLine, attachments: attachments)
-        case .audioMessage(let text, let attachmentId, let mimeType, let playbackBehavior):
+        case .audioMessage(let text, let attachmentId, let mimeType, let durationSeconds, let playbackBehavior):
             let suppressVoiceAutoplay = isExpandingTransition || playbackBehavior == .playNow
             installExpandedAudioMessageView(
                 text: text,
                 attachmentId: attachmentId,
                 mimeType: mimeType,
                 playbackBehavior: playbackBehavior,
-                suppressAutoplay: suppressVoiceAutoplay
+                suppressAutoplay: suppressVoiceAutoplay,
+                durationSeconds: durationSeconds
             )
         case .markdownViewport(
             let text,

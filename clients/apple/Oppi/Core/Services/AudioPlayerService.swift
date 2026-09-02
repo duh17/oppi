@@ -474,12 +474,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private func attachAndStartPlayer(_ audioPlayer: AVAudioPlayer, itemID: String) {
         let delegate = PlaybackDelegate { [weak self] in
             Task { @MainActor in
-                guard let self else { return }
-                self.player = nil
-                self.playbackDelegate = nil
-                self.deactivatePlaybackAudioSessionIfPossible()
-                self.setPlaybackState(playing: nil, loading: nil)
-                self.clearGlobalPlaybackOwnershipIfNeeded()
+                self?.handleDataPlaybackFinished()
             }
         }
         audioPlayer.delegate = delegate
@@ -495,6 +490,15 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
         audioPlayer.play()
         startProgressUpdates()
+    }
+
+    private func handleDataPlaybackFinished() {
+        stopProgressUpdates()
+        player = nil
+        playbackDelegate = nil
+        deactivatePlaybackAudioSessionIfPossible()
+        setPlaybackState(playing: nil, loading: nil)
+        clearGlobalPlaybackOwnershipIfNeeded()
     }
 
     private func handleWAVAudioStream(_ stream: AudioStreamMessage) {
@@ -696,6 +700,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     static func ownsPlaybackAudioSession(category: AVAudioSession.Category) -> Bool {
         category == .playback
+    }
+
+    // periphery:ignore - test seam used by AudioPlayer/ConnectionCoordinator lifecycle tests
+    var _isProgressTimerRunningForTesting: Bool { progressTimer != nil }
+
+    // periphery:ignore - test seam used by audio completion tests
+    func _finishDataPlaybackForTesting() {
+        handleDataPlaybackFinished()
     }
 
     // periphery:ignore - test seam used by AudioPlayer/ConnectionCoordinator lifecycle tests

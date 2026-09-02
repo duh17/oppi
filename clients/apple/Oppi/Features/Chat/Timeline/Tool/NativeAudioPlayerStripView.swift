@@ -56,6 +56,7 @@ final class NativeAudioPlayerStripView: UIView {
         accessibilityIdentifier = "chat.timeline.row.\(itemID).audio.strip"
         playButton.accessibilityIdentifier = "chat.timeline.row.\(itemID).audio.play"
         expandButton.accessibilityIdentifier = "chat.timeline.row.\(itemID).audio.expand"
+        timeLabel.accessibilityIdentifier = "chat.timeline.row.\(itemID).audio.time"
 
         let palette = ThemeRuntimeState.currentPalette()
         backgroundColor = UIColor(palette.bgDark)

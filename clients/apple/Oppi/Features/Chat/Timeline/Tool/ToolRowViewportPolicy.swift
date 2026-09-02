@@ -171,21 +171,11 @@ struct ToolRowViewportPolicy {
     }
 
     static func audioMessage(hasTranscript: Bool) -> ToolRowViewportPolicy {
-        if hasTranscript {
-            return ToolRowViewportPolicy(
-                contentKind: .audioMessage(hasTranscript: true),
-                surface: .compactHostedView,
-                viewportMode: .text,
-                heightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
-                constraintPriority: .required
-            )
-        }
-
-        return ToolRowViewportPolicy(
-            contentKind: .audioMessage(hasTranscript: false),
-            surface: .label,
+        ToolRowViewportPolicy(
+            contentKind: .audioMessage(hasTranscript: hasTranscript),
+            surface: .compactHostedView,
             viewportMode: .text,
-            heightBehavior: .cachedMeasured(mode: .expandedText),
+            heightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
             constraintPriority: .required
         )
     }

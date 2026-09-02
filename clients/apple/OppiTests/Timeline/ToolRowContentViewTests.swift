@@ -1584,4 +1584,137 @@ struct ToolTimelineRowContentViewTests {
         #expect(await sourceSpy.value() == 1)
     }
 
+    @MainActor
+    @Test func expandedVoiceStripShowsKnownDurationBeforePlayback() throws {
+        let source = AuthenticatedMediaSource(
+            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .audioMessage(
+                text: "Known duration before play.",
+                attachmentId: "att-session-owned-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 4.2,
+                playbackBehavior: .tapToPlay
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+            .withAudioPlayer(AudioPlayerService())
+            .withSessionAttachmentMediaSourceProvider { _, _, _ in source }
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
+
+        let time = try #require(timelineAllLabels(in: view).first {
+            $0.accessibilityIdentifier == "chat.timeline.row.\(config.itemID).audio.time"
+        })
+        #expect(time.text == AudioPlaybackTimeFormatting.elapsedDuration(elapsed: 0, duration: 4.2))
+    }
+
+    @MainActor
+    @Test func streamingVoiceCardDoesNotShowAudioUnavailable() throws {
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .audioMessage(
+                text: "Speaking now.",
+                attachmentId: "",
+                mimeType: "audio/wav",
+                durationSeconds: nil,
+                playbackBehavior: .playNow
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+            .withAudioPlayer(AudioPlayerService())
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
+
+        let strip = try #require(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: view))
+        let playButton = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "chat.timeline.row.\(config.itemID).audio.play"
+        })
+        #expect(!playButton.isHidden)
+        #expect(timelineAllLabels(in: view).allSatisfy {
+            $0.isHidden || $0.text != "Audio unavailable"
+        })
+    }
+
+    @MainActor
+    @Test func expandedVoiceMessageHasOneCardChrome() throws {
+        let source = AuthenticatedMediaSource(
+            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .audioMessage(
+                text: "One chrome around the strip.",
+                attachmentId: "att-session-owned-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 1.0,
+                playbackBehavior: .tapToPlay
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+            .withAudioPlayer(AudioPlayerService())
+            .withSessionAttachmentMediaSourceProvider { _, _, _ in source }
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
+
+        let message = try #require(timelineFirstView(ofType: NativeAudioMessageView.self, in: view))
+        let strip = try #require(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: message))
+        let borderedCards = timelineAllViews(in: message).filter {
+            $0.layer.borderWidth == 1 && $0.layer.cornerRadius == 12
+        }
+        #expect(borderedCards.count == 1)
+        #expect(borderedCards.first === strip)
+        #expect(message.layer.borderWidth == 0)
+    }
+
+    @MainActor
+    @Test func emptyTranscriptStillInstallsAudioStrip() throws {
+        let source = AuthenticatedMediaSource(
+            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
+        let config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .audioMessage(
+                text: "",
+                attachmentId: "att-session-owned-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 1.0,
+                playbackBehavior: .tapToPlay
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+            .withAudioPlayer(AudioPlayerService())
+            .withSessionAttachmentMediaSourceProvider { _, _, _ in source }
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
+
+        #expect(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: view) != nil)
+    }
+
 }

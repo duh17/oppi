@@ -697,7 +697,8 @@ final class AssistantMarkdownSegmentApplier {
                 sourceProvider: makeMarkdownAudioSource,
                 audioPlayer: audioPlayer,
                 renderingMode: config.renderingMode,
-                preferredDisplayWidth: preparationWidth
+                preferredDisplayWidth: preparationWidth,
+                worktreeID: config.worktreeId
             )
             stackView.addArrangedSubview(audioView)
             audioViews[index] = audioView
@@ -994,7 +995,8 @@ final class AssistantMarkdownSegmentApplier {
                     sourceProvider: makeMarkdownAudioSource,
                     audioPlayer: audioPlayer,
                     renderingMode: config.renderingMode,
-                    preferredDisplayWidth: preparationWidth
+                    preferredDisplayWidth: preparationWidth,
+                    worktreeID: config.worktreeId
                 )
 
             case .mermaidDiagram(let code):

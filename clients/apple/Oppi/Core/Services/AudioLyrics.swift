@@ -28,6 +28,12 @@ enum AudioLyrics {
         lines.contains { $0.startTime != nil }
     }
 
+    /// Full-screen highlight index. Untimed verse lists never treat line 0 as current.
+    static func presentationCurrentIndex(in lines: [Line], at time: TimeInterval?) -> Int? {
+        guard allowsKaraoke(lines), let time else { return nil }
+        return currentIndex(in: lines, at: time)
+    }
+
     static func currentIndex(in lines: [Line], at time: TimeInterval) -> Int? {
         let timed = lines.enumerated().compactMap { index, line -> (Int, TimeInterval)? in
             guard let start = line.startTime, start.isFinite else { return nil }

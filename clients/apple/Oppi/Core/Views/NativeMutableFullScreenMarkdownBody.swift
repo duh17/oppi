@@ -75,6 +75,8 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?
     private var fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?
     private var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
+    private var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    private var audioPlayer: AudioPlayerService?
 
     private var readerPreferences: FullScreenReaderPreferences
     private var latestContent: String
@@ -116,7 +118,9 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         perfSurface: MarkdownStreamingPerf.Surface? = nil,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)? = nil,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
+        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        audioPlayer: AudioPlayerService? = nil
     ) {
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
         self.palette = palette
@@ -134,6 +138,8 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
+        self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.audioPlayer = audioPlayer
         self.latestContent = content
         self.isStreaming = isStreaming
         super.init(frame: .zero)
@@ -180,6 +186,8 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         markdownView.fetchWorkspaceFile = fetchWorkspaceFile
         markdownView.fetchSessionFile = fetchSessionFile
         markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
+        markdownView.makeMarkdownAudioSource = makeMarkdownAudioSource
+        markdownView.audioPlayer = audioPlayer
 
         addSubview(scrollView)
         scrollView.addSubview(markdownView)
@@ -210,7 +218,9 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             sourceFilePath: sourceFilePath,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource
+            makeMarkdownVideoSource: makeMarkdownVideoSource,
+            makeMarkdownAudioSource: makeMarkdownAudioSource,
+            audioPlayer: audioPlayer
         )
     }
 
@@ -226,7 +236,9 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         sourceFilePath: String?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
         fetchSessionFile: ((_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data)?,
-        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
+        makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
+        makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        audioPlayer: AudioPlayerService? = nil
     ) {
         guard immutableBody == nil else { return }
         let completionIntent = isStreaming ? nil : currentViewportIntent()
@@ -250,9 +262,13 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.fetchWorkspaceFile = fetchWorkspaceFile
         self.fetchSessionFile = fetchSessionFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
+        self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.audioPlayer = audioPlayer
         markdownView.fetchWorkspaceFile = fetchWorkspaceFile
         markdownView.fetchSessionFile = fetchSessionFile
         markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
+        markdownView.makeMarkdownAudioSource = makeMarkdownAudioSource
+        markdownView.audioPlayer = audioPlayer
 
         guard contentChanged || streamingChanged || contextChanged else {
             viewportOwner.scheduleFollowTail()
@@ -333,7 +349,9 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             perfSurface: perfSurface,
             fetchWorkspaceFile: fetchWorkspaceFile,
             fetchSessionFile: fetchSessionFile,
-            makeMarkdownVideoSource: makeMarkdownVideoSource
+            makeMarkdownVideoSource: makeMarkdownVideoSource,
+            makeMarkdownAudioSource: makeMarkdownAudioSource,
+            audioPlayer: audioPlayer
         )
         body.accessibilityIdentifier = accessibilityIdentifier
         body.translatesAutoresizingMaskIntoConstraints = false

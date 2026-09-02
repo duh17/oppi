@@ -157,6 +157,8 @@ struct MarkdownInlineAudioTests {
         #expect(newlineLines.allSatisfy { $0.startTime == nil })
         #expect(!AudioLyrics.allowsKaraoke(newlineLines))
         #expect(AudioLyrics.currentIndex(in: newlineLines, at: 12) == nil)
+        #expect(AudioLyrics.presentationCurrentIndex(in: newlineLines, at: 0) == nil)
+        #expect(AudioLyrics.presentationCurrentIndex(in: newlineLines, at: 12) == nil)
 
         let sentenceLines = AudioLyrics.lines(from: "Got it. I’m reinstalling the iPhone app now.")
         #expect(sentenceLines.count == 2)
@@ -178,7 +180,81 @@ struct MarkdownInlineAudioTests {
         #expect(AudioLyrics.currentIndex(in: lines, at: 0) == 0)
         #expect(AudioLyrics.currentIndex(in: lines, at: 4.2) == 1)
         #expect(AudioLyrics.currentIndex(in: lines, at: 20) == 2)
+        #expect(AudioLyrics.presentationCurrentIndex(in: lines, at: 4.2) == 1)
+        #expect(AudioLyrics.presentationCurrentIndex(in: lines, at: nil) == nil)
         #expect(lines[1].startTime == 4)
+    }
+
+    @Test("playback IDs stay unique for the same path in different scopes")
+    func playbackIDsIncludeWorkspaceSessionAndWorktree() {
+        let path = "media/demo.m4a"
+        let workspaceA = AudioPlaybackItemID.markdown(
+            embed: MarkdownAudioEmbed(
+                reference: ResourceReference(
+                    target: path,
+                    sourceServerID: "server-a",
+                    workspaceID: "workspace-a",
+                    sourceSessionID: "session-a",
+                    fileCandidatePath: path
+                )
+            ),
+            worktreeID: "wt-a"
+        )
+        let workspaceB = AudioPlaybackItemID.markdown(
+            embed: MarkdownAudioEmbed(
+                reference: ResourceReference(
+                    target: path,
+                    sourceServerID: "server-a",
+                    workspaceID: "workspace-b",
+                    sourceSessionID: "session-a",
+                    fileCandidatePath: path
+                )
+            ),
+            worktreeID: "wt-a"
+        )
+        let worktreeA = AudioPlaybackItemID.fileBrowser(
+            path: path,
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            worktreeID: "wt-a"
+        )
+        let worktreeB = AudioPlaybackItemID.fileBrowser(
+            path: path,
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            worktreeID: "wt-b"
+        )
+        #expect(workspaceA != workspaceB)
+        #expect(worktreeA != worktreeB)
+    }
+
+    @MainActor
+    @Test("expand autoplay is only for playNow or an already-playing item")
+    func expandAutoplayFollowsPlayNowOrActivePlayback() {
+        #expect(AudioLyricsPlayerPresenter.shouldAutoplayOnAppear(
+            itemID: "voice-1",
+            audioPlayer: nil,
+            playNow: true
+        ))
+        #expect(!AudioLyricsPlayerPresenter.shouldAutoplayOnAppear(
+            itemID: "voice-1",
+            audioPlayer: nil,
+            playNow: false
+        ))
+
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "voice-1", loading: nil)
+        #expect(AudioLyricsPlayerPresenter.shouldAutoplayOnAppear(
+            itemID: "voice-1",
+            audioPlayer: player,
+            playNow: false
+        ))
+        #expect(!AudioLyricsPlayerPresenter.shouldAutoplayOnAppear(
+            itemID: "voice-2",
+            audioPlayer: player,
+            playNow: false
+        ))
+        #expect(!MarkdownInlineAudioLayout.autoplay)
     }
 
     @MainActor
@@ -203,6 +279,44 @@ struct MarkdownInlineAudioTests {
         #expect(view.reservedHeight >= 56)
         #expect(view.reservedHeight <= 72)
         #expect(!MarkdownInlineAudioLayout.autoplay)
+    }
+
+    @MainActor
+    @Test("full-screen markdown reader invokes the audio source provider")
+    func fullScreenReaderGetsAudioSourceProvider() async throws {
+        var resolved = 0
+        let provider: MarkdownAudioMediaSourceProvider = { _ in
+            resolved += 1
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let body = NativeFullScreenMarkdownBody(
+            content: "Listen.\n\n![[clip.m4a]]\n\nDone.",
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            makeMarkdownAudioSource: provider,
+            audioPlayer: AudioPlayerService()
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        body.layoutIfNeeded()
+        let mounted = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            timelineFirstView(ofType: NativeMarkdownAudioView.self, in: body) != nil
+        }
+        #expect(mounted)
+        let didResolve = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            resolved > 0
+        }
+        #expect(didResolve)
+        #expect(resolved >= 1)
     }
 
     private func audioEmbeds(in segments: [FlatSegment]) -> [MarkdownAudioEmbed] {

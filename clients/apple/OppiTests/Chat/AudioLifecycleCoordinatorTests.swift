@@ -196,6 +196,17 @@ struct AudioLifecycleCoordinatorTests {
         #expect(info?[MPMediaItemPropertyArtwork] == nil)
     }
 
+    @Test func audioPlayerStopsProgressTimerWhenDataPlaybackFinishes() {
+        let player = AudioPlayerService()
+        player.toggleDataPlayback(data: Self.makeSilentWAV(), itemID: "voice-finish-timer")
+        defer { player.stop() }
+
+        #expect(player._isProgressTimerRunningForTesting)
+        player._finishDataPlaybackForTesting()
+        #expect(!player._isProgressTimerRunningForTesting)
+        #expect(player.playingItemID == nil)
+    }
+
     @Test func audioPlayerNowPlayingPresentationUsesSessionTitleAndModel() {
         let player = AudioPlayerService()
         player.setSessionContext(
