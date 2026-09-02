@@ -307,6 +307,35 @@ struct MarkdownInlineAudioTests {
     }
 
     @MainActor
+    @Test("time and expand use purple rather than comment")
+    func timeAndExpandUsePurpleNotComment() throws {
+        let strip = NativeAudioPlayerStripView()
+        strip.apply(
+            itemID: "audio-1",
+            title: "clip.m4a",
+            durationSeconds: 12,
+            audioPlayer: nil,
+            showsTitle: true,
+            isUnavailable: false,
+            onPlay: {},
+            onExpand: {}
+        )
+
+        let palette = ThemeRuntimeState.currentPalette()
+        let time = try #require(timelineAllLabels(in: strip).first {
+            $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.time"
+        })
+        let expand = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.expand"
+        })
+
+        #expect(inlineAudioColor(time.textColor, approximatelyEquals: UIColor(palette.purple)))
+        #expect(inlineAudioColor(expand.tintColor, approximatelyEquals: UIColor(palette.purple)))
+        #expect(!inlineAudioColor(time.textColor, approximatelyEquals: UIColor(palette.comment)))
+        #expect(!inlineAudioColor(expand.tintColor, approximatelyEquals: UIColor(palette.comment)))
+    }
+
+    @MainActor
     @Test("full-screen markdown reader invokes the audio source provider")
     func fullScreenReaderGetsAudioSourceProvider() async throws {
         var resolved = 0
@@ -408,4 +437,27 @@ struct MarkdownInlineAudioTests {
             mergeAdjacentTextSegments: false
         )
     }
+}
+
+private func inlineAudioColor(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance: CGFloat = 0.01) -> Bool {
+    guard let lhs else { return false }
+
+    var lr: CGFloat = 0
+    var lg: CGFloat = 0
+    var lb: CGFloat = 0
+    var la: CGFloat = 0
+    var rr: CGFloat = 0
+    var rg: CGFloat = 0
+    var rb: CGFloat = 0
+    var ra: CGFloat = 0
+
+    guard lhs.getRed(&lr, green: &lg, blue: &lb, alpha: &la),
+          rhs.getRed(&rr, green: &rg, blue: &rb, alpha: &ra) else {
+        return lhs.cgColor == rhs.cgColor
+    }
+
+    return abs(lr - rr) <= tolerance &&
+        abs(lg - rg) <= tolerance &&
+        abs(lb - rb) <= tolerance &&
+        abs(la - ra) <= tolerance
 }

@@ -414,8 +414,9 @@ final class AssistantMarkdownSegmentApplier {
     ///
     /// - First segment is prose: exclusion path reserves the badge column for
     ///   the first line(s) only; later lines wrap under the avatar.
-    /// - First segment is a block (table/code/…): push the block below the
-    ///   badge with top layout margin so it can use full width without overlap.
+    /// - First segment is a block (audio/video/image/code/table): push the
+    ///   block below the badge with `avatarHangHeight` plus extra top margin
+    ///   so media is not flush under the 18pt avatar.
     ///
     /// Idempotent when geometry and the hung text view are unchanged so streaming
     /// ticks do not force a full TextKit relayout of the growing tail.
@@ -469,11 +470,12 @@ final class AssistantMarkdownSegmentApplier {
             return
         }
 
-        // Non-text first segment: drop the block below the avatar band.
+        // Non-text first segment: drop the block below the avatar band with
+        // extra air so media is not flush under the 18pt badge.
         if wantsTopMargin {
             stackView.isLayoutMarginsRelativeArrangement = true
             stackView.layoutMargins = UIEdgeInsets(
-                top: nextHeight,
+                top: nextHeight + AssistantTimelineRowContentView.avatarBlockHangExtraTop,
                 left: 0,
                 bottom: 0,
                 right: 0

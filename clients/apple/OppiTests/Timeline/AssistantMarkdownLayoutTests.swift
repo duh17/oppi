@@ -1113,6 +1113,32 @@ struct AssistantMarkdownLayoutTests {
         #expect(cell.contentView.clipsToBounds == true,
                 "Cell contentView.clipsToBounds must be true to prevent overflow during estimated-height layout")
     }
+
+    /// Non-text first blocks (audio/video/image/code/table) must sit below the
+    /// avatar with extra air, not the ~2pt text-exclusion hang height alone.
+    @Test func nonTextFirstBlockHangsBelowAvatarWithExtraTop() throws {
+        let row = AssistantTimelineRowContentView(configuration: .init(
+            text: """
+            ```swift
+            print("hang")
+            ```
+            """,
+            isStreaming: false,
+            canFork: false,
+            onFork: nil
+        ))
+        _ = fittedTimelineSize(for: row, width: 370)
+
+        let markdown = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: row))
+        let stack = try #require(markdown.subviews.compactMap { $0 as? UIStackView }.first)
+        #expect(timelineFirstView(ofType: NativeCodeBlockView.self, in: markdown) != nil)
+        #expect(stack.isLayoutMarginsRelativeArrangement)
+        #expect(
+            stack.layoutMargins.top == AssistantTimelineRowContentView.avatarBlockHangHeight,
+            "Block-first hang must be avatarHangHeight + extra, got \(stack.layoutMargins.top) hang=\(AssistantTimelineRowContentView.avatarHangHeight)"
+        )
+        #expect(stack.layoutMargins.top > AssistantTimelineRowContentView.avatarHangHeight)
+    }
 }
 
 @MainActor

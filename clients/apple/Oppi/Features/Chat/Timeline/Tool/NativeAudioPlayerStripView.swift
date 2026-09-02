@@ -62,9 +62,9 @@ final class NativeAudioPlayerStripView: UIView {
         backgroundColor = UIColor(palette.bgDark)
         layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
         playButton.tintColor = UIColor(palette.purple)
-        expandButton.tintColor = UIColor(palette.comment)
+        expandButton.tintColor = UIColor(palette.purple)
         titleLabel.textColor = UIColor(palette.fg)
-        timeLabel.textColor = UIColor(palette.comment)
+        timeLabel.textColor = UIColor(palette.purple)
         progressView.progressTintColor = UIColor(palette.purple)
         progressView.trackTintColor = UIColor(palette.comment).withAlphaComponent(0.25)
         unavailableLabel.textColor = UIColor(palette.comment)
@@ -113,12 +113,17 @@ final class NativeAudioPlayerStripView: UIView {
         unavailableLabel.text = String(localized: "Audio unavailable")
         unavailableLabel.isHidden = true
 
-        let textStack = UIStackView(arrangedSubviews: [titleLabel, timeLabel, progressView])
-        textStack.axis = .vertical
-        textStack.alignment = .fill
-        textStack.spacing = 4
-        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        timeLabel.setContentHuggingPriority(.required, for: .horizontal)
+        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let textRow = UIStackView(arrangedSubviews: [titleLabel, timeLabel])
+        textRow.axis = .horizontal
+        textRow.alignment = .center
+        textRow.spacing = 8
+        textRow.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textRow.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let playHit = UIView()
         playHit.translatesAutoresizingMaskIntoConstraints = false
@@ -127,13 +132,14 @@ final class NativeAudioPlayerStripView: UIView {
         expandHit.translatesAutoresizingMaskIntoConstraints = false
         expandHit.addSubview(expandButton)
 
-        let row = UIStackView(arrangedSubviews: [playHit, textStack, expandHit])
-        row.axis = .horizontal
-        row.alignment = .center
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
+        let controls = UIStackView(arrangedSubviews: [playHit, textRow, expandHit])
+        controls.axis = .horizontal
+        controls.alignment = .center
+        controls.spacing = 8
+        controls.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(row)
+        addSubview(controls)
+        addSubview(progressView)
         addSubview(unavailableLabel)
 
         NSLayoutConstraint.activate([
@@ -150,13 +156,15 @@ final class NativeAudioPlayerStripView: UIView {
             expandButton.topAnchor.constraint(equalTo: expandHit.topAnchor),
             expandButton.bottomAnchor.constraint(equalTo: expandHit.bottomAnchor),
             progressView.heightAnchor.constraint(equalToConstant: 3),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            controls.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            controls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            controls.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            progressView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            progressView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            progressView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             unavailableLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             unavailableLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -54),
-            unavailableLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            unavailableLabel.centerYAnchor.constraint(equalTo: controls.centerYAnchor),
             heightAnchor.constraint(equalToConstant: MarkdownInlineAudioLayout.compactHeight),
         ])
     }

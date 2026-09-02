@@ -107,8 +107,16 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
     static let avatarContentGap: CGFloat = 8
     static var avatarContentClearance: CGFloat { avatarSize + avatarContentGap }
     /// Exclusion height relative to markdown top so line 1 clears the badge.
+    /// That band sits only ~2pt below the 18pt avatar; block-first content needs
+    /// extra air so media is not flush under the badge.
     static var avatarHangHeight: CGFloat {
         max(avatarSize, (avatarTopPadding - bubbleVerticalPadding) + avatarSize + 2)
+    }
+    /// Extra top margin when the first markdown segment is a block (audio,
+    /// video, image, code, table) so it hangs below the avatar band.
+    static let avatarBlockHangExtraTop: CGFloat = 10
+    static var avatarBlockHangHeight: CGFloat {
+        avatarHangHeight + avatarBlockHangExtraTop
     }
 
     private let bubbleContainer = UIView()
