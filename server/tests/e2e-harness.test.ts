@@ -5,6 +5,7 @@ import {
   dockerStartupCleanupCommand,
   E2EPairingError,
   enrollE2EDevice,
+  isRetryablePairingFailure,
   listWorkspaceSessions,
   nativeStartupStepsForTarget,
   pairDevice,
@@ -264,6 +265,33 @@ describe("E2E harness helpers", () => {
     );
     expect(error).toBeInstanceOf(E2EPairingError);
     expect((error as E2EPairingError).retryable).toBe(false);
+  });
+
+  it("pairing invite retry does not call pairDevice again after a non-retryable enrollment", async () => {
+    let pairCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        if (requestPath(url) === "/pair") {
+          pairCalls += 1;
+          return jsonResponse({ ok: true });
+        }
+        return new Response("missing stub", { status: 500 });
+      }),
+    );
+
+    // Mirrors server/e2e/pairing-flow.e2e.test.ts: retry only retryable pairing failures.
+    const pairWithInviteRetry = async (): Promise<string> => {
+      try {
+        return await pairDevice("pt_first", "e2e-pairing-test");
+      } catch (error) {
+        if (!isRetryablePairingFailure(error)) throw error;
+        return await pairDevice("pt_second", "e2e-pairing-test");
+      }
+    };
+
+    await expect(pairWithInviteRetry()).rejects.toBeInstanceOf(E2EPairingError);
+    expect(pairCalls).toBe(1);
   });
 
   it("treats a failed /pair status as retryable", async () => {

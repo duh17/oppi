@@ -24,6 +24,7 @@ import {
   refreshE2EAccessToken,
   sessionStreamURL,
   isSecureTransport,
+  isRetryablePairingFailure,
 } from "./harness.js";
 
 declare module "vitest" {
@@ -153,11 +154,12 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
     it("pairs successfully with valid pairing token", async () => {
       if (!lmsReady()) return;
 
-      // Retry with fresh invite if pairing fails — previous test file may have
-      // left a consumed token on disk that hasn't been fully flushed.
+      // Retry with a fresh invite only when /pair did not enroll a device.
+      // HTTP 200 with a malformed body is non-retryable (token already consumed).
       try {
         deviceToken = await pairDevice(invite.pairingToken, "e2e-pairing-test");
-      } catch {
+      } catch (error) {
+        if (!isRetryablePairingFailure(error)) throw error;
         invite = await generateTestInvite();
         deviceToken = await pairDevice(invite.pairingToken, "e2e-pairing-test");
       }

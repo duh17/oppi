@@ -116,6 +116,70 @@ function mockSttProvider(tokens: string[]) {
   return Object.assign(provider, { start: startFn, feedAudio: feedAudioFn, stop: stopFn });
 }
 
+/**
+ * Mock provider whose start() installs a backend session only after the awaited
+ * setup is released — the StreamingSttProvider race (sessionId/timer after stop).
+ */
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function lateInstallSttProvider() {
+  const pendingStarts: Array<() => void> = [];
+  let liveSession = false;
+  let tokenCb:
+    | ((update: {
+        text: string;
+        snap?: boolean;
+        committedText?: string;
+        activeText?: string;
+      }) => void)
+    | null = null;
+
+  const startFn = vi.fn<() => Promise<void>>(
+    () =>
+      new Promise<void>((resolve) => {
+        pendingStarts.push(() => {
+          liveSession = true;
+          resolve();
+        });
+      }),
+  );
+  const feedAudioFn = vi.fn<(pcm: Buffer) => void>();
+  const stopFn = vi.fn<() => Promise<{ text: string }>>(() => {
+    // Teardown is decided at the call, like StreamingSttProvider.stop() with no sessionId yet.
+    // An earlier stop must not clear a session that start() installs after this call returns.
+    liveSession = false;
+    return Promise.resolve({ text: "" });
+  });
+
+  const provider: SttProvider = {
+    name: "mock",
+    model: "mock-model",
+    start: startFn,
+    feedAudio: feedAudioFn,
+    onToken(cb) {
+      tokenCb = cb;
+    },
+    stop: stopFn,
+  };
+  return Object.assign(provider, {
+    start: startFn,
+    feedAudio: feedAudioFn,
+    stop: stopFn,
+    isLive(): boolean {
+      return liveSession;
+    },
+    releaseStart(index: number) {
+      const release = pendingStarts[index];
+      if (!release) throw new Error(`start() ${index} has not been called yet`);
+      release();
+    },
+    fire(text = "late"): boolean {
+      if (!liveSession) return false;
+      tokenCb?.({ text });
+      return true;
+    },
+  });
+}
+
 /** Create a mock SttProvider whose start() stays pending until released. */
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function deferredStartSttProvider() {
@@ -418,6 +482,88 @@ describe("DictationManager", () => {
       expect(messagesOfType(mgrSent, "dictation_error")).toHaveLength(0);
       expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
       expect(mgr.isActive()).toBe(false);
+    });
+
+    it.each([
+      [
+        "cancel",
+        (mgr: DictationManager, send: DictationSendFn) => {
+          mgr.handleControlMessage({ type: "dictation_cancel" }, send);
+        },
+      ],
+      [
+        "stop",
+        (mgr: DictationManager, send: DictationSendFn) => {
+          mgr.handleControlMessage({ type: "dictation_stop" }, send);
+        },
+      ],
+      [
+        "disconnect",
+        (mgr: DictationManager) => {
+          mgr.handleDisconnect();
+        },
+      ],
+    ] as const)(
+      "cleans a backend session installed after %s during STT start",
+      async (_label, abort) => {
+        const provider = lateInstallSttProvider();
+        const mgr = new DictationManager(provider);
+        const mgrSent: DictationServerMessage[] = [];
+        const send: DictationSendFn = (m) => mgrSent.push(m);
+
+        mgr.handleControlMessage({ type: "dictation_start" }, send);
+        await drain();
+        expect(provider.start).toHaveBeenCalledTimes(1);
+        expect(provider.isLive()).toBe(false);
+
+        abort(mgr, send);
+        const stopsBeforeInstall = provider.stop.mock.calls.length;
+        provider.releaseStart(0);
+        await drain();
+
+        expect(provider.isLive()).toBe(false);
+        expect(provider.stop.mock.calls.length).toBeGreaterThan(stopsBeforeInstall);
+        expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
+        expect(provider.fire("late")).toBe(false);
+        expect(messagesOfType(mgrSent, "dictation_result")).toHaveLength(0);
+        expect(mgr.isActive()).toBe(false);
+      },
+    );
+
+    it("does not let stale start cleanup stop a newer take", async () => {
+      const provider = lateInstallSttProvider();
+      const mgr = new DictationManager(provider);
+      const mgrSent: DictationServerMessage[] = [];
+      const send: DictationSendFn = (m) => mgrSent.push(m);
+
+      mgr.handleControlMessage({ type: "dictation_start" }, send);
+      await drain();
+      expect(provider.start).toHaveBeenCalledTimes(1);
+
+      mgr.handleControlMessage({ type: "dictation_cancel" }, send);
+      mgr.handleControlMessage({ type: "dictation_start" }, send);
+      await drain();
+      expect(provider.start).toHaveBeenCalledTimes(1);
+
+      provider.releaseStart(0);
+      await drain();
+      expect(provider.isLive()).toBe(false);
+      expect(provider.start).toHaveBeenCalledTimes(2);
+      expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(0);
+
+      provider.releaseStart(1);
+      await drain();
+      expect(messagesOfType(mgrSent, "dictation_ready")).toHaveLength(1);
+      expect(provider.isLive()).toBe(true);
+      expect(mgr.isActive()).toBe(true);
+
+      const stopsOnceReady = provider.stop.mock.calls.length;
+      expect(provider.fire("hello")).toBe(true);
+      expect(messagesOfType(mgrSent, "dictation_result").map((m) => m.text)).toEqual(["hello"]);
+      await drain();
+      expect(provider.stop.mock.calls.length).toBe(stopsOnceReady);
+      expect(provider.isLive()).toBe(true);
+      expect(mgr.isActive()).toBe(true);
     });
   });
 

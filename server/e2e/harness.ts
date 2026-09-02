@@ -586,7 +586,7 @@ function registerE2EAuthSession(enrollment: E2EDeviceEnrollment): E2EAuthSession
   return session;
 }
 
-function isRetryablePairingFailure(error: unknown): boolean {
+export function isRetryablePairingFailure(error: unknown): boolean {
   return !(error instanceof E2EPairingError) || error.retryable;
 }
 

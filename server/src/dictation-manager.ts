@@ -62,6 +62,12 @@ export class DictationManager {
   /** Callback for sending messages to the client. Set by handleControlMessage. */
   private sendFn: DictationSendFn | null = null;
 
+  /** Bumped on each dictation_start. Stale start() must not emit ready/fatal. */
+  private startGeneration = 0;
+
+  /** Serialize provider.start() and its stale-stop so they finish before a newer take starts. */
+  private startChain: Promise<void> = Promise.resolve();
+
   constructor(sttProvider: SttProvider, metrics?: ServerMetricCollector) {
     this.sttProvider = sttProvider;
     this.metrics = metrics ?? null;
@@ -169,16 +175,28 @@ export class DictationManager {
   private startSession(): void {
     // Start the STT provider (async — validates backend is reachable).
     // Only send dictation_ready after the session is confirmed.
-    void this.startSttAndSignalReady();
+    const generation = ++this.startGeneration;
+    const run = this.startChain.then(
+      () => this.startSttAndSignalReady(generation),
+      () => this.startSttAndSignalReady(generation),
+    );
+    this.startChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    void run;
   }
 
-  private async startSttAndSignalReady(): Promise<void> {
+  private async startSttAndSignalReady(generation: number): Promise<void> {
     const session = this.session;
-    if (!session) return;
+    // Superseded before start() — do not touch the provider; the owner will.
+    if (!session || this.startGeneration !== generation || session.stopping) return;
     try {
       await this.sttProvider.start();
     } catch (err) {
-      if (this.session !== session || session.stopping) return;
+      if (this.startGeneration !== generation || this.session !== session || session.stopping) {
+        return;
+      }
       const errorMsg = err instanceof Error ? err.message : String(err);
       log.error("dictation.stt_start.failed", { error: errorMsg });
       this.send({
@@ -191,8 +209,13 @@ export class DictationManager {
       return;
     }
 
-    // Cancel/stop during start() must not emit ready for a stale take.
-    if (this.session !== session || session.stopping) return;
+    // Stop/Cancel/disconnect during start() can race StreamingSttProvider installing
+    // sessionId/timer after that earlier stop. Clean the just-started session once
+    // before the next serialized start(); a newer take is queued, not started.
+    if (this.startGeneration !== generation || this.session !== session || session.stopping) {
+      await this.sttProvider.stop().catch(() => {});
+      return;
+    }
 
     // STT session is confirmed — now tell the client
     this.send({
