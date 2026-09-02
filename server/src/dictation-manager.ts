@@ -107,16 +107,16 @@ export class DictationManager {
           });
           return;
         }
+        if (session.stopping) return;
         session.stopping = true;
         void this.finalizeSession(session);
         break;
       }
 
       case "dictation_cancel":
-        if (this.session) {
-          this.cancelSession();
-          this.session = null;
-        }
+        if (!this.session || this.session.stopping) return;
+        this.cancelSession();
+        this.session = null;
         break;
 
       default:

@@ -116,6 +116,38 @@ function mockSttProvider(tokens: string[]) {
   return Object.assign(provider, { start: startFn, feedAudio: feedAudioFn, stop: stopFn });
 }
 
+/** Create a mock SttProvider whose stop() stays pending until released. */
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function deferredSttProvider() {
+  let releaseStop: ((value: { text: string }) => void) | undefined;
+  const startFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  const feedAudioFn = vi.fn<(pcm: Buffer) => void>();
+  const stopFn = vi.fn<() => Promise<{ text: string }>>(
+    () =>
+      new Promise<{ text: string }>((resolve) => {
+        releaseStop = resolve;
+      }),
+  );
+
+  const provider: SttProvider = {
+    name: "mock",
+    model: "mock-model",
+    start: startFn,
+    feedAudio: feedAudioFn,
+    onToken() {},
+    stop: stopFn,
+  };
+  return Object.assign(provider, {
+    start: startFn,
+    feedAudio: feedAudioFn,
+    stop: stopFn,
+    releaseStop(text = "hello world") {
+      if (!releaseStop) throw new Error("stop() has not been called yet");
+      releaseStop({ text });
+    },
+  });
+}
+
 /** Create a mock SttProvider whose stop() rejects. */
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function failingSttProvider(error: string) {
@@ -382,6 +414,64 @@ describe("DictationManager", () => {
       const finals = messagesOfType(sent, "dictation_final");
       expect(finals).toHaveLength(1);
       expect(finals[0]).toEqual({ type: "dictation_final", text: "hello world" });
+    });
+
+    it("duplicate stop while provider.stop is pending does not stop twice or emit two finals", async () => {
+      const deferred = deferredSttProvider();
+      const mgr = new DictationManager(deferred);
+      const mgrSent: DictationServerMessage[] = [];
+      const mgrSendFn: DictationSendFn = (msg) => {
+        mgrSent.push(msg);
+      };
+
+      mgr.handleControlMessage({ type: "dictation_start" }, mgrSendFn);
+      await drain();
+      mgr.handleAudioData(silencePcm(500));
+      mgr.handleControlMessage({ type: "dictation_stop" }, mgrSendFn);
+      await drain();
+      expect(deferred.stop).toHaveBeenCalledTimes(1);
+      expect(messagesOfType(mgrSent, "dictation_final")).toHaveLength(0);
+
+      mgr.handleControlMessage({ type: "dictation_stop" }, mgrSendFn);
+      await drain();
+      expect(deferred.stop).toHaveBeenCalledTimes(1);
+      expect(messagesOfType(mgrSent, "dictation_final")).toHaveLength(0);
+      expect(messagesOfType(mgrSent, "dictation_error")).toHaveLength(0);
+
+      deferred.releaseStop("only once");
+      await drain();
+      const finals = messagesOfType(mgrSent, "dictation_final");
+      expect(finals).toHaveLength(1);
+      expect(finals[0].text).toBe("only once");
+      expect(deferred.stop).toHaveBeenCalledTimes(1);
+    });
+
+    it("cancel after stop while provider.stop is pending does not stop twice or emit two terminals", async () => {
+      const deferred = deferredSttProvider();
+      const mgr = new DictationManager(deferred);
+      const mgrSent: DictationServerMessage[] = [];
+      const mgrSendFn: DictationSendFn = (msg) => {
+        mgrSent.push(msg);
+      };
+
+      mgr.handleControlMessage({ type: "dictation_start" }, mgrSendFn);
+      await drain();
+      mgr.handleAudioData(silencePcm(500));
+      mgr.handleControlMessage({ type: "dictation_stop" }, mgrSendFn);
+      await drain();
+      expect(deferred.stop).toHaveBeenCalledTimes(1);
+
+      mgr.handleControlMessage({ type: "dictation_cancel" }, mgrSendFn);
+      await drain();
+      expect(deferred.stop).toHaveBeenCalledTimes(1);
+      expect(messagesOfType(mgrSent, "dictation_final")).toHaveLength(0);
+      expect(messagesOfType(mgrSent, "dictation_error")).toHaveLength(0);
+
+      deferred.releaseStop("still one");
+      await drain();
+      expect(messagesOfType(mgrSent, "dictation_final")).toHaveLength(1);
+      expect(messagesOfType(mgrSent, "dictation_error")).toHaveLength(0);
+      expect(deferred.stop).toHaveBeenCalledTimes(1);
     });
 
     it("handles stop() failure with fatal error", async () => {

@@ -162,7 +162,7 @@ const MAX_UPLOAD_GC_INTERVAL_MS = 60 * 60 * 1000;
 
 type SocketPrincipal =
   | { kind: "owner" }
-  | { kind: "device"; deviceId: string; tokenClass: "at_" | "dt_"; expiresAt?: number };
+  | { kind: "device"; deviceId: string; tokenClass: "at_"; expiresAt?: number };
 
 const log = createLogger({ base: { component: "server" } });
 
@@ -794,9 +794,6 @@ export class Server {
       serverVersion: Server.VERSION,
       piVersion: Server.detectPiVersion(this.piExecutable),
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
-      onMigrationFinalized: (finalized) => {
-        if (finalized) this.closeLegacyTokenConnections();
-      },
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
     });
@@ -1193,26 +1190,6 @@ export class Server {
     }
   }
 
-  private closeLegacyTokenConnections(): void {
-    for (const [ws, principal] of this.socketPrincipals) {
-      if (principal.kind === "device" && principal.tokenClass === "dt_") {
-        ws.close(1008, "Device token rejected");
-      }
-    }
-  }
-
-  private closeLegacyTokenConnectionsForDevice(deviceId: string): void {
-    for (const [ws, principal] of this.socketPrincipals) {
-      if (
-        principal.kind === "device" &&
-        principal.deviceId === deviceId &&
-        principal.tokenClass === "dt_"
-      ) {
-        ws.close(1008, "Device credential migrated");
-      }
-    }
-  }
-
   private closeAllDeviceConnections(): void {
     for (const [ws, principal] of this.socketPrincipals) {
       if (principal.kind === "device") ws.close(1008, "Owner credentials rotated");
@@ -1327,9 +1304,7 @@ export class Server {
 
     const access = this.storage.validateAccessToken(candidate);
     if (access.ok) {
-      if (this.storage.commitLegacyRevocation(access.deviceId)) {
-        this.closeLegacyTokenConnectionsForDevice(access.deviceId);
-      }
+      this.storage.commitLegacyRevocation(access.deviceId);
       return {
         ok: true,
         principal: {

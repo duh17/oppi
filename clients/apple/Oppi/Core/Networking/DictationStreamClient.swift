@@ -68,8 +68,8 @@ final class DictationStreamClient: DictationTransport {
     private var continuation: AsyncStream<ServerMessage>.Continuation?
     /// Queued until the current socket is writable, then replayed after a 401
     /// refresh or leftover-token rotate so start lands on the surviving socket.
-    /// Cleared once the server accepts or completes the take so a later 4001
-    /// cannot start a phantom second recording.
+    /// Cleared once the server accepts, completes, or fatally rejects the take
+    /// so a later 4001 cannot start a phantom second recording.
     private var pendingDictationStart = false
     /// True only while a 401 refresh or leftover-token rotate is replacing the
     /// current socket. sendDictation may requeue dictation_start in that window.
@@ -248,6 +248,8 @@ final class DictationStreamClient: DictationTransport {
     private func clearPendingStartIfAcceptedOrCompleted(_ message: ServerMessage) {
         switch message {
         case .dictationReady, .dictationFinal:
+            pendingDictationStart = false
+        case .dictationError(_, let fatal) where fatal:
             pendingDictationStart = false
         default:
             break

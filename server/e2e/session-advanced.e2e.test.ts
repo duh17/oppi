@@ -14,12 +14,12 @@
 import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
-  generateTestInvite,
   openSessionStream,
   closeStream,
   waitForEvent,
   autoApprovePermissions,
   listWorkspaceSessions,
+  pairFreshDevice,
 } from "./harness.js";
 
 declare module "vitest" {
@@ -36,19 +36,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
   beforeAll(async () => {
     if (!lmsReady()) return;
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const invite = await generateTestInvite();
-      const pairRes = await api("POST", "/pair", undefined, {
-        pairingToken: invite.pairingToken,
-        deviceName: "e2e-advanced-session",
-      });
-
-      if (pairRes.json?.deviceToken) {
-        deviceToken = pairRes.json.deviceToken as string;
-        break;
-      }
-      console.warn(`[e2e] Pairing attempt ${attempt + 1} failed (${pairRes.status}), retrying...`);
-    }
+    deviceToken = await pairFreshDevice("e2e-advanced-session");
     expect(deviceToken).toBeTruthy();
   }, 120_000);
 

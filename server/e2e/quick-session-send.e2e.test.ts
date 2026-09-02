@@ -14,11 +14,11 @@
 import { describe, it, expect, beforeAll, afterAll, inject } from "vitest";
 import {
   api,
-  generateTestInvite,
   openSessionStream,
   closeStream,
   sendPromptAndWait,
   autoApprovePermissions,
+  pairFreshDevice,
 } from "./harness.js";
 
 declare module "vitest" {
@@ -37,15 +37,7 @@ describe("E2E: Quick Session Send", { timeout: 300_000 }, () => {
   beforeAll(async () => {
     if (!lmsReady()) return;
 
-    // Pair a fresh device
-    const invite = await generateTestInvite();
-    const pairRes = await api("POST", "/pair", undefined, {
-      pairingToken: invite.pairingToken,
-      deviceName: "e2e-quick-send",
-    });
-
-    expect(pairRes.status).toBe(200);
-    deviceToken = pairRes.json?.deviceToken as string;
+    deviceToken = await pairFreshDevice("e2e-quick-send");
     expect(deviceToken).toBeTruthy();
 
     // Create workspace

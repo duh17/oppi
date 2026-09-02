@@ -4,7 +4,7 @@
  * Exercises the full pairing lifecycle that a new iOS device goes through:
  *   1. Server generates invite (QR payload with one-time pairing token)
  *   2. Client decodes the invite payload (simulates QR scan)
- *   3. Client POST /pair with the pairing token → receives deviceToken
+ *   3. Client POST /pair with the pairing token and P-256 key → receives at_
  *   4. Replayed pairing token is rejected (one-time use)
  *   5. Device token authenticates all subsequent API calls
  *   6. Device can list workspaces, create sessions, and access split streams
@@ -16,8 +16,11 @@ import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
   generateTestInvite,
+  makeE2EDevicePublicKey,
   openSessionStream,
   closeStream,
+  pairDevice,
+  pairFreshDevice,
   sessionStreamURL,
   isSecureTransport,
 } from "./harness.js";
@@ -141,6 +144,7 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
 
       const res = await api("POST", "/pair", undefined, {
         pairingToken: "definitely-not-valid",
+        devicePublicKey: makeE2EDevicePublicKey(),
       });
       expect(res.status).toBe(401);
     });
@@ -150,24 +154,15 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
 
       // Retry with fresh invite if pairing fails — previous test file may have
       // left a consumed token on disk that hasn't been fully flushed.
-      let res = await api("POST", "/pair", undefined, {
-        pairingToken: invite.pairingToken,
-        deviceName: "e2e-pairing-test",
-      });
-
-      if (res.status !== 200) {
+      try {
+        deviceToken = await pairDevice(invite.pairingToken, "e2e-pairing-test");
+      } catch {
         invite = await generateTestInvite();
-        res = await api("POST", "/pair", undefined, {
-          pairingToken: invite.pairingToken,
-          deviceName: "e2e-pairing-test",
-        });
+        deviceToken = await pairDevice(invite.pairingToken, "e2e-pairing-test");
       }
 
-      expect(res.status).toBe(200);
-      expect(res.json?.deviceToken).toBeTruthy();
-      expect(typeof res.json?.deviceToken).toBe("string");
-
-      deviceToken = res.json!.deviceToken as string;
+      expect(deviceToken).toBeTruthy();
+      expect(deviceToken.startsWith("at_")).toBe(true);
     });
 
     it("rejects replayed pairing token (one-time use)", async () => {
@@ -176,6 +171,7 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
       const res = await api("POST", "/pair", undefined, {
         pairingToken: invite.pairingToken,
         deviceName: "e2e-replay-attempt",
+        devicePublicKey: makeE2EDevicePublicKey(),
       });
 
       expect(res.status).toBe(401);
@@ -257,11 +253,7 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
     if (!lmsReady()) return;
 
     // Pair a fresh device for this test
-    const invite = await generateTestInvite();
-    const pairRes = await api("POST", "/pair", undefined, {
-      pairingToken: invite.pairingToken,
-    });
-    const token = pairRes.json?.deviceToken as string;
+    const token = await pairFreshDevice("e2e-server-info");
 
     const info = await api("GET", "/server/info", token);
     expect(info.status).toBe(200);
@@ -274,11 +266,7 @@ describe("E2E: Pairing Flow", { timeout: 300_000 }, () => {
   it("lists models with device token", async () => {
     if (!lmsReady()) return;
 
-    const invite = await generateTestInvite();
-    const pairRes = await api("POST", "/pair", undefined, {
-      pairingToken: invite.pairingToken,
-    });
-    const token = pairRes.json?.deviceToken as string;
+    const token = await pairFreshDevice("e2e-models");
 
     const models = await api("GET", "/models", token);
     expect(models.status).toBe(200);

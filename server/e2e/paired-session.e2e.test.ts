@@ -17,7 +17,6 @@
 import { describe, it, expect, beforeAll, inject } from "vitest";
 import {
   api,
-  generateTestInvite,
   openSessionStream,
   closeStream,
   sendPromptAndWait,
@@ -26,6 +25,7 @@ import {
   sessionStreamURL,
   isSecureTransport,
   listWorkspaceSessions,
+  pairFreshDevice,
   waitForEvent,
 } from "./harness.js";
 
@@ -68,26 +68,7 @@ describe("E2E: Paired Session Flow", { timeout: 600_000 }, () => {
   beforeAll(async () => {
     if (!lmsReady()) return;
 
-    // Pre-pair: generate invite and pair in one atomic step.
-    // Uses a retry loop because the pairing test may have just issued/consumed
-    // a token — we need a fresh one.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const invite = await generateTestInvite();
-      const pairRes = await api("POST", "/pair", undefined, {
-        pairingToken: invite.pairingToken,
-        deviceName: "e2e-paired-session",
-      });
-
-      if (pairRes.json?.deviceToken) {
-        deviceToken = pairRes.json.deviceToken as string;
-        break;
-      }
-
-      // Token may have been consumed between generate and pair (race).
-      // Retry with a fresh token.
-      console.warn(`[e2e] Pairing attempt ${attempt + 1} failed (${pairRes.status}), retrying...`);
-    }
-
+    deviceToken = await pairFreshDevice("e2e-paired-session");
     expect(deviceToken).toBeTruthy();
   }, 120_000);
 

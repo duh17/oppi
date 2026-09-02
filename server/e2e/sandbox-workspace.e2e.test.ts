@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";
-import { api, generateTestInvite } from "./harness.js";
+import { api, pairFreshDevice } from "./harness.js";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -27,19 +27,7 @@ describe("E2E: Sandbox Workspace Lifecycle", { timeout: 300_000 }, () => {
   beforeAll(async () => {
     if (!lmsReady()) return;
 
-    // Pair a device
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const invite = await generateTestInvite();
-      const pairRes = await api("POST", "/pair", undefined, {
-        pairingToken: invite.pairingToken,
-        deviceName: "e2e-sandbox-test",
-        pushToken: null,
-      });
-      if (pairRes.status === 200 && pairRes.json?.deviceToken) {
-        deviceToken = pairRes.json.deviceToken as string;
-        break;
-      }
-    }
+    deviceToken = await pairFreshDevice("e2e-sandbox-test");
     expect(deviceToken).toBeTruthy();
   }, 120_000);
 

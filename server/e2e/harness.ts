@@ -11,6 +11,7 @@
  */
 
 import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdtempSync, writeFileSync, rmSync, openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
@@ -648,13 +649,79 @@ export async function generateTestInvite(opts?: {
   }
 }
 
-export async function pairDevice(pairingToken: string, deviceName = "e2e-device"): Promise<string> {
-  const res = await api("POST", "/pair", undefined, { pairingToken, deviceName });
-  const deviceToken = res.json?.deviceToken;
-  if (res.status !== 200 || typeof deviceToken !== "string" || deviceToken.length === 0) {
+export function makeE2EDevicePublicKey(): {
+  kty: "EC";
+  crv: "P-256";
+  x: string;
+  y: string;
+} {
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = publicKey.export({ format: "jwk" }) as { x?: string; y?: string };
+  if (!jwk.x || !jwk.y) throw new Error("failed to export P-256 public key");
+  return { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y };
+}
+
+/** Pairing result plus the P-256 key needed to refresh the short-lived at_. */
+export interface E2EDeviceEnrollment {
+  accessToken: string;
+  deviceId: string;
+  expiresAt: number;
+  publicKey: { kty: "EC"; crv: "P-256"; x: string; y: string };
+  privateKeyPem: string;
+}
+
+export async function enrollE2EDevice(
+  pairingToken: string,
+  deviceName = "e2e-device",
+): Promise<E2EDeviceEnrollment> {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = publicKey.export({ format: "jwk" }) as { x?: string; y?: string };
+  if (!jwk.x || !jwk.y) throw new Error("failed to export P-256 public key");
+  const devicePublicKey = { kty: "EC" as const, crv: "P-256" as const, x: jwk.x, y: jwk.y };
+  const res = await api("POST", "/pair", undefined, {
+    pairingToken,
+    deviceName,
+    devicePublicKey,
+  });
+  const accessToken = res.json?.accessToken;
+  const deviceId = res.json?.deviceId;
+  const expiresAt = res.json?.expiresAt;
+  if (
+    res.status !== 200 ||
+    typeof accessToken !== "string" ||
+    accessToken.length === 0 ||
+    typeof deviceId !== "string" ||
+    typeof expiresAt !== "number"
+  ) {
     throw new Error(`Pairing failed (${res.status}): ${res.text}`);
   }
-  return deviceToken;
+  return {
+    accessToken,
+    deviceId,
+    expiresAt,
+    publicKey: devicePublicKey,
+    privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  };
+}
+
+export async function pairDevice(pairingToken: string, deviceName = "e2e-device"): Promise<string> {
+  return (await enrollE2EDevice(pairingToken, deviceName)).accessToken;
+}
+
+export async function pairFreshDevice(deviceName = "e2e-device"): Promise<string> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const invite = await generateTestInvite();
+    try {
+      return await pairDevice(invite.pairingToken, deviceName);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.warn(
+        `[e2e] Pairing attempt ${attempt + 1} failed (${lastError.message}), retrying...`,
+      );
+    }
+  }
+  throw lastError ?? new Error("Pairing failed");
 }
 
 export async function bootstrapAppleE2E(opts?: {

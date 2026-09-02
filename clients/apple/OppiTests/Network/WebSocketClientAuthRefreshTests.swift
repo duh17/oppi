@@ -806,6 +806,58 @@ struct DictationDeviceAuthTests {
         await consumer.value
     }
 
+    @Test func fatalDictationErrorDoesNotReplayStartAfterAuthExpiredClose() async throws {
+        let factory = ScriptedDictationFactory()
+        let refreshCalls = LockedCallCount()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_stale",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in "at_stale" },
+            refreshTokenProvider: { @Sendable in
+                refreshCalls.increment()
+                return "at_refreshed"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+        var receivedFatal = false
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await message in stream {
+                if case .dictationError(_, let fatal) = message, fatal {
+                    receivedFatal = true
+                }
+            }
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        try await client.sendDictation(.dictationStart)
+        #expect(factory.sockets.first?.sentDictationStartCount == 1)
+
+        let first = try #require(factory.sockets.first)
+        first.deliverString(#"{"type":"dictation_error","error":"STT failed to start","fatal":true}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { receivedFatal })
+
+        first.failAuthExpired()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+        #expect(refreshCalls.get() == 1)
+        #expect(
+            factory.sockets.last?.sentDictationStartCount == 0,
+            "Fatal dictation_error must not replay dictation_start after 4001"
+        )
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
     @Test func leftoverStaticTokenOpensWithoutADeviceSession() async throws {
         let factory = ScriptedDictationFactory()
         guard let client = DictationStreamClient(
