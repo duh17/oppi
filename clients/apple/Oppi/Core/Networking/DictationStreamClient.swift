@@ -226,6 +226,9 @@ final class DictationStreamClient: DictationTransport {
             if case .dictationStart = message, status != .disconnected, continuation != nil {
                 return
             }
+            if case .dictationStart = message {
+                pendingDictationStart = false
+            }
             throw WebSocketError.notConnected
         }
         do {
@@ -238,6 +241,9 @@ final class DictationStreamClient: DictationTransport {
                status != .disconnected,
                continuation != nil {
                 return
+            }
+            if case .dictationStart = message {
+                pendingDictationStart = false
             }
             throw error
         }

@@ -1,10 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   api,
+  applyAppleE2EBootstrapEnv,
   bindE2EAccessTokenFile,
   currentE2EAccessToken,
   dockerStartupCleanupCommand,
@@ -12,6 +14,7 @@ import {
   enrollE2EDevice,
   isRetryablePairingFailure,
   listWorkspaceSessions,
+  nativeE2ETlsPosture,
   nativeStartupStepsForTarget,
   pairDevice,
   refreshE2EAccessToken,
@@ -409,5 +412,66 @@ describe("E2E harness helpers", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("replaces the Apple script-bearer file atomically in the same directory", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "e2e-at-atomic-"));
+    const file = join(dir, "device-token.txt");
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL) => {
+          const path = requestPath(url);
+          if (path === "/pair") {
+            return jsonResponse({
+              accessToken: "at_old",
+              deviceId: "dev_1",
+              expiresAt: Date.now() - 1_000,
+            });
+          }
+          if (path === "/auth/challenge") {
+            return jsonResponse({
+              nonce: "nonce-atomic",
+              audience: "oppi:refresh:v1",
+              expiresAt: Date.now() + 60_000,
+            });
+          }
+          if (path === "/auth/refresh") {
+            return jsonResponse({
+              accessToken: "at_atomic",
+              expiresAt: Date.now() + 600_000,
+            });
+          }
+          return new Response("missing stub", { status: 500 });
+        }),
+      );
+
+      const token = await pairDevice("pt_test", "e2e-file-atomic");
+      bindE2EAccessTokenFile(token, file);
+      const before = statSync(file);
+      expect(readFileSync(file, "utf8")).toBe("at_old");
+
+      await expect(currentE2EAccessToken(token)).resolves.toBe("at_atomic");
+      const after = statSync(file);
+      expect(readFileSync(file, "utf8")).toBe("at_atomic");
+      expect(after.ino).not.toBe(before.ino);
+      expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("canonical Apple bootstrap defaults native TLS to self-signed HTTPS", () => {
+    const cli = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../e2e/harness-cli.ts"),
+      "utf8",
+    );
+    expect(cli).not.toMatch(/E2E_TLS_MODE\s*\?\?=\s*["']disabled["']/);
+    const env: NodeJS.ProcessEnv = {};
+    applyAppleE2EBootstrapEnv(env);
+    expect(nativeE2ETlsPosture(env)).toEqual({
+      tlsMode: "self-signed",
+      transportScheme: "https",
+    });
   });
 });

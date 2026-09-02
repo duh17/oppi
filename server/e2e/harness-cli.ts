@@ -9,6 +9,7 @@
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import {
   E2E_MODEL,
+  applyAppleE2EBootstrapEnv,
   bootstrapAppleE2E,
   ensureMLXServerReady,
   startServer,
@@ -37,9 +38,7 @@ async function main(): Promise<void> {
 }
 
 async function appleBootstrap(): Promise<void> {
-  process.env.E2E_NATIVE ??= "1";
-  process.env.E2E_TLS_MODE ??= "disabled";
-  process.env.OPPI_E2E_UI_HARNESS ??= "1";
+  applyAppleE2EBootstrapEnv();
 
   const ready = await ensureMLXServerReady();
   if (!ready) {

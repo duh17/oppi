@@ -11,10 +11,10 @@
  */
 
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { createPrivateKey, generateKeyPairSync, sign as cryptoSign } from "node:crypto";
-import { existsSync, mkdtempSync, writeFileSync, rmSync, openSync, closeSync } from "node:fs";
+import { createPrivateKey, generateKeyPairSync, randomUUID, sign as cryptoSign } from "node:crypto";
+import { existsSync, mkdtempSync, writeFileSync, renameSync, rmSync, openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname, resolve } from "node:path";
+import { basename, join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import WebSocket from "ws";
 
@@ -83,7 +83,31 @@ const DEFAULT_APP_INVITE_FILE = "/tmp/oppi-e2e-invite.txt";
 const DEFAULT_APP_DEVICE_TOKEN_FILE = "/tmp/oppi-e2e-device-token.txt";
 
 export type E2ETransportScheme = "http" | "https";
+export type NativeE2ETlsMode = "disabled" | "self-signed";
 export type NativeStartupStep = "build" | "assertEntrypoint";
+
+export interface NativeE2ETlsPosture {
+  tlsMode: NativeE2ETlsMode;
+  transportScheme: E2ETransportScheme;
+}
+
+/** Canonical Apple E2E bootstrap. /pair and /auth/* require TLS, so default is self-signed HTTPS. */
+export function applyAppleE2EBootstrapEnv(env: NodeJS.ProcessEnv = process.env): void {
+  env.E2E_NATIVE ??= "1";
+  env.E2E_TLS_MODE ??= "self-signed";
+  env.OPPI_E2E_UI_HARNESS ??= "1";
+}
+
+export function nativeE2ETlsPosture(
+  env: NodeJS.ProcessEnv = process.env,
+): NativeE2ETlsPosture {
+  const tlsMode: NativeE2ETlsMode = env.E2E_TLS_MODE === "disabled" ? "disabled" : "self-signed";
+  return {
+    tlsMode,
+    transportScheme: tlsMode === "disabled" ? "http" : "https",
+  };
+}
+
 let transportScheme: E2ETransportScheme =
   process.env.E2E_TRANSPORT_SCHEME === "https" ? "https" : "http";
 
@@ -337,7 +361,8 @@ async function startNativeServer(): Promise<void> {
   process.env.E2E_NATIVE_DATA_DIR = nativeDataDir;
 
   // Pre-configure. ConfigStore merges this minimal file with defaults at startup.
-  const nativeTlsMode = process.env.E2E_TLS_MODE === "disabled" ? "disabled" : "self-signed";
+  const { tlsMode: nativeTlsMode, transportScheme: nativeTransportScheme } =
+    nativeE2ETlsPosture();
   writeFileSync(
     join(nativeDataDir, "config.json"),
     JSON.stringify(
@@ -348,7 +373,7 @@ async function startNativeServer(): Promise<void> {
     { mode: 0o600 },
   );
 
-  transportScheme = nativeTlsMode === "disabled" ? "http" : "https";
+  transportScheme = nativeTransportScheme;
   process.env.E2E_TRANSPORT_SCHEME = transportScheme;
   applySelfSignedTlsBypass();
 
@@ -626,7 +651,14 @@ export function bindE2EAccessTokenFile(token: string, file: string): void {
     throw new Error("No harness auth session for this device token");
   }
   const persist = (accessToken: string): void => {
-    writeFileSync(file, accessToken);
+    const temporaryPath = join(dirname(file), `.${basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+    try {
+      writeFileSync(temporaryPath, accessToken);
+      renameSync(temporaryPath, file);
+    } catch (error) {
+      rmSync(temporaryPath, { force: true });
+      throw error;
+    }
   };
   persist(session.accessToken);
   session.onAccessTokenChange = persist;

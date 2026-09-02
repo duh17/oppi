@@ -1270,6 +1270,57 @@ struct DictationDeviceAuthTests {
         await consumer.value
     }
 
+    @Test func thrownNonAuthStartSendDoesNotReplayAfterAuthExpiredClose() async throws {
+        let factory = ScriptedDictationFactory()
+        let refreshCalls = LockedCallCount()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_stale",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in "at_stale" },
+            refreshTokenProvider: { @Sendable in
+                refreshCalls.increment()
+                return "at_refreshed"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        let first = try #require(factory.sockets.first)
+        first.failSend(URLError(.secureConnectionFailed))
+
+        var sendError: Error?
+        do {
+            try await client.sendDictation(.dictationStart)
+        } catch {
+            sendError = error
+        }
+
+        #expect(sendError != nil, "Non-auth Start send failure must throw to the recording session")
+        #expect(first.sentDictationStartCount == 0)
+
+        first.failAuthExpired()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+        #expect(refreshCalls.get() == 1)
+        #expect(
+            factory.sockets.last?.sentDictationStartCount == 0,
+            "Thrown Start send must not replay dictation_start after 4001"
+        )
+        #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
     @Test func failedCurrentTokenResolveDoesNotOpenAfterDisconnect() async throws {
         let factory = ScriptedDictationFactory()
         let gate = LateTokenGate()
