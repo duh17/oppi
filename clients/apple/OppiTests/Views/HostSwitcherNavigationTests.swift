@@ -103,6 +103,12 @@ struct UsageHostFollowWiringTests {
         #expect(source.contains("shouldApplyHostResult"))
         #expect(source.contains("let requestedId = server.id") || source.contains("let requestedId = selectedServer?.id"))
     }
+
+    @Test func usageTrailingChromeHasNoSettingsGear() throws {
+        let source = try appleSource("Oppi/Features/Server/ServerView.swift")
+        #expect(!source.contains("server.settings.gear"))
+        #expect(!source.contains("Image(systemName: \"gearshape\")"))
+    }
 }
 
 @Suite("Inbox host-change local state")

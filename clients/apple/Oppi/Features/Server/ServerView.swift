@@ -75,15 +75,6 @@ struct ServerView: View {
         .toolbar {
             if let selectedServer {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        navigation.openServerDetails(ServerDetailsNavTarget(serverId: selectedServer.id))
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .accessibilityLabel(HostSwitcherDestination.serverSettings.menuTitle)
-                    .accessibilityIdentifier("server.settings.gear")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
                     HostSwitcherMenu(current: selectedServer, destination: .usage)
                 }
             }
@@ -395,11 +386,6 @@ struct UsageChromePreview: View {
             .navigationTitle(HostSwitcherDestination.usage.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Image(systemName: "gearshape")
-                        .accessibilityLabel(HostSwitcherDestination.serverSettings.menuTitle)
-                        .accessibilityIdentifier("server.settings.gear")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     ServerSwitcherPill(
                         server: HostSwitcherPreviewData.server,
