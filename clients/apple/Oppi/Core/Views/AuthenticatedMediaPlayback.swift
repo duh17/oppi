@@ -891,10 +891,13 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
     @Published var player: AVPlayer?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var currentTime: TimeInterval = 0
 
     private var playbackSession: AuthenticatedMediaPlaybackSession?
     private var statusObservation: NSKeyValueObservation?
     private var presentationSizeObservation: NSKeyValueObservation?
+    private var timeObserver: Any?
+    private weak var timeObservedPlayer: AVPlayer?
     private var preparedIdentity: String?
     private var recordedStartIdentity: String?
     private var recordedErrorIdentity: String?
@@ -931,6 +934,8 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         let player = playbackSession.player
         self.playbackSession = playbackSession
         self.player = player
+        currentTime = 0
+        startTimeObserver(on: player)
 
         presentationSizeObservation = player.currentItem?.observe(\.presentationSize, options: [.initial, .new]) { [weak self] item, _ in
             let width = item.presentationSize.width
@@ -1106,9 +1111,11 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
         statusObservation = nil
         presentationSizeObservation?.invalidate()
         presentationSizeObservation = nil
+        stopTimeObserver()
         playbackSession?.teardown()
         playbackSession = nil
         player = nil
+        currentTime = 0
         isLoading = false
         ownership.isFullScreen = false
         ownership.isPictureInPicture = false
@@ -1123,6 +1130,28 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
             recordedStartIdentity = nil
             recordedErrorIdentity = nil
         }
+    }
+
+    private func startTimeObserver(on player: AVPlayer) {
+        stopTimeObserver()
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.2, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] time in
+            let seconds = time.seconds
+            Task { @MainActor in
+                self?.currentTime = seconds
+            }
+        }
+        timeObservedPlayer = player
+    }
+
+    private func stopTimeObserver() {
+        if let timeObserver, let timeObservedPlayer {
+            timeObservedPlayer.removeTimeObserver(timeObserver)
+        }
+        timeObserver = nil
+        timeObservedPlayer = nil
     }
 }
 
@@ -1140,6 +1169,7 @@ struct AuthenticatedMediaPlayerView: View {
     var telemetrySource = "authenticated_media"
     var telemetryMode = "inline"
     var telemetrySessionId: String? = nil
+    var timedText: TimedText.LoadResult = .empty
 
     private let injectedModel: AuthenticatedMediaPlayerModel?
     @StateObject private var ownedModel = AuthenticatedMediaPlayerModel()
@@ -1158,7 +1188,8 @@ struct AuthenticatedMediaPlayerView: View {
         telemetrySource: String = "authenticated_media",
         telemetryMode: String = "inline",
         telemetrySessionId: String? = nil,
-        model: AuthenticatedMediaPlayerModel? = nil
+        model: AuthenticatedMediaPlayerModel? = nil,
+        timedText: TimedText.LoadResult = .empty
     ) {
         self.source = source
         self.height = height
@@ -1173,6 +1204,7 @@ struct AuthenticatedMediaPlayerView: View {
         self.telemetrySource = telemetrySource
         self.telemetryMode = telemetryMode
         self.telemetrySessionId = telemetrySessionId
+        self.timedText = timedText
         injectedModel = model
     }
 
@@ -1191,6 +1223,7 @@ struct AuthenticatedMediaPlayerView: View {
             telemetrySource: telemetrySource,
             telemetryMode: telemetryMode,
             telemetrySessionId: telemetrySessionId,
+            timedText: timedText,
             model: injectedModel ?? ownedModel
         )
     }
@@ -1210,7 +1243,9 @@ private struct AuthenticatedMediaPlayerSurface: View {
     var telemetrySource: String
     var telemetryMode: String
     var telemetrySessionId: String?
+    var timedText: TimedText.LoadResult
     @ObservedObject var model: AuthenticatedMediaPlayerModel
+    @State private var selectedTrackIndex: Int?
 
     var body: some View {
 #if DEBUG
@@ -1220,6 +1255,7 @@ private struct AuthenticatedMediaPlayerSurface: View {
             if let player = model.player {
                 AVPlayerViewControllerContainer(
                     player: player,
+                    captionText: currentCaptionText,
                     onFullScreenChange: { fullScreen in
                         if fullScreen {
                             model.setFullScreen(true)
@@ -1245,6 +1281,13 @@ private struct AuthenticatedMediaPlayerSurface: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: height)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                    .overlay(alignment: .bottom) {
+                        captionOverlay
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        captionLanguageControl
+                            .padding(10)
+                    }
             } else if let errorMessage = model.errorMessage {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color.themeBgHighlight)
@@ -1281,6 +1324,9 @@ private struct AuthenticatedMediaPlayerSurface: View {
                     }
             }
         }
+        .onChange(of: timedText) { _, _ in
+            selectedTrackIndex = timedText.selectedIndex
+        }
         .task(id: "\(source.identity)|\(isActive)") {
             model.setVisible(isActive)
             guard isActive else { return }
@@ -1298,6 +1344,54 @@ private struct AuthenticatedMediaPlayerSurface: View {
         }
         .onDisappear {
             model.handleDisappear()
+        }
+    }
+
+    private var resolvedTrackIndex: Int {
+        selectedTrackIndex ?? timedText.selectedIndex
+    }
+
+    private var currentCaptionText: String? {
+        guard timedText.tracks.indices.contains(resolvedTrackIndex) else { return nil }
+        return TimedText.currentCue(
+            in: timedText.tracks[resolvedTrackIndex].cues,
+            at: model.currentTime
+        )?.text
+    }
+
+    @ViewBuilder
+    private var captionOverlay: some View {
+        if let currentCaptionText, !currentCaptionText.isEmpty {
+            Text(currentCaptionText)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 46)
+                .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private var captionLanguageControl: some View {
+        if timedText.showsLanguageControl {
+            Menu {
+                ForEach(timedText.tracks.indices, id: \.self) { index in
+                    Button(timedText.tracks[index].languageLabel) {
+                        selectedTrackIndex = index
+                    }
+                }
+            } label: {
+                Image(systemName: "captions.bubble")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .background(.black.opacity(0.45), in: Circle())
+            }
+            .accessibilityLabel("Caption language")
         }
     }
 }

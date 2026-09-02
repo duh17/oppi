@@ -1180,6 +1180,7 @@ struct FullScreenEndHandoff: @unchecked Sendable {
 
 struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     let player: AVPlayer
+    var captionText: String? = nil
     var onFullScreenChange: ((Bool) -> Void)?
     var onFullScreenWillEnd: (() -> Void)?
     var onFullScreenDidEnd: ((Bool) -> Void)?
@@ -1218,6 +1219,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         }
         uiViewController.delegate = context.coordinator
         configure(uiViewController)
+        applyCaption(captionText, to: uiViewController)
     }
 
     private func configure(_ controller: AVPlayerViewController) {
@@ -1227,6 +1229,38 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
         controller.view.accessibilityIdentifier = "videoPlayer.native"
+        // Overlay captions instead of injecting AVPlayer closed captions.
+        applyCaption(captionText, to: controller)
+    }
+
+    private func applyCaption(_ text: String?, to controller: AVPlayerViewController) {
+        let tag = 0x0C4D
+        guard let overlay = controller.contentOverlayView else { return }
+        let label: UILabel
+        if let existing = overlay.viewWithTag(tag) as? UILabel {
+            label = existing
+        } else {
+            label = UILabel()
+            label.tag = tag
+            label.numberOfLines = 3
+            label.textAlignment = .center
+            label.font = .preferredFont(forTextStyle: .subheadline)
+            label.textColor = .white
+            label.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+            label.layer.cornerRadius = 8
+            label.layer.masksToBounds = true
+            label.translatesAutoresizingMaskIntoConstraints = false
+            overlay.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 16),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -16),
+                label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+                label.bottomAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.bottomAnchor, constant: -52),
+            ])
+        }
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        label.text = trimmed.isEmpty ? nil : "  \(trimmed)  "
+        label.isHidden = trimmed.isEmpty
     }
 
     final class Coordinator: NSObject, AVPlayerViewControllerDelegate {

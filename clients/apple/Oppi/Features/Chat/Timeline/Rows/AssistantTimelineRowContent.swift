@@ -39,6 +39,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     /// Existing authenticated/range-capable source path for inline wiki audio.
     let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    let makeTimedTextSidecar: TimedTextSidecarProvider?
     let audioPlayer: AudioPlayerService?
 
     init(
@@ -61,6 +62,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
         self.text = text
@@ -82,6 +84,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
     }
 
@@ -325,6 +328,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         markdownView.fetchHostFile = configuration.fetchHostFile
         markdownView.makeMarkdownVideoSource = configuration.makeMarkdownVideoSource
         markdownView.makeMarkdownAudioSource = configuration.makeMarkdownAudioSource
+        markdownView.makeTimedTextSidecar = configuration.makeTimedTextSidecar
         markdownView.audioPlayer = configuration.audioPlayer
         let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .assistantProse,

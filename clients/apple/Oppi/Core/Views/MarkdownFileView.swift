@@ -24,6 +24,7 @@ struct MarkdownFileView: View {
     var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil
+    var makeTimedTextSidecar: TimedTextSidecarProvider? = nil
     var audioPlayer: AudioPlayerService? = nil
     var reviewCommentSelectionContext: ReviewCommentSelectionContext?
 
@@ -59,6 +60,7 @@ struct MarkdownFileView: View {
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
     }
@@ -82,7 +84,7 @@ struct MarkdownFileView: View {
                 workspaceContext: fullScreenWorkspaceContext
             ),
             reviewCommentSelectionContext: reviewContext,
-            renderedViewFactory: { [content, filePath, workspaceID, worktreeId, serverBaseURL, fetchWorkspaceFile, fetchHostFile, makeMarkdownVideoSource, makeMarkdownAudioSource, audioPlayer, presentation, reviewContext, reviewSourceContext] in
+            renderedViewFactory: { [content, filePath, workspaceID, worktreeId, serverBaseURL, fetchWorkspaceFile, fetchHostFile, makeMarkdownVideoSource, makeMarkdownAudioSource, makeTimedTextSidecar, audioPlayer, presentation, reviewContext, reviewSourceContext] in
                 let themeID = ThemeRuntimeState.currentThemeID()
                 if presentation == .document {
                     return NativeFullScreenMarkdownBody(
@@ -99,6 +101,7 @@ struct MarkdownFileView: View {
                         fetchHostFile: fetchHostFile,
                         makeMarkdownVideoSource: makeMarkdownVideoSource,
                         makeMarkdownAudioSource: makeMarkdownAudioSource,
+                        makeTimedTextSidecar: makeTimedTextSidecar,
                         audioPlayer: audioPlayer
                     )
                 }
@@ -109,6 +112,7 @@ struct MarkdownFileView: View {
                 view.fetchHostFile = fetchHostFile
                 view.makeMarkdownVideoSource = makeMarkdownVideoSource
                 view.makeMarkdownAudioSource = makeMarkdownAudioSource
+                view.makeTimedTextSidecar = makeTimedTextSidecar
                 view.audioPlayer = audioPlayer
                 view.apply(configuration: .make(
                     content: content,

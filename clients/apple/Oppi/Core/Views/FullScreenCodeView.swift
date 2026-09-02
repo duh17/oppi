@@ -289,6 +289,7 @@ indirect enum FullScreenCodeContent {
         let fetchHostFile: ((_ path: String) async throws -> Data)?
         let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
         let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+        let makeTimedTextSidecar: TimedTextSidecarProvider?
         let audioPlayer: AudioPlayerService?
 
         init(
@@ -302,6 +303,7 @@ indirect enum FullScreenCodeContent {
             fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
             makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
             makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+            makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
             audioPlayer: AudioPlayerService? = nil
         ) {
             self.workspaceID = workspaceID
@@ -314,6 +316,7 @@ indirect enum FullScreenCodeContent {
             self.fetchHostFile = fetchHostFile
             self.makeMarkdownVideoSource = makeMarkdownVideoSource
             self.makeMarkdownAudioSource = makeMarkdownAudioSource
+            self.makeTimedTextSidecar = makeTimedTextSidecar
             self.audioPlayer = audioPlayer
         }
     }

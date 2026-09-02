@@ -23,7 +23,8 @@ enum AudioLyricsPlayerPresenter {
         audioPlayer: AudioPlayerService?,
         play: @escaping () -> Void,
         openFile: (() -> Void)?,
-        autoplayOnAppear: Bool
+        autoplayOnAppear: Bool,
+        timedText: TimedText.LoadResult? = nil
     ) {
         // Expand starts playback only when the caller opts in: already playing
         // this item, or a voice `playNow` reply. Markdown and file browser pass false.
@@ -36,7 +37,8 @@ enum AudioLyricsPlayerPresenter {
             play: play,
             openFile: openFile,
             autoplayOnAppear: autoplayOnAppear,
-            showsCloseButton: true
+            showsCloseButton: true,
+            timedText: timedText
         )
         let host = UIHostingController(rootView: root)
         host.modalPresentationStyle = .fullScreen
@@ -65,12 +67,21 @@ struct AudioLyricsPlayerView: View {
     let openFile: (() -> Void)?
     var autoplayOnAppear = false
     var showsCloseButton = true
+    var timedText: TimedText.LoadResult? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var progressTick = 0
+    @State private var selectedTrackIndex: Int?
+
+    private var resolvedTrackIndex: Int {
+        selectedTrackIndex ?? timedText?.selectedIndex ?? 0
+    }
 
     private var lines: [AudioLyrics.Line] {
-        AudioLyrics.lines(from: lyrics)
+        if let timedText, timedText.tracks.indices.contains(resolvedTrackIndex) {
+            return TimedText.lyricsLines(from: timedText.tracks[resolvedTrackIndex].cues)
+        }
+        return AudioLyrics.lines(from: lyrics)
     }
 
     private var currentIndex: Int? {
@@ -137,11 +148,35 @@ struct AudioLyricsPlayerView: View {
                 .foregroundStyle(.themeFg)
                 .lineLimit(1)
             Spacer()
-            Color.clear.frame(width: 72, height: 1)
+            languageControl
+                .frame(width: 72, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var languageControl: some View {
+        if let timedText, timedText.showsLanguageControl {
+            Menu {
+                ForEach(timedText.tracks.indices, id: \.self) { index in
+                    Button(timedText.tracks[index].languageLabel) {
+                        selectedTrackIndex = index
+                    }
+                }
+            } label: {
+                Text(timedText.tracks.indices.contains(resolvedTrackIndex)
+                     ? timedText.tracks[resolvedTrackIndex].languageLabel
+                     : "Language")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themePurple)
+                    .lineLimit(1)
+            }
+            .accessibilityLabel("Lyrics language")
+        } else {
+            Color.clear.frame(width: 72, height: 1)
+        }
     }
 
     @ViewBuilder

@@ -1139,6 +1139,55 @@ final class ServerConnection {
         }
     }
 
+    func loadTimedTextSidecarWhenReady(
+        mediaPath: String,
+        kind: TimedText.MediaKind,
+        reference: ResourceReference,
+        workspaceId: String?,
+        sessionId: String?,
+        worktreeId: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) async -> TimedText.LoadResult {
+        let apiClient: APIClient
+        do {
+            apiClient = try await waitForAPIClient()
+        } catch {
+            return .empty
+        }
+        let currentRuntime = MarkdownVideoWorkspaceContext.runtime(
+            workspaceId: workspaceId,
+            serverId: currentServerId,
+            workspacesByServer: workspaceStore.workspacesByServer,
+            workspaces: workspaceStore.workspaces
+        )
+        let resolvedRuntime = MarkdownVideoWorkspaceContext.resolvedRuntime(
+            captured: workspaceRuntime,
+            current: currentRuntime
+        )
+        let session = sessionId.flatMap { sessionStore.session(id: $0) }
+        let resolvedWorktree = worktreeId ?? MarkdownVideoWorkspaceContext.firstCheckout(
+            session: session,
+            workspaceId: workspaceId
+        )
+        guard let route = MarkdownVideoMediaSourceRoute.resolve(
+            filePath: mediaPath,
+            kind: reference.kind,
+            referenceWorkspaceID: reference.workspaceID,
+            workspaceID: workspaceId,
+            sessionID: sessionId,
+            worktreeID: resolvedWorktree,
+            workspaceRuntime: resolvedRuntime
+        ) else {
+            return .empty
+        }
+        return await TimedText.load(
+            mediaPath: mediaPath,
+            kind: kind,
+            route: route,
+            api: apiClient
+        )
+    }
+
     func fetchHostFileWhenReady(
         path: String,
         workspaceId: String?,

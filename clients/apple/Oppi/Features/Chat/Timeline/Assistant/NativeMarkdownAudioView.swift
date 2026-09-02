@@ -79,6 +79,7 @@ final class NativeMarkdownAudioView: UIView {
     private(set) var reservedHeight: CGFloat = MarkdownInlineAudioLayout.reservedHeight(forWidth: .nan)
     private var isUnavailable = false
     private var worktreeID: String?
+    private var sidecarProvider: TimedTextSidecarProvider?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -105,7 +106,8 @@ final class NativeMarkdownAudioView: UIView {
         audioPlayer: AudioPlayerService?,
         renderingMode: ContentRenderingMode,
         preferredDisplayWidth: CGFloat?,
-        worktreeID: String? = nil
+        worktreeID: String? = nil,
+        sidecarProvider: TimedTextSidecarProvider? = nil
     ) {
         let width = preferredDisplayWidth.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
             ?? (bounds.width > 0 ? bounds.width : 320)
@@ -131,6 +133,7 @@ final class NativeMarkdownAudioView: UIView {
         self.sourceProvider = sourceProvider
         self.audioPlayer = audioPlayer
         self.worktreeID = worktreeID
+        self.sidecarProvider = sidecarProvider
         currentSource = nil
         isUnavailable = false
         resolutionTask?.cancel()
@@ -253,19 +256,34 @@ final class NativeMarkdownAudioView: UIView {
             NotificationCenter.default.post(name: .resourceReferenceTapped, object: embed.reference)
             return
         }
-        AudioLyricsPlayerPresenter.present(
-            from: self,
-            title: (embed.filePath as NSString).lastPathComponent,
-            lyrics: nil,
-            itemID: playbackItemID(for: embed),
-            audioPlayer: audioPlayer,
-            play: { [weak self] in self?.ensurePlaying() },
-            openFile: { [weak self] in
-                guard let reference = self?.currentEmbed?.reference else { return }
-                NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
-            },
-            autoplayOnAppear: false
-        )
+        let title = (embed.filePath as NSString).lastPathComponent
+        let itemID = playbackItemID(for: embed)
+        let present: (TimedText.LoadResult?) -> Void = { [weak self] timedText in
+            guard let self else { return }
+            AudioLyricsPlayerPresenter.present(
+                from: self,
+                title: title,
+                lyrics: nil,
+                itemID: itemID,
+                audioPlayer: self.audioPlayer,
+                play: { [weak self] in self?.ensurePlaying() },
+                openFile: { [weak self] in
+                    guard let reference = self?.currentEmbed?.reference else { return }
+                    NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
+                },
+                autoplayOnAppear: false,
+                timedText: timedText
+            )
+        }
+        guard let sidecarProvider else {
+            present(nil)
+            return
+        }
+        Task { @MainActor [weak self] in
+            let timedText = await sidecarProvider(embed.filePath, .audio, embed.reference)
+            guard let self, self.currentEmbed?.filePath == embed.filePath else { return }
+            present(timedText)
+        }
     }
 
     private func ensurePlaying() {

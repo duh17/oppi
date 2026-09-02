@@ -40,6 +40,9 @@ final class NativeMarkdownVideoView: UIView {
     private var hasCommittedRevealGeometry = false
     private var renderingMode: ContentRenderingMode = .live
     private var sourceProvider: MarkdownVideoMediaSourceProvider?
+    private var sidecarProvider: TimedTextSidecarProvider?
+    private var timedText = TimedText.LoadResult.empty
+    private var sidecarTask: Task<Void, Never>?
     private(set) var reservedHeight: CGFloat = MarkdownInlineVideoLayout.reservedHeight(forWidth: .nan)
     private(set) var isStaticFallback = false
     /// Render-ahead may publish the reserved 16:9 height before reveal.
@@ -58,6 +61,7 @@ final class NativeMarkdownVideoView: UIView {
 
     deinit {
         resolutionTask?.cancel()
+        sidecarTask?.cancel()
     }
 
     /// Recycle / identity-change teardown. Do not call from `willMove(toSuperview:)`;
@@ -65,6 +69,9 @@ final class NativeMarkdownVideoView: UIView {
     func prepareForRemoval() {
         resolutionTask?.cancel()
         resolutionTask = nil
+        sidecarTask?.cancel()
+        sidecarTask = nil
+        timedText = .empty
         currentIdentity = nil
         removePlayer()
     }
@@ -73,7 +80,8 @@ final class NativeMarkdownVideoView: UIView {
         embed: MarkdownVideoEmbed,
         sourceProvider: MarkdownVideoMediaSourceProvider?,
         renderingMode: ContentRenderingMode,
-        preferredDisplayWidth: CGFloat?
+        preferredDisplayWidth: CGFloat?,
+        sidecarProvider: TimedTextSidecarProvider? = nil
     ) {
         let width = preferredDisplayWidth.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
             ?? (bounds.width > 0 ? bounds.width : 320)
@@ -93,6 +101,9 @@ final class NativeMarkdownVideoView: UIView {
         currentEmbed = embed
         self.renderingMode = renderingMode
         self.sourceProvider = sourceProvider
+        self.sidecarProvider = sidecarProvider
+        timedText = .empty
+        sidecarTask?.cancel()
         hasCommittedRevealGeometry = shouldCommitRevealGeometry(renderingMode: renderingMode)
         applyReservedHeight(nextHeight)
         resolutionTask?.cancel()
@@ -257,6 +268,7 @@ final class NativeMarkdownVideoView: UIView {
         hostingController = host
         currentSource = source
         attachPlayerHost(host)
+        loadSidecar(for: embed)
         NSLayoutConstraint.activate([
             host.view.leadingAnchor.constraint(equalTo: leadingAnchor),
             host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -318,7 +330,30 @@ final class NativeMarkdownVideoView: UIView {
             telemetrySource: "markdown_inline_video",
             telemetryMode: "inline",
             telemetrySessionId: embed?.reference.sourceSessionID,
-            model: playbackModel
+            model: playbackModel,
+            timedText: timedText
+        )
+    }
+
+    private func loadSidecar(for embed: MarkdownVideoEmbed) {
+        sidecarTask?.cancel()
+        guard let sidecarProvider else { return }
+        sidecarTask = Task { [weak self] in
+            let result = await sidecarProvider(embed.filePath, .video, embed.reference)
+            await MainActor.run {
+                guard let self, !Task.isCancelled, self.currentEmbed == embed else { return }
+                self.timedText = result
+                self.refreshPlayerCaptions()
+            }
+        }
+    }
+
+    private func refreshPlayerCaptions() {
+        guard let host = hostingController, let source = currentSource else { return }
+        host.rootView = makePlayerView(
+            source: source,
+            embed: currentEmbed,
+            isActive: isPlaybackVisible
         )
     }
 

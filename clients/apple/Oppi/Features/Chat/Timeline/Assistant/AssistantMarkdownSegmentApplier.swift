@@ -304,6 +304,9 @@ final class AssistantMarkdownSegmentApplier {
     /// Authenticated file-backed media resolver for `![[audio-file]]`.
     var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
 
+    /// Workspace/session sidecar lyrics and captions. Host media stays sidecar-free.
+    var makeTimedTextSidecar: TimedTextSidecarProvider?
+
     /// Shared playback owner for markdown audio strips.
     var audioPlayer: AudioPlayerService?
 
@@ -691,7 +694,8 @@ final class AssistantMarkdownSegmentApplier {
                 embed: embed,
                 sourceProvider: makeMarkdownVideoSource,
                 renderingMode: config.renderingMode,
-                preferredDisplayWidth: preparationWidth
+                preferredDisplayWidth: preparationWidth,
+                sidecarProvider: makeTimedTextSidecar
             )
             videoView.setPlaybackVisible(videoPlaybackVisible)
             stackView.addArrangedSubview(videoView)
@@ -705,7 +709,8 @@ final class AssistantMarkdownSegmentApplier {
                 audioPlayer: audioPlayer,
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth,
-                worktreeID: config.worktreeId
+                worktreeID: config.worktreeId,
+                sidecarProvider: makeTimedTextSidecar
             )
             stackView.addArrangedSubview(audioView)
             audioViews[index] = audioView
@@ -993,7 +998,8 @@ final class AssistantMarkdownSegmentApplier {
                     embed: embed,
                     sourceProvider: makeMarkdownVideoSource,
                     renderingMode: config.renderingMode,
-                    preferredDisplayWidth: preparationWidth
+                    preferredDisplayWidth: preparationWidth,
+                    sidecarProvider: makeTimedTextSidecar
                 )
                 videoViews[index]?.setPlaybackVisible(videoPlaybackVisible)
 
@@ -1004,7 +1010,8 @@ final class AssistantMarkdownSegmentApplier {
                     audioPlayer: audioPlayer,
                     renderingMode: config.renderingMode,
                     preferredDisplayWidth: preparationWidth,
-                    worktreeID: config.worktreeId
+                    worktreeID: config.worktreeId,
+                    sidecarProvider: makeTimedTextSidecar
                 )
 
             case .mermaidDiagram(let code):

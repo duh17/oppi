@@ -12,6 +12,7 @@ enum SessionFileFullScreenContentBuilder {
         fetchSessionFileData: ((String) async throws -> Data)?,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil,
         sessionID: String
     ) -> FullScreenCodeContent {
@@ -35,6 +36,7 @@ enum SessionFileFullScreenContentBuilder {
                 fetchHostFile: fetchSessionFileData,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
+                makeTimedTextSidecar: makeTimedTextSidecar,
                 audioPlayer: audioPlayer
             )
         )
@@ -64,6 +66,7 @@ struct SessionTouchedFileContentView: View {
     @State private var fetchSessionFileData: ((String) async throws -> Data)?
     @State private var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     @State private var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    @State private var makeTimedTextSidecar: TimedTextSidecarProvider?
 
     /// Whether the UIKit file viewer is active (text content loaded).
     private var isUsingFileViewer: Bool {
@@ -115,6 +118,7 @@ struct SessionTouchedFileContentView: View {
             fetchSessionFileData: fetchSessionFileData,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer,
             sessionID: sessionId
         )
@@ -284,6 +288,34 @@ struct SessionTouchedFileContentView: View {
                     path: rawPath,
                     contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: pathExtension),
                     sourceFileExtension: pathExtension
+                )
+            }
+        }
+        makeTimedTextSidecar = { [api, workspaceId, sessionId, workspaceRuntime, workspaceHostMount] mediaPath, kind, _ in
+            let route = SessionTouchedFileLoadRoute.resolve(
+                path: mediaPath,
+                workspaceRuntime: workspaceRuntime,
+                hostMount: workspaceHostMount
+            )
+            switch route {
+            case .hostFile:
+                return .empty
+            case .sessionRaw(let rawPath):
+                let access = TimedText.Access(
+                    sourceKind: .session,
+                    fetchFile: { path in
+                        try await api.getSessionFileData(
+                            workspaceId: workspaceId,
+                            sessionId: sessionId,
+                            path: path
+                        )
+                    }
+                )
+                return await TimedText.load(
+                    mediaPath: rawPath,
+                    kind: kind,
+                    locale: .current,
+                    access: access
                 )
             }
         }

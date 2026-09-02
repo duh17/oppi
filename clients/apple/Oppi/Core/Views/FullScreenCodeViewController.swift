@@ -913,6 +913,7 @@ final class FullScreenCodeViewController: UIViewController {
                 fetchHostFile: wsContext?.fetchHostFile,
                 makeMarkdownVideoSource: wsContext?.makeMarkdownVideoSource,
                 makeMarkdownAudioSource: wsContext?.makeMarkdownAudioSource,
+                makeTimedTextSidecar: wsContext?.makeTimedTextSidecar,
                 audioPlayer: wsContext?.audioPlayer
             )
             body.accessibilityIdentifier = "full-screen.markdown.body"
@@ -1119,6 +1120,7 @@ final class FullScreenCodeViewController: UIViewController {
             fetchHostFile: workspaceContext?.fetchHostFile,
             makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
             makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
+            makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
             audioPlayer: workspaceContext?.audioPlayer
         )
     }
@@ -1199,6 +1201,7 @@ final class FullScreenCodeViewController: UIViewController {
                     fetchHostFile: workspaceContext?.fetchHostFile,
                     makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
                     makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
+            makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
                     audioPlayer: workspaceContext?.audioPlayer
                 )
             } else {
@@ -1271,6 +1274,7 @@ final class FullScreenCodeViewController: UIViewController {
                     fetchHostFile: workspaceContext?.fetchHostFile,
                     makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
                     makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
+            makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
                     audioPlayer: workspaceContext?.audioPlayer
                 )
                 liveSourceMarkdownBodyView = nil

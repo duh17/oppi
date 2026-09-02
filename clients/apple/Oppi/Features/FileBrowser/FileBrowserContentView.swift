@@ -152,6 +152,7 @@ struct FileBrowserContentView: View {
     /// survive across the `@State` update boundary. We capture it in `loadContent()`
     /// when we know it's non-nil (since we just used it to load the file).
     @State private var loadedApiClient: APIClient?
+    @State private var timedText = TimedText.LoadResult.empty
 
     private var currentSelection: FileBrowserSelection {
         activeSelection ?? FileBrowserSelection(path: filePath, name: fileName, size: fileSize)
@@ -392,7 +393,8 @@ struct FileBrowserContentView: View {
                 source: source,
                 height: min(max(geometry.size.height * 0.34, 220), 420),
                 unavailableTitle: "Video preview unavailable",
-                unavailableSystemImage: "film.slash"
+                unavailableSystemImage: "film.slash",
+                timedText: timedText
             )
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -421,7 +423,8 @@ struct FileBrowserContentView: View {
             },
             openFile: nil,
             autoplayOnAppear: false,
-            showsCloseButton: false
+            showsCloseButton: false,
+            timedText: timedText
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.themeBg)
@@ -468,6 +471,7 @@ struct FileBrowserContentView: View {
         }
 
         loadedMediaPath = nil
+        timedText = .empty
         content = .loading
 
         do {
@@ -482,6 +486,7 @@ struct FileBrowserContentView: View {
                 guard isCurrentFile(requestedPath) else { return }
                 loadedMediaPath = requestedPath
                 content = .video(source)
+                await loadTimedText(api: api, path: requestedPath, kind: .video)
             case .audio:
                 let source = try await mediaSource(
                     api: api,
@@ -492,6 +497,7 @@ struct FileBrowserContentView: View {
                 guard isCurrentFile(requestedPath) else { return }
                 loadedMediaPath = requestedPath
                 content = .audio(source)
+                await loadTimedText(api: api, path: requestedPath, kind: .audio)
             case .image, .pdf, .text, .binary:
                 let data = try await browseFile(api: api, path: requestedPath)
                 guard isCurrentFile(requestedPath) else { return }
@@ -658,9 +664,69 @@ struct FileBrowserContentView: View {
                         )
                     }
                 },
+                makeTimedTextSidecar: { [workspaceId, worktreeId, sessionId, workspaceRuntime] mediaPath, kind, reference in
+                    guard let route = MarkdownVideoMediaSourceRoute.resolve(
+                        filePath: mediaPath,
+                        kind: reference.kind,
+                        referenceWorkspaceID: reference.workspaceID,
+                        workspaceID: workspaceId,
+                        sessionID: sessionId,
+                        worktreeID: worktreeId,
+                        workspaceRuntime: workspaceRuntime
+                    ) else {
+                        return .empty
+                    }
+                    return await TimedText.load(
+                        mediaPath: mediaPath,
+                        kind: kind,
+                        route: route,
+                        api: api
+                    )
+                },
                 audioPlayer: audioPlayer
             )
         )
+    }
+
+    private func loadTimedText(
+        api: APIClient,
+        path: String,
+        kind: TimedText.MediaKind
+    ) async {
+        let access: TimedText.Access
+        switch source {
+        case .hostFile:
+            access = TimedText.Access(
+                sourceKind: .host,
+                fetchFile: { _ in throw CocoaError(.fileNoSuchFile) }
+            )
+        case .workspaceFile:
+            access = TimedText.Access(
+                sourceKind: .workspace,
+                listDirectory: { directory in
+                    try await api.listWorkspaceDirectory(
+                        workspaceId: workspaceId,
+                        path: directory,
+                        worktreeId: worktreeId
+                    ).entries.filter { !$0.isDirectory }.map(\.name)
+                },
+                fetchFile: { sidecarPath in
+                    try await api.browseWorkspaceFile(
+                        workspaceId: workspaceId,
+                        path: sidecarPath,
+                        worktreeId: worktreeId
+                    )
+                }
+            )
+        }
+        let result = await TimedText.load(
+            mediaPath: path,
+            kind: kind,
+            locale: .current,
+            access: access
+        )
+        guard isCurrentFile(path) else { return }
+        timedText = result
     }
 
     private func browseFile(api: APIClient, path: String) async throws -> Data {

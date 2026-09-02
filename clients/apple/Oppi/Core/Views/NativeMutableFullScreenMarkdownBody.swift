@@ -78,6 +78,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private var fetchHostFile: ((_ path: String) async throws -> Data)?
     private var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     private var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    private var makeTimedTextSidecar: TimedTextSidecarProvider?
     private var audioPlayer: AudioPlayerService?
 
     private var readerPreferences: FullScreenReaderPreferences
@@ -124,6 +125,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
         self.themeID = themeID ?? ThemeRuntimeState.currentThemeID()
@@ -145,6 +147,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
         self.latestContent = content
         self.isStreaming = isStreaming
@@ -194,6 +197,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         markdownView.fetchHostFile = fetchHostFile
         markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
         markdownView.makeMarkdownAudioSource = makeMarkdownAudioSource
+        markdownView.makeTimedTextSidecar = makeTimedTextSidecar
         markdownView.audioPlayer = audioPlayer
 
         addSubview(scrollView)
@@ -229,6 +233,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
     }
@@ -249,6 +254,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
         guard immutableBody == nil else { return }
@@ -277,12 +283,14 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
         markdownView.fetchWorkspaceFile = fetchWorkspaceFile
         markdownView.fetchSessionFile = fetchSessionFile
         markdownView.fetchHostFile = fetchHostFile
         markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
         markdownView.makeMarkdownAudioSource = makeMarkdownAudioSource
+        markdownView.makeTimedTextSidecar = makeTimedTextSidecar
         markdownView.audioPlayer = audioPlayer
 
         guard contentChanged || streamingChanged || contextChanged else {
@@ -369,6 +377,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
         body.accessibilityIdentifier = accessibilityIdentifier

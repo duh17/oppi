@@ -25,6 +25,7 @@ struct FileContentView: View {
     var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil
+    var makeTimedTextSidecar: TimedTextSidecarProvider? = nil
     var audioPlayer: AudioPlayerService? = nil
 
     /// Maximum lines to render inline (performance bound).
@@ -43,6 +44,7 @@ struct FileContentView: View {
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
         self.content = content
@@ -57,6 +59,7 @@ struct FileContentView: View {
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
     }
 
@@ -85,6 +88,7 @@ struct FileContentView: View {
                 fetchHostFile: fetchHostFile,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
+                makeTimedTextSidecar: makeTimedTextSidecar,
                 audioPlayer: audioPlayer
             )
         case .html:

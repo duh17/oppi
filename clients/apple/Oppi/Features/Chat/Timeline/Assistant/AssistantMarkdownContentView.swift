@@ -260,6 +260,10 @@ final class AssistantMarkdownContentView: UIView {
         didSet { segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource }
     }
 
+    var makeTimedTextSidecar: TimedTextSidecarProvider? {
+        didSet { segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar }
+    }
+
     var audioPlayer: AudioPlayerService? {
         didSet { segmentApplier.audioPlayer = audioPlayer }
     }

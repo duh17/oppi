@@ -1590,6 +1590,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
         // The source-line enclosure is painted by the reader's overlay. Keep
@@ -1604,6 +1605,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         segmentApplier.fetchHostFile = fetchHostFile
         segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
         segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource
+        segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar
         segmentApplier.audioPlayer = audioPlayer
     }
 
@@ -1622,6 +1624,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         canonicalWidth: CGFloat? = nil,
         preparesImagesForDisplay: Bool = true,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
         // Source-line chrome overlays the cell; arranged content always uses
@@ -1635,6 +1638,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         segmentApplier.fetchHostFile = fetchHostFile
         segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
         segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource
+        segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar
         segmentApplier.audioPlayer = audioPlayer
         segmentApplier.preparationWidth = canonicalWidth
         segmentApplier.preparesImagesForDisplay = preparesImagesForDisplay
@@ -1871,6 +1875,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let fetchHostFile: ((_ path: String) async throws -> Data)?
     private let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     private let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    private let makeTimedTextSidecar: TimedTextSidecarProvider?
     private let audioPlayer: AudioPlayerService?
     private let maximumViewportHeight: CGFloat?
     private var intrinsicViewportContentHeight: CGFloat = 44
@@ -1946,6 +1951,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
         self.sourceFormat = sourceFormat
@@ -1970,6 +1976,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         let initialSnapshot = sourceFormat == .markdown
@@ -2627,6 +2634,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
         cell.appliedItemIndex = indexPath.item
@@ -2666,6 +2674,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 canonicalWidth: preparedCanonicalWidth,
                 preparesImagesForDisplay: true,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
+                makeTimedTextSidecar: makeTimedTextSidecar,
                 audioPlayer: audioPlayer
             )
             #if DEBUG
@@ -3103,6 +3112,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
         cell.appliedItemIndex = item
@@ -3126,6 +3136,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             canonicalWidth: canonicalWidth,
             preparesImagesForDisplay: false,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
         isConfiguringCell = false
@@ -3959,6 +3970,7 @@ extension NativeFullScreenMarkdownBody {
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
         measuringCell.apply(
@@ -3978,6 +3990,7 @@ extension NativeFullScreenMarkdownBody {
             canonicalWidth: canonicalWidth,
             preparesImagesForDisplay: false,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
         return measuringCell.measuredFittingHeight(width: canonicalWidth)

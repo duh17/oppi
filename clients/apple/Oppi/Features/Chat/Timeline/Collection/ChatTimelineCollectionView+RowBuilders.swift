@@ -109,6 +109,19 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
+            makeTimedTextSidecar: connection.map { connection in
+                { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] mediaPath, kind, reference in
+                    await connection.loadTimedTextSidecarWhenReady(
+                        mediaPath: mediaPath,
+                        kind: kind,
+                        reference: reference,
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        worktreeId: firstCheckout,
+                        workspaceRuntime: sourceWorkspaceRuntime
+                    )
+                }
+            },
             audioPlayer: audioPlayer
         )
     }

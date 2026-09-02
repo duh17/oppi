@@ -215,11 +215,13 @@ Inline video uses Oppi's authenticated range-streaming player. Playback never st
 
 The player always reserves 16:9 geometry because wiki-file syntax has no dimensions. Playback metadata never resizes an embed, including later remounts. Portrait and landscape clips letterbox inside that slot. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
 
+Workspace and session video can overlay same-directory sidecar captions (`stem(.lang)?.(vtt|srt|ass|ssa)`). Auto-pick uses a bare stem, then the device locale, then the first match. A language control appears only when more than one sidecar matches. Session and sandbox files probe exact `stem.ext` names and never list the directory. Host `/files/raw` media keeps playing with no sidecar. Captions follow `AVPlayer.currentTime` in an overlay; Oppi does not inject AVPlayer closed captions.
+
 ## Markdown inline audio
 
 Use `![[audio-file]]` or `![label](audio-file)` to embed a current workspace, worktree, session-reported, or exact owner host audio file as a compact native player strip. Use `[[audio-file]]` or `[label](audio-file)` when the file must remain an ordinary navigable link that opens the lyrics-first full-screen player.
 
-Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. Wiki audio without a transcript shows “No lyrics”. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with “Audio unavailable” and an open-file fallback. Voice `audio_presentation` rows use the same strip plus the transcript as message text.
+Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. Wiki audio without a transcript or sidecar shows “No lyrics”. Workspace and session audio can load same-directory sidecar lyrics (`stem(.lang)?.(lrc|vtt|srt|ass|ssa)`) on expand, not on the compact strip. Host files do not load sidecars. Voice `audio_presentation` rows keep the message transcript and do not fetch a sidecar. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with “Audio unavailable” and an open-file fallback.
 
 ## Extension authoring API
 

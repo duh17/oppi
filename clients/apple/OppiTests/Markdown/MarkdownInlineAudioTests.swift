@@ -196,6 +196,20 @@ struct MarkdownInlineAudioTests {
         ) == .session(workspaceID: "workspace-a", sessionID: "session-a", path: "/tmp/demo.wav"))
     }
 
+    @Test("sidecar lyrics keep authored start times and missing sidecars stay empty")
+    func sidecarLyricsKeepAuthoredTimes() {
+        let cues = TimedText.parse("""
+        [00:01.00]Hi
+        [00:04.00]There
+        """, format: .lrc)
+        let lines = TimedText.lyricsLines(from: cues)
+        #expect(lines.map(\.text) == ["Hi", "There"])
+        #expect(lines.map(\.startTime) == [1, 4])
+        #expect(AudioLyrics.allowsKaraoke(lines))
+        #expect(TimedText.lyricsLines(from: []).isEmpty)
+        #expect(AudioLyrics.lines(from: nil).isEmpty)
+    }
+
     @Test("untimed transcript splits into verse lines without inventing start times")
     func untimedLyricsHaveNoKaraoke() {
         let newlineLines = AudioLyrics.lines(from: "First verse\n\nSecond verse")
