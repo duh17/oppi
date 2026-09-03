@@ -82,18 +82,19 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     /// True when the active item is paused rather than stopped.
     private(set) var isPaused = false
 
-    nonisolated static let waveformBarCount = 5
+    nonisolated static let waveformBarCount = 7
     nonisolated static let restingWaveformLevel: Float = 0.16
-    private nonisolated static let waveformMinDecibels: Float = -50
-    private nonisolated static let waveformBarOffsets: [Float] = [-0.10, 0.04, 0.14, -0.04, 0.08]
+    private nonisolated static let waveformMinDecibels: Float = -60
+    private nonisolated static let waveformBarShape: [Float] = [0.55, 0.86, 0.68, 1, 0.72, 0.90, 0.58]
 
-    /// Compact 5-bar snapshot for in-app Now Playing chrome.
-    /// Playing bars fan out from a real meter; paused/idle bars rest low.
+    /// Compact meter snapshot for in-app Now Playing chrome.
+    /// Playing bars keep a strong silhouette; the view supplies faster local motion.
     private(set) var waveformLevels: [Float] = Array(
         repeating: restingWaveformLevel,
         count: waveformBarCount
     )
     private var streamMeterLevel: Float = 0
+    private var smoothedWaveformMeterLevel: Float = 0
 
     var hasActivePlayback: Bool {
         playingItemID != nil || loadingItemID != nil || streamID != nil
@@ -240,6 +241,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         duration = nil
         isPaused = false
         streamMeterLevel = 0
+        smoothedWaveformMeterLevel = 0
         waveformLevels = Array(repeating: Self.restingWaveformLevel, count: Self.waveformBarCount)
         stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
@@ -552,6 +554,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         stopProgressUpdates()
         player = nil
         playbackDelegate = nil
+        smoothedWaveformMeterLevel = 0
         waveformLevels = Array(repeating: Self.restingWaveformLevel, count: Self.waveformBarCount)
         deactivatePlaybackAudioSessionIfPossible()
         setPlaybackState(playing: nil, loading: nil)
@@ -739,6 +742,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         streamPendingBuffers = 0
         streamReceivedDone = false
         streamMeterLevel = 0
+        smoothedWaveformMeterLevel = 0
+        waveformLevels = Array(repeating: Self.restingWaveformLevel, count: Self.waveformBarCount)
         if clearState {
             deactivatePlaybackAudioSessionIfPossible()
             setPlaybackState(playing: nil, loading: nil)
@@ -912,27 +917,40 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     // MARK: - Waveform metering
 
-    /// Map AVAudioPlayer averagePower dB into 0...1. Silence and non-finite values rest at 0.
+    /// Map audio power into 0...1 with a soft curve so quiet speech still reads clearly.
     nonisolated static func normalizedMeterLevel(fromAveragePower dB: Float) -> Float {
         guard dB.isFinite else { return 0 }
         let clamped = min(0, max(waveformMinDecibels, dB))
-        return (clamped - waveformMinDecibels) / -waveformMinDecibels
+        let linear = (clamped - waveformMinDecibels) / -waveformMinDecibels
+        return pow(linear, 0.58)
     }
 
-    /// Fan one meter level into 5 bars. Paused/idle bars freeze at a low rest height.
+    /// Shape one meter into seven visibly independent bars. Paused/idle bars rest low.
     nonisolated static func waveformLevels(fromMeterLevel level: Float, isPlaying: Bool) -> [Float] {
         guard isPlaying else {
             return Array(repeating: restingWaveformLevel, count: waveformBarCount)
         }
         let clamped = min(1, max(0, level.isFinite ? level : 0))
-        return waveformBarOffsets.map { min(1, max(0, clamped + $0)) }
+        let envelope = 0.34 + 0.66 * clamped
+        return waveformBarShape.map { shape in
+            min(1, max(restingWaveformLevel, envelope * shape))
+        }
     }
 
-    /// AVPlayer has no meters; derive a quiet, deterministic level from elapsed time.
+    /// Fast attack keeps syllables lively; slower release avoids jitter between samples.
+    nonisolated static func smoothedMeterLevel(previous: Float, measured: Float) -> Float {
+        let previous = min(1, max(0, previous.isFinite ? previous : 0))
+        let measured = min(1, max(0, measured.isFinite ? measured : 0))
+        let response: Float = measured > previous ? 0.72 : 0.28
+        return previous + (measured - previous) * response
+    }
+
+    /// AVPlayer has no meters; use a deterministic speech-like envelope from elapsed time.
     nonisolated static func mediaFallbackMeterLevel(currentTime: TimeInterval) -> Float {
-        guard currentTime.isFinite, currentTime >= 0 else { return 0.22 }
-        let phase = Float(currentTime.truncatingRemainder(dividingBy: Double.pi * 2))
-        return 0.20 + 0.12 * abs(sin(phase * 1.3))
+        guard currentTime.isFinite, currentTime >= 0 else { return 0.4 }
+        let primary = abs(sin(currentTime * 1.8))
+        let secondary = abs(sin(currentTime * 3.1 + 1.2))
+        return Float(0.40 + 0.42 * (0.55 * primary + 0.45 * secondary))
     }
 
     /// RMS of already-decoded PCM. Cheaper than installing a mixer tap.
@@ -943,39 +961,63 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         guard frames > 0, channelCount > 0 else { return 0 }
 
         var sum: Float = 0
+        var peak: Float = 0
         for channel in 0..<channelCount {
             let samples = channels[channel]
             for frame in 0..<frames {
                 let sample = samples[frame]
                 sum += sample * sample
+                peak = max(peak, abs(sample))
             }
         }
         let rms = sqrt(sum / Float(frames * channelCount))
         guard rms.isFinite, rms > 0 else { return 0 }
-        return normalizedMeterLevel(fromAveragePower: 20 * log10(max(rms, 1e-7)))
+        let averageLevel = normalizedMeterLevel(fromAveragePower: 20 * log10(max(rms, 1e-7)))
+        let peakLevel = normalizedMeterLevel(fromAveragePower: 20 * log10(max(peak, 1e-7)))
+        return max(averageLevel, peakLevel * 0.9)
     }
 
     private func updateWaveformSnapshot() {
         let isPlaying = playingItemID != nil && !isPaused
-        let level: Float
+        let measuredLevel: Float
         if !isPlaying {
-            level = Self.restingWaveformLevel
+            measuredLevel = 0
         } else if let player {
             player.updateMeters()
             let channelCount = max(player.numberOfChannels, 1)
-            var sum: Float = 0
+            var averagePower: Float = 0
+            var peakLevel: Float = 0
             for channel in 0..<channelCount {
-                sum += player.averagePower(forChannel: channel)
+                averagePower += player.averagePower(forChannel: channel)
+                peakLevel = max(
+                    peakLevel,
+                    Self.normalizedMeterLevel(fromAveragePower: player.peakPower(forChannel: channel))
+                )
             }
-            level = Self.normalizedMeterLevel(fromAveragePower: sum / Float(channelCount))
+            let averageLevel = Self.normalizedMeterLevel(
+                fromAveragePower: averagePower / Float(channelCount)
+            )
+            measuredLevel = max(averageLevel, peakLevel * 0.9)
         } else if streamID != nil {
-            level = streamMeterLevel
+            measuredLevel = streamMeterLevel
         } else if mediaPlaybackSession != nil {
-            level = Self.mediaFallbackMeterLevel(currentTime: currentTime)
+            measuredLevel = Self.mediaFallbackMeterLevel(currentTime: currentTime)
         } else {
-            level = Self.restingWaveformLevel
+            measuredLevel = 0
         }
-        waveformLevels = Self.waveformLevels(fromMeterLevel: level, isPlaying: isPlaying)
+
+        if isPlaying {
+            smoothedWaveformMeterLevel = Self.smoothedMeterLevel(
+                previous: smoothedWaveformMeterLevel,
+                measured: measuredLevel
+            )
+        } else {
+            smoothedWaveformMeterLevel = 0
+        }
+        waveformLevels = Self.waveformLevels(
+            fromMeterLevel: smoothedWaveformMeterLevel,
+            isPlaying: isPlaying
+        )
     }
 
     private func updateNowPlayingInfo(

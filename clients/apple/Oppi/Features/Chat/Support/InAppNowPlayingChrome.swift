@@ -92,32 +92,39 @@ enum InAppNowPlayingChrome {
             : .minimizedSearchWithNowPlaying
     }
 
-    /// Reduce Motion keeps bars static. Playing motion is an extra cue, not the only one.
-    static let reducedMotionPlayingLevels: [Float] = [0.28, 0.46, 0.58, 0.40, 0.32]
+    /// Reduce Motion keeps a recognizable waveform silhouette without periodic updates.
+    static let reducedMotionPlayingLevels: [Float] = [0.30, 0.54, 0.76, 1, 0.72, 0.48, 0.28]
+    private static let waveformPhaseOffsets: [Double] = [0, 1.7, 3.6, 5.1, 2.7, 4.4, 0.9]
+    private static let waveformSpeeds: [Double] = [1, 1.25, 0.85, 1.4, 0.95, 1.18, 0.78]
 
     static func displayedWaveformLevels(
         snapshot: [Float],
         isPlaying: Bool,
-        reduceMotion: Bool
+        reduceMotion: Bool,
+        elapsed: TimeInterval = 0
     ) -> [Float] {
-        if reduceMotion {
-            return isPlaying
-                ? reducedMotionPlayingLevels
-                : Array(
-                    repeating: AudioPlayerService.restingWaveformLevel,
-                    count: AudioPlayerService.waveformBarCount
-                )
-        }
-        if !isPlaying {
+        guard isPlaying else {
             return Array(
                 repeating: AudioPlayerService.restingWaveformLevel,
                 count: AudioPlayerService.waveformBarCount
             )
         }
-        if snapshot.count == AudioPlayerService.waveformBarCount {
-            return snapshot
+        if reduceMotion {
+            return reducedMotionPlayingLevels
         }
-        return AudioPlayerService.waveformLevels(fromMeterLevel: 0, isPlaying: true)
+
+        let meterSnapshot = snapshot.count == AudioPlayerService.waveformBarCount
+            ? snapshot
+            : AudioPlayerService.waveformLevels(fromMeterLevel: 0, isPlaying: true)
+        return meterSnapshot.enumerated().map { index, rawLevel in
+            let sourceLevel = min(1, max(0, rawLevel.isFinite ? rawLevel : 0))
+            let phase = elapsed * 5.2 * waveformSpeeds[index] + waveformPhaseOffsets[index]
+            let oscillator = Float((sin(phase) + 1) / 2)
+            let ceiling = 0.58 + 0.42 * sourceLevel
+            let pulse = 0.08 + 0.92 * oscillator
+            return AudioPlayerService.restingWaveformLevel
+                + (ceiling - AudioPlayerService.restingWaveformLevel) * pulse
+        }
     }
 
     static func matchesPlayback(_ playbackItemID: String, stripItemID: String) -> Bool {
@@ -196,14 +203,6 @@ struct InAppNowPlayingPill: View {
         audioPlayer.playingItemID != nil && !audioPlayer.isPaused
     }
 
-    private var waveformLevels: [Float] {
-        InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: audioPlayer.waveformLevels,
-            isPlaying: isActivelyPlaying,
-            reduceMotion: reduceMotion
-        )
-    }
-
     var body: some View {
         HStack(spacing: 2) {
             Button(action: togglePlayback) {
@@ -239,7 +238,7 @@ struct InAppNowPlayingPill: View {
                         }
                         if density.showsWaveform {
                             InAppNowPlayingWaveform(
-                                levels: waveformLevels,
+                                levels: audioPlayer.waveformLevels,
                                 isPlaying: isActivelyPlaying,
                                 reduceMotion: reduceMotion
                             )
@@ -277,24 +276,33 @@ struct InAppNowPlayingWaveform: View {
     var reduceMotion: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
-                Capsule()
-                    .fill(isPlaying ? Color.themeFg : Color.themeComment)
-                    .frame(width: 3, height: 16)
-                    .scaleEffect(x: 1, y: barScale(level), anchor: .center)
+        TimelineView(
+            .animation(
+                minimumInterval: 1 / 15,
+                paused: !isPlaying || reduceMotion
+            )
+        ) { context in
+            let displayedLevels = InAppNowPlayingChrome.displayedWaveformLevels(
+                snapshot: levels,
+                isPlaying: isPlaying,
+                reduceMotion: reduceMotion,
+                elapsed: context.date.timeIntervalSinceReferenceDate
+            )
+            HStack(alignment: .center, spacing: 1.5) {
+                ForEach(Array(displayedLevels.enumerated()), id: \.offset) { _, level in
+                    Capsule()
+                        .fill(isPlaying ? Color.themeFg : Color.themeComment)
+                        .frame(width: 2.5, height: 22)
+                        .scaleEffect(x: 1, y: barScale(level), anchor: .center)
+                }
             }
+            .frame(width: 28, height: 24)
         }
-        .frame(width: 22, height: 18)
-        .animation(
-            ThemeMotion.easeInOut(duration: 0.12, reduceMotion: reduceMotion),
-            value: levels
-        )
         .accessibilityHidden(true)
     }
 
     private func barScale(_ level: Float) -> CGFloat {
-        let minScale: CGFloat = 4 / 16
+        let minScale: CGFloat = 4 / 22
         let clamped = CGFloat(min(1, max(0, level)))
         return minScale + clamped * (1 - minScale)
     }

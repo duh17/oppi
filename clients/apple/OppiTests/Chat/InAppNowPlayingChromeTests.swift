@@ -148,40 +148,90 @@ struct InAppNowPlayingChromeTests {
     }
 
     @Test func pausedWaveformBarsAreResting() {
-        let paused = AudioPlayerService.waveformLevels(fromMeterLevel: 0.92, isPlaying: false)
-        #expect(paused.count == AudioPlayerService.waveformBarCount)
-        #expect(paused == Array(repeating: AudioPlayerService.restingWaveformLevel, count: AudioPlayerService.waveformBarCount))
+        let snapshot = AudioPlayerService.waveformLevels(fromMeterLevel: 0.92, isPlaying: true)
+        let expected = Array(
+            repeating: AudioPlayerService.restingWaveformLevel,
+            count: AudioPlayerService.waveformBarCount
+        )
+        let paused = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: snapshot,
+            isPlaying: false,
+            reduceMotion: false,
+            elapsed: 8.4
+        )
+        let pausedWithReduceMotion = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: snapshot,
+            isPlaying: false,
+            reduceMotion: true,
+            elapsed: 8.4
+        )
 
-        let playing = AudioPlayerService.waveformLevels(fromMeterLevel: 0.92, isPlaying: true)
-        #expect(playing != paused)
-        #expect(playing.allSatisfy { $0 >= 0 && $0 <= 1 })
+        #expect(AudioPlayerService.waveformBarCount == 7)
+        #expect(AudioPlayerService.waveformLevels(fromMeterLevel: 0.92, isPlaying: false) == expected)
+        #expect(paused == expected)
+        #expect(pausedWithReduceMotion == expected)
     }
 
-    @Test func reduceMotionWaveformBarsAreStatic() {
+    @Test func playingWaveformBarsHaveVisibleSpread() {
+        let quietSpeech = AudioPlayerService.waveformLevels(fromMeterLevel: 0.25, isPlaying: true)
+        #expect(quietSpeech.count == AudioPlayerService.waveformBarCount)
+        #expect(quietSpeech.allSatisfy { $0 >= 0 && $0 <= 1 })
+        #expect((quietSpeech.max() ?? 0) - (quietSpeech.min() ?? 0) >= 0.20)
+    }
+
+    @Test func reduceMotionWaveformBarsAreStaticAndDistinctive() {
         let quiet = InAppNowPlayingChrome.displayedWaveformLevels(
             snapshot: AudioPlayerService.waveformLevels(fromMeterLevel: 0.2, isPlaying: true),
             isPlaying: true,
-            reduceMotion: true
+            reduceMotion: true,
+            elapsed: 0
         )
         let loud = InAppNowPlayingChrome.displayedWaveformLevels(
             snapshot: AudioPlayerService.waveformLevels(fromMeterLevel: 0.95, isPlaying: true),
             isPlaying: true,
-            reduceMotion: true
+            reduceMotion: true,
+            elapsed: 10
         )
         #expect(quiet.count == AudioPlayerService.waveformBarCount)
         #expect(quiet == loud)
+        #expect(Set(quiet).count >= 4)
+    }
 
-        let liveQuiet = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: AudioPlayerService.waveformLevels(fromMeterLevel: 0.2, isPlaying: true),
+    @Test func playingWaveformUsesIndependentLocalMotionAndRealMeter() {
+        let quietSnapshot = AudioPlayerService.waveformLevels(fromMeterLevel: 0.2, isPlaying: true)
+        let loudSnapshot = AudioPlayerService.waveformLevels(fromMeterLevel: 0.95, isPlaying: true)
+        let first = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: quietSnapshot,
             isPlaying: true,
-            reduceMotion: false
+            reduceMotion: false,
+            elapsed: 0
         )
-        let liveLoud = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: AudioPlayerService.waveformLevels(fromMeterLevel: 0.95, isPlaying: true),
+        let next = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: quietSnapshot,
             isPlaying: true,
-            reduceMotion: false
+            reduceMotion: false,
+            elapsed: 0.12
         )
-        #expect(liveQuiet != liveLoud)
+        let loud = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: loudSnapshot,
+            isPlaying: true,
+            reduceMotion: false,
+            elapsed: 0
+        )
+
+        let firstSpread = (first.max() ?? 0) - (first.min() ?? 0)
+        let firstAverage = first.reduce(0, +) / Float(first.count)
+        let loudAverage = loud.reduce(0, +) / Float(loud.count)
+        #expect(first != next)
+        #expect(firstSpread >= 0.30)
+        #expect(loudAverage > firstAverage)
+    }
+
+    @Test func meterSmoothingAttacksFasterThanItReleases() {
+        let attack = AudioPlayerService.smoothedMeterLevel(previous: 0.2, measured: 0.9)
+        let release = AudioPlayerService.smoothedMeterLevel(previous: 0.9, measured: 0.2)
+        #expect(attack - 0.2 > 0.9 - release)
+        #expect(AudioPlayerService.smoothedMeterLevel(previous: -.infinity, measured: 3) == 0.72)
     }
 
     @Test func meterMappingClampsToUnitInterval() {
