@@ -134,6 +134,7 @@ struct WorkspaceDetailView: View {
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
     @State private var pendingDeleteSession: Session?
+    @State private var pendingPromptSession: Session?
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
@@ -470,16 +471,7 @@ struct WorkspaceDetailView: View {
                 if !data.yourTurnRoots.isEmpty {
                     Section("Your Turn") {
                         ForEach(data.yourTurnRoots) { session in
-                            Button {
-                                openSession(session)
-                            } label: {
-                                sessionRow(for: session)
-                            }
-                            .accessibilityIdentifier("session.nav.\(session.id)")
-                            .accessibilityValue(sessionRowAccessibilityValue(for: session))
-                            .buttonStyle(.plain)
-                            .themedListRowBackground()
-                            .swipeActions(edge: .trailing) {
+                            liveSessionNavigationRow(for: session) {
                                 Button {
                                     Task { await stopSession(session) }
                                 } label: {
@@ -495,16 +487,7 @@ struct WorkspaceDetailView: View {
                 if !data.workingRoots.isEmpty {
                     Section("Working") {
                         ForEach(data.workingRoots) { session in
-                            Button {
-                                openSession(session)
-                            } label: {
-                                sessionRow(for: session)
-                            }
-                            .accessibilityIdentifier("session.nav.\(session.id)")
-                            .accessibilityValue(sessionRowAccessibilityValue(for: session))
-                            .buttonStyle(.plain)
-                            .themedListRowBackground()
-                            .swipeActions(edge: .trailing) {
+                            liveSessionNavigationRow(for: session) {
                                 Button {
                                     Task { await stopSession(session) }
                                 } label: {
@@ -703,6 +686,19 @@ struct WorkspaceDetailView: View {
         } message: {
             Text(error ?? "")
         }
+        .sheet(item: $pendingPromptSession) { session in
+            SessionListPromptTemplatePicker(
+                workspaceId: session.workspaceId ?? workspace.id,
+                apiClient: apiClient,
+                onSelect: { commandName in
+                    Task { await sendPromptTemplate(session, commandName: commandName) }
+                },
+                onError: { message in
+                    pendingPromptSession = nil
+                    error = message
+                }
+            )
+        }
         .modifier(SessionDeleteConfirmationModifier(pendingSession: $pendingDeleteSession) { session in
             Task { await deleteSession(session) }
         })
@@ -710,18 +706,44 @@ struct WorkspaceDetailView: View {
 
     @ViewBuilder
     private func searchResultRow(for session: Session) -> some View {
-        Button {
-            openSession(session)
-        } label: {
-            sessionRow(for: session)
-        }
-        .accessibilityIdentifier("session.nav.\(session.id)")
-        .accessibilityValue(sessionRowAccessibilityValue(for: session))
-        .buttonStyle(.plain)
-        .themedListRowBackground()
-        .swipeActions(edge: .trailing) {
+        liveSessionNavigationRow(for: session) {
             sessionSwipeActions(for: session)
         }
+    }
+
+    /// Live/search rows use a tap recognizer instead of Button so a leading
+    /// Prompt swipe does not also open the session. Stopped rows stay as Button.
+    @ViewBuilder
+    private func liveSessionNavigationRow<Trailing: View>(
+        for session: Session,
+        @ViewBuilder trailingSwipeActions: () -> Trailing
+    ) -> some View {
+        sessionRow(for: session)
+            .contentShape(Rectangle())
+            // A plain Button can still commit after a horizontal drag loses to
+            // the List's swipe recognizer. Use an actual tap recognizer so row
+            // navigation fails as soon as either swipe direction becomes a drag.
+            .onTapGesture {
+                openSession(session)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                openSession(session)
+            }
+            .accessibilityIdentifier("session.nav.\(session.id)")
+            .accessibilityValue(sessionRowAccessibilityValue(for: session))
+            .themedListRowBackground()
+            .sessionListPromptSwipeActions(
+                sessionId: session.id,
+                status: session.status,
+                workspaceId: session.workspaceId ?? workspace.id
+            ) {
+                pendingPromptSession = session
+            }
+            .swipeActions(edge: .trailing) {
+                trailingSwipeActions()
+            }
     }
 
     @ViewBuilder
@@ -1009,6 +1031,22 @@ struct WorkspaceDetailView: View {
         } catch {
             self.error = error.localizedDescription
             isCreating = false
+        }
+    }
+
+    private func sendPromptTemplate(_ session: Session, commandName: String) async {
+        guard let api = apiClient else {
+            error = "Server is offline — reconnecting in background"
+            return
+        }
+        do {
+            try await api.sendSessionCommand(
+                scope: .workspace(workspace.id),
+                sessionId: session.id,
+                message: SessionListPromptSwipePolicy.sendMessage(commandName: commandName)
+            )
+        } catch {
+            self.error = "Prompt failed: \(error.localizedDescription)"
         }
     }
 
