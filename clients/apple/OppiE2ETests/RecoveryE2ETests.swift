@@ -51,9 +51,17 @@ final class RecoveryE2ETests: E2ETestCase {
             waitForTextValueToDiffer(restoredInput, from: draft, timeout: 10),
             "Composer did not clear after dispatch"
         )
+        // Tombstone happens in onSendSucceeded / completeSubmission after sendPrompt
+        // returns, which is when chat.send leaves the in-flight "Sending" label.
+        // Do not treat the optimistic bubble as that ack: it can exist at
+        // appendUserMessage, before the prompt is on the wire.
         XCTAssertTrue(
-            waitForClientDispatchAcknowledgement(timeout: 10),
-            "Client did not process the dispatched send acknowledgement"
+            waitForSendButtonToLeaveSending(timeout: 10),
+            "Send did not leave in-flight after the turn send returned"
+        )
+        XCTAssertTrue(
+            waitForOptimisticUserBubble(draft, timeout: 10),
+            "Optimistic user bubble did not appear after send"
         )
 
         XCUIDevice.shared.press(.home)
@@ -142,19 +150,42 @@ final class RecoveryE2ETests: E2ETestCase {
         return element.value as? String != value
     }
 
+    /// ChatInputBar sets `chat.send` accessibilityLabel to "Sending" while
+    /// `isSendInFlight` (`isSending` / voice-finish), then "Send" when the turn
+    /// send returns. Call this after composer clear: beginSubmission clears the
+    /// field while still in-flight, so "Send" here means completeSubmission
+    /// already ran. Do not require observing "Sending" first; a fast local send
+    /// can restore "Send" during the composer-clear wait. Optimistic append
+    /// alone cannot both clear the composer and restore the Send label.
     @MainActor
-    private func waitForClientDispatchAcknowledgement(timeout: TimeInterval) -> Bool {
-        let progress = app.staticTexts["chat.sendProgress"]
+    private func waitForSendButtonToLeaveSending(timeout: TimeInterval) -> Bool {
+        let sendButton = app.buttons["chat.send"]
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if progress.exists,
-               progress.label == "Dispatched…" || progress.label == "Started…" {
+            if sendButton.exists, sendButton.label != "Sending" {
                 return true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        return progress.exists
-            && (progress.label == "Dispatched…" || progress.label == "Started…")
+        return sendButton.exists && sendButton.label != "Sending"
+    }
+
+    @MainActor
+    private func waitForOptimisticUserBubble(_ text: String, timeout: TimeInterval) -> Bool {
+        let timeline = app.collectionViews["chat.timeline"]
+        let predicate = NSPredicate(
+            format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+            text,
+            text
+        )
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if timeline.descendants(matching: .any).matching(predicate).firstMatch.exists {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return timeline.descendants(matching: .any).matching(predicate).firstMatch.exists
     }
 
 }

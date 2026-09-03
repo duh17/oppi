@@ -285,13 +285,12 @@ struct ChatActionHandlerTests {
         #expect(userCount == 1)
     }
 
-    @Test func sendPromptTracksAckStageProgress() async {
+    @Test func sendPromptDoesNotExposeTurnAckOrSendingProgressText() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
         connection._setActiveSessionIdForTesting("s1")
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
-        handler._sendStageDisplayDurationForTesting = .milliseconds(40)
 
         connection._sendMessageForTesting = { message in
             guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
@@ -346,12 +345,19 @@ struct ChatActionHandlerTests {
             sessionId: "s1"
         )
 
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .accepted } }
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .dispatched } }
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .started } }
-        #expect(handler.sendProgressText == "Started…")
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.isSending } }
+        #expect(handler.sendProgressText == nil)
 
-        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == nil } }
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .accepted } }
+        #expect(handler.sendProgressText == nil)
+
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .dispatched } }
+        #expect(handler.sendProgressText == nil)
+
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { handler.sendAckStage == .started } }
+        #expect(handler.sendProgressText == nil)
+
+        _ = await waitForTestCondition(timeoutMs: 600) { await MainActor.run { !handler.isSending } }
         #expect(handler.sendProgressText == nil)
     }
 
