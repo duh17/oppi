@@ -412,6 +412,13 @@ struct WorkspaceDetailView: View {
         )
     }
 
+    private var sessionListToolbar: InAppNowPlayingChrome.SessionListToolbar {
+        InAppNowPlayingChrome.sessionListToolbar(
+            hasActivePlayback: connection.audioPlayer.hasActivePlayback,
+            isSearchPresented: isSearchPresented
+        )
+    }
+
     var body: some View {
         let data = viewData
 
@@ -598,6 +605,10 @@ struct WorkspaceDetailView: View {
             handleWorkspaceIdentityChanged()
         }
         .searchable(text: $sessionSearchText, isPresented: $isSearchPresented, prompt: "Search sessions")
+        .searchToolbarBehavior(sessionListToolbar.usesMinimizedSearch ? .minimize : .automatic)
+        .searchPresentationToolbarBehavior(
+            sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
+        )
         .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
             InAppNowPlayingPlayerScreen(audioPlayer: connection.audioPlayer)
         }
@@ -631,26 +642,24 @@ struct WorkspaceDetailView: View {
                     workspaceFilesToolbarItem
                 }
                 ToolbarSpacer(.fixed, placement: .bottomBar)
-                if InAppNowPlayingChrome.sessionListToolbar(
-                    hasActivePlayback: connection.audioPlayer.hasActivePlayback
-                ) == .collapsedSearchWithNowPlaying {
-                    ToolbarItem(placement: .bottomBar) {
-                        InAppNowPlayingSearchIconButton {
-                            isSearchPresented = true
-                        }
-                    }
+                if sessionListToolbar.keepsSystemSearchToolbarItem {
+                    DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                }
+                if sessionListToolbar.showsNowPlayingPill {
                     ToolbarSpacer(.flexible, placement: .bottomBar)
                     ToolbarItem(placement: .bottomBar) {
                         InAppNowPlayingPill(
                             audioPlayer: connection.audioPlayer,
                             accessibilityPrefix: "sessionList.nowPlaying",
-                            density: .sessionList,
+                            density: sessionListToolbar.pillDensity,
                             onOpen: { presentsNowPlayingPlayer = true }
                         )
                     }
-                    ToolbarSpacer(.flexible, placement: .bottomBar)
+                    ToolbarSpacer(
+                        sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
+                        placement: .bottomBar
+                    )
                 } else {
-                    DefaultToolbarItem(kind: .search, placement: .bottomBar)
                     ToolbarSpacer(.flexible, placement: .bottomBar)
                 }
                 ToolbarItem(placement: .bottomBar) {

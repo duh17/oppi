@@ -82,26 +82,67 @@ struct InAppNowPlayingChromeTests {
         )
     }
 
-    @Test func collapsesInboxSearchWhilePlaying() {
-        #expect(
-            InAppNowPlayingChrome.sessionListToolbar(hasActivePlayback: true)
-                == .collapsedSearchWithNowPlaying
+    @Test func playingKeepsSystemSearchToolbarItemAndMinimizes() {
+        let toolbar = InAppNowPlayingChrome.sessionListToolbar(
+            hasActivePlayback: true,
+            isSearchPresented: false
         )
+        #expect(toolbar.keepsSystemSearchToolbarItem)
+        #expect(toolbar.usesMinimizedSearch)
+        #expect(toolbar.showsNowPlayingPill)
+        #expect(!toolbar.parksNowPlayingNextToCompose)
+        #expect(toolbar.pillShowsWaveform)
+        #expect(toolbar.avoidsHidingContentWhileSearching)
     }
 
-    @Test func restoresInboxSearchWhenIdle() {
-        #expect(
-            InAppNowPlayingChrome.sessionListToolbar(hasActivePlayback: false)
-                == .searchField
+    @Test func playingSearchParksCompactPlayPauseNextToCompose() {
+        let toolbar = InAppNowPlayingChrome.sessionListToolbar(
+            hasActivePlayback: true,
+            isSearchPresented: true
         )
+        #expect(toolbar.keepsSystemSearchToolbarItem)
+        #expect(toolbar.usesMinimizedSearch)
+        #expect(toolbar.showsNowPlayingPill)
+        #expect(toolbar.parksNowPlayingNextToCompose)
+        #expect(!toolbar.pillShowsWaveform)
+        #expect(toolbar.avoidsHidingContentWhileSearching)
+    }
+
+    @Test func idleUsesAutomaticSystemSearchWithoutPill() {
+        let toolbar = InAppNowPlayingChrome.sessionListToolbar(
+            hasActivePlayback: false,
+            isSearchPresented: false
+        )
+        #expect(toolbar.keepsSystemSearchToolbarItem)
+        #expect(!toolbar.usesMinimizedSearch)
+        #expect(!toolbar.showsNowPlayingPill)
+        #expect(!toolbar.parksNowPlayingNextToCompose)
+        #expect(!toolbar.avoidsHidingContentWhileSearching)
+    }
+
+    @Test func idleSearchDoesNotShowNowPlaying() {
+        let toolbar = InAppNowPlayingChrome.sessionListToolbar(
+            hasActivePlayback: false,
+            isSearchPresented: true
+        )
+        #expect(toolbar.keepsSystemSearchToolbarItem)
+        #expect(!toolbar.usesMinimizedSearch)
+        #expect(!toolbar.showsNowPlayingPill)
+        #expect(!toolbar.parksNowPlayingNextToCompose)
     }
 
     @Test func sessionListPillHidesTitleAndKeepsPlayPauseHit() {
         #expect(!InAppNowPlayingChrome.PillDensity.sessionList.showsTitle)
         #expect(!InAppNowPlayingChrome.PillDensity.sessionList.showsSubtitle)
+        #expect(InAppNowPlayingChrome.PillDensity.sessionList.showsWaveform)
         #expect(InAppNowPlayingChrome.PillDensity.sessionList.playPauseHitSize == 44)
+        #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsTitle)
+        #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsSubtitle)
+        #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsWaveform)
+        #expect(InAppNowPlayingChrome.PillDensity.sessionListCompact.playPauseHitSize == 44)
         #expect(InAppNowPlayingChrome.PillDensity.chat.showsTitle)
         #expect(!InAppNowPlayingChrome.PillDensity.chat.showsSubtitle)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.showsWaveform)
         #expect(InAppNowPlayingChrome.PillDensity.chat.playPauseHitSize == 44)
         #expect(InAppNowPlayingChrome.PillDensity.chat.titleMaxWidth == 180)
     }

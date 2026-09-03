@@ -4,12 +4,41 @@ import UIKit
 enum InAppNowPlayingChrome {
     enum SessionListToolbar: Equatable {
         case searchField
-        case collapsedSearchWithNowPlaying
+        case minimizedSearchWithNowPlaying
+        case expandedSearchWithCompactNowPlaying
+
+        /// iOS search only expands from the system search toolbar item.
+        var keepsSystemSearchToolbarItem: Bool { true }
+
+        var usesMinimizedSearch: Bool {
+            self != .searchField
+        }
+
+        var showsNowPlayingPill: Bool {
+            self != .searchField
+        }
+
+        var parksNowPlayingNextToCompose: Bool {
+            self == .expandedSearchWithCompactNowPlaying
+        }
+
+        var avoidsHidingContentWhileSearching: Bool {
+            showsNowPlayingPill
+        }
+
+        var pillShowsWaveform: Bool {
+            self == .minimizedSearchWithNowPlaying
+        }
+
+        var pillDensity: PillDensity {
+            parksNowPlayingNextToCompose ? .sessionListCompact : .sessionList
+        }
     }
 
     enum PillDensity: Equatable {
         case chat
         case sessionList
+        case sessionListCompact
 
         var showsTitle: Bool {
             self == .chat
@@ -20,10 +49,14 @@ enum InAppNowPlayingChrome {
             false
         }
 
+        var showsWaveform: Bool {
+            self != .sessionListCompact
+        }
+
         var titleMaxWidth: CGFloat {
             switch self {
             case .chat: return 180
-            case .sessionList: return 120
+            case .sessionList, .sessionListCompact: return 120
             }
         }
 
@@ -49,8 +82,14 @@ enum InAppNowPlayingChrome {
         return !visibleStripItemIDs.contains { matchesPlayback(playbackItemID, stripItemID: $0) }
     }
 
-    static func sessionListToolbar(hasActivePlayback: Bool) -> SessionListToolbar {
-        hasActivePlayback ? .collapsedSearchWithNowPlaying : .searchField
+    static func sessionListToolbar(
+        hasActivePlayback: Bool,
+        isSearchPresented: Bool = false
+    ) -> SessionListToolbar {
+        guard hasActivePlayback else { return .searchField }
+        return isSearchPresented
+            ? .expandedSearchWithCompactNowPlaying
+            : .minimizedSearchWithNowPlaying
     }
 
     /// Reduce Motion keeps bars static. Playing motion is an extra cue, not the only one.
@@ -178,41 +217,45 @@ struct InAppNowPlayingPill: View {
             .accessibilityLabel(isActivelyPlaying ? "Pause" : "Play")
             .accessibilityIdentifier("\(accessibilityPrefix).playPause")
 
-            Button(action: onOpen) {
-                HStack(spacing: 6) {
-                    if density.showsTitle {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.themeFg)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                            if density.showsSubtitle, let subtitle {
-                                Text(subtitle)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.themeComment)
+            if density.showsTitle || density.showsWaveform {
+                Button(action: onOpen) {
+                    HStack(spacing: 6) {
+                        if density.showsTitle {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(title)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.themeFg)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
+                                if density.showsSubtitle, let subtitle {
+                                    Text(subtitle)
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.themeComment)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                }
                             }
+                            .frame(maxWidth: density.titleMaxWidth, alignment: .leading)
                         }
-                        .frame(maxWidth: density.titleMaxWidth, alignment: .leading)
+                        if density.showsWaveform {
+                            InAppNowPlayingWaveform(
+                                levels: waveformLevels,
+                                isPlaying: isActivelyPlaying,
+                                reduceMotion: reduceMotion
+                            )
+                        }
                     }
-                    InAppNowPlayingWaveform(
-                        levels: waveformLevels,
-                        isPlaying: isActivelyPlaying,
-                        reduceMotion: reduceMotion
+                    .frame(
+                        minWidth: density.showsTitle ? nil : density.playPauseHitSize,
+                        minHeight: density.playPauseHitSize,
+                        alignment: .leading
                     )
+                    .contentShape(Rectangle())
                 }
-                .frame(
-                    minWidth: density.showsTitle ? nil : density.playPauseHitSize,
-                    minHeight: density.playPauseHitSize,
-                    alignment: .leading
-                )
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityLabel("Now Playing, \(title)")
+                .accessibilityHint("Opens the full-screen audio player")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Now Playing, \(title)")
-            .accessibilityHint("Opens the full-screen audio player")
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("\(accessibilityPrefix).pill")
@@ -254,22 +297,6 @@ struct InAppNowPlayingWaveform: View {
         let minScale: CGFloat = 4 / 16
         let clamped = CGFloat(min(1, max(0, level)))
         return minScale + clamped * (1 - minScale)
-    }
-}
-
-struct InAppNowPlayingSearchIconButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.themeFg)
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Search sessions")
-        .accessibilityIdentifier("sessionList.nowPlaying.search")
     }
 }
 
