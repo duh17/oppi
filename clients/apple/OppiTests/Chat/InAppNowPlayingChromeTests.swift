@@ -207,6 +207,62 @@ struct InAppNowPlayingChromeTests {
         #expect(player.nowPlayingPresentation?.title == "bridge.m4a")
     }
 
+    @Test func playPathTitleUsesFileNameNotSessionTitle() throws {
+        let session = makeTestSession(
+            id: "session-play-path",
+            name: "continue 96cbb6f6",
+            model: "openai/o4-mini"
+        )
+        let fileName = "bridge-clip.wav"
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        try makeSilentWAV().write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let filePlayer = AudioPlayerService()
+        filePlayer.setSessionContext(session)
+        filePlayer.toggleFilePlayback(fileURL: fileURL, itemID: "file-play-1")
+        defer { filePlayer.stop() }
+
+        #expect(filePlayer.nowPlayingPresentation?.title == fileName)
+        #expect(filePlayer.nowPlayingPresentation?.title != session.displayTitle)
+
+        let mediaURL = try #require(
+            URL(string: "https://oppi.local/workspaces/ws/raw/music/voice-memo.wav")
+        )
+        let queryURL = try #require(
+            URL(string: "https://oppi.local/files/raw?path=%2FUsers%2Fchen%2Fchorus.m4a")
+        )
+        let mediaPlayer = AudioPlayerService()
+        mediaPlayer.setSessionContext(session)
+        mediaPlayer.toggleMediaPlayback(
+            source: AuthenticatedMediaSource(
+                url: mediaURL,
+                authorizationHeaderValue: "Bearer test",
+                tlsCertFingerprint: nil,
+                contentTypeHint: "audio/wav",
+                sourceFileExtension: "wav"
+            ),
+            itemID: "media-play-raw"
+        )
+        #expect(mediaPlayer.nowPlayingPresentation?.title == "voice-memo.wav")
+        #expect(mediaPlayer.nowPlayingPresentation?.title != session.displayTitle)
+        mediaPlayer.stop()
+
+        mediaPlayer.toggleMediaPlayback(
+            source: AuthenticatedMediaSource(
+                url: queryURL,
+                authorizationHeaderValue: "Bearer test",
+                tlsCertFingerprint: nil,
+                contentTypeHint: "audio/mp4",
+                sourceFileExtension: "m4a"
+            ),
+            itemID: "media-play-query"
+        )
+        defer { mediaPlayer.stop() }
+        #expect(mediaPlayer.nowPlayingPresentation?.title == "chorus.m4a")
+        #expect(mediaPlayer.nowPlayingPresentation?.title != session.displayTitle)
+    }
+
     @Test func envelopeFromSamplesFollowsActualPeaks() {
         var samples = [Float](repeating: 0, count: 70)
         for index in 30..<40 {
@@ -300,8 +356,11 @@ struct InAppNowPlayingChromeTests {
 
         #expect(first == snapshot)
         #expect(later == snapshot)
-        #expect(reduced == snapshot)
         #expect(first == later)
+        #expect(reduced == InAppNowPlayingChrome.reducedMotionPlayingLevels)
+        #expect(reduced != snapshot)
+        #expect(!AudioPlayerService.shouldUpdatePlayingWaveformSnapshot(reduceMotion: true))
+        #expect(AudioPlayerService.shouldUpdatePlayingWaveformSnapshot(reduceMotion: false))
     }
 
     @Test func reduceMotionWithoutEnvelopeUsesStaticSilhouette() {
@@ -321,6 +380,42 @@ struct InAppNowPlayingChromeTests {
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 2, expandsOnTap: true) == .openFullScreen)
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 1, expandsOnTap: false) == .openFullScreen)
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 3, expandsOnTap: true) == nil)
+    }
+
+    @Test func exclusiveTitleGesturesDoNotRunBothActions() throws {
+        var expandCount = 0
+        var openCount = 0
+        func record(_ tapCount: Int) {
+            switch InAppNowPlayingChrome.titleAction(tapCount: tapCount, expandsOnTap: true) {
+            case .expandOrCollapse:
+                expandCount += 1
+            case .openFullScreen:
+                openCount += 1
+            case nil:
+                break
+            }
+        }
+
+        let siblingActions = [1, 2].compactMap {
+            InAppNowPlayingChrome.titleAction(tapCount: $0, expandsOnTap: true)
+        }
+        #expect(Set(siblingActions) == [.expandOrCollapse, .openFullScreen])
+
+        let competing: Set<Int> = [1, 2]
+        if competing.contains(2) {
+            record(2)
+        } else if competing.contains(1) {
+            record(1)
+        }
+        #expect(expandCount == 0)
+        #expect(openCount == 1)
+        #expect(expandCount + openCount == 1)
+
+        let source = try nowPlayingChromeSource()
+        #expect(source.contains("TapGesture(count: 2)"))
+        #expect(source.contains(".exclusively(before:"))
+        #expect(source.contains("TapGesture(count: 1)"))
+        #expect(!source.contains("highPriorityGesture"))
     }
 
     @Test func meterMappingClampsToUnitInterval() {
@@ -389,6 +484,45 @@ struct InAppNowPlayingChromeTests {
         )
         #expect(ids.isEmpty)
     }
+}
+
+private func nowPlayingChromeSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func makeSilentWAV(sampleRate: Int = 24_000, frames: Int = 2_400) -> Data {
+    var data = Data()
+    let pcmBytes = frames * 2
+    func appendString(_ value: String) { data.append(contentsOf: value.utf8) }
+    func appendUInt16(_ value: UInt16) {
+        var le = value.littleEndian
+        withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+    }
+    func appendUInt32(_ value: UInt32) {
+        var le = value.littleEndian
+        withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+    }
+
+    appendString("RIFF")
+    appendUInt32(UInt32(36 + pcmBytes))
+    appendString("WAVE")
+    appendString("fmt ")
+    appendUInt32(16)
+    appendUInt16(1)
+    appendUInt16(1)
+    appendUInt32(UInt32(sampleRate))
+    appendUInt32(UInt32(sampleRate * 2))
+    appendUInt16(2)
+    appendUInt16(16)
+    appendString("data")
+    appendUInt32(UInt32(pcmBytes))
+    data.append(Data(repeating: 0, count: pcmBytes))
+    return data
 }
 
 @MainActor

@@ -115,12 +115,14 @@ enum InAppNowPlayingChrome {
         isPaused: Bool,
         reduceMotion: Bool
     ) -> [Float] {
-        _ = reduceMotion
         if !isPlaying && !isPaused {
             return Array(
                 repeating: AudioPlayerService.restingWaveformLevel,
                 count: AudioPlayerService.waveformBarCount
             )
+        }
+        if reduceMotion && isPlaying {
+            return reducedMotionPlayingLevels
         }
         if snapshot.count == AudioPlayerService.waveformBarCount {
             return snapshot.map { level in
@@ -290,15 +292,13 @@ struct InAppNowPlayingPill: View {
                 .accessibilityHint(isExpanded ? "Collapses the player" : "Expands the player")
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction(named: Text("Open Full Screen"), onOpen)
-                .highPriorityGesture(
+                .gesture(
                     TapGesture(count: 2).onEnded {
                         handleTitleTaps(2)
                     }
-                )
-                .gesture(
-                    TapGesture(count: 1).onEnded {
+                    .exclusively(before: TapGesture(count: 1).onEnded {
                         handleTitleTaps(1)
-                    }
+                    })
                 )
         } else {
             Button(action: onOpen) {

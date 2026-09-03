@@ -3,6 +3,9 @@ import CoreMedia
 import Foundation
 import MediaPlayer
 import os.log
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AudioPlayer")
 
@@ -1157,9 +1160,28 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
     }
 
+    /// Reduce Motion keeps the last snapshot; the pill draws a static silhouette instead.
+    nonisolated static func shouldUpdatePlayingWaveformSnapshot(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
+
+    private static var isReduceMotionEnabled: Bool {
+        #if canImport(UIKit)
+        UIAccessibility.isReduceMotionEnabled
+        #else
+        false
+        #endif
+    }
+
     private func updateWaveformSnapshot() {
         if playingItemID == nil, loadingItemID == nil, streamID == nil {
             waveformLevels = Array(repeating: Self.restingWaveformLevel, count: Self.waveformBarCount)
+            return
+        }
+
+        let isActivelyPlaying = playingItemID != nil && !isPaused
+        if isActivelyPlaying,
+           !Self.shouldUpdatePlayingWaveformSnapshot(reduceMotion: Self.isReduceMotionEnabled) {
             return
         }
 
@@ -1184,7 +1206,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return
         }
 
-        let isActivelyPlaying = playingItemID != nil && !isPaused
         if !isActivelyPlaying {
             // Pause without PCM: freeze the last envelope/silhouette.
             return
