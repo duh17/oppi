@@ -1,21 +1,21 @@
 import Foundation
 
 enum SessionListPromptSwipePolicy {
-    enum LeadingAction: Equatable, Sendable {
+    enum TrailingAction: Equatable, Sendable {
         case prompt
         case none
     }
 
-    /// Leading (swipe-right) action for session-list rows.
+    /// Trailing (swipe-left) Prompt for session-list rows.
     ///
     /// Prompt is only offered on live rows that belong to a workspace, because
     /// templates load from GET `/workspaces/{id}/quick-actions`. Stopped rows
-    /// keep their existing Resume action and do not gain Prompt. Rows without a
-    /// workspace cannot load templates, so they get no leading action.
-    static func leadingAction(
+    /// keep their existing Resume/Delete actions and do not gain Prompt. Rows
+    /// without a workspace cannot load templates, so they get no Prompt.
+    static func trailingAction(
         status: SessionStatus,
         workspaceId: String?
-    ) -> LeadingAction {
+    ) -> TrailingAction {
         let trimmed = workspaceId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmed.isEmpty, status != .stopped else { return .none }
         return .prompt

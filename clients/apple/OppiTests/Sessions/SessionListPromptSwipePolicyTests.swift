@@ -5,18 +5,18 @@ import Testing
 @Suite("Session list prompt swipe")
 struct SessionListPromptSwipePolicyTests {
     @Test(arguments: [SessionStatus.starting, .ready, .busy, .stopping, .error])
-    func liveWorkspaceSessionShowsLeadingPrompt(status: SessionStatus) {
+    func liveWorkspaceSessionShowsTrailingPrompt(status: SessionStatus) {
         #expect(
-            SessionListPromptSwipePolicy.leadingAction(
+            SessionListPromptSwipePolicy.trailingAction(
                 status: status,
                 workspaceId: "ws-1"
             ) == .prompt
         )
     }
 
-    @Test func stoppedWorkspaceSessionDoesNotShowLeadingPrompt() {
+    @Test func stoppedWorkspaceSessionDoesNotShowTrailingPrompt() {
         #expect(
-            SessionListPromptSwipePolicy.leadingAction(
+            SessionListPromptSwipePolicy.trailingAction(
                 status: .stopped,
                 workspaceId: "ws-1"
             ) == .none
@@ -24,21 +24,21 @@ struct SessionListPromptSwipePolicyTests {
     }
 
     @Test(arguments: [SessionStatus.ready, .busy, .stopped])
-    func sessionWithoutWorkspaceShowsNoLeadingPrompt(status: SessionStatus) {
+    func sessionWithoutWorkspaceShowsNoTrailingPrompt(status: SessionStatus) {
         #expect(
-            SessionListPromptSwipePolicy.leadingAction(
+            SessionListPromptSwipePolicy.trailingAction(
                 status: status,
                 workspaceId: nil
             ) == .none
         )
         #expect(
-            SessionListPromptSwipePolicy.leadingAction(
+            SessionListPromptSwipePolicy.trailingAction(
                 status: status,
                 workspaceId: ""
             ) == .none
         )
         #expect(
-            SessionListPromptSwipePolicy.leadingAction(
+            SessionListPromptSwipePolicy.trailingAction(
                 status: status,
                 workspaceId: "   "
             ) == .none

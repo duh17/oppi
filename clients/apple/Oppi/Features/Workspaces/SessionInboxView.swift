@@ -745,14 +745,13 @@ struct SessionInboxView: View {
             .accessibilityIdentifier("session.nav.\(item.session.id)")
             .accessibilityValue(sessionRowAccessibilityValue(for: item))
             .listRowBackground(theme.bg.primary)
-            .sessionListPromptSwipeActions(
-                sessionId: item.session.id,
-                status: item.session.status,
-                workspaceId: item.session.workspaceId ?? item.workspace?.id
+            .swipeActions(
+                edge: .trailing,
+                allowsFullSwipe: SessionListPromptSwipePolicy.trailingAction(
+                    status: item.session.status,
+                    workspaceId: item.session.workspaceId ?? item.workspace?.id
+                ) != .prompt
             ) {
-                presentPromptPicker(for: item)
-            }
-            .swipeActions(edge: .trailing) {
                 sessionSwipeActions(for: item)
             }
     }
@@ -814,6 +813,19 @@ struct SessionInboxView: View {
                 .accessibilityIdentifier("session.delete.\(item.session.id)")
             }
         } else {
+            if SessionListPromptSwipePolicy.trailingAction(
+                status: item.session.status,
+                workspaceId: item.session.workspaceId ?? item.workspace?.id
+            ) == .prompt {
+                Button {
+                    presentPromptPicker(for: item)
+                } label: {
+                    Label("Prompt", systemImage: SlashCommand.Source.prompt.iconName)
+                }
+                .tint(.themeCyan)
+                .accessibilityIdentifier("session.prompt.\(item.session.id)")
+            }
+
             Button {
                 Task { await stopSession(item) }
             } label: {

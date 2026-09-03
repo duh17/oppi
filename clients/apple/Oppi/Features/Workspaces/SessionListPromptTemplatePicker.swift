@@ -1,27 +1,5 @@
 import SwiftUI
 
-extension View {
-    func sessionListPromptSwipeActions(
-        sessionId: String,
-        status: SessionStatus,
-        workspaceId: String?,
-        onPrompt: @escaping () -> Void
-    ) -> some View {
-        swipeActions(edge: .leading, allowsFullSwipe: false) {
-            if SessionListPromptSwipePolicy.leadingAction(
-                status: status,
-                workspaceId: workspaceId
-            ) == .prompt {
-                Button(action: onPrompt) {
-                    Label("Prompt", systemImage: SlashCommand.Source.prompt.iconName)
-                }
-                .tint(.themeCyan)
-                .accessibilityIdentifier("session.prompt.\(sessionId)")
-            }
-        }
-    }
-}
-
 /// Sheet listing a workspace's prompt templates for sending into a live session.
 struct SessionListPromptTemplatePicker: View {
     let workspaceId: String

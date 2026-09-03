@@ -472,13 +472,7 @@ struct WorkspaceDetailView: View {
                     Section("Your Turn") {
                         ForEach(data.yourTurnRoots) { session in
                             liveSessionNavigationRow(for: session) {
-                                Button {
-                                    Task { await stopSession(session) }
-                                } label: {
-                                    Label("Stop", systemImage: "stop.fill")
-                                }
-                                .accessibilityIdentifier("session.stop.\(session.id)")
-                                .tint(.themeOrange)
+                                sessionSwipeActions(for: session)
                             }
                         }
                     }
@@ -488,13 +482,7 @@ struct WorkspaceDetailView: View {
                     Section("Working") {
                         ForEach(data.workingRoots) { session in
                             liveSessionNavigationRow(for: session) {
-                                Button {
-                                    Task { await stopSession(session) }
-                                } label: {
-                                    Label("Stop", systemImage: "stop.fill")
-                                }
-                                .accessibilityIdentifier("session.stop.\(session.id)")
-                                .tint(.themeOrange)
+                                sessionSwipeActions(for: session)
                             }
                         }
                     }
@@ -711,7 +699,7 @@ struct WorkspaceDetailView: View {
         }
     }
 
-    /// Live/search rows use a tap recognizer instead of Button so a leading
+    /// Live/search rows use a tap recognizer instead of Button so a trailing
     /// Prompt swipe does not also open the session. Stopped rows stay as Button.
     @ViewBuilder
     private func liveSessionNavigationRow<Trailing: View>(
@@ -734,14 +722,13 @@ struct WorkspaceDetailView: View {
             .accessibilityIdentifier("session.nav.\(session.id)")
             .accessibilityValue(sessionRowAccessibilityValue(for: session))
             .themedListRowBackground()
-            .sessionListPromptSwipeActions(
-                sessionId: session.id,
-                status: session.status,
-                workspaceId: session.workspaceId ?? workspace.id
+            .swipeActions(
+                edge: .trailing,
+                allowsFullSwipe: SessionListPromptSwipePolicy.trailingAction(
+                    status: session.status,
+                    workspaceId: session.workspaceId ?? workspace.id
+                ) != .prompt
             ) {
-                pendingPromptSession = session
-            }
-            .swipeActions(edge: .trailing) {
                 trailingSwipeActions()
             }
     }
@@ -765,6 +752,19 @@ struct WorkspaceDetailView: View {
             .tint(.themeRed)
             .accessibilityIdentifier("session.delete.\(session.id)")
         } else {
+            if SessionListPromptSwipePolicy.trailingAction(
+                status: session.status,
+                workspaceId: session.workspaceId ?? workspace.id
+            ) == .prompt {
+                Button {
+                    pendingPromptSession = session
+                } label: {
+                    Label("Prompt", systemImage: SlashCommand.Source.prompt.iconName)
+                }
+                .tint(.themeCyan)
+                .accessibilityIdentifier("session.prompt.\(session.id)")
+            }
+
             Button {
                 Task { await stopSession(session) }
             } label: {
