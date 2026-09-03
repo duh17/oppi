@@ -370,7 +370,7 @@ struct NavigationSwipeGesturePolicyTests {
         #expect(HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim)
 
         // Parent onChanged latches while the claim is active.
-        let latched = HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim
+        let latched = HorizontalBackSwipeGesturePolicy.latchingExclusiveClaim(false)
         #expect(latched)
 
         // Child end: the claim is released before the parent ends.
@@ -387,9 +387,28 @@ struct NavigationSwipeGesturePolicyTests {
         #expect(backCount == 0)
     }
 
+    @Test func suppressionLatchStaysStickyUntilParentGestureResets() {
+        let claim = HorizontalBackSwipeGesturePolicy.acquireExclusiveClaim()
+        var latched = HorizontalBackSwipeGesturePolicy.latchingExclusiveClaim(false)
+        #expect(latched)
+
+        // Child end may run before the parent's final update/end. Once observed,
+        // suppression stays sticky for this gesture despite the release.
+        HorizontalBackSwipeGesturePolicy.releaseExclusiveClaim(claim)
+        latched = HorizontalBackSwipeGesturePolicy.latchingExclusiveClaim(latched)
+        #expect(latched)
+
+        // `@GestureState` supplies false to the next gesture after either an end
+        // or a cancellation, so a fresh off-bar swipe is not poisoned.
+        latched = false
+        latched = HorizontalBackSwipeGesturePolicy.latchingExclusiveClaim(latched)
+        #expect(!latched)
+    }
+
     @Test func offBarSwipeWithoutClaimStillPops() {
         let swipe = CGSize(width: 90, height: 12)
         #expect(!HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim)
+        #expect(!HorizontalBackSwipeGesturePolicy.latchingExclusiveClaim(false))
 
         var backCount = 0
         HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(

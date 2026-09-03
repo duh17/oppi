@@ -370,6 +370,14 @@ enum HorizontalBackSwipeGesturePolicy {
         !activeClaims.isEmpty
     }
 
+    /// Keeps a parent drag suppressed once any nested scrub claimed it. The
+    /// gesture stores this in `@GestureState`, which resets on both end and
+    /// cancellation instead of leaking into the next swipe.
+    @MainActor
+    static func latchingExclusiveClaim(_ alreadyLatched: Bool) -> Bool {
+        alreadyLatched || hasActiveExclusiveClaim
+    }
+
     /// SwiftUI ``horizontalBackSwipeGesture`` `onEnded` consults the latch the
     /// host captured during `onChanged`. Once a scrub claim was observed, the
     /// simultaneous parent drag must not pop, regardless of release order.
@@ -404,9 +412,9 @@ private struct HorizontalBackSwipeGestureModifier: ViewModifier {
     let isEnabled: Bool
     let onBack: () -> Void
 
-    /// Latched during `onChanged` when a scrub claim is active; consumed in
-    /// `onEnded` so the decision survives child/parent `onEnded` reordering.
-    @State private var didLatchSuppression = false
+    /// Sticky for one parent drag, then reset automatically on both end and
+    /// cancellation so an interrupted scrub cannot suppress the next swipe.
+    @GestureState private var didLatchSuppression = false
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -415,17 +423,13 @@ private struct HorizontalBackSwipeGestureModifier: ViewModifier {
                 .contentShape(Rectangle())
                 .simultaneousGesture(
                     DragGesture(minimumDistance: HorizontalBackSwipeGesturePolicy.minimumHorizontalDistance)
-                        .onChanged { _ in
-                            if HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim {
-                                didLatchSuppression = true
-                            }
+                        .updating($didLatchSuppression) { _, latched, _ in
+                            latched = HorizontalBackSwipeGesturePolicy.latchingExclusiveClaim(latched)
                         }
                         .onEnded { value in
-                            let latched = didLatchSuppression
-                            didLatchSuppression = false
                             HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
                                 translation: value.translation,
-                                didLatchSuppression: latched,
+                                didLatchSuppression: didLatchSuppression,
                                 onBack: onBack
                             )
                         }

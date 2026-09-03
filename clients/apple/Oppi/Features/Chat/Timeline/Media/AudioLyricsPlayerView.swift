@@ -426,6 +426,7 @@ private struct AudioPlaybackSeekBar: View {
                         state = true
                     }
                     .onChanged { value in
+                        beginClaim()
                         onScrub(Self.fraction(forX: value.location.x, width: width))
                     }
                     .onEnded { value in
@@ -437,7 +438,9 @@ private struct AudioPlaybackSeekBar: View {
         .allowsHitTesting(isSeekable)
         .opacity(isSeekable ? 1 : 0.55)
         .onChange(of: isTrackingSeek) { _, tracking in
-            updateClaim(tracking: tracking)
+            if !tracking {
+                releaseClaim()
+            }
         }
         .onChange(of: isSeekable) { _, seekable in
             if !seekable {
@@ -467,14 +470,11 @@ private struct AudioPlaybackSeekBar: View {
         "\(Int((min(1, max(0, fraction)) * 100).rounded())) percent"
     }
 
-    private func updateClaim(tracking: Bool) {
-        if tracking {
-            if scrubClaim == nil {
-                scrubClaim = HorizontalBackSwipeGesturePolicy.acquireExclusiveClaim()
-            }
-        } else {
-            releaseClaim()
-        }
+    /// Acquire inside the gesture callback so a fast flick cannot reach the
+    /// parent's first `onChanged` before the claim exists.
+    private func beginClaim() {
+        guard scrubClaim == nil else { return }
+        scrubClaim = HorizontalBackSwipeGesturePolicy.acquireExclusiveClaim()
     }
 
     private func releaseClaim() {
