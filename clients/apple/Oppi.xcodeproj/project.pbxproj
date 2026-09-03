@@ -867,6 +867,7 @@
 		8E8279F64DA3BB5D707EB35B /* DeviceKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41BEBB809604E16A370BD919 /* DeviceKey.swift */; };
 		8E82A785A80BC3C117EE9643 /* AudioPlayerSeekTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6644D27892D427D076917391 /* AudioPlayerSeekTests.swift */; };
 		8E8AB0B84AAC495D4200715F /* ServerResourcesScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = D68EC1FA1F03FD12342D6452 /* ServerResourcesScreenshotPreview.swift */; };
+		8ECB768708C34A584F00A191 /* ExtensionSurfacePanelChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 464AC7A260868A69E02A91FE /* ExtensionSurfacePanelChromeTests.swift */; };
 		8ED90B2DC0381AEA969BF4A3 /* FileIndexStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9281422D1136DD4ED4E6D6D8 /* FileIndexStore.swift */; };
 		8EECB2E3C97DB150611A4BED /* MacToolDocumentColumn.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDB1A19208522C50E08970C8 /* MacToolDocumentColumn.swift */; };
 		8EF67BA4D67963AC6A29089E /* SilenceWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC9F5CA86714726B2FEE5D49 /* SilenceWatchdog.swift */; };
@@ -2006,6 +2007,7 @@
 		45A93C53A3D07148629FED0C /* ANSIParserPerfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ANSIParserPerfTests.swift; sourceTree = "<group>"; };
 		45F7545604EA7285133F8CD3 /* NativeMutableFullScreenMarkdownBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMutableFullScreenMarkdownBody.swift; sourceTree = "<group>"; };
 		4601A4620AC9724F7561A959 /* QuietTimelineProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuietTimelineProjection.swift; sourceTree = "<group>"; };
+		464AC7A260868A69E02A91FE /* ExtensionSurfacePanelChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfacePanelChromeTests.swift; sourceTree = "<group>"; };
 		46D35581D8AC4B76C98096BB /* MacPathPaintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacPathPaintTests.swift; sourceTree = "<group>"; };
 		46E499425EC3C24982877300 /* SourceCodePro-Bold.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceCodePro-Bold.otf"; sourceTree = "<group>"; };
 		46FD81F9FF8776537FB8997B /* FollowTailBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FollowTailBench.swift; sourceTree = "<group>"; };
@@ -3389,6 +3391,7 @@
 				E64B26E7C32DB95BB68CC710 /* ChatViewLifecycleTests.swift */,
 				267AEAF28AB4E3352ACF76B9 /* ComposerAutocompleteTests.swift */,
 				924CE245EFA79FF38E4B37C5 /* ContextInspectorViewTests.swift */,
+				464AC7A260868A69E02A91FE /* ExtensionSurfacePanelChromeTests.swift */,
 				9053FD2615A63B0FEF6742AC /* ExtensionSurfaceReducerTests.swift */,
 				226CC4101913DDB0E2FDE9B3 /* ExtensionSurfaceURLTests.swift */,
 				84473A6CD0403E055A6CFFD5 /* FileSuggestionInsertionTests.swift */,
@@ -6422,6 +6425,7 @@
 				6835A9E02A71A0CFDFB06959 /* E2EAppAuthBootstrapTests.swift in Sources */,
 				15F1D0AEC361B4FC3D0020F3 /* E2ELifecycleDiagnosticsTests.swift in Sources */,
 				284EBB337482A486864B7DC0 /* ElevatedSurfaceOpacityTests.swift in Sources */,
+				8ECB768708C34A584F00A191 /* ExtensionSurfacePanelChromeTests.swift in Sources */,
 				C140B81760C07173365D5D12 /* ExtensionSurfaceReducerTests.swift in Sources */,
 				7E845D44E2061F7DEA57B7F7 /* ExtensionSurfaceURLTests.swift in Sources */,
 				BF178941278BA0EE28F362F6 /* ExtensionTests.swift in Sources */,

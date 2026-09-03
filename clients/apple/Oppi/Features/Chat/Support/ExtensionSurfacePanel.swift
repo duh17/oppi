@@ -36,13 +36,6 @@ extension View {
 }
 
 private extension View {
-    func extensionStripGlassPanel(cornerRadius: CGFloat = 18) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return self
-            .glassEffect(.regular, in: shape)
-            .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 2)
-    }
-
     func extensionGlassInset(cornerRadius: CGFloat = 12) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
@@ -1754,7 +1747,7 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
                 .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-collapsed")
-                .extensionStripGlassPanel(cornerRadius: 18)
+                .extensionGlassPanel(cornerRadius: 18)
             }
 
             if let activeEntry {
