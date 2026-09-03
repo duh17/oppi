@@ -233,6 +233,11 @@ final class NativeMarkdownAudioView: UIView {
         guard renderingMode != .export else { return }
         guard let embed = currentEmbed, let audioPlayer else { return }
         let itemID = playbackItemID(for: embed)
+        if audioPlayer.loadingItemID == itemID {
+            audioPlayer.stop()
+            refreshStrip()
+            return
+        }
         if audioPlayer.playingItemID == itemID {
             if audioPlayer.isPaused {
                 audioPlayer.resume()
@@ -246,7 +251,11 @@ final class NativeMarkdownAudioView: UIView {
             showUnavailable()
             return
         }
-        audioPlayer.toggleMediaPlayback(source: source, itemID: itemID)
+        audioPlayer.toggleMediaPlayback(
+            source: source,
+            itemID: itemID,
+            timedTextLoader: makeTimedTextLoader(for: embed)
+        )
         refreshStrip()
     }
 
@@ -258,31 +267,28 @@ final class NativeMarkdownAudioView: UIView {
         }
         let title = (embed.filePath as NSString).lastPathComponent
         let itemID = playbackItemID(for: embed)
-        let filePath = embed.filePath
-        let reference = embed.reference
-        let loader: (() async -> TimedText.LoadResult)? = sidecarProvider.map { provider in
-            {
-                await provider(filePath, .audio, reference)
-            }
-        }
+        let presentedTimedText = timedTextForPresentation(itemID: itemID)
+        let loader = makeTimedTextLoader(for: embed)
         AudioLyricsPlayerPresenter.present(
             from: self,
             title: title,
             lyrics: nil,
             itemID: itemID,
             audioPlayer: audioPlayer,
-            play: { [weak self] in self?.ensurePlaying() },
+            play: { [weak self] timedText in
+                self?.ensurePlaying(timedText: timedText)
+            },
             openFile: { [weak self] in
                 guard let reference = self?.currentEmbed?.reference else { return }
                 NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
             },
             autoplayOnAppear: false,
-            timedText: nil,
-            sidecarLoader: loader
+            timedText: presentedTimedText,
+            sidecarLoader: presentedTimedText == nil ? loader : nil
         )
     }
 
-    private func ensurePlaying() {
+    private func ensurePlaying(timedText: TimedText.LoadResult?) {
         guard let embed = currentEmbed, let audioPlayer else { return }
         let itemID = playbackItemID(for: embed)
         if audioPlayer.playingItemID == itemID {
@@ -290,6 +296,31 @@ final class NativeMarkdownAudioView: UIView {
             return
         }
         guard let source = currentSource else { return }
-        audioPlayer.toggleMediaPlayback(source: source, itemID: itemID)
+        audioPlayer.toggleMediaPlayback(
+            source: source,
+            itemID: itemID,
+            timedText: timedText ?? .empty,
+            timedTextLoader: makeTimedTextLoader(for: embed)
+        )
+    }
+
+    private func timedTextForPresentation(itemID: String) -> TimedText.LoadResult? {
+        guard let audioPlayer,
+              audioPlayer.playingItemID == itemID || audioPlayer.loadingItemID == itemID,
+              !audioPlayer.nowPlayingTimedText.tracks.isEmpty else {
+            return nil
+        }
+        return audioPlayer.nowPlayingTimedText
+    }
+
+    private func makeTimedTextLoader(
+        for embed: MarkdownAudioEmbed
+    ) -> (() async -> TimedText.LoadResult)? {
+        guard let sidecarProvider else { return nil }
+        let filePath = embed.filePath
+        let reference = embed.reference
+        return {
+            await sidecarProvider(filePath, .audio, reference)
+        }
     }
 }

@@ -34,14 +34,14 @@ struct AudioPlayerSkipTests {
         #expect(player.currentTime == 20)
     }
 
-    @Test func liveSkipBackUsesElapsed() {
+    @Test func liveSkipBackIsNoOpWithoutBufferedSeeking() {
         let player = AudioPlayerService()
         player._setPlaybackStateForTesting(playing: "live-1", loading: nil)
         player._setProgressForTesting(currentTime: 20, duration: nil)
 
         player.skip(by: -15)
 
-        #expect(player.currentTime == 5)
+        #expect(player.currentTime == 20)
     }
 
     @Test func skipBackAtRestStaysAtZero() {

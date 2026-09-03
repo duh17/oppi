@@ -376,6 +376,164 @@ struct MarkdownInlineAudioTests {
     }
 
     @MainActor
+    @Test("markdown sidecar follows active audio into shared Now Playing")
+    func markdownSidecarFollowsActivePlayback() async throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let embed = try #require(audioEmbeds(in: build(
+            "![[clip.m4a]]",
+            baseURL: baseURL
+        ).segments).first)
+        let itemID = AudioPlaybackItemID.markdown(embed: embed, worktreeID: nil)
+        let player = AudioPlayerService()
+        defer { player.stop() }
+        let timedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.srt",
+                        path: "clip.srt",
+                        format: .srt,
+                        language: nil
+                    ),
+                    cues: [TimedText.Cue(text: "Shared subtitle", startTime: 0, endTime: 5)]
+                ),
+            ],
+            selectedIndex: 0
+        )
+        var didResolveSource = false
+        let view = NativeMarkdownAudioView()
+        view.apply(
+            embed: embed,
+            sourceProvider: { _ in
+                didResolveSource = true
+                return AuthenticatedMediaSource(
+                    url: try #require(URL(string: "https://server.example.com/media/clip.m4a")),
+                    authorizationHeaderValue: "Bearer test",
+                    tlsCertFingerprint: nil,
+                    contentTypeHint: "audio/mp4",
+                    sourceFileExtension: "m4a"
+                )
+            },
+            audioPlayer: player,
+            renderingMode: .live,
+            preferredDisplayWidth: 320,
+            sidecarProvider: { _, _, _ in timedText }
+        )
+
+        #expect(await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            didResolveSource
+        })
+        let play = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "chat.timeline.row.\(itemID).audio.play"
+        })
+        play.sendActions(for: .touchUpInside)
+
+        let propagated = await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            player.nowPlayingTimedText == timedText
+        }
+        #expect(propagated)
+    }
+
+    @MainActor
+    @Test("full-screen sidecar loading cannot overwrite playback language")
+    func fullScreenSidecarDoesNotOverwritePlaybackLanguage() async {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
+        var playbackTimedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.en.srt",
+                        path: "clip.en.srt",
+                        format: .srt,
+                        language: "en"
+                    ),
+                    cues: [TimedText.Cue(text: "Hello", startTime: 0, endTime: 5)]
+                ),
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.zh.srt",
+                        path: "clip.zh.srt",
+                        format: .srt,
+                        language: "zh"
+                    ),
+                    cues: [TimedText.Cue(text: "你好", startTime: 0, endTime: 5)]
+                ),
+            ],
+            selectedIndex: 0
+        )
+        playbackTimedText.selectedIndex = 1
+        player.setNowPlayingTimedText(playbackTimedText, for: "audio-1")
+        var didLoadViewSidecar = false
+        let host = UIHostingController(
+            rootView: AudioLyricsPlayerView(
+                title: "clip.m4a",
+                lyrics: nil,
+                itemID: "audio-1",
+                audioPlayer: player,
+                play: { _ in },
+                openFile: nil,
+                autoplayOnAppear: false,
+                sidecarLoader: {
+                    didLoadViewSidecar = true
+                    var defaultTimedText = playbackTimedText
+                    defaultTimedText.selectedIndex = 0
+                    return defaultTimedText
+                }
+            )
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.layoutIfNeeded()
+
+        #expect(await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            didLoadViewSidecar
+        })
+        #expect(player.nowPlayingTimedText.selectedIndex == 1)
+    }
+
+    @MainActor
+    @Test("visible Markdown loading strip shows and performs cancel")
+    func visibleMarkdownLoadingStripCancels() throws {
+        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let embed = try #require(audioEmbeds(in: build(
+            "![[clip.m4a]]",
+            baseURL: baseURL
+        ).segments).first)
+        let itemID = AudioPlaybackItemID.markdown(embed: embed, worktreeID: nil)
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: nil, loading: itemID)
+        let view = NativeMarkdownAudioView()
+        view.apply(
+            embed: embed,
+            sourceProvider: { _ in
+                AuthenticatedMediaSource(
+                    url: baseURL.appending(path: "media/clip.m4a"),
+                    authorizationHeaderValue: "Bearer test",
+                    tlsCertFingerprint: nil,
+                    contentTypeHint: "audio/mp4",
+                    sourceFileExtension: "m4a"
+                )
+            },
+            audioPlayer: player,
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+
+        let play = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "chat.timeline.row.\(itemID).audio.play"
+        })
+        let spinner = try #require(timelineAllViews(in: play).compactMap { $0 as? UIActivityIndicatorView }.first)
+        #expect(play.accessibilityLabel == "Cancel Loading")
+        #expect(spinner.isAnimating)
+
+        play.sendActions(for: .touchUpInside)
+        #expect(!player.hasActivePlayback)
+    }
+
+    @MainActor
     @Test("strip controls use fg and comment, not purple")
     func stripControlsUseForegroundNotPurple() throws {
         let strip = NativeAudioPlayerStripView()

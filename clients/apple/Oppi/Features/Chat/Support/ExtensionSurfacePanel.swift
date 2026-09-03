@@ -2,7 +2,13 @@ import Foundation
 import SwiftUI
 import UIKit
 
-private extension View {
+enum ExtensionStripPillMetrics {
+    static let visualHeight: CGFloat = 36
+    static let horizontalPadding: CGFloat = 10
+    static let verticalPadding: CGFloat = 8
+}
+
+extension View {
     func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
         self
             .themedSurface(
@@ -12,6 +18,24 @@ private extension View {
             .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 2)
     }
 
+    func extensionStripPillSurface(isActive: Bool, activeStroke: Color) -> some View {
+        self
+            .padding(.horizontal, ExtensionStripPillMetrics.horizontalPadding)
+            .padding(.vertical, ExtensionStripPillMetrics.verticalPadding)
+            .frame(minHeight: ExtensionStripPillMetrics.visualHeight)
+            .background(
+                .themeFg.opacity(isActive ? 0.1 : 0.045),
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .stroke(isActive ? activeStroke.opacity(0.45) : .themeFg.opacity(0.08), lineWidth: 1)
+            }
+            .contentShape(Capsule())
+    }
+}
+
+private extension View {
     func extensionStripGlassPanel(cornerRadius: CGFloat = 18) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
@@ -1450,18 +1474,7 @@ private struct ExtensionSurfaceStripPill: View {
                     .foregroundStyle(.themeComment)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(minHeight: 36)
-            .background(
-                .themeFg.opacity(isActive ? 0.1 : 0.045),
-                in: Capsule()
-            )
-            .overlay {
-                Capsule()
-                    .stroke(isActive ? entry.stateTone.color.opacity(0.45) : .themeFg.opacity(0.08), lineWidth: 1)
-            }
-            .contentShape(Capsule())
+            .extensionStripPillSurface(isActive: isActive, activeStroke: entry.stateTone.color)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-pill-\(entry.identifierSuffix)")

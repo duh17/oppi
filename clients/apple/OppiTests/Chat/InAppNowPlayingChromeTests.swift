@@ -91,7 +91,6 @@ struct InAppNowPlayingChromeTests {
         #expect(toolbar.usesMinimizedSearch)
         #expect(toolbar.showsNowPlayingPill)
         #expect(!toolbar.parksNowPlayingNextToCompose)
-        #expect(toolbar.pillShowsWaveform)
         #expect(toolbar.avoidsHidingContentWhileSearching)
     }
 
@@ -104,7 +103,6 @@ struct InAppNowPlayingChromeTests {
         #expect(toolbar.usesMinimizedSearch)
         #expect(toolbar.showsNowPlayingPill)
         #expect(toolbar.parksNowPlayingNextToCompose)
-        #expect(!toolbar.pillShowsWaveform)
         #expect(toolbar.avoidsHidingContentWhileSearching)
     }
 
@@ -131,20 +129,89 @@ struct InAppNowPlayingChromeTests {
         #expect(!toolbar.parksNowPlayingNextToCompose)
     }
 
-    @Test func sessionListPillHidesTitleAndKeepsPlayPauseHit() {
-        #expect(!InAppNowPlayingChrome.PillDensity.sessionList.showsTitle)
-        #expect(!InAppNowPlayingChrome.PillDensity.sessionList.showsSubtitle)
-        #expect(InAppNowPlayingChrome.PillDensity.sessionList.showsWaveform)
+    @Test func pillsUseFilenameWithoutWaveformAndKeepPlayPauseHit() throws {
+        #expect(InAppNowPlayingChrome.PillDensity.sessionList.showsTitle)
         #expect(InAppNowPlayingChrome.PillDensity.sessionList.playPauseHitSize == 44)
         #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsTitle)
-        #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsSubtitle)
-        #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsWaveform)
         #expect(InAppNowPlayingChrome.PillDensity.sessionListCompact.playPauseHitSize == 44)
         #expect(InAppNowPlayingChrome.PillDensity.chat.showsTitle)
-        #expect(!InAppNowPlayingChrome.PillDensity.chat.showsSubtitle)
-        #expect(InAppNowPlayingChrome.PillDensity.chat.showsWaveform)
         #expect(InAppNowPlayingChrome.PillDensity.chat.playPauseHitSize == 44)
-        #expect(InAppNowPlayingChrome.PillDensity.chat.titleMaxWidth == 180)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.titleMaxWidth > 180)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.visualHeight == ExtensionStripPillMetrics.visualHeight)
+
+        let source = try nowPlayingChromeSource()
+        #expect(!source.contains("InAppNowPlayingWaveform"))
+        #expect(!source.contains("waveformLevels"))
+    }
+
+    @Test func playbackControlsExposeLoadingAsCancel() {
+        #expect(AudioPlaybackControlAction.resolve(
+            isLoading: true,
+            isActive: false,
+            isPaused: false
+        ) == .cancelLoading)
+        #expect(AudioPlaybackControlAction.resolve(
+            isLoading: false,
+            isActive: true,
+            isPaused: false
+        ) == .pause)
+        #expect(AudioPlaybackControlAction.resolve(
+            isLoading: false,
+            isActive: true,
+            isPaused: true
+        ) == .resume)
+        #expect(AudioPlaybackControlAction.resolve(
+            isLoading: false,
+            isActive: false,
+            isPaused: false
+        ) == .start)
+    }
+
+    @Test func loadingControlIncludesAnExplicitCancelGlyph() {
+        #expect(AudioLoadingCancelControl.cancelSymbolName == "xmark")
+    }
+
+    @Test func selectedLanguageIsIncludedInThePlaybackRequest() {
+        let timedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.en.srt",
+                        path: "clip.en.srt",
+                        format: .srt,
+                        language: "en"
+                    ),
+                    cues: []
+                ),
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.zh.srt",
+                        path: "clip.zh.srt",
+                        format: .srt,
+                        language: "zh"
+                    ),
+                    cues: []
+                ),
+            ],
+            selectedIndex: 0
+        )
+
+        let selected = AudioLyricsPlayerView.selectedTimedTextForPlayback(
+            timedText,
+            selectedTrackIndex: 1
+        )
+        #expect(selected?.selectedIndex == 1)
+    }
+
+    @Test func pausedStreamsNeverRestartForIncomingChunks() {
+        #expect(!AudioPlayerService.shouldStartStreamNode(isPaused: true, isNodePlaying: false))
+        #expect(!AudioPlayerService.shouldStartStreamNode(isPaused: false, isNodePlaying: true))
+        #expect(AudioPlayerService.shouldStartStreamNode(isPaused: false, isNodePlaying: false))
+    }
+
+    @Test func globalPlayerDismissesWhenPlaybackEnds() {
+        #expect(InAppNowPlayingChrome.shouldDismissPlayer(hasActivePlayback: false))
+        #expect(!InAppNowPlayingChrome.shouldDismissPlayer(hasActivePlayback: true))
     }
 
     @Test func nowPlayingTitleUsesFileNameNotSessionTitle() {
@@ -207,6 +274,138 @@ struct InAppNowPlayingChromeTests {
         #expect(player.nowPlayingPresentation?.title == "bridge.m4a")
     }
 
+    @Test func activePlaybackKeepsTimedTextForExpandedAndFullScreenPlayers() {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "file-1", loading: nil)
+        let timedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.srt",
+                        path: "clip.srt",
+                        format: .srt,
+                        language: nil
+                    ),
+                    cues: [TimedText.Cue(text: "Follow me", startTime: 0, endTime: 4)]
+                ),
+            ],
+            selectedIndex: 0
+        )
+
+        player.setNowPlayingTimedText(timedText, for: "other-item")
+        #expect(player.nowPlayingTimedText == .empty)
+
+        player.setNowPlayingTimedText(timedText, for: "file-1")
+        #expect(player.nowPlayingTimedText == timedText)
+
+        player.stop()
+        #expect(player.nowPlayingTimedText == .empty)
+    }
+
+    @Test func serviceOwnedTimedTextLoadSurvivesItsCaller() async {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: nil, loading: "file-1")
+        let timedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.srt",
+                        path: "clip.srt",
+                        format: .srt,
+                        language: nil
+                    ),
+                    cues: [TimedText.Cue(text: "Still loading", startTime: 0, endTime: 4)]
+                ),
+            ],
+            selectedIndex: 0
+        )
+
+        player.loadNowPlayingTimedText(for: "file-1") {
+            try? await Task.sleep(for: .milliseconds(20))
+            return timedText
+        }
+        #expect(player.isNowPlayingTimedTextLoading)
+        try? await Task.sleep(for: .milliseconds(60))
+
+        #expect(player.nowPlayingTimedText == timedText)
+        #expect(!player.isNowPlayingTimedTextLoading)
+    }
+
+    @Test func stoppingPlaybackRejectsLateTimedText() async {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: nil, loading: "file-1")
+        let timedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "late.srt",
+                        path: "late.srt",
+                        format: .srt,
+                        language: nil
+                    ),
+                    cues: [TimedText.Cue(text: "Too late", startTime: 0, endTime: 4)]
+                ),
+            ],
+            selectedIndex: 0
+        )
+
+        player.loadNowPlayingTimedText(for: "file-1") {
+            try? await Task.sleep(for: .milliseconds(40))
+            return timedText
+        }
+        player.stop()
+        try? await Task.sleep(for: .milliseconds(80))
+
+        #expect(player.nowPlayingTimedText == .empty)
+        #expect(!player.isNowPlayingTimedTextLoading)
+    }
+
+    @Test func adoptedLanguageCancelsTheDefaultTimedTextLoader() async {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: nil, loading: "file-1")
+        let defaultTimedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.en.srt",
+                        path: "clip.en.srt",
+                        format: .srt,
+                        language: "en"
+                    ),
+                    cues: []
+                ),
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "clip.zh.srt",
+                        path: "clip.zh.srt",
+                        format: .srt,
+                        language: "zh"
+                    ),
+                    cues: []
+                ),
+            ],
+            selectedIndex: 0
+        )
+        var selectedTimedText = defaultTimedText
+        selectedTimedText.selectedIndex = 1
+
+        player.loadNowPlayingTimedText(for: "file-1") {
+            try? await Task.sleep(for: .milliseconds(40))
+            return defaultTimedText
+        }
+        player.setNowPlayingTimedText(selectedTimedText, for: "file-1")
+        try? await Task.sleep(for: .milliseconds(80))
+
+        #expect(player.nowPlayingTimedText.selectedIndex == 1)
+        #expect(!player.isNowPlayingTimedTextLoading)
+    }
+
+    @Test func queuedMediaCallbacksRejectRetiredPlaybackSessions() throws {
+        let source = try audioPlayerServiceSource()
+        let identityGuard = "self.mediaPlaybackSession === playbackSession"
+        #expect(source.components(separatedBy: identityGuard).count == 3)
+    }
+
     @Test func playPathTitleUsesFileNameNotSessionTitle() throws {
         let session = makeTestSession(
             id: "session-play-path",
@@ -263,116 +462,72 @@ struct InAppNowPlayingChromeTests {
         #expect(mediaPlayer.nowPlayingPresentation?.title != session.displayTitle)
     }
 
-    @Test func envelopeFromSamplesFollowsActualPeaks() {
-        var samples = [Float](repeating: 0, count: 70)
-        for index in 30..<40 {
-            samples[index] = 0.95
-        }
-        let levels = AudioPlayerService.envelopeLevels(fromSamples: samples)
+    @Test func expandedSubtitleFollowsTimedTextAtThePlayhead() {
+        let timedText = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "lesson.en.srt",
+                        path: "lesson.en.srt",
+                        format: .srt,
+                        language: "en"
+                    ),
+                    cues: [
+                        TimedText.Cue(text: "First line", startTime: 0, endTime: 2),
+                        TimedText.Cue(text: "Second line", startTime: 2, endTime: 5),
+                    ]
+                ),
+            ],
+            selectedIndex: 0
+        )
 
-        #expect(levels.count == AudioPlayerService.waveformBarCount)
-        #expect(levels.allSatisfy { $0 >= 0 && $0 <= 1 })
-        let peakIndex = levels.enumerated().max { $0.element < $1.element }?.offset
-        #expect(peakIndex == 3)
-        #expect(levels[3] > levels[0])
-        #expect(levels[3] > levels[6])
+        #expect(InAppNowPlayingChrome.currentSubtitle(in: timedText, at: 0.5) == "First line")
+        #expect(InAppNowPlayingChrome.currentSubtitle(in: timedText, at: 3) == "Second line")
+        #expect(InAppNowPlayingChrome.currentSubtitle(in: timedText, at: 6) == nil)
     }
 
-    @Test func playheadWindowTracksTheCurrentAudioSlice() {
-        var envelope = [Float](repeating: 0.05, count: 100)
-        for index in 50..<60 {
-            envelope[index] = 0.9
-        }
-
-        let loud = AudioPlayerService.playheadEnvelopeWindow(
-            envelope: envelope,
-            currentTime: 5.5,
-            duration: 10,
-            windowDuration: 1
-        )
-        let quiet = AudioPlayerService.playheadEnvelopeWindow(
-            envelope: envelope,
-            currentTime: 0.4,
-            duration: 10,
-            windowDuration: 1
+    @Test func subtitlePresentationDistinguishesLoadingGapsAndNoLyrics() {
+        let gapTrack = TimedText.LoadResult(
+            tracks: [
+                TimedText.Track(
+                    candidate: TimedText.Candidate(
+                        fileName: "lesson.srt",
+                        path: "lesson.srt",
+                        format: .srt,
+                        language: nil
+                    ),
+                    cues: [TimedText.Cue(text: "A line", startTime: 0, endTime: 2)]
+                ),
+            ],
+            selectedIndex: 0
         )
 
-        #expect(loud.count == AudioPlayerService.waveformBarCount)
-        #expect(quiet.count == AudioPlayerService.waveformBarCount)
-        #expect((loud.max() ?? 0) > (quiet.max() ?? 0))
+        #expect(InAppNowPlayingChrome.subtitlePresentation(
+            in: .empty,
+            at: 0,
+            isLoading: true
+        ) == .loading)
+        #expect(InAppNowPlayingChrome.subtitlePresentation(
+            in: .empty,
+            at: 0,
+            isLoading: false
+        ) == .unavailable)
+        #expect(InAppNowPlayingChrome.subtitlePresentation(
+            in: gapTrack,
+            at: 3,
+            isLoading: false
+        ) == .gap)
+        #expect(InAppNowPlayingChrome.subtitlePresentation(
+            in: gapTrack,
+            at: 1,
+            isLoading: false
+        ) == .cue("A line"))
     }
 
-    @Test func pausedWaveformFreezesCurrentEnvelope() {
-        let snapshot: [Float] = [0.2, 0.4, 0.8, 1, 0.7, 0.3, 0.18]
-        let expectedRest = Array(
-            repeating: AudioPlayerService.restingWaveformLevel,
-            count: AudioPlayerService.waveformBarCount
-        )
-        let paused = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: snapshot,
-            isPlaying: false,
-            isPaused: true,
-            reduceMotion: false
-        )
-        let pausedReduceMotion = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: snapshot,
-            isPlaying: false,
-            isPaused: true,
-            reduceMotion: true
-        )
-        let idle = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: snapshot,
-            isPlaying: false,
-            isPaused: false,
-            reduceMotion: false
-        )
-
-        #expect(AudioPlayerService.waveformBarCount == 7)
-        #expect(paused == snapshot)
-        #expect(pausedReduceMotion == snapshot)
-        #expect(idle == expectedRest)
-    }
-
-    @Test func displayedWaveformDoesNotAddSineMotion() {
-        let snapshot: [Float] = [0.22, 0.31, 0.74, 0.95, 0.66, 0.28, 0.19]
-        let first = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: snapshot,
-            isPlaying: true,
-            isPaused: false,
-            reduceMotion: false
-        )
-        let later = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: snapshot,
-            isPlaying: true,
-            isPaused: false,
-            reduceMotion: false
-        )
-        let reduced = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: snapshot,
-            isPlaying: true,
-            isPaused: false,
-            reduceMotion: true
-        )
-
-        #expect(first == snapshot)
-        #expect(later == snapshot)
-        #expect(first == later)
-        #expect(reduced == InAppNowPlayingChrome.reducedMotionPlayingLevels)
-        #expect(reduced != snapshot)
-        #expect(!AudioPlayerService.shouldUpdatePlayingWaveformSnapshot(reduceMotion: true))
-        #expect(AudioPlayerService.shouldUpdatePlayingWaveformSnapshot(reduceMotion: false))
-    }
-
-    @Test func reduceMotionWithoutEnvelopeUsesStaticSilhouette() {
-        let empty: [Float] = []
-        let reduced = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: empty,
-            isPlaying: true,
-            isPaused: false,
-            reduceMotion: true
-        )
-        #expect(reduced == InAppNowPlayingChrome.reducedMotionPlayingLevels)
-        #expect(Set(reduced).count >= 4)
+    @Test func expandedDrawerUsesTheSharedFullTransport() throws {
+        let source = try nowPlayingChromeSource()
+        #expect(source.contains("AudioPlaybackTransportControls("))
+        #expect(source.contains("density: .drawer"))
     }
 
     @Test func chatTitleTapExpandsAndDoubleTapOpensFullscreen() {
@@ -416,21 +571,6 @@ struct InAppNowPlayingChromeTests {
         #expect(source.contains(".exclusively(before:"))
         #expect(source.contains("TapGesture(count: 1)"))
         #expect(!source.contains("highPriorityGesture"))
-    }
-
-    @Test func meterMappingClampsToUnitInterval() {
-        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: 0) == 1)
-        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: 12) == 1)
-        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: -160) == 0)
-        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: -.infinity) == 0)
-        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: .nan) == 0)
-
-        let mid = AudioPlayerService.normalizedMeterLevel(fromAveragePower: -25)
-        #expect(mid > 0 && mid < 1)
-
-        let overflow = AudioPlayerService.envelopeLevels(fromSamples: [2.4, -1.2, 0.5])
-        #expect(overflow.count == AudioPlayerService.waveformBarCount)
-        #expect(overflow.allSatisfy { $0 >= 0 && $0 <= 1 })
     }
 
     @Test func visibleStripCollectorFindsOnscreenNativeAudioStrip() {
@@ -492,6 +632,15 @@ private func nowPlayingChromeSource() throws -> String {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .appending(path: "Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func audioPlayerServiceSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Core/Services/AudioPlayerService.swift")
     return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 

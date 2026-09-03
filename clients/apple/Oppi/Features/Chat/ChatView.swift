@@ -922,7 +922,8 @@ struct ChatView: View {
                             InAppNowPlayingDrawer(
                                 audioPlayer: audioPlayer,
                                 accessibilityPrefix: "chat.nowPlaying",
-                                onCollapse: { nowPlayingDrawerExpanded = false }
+                                onCollapse: { nowPlayingDrawerExpanded = false },
+                                onOpen: { presentsNowPlayingPlayer = true }
                             )
                             .padding(.horizontal, 16)
                         }

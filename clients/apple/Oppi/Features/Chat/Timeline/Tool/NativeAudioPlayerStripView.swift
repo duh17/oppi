@@ -4,6 +4,7 @@ import UIKit
 @MainActor
 final class NativeAudioPlayerStripView: UIView {
     private let playButton = UIButton(type: .system)
+    private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let titleLabel = UILabel()
     private let timeLabel = UILabel()
     private let progressView = UIProgressView(progressViewStyle: .default)
@@ -63,6 +64,7 @@ final class NativeAudioPlayerStripView: UIView {
         backgroundColor = UIColor(palette.bgDark)
         layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
         playButton.tintColor = UIColor(palette.fg)
+        loadingIndicator.color = UIColor(palette.comment)
         expandButton.tintColor = UIColor(palette.fg)
         titleLabel.textColor = UIColor(palette.fg)
         timeLabel.textColor = UIColor(palette.comment)
@@ -89,6 +91,10 @@ final class NativeAudioPlayerStripView: UIView {
 
         playButton.translatesAutoresizingMaskIntoConstraints = false
         playButton.addTarget(self, action: #selector(handlePlay), for: .touchUpInside)
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndicator.hidesWhenStopped = true
+        loadingIndicator.isUserInteractionEnabled = false
+        playButton.addSubview(loadingIndicator)
 
         titleLabel.font = .preferredFont(forTextStyle: .subheadline)
         titleLabel.adjustsFontForContentSizeCategory = true
@@ -152,6 +158,8 @@ final class NativeAudioPlayerStripView: UIView {
             playButton.trailingAnchor.constraint(equalTo: playHit.trailingAnchor),
             playButton.topAnchor.constraint(equalTo: playHit.topAnchor),
             playButton.bottomAnchor.constraint(equalTo: playHit.bottomAnchor),
+            loadingIndicator.centerXAnchor.constraint(equalTo: playButton.centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: playButton.centerYAnchor),
             expandButton.leadingAnchor.constraint(equalTo: expandHit.leadingAnchor),
             expandButton.trailingAnchor.constraint(equalTo: expandHit.trailingAnchor),
             expandButton.topAnchor.constraint(equalTo: expandHit.topAnchor),
@@ -184,11 +192,27 @@ final class NativeAudioPlayerStripView: UIView {
     }
 
     private func refreshPlaybackChrome() {
-        let imageName = isActivePlaying() ? "pause.fill" : "play.fill"
-        playButton.setImage(
-            UIImage(systemName: imageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)),
-            for: .normal
-        )
+        let isLoading = isMatchingLoading()
+        if isLoading {
+            loadingIndicator.startAnimating()
+            playButton.setImage(
+                UIImage(
+                    systemName: "xmark",
+                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 8, weight: .bold)
+                ),
+                for: .normal
+            )
+        } else {
+            loadingIndicator.stopAnimating()
+            let imageName = isActivePlaying() ? "pause.fill" : "play.fill"
+            playButton.setImage(
+                UIImage(
+                    systemName: imageName,
+                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+                ),
+                for: .normal
+            )
+        }
         playButton.accessibilityLabel = playAccessibilityLabel()
 
         let elapsed: TimeInterval
@@ -214,12 +238,18 @@ final class NativeAudioPlayerStripView: UIView {
             || audioPlayer.isStreamingPlaybackActive(itemID: itemID)
     }
 
+    private func isMatchingLoading() -> Bool {
+        guard let itemID, let audioPlayer else { return false }
+        return audioPlayer.loadingItemID == itemID
+    }
+
     private func isActivePlaying() -> Bool {
         isMatchingPlayback() && audioPlayer?.isPaused == false
     }
 
     private func playAccessibilityLabel() -> String {
-        isActivePlaying() ? "Pause audio" : "Play audio"
+        if isMatchingLoading() { return "Cancel Loading" }
+        return isActivePlaying() ? "Pause audio" : "Play audio"
     }
 
     @objc private func handlePlay() {

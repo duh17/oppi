@@ -3,9 +3,6 @@ import CoreMedia
 import Foundation
 import MediaPlayer
 import os.log
-#if canImport(UIKit)
-import UIKit
-#endif
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "AudioPlayer")
 
@@ -85,23 +82,12 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     /// True when the active item is paused rather than stopped.
     private(set) var isPaused = false
 
-    nonisolated static let waveformBarCount = 7
-    nonisolated static let restingWaveformLevel: Float = 0.16
-    nonisolated static let placeholderWaveformLevels: [Float] = [0.30, 0.54, 0.76, 1, 0.72, 0.48, 0.28]
-    private nonisolated static let waveformMinDecibels: Float = -60
-    private nonisolated static let waveformEnvelopeBucketCount = 240
-    private nonisolated static let waveformPlayheadWindowDuration: TimeInterval = 1.2
-
-    /// Compact envelope snapshot for in-app Now Playing chrome.
-    /// Bars are a playhead window of the playing file, or recent PCM RMS for live streams.
-    private(set) var waveformLevels: [Float] = Array(
-        repeating: restingWaveformLevel,
-        count: waveformBarCount
-    )
     private var nowPlayingItemTitle: String?
-    private var waveformEnvelope: [Float] = []
-    private var streamEnvelope: [Float] = []
-    private var envelopeLoadGeneration = 0
+    /// Timed sidecar owned by the active file so compact and full-screen players
+    /// follow the same subtitle track.
+    private(set) var nowPlayingTimedText: TimedText.LoadResult = .empty
+    private(set) var isNowPlayingTimedTextLoading = false
+    private var timedTextLoadTask: Task<Void, Never>?
 
     var hasActivePlayback: Bool {
         playingItemID != nil || loadingItemID != nil || streamID != nil
@@ -232,7 +218,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     /// Stream a bearer-authenticated media attachment through AVFoundation.
-    func toggleMediaPlayback(source: AuthenticatedMediaSource, itemID: String, mode: String = "manual") {
+    func toggleMediaPlayback(
+        source: AuthenticatedMediaSource,
+        itemID: String,
+        mode: String = "manual",
+        timedText: TimedText.LoadResult = .empty,
+        timedTextLoader: (() async -> TimedText.LoadResult)? = nil
+    ) {
         if playingItemID == itemID || loadingItemID == itemID {
             stop()
             return
@@ -241,7 +233,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         let startedAtMs = ChatSessionTelemetry.nowMs()
         stop()
         do {
-            try play(source: source, itemID: itemID, mode: mode, startedAtMs: startedAtMs)
+            try play(
+                source: source,
+                itemID: itemID,
+                mode: mode,
+                timedText: timedText,
+                timedTextLoader: timedTextLoader,
+                startedAtMs: startedAtMs
+            )
         } catch {
             recordVoicePlaybackError(source: "media", phase: "start", error: error)
             logger.error("Audio media playback failed: \(error.localizedDescription)")
@@ -267,10 +266,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         duration = nil
         isPaused = false
         nowPlayingItemTitle = nil
-        envelopeLoadGeneration += 1
-        waveformEnvelope = []
-        streamEnvelope = []
-        waveformLevels = Array(repeating: Self.restingWaveformLevel, count: Self.waveformBarCount)
+        nowPlayingTimedText = .empty
+        isNowPlayingTimedTextLoading = false
+        timedTextLoadTask?.cancel()
+        timedTextLoadTask = nil
         stopMediaPlaybackSession()
         stopAudioStream(clearState: false)
         if let activeStreamID {
@@ -323,24 +322,19 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         seek(to: target)
     }
 
-    /// Live streams have no duration: skip back uses elapsed time, skip forward is a no-op.
+    /// Durationless streams cannot seek, so both skip directions are no-ops.
     nonisolated private static func skipTarget(
         currentTime: TimeInterval,
         duration: TimeInterval?,
         interval: TimeInterval
     ) -> TimeInterval? {
         guard currentTime.isFinite, interval.isFinite, interval != 0 else { return nil }
-        let knownDuration = duration.flatMap { value in
-            value.isFinite && value >= 0 ? value : nil
-        }
-        if interval > 0, knownDuration == nil {
+        guard let knownDuration = duration,
+              knownDuration.isFinite,
+              knownDuration >= 0 else {
             return nil
         }
-        let unclamped = currentTime + interval
-        if let knownDuration {
-            return min(knownDuration, max(0, unclamped))
-        }
-        return max(0, unclamped)
+        return min(knownDuration, max(0, currentTime + interval))
     }
 
     func seek(to time: TimeInterval) {
@@ -467,10 +461,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         try audioSession.setActive(true)
 
         let audioPlayer = try AVAudioPlayer(data: data)
-        beginNowPlayingItem(
-            title: Self.nowPlayingDisplayTitle(),
-            envelopeSource: .data(data)
-        )
+        beginNowPlayingItem(title: Self.nowPlayingDisplayTitle())
         attachAndStartPlayer(audioPlayer, itemID: itemID)
         recordVoicePlaybackStart(source: "data", mode: mode, durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         logger.info("Playing audio data for item \(itemID), duration: \(audioPlayer.duration, format: .fixed(precision: 1))s")
@@ -486,16 +477,20 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         try audioSession.setActive(true)
 
         let audioPlayer = try AVAudioPlayer(contentsOf: fileURL)
-        beginNowPlayingItem(
-            title: Self.nowPlayingDisplayTitle(fileURL: fileURL),
-            envelopeSource: .file(fileURL)
-        )
+        beginNowPlayingItem(title: Self.nowPlayingDisplayTitle(fileURL: fileURL))
         attachAndStartPlayer(audioPlayer, itemID: itemID)
         recordVoicePlaybackStart(source: "file", mode: mode, durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         logger.info("Playing audio file for item \(itemID): \(fileURL.lastPathComponent, privacy: .public)")
     }
 
-    private func play(source: AuthenticatedMediaSource, itemID: String, mode: String, startedAtMs: Int64) throws {
+    private func play(
+        source: AuthenticatedMediaSource,
+        itemID: String,
+        mode: String,
+        timedText: TimedText.LoadResult,
+        timedTextLoader: (() async -> TimedText.LoadResult)?,
+        startedAtMs: Int64
+    ) throws {
         guard !playbackSuppressedForCapture else { return }
         claimGlobalPlaybackOwnership()
         stopMediaPlaybackSession()
@@ -509,10 +504,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         mediaPlaybackSession = playbackSession
         beginNowPlayingItem(
             title: Self.nowPlayingDisplayTitle(mediaURL: source.url),
-            envelopeSource: nil
+            timedText: timedText
         )
         activePlaybackContext = sessionContext
         setPlaybackState(playing: nil, loading: itemID)
+        if timedText.tracks.isEmpty, let timedTextLoader {
+            loadNowPlayingTimedText(for: itemID, using: timedTextLoader)
+        }
         updateNowPlayingInfo(durationSeconds: nil, isLiveStream: false)
 
         mediaEndObserver = NotificationCenter.default.addObserver(
@@ -521,7 +519,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.mediaPlaybackSession === playbackSession else { return }
                 self.stopMediaPlaybackSession()
                 self.deactivatePlaybackAudioSessionIfPossible()
                 self.setPlaybackState(playing: nil, loading: nil)
@@ -531,7 +529,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
         mediaStatusObservation = player.currentItem?.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.mediaPlaybackSession === playbackSession else { return }
                 switch item.status {
                 case .readyToPlay:
                     let duration = item.duration.seconds
@@ -594,10 +592,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         player = nil
         playbackDelegate = nil
         nowPlayingItemTitle = nil
-        envelopeLoadGeneration += 1
-        waveformEnvelope = []
-        streamEnvelope = []
-        waveformLevels = Array(repeating: Self.restingWaveformLevel, count: Self.waveformBarCount)
+        nowPlayingTimedText = .empty
+        isNowPlayingTimedTextLoading = false
         deactivatePlaybackAudioSessionIfPossible()
         setPlaybackState(playing: nil, loading: nil)
         clearGlobalPlaybackOwnershipIfNeeded()
@@ -659,7 +655,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             streamSessionID = sessionId ?? sessionContext?.sessionID
             streamPendingBuffers = 0
             streamReceivedDone = false
-            beginNowPlayingItem(title: Self.nowPlayingFallbackTitle, envelopeSource: nil)
+            beginNowPlayingItem(title: Self.nowPlayingFallbackTitle)
             markVoiceReplyAutoplayed(itemID: id)
             activePlaybackContext = sessionContext
             setPlaybackState(playing: Self.streamingPlaybackItemID(for: id), loading: nil)
@@ -704,10 +700,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return
         }
 
-        if !isPaused {
-            appendStreamEnvelopeLevel(Self.meterLevel(fromPCMBuffer: buffer))
-            updateWaveformSnapshot()
-        }
         streamPendingBuffers += 1
         node.scheduleBuffer(buffer) { [weak self, id = stream.id] in
             Task { @MainActor in
@@ -716,7 +708,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 self.finishAudioStreamIfDrained(id: id)
             }
         }
-        if !node.isPlaying { node.play() }
+        if Self.shouldStartStreamNode(isPaused: isPaused, isNodePlaying: node.isPlaying) {
+            node.play()
+        }
+    }
+
+    nonisolated static func shouldStartStreamNode(isPaused: Bool, isNodePlaying: Bool) -> Bool {
+        !isPaused && !isNodePlaying
     }
 
     private func recordVoicePlaybackStart(source: String, mode: String, durationMs: Int64) {
@@ -785,8 +783,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         streamSessionID = nil
         streamPendingBuffers = 0
         streamReceivedDone = false
-        streamEnvelope = []
-        waveformLevels = Array(repeating: Self.restingWaveformLevel, count: Self.waveformBarCount)
         if clearState {
             deactivatePlaybackAudioSessionIfPossible()
             setPlaybackState(playing: nil, loading: nil)
@@ -834,6 +830,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         if playing == nil, loading == nil, streamID == nil {
             activePlaybackContext = nil
             nowPlayingItemTitle = nil
+            nowPlayingTimedText = .empty
+            isNowPlayingTimedTextLoading = false
+            timedTextLoadTask?.cancel()
+            timedTextLoadTask = nil
         }
     }
 
@@ -900,9 +900,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         Self.activePlaybackOwner = nil
         activePlaybackContext = nil
         nowPlayingItemTitle = nil
+        nowPlayingTimedText = .empty
+        isNowPlayingTimedTextLoading = false
+        timedTextLoadTask?.cancel()
+        timedTextLoadTask = nil
         lastNowPlayingDurationSeconds = nil
         lastNowPlayingIsLiveStream = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        Self.setRemoteSeekingEnabled(false)
     }
 
     private func startProgressUpdates() {
@@ -954,7 +959,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 duration = itemDuration
             }
         }
-        updateWaveformSnapshot()
         NotificationCenter.default.post(
             name: Self.stateDidChangeNotification,
             object: self,
@@ -965,12 +969,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         )
     }
 
-    // MARK: - Waveform envelope
-
-    private enum WaveformEnvelopeSource: Sendable {
-        case file(URL)
-        case data(Data)
-    }
+    // MARK: - Now Playing metadata
 
     nonisolated private static func fileName(fromPath path: String) -> String? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -996,223 +995,42 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         return fileName(fromPath: last)
     }
 
-    /// Peak-downsample PCM into `barCount` bars. Silent bins keep a visible floor.
-    nonisolated static func envelopeLevels(
-        fromSamples samples: [Float],
-        barCount: Int = waveformBarCount
-    ) -> [Float] {
-        guard barCount > 0 else { return [] }
-        if samples.isEmpty {
-            return Array(repeating: restingWaveformLevel, count: barCount)
-        }
-        let count = samples.count
-        var levels = [Float](repeating: restingWaveformLevel, count: barCount)
-        for bar in 0..<barCount {
-            let start = bar * count / barCount
-            let end = max(start + 1, (bar + 1) * count / barCount)
-            var peak: Float = 0
-            for index in start..<min(end, count) {
-                let sample = samples[index]
-                if sample.isFinite {
-                    peak = max(peak, abs(sample))
-                }
-            }
-            levels[bar] = min(1, max(restingWaveformLevel, peak))
-        }
-        return levels
-    }
-
-    /// Voice Memos-style window of the stored envelope around the playhead.
-    nonisolated static func playheadEnvelopeWindow(
-        envelope: [Float],
-        currentTime: TimeInterval,
-        duration: TimeInterval,
-        barCount: Int = waveformBarCount,
-        windowDuration: TimeInterval = waveformPlayheadWindowDuration
-    ) -> [Float] {
-        guard barCount > 0 else { return [] }
-        guard !envelope.isEmpty, duration.isFinite, duration > 0 else {
-            return Array(repeating: restingWaveformLevel, count: barCount)
-        }
-        let window = min(max(windowDuration, 0.05), duration)
-        let center = min(max(currentTime.isFinite ? currentTime : 0, 0), duration)
-        let startTime = min(max(center - window / 2, 0), max(0, duration - window))
-        let startIndex = Int((startTime / duration) * Double(envelope.count))
-        let indexCount = max(barCount, Int((window / duration) * Double(envelope.count)))
-        let clampedStart = min(max(0, startIndex), max(0, envelope.count - indexCount))
-        let endIndex = min(envelope.count, clampedStart + indexCount)
-        let slice = Array(envelope[clampedStart..<endIndex])
-        return envelopeLevels(fromSamples: slice, barCount: barCount)
-    }
-
-    /// Map audio power into 0...1 with a soft curve so quiet speech still reads clearly.
-    nonisolated static func normalizedMeterLevel(fromAveragePower dB: Float) -> Float {
-        guard dB.isFinite else { return 0 }
-        let clamped = min(0, max(waveformMinDecibels, dB))
-        let linear = (clamped - waveformMinDecibels) / -waveformMinDecibels
-        return pow(linear, 0.58)
-    }
-
-    /// RMS of already-decoded PCM. Live streams use this per buffer, not a sine LFO.
-    nonisolated static func meterLevel(fromPCMBuffer buffer: AVAudioPCMBuffer) -> Float {
-        guard let channels = buffer.floatChannelData else { return 0 }
-        let frames = Int(buffer.frameLength)
-        let channelCount = Int(buffer.format.channelCount)
-        guard frames > 0, channelCount > 0 else { return 0 }
-
-        var sum: Float = 0
-        var peak: Float = 0
-        for channel in 0..<channelCount {
-            let samples = channels[channel]
-            for frame in 0..<frames {
-                let sample = samples[frame]
-                sum += sample * sample
-                peak = max(peak, abs(sample))
-            }
-        }
-        let rms = sqrt(sum / Float(frames * channelCount))
-        guard rms.isFinite, rms > 0 else { return 0 }
-        let averageLevel = normalizedMeterLevel(fromAveragePower: 20 * log10(max(rms, 1e-7)))
-        let peakLevel = normalizedMeterLevel(fromAveragePower: 20 * log10(max(peak, 1e-7)))
-        return max(averageLevel, peakLevel * 0.9)
-    }
-
-    nonisolated static func peakEnvelope(fromFileURL url: URL, bucketCount: Int = waveformEnvelopeBucketCount) -> [Float] {
-        guard let file = try? AVAudioFile(forReading: url) else { return [] }
-        let format = file.processingFormat
-        let frameCount = Int(file.length)
-        guard frameCount > 0, bucketCount > 0, format.channelCount > 0 else { return [] }
-
-        let bufferFrames = min(4096, max(256, frameCount / bucketCount * 4))
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(bufferFrames)) else {
-            return []
-        }
-
-        var envelope = [Float](repeating: 0, count: bucketCount)
-        var frameCursor = 0
-        while frameCursor < frameCount {
-            let remaining = frameCount - frameCursor
-            let thisRead = min(bufferFrames, remaining)
-            do {
-                try file.read(into: buffer, frameCount: AVAudioFrameCount(thisRead))
-            } catch {
-                break
-            }
-            let readFrames = Int(buffer.frameLength)
-            guard readFrames > 0, let channels = buffer.floatChannelData else { break }
-            let channelCount = Int(format.channelCount)
-            for frame in 0..<readFrames {
-                var peak: Float = 0
-                for channel in 0..<channelCount {
-                    peak = max(peak, abs(channels[channel][frame]))
-                }
-                let bucket = min(bucketCount - 1, (frameCursor + frame) * bucketCount / frameCount)
-                envelope[bucket] = max(envelope[bucket], peak)
-            }
-            frameCursor += readFrames
-            if readFrames < thisRead { break }
-        }
-        return envelope.map { min(1, max(restingWaveformLevel, $0.isFinite ? $0 : 0)) }
-    }
-
-    nonisolated static func peakEnvelope(fromAudioData data: Data, bucketCount: Int = waveformEnvelopeBucketCount) -> [Float] {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("oppi-envelope-\(UUID().uuidString).audio")
-        do {
-            try data.write(to: url, options: .atomic)
-            defer { try? FileManager.default.removeItem(at: url) }
-            return peakEnvelope(fromFileURL: url, bucketCount: bucketCount)
-        } catch {
-            return []
-        }
-    }
-
-    private func beginNowPlayingItem(title: String?, envelopeSource: WaveformEnvelopeSource?) {
+    private func beginNowPlayingItem(
+        title: String?,
+        timedText: TimedText.LoadResult = .empty
+    ) {
+        timedTextLoadTask?.cancel()
+        timedTextLoadTask = nil
         nowPlayingItemTitle = title
-        waveformEnvelope = []
-        streamEnvelope = []
-        envelopeLoadGeneration += 1
-        let generation = envelopeLoadGeneration
-        guard let envelopeSource else { return }
-        Task.detached { [weak self] in
-            let envelope: [Float]
-            switch envelopeSource {
-            case .file(let url):
-                envelope = AudioPlayerService.peakEnvelope(fromFileURL: url)
-            case .data(let data):
-                envelope = AudioPlayerService.peakEnvelope(fromAudioData: data)
-            }
-            await self?.applyLoadedEnvelope(envelope, generation: generation)
-        }
+        nowPlayingTimedText = timedText
+        isNowPlayingTimedTextLoading = false
     }
 
-    private func applyLoadedEnvelope(_ envelope: [Float], generation: Int) {
-        guard generation == envelopeLoadGeneration, hasActivePlayback else { return }
-        waveformEnvelope = envelope
-        updateWaveformSnapshot()
+    func setNowPlayingTimedText(_ timedText: TimedText.LoadResult, for itemID: String) {
+        guard playingItemID == itemID || loadingItemID == itemID else { return }
+        timedTextLoadTask?.cancel()
+        timedTextLoadTask = nil
+        nowPlayingTimedText = timedText
+        isNowPlayingTimedTextLoading = false
     }
 
-    private func appendStreamEnvelopeLevel(_ level: Float) {
-        let clamped = min(1, max(0, level.isFinite ? level : 0))
-        streamEnvelope.append(clamped)
-        if streamEnvelope.count > Self.waveformBarCount {
-            streamEnvelope.removeFirst(streamEnvelope.count - Self.waveformBarCount)
+    /// The playback service owns this task so subtitles can finish loading after
+    /// the row or file view that started playback has disappeared.
+    func loadNowPlayingTimedText(
+        for itemID: String,
+        using loader: @escaping () async -> TimedText.LoadResult
+    ) {
+        timedTextLoadTask?.cancel()
+        timedTextLoadTask = nil
+        isNowPlayingTimedTextLoading = false
+        guard playingItemID == itemID || loadingItemID == itemID else { return }
+
+        isNowPlayingTimedTextLoading = true
+        timedTextLoadTask = Task { [weak self] in
+            let loaded = await loader()
+            guard !Task.isCancelled, let self else { return }
+            setNowPlayingTimedText(loaded, for: itemID)
         }
-    }
-
-    /// Reduce Motion keeps the last snapshot; the pill draws a static silhouette instead.
-    nonisolated static func shouldUpdatePlayingWaveformSnapshot(reduceMotion: Bool) -> Bool {
-        !reduceMotion
-    }
-
-    private static var isReduceMotionEnabled: Bool {
-        #if canImport(UIKit)
-        UIAccessibility.isReduceMotionEnabled
-        #else
-        false
-        #endif
-    }
-
-    private func updateWaveformSnapshot() {
-        if playingItemID == nil, loadingItemID == nil, streamID == nil {
-            waveformLevels = Array(repeating: Self.restingWaveformLevel, count: Self.waveformBarCount)
-            return
-        }
-
-        let isActivelyPlaying = playingItemID != nil && !isPaused
-        if isActivelyPlaying,
-           !Self.shouldUpdatePlayingWaveformSnapshot(reduceMotion: Self.isReduceMotionEnabled) {
-            return
-        }
-
-        if !waveformEnvelope.isEmpty, let duration, duration > 0 {
-            waveformLevels = Self.playheadEnvelopeWindow(
-                envelope: waveformEnvelope,
-                currentTime: currentTime,
-                duration: duration
-            )
-            return
-        }
-
-        if !streamEnvelope.isEmpty {
-            var levels = streamEnvelope
-            while levels.count < Self.waveformBarCount {
-                levels.insert(Self.restingWaveformLevel, at: 0)
-            }
-            if levels.count > Self.waveformBarCount {
-                levels = Array(levels.suffix(Self.waveformBarCount))
-            }
-            waveformLevels = levels
-            return
-        }
-
-        if !isActivelyPlaying {
-            // Pause without PCM: freeze the last envelope/silhouette.
-            return
-        }
-
-        // AVPlayer has no cheap tap and we do not invent motion.
-        waveformLevels = Self.placeholderWaveformLevels
     }
 
     private func updateNowPlayingInfo(
@@ -1248,8 +1066,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             info[MPNowPlayingInfoPropertyIsLiveStream] = true
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled =
-            AudioPlaybackSeek.isSeekable(duration: durationSeconds)
+        Self.setRemoteSeekingEnabled(AudioPlaybackSeek.isSeekable(duration: durationSeconds))
+    }
+
+    private static func setRemoteSeekingEnabled(_ enabled: Bool) {
+        let center = MPRemoteCommandCenter.shared()
+        center.changePlaybackPositionCommand.isEnabled = enabled
+        center.skipForwardCommand.isEnabled = enabled
+        center.skipBackwardCommand.isEnabled = enabled
     }
 
     private static func installRemoteCommandTargetsIfNeeded() {
@@ -1268,9 +1092,9 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         center.pauseCommand.isEnabled = true
         center.stopCommand.isEnabled = true
         center.togglePlayPauseCommand.isEnabled = true
-        center.skipForwardCommand.isEnabled = true
-        center.skipBackwardCommand.isEnabled = true
-        center.changePlaybackPositionCommand.isEnabled = true
+        center.skipForwardCommand.isEnabled = false
+        center.skipBackwardCommand.isEnabled = false
+        center.changePlaybackPositionCommand.isEnabled = false
         center.skipForwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
         center.skipBackwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
         center.playCommand.addTarget { _ in

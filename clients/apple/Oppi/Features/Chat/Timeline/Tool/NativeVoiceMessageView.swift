@@ -283,6 +283,11 @@ final class NativeAudioMessageView: UIView {
 
     private func togglePlayback() {
         guard let id, let audioPlayer else { return }
+        if audioPlayer.loadingItemID == id {
+            audioPlayer.stop()
+            refreshStrip()
+            return
+        }
         if audioPlayer.playingItemID == id
             || audioPlayer.isStreamingPlaybackActive(itemID: id) {
             if audioPlayer.isPaused {
@@ -326,7 +331,7 @@ final class NativeAudioMessageView: UIView {
             lyrics: messageLabel.attributedText?.string,
             itemID: id,
             audioPlayer: audioPlayer,
-            play: { [weak self] in
+            play: { [weak self] _ in
                 guard let self else { return }
                 let isThisItem = self.audioPlayer?.playingItemID == id
                     || self.audioPlayer?.isStreamingPlaybackActive(itemID: id) == true

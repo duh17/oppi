@@ -39,7 +39,7 @@ enum AudioLyricsPlayerPresenter {
         lyrics: String?,
         itemID: String,
         audioPlayer: AudioPlayerService?,
-        play: @escaping () -> Void,
+        play: @escaping (TimedText.LoadResult?) -> Void,
         openFile: (() -> Void)?,
         autoplayOnAppear: Bool,
         timedText: TimedText.LoadResult? = nil,
@@ -83,7 +83,7 @@ struct AudioLyricsPlayerView: View {
     let lyrics: String?
     let itemID: String
     let audioPlayer: AudioPlayerService?
-    let play: () -> Void
+    let play: (TimedText.LoadResult?) -> Void
     let openFile: (() -> Void)?
     var autoplayOnAppear = false
     var showsCloseButton = true
@@ -95,8 +95,6 @@ struct AudioLyricsPlayerView: View {
     @State private var progressTick = 0
     @State private var selectedTrackIndex: Int?
     @State private var loadedTimedText: TimedText.LoadResult?
-    @State private var isScrubbing = false
-    @State private var scrubFraction: Double = 0
 
     private var resolvedTimedText: TimedText.LoadResult? {
         loadedTimedText ?? timedText
@@ -104,6 +102,25 @@ struct AudioLyricsPlayerView: View {
 
     private var resolvedTrackIndex: Int {
         selectedTrackIndex ?? resolvedTimedText?.selectedIndex ?? 0
+    }
+
+    private var playbackTimedText: TimedText.LoadResult? {
+        Self.selectedTimedTextForPlayback(
+            resolvedTimedText,
+            selectedTrackIndex: selectedTrackIndex
+        )
+    }
+
+    static func selectedTimedTextForPlayback(
+        _ timedText: TimedText.LoadResult?,
+        selectedTrackIndex: Int?
+    ) -> TimedText.LoadResult? {
+        guard var selected = timedText else { return nil }
+        if let selectedTrackIndex,
+           selected.tracks.indices.contains(selectedTrackIndex) {
+            selected.selectedIndex = selectedTrackIndex
+        }
+        return selected
     }
 
     private var lines: [AudioLyrics.Line] {
@@ -128,39 +145,30 @@ struct AudioLyricsPlayerView: View {
         return audioPlayer?.currentTime
     }
 
-    private var elapsed: TimeInterval {
-        _ = progressTick
-        if isScrubbing, let time = AudioPlaybackSeek.time(forFraction: scrubFraction, duration: duration) {
-            return time
-        }
-        guard matchesPlayback else { return 0 }
-        return audioPlayer?.currentTime ?? 0
-    }
-
-    private var duration: TimeInterval? {
-        matchesPlayback ? audioPlayer?.duration : nil
-    }
-
-    private var isPlaying: Bool {
-        matchesPlayback && audioPlayer?.isPaused == false
-    }
-
     var body: some View {
         ZStack {
             Color.themeBg.ignoresSafeArea()
             VStack(spacing: 0) {
                 header
                 lyricsBody
-                transport
+                AudioPlaybackTransportControls(
+                    itemID: itemID,
+                    audioPlayer: audioPlayer,
+                    play: { play(playbackTimedText) },
+                    openFile: openFile,
+                    density: .fullScreen
+                )
             }
         }
         .task {
             guard let sidecarLoader else { return }
-            loadedTimedText = await sidecarLoader()
+            let loaded = await sidecarLoader()
+            guard !Task.isCancelled else { return }
+            loadedTimedText = loaded
         }
         .onAppear {
             if autoplayOnAppear {
-                play()
+                play(playbackTimedText)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { _ in
@@ -200,7 +208,7 @@ struct AudioLyricsPlayerView: View {
             Menu {
                 ForEach(resolvedTimedText.tracks.indices, id: \.self) { index in
                     Button(resolvedTimedText.tracks[index].languageLabel) {
-                        selectedTrackIndex = index
+                        selectTrack(index, in: resolvedTimedText)
                     }
                 }
             } label: {
@@ -277,12 +285,83 @@ struct AudioLyricsPlayerView: View {
             .accessibilityAddTraits(line.startTime == nil ? [] : .isButton)
     }
 
-    private var transport: some View {
-        VStack(spacing: 16) {
+    private func selectTrack(_ index: Int, in timedText: TimedText.LoadResult) {
+        selectedTrackIndex = index
+        var selected = timedText
+        selected.selectedIndex = index
+        audioPlayer?.setNowPlayingTimedText(selected, for: itemID)
+    }
+}
+
+struct AudioLoadingCancelControl: View {
+    nonisolated static let cancelSymbolName = "xmark"
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            ProgressView()
+                .controlSize(.regular)
+                .tint(.themeComment)
+            Image(systemName: Self.cancelSymbolName)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.themeFg)
+        }
+        .frame(width: size, height: size)
+        .contentShape(Rectangle())
+        .accessibilityHidden(true)
+    }
+}
+
+enum AudioPlaybackControlAction: Equatable {
+    case start
+    case cancelLoading
+    case pause
+    case resume
+
+    static func resolve(
+        isLoading: Bool,
+        isActive: Bool,
+        isPaused: Bool
+    ) -> Self {
+        if isLoading { return .cancelLoading }
+        guard isActive else { return .start }
+        return isPaused ? .resume : .pause
+    }
+}
+
+enum AudioPlaybackTransportDensity {
+    case fullScreen
+    case drawer
+
+    var stackSpacing: CGFloat { self == .fullScreen ? 16 : 10 }
+    var controlSpacing: CGFloat { self == .fullScreen ? 28 : 24 }
+    var playSize: CGFloat { self == .fullScreen ? 56 : 44 }
+    var playSymbolSize: CGFloat { self == .fullScreen ? 36 : 24 }
+    var horizontalPadding: CGFloat { self == .fullScreen ? 24 : 0 }
+    var bottomPadding: CGFloat { self == .fullScreen ? 28 : 0 }
+    var topPadding: CGFloat { self == .fullScreen ? 8 : 0 }
+}
+
+/// Shared seek and transport controls for full-screen and expanded Now Playing.
+struct AudioPlaybackTransportControls: View {
+    let itemID: String
+    let audioPlayer: AudioPlayerService?
+    let play: () -> Void
+    var openFile: (() -> Void)? = nil
+    var density: AudioPlaybackTransportDensity = .fullScreen
+    var accessibilityPrefix = "audioLyrics"
+
+    @State private var progressTick = 0
+    @State private var isScrubbing = false
+    @State private var scrubFraction: Double = 0
+
+    var body: some View {
+        VStack(spacing: density.stackSpacing) {
             VStack(spacing: 6) {
                 AudioPlaybackSeekBar(
                     fraction: displayedFraction,
                     isSeekable: isSeekable,
+                    accessibilityIdentifier: "\(accessibilityPrefix).seek",
                     onScrub: { fraction in
                         isScrubbing = true
                         scrubFraction = fraction
@@ -297,37 +376,89 @@ struct AudioLyricsPlayerView: View {
                 .font(.caption)
                 .foregroundStyle(.themeComment)
             }
-            HStack(spacing: 28) {
+
+            HStack(spacing: density.controlSpacing) {
                 skipButton(
                     interval: -AudioPlayerService.skipInterval,
                     symbol: "gobackward.15",
                     label: "Skip back 15 seconds",
-                    identifier: "audioLyrics.skipBack"
+                    identifier: "\(accessibilityPrefix).skipBack"
                 )
                 Button(action: togglePlay) {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 36, weight: .semibold))
-                        .foregroundStyle(.themeFg)
-                        .frame(width: 56, height: 56)
-                        .contentShape(Rectangle())
+                    if controlAction == .cancelLoading {
+                        AudioLoadingCancelControl(size: density.playSize)
+                    } else {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: density.playSymbolSize, weight: .semibold))
+                            .foregroundStyle(.themeFg)
+                            .frame(width: density.playSize, height: density.playSize)
+                            .contentShape(Rectangle())
+                    }
                 }
-                .accessibilityLabel(isPlaying ? "Pause" : "Play")
+                .buttonStyle(.plain)
+                .accessibilityLabel(controlAccessibilityLabel)
+                .accessibilityIdentifier("\(accessibilityPrefix).playPause")
                 skipButton(
                     interval: AudioPlayerService.skipInterval,
                     symbol: "goforward.15",
                     label: "Skip forward 15 seconds",
-                    identifier: "audioLyrics.skipForward"
+                    identifier: "\(accessibilityPrefix).skipForward"
                 )
             }
+
             if !matchesPlayback, openFile != nil {
                 Button("Open file", action: { openFile?() })
                     .font(.subheadline)
                     .foregroundStyle(.themePurple)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 28)
-        .padding(.top, 8)
+        .padding(.horizontal, density.horizontalPadding)
+        .padding(.bottom, density.bottomPadding)
+        .padding(.top, density.topPadding)
+        .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { _ in
+            progressTick += 1
+        }
+    }
+
+    private var matchesPlayback: Bool {
+        guard let audioPlayer else { return false }
+        return audioPlayer.playingItemID == itemID
+            || audioPlayer.isStreamingPlaybackActive(itemID: itemID)
+    }
+
+    private var controlAction: AudioPlaybackControlAction {
+        AudioPlaybackControlAction.resolve(
+            isLoading: audioPlayer?.loadingItemID == itemID,
+            isActive: matchesPlayback,
+            isPaused: audioPlayer?.isPaused == true
+        )
+    }
+
+    private var controlAccessibilityLabel: String {
+        switch controlAction {
+        case .start: return "Play"
+        case .cancelLoading: return "Cancel Loading"
+        case .pause: return "Pause"
+        case .resume: return "Play"
+        }
+    }
+
+    private var elapsed: TimeInterval {
+        _ = progressTick
+        if isScrubbing,
+           let time = AudioPlaybackSeek.time(forFraction: scrubFraction, duration: duration) {
+            return time
+        }
+        guard matchesPlayback else { return 0 }
+        return audioPlayer?.currentTime ?? 0
+    }
+
+    private var duration: TimeInterval? {
+        matchesPlayback ? audioPlayer?.duration : nil
+    }
+
+    private var isPlaying: Bool {
+        matchesPlayback && audioPlayer?.isPaused == false
     }
 
     private var isSeekable: Bool {
@@ -342,7 +473,8 @@ struct AudioLyricsPlayerView: View {
     private func commitSeek(_ fraction: Double) {
         isScrubbing = false
         scrubFraction = fraction
-        guard isSeekable, let time = AudioPlaybackSeek.time(forFraction: fraction, duration: duration) else {
+        guard isSeekable,
+              let time = AudioPlaybackSeek.time(forFraction: fraction, duration: duration) else {
             return
         }
         audioPlayer?.seek(to: time)
@@ -355,7 +487,8 @@ struct AudioLyricsPlayerView: View {
         identifier: String
     ) -> some View {
         Button {
-            skip(by: interval)
+            guard matchesPlayback else { return }
+            audioPlayer?.skip(by: interval)
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 24, weight: .semibold))
@@ -363,29 +496,23 @@ struct AudioLyricsPlayerView: View {
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(!isSeekable)
+        .opacity(isSeekable ? 1 : 0.45)
         .accessibilityLabel(label)
         .accessibilityIdentifier(identifier)
     }
 
-    private func skip(by interval: TimeInterval) {
-        guard matchesPlayback else { return }
-        audioPlayer?.skip(by: interval)
-    }
-
     private func togglePlay() {
-        guard let audioPlayer else {
+        switch controlAction {
+        case .start:
             play()
-            return
-        }
-        if audioPlayer.playingItemID == itemID
-            || audioPlayer.isStreamingPlaybackActive(itemID: itemID) {
-            if audioPlayer.isPaused {
-                audioPlayer.resume()
-            } else {
-                audioPlayer.pause()
-            }
-        } else {
-            play()
+        case .cancelLoading:
+            audioPlayer?.stop()
+        case .pause:
+            audioPlayer?.pause()
+        case .resume:
+            audioPlayer?.resume()
         }
     }
 }
@@ -394,6 +521,7 @@ struct AudioLyricsPlayerView: View {
 private struct AudioPlaybackSeekBar: View {
     var fraction: Double
     var isSeekable: Bool
+    var accessibilityIdentifier = "audioLyrics.seek"
     var onScrub: (Double) -> Void
     var onCommit: (Double) -> Void
 
@@ -451,7 +579,7 @@ private struct AudioPlaybackSeekBar: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback position")
         .accessibilityValue(percentValue)
-        .accessibilityIdentifier("audioLyrics.seek")
+        .accessibilityIdentifier(accessibilityIdentifier)
         .accessibilityAdjustableAction { direction in
             guard isSeekable else { return }
             let step = 0.05

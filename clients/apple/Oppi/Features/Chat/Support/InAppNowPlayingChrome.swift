@@ -26,10 +26,6 @@ enum InAppNowPlayingChrome {
             showsNowPlayingPill
         }
 
-        var pillShowsWaveform: Bool {
-            self == .minimizedSearchWithNowPlaying
-        }
-
         var pillDensity: PillDensity {
             parksNowPlayingNextToCompose ? .sessionListCompact : .sessionList
         }
@@ -41,25 +37,22 @@ enum InAppNowPlayingChrome {
         case sessionListCompact
 
         var showsTitle: Bool {
-            self == .chat
-        }
-
-        /// Waveform replaces the subtitle so the compact pill does not crowd.
-        var showsSubtitle: Bool {
-            false
-        }
-
-        var showsWaveform: Bool {
             self != .sessionListCompact
+        }
+
+        var titleMinWidth: CGFloat {
+            self == .chat ? 160 : 0
         }
 
         var titleMaxWidth: CGFloat {
             switch self {
-            case .chat: return 180
-            case .sessionList, .sessionListCompact: return 120
+            case .chat: return 240
+            case .sessionList: return 160
+            case .sessionListCompact: return 0
             }
         }
 
+        var visualHeight: CGFloat { ExtensionStripPillMetrics.visualHeight }
         var playPauseHitSize: CGFloat { 44 }
     }
 
@@ -92,9 +85,6 @@ enum InAppNowPlayingChrome {
             : .minimizedSearchWithNowPlaying
     }
 
-    /// Reduce Motion keeps a recognizable waveform silhouette without periodic updates.
-    static let reducedMotionPlayingLevels = AudioPlayerService.placeholderWaveformLevels
-
     enum TitleAction: Equatable {
         case expandOrCollapse
         case openFullScreen
@@ -109,27 +99,44 @@ enum InAppNowPlayingChrome {
         return .openFullScreen
     }
 
-    static func displayedWaveformLevels(
-        snapshot: [Float],
-        isPlaying: Bool,
-        isPaused: Bool,
-        reduceMotion: Bool
-    ) -> [Float] {
-        if !isPlaying && !isPaused {
-            return Array(
-                repeating: AudioPlayerService.restingWaveformLevel,
-                count: AudioPlayerService.waveformBarCount
-            )
+    static func shouldDismissPlayer(hasActivePlayback: Bool) -> Bool {
+        !hasActivePlayback
+    }
+
+    enum SubtitlePresentation: Equatable {
+        case loading
+        case unavailable
+        case gap
+        case cue(String)
+    }
+
+    static func subtitlePresentation(
+        in timedText: TimedText.LoadResult,
+        at time: TimeInterval,
+        isLoading: Bool
+    ) -> SubtitlePresentation {
+        if let subtitle = currentSubtitle(in: timedText, at: time) {
+            return .cue(subtitle)
         }
-        if reduceMotion && isPlaying {
-            return reducedMotionPlayingLevels
+        if isLoading, timedText.tracks.isEmpty {
+            return .loading
         }
-        if snapshot.count == AudioPlayerService.waveformBarCount {
-            return snapshot.map { level in
-                min(1, max(0, level.isFinite ? level : 0))
-            }
+        if timedText.selected != nil {
+            return .gap
         }
-        return reducedMotionPlayingLevels
+        return .unavailable
+    }
+
+    static func currentSubtitle(
+        in timedText: TimedText.LoadResult,
+        at time: TimeInterval
+    ) -> String? {
+        guard let track = timedText.selected,
+              let cue = TimedText.currentCue(in: track.cues, at: time) else {
+            return nil
+        }
+        let text = cue.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     static func matchesPlayback(_ playbackItemID: String, stripItemID: String) -> Bool {
@@ -188,106 +195,136 @@ struct InAppNowPlayingPill: View {
     var isExpanded = false
     var onExpand: (() -> Void)? = nil
     let onOpen: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var presentation: AudioPlayerService.NowPlayingPresentation? {
-        audioPlayer.nowPlayingPresentation
-    }
 
     private var title: String {
-        presentation?.title ?? "Now Playing"
+        audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
     }
 
-    private var subtitle: String? {
-        guard let subtitle = presentation?.subtitle.trimmingCharacters(in: .whitespacesAndNewlines),
-              !subtitle.isEmpty else {
-            return nil
-        }
-        return subtitle
-    }
-
-    private var isActivelyPlaying: Bool {
-        audioPlayer.playingItemID != nil && !audioPlayer.isPaused
+    private var controlAction: AudioPlaybackControlAction {
+        AudioPlaybackControlAction.resolve(
+            isLoading: audioPlayer.loadingItemID != nil && audioPlayer.playingItemID == nil,
+            isActive: audioPlayer.playingItemID != nil,
+            isPaused: audioPlayer.isPaused
+        )
     }
 
     private var expandsOnTap: Bool {
         onExpand != nil
     }
 
+    @ViewBuilder
     var body: some View {
-        HStack(spacing: 2) {
-            Button(action: togglePlayback) {
-                Image(systemName: isActivelyPlaying ? "pause.fill" : "play.fill")
+        if density == .chat {
+            chatPill
+        } else {
+            toolbarPill
+        }
+    }
+
+    private var chatPill: some View {
+        HStack(spacing: 7) {
+            // Reserve the 44pt play/pause hit region without making the visible
+            // capsule taller than neighboring extension pills.
+            Color.clear
+                .frame(
+                    width: density.playPauseHitSize
+                        - ExtensionStripPillMetrics.horizontalPadding
+                        - 7,
+                    height: 20
+                )
+                .accessibilityHidden(true)
+            titleContent
+                .accessibilityHidden(true)
+        }
+        .extensionStripPillSurface(isActive: isExpanded, activeStroke: .themeFg)
+        .frame(minHeight: density.visualHeight)
+        .overlay(alignment: .leading) {
+            playPauseButton
+        }
+        .overlay {
+            chatTitleHitTarget
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("\(accessibilityPrefix).pill")
+    }
+
+    private var toolbarPill: some View {
+        HStack(spacing: 4) {
+            playPauseButton
+            if density.showsTitle {
+                toolbarTitleButton
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("\(accessibilityPrefix).pill")
+    }
+
+    private var playPauseButton: some View {
+        Button(action: togglePlayback) {
+            if controlAction == .cancelLoading {
+                AudioLoadingCancelControl(size: density.playPauseHitSize)
+            } else {
+                Image(systemName: controlAction == .pause ? "pause.fill" : "play.fill")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.themeFg)
                     .frame(width: density.playPauseHitSize, height: density.playPauseHitSize)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isActivelyPlaying ? "Pause" : "Play")
-            .accessibilityIdentifier("\(accessibilityPrefix).playPause")
-
-            if density.showsTitle || density.showsWaveform {
-                titleAndWaveform
-            }
         }
-        .padding(.horizontal, density == .chat ? 10 : 0)
-        .padding(.vertical, density == .chat ? 4 : 0)
-        .background {
-            if density == .chat {
-                Capsule()
-                    .fill(.themeFg.opacity(isExpanded ? 0.1 : 0.045))
-            }
-        }
-        .overlay {
-            if density == .chat {
-                Capsule()
-                    .stroke(isExpanded ? Color.themeFg.opacity(0.45) : Color.themeFg.opacity(0.08), lineWidth: 1)
-            }
-        }
-        .contentShape(Capsule())
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("\(accessibilityPrefix).pill")
+        .buttonStyle(.plain)
+        .accessibilityLabel(controlAccessibilityLabel)
+        .accessibilityIdentifier("\(accessibilityPrefix).playPause")
     }
 
-    @ViewBuilder
-    private var titleAndWaveform: some View {
-        let content = HStack(spacing: 6) {
-            if density.showsTitle {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if density.showsSubtitle, let subtitle {
-                        Text(subtitle)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.themeComment)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                .frame(maxWidth: density.titleMaxWidth, alignment: .leading)
-            }
-            if density.showsWaveform {
-                InAppNowPlayingWaveform(
-                    levels: audioPlayer.waveformLevels,
-                    isPlaying: isActivelyPlaying,
-                    isPaused: audioPlayer.isPaused,
-                    reduceMotion: reduceMotion
+    private var controlAccessibilityLabel: String {
+        switch controlAction {
+        case .cancelLoading: return "Cancel Loading"
+        case .pause: return "Pause"
+        case .resume, .start: return "Play"
+        }
+    }
+
+    private var titleContent: some View {
+        HStack(spacing: 7) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(
+                    minWidth: density.titleMinWidth,
+                    maxWidth: density.titleMaxWidth,
+                    alignment: .leading
                 )
+                .layoutPriority(1)
+
+            if expandsOnTap {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.themeComment)
+                    .accessibilityHidden(true)
             }
         }
-        .frame(
-            minWidth: density.showsTitle ? nil : density.playPauseHitSize,
-            minHeight: density.playPauseHitSize,
-            alignment: .leading
-        )
-        .contentShape(Rectangle())
+    }
 
-        if expandsOnTap {
-            content
+    private var toolbarTitleButton: some View {
+        Button(action: onOpen) {
+            titleContent
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Now Playing, \(title)")
+        .accessibilityHint("Opens the full-screen audio player")
+    }
+
+    private var chatTitleHitTarget: some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: density.playPauseHitSize)
+                .allowsHitTesting(false)
+            Color.clear
+                .frame(maxWidth: .infinity, minHeight: density.playPauseHitSize)
+                .contentShape(Rectangle())
                 .accessibilityLabel("Now Playing, \(title)")
                 .accessibilityHint(isExpanded ? "Collapses the player" : "Expands the player")
                 .accessibilityAddTraits(.isButton)
@@ -300,13 +337,6 @@ struct InAppNowPlayingPill: View {
                         handleTitleTaps(1)
                     })
                 )
-        } else {
-            Button(action: onOpen) {
-                content
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Now Playing, \(title)")
-            .accessibilityHint("Opens the full-screen audio player")
         }
     }
 
@@ -322,46 +352,16 @@ struct InAppNowPlayingPill: View {
     }
 
     private func togglePlayback() {
-        guard audioPlayer.playingItemID != nil else { return }
-        if audioPlayer.isPaused {
-            audioPlayer.resume()
-        } else {
+        switch controlAction {
+        case .cancelLoading:
+            audioPlayer.stop()
+        case .pause:
             audioPlayer.pause()
+        case .resume:
+            audioPlayer.resume()
+        case .start:
+            break
         }
-    }
-}
-
-struct InAppNowPlayingWaveform: View {
-    var levels: [Float]
-    var isPlaying: Bool
-    var isPaused: Bool = false
-    var reduceMotion: Bool
-    var barHeight: CGFloat = 22
-    var barWidth: CGFloat = 2.5
-
-    var body: some View {
-        let displayedLevels = InAppNowPlayingChrome.displayedWaveformLevels(
-            snapshot: levels,
-            isPlaying: isPlaying,
-            isPaused: isPaused,
-            reduceMotion: reduceMotion
-        )
-        HStack(alignment: .center, spacing: 1.5) {
-            ForEach(Array(displayedLevels.enumerated()), id: \.offset) { _, level in
-                Capsule()
-                    .fill((isPlaying || isPaused) ? Color.themeFg : Color.themeComment)
-                    .frame(width: barWidth, height: barHeight)
-                    .scaleEffect(x: 1, y: barScale(level), anchor: .center)
-            }
-        }
-        .frame(height: max(24, barHeight))
-        .accessibilityHidden(true)
-    }
-
-    private func barScale(_ level: Float) -> CGFloat {
-        let minScale: CGFloat = 4 / max(barHeight, 1)
-        let clamped = CGFloat(min(1, max(0, level)))
-        return minScale + clamped * (1 - minScale)
     }
 }
 
@@ -369,35 +369,75 @@ struct InAppNowPlayingDrawer: View {
     @Bindable var audioPlayer: AudioPlayerService
     var accessibilityPrefix: String
     let onCollapse: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let onOpen: () -> Void
+
+    private var itemID: String {
+        audioPlayer.playingItemID ?? audioPlayer.loadingItemID ?? ""
+    }
 
     private var title: String {
         audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
     }
 
-    private var isActivelyPlaying: Bool {
-        audioPlayer.playingItemID != nil && !audioPlayer.isPaused
+    private var subtitlePresentation: InAppNowPlayingChrome.SubtitlePresentation {
+        InAppNowPlayingChrome.subtitlePresentation(
+            in: audioPlayer.nowPlayingTimedText,
+            at: audioPlayer.currentTime,
+            isLoading: audioPlayer.isNowPlayingTimedTextLoading
+        )
+    }
+
+    @ViewBuilder
+    private var subtitleView: some View {
+        switch subtitlePresentation {
+        case .cue(let text):
+            Text(text)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.themeFg)
+                .lineLimit(2)
+        case .loading:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Loading lyrics…")
+            }
+            .font(.callout)
+            .foregroundStyle(.themeComment)
+        case .gap:
+            Text("…")
+                .font(.body.weight(.medium))
+                .foregroundStyle(.themeComment)
+                .accessibilityLabel("No lyric at the current position")
+        case .unavailable:
+            Text("No lyrics")
+                .font(.callout)
+                .foregroundStyle(.themeComment)
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                    Text(timeLabel)
-                        .font(.caption)
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.themeComment)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    subtitleView
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .combine)
+                .accessibilityHint("Double tap to open the full-screen audio player")
+                .accessibilityAction(named: Text("Open Full Screen"), onOpen)
+                .onTapGesture(count: 2, perform: onOpen)
 
                 Button(action: onCollapse) {
                     Image(systemName: "chevron.up")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.themeComment)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
                         .background(.themeFg.opacity(0.04), in: Circle())
                 }
                 .buttonStyle(.plain)
@@ -405,36 +445,27 @@ struct InAppNowPlayingDrawer: View {
                 .accessibilityLabel("Collapse Now Playing")
             }
 
-            InAppNowPlayingWaveform(
-                levels: audioPlayer.waveformLevels,
-                isPlaying: isActivelyPlaying,
-                isPaused: audioPlayer.isPaused,
-                reduceMotion: reduceMotion,
-                barHeight: 36,
-                barWidth: 3
+            AudioPlaybackTransportControls(
+                itemID: itemID,
+                audioPlayer: audioPlayer,
+                play: {
+                    if audioPlayer.isPaused {
+                        audioPlayer.resume()
+                    }
+                },
+                density: .drawer,
+                accessibilityPrefix: "\(accessibilityPrefix).drawer"
             )
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .themedSurface(
-            .elevatedPanel,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 2)
+        .padding(12)
+        .extensionGlassPanel(cornerRadius: 18)
         .accessibilityIdentifier("\(accessibilityPrefix).drawer")
-    }
-
-    private var timeLabel: String {
-        AudioPlaybackTimeFormatting.elapsedDuration(
-            elapsed: audioPlayer.currentTime,
-            duration: audioPlayer.duration
-        )
     }
 }
 
 struct InAppNowPlayingPlayerScreen: View {
     let audioPlayer: AudioPlayerService
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         AudioLyricsPlayerView(
@@ -442,13 +473,26 @@ struct InAppNowPlayingPlayerScreen: View {
             lyrics: nil,
             itemID: audioPlayer.playingItemID ?? audioPlayer.loadingItemID ?? "",
             audioPlayer: audioPlayer,
-            play: {
+            play: { _ in
                 if audioPlayer.isPaused {
                     audioPlayer.resume()
                 }
             },
             openFile: nil,
-            autoplayOnAppear: false
+            autoplayOnAppear: false,
+            timedText: audioPlayer.nowPlayingTimedText
         )
+        .onAppear(perform: dismissIfPlaybackEnded)
+        .onChange(of: audioPlayer.hasActivePlayback) { _, _ in
+            dismissIfPlaybackEnded()
+        }
+    }
+
+    private func dismissIfPlaybackEnded() {
+        if InAppNowPlayingChrome.shouldDismissPlayer(
+            hasActivePlayback: audioPlayer.hasActivePlayback
+        ) {
+            dismiss()
+        }
     }
 }

@@ -156,6 +156,7 @@ struct FileBrowserContentView: View {
     /// when we know it's non-nil (since we just used it to load the file).
     @State private var loadedApiClient: APIClient?
     @State private var timedText = TimedText.LoadResult.empty
+    @State private var timedTextLoadFinished = false
 
     private var currentSelection: FileBrowserSelection {
         activeSelection ?? FileBrowserSelection(path: filePath, name: fileName, size: fileSize)
@@ -406,22 +407,32 @@ struct FileBrowserContentView: View {
             sessionID: sessionId,
             worktreeID: worktreeId
         )
+        let playbackTimedText = (
+            audioPlayer.playingItemID == itemID || audioPlayer.loadingItemID == itemID
+        ) && !audioPlayer.nowPlayingTimedText.tracks.isEmpty
+            ? audioPlayer.nowPlayingTimedText
+            : timedText
+        let playbackTimedTextLoader = timedTextLoadFinished
+            ? nil
+            : makeTimedTextLoader(path: currentFilePath, kind: .audio)
         AudioLyricsPlayerView(
             title: currentFileName,
             lyrics: nil,
             itemID: itemID,
             audioPlayer: audioPlayer,
-            play: {
+            play: { selectedTimedText in
                 audioPlayer.toggleMediaPlayback(
                     source: source,
-                    itemID: itemID
+                    itemID: itemID,
+                    timedText: selectedTimedText ?? playbackTimedText,
+                    timedTextLoader: playbackTimedTextLoader
                 )
             },
             openFile: nil,
             autoplayOnAppear: false,
             showsCloseButton: false,
             titlePresentation: FileBrowserContentRenderingPolicy.audioPlayerTitlePresentation,
-            timedText: timedText
+            timedText: playbackTimedText
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.themeBg)
@@ -469,6 +480,7 @@ struct FileBrowserContentView: View {
 
         loadedMediaPath = nil
         timedText = .empty
+        timedTextLoadFinished = false
         content = .loading
 
         do {
@@ -683,6 +695,47 @@ struct FileBrowserContentView: View {
         path: String,
         kind: TimedText.MediaKind
     ) async {
+        let result = await Self.loadTimedTextResult(
+            api: api,
+            path: path,
+            kind: kind,
+            source: source,
+            workspaceId: workspaceId,
+            worktreeId: worktreeId
+        )
+        guard isCurrentFile(path) else { return }
+        timedText = result
+        timedTextLoadFinished = true
+    }
+
+    private func makeTimedTextLoader(
+        path: String,
+        kind: TimedText.MediaKind
+    ) -> (() async -> TimedText.LoadResult)? {
+        guard let api = loadedApiClient ?? apiClient else { return nil }
+        let source = source
+        let workspaceId = workspaceId
+        let worktreeId = worktreeId
+        return {
+            await Self.loadTimedTextResult(
+                api: api,
+                path: path,
+                kind: kind,
+                source: source,
+                workspaceId: workspaceId,
+                worktreeId: worktreeId
+            )
+        }
+    }
+
+    private static func loadTimedTextResult(
+        api: APIClient,
+        path: String,
+        kind: TimedText.MediaKind,
+        source: FileBrowserContentSource,
+        workspaceId: String,
+        worktreeId: String?
+    ) async -> TimedText.LoadResult {
         let access: TimedText.Access
         switch source {
         case .hostFile:
@@ -709,14 +762,12 @@ struct FileBrowserContentView: View {
                 }
             )
         }
-        let result = await TimedText.load(
+        return await TimedText.load(
             mediaPath: path,
             kind: kind,
             locale: .current,
             access: access
         )
-        guard isCurrentFile(path) else { return }
-        timedText = result
     }
 
     private func browseFile(api: APIClient, path: String) async throws -> Data {
