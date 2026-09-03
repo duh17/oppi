@@ -93,38 +93,41 @@ enum InAppNowPlayingChrome {
     }
 
     /// Reduce Motion keeps a recognizable waveform silhouette without periodic updates.
-    static let reducedMotionPlayingLevels: [Float] = [0.30, 0.54, 0.76, 1, 0.72, 0.48, 0.28]
-    private static let waveformPhaseOffsets: [Double] = [0, 1.7, 3.6, 5.1, 2.7, 4.4, 0.9]
-    private static let waveformSpeeds: [Double] = [1, 1.25, 0.85, 1.4, 0.95, 1.18, 0.78]
+    static let reducedMotionPlayingLevels = AudioPlayerService.placeholderWaveformLevels
+
+    enum TitleAction: Equatable {
+        case expandOrCollapse
+        case openFullScreen
+    }
+
+    /// In-session: tap expands, double-tap opens fullscreen. Inbox: tap opens fullscreen.
+    static func titleAction(tapCount: Int, expandsOnTap: Bool) -> TitleAction? {
+        guard tapCount == 1 || tapCount == 2 else { return nil }
+        if expandsOnTap {
+            return tapCount == 1 ? .expandOrCollapse : .openFullScreen
+        }
+        return .openFullScreen
+    }
 
     static func displayedWaveformLevels(
         snapshot: [Float],
         isPlaying: Bool,
-        reduceMotion: Bool,
-        elapsed: TimeInterval = 0
+        isPaused: Bool,
+        reduceMotion: Bool
     ) -> [Float] {
-        guard isPlaying else {
+        _ = reduceMotion
+        if !isPlaying && !isPaused {
             return Array(
                 repeating: AudioPlayerService.restingWaveformLevel,
                 count: AudioPlayerService.waveformBarCount
             )
         }
-        if reduceMotion {
-            return reducedMotionPlayingLevels
+        if snapshot.count == AudioPlayerService.waveformBarCount {
+            return snapshot.map { level in
+                min(1, max(0, level.isFinite ? level : 0))
+            }
         }
-
-        let meterSnapshot = snapshot.count == AudioPlayerService.waveformBarCount
-            ? snapshot
-            : AudioPlayerService.waveformLevels(fromMeterLevel: 0, isPlaying: true)
-        return meterSnapshot.enumerated().map { index, rawLevel in
-            let sourceLevel = min(1, max(0, rawLevel.isFinite ? rawLevel : 0))
-            let phase = elapsed * 5.2 * waveformSpeeds[index] + waveformPhaseOffsets[index]
-            let oscillator = Float((sin(phase) + 1) / 2)
-            let ceiling = 0.58 + 0.42 * sourceLevel
-            let pulse = 0.08 + 0.92 * oscillator
-            return AudioPlayerService.restingWaveformLevel
-                + (ceiling - AudioPlayerService.restingWaveformLevel) * pulse
-        }
+        return reducedMotionPlayingLevels
     }
 
     static func matchesPlayback(_ playbackItemID: String, stripItemID: String) -> Bool {
@@ -180,6 +183,8 @@ struct InAppNowPlayingPill: View {
     @Bindable var audioPlayer: AudioPlayerService
     var accessibilityPrefix: String
     var density: InAppNowPlayingChrome.PillDensity = .chat
+    var isExpanded = false
+    var onExpand: (() -> Void)? = nil
     let onOpen: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -203,6 +208,10 @@ struct InAppNowPlayingPill: View {
         audioPlayer.playingItemID != nil && !audioPlayer.isPaused
     }
 
+    private var expandsOnTap: Bool {
+        onExpand != nil
+    }
+
     var body: some View {
         HStack(spacing: 2) {
             Button(action: togglePlayback) {
@@ -217,47 +226,99 @@ struct InAppNowPlayingPill: View {
             .accessibilityIdentifier("\(accessibilityPrefix).playPause")
 
             if density.showsTitle || density.showsWaveform {
-                Button(action: onOpen) {
-                    HStack(spacing: 6) {
-                        if density.showsTitle {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(title)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.themeFg)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                if density.showsSubtitle, let subtitle {
-                                    Text(subtitle)
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.themeComment)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                }
-                            }
-                            .frame(maxWidth: density.titleMaxWidth, alignment: .leading)
-                        }
-                        if density.showsWaveform {
-                            InAppNowPlayingWaveform(
-                                levels: audioPlayer.waveformLevels,
-                                isPlaying: isActivelyPlaying,
-                                reduceMotion: reduceMotion
-                            )
-                        }
-                    }
-                    .frame(
-                        minWidth: density.showsTitle ? nil : density.playPauseHitSize,
-                        minHeight: density.playPauseHitSize,
-                        alignment: .leading
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Now Playing, \(title)")
-                .accessibilityHint("Opens the full-screen audio player")
+                titleAndWaveform
             }
         }
+        .padding(.horizontal, density == .chat ? 10 : 0)
+        .padding(.vertical, density == .chat ? 4 : 0)
+        .background {
+            if density == .chat {
+                Capsule()
+                    .fill(.themeFg.opacity(isExpanded ? 0.1 : 0.045))
+            }
+        }
+        .overlay {
+            if density == .chat {
+                Capsule()
+                    .stroke(isExpanded ? Color.themeFg.opacity(0.45) : Color.themeFg.opacity(0.08), lineWidth: 1)
+            }
+        }
+        .contentShape(Capsule())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("\(accessibilityPrefix).pill")
+    }
+
+    @ViewBuilder
+    private var titleAndWaveform: some View {
+        let content = HStack(spacing: 6) {
+            if density.showsTitle {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if density.showsSubtitle, let subtitle {
+                        Text(subtitle)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .frame(maxWidth: density.titleMaxWidth, alignment: .leading)
+            }
+            if density.showsWaveform {
+                InAppNowPlayingWaveform(
+                    levels: audioPlayer.waveformLevels,
+                    isPlaying: isActivelyPlaying,
+                    isPaused: audioPlayer.isPaused,
+                    reduceMotion: reduceMotion
+                )
+            }
+        }
+        .frame(
+            minWidth: density.showsTitle ? nil : density.playPauseHitSize,
+            minHeight: density.playPauseHitSize,
+            alignment: .leading
+        )
+        .contentShape(Rectangle())
+
+        if expandsOnTap {
+            content
+                .accessibilityLabel("Now Playing, \(title)")
+                .accessibilityHint(isExpanded ? "Collapses the player" : "Expands the player")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction(named: Text("Open Full Screen"), onOpen)
+                .highPriorityGesture(
+                    TapGesture(count: 2).onEnded {
+                        handleTitleTaps(2)
+                    }
+                )
+                .gesture(
+                    TapGesture(count: 1).onEnded {
+                        handleTitleTaps(1)
+                    }
+                )
+        } else {
+            Button(action: onOpen) {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Now Playing, \(title)")
+            .accessibilityHint("Opens the full-screen audio player")
+        }
+    }
+
+    private func handleTitleTaps(_ tapCount: Int) {
+        switch InAppNowPlayingChrome.titleAction(tapCount: tapCount, expandsOnTap: expandsOnTap) {
+        case .expandOrCollapse:
+            onExpand?()
+        case .openFullScreen:
+            onOpen()
+        case nil:
+            break
+        }
     }
 
     private func togglePlayback() {
@@ -273,38 +334,102 @@ struct InAppNowPlayingPill: View {
 struct InAppNowPlayingWaveform: View {
     var levels: [Float]
     var isPlaying: Bool
+    var isPaused: Bool = false
     var reduceMotion: Bool
+    var barHeight: CGFloat = 22
+    var barWidth: CGFloat = 2.5
 
     var body: some View {
-        TimelineView(
-            .animation(
-                minimumInterval: 1 / 15,
-                paused: !isPlaying || reduceMotion
-            )
-        ) { context in
-            let displayedLevels = InAppNowPlayingChrome.displayedWaveformLevels(
-                snapshot: levels,
-                isPlaying: isPlaying,
-                reduceMotion: reduceMotion,
-                elapsed: context.date.timeIntervalSinceReferenceDate
-            )
-            HStack(alignment: .center, spacing: 1.5) {
-                ForEach(Array(displayedLevels.enumerated()), id: \.offset) { _, level in
-                    Capsule()
-                        .fill(isPlaying ? Color.themeFg : Color.themeComment)
-                        .frame(width: 2.5, height: 22)
-                        .scaleEffect(x: 1, y: barScale(level), anchor: .center)
-                }
+        let displayedLevels = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: levels,
+            isPlaying: isPlaying,
+            isPaused: isPaused,
+            reduceMotion: reduceMotion
+        )
+        HStack(alignment: .center, spacing: 1.5) {
+            ForEach(Array(displayedLevels.enumerated()), id: \.offset) { _, level in
+                Capsule()
+                    .fill((isPlaying || isPaused) ? Color.themeFg : Color.themeComment)
+                    .frame(width: barWidth, height: barHeight)
+                    .scaleEffect(x: 1, y: barScale(level), anchor: .center)
             }
-            .frame(width: 28, height: 24)
         }
+        .frame(height: max(24, barHeight))
         .accessibilityHidden(true)
     }
 
     private func barScale(_ level: Float) -> CGFloat {
-        let minScale: CGFloat = 4 / 22
+        let minScale: CGFloat = 4 / max(barHeight, 1)
         let clamped = CGFloat(min(1, max(0, level)))
         return minScale + clamped * (1 - minScale)
+    }
+}
+
+struct InAppNowPlayingDrawer: View {
+    @Bindable var audioPlayer: AudioPlayerService
+    var accessibilityPrefix: String
+    let onCollapse: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var title: String {
+        audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"
+    }
+
+    private var isActivelyPlaying: Bool {
+        audioPlayer.playingItemID != nil && !audioPlayer.isPaused
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .lineLimit(1)
+                    Text(timeLabel)
+                        .font(.caption)
+                        .foregroundStyle(.themeComment)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(action: onCollapse) {
+                    Image(systemName: "chevron.up")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.themeComment)
+                        .frame(width: 32, height: 32)
+                        .background(.themeFg.opacity(0.04), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("\(accessibilityPrefix).drawer.collapse")
+                .accessibilityLabel("Collapse Now Playing")
+            }
+
+            InAppNowPlayingWaveform(
+                levels: audioPlayer.waveformLevels,
+                isPlaying: isActivelyPlaying,
+                isPaused: audioPlayer.isPaused,
+                reduceMotion: reduceMotion,
+                barHeight: 36,
+                barWidth: 3
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .themedSurface(
+            .elevatedPanel,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 2)
+        .accessibilityIdentifier("\(accessibilityPrefix).drawer")
+    }
+
+    private var timeLabel: String {
+        AudioPlaybackTimeFormatting.elapsedDuration(
+            elapsed: audioPlayer.currentTime,
+            duration: audioPlayer.duration
+        )
     }
 }
 

@@ -192,7 +192,7 @@ struct AudioLifecycleCoordinatorTests {
         defer { player.stop() }
 
         let info = MPNowPlayingInfoCenter.default().nowPlayingInfo
-        #expect(info?[MPMediaItemPropertyTitle] as? String == "Artwork crash guard")
+        #expect(info?[MPMediaItemPropertyTitle] as? String == "Voice reply")
         #expect(info?[MPMediaItemPropertyArtwork] == nil)
     }
 
@@ -220,7 +220,7 @@ struct AudioLifecycleCoordinatorTests {
 
         let presentation = player.nowPlayingPresentation
         #expect(presentation?.sessionID == "session-12345678")
-        #expect(presentation?.title == "Fix playback bar")
+        #expect(presentation?.title == "Voice reply")
         #expect(presentation?.subtitle == "o4-mini")
         #expect(presentation?.provider == "openai")
     }
@@ -238,7 +238,7 @@ struct AudioLifecycleCoordinatorTests {
         player._setPlaybackStateForTesting(playing: "voice-2", loading: nil)
 
         let presentation = player.nowPlayingPresentation
-        #expect(presentation?.title == "Session abc12345")
+        #expect(presentation?.title == "Voice reply")
         #expect(presentation?.subtitle == "Session abc12345")
         #expect(presentation?.provider == nil)
     }
@@ -264,7 +264,7 @@ struct AudioLifecycleCoordinatorTests {
 
         let presentation = player.nowPlayingPresentation
         #expect(presentation?.sessionID == "session-a")
-        #expect(presentation?.title == "Session A")
+        #expect(presentation?.title == "Voice reply")
         #expect(presentation?.subtitle == "o4-mini")
         #expect(presentation?.provider == "openai")
     }

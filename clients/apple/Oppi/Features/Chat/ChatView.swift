@@ -117,6 +117,7 @@ struct ChatView: View {
     @State private var headerHeight: CGFloat = 0
     @State private var visibleAudioStripItemIDs: Set<String> = []
     @State private var presentsNowPlayingPlayer = false
+    @State private var nowPlayingDrawerExpanded = false
     @State private var composerExternalFocusRequestID = 0
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
@@ -539,6 +540,13 @@ struct ChatView: View {
         )
     }
 
+    private func toggleNowPlayingDrawer() {
+        nowPlayingDrawerExpanded.toggle()
+        if nowPlayingDrawerExpanded {
+            dismissKeyboard()
+        }
+    }
+
     private var chatTimelineScaffold: some View {
         chatTimeline
             .ignoresSafeArea(.container, edges: .top)
@@ -593,6 +601,11 @@ struct ChatView: View {
             }
             .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
                 InAppNowPlayingPlayerScreen(audioPlayer: audioPlayer)
+            }
+            .onChange(of: showsNowPlayingPill) { _, visible in
+                if !visible {
+                    nowPlayingDrawerExpanded = false
+                }
             }
     }
 
@@ -762,6 +775,7 @@ struct ChatView: View {
                 scrollController.cancel()
                 visibleAudioStripItemIDs = []
                 presentsNowPlayingPlayer = false
+                nowPlayingDrawerExpanded = false
                 if connection.isFocusedSession(oldId) {
                     connection.disconnectSession()
                 }
@@ -896,11 +910,22 @@ struct ChatView: View {
                                 InAppNowPlayingPill(
                                     audioPlayer: audioPlayer,
                                     accessibilityPrefix: "chat.nowPlaying",
+                                    isExpanded: nowPlayingDrawerExpanded,
+                                    onExpand: toggleNowPlayingDrawer,
                                     onOpen: { presentsNowPlayingPlayer = true }
                                 )
                             }
                         )
                         .padding(.horizontal, 16)
+
+                        if showsNowPlayingPill, nowPlayingDrawerExpanded {
+                            InAppNowPlayingDrawer(
+                                audioPlayer: audioPlayer,
+                                accessibilityPrefix: "chat.nowPlaying",
+                                onCollapse: { nowPlayingDrawerExpanded = false }
+                            )
+                            .padding(.horizontal, 16)
+                        }
                     }
                 }
 
