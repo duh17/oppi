@@ -333,6 +333,15 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .padding(.horizontal, appliesOuterPadding ? 16 : 0)
         .padding(.bottom, appliesOuterPadding ? 8 : 0)
+        // Opening Photos resigns text focus, which can remove the inline action row.
+        // Keep its presenter on the stable composer root instead of the attach button.
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoSelection,
+            maxSelectionCount: ComposerShared.maxPhotoSelectionCount,
+            matching: .images,
+            preferredItemEncoding: .current
+        )
         .onChange(of: text) { _, newValue in
             if newValue.isEmpty {
                 inlineVisualLineCount = 1
@@ -617,13 +626,6 @@ struct ChatInputBar<ActionRow: View>: View {
         .menuOrder(ComposerShared.attachmentMenuOrder)
         .accessibilityIdentifier("chat.attach")
         .accessibilityLabel("Add attachment")
-        .photosPicker(
-            isPresented: $showPhotoPicker,
-            selection: $photoSelection,
-            maxSelectionCount: ComposerShared.maxPhotoSelectionCount,
-            matching: .images,
-            preferredItemEncoding: .current
-        )
     }
 
     private var busyModeSelector: some View {

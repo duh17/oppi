@@ -475,6 +475,38 @@ struct ChatInputBarTests {
         #expect(!slice.contains(".glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20"))
     }
 
+    @Test("Photo picker presentation stays on stable composer roots")
+    func photoPickerPresentationStaysOnStableComposerRoots() throws {
+        let inlineSource = try chatInputBarSource()
+        let inlineRoot = try chatInputBarSourceSlice(
+            named: "var body: some View {",
+            until: "// MARK: - Subviews",
+            in: inlineSource
+        )
+        let inlineAttachButton = try chatInputBarSourceSlice(
+            named: "private var attachButton: some View {",
+            until: "private var busyModeSelector",
+            in: inlineSource
+        )
+
+        let expandedSource = try expandedComposerSource()
+        let expandedRoot = try chatInputBarSourceSlice(
+            named: "var body: some View {",
+            until: "// MARK: - Subviews",
+            in: expandedSource
+        )
+        let expandedAttachMenu = try chatInputBarSourceSlice(
+            named: "private var attachMenu: some View {",
+            until: "// MARK: - Mic Button",
+            in: expandedSource
+        )
+
+        #expect(inlineRoot.contains(".photosPicker("))
+        #expect(!inlineAttachButton.contains(".photosPicker("))
+        #expect(expandedRoot.contains(".photosPicker("))
+        #expect(!expandedAttachMenu.contains(".photosPicker("))
+    }
+
     @Test("Active asks can disable expanded composer routing")
     func activeAsksCanDisableExpandedComposerRouting() {
         #expect(!ChatInputBar<EmptyView>.shouldShowExpandButton(
@@ -1102,11 +1134,19 @@ struct ChatInputBarTests {
 }
 
 private func chatInputBarSource() throws -> String {
+    try composerSource(named: "ChatInputBar.swift")
+}
+
+private func expandedComposerSource() throws -> String {
+    try composerSource(named: "ExpandedComposerView.swift")
+}
+
+private func composerSource(named fileName: String) throws -> String {
     let sourceURL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-        .appending(path: "Oppi/Features/Chat/Composer/ChatInputBar.swift")
+        .appending(path: "Oppi/Features/Chat/Composer/\(fileName)")
     return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 

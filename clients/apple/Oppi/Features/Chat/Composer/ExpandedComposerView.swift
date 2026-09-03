@@ -276,6 +276,15 @@ struct ExpandedComposerView: View {
             }
         }
         .preferredColorScheme(ThemeRuntimeState.currentThemeID().preferredColorScheme)
+        // Match the inline composer: presentation belongs to the stable composer root,
+        // not to attachment controls whose lifetime can change with surrounding UI.
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $photoSelection,
+            maxSelectionCount: ComposerShared.maxPhotoSelectionCount,
+            matching: .images,
+            preferredItemEncoding: .current
+        )
         .onAppear {
             guard ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(
                 voiceInputManager,
@@ -436,13 +445,6 @@ struct ExpandedComposerView: View {
         .menuOrder(ComposerShared.attachmentMenuOrder)
         .accessibilityIdentifier("expanded.attach")
         .accessibilityLabel("Add attachment")
-        .photosPicker(
-            isPresented: $showPhotoPicker,
-            selection: $photoSelection,
-            maxSelectionCount: ComposerShared.maxPhotoSelectionCount,
-            matching: .images,
-            preferredItemEncoding: .current
-        )
     }
 
     // MARK: - Mic Button
