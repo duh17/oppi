@@ -362,27 +362,63 @@ struct NavigationSwipeGesturePolicyTests {
         ))
     }
 
-    @Test func swiftUIBackSwipeOnEndedIsIgnoredWhileExclusiveClaimIsActive() {
+    @Test func backSwipeSuppressesPopWhenSeekClaimReleasedBeforeParentEnds() {
+        let swipe = CGSize(width: 90, height: 12)
+
+        // Begin: the child seek drag acquires an exclusive claim.
+        let claim = HorizontalBackSwipeGesturePolicy.acquireExclusiveClaim()
+        #expect(HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim)
+
+        // Parent onChanged latches while the claim is active.
+        let latched = HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim
+        #expect(latched)
+
+        // Child end: the claim is released before the parent ends.
+        HorizontalBackSwipeGesturePolicy.releaseExclusiveClaim(claim)
+        #expect(!HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim)
+
+        // Parent end: the latched suppression still prevents the pop.
+        var backCount = 0
+        HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
+            translation: swipe,
+            didLatchSuppression: latched,
+            onBack: { backCount += 1 }
+        )
+        #expect(backCount == 0)
+    }
+
+    @Test func offBarSwipeWithoutClaimStillPops() {
+        let swipe = CGSize(width: 90, height: 12)
+        #expect(!HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim)
+
+        var backCount = 0
+        HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
+            translation: swipe,
+            didLatchSuppression: false,
+            onBack: { backCount += 1 }
+        )
+        #expect(backCount == 1)
+    }
+
+    @Test func releasedClaimDoesNotPoisonSubsequentBackSwipes() {
+        let claim = HorizontalBackSwipeGesturePolicy.acquireExclusiveClaim()
+        #expect(HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim)
+
+        // Idempotent release on cancel/teardown must never underflow or leak.
+        HorizontalBackSwipeGesturePolicy.releaseExclusiveClaim(claim)
+        HorizontalBackSwipeGesturePolicy.releaseExclusiveClaim(claim)
+
+        #expect(!HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim)
+
+        // A fresh off-bar swipe must still pop.
         let swipe = CGSize(width: 90, height: 12)
         var backCount = 0
-        func fire() {
-            HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(translation: swipe) {
-                backCount += 1
-            }
-        }
-
-        fire()
+        HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
+            translation: swipe,
+            didLatchSuppression: false,
+            onBack: { backCount += 1 }
+        )
         #expect(backCount == 1)
-
-        do {
-            HorizontalBackSwipeGesturePolicy.beginExclusiveClaim()
-            defer { HorizontalBackSwipeGesturePolicy.endExclusiveClaim() }
-            fire()
-            #expect(backCount == 1)
-        }
-
-        fire()
-        #expect(backCount == 2)
     }
 
     @Test func downDismissIgnoresScrollViewInsideNonInteractiveAncestor() {

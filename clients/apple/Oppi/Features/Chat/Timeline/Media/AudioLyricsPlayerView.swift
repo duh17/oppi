@@ -397,7 +397,10 @@ private struct AudioPlaybackSeekBar: View {
     var onScrub: (Double) -> Void
     var onCommit: (Double) -> Void
 
-    @State private var holdsBackSwipeClaim = false
+    /// `@GestureState` tracks the drag so the back-swipe claim is released even
+    /// when the gesture is cancelled (e.g. `isSeekable` flips off mid-scrub).
+    @GestureState private var isTrackingSeek = false
+    @State private var scrubClaim: BackSwipeExclusiveClaim?
 
     var body: some View {
         GeometryReader { geo in
@@ -419,20 +422,29 @@ private struct AudioPlaybackSeekBar: View {
             .contentShape(Rectangle())
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0)
+                    .updating($isTrackingSeek) { _, state, _ in
+                        state = true
+                    }
                     .onChanged { value in
-                        beginBackSwipeClaim()
                         onScrub(Self.fraction(forX: value.location.x, width: width))
                     }
                     .onEnded { value in
                         onCommit(Self.fraction(forX: value.location.x, width: width))
-                        endBackSwipeClaim()
                     }
             )
         }
         .frame(height: 44)
         .allowsHitTesting(isSeekable)
         .opacity(isSeekable ? 1 : 0.55)
-        .onDisappear { endBackSwipeClaim() }
+        .onChange(of: isTrackingSeek) { _, tracking in
+            updateClaim(tracking: tracking)
+        }
+        .onChange(of: isSeekable) { _, seekable in
+            if !seekable {
+                releaseClaim()
+            }
+        }
+        .onDisappear { releaseClaim() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback position")
         .accessibilityValue(percentValue)
@@ -455,16 +467,21 @@ private struct AudioPlaybackSeekBar: View {
         "\(Int((min(1, max(0, fraction)) * 100).rounded())) percent"
     }
 
-    private func beginBackSwipeClaim() {
-        guard !holdsBackSwipeClaim else { return }
-        holdsBackSwipeClaim = true
-        HorizontalBackSwipeGesturePolicy.beginExclusiveClaim()
+    private func updateClaim(tracking: Bool) {
+        if tracking {
+            if scrubClaim == nil {
+                scrubClaim = HorizontalBackSwipeGesturePolicy.acquireExclusiveClaim()
+            }
+        } else {
+            releaseClaim()
+        }
     }
 
-    private func endBackSwipeClaim() {
-        guard holdsBackSwipeClaim else { return }
-        holdsBackSwipeClaim = false
-        HorizontalBackSwipeGesturePolicy.endExclusiveClaim()
+    private func releaseClaim() {
+        if let claim = scrubClaim {
+            HorizontalBackSwipeGesturePolicy.releaseExclusiveClaim(claim)
+            scrubClaim = nil
+        }
     }
 
     private static func fraction(forX x: CGFloat, width: CGFloat) -> Double {

@@ -327,16 +327,18 @@ enum NavigationSwipeGesturePolicy {
 ///
 /// Distance/velocity thresholds are shared with ``NavigationSwipeGesturePolicy``.
 /// Scroll-edge gating lives on the UIKit installer path; pure SwiftUI
-/// ``horizontalBackSwipeGesture`` hosts apply the translation gate and ignore
-/// `onEnded` while an exclusive claim is held.
+/// ``horizontalBackSwipeGesture`` hosts latch suppression during `onChanged`
+/// while a scrub claim is active and consume the latch on end, so child/parent
+/// `onEnded` ordering can never pop a viewer mid-scrub.
 enum HorizontalBackSwipeGesturePolicy {
     static let minimumHorizontalDistance = NavigationSwipeGesturePolicy.minimumDistance
     static let horizontalDominanceRatio = NavigationSwipeGesturePolicy.dominanceRatio
 
-    /// Nested seek-bar (or similar) drags increment this so SwiftUI back-swipe
-    /// `onEnded` does not pop the host while the finger is still scrubbing.
+    /// Claims held by nested scrub gestures while their drag is active. A set
+    /// (not a counter) makes release idempotent: an owner can release on cancel,
+    /// disappear, and end without underflowing or poisoning later swipes.
     @MainActor
-    private static var exclusiveClaimCount = 0
+    private static var activeClaims: Set<BackSwipeExclusiveClaim> = []
 
     static func isBackSwipe(translation: CGSize) -> Bool {
         NavigationSwipeGesturePolicy.isSwipe(translation: translation, direction: .right)
@@ -346,34 +348,65 @@ enum HorizontalBackSwipeGesturePolicy {
         NavigationSwipeGesturePolicy.shouldBegin(velocity: velocity, direction: .right)
     }
 
+    /// Acquires an exclusive claim. The owner must release it when its drag ends
+    /// or cancels; see ``BackSwipeExclusiveClaim``.
     @MainActor
-    static func beginExclusiveClaim() {
-        exclusiveClaimCount += 1
+    static func acquireExclusiveClaim() -> BackSwipeExclusiveClaim {
+        let claim = BackSwipeExclusiveClaim()
+        activeClaims.insert(claim)
+        return claim
     }
 
+    /// Idempotent release; safe to call from cancel, disappear, and end paths.
     @MainActor
-    static func endExclusiveClaim() {
-        if exclusiveClaimCount > 0 {
-            exclusiveClaimCount -= 1
-        }
+    static func releaseExclusiveClaim(_ claim: BackSwipeExclusiveClaim) {
+        activeClaims.remove(claim)
     }
 
-    /// SwiftUI ``horizontalBackSwipeGesture`` `onEnded` consults this so a
-    /// simultaneous parent drag cannot pop while an exclusive claim is held.
+    /// True while any scrub claim is active. Back-swipe hosts latch on this
+    /// during `onChanged`.
+    @MainActor
+    static var hasActiveExclusiveClaim: Bool {
+        !activeClaims.isEmpty
+    }
+
+    /// SwiftUI ``horizontalBackSwipeGesture`` `onEnded` consults the latch the
+    /// host captured during `onChanged`. Once a scrub claim was observed, the
+    /// simultaneous parent drag must not pop, regardless of release order.
     @MainActor
     static func handleSwiftUIBackSwipeEnded(
         translation: CGSize,
+        didLatchSuppression: Bool,
         onBack: () -> Void
     ) {
-        guard exclusiveClaimCount == 0 else { return }
+        guard !didLatchSuppression else { return }
         guard isBackSwipe(translation: translation) else { return }
         onBack()
+    }
+}
+
+/// Opaque, identity-keyed token held by a scrub gesture for the lifetime of its
+/// drag. Release is idempotent, so cancellation and teardown paths can each
+/// release without coordination.
+final class BackSwipeExclusiveClaim: Hashable {
+    fileprivate init() {}
+
+    static func == (lhs: BackSwipeExclusiveClaim, rhs: BackSwipeExclusiveClaim) -> Bool {
+        lhs === rhs
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(self))
     }
 }
 
 private struct HorizontalBackSwipeGestureModifier: ViewModifier {
     let isEnabled: Bool
     let onBack: () -> Void
+
+    /// Latched during `onChanged` when a scrub claim is active; consumed in
+    /// `onEnded` so the decision survives child/parent `onEnded` reordering.
+    @State private var didLatchSuppression = false
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -382,9 +415,17 @@ private struct HorizontalBackSwipeGestureModifier: ViewModifier {
                 .contentShape(Rectangle())
                 .simultaneousGesture(
                     DragGesture(minimumDistance: HorizontalBackSwipeGesturePolicy.minimumHorizontalDistance)
+                        .onChanged { _ in
+                            if HorizontalBackSwipeGesturePolicy.hasActiveExclusiveClaim {
+                                didLatchSuppression = true
+                            }
+                        }
                         .onEnded { value in
+                            let latched = didLatchSuppression
+                            didLatchSuppression = false
                             HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
                                 translation: value.translation,
+                                didLatchSuppression: latched,
                                 onBack: onBack
                             )
                         }
