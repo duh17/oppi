@@ -1053,6 +1053,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             info[MPNowPlayingInfoPropertyIsLiveStream] = true
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled =
+            AudioPlaybackSeek.isSeekable(duration: durationSeconds)
     }
 
     private static func installRemoteCommandTargetsIfNeeded() {
@@ -1073,6 +1075,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         center.togglePlayPauseCommand.isEnabled = true
         center.skipForwardCommand.isEnabled = true
         center.skipBackwardCommand.isEnabled = true
+        center.changePlaybackPositionCommand.isEnabled = true
         center.skipForwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
         center.skipBackwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
         center.playCommand.addTarget { _ in
@@ -1110,6 +1113,20 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? Self.skipInterval
             Task { @MainActor in
                 Self.activePlaybackOwner?.skip(by: -abs(interval))
+            }
+            return .success
+        }
+        center.changePlaybackPositionCommand.addTarget { event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            let position = event.positionTime
+            Task { @MainActor in
+                guard let owner = Self.activePlaybackOwner,
+                      let time = AudioPlaybackSeek.clampedTime(position, duration: owner.duration) else {
+                    return
+                }
+                owner.seek(to: time)
             }
             return .success
         }

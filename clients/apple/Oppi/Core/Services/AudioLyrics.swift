@@ -70,6 +70,30 @@ enum AudioLyrics {
     }
 }
 
+/// Full-screen player and Control Center map a 0...1 bar onto a known duration.
+enum AudioPlaybackSeek {
+    static func isSeekable(duration: TimeInterval?) -> Bool {
+        guard let duration, duration.isFinite, duration > 0 else { return false }
+        return true
+    }
+
+    static func time(forFraction fraction: Double, duration: TimeInterval?) -> TimeInterval? {
+        guard isSeekable(duration: duration), let duration, fraction.isFinite else { return nil }
+        let clampedFraction = min(1, max(0, fraction))
+        return clampedFraction * duration
+    }
+
+    static func clampedTime(_ time: TimeInterval, duration: TimeInterval?) -> TimeInterval? {
+        guard isSeekable(duration: duration), let duration, time.isFinite else { return nil }
+        return min(duration, max(0, time))
+    }
+
+    static func fraction(elapsed: TimeInterval, duration: TimeInterval?) -> Double {
+        guard isSeekable(duration: duration), let duration, elapsed.isFinite else { return 0 }
+        return min(1, max(0, elapsed / duration))
+    }
+}
+
 enum AudioPlaybackTimeFormatting {
     static func clock(_ seconds: TimeInterval?) -> String {
         guard let seconds, seconds.isFinite, seconds >= 0 else { return "--:--" }

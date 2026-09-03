@@ -76,6 +76,8 @@ struct AudioLyricsPlayerView: View {
     @State private var progressTick = 0
     @State private var selectedTrackIndex: Int?
     @State private var loadedTimedText: TimedText.LoadResult?
+    @State private var isScrubbing = false
+    @State private var scrubFraction: Double = 0
 
     private var resolvedTimedText: TimedText.LoadResult? {
         loadedTimedText ?? timedText
@@ -109,6 +111,9 @@ struct AudioLyricsPlayerView: View {
 
     private var elapsed: TimeInterval {
         _ = progressTick
+        if isScrubbing, let time = AudioPlaybackSeek.time(forFraction: scrubFraction, duration: duration) {
+            return time
+        }
         guard matchesPlayback else { return 0 }
         return audioPlayer?.currentTime ?? 0
     }
@@ -254,8 +259,15 @@ struct AudioLyricsPlayerView: View {
     private var transport: some View {
         VStack(spacing: 16) {
             VStack(spacing: 6) {
-                ProgressView(value: progressValue)
-                    .tint(.themePurple)
+                AudioPlaybackSeekBar(
+                    fraction: displayedFraction,
+                    isSeekable: isSeekable,
+                    onScrub: { fraction in
+                        isScrubbing = true
+                        scrubFraction = fraction
+                    },
+                    onCommit: commitSeek
+                )
                 HStack {
                     Text(AudioPlaybackTimeFormatting.clock(elapsed))
                     Spacer()
@@ -297,9 +309,22 @@ struct AudioLyricsPlayerView: View {
         .padding(.top, 8)
     }
 
-    private var progressValue: Double {
-        guard let duration, duration > 0 else { return 0 }
-        return min(max(elapsed / duration, 0), 1)
+    private var isSeekable: Bool {
+        matchesPlayback && AudioPlaybackSeek.isSeekable(duration: duration)
+    }
+
+    private var displayedFraction: Double {
+        if isScrubbing { return scrubFraction }
+        return AudioPlaybackSeek.fraction(elapsed: elapsed, duration: duration)
+    }
+
+    private func commitSeek(_ fraction: Double) {
+        isScrubbing = false
+        scrubFraction = fraction
+        guard isSeekable, let time = AudioPlaybackSeek.time(forFraction: fraction, duration: duration) else {
+            return
+        }
+        audioPlayer?.seek(to: time)
     }
 
     private func skipButton(
@@ -341,5 +366,71 @@ struct AudioLyricsPlayerView: View {
         } else {
             play()
         }
+    }
+}
+
+/// 44pt track that scrubs on drag and tap-to-position. Native Slider is thumb-only.
+private struct AudioPlaybackSeekBar: View {
+    var fraction: Double
+    var isSeekable: Bool
+    var onScrub: (Double) -> Void
+    var onCommit: (Double) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = max(geo.size.width, 1)
+            let clamped = min(1, max(0, fraction))
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.themeComment.opacity(0.35))
+                    .frame(height: 4)
+                Capsule()
+                    .fill(Color.themePurple)
+                    .frame(width: width * clamped, height: 4)
+                Circle()
+                    .fill(Color.themePurple)
+                    .frame(width: 12, height: 12)
+                    .offset(x: (width * clamped) - 6)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        onScrub(Self.fraction(forX: value.location.x, width: width))
+                    }
+                    .onEnded { value in
+                        onCommit(Self.fraction(forX: value.location.x, width: width))
+                    }
+            )
+        }
+        .frame(height: 44)
+        .allowsHitTesting(isSeekable)
+        .opacity(isSeekable ? 1 : 0.55)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Playback position")
+        .accessibilityValue(percentValue)
+        .accessibilityIdentifier("audioLyrics.seek")
+        .accessibilityAdjustableAction { direction in
+            guard isSeekable else { return }
+            let step = 0.05
+            switch direction {
+            case .increment:
+                onCommit(min(1, fraction + step))
+            case .decrement:
+                onCommit(max(0, fraction - step))
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private var percentValue: String {
+        "\(Int((min(1, max(0, fraction)) * 100).rounded())) percent"
+    }
+
+    private static func fraction(forX x: CGFloat, width: CGFloat) -> Double {
+        guard width > 0 else { return 0 }
+        return min(1, max(0, Double(x / width)))
     }
 }
