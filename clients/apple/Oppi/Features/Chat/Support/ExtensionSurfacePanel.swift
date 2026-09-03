@@ -1628,13 +1628,35 @@ private struct ExtensionSurfaceDrawer: View {
     }
 }
 
-struct ExtensionSurfacePanel: View {
+struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
     let surface: ExtensionSurfaceState
     let placement: ExtensionSurfacePlacementGroup
     var messageQueue: MessageQueueSurfaceConfiguration? = nil
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)? = nil
     var onExpandedEntryChange: ((Bool) -> Void)? = nil
+    var showsLeadingStripContent = false
+    var leadingStripContent: LeadingStripContent
+
+    init(
+        surface: ExtensionSurfaceState,
+        placement: ExtensionSurfacePlacementGroup,
+        messageQueue: MessageQueueSurfaceConfiguration? = nil,
+        linkContext: ExtensionSurfaceLinkContext = .empty,
+        onOpenURL: ((URL) -> Bool)? = nil,
+        onExpandedEntryChange: ((Bool) -> Void)? = nil,
+        showsLeadingStripContent: Bool = false,
+        @ViewBuilder leadingStripContent: () -> LeadingStripContent = { EmptyView() }
+    ) {
+        self.surface = surface
+        self.placement = placement
+        self.messageQueue = messageQueue
+        self.linkContext = linkContext
+        self.onOpenURL = onOpenURL
+        self.onExpandedEntryChange = onExpandedEntryChange
+        self.showsLeadingStripContent = showsLeadingStripContent
+        self.leadingStripContent = leadingStripContent()
+    }
 
     @State private var expandedEntryID: String?
 
@@ -1693,11 +1715,18 @@ struct ExtensionSurfacePanel: View {
         return stripEntries.first { $0.id == expandedEntryID }
     }
 
+    private var showsStrip: Bool {
+        showsLeadingStripContent || !stripEntries.isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !stripEntries.isEmpty {
+            if showsStrip {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
+                        if showsLeadingStripContent {
+                            leadingStripContent
+                        }
                         ForEach(stripEntries) { entry in
                             ExtensionSurfaceStripPill(
                                 entry: entry,

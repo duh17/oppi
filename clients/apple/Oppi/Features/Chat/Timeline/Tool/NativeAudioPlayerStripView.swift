@@ -10,7 +10,8 @@ final class NativeAudioPlayerStripView: UIView {
     private let expandButton = UIButton(type: .system)
     private let unavailableLabel = UILabel()
 
-    private var itemID: String?
+    private(set) var playbackItemID: String?
+    private var itemID: String? { playbackItemID }
     private var audioPlayer: AudioPlayerService?
     private var durationSeconds: TimeInterval?
     private var onPlay: (() -> Void)?
@@ -47,7 +48,7 @@ final class NativeAudioPlayerStripView: UIView {
         onPlay: @escaping () -> Void,
         onExpand: @escaping () -> Void
     ) {
-        self.itemID = itemID
+        playbackItemID = itemID
         self.audioPlayer = audioPlayer
         self.durationSeconds = durationSeconds
         self.showsTitle = showsTitle

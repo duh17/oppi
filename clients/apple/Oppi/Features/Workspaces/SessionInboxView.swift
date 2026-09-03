@@ -155,6 +155,8 @@ struct SessionInboxView: View {
     @State private var hasAutoCreatedE2ESession = false
     @State private var hasAutoOpenedE2ESession = false
     @State private var providerSetupState: ProviderSetupState = .unknown
+    @State private var isSearchPresented = false
+    @State private var presentsNowPlayingPlayer = false
 
     init(onOpenSidebar: (() -> Void)? = nil) {
         self.onOpenSidebar = onOpenSidebar
@@ -166,6 +168,14 @@ struct SessionInboxView: View {
 
     private var activeConnection: ServerConnection? {
         activeServerId.flatMap { coordinator.connection(for: $0) }
+    }
+
+    private var sessionListAudioPlayer: AudioPlayerService? {
+        activeConnection?.audioPlayer
+    }
+
+    private var sessionListHasActivePlayback: Bool {
+        sessionListAudioPlayer?.hasActivePlayback == true
     }
 
     private var selectedWorkspace: WorkspaceNavTarget? {
@@ -311,7 +321,12 @@ struct SessionInboxView: View {
         .themedListSurface()
         .navigationTitle(inboxNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "Search sessions")
+        .searchable(text: $searchText, isPresented: $isSearchPresented, prompt: "Search sessions")
+        .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
+            if let player = sessionListAudioPlayer {
+                InAppNowPlayingPlayerScreen(audioPlayer: player)
+            }
+        }
         .onChange(of: searchText) { _, newValue in
             searchStore.search(
                 query: newValue,
@@ -503,8 +518,28 @@ struct SessionInboxView: View {
             ToolbarSpacer(.fixed, placement: .bottomBar)
         }
 
-        DefaultToolbarItem(kind: .search, placement: .bottomBar)
-        ToolbarSpacer(.flexible, placement: .bottomBar)
+        if InAppNowPlayingChrome.sessionListToolbar(hasActivePlayback: sessionListHasActivePlayback)
+            == .collapsedSearchWithNowPlaying {
+            ToolbarItem(placement: .bottomBar) {
+                InAppNowPlayingSearchIconButton {
+                    isSearchPresented = true
+                }
+            }
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+            ToolbarItem(placement: .bottomBar) {
+                if let player = sessionListAudioPlayer {
+                    InAppNowPlayingPill(
+                        audioPlayer: player,
+                        accessibilityPrefix: "sessionList.nowPlaying",
+                        onOpen: { presentsNowPlayingPlayer = true }
+                    )
+                }
+            }
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+        } else {
+            DefaultToolbarItem(kind: .search, placement: .bottomBar)
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+        }
 
         ToolbarItem(placement: .bottomBar) {
             newSessionButton

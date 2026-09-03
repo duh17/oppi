@@ -58,6 +58,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
         let topOverlap: CGFloat
         let bottomOverlap: CGFloat
+        let onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
 
         init(
             items: [ChatItem],
@@ -95,7 +96,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             audioLifecycleCoordinator: AudioLifecycleCoordinator? = nil,
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             topOverlap: CGFloat = 0,
-            bottomOverlap: CGFloat = 0
+            bottomOverlap: CGFloat = 0,
+            onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)? = nil
         ) {
             self.items = items
             self.displayRows = displayRows ?? items.map(TimelineDisplayRow.item)
@@ -134,6 +136,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
             self.topOverlap = topOverlap
             self.bottomOverlap = bottomOverlap
+            self.onVisibleAudioStripItemIDsChange = onVisibleAudioStripItemIDsChange
         }
     }
 
@@ -218,6 +221,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var hardwareKeybindingResponder: HardwareKeybindingResponder?
         private var backSwipeGestureInstaller: HorizontalBackSwipeGestureInstaller?
         var onBackSwipe: (() -> Void)?
+        var onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
+        var timelineTopOverlap: CGFloat = 0
+        var timelineBottomOverlap: CGFloat = 0
+        private var lastPublishedVisibleAudioStripItemIDs = Set<String>()
 
         override init() {
             super.init()
@@ -709,6 +716,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             currentFullTimelineItemIDs = configuration.fullTimelineItemIDs
             scrollController?.updateTimelineItemOrder(configuration.fullTimelineItemIDs)
             onBackSwipe = configuration.onBackSwipe
+            onVisibleAudioStripItemIDsChange = configuration.onVisibleAudioStripItemIDsChange
+            timelineTopOverlap = configuration.topOverlap
+            timelineBottomOverlap = configuration.bottomOverlap
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
 
             // Detect theme change from runtime state instead of threaded param.
@@ -1124,7 +1134,29 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 updateScrollState(collectionView)
             }
             updateDetachedStreamingHintVisibility()
+            publishVisibleAudioStripItemIDs(in: collectionView)
             ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
+        }
+
+        func publishVisibleAudioStripItemIDs(in collectionView: UICollectionView) {
+            let unobstructed = collectionView.bounds.inset(
+                by: UIEdgeInsets(
+                    top: timelineTopOverlap,
+                    left: 0,
+                    bottom: timelineBottomOverlap,
+                    right: 0
+                )
+            )
+            let ids = InAppNowPlayingChrome.visibleStripItemIDs(
+                in: collectionView,
+                unobstructedRect: unobstructed
+            )
+            guard ids != lastPublishedVisibleAudioStripItemIDs else { return }
+            lastPublishedVisibleAudioStripItemIDs = ids
+            let callback = onVisibleAudioStripItemIDsChange
+            DispatchQueue.main.async {
+                callback?(ids)
+            }
         }
 
         // MARK: - UICollectionViewDelegate
@@ -1163,6 +1195,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ofType: AssistantTimelineRowContentView.self,
                 in: cell.contentView
             )?.setMarkdownVideoPlaybackVisible(true)
+            publishVisibleAudioStripItemIDs(in: collectionView)
         }
 
         func collectionView(
@@ -1174,6 +1207,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ofType: AssistantTimelineRowContentView.self,
                 in: cell.contentView
             )?.setMarkdownVideoPlaybackVisible(false)
+            publishVisibleAudioStripItemIDs(in: collectionView)
         }
 
         func stopMarkdownVideoPlayback(in collectionView: UICollectionView) {

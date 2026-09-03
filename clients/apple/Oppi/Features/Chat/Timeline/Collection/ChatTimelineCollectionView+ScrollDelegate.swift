@@ -43,6 +43,10 @@ extension ChatTimelineCollectionHost.Controller {
 
         defer {
             lastObservedContentHeight = scrollView.contentSize.height
+            // Every scroll path, including early returns for upward drags,
+            // must republish unobstructed audio-strip IDs. Cells under the
+            // composer overlay stay in visibleCells.
+            publishVisibleAudioStripItemIDs(in: collectionView)
         }
 
         let previousContentHeight = lastObservedContentHeight ?? scrollView.contentSize.height

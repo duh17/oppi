@@ -67,6 +67,7 @@ struct ChatTimelineView: View {
     let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let topOverlap: CGFloat
     let bottomOverlap: CGFloat
+    var onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)? = nil
 
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
@@ -224,7 +225,8 @@ struct ChatTimelineView: View {
                 audioLifecycleCoordinator: audioLifecycleCoordinator,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 topOverlap: topOverlap,
-                bottomOverlap: bottomOverlap
+                bottomOverlap: bottomOverlap,
+                onVisibleAudioStripItemIDsChange: onVisibleAudioStripItemIDsChange
             )
         )
         .background(.themeBg)

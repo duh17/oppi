@@ -1298,6 +1298,7 @@
 		D72C42F1F2D5BCE78EABF8E5 /* ServerMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10ECB7266E12083547C5138A /* ServerMessage.swift */; };
 		D7DF7D2F04D7A4E2168801B8 /* EmbeddedFileViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0996499F6180DAE543025C8C /* EmbeddedFileViewerView.swift */; };
 		D86D24C38184965B11E9E07F /* ClientLogBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BC9A9B9229497D47A8A4919 /* ClientLogBuffer.swift */; };
+		D880C41DA11A8628A5FBDA7D /* InAppNowPlayingChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22E3FB8DC38A8516B29528D /* InAppNowPlayingChrome.swift */; };
 		D88A99498FDFFAFB609988AD /* Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4CF2DCA9F90102E5D75300B /* Workspace.swift */; };
 		D8B817341C9292D040D877D3 /* PiSessionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5A520E25168805262E5CF8E /* PiSessionAttributes.swift */; };
 		D8CAFE85D3F4794686038567 /* WorkspaceMediaOverlayNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DE8D99D7B139F0F9E858AB0 /* WorkspaceMediaOverlayNavigationTests.swift */; };
@@ -1406,6 +1407,7 @@
 		E846F1EC196C3849E625CF14 /* MermaidERParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA5130567D8BB2FF99C2F37 /* MermaidERParser.swift */; };
 		E8A210A20450AE27688C5F00 /* FollowTailBench.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46FD81F9FF8776537FB8997B /* FollowTailBench.swift */; };
 		E8AA897D7BFC1D6CC9031736 /* TypewriterAnimatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93BDFBAC4AF77FE70812539A /* TypewriterAnimatorTests.swift */; };
+		E8B1652429E3564BE1BE896D /* InAppNowPlayingChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F458CBB94D31D7470925BE /* InAppNowPlayingChromeTests.swift */; };
 		E8C0190FA5CA753291E4C1A5 /* ClientLogUploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A416BBF704B084E8F76ED3 /* ClientLogUploadModels.swift */; };
 		E8D9F87BA5D95048F7BD5BA6 /* MermaidNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B1ED7BE6519C6D91B2FD15 /* MermaidNode.swift */; };
 		E91AF9EC096ED037C96FB307 /* MermaidQuadrantRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B1AAD026AA75319F22E703B /* MermaidQuadrantRenderer.swift */; };
@@ -2620,6 +2622,7 @@
 		C51B6A0277D5DB877CE6B98C /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		C542BD74088A1BD1C771CCB4 /* ServerSkillFileTreeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSkillFileTreeTests.swift; sourceTree = "<group>"; };
 		C564FFE53F9C5366B4791160 /* MessageQueueEditorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageQueueEditorState.swift; sourceTree = "<group>"; };
+		C5F458CBB94D31D7470925BE /* InAppNowPlayingChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppNowPlayingChromeTests.swift; sourceTree = "<group>"; };
 		C626ECC16F58F6FE6D214EF9 /* PermissionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsView.swift; sourceTree = "<group>"; };
 		C62CD8BB94F709C09528FB6C /* ToolRowTextRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowTextRenderer.swift; sourceTree = "<group>"; };
 		C66DCC87863AAE07AADFF09F /* FiraCode-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "FiraCode-Regular.ttf"; sourceTree = "<group>"; };
@@ -2841,6 +2844,7 @@
 		F1D4CE6842FBBD5377C922E7 /* TimelineStressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineStressTests.swift; sourceTree = "<group>"; };
 		F1D70BF27FE1793A085A826C /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		F21F5F213A93C77751FCD261 /* ChatTimelineCollectionView+ScrollDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatTimelineCollectionView+ScrollDelegate.swift"; sourceTree = "<group>"; };
+		F22E3FB8DC38A8516B29528D /* InAppNowPlayingChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppNowPlayingChrome.swift; sourceTree = "<group>"; };
 		F2B8C03EB590CF4B97075186 /* ToolRowCodeRenderStrategy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowCodeRenderStrategy.swift; sourceTree = "<group>"; };
 		F2B940D663E4E1B0DB13B671 /* ServerResourcesScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerResourcesScreenshotUITests.swift; sourceTree = "<group>"; };
 		F3582E38CDDBE1EAEEAE80C5 /* MacReviewCommentSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacReviewCommentSheets.swift; sourceTree = "<group>"; };
@@ -3325,6 +3329,7 @@
 				38079C013A567DD846E84749 /* ExtensionNativeMarkdownSupport.swift */,
 				AD5700C2A43A69C0769C350A /* ExtensionSurfaceLinkRouting.swift */,
 				D8F477E5264D3B76FDE67B4E /* ExtensionSurfacePanel.swift */,
+				F22E3FB8DC38A8516B29528D /* InAppNowPlayingChrome.swift */,
 				12E0B951683E05344CC3026E /* ModelPickerSheet.swift */,
 				E91717D18C9F0C2E245B13DD /* ModelSwitchPolicy.swift */,
 				F672F7CD99592F1122960230 /* SessionOutlineView.swift */,
@@ -3374,6 +3379,7 @@
 				226CC4101913DDB0E2FDE9B3 /* ExtensionSurfaceURLTests.swift */,
 				84473A6CD0403E055A6CFFD5 /* FileSuggestionInsertionTests.swift */,
 				A4DC1FCD6786843DD8EA8F1A /* HardwareKeybindingAdapterTests.swift */,
+				C5F458CBB94D31D7470925BE /* InAppNowPlayingChromeTests.swift */,
 				1CE2448FA9B2217CAEA09AC7 /* KeyboardSuppressionTests.swift */,
 				03DD331E63139137B923C7AA /* MessageQueueComposerRestoreTests.swift */,
 				17B4E74171F46BA1FA13345F /* MessageQueueEditorStateTests.swift */,
@@ -6427,6 +6433,7 @@
 				1528C307D570E1E1D7EDB5FB /* ImageDecodeCacheTests.swift in Sources */,
 				8C0F85B6B0C111D934081BA1 /* ImagePreviewSecurityTests.swift in Sources */,
 				917DFC026ECDC8C09719A861 /* ImageSaveAndPermissionsTests.swift in Sources */,
+				E8B1652429E3564BE1BE896D /* InAppNowPlayingChromeTests.swift in Sources */,
 				DDB4603AEDB38BA09E1D8BFD /* InteractionPreferencesTests.swift in Sources */,
 				6AC6FB7AB00E1208D37F0E03 /* InviteBootstrapServiceTests.swift in Sources */,
 				1B9C52CF0D5B97A16A1FAE59 /* JSONUnpairedSurrogateRepairTests.swift in Sources */,
@@ -6922,6 +6929,7 @@
 				D9D5F4D78818DA6BCE65C8D0 /* ImageBlobView.swift in Sources */,
 				7FD2EE2EB27E4A476FC58ED5 /* ImageDecodeCache.swift in Sources */,
 				475C635EF6F613D7E839DEC7 /* InAppBrowserView.swift in Sources */,
+				D880C41DA11A8628A5FBDA7D /* InAppNowPlayingChrome.swift in Sources */,
 				876EC3166F3CECFDC96431DD /* InlineFileContentChrome.swift in Sources */,
 				399FA914EC92BD66F4906748 /* InlineMediaPlayback.swift in Sources */,
 				DC5BA0B8DC09255A6218A9C9 /* Int+TokenFormatting.swift in Sources */,

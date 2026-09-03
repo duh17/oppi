@@ -115,6 +115,8 @@ struct ChatView: View {
     @State private var isKeyboardVisible = false
     @State private var footerHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
+    @State private var visibleAudioStripItemIDs: Set<String> = []
+    @State private var presentsNowPlayingPlayer = false
     @State private var composerExternalFocusRequestID = 0
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
@@ -519,7 +521,21 @@ struct ChatView: View {
             onBackSwipe: navigateBackFromChat,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             topOverlap: headerHeight,
-            bottomOverlap: footerHeight
+            bottomOverlap: footerHeight,
+            onVisibleAudioStripItemIDsChange: { ids in
+                visibleAudioStripItemIDs = ids
+            }
+        )
+    }
+
+    private var showsNowPlayingPill: Bool {
+        InAppNowPlayingChrome.shouldShowChatPill(
+            hasActivePlayback: audioPlayer.hasActivePlayback,
+            playbackItemID: InAppNowPlayingChrome.playbackItemID(
+                playingItemID: audioPlayer.playingItemID,
+                loadingItemID: audioPlayer.loadingItemID
+            ),
+            visibleStripItemIDs: visibleAudioStripItemIDs
         )
     }
 
@@ -574,6 +590,9 @@ struct ChatView: View {
             .animation(ThemeMotion.easeInOut(duration: 0.18, reduceMotion: reduceMotion), value: scrollController.isJumpToBottomHintVisible)
             .onChange(of: scrollController.isJumpToBottomHintVisible) { _, visible in
                 if visible { contextBarCollapseToken &+= 1 }
+            }
+            .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
+                InAppNowPlayingPlayerScreen(audioPlayer: audioPlayer)
             }
     }
 
@@ -741,6 +760,8 @@ struct ChatView: View {
                 actionHandler.cleanup()
                 sessionManager.cleanup()
                 scrollController.cancel()
+                visibleAudioStripItemIDs = []
+                presentsNowPlayingPlayer = false
                 if connection.isFocusedSession(oldId) {
                     connection.disconnectSession()
                 }
@@ -857,7 +878,10 @@ struct ChatView: View {
             VStack(spacing: 8) {
                 if !hasBlockingExtensionInput {
                     let surface = extensionSurfaceState ?? ExtensionSurfaceState()
-                    if surface.hasVisibleContent(in: .aboveEditor) || showsMessageQueue || hasMessageQueueDraft {
+                    if showsNowPlayingPill
+                        || surface.hasVisibleContent(in: .aboveEditor)
+                        || showsMessageQueue
+                        || hasMessageQueueDraft {
                         ExtensionSurfacePanel(
                             surface: surface,
                             placement: .aboveEditor,
@@ -866,6 +890,14 @@ struct ChatView: View {
                             onOpenURL: openExtensionSurfaceURL,
                             onExpandedEntryChange: { expanded in
                                 if expanded { dismissKeyboard() }
+                            },
+                            showsLeadingStripContent: showsNowPlayingPill,
+                            leadingStripContent: {
+                                InAppNowPlayingPill(
+                                    audioPlayer: audioPlayer,
+                                    accessibilityPrefix: "chat.nowPlaying",
+                                    onOpen: { presentsNowPlayingPlayer = true }
+                                )
                             }
                         )
                         .padding(.horizontal, 16)
