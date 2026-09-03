@@ -220,10 +220,12 @@ struct FileBrowserContentView: View {
                 ),
                 navigateBackToFileList
             )
-            .overlay(alignment: .bottom) {
-                fileNavigatorControls
-                    .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
-            }
+            .modifier(AdjacentFileNavigatorControls(
+                canGoPrevious: adjacentSelection(.previous) != nil,
+                canGoNext: adjacentSelection(.next) != nil,
+                onPrevious: { navigateToAdjacentFile(.previous) },
+                onNext: { navigateToAdjacentFile(.next) }
+            ))
         .navigationTitle(shouldHideHostNavigationBar ? "" : viewerTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .automatic, for: .navigationBar)
@@ -293,15 +295,6 @@ struct FileBrowserContentView: View {
                 description: Text("This file type cannot be displayed as text.")
             )
         }
-    }
-
-    private var fileNavigatorControls: some View {
-        AdjacentFileNavigatorControls(
-            canGoPrevious: adjacentSelection(.previous) != nil,
-            canGoNext: adjacentSelection(.next) != nil,
-            onPrevious: { navigateToAdjacentFile(.previous) },
-            onNext: { navigateToAdjacentFile(.next) }
-        )
     }
 
     @ViewBuilder
@@ -851,55 +844,83 @@ extension View {
 
 // MARK: - File Navigation Controls
 
+/// Previous file stays in the leading bottom corner; next file stays trailing.
+/// A missing direction omits that button instead of recentering the other one.
+enum AdjacentFileNavigatorLayout {
+    enum Corner: Equatable {
+        case leading
+        case trailing
+    }
+
+    struct Slot: Equatable {
+        var corner: Corner
+        var systemImage: String
+        var accessibilityLabel: String
+    }
+
+    static func slots(canGoPrevious: Bool, canGoNext: Bool) -> [Slot] {
+        var slots: [Slot] = []
+        if canGoPrevious {
+            slots.append(Slot(
+                corner: .leading,
+                systemImage: "chevron.left",
+                accessibilityLabel: "Previous file"
+            ))
+        }
+        if canGoNext {
+            slots.append(Slot(
+                corner: .trailing,
+                systemImage: "chevron.right",
+                accessibilityLabel: "Next file"
+            ))
+        }
+        return slots
+    }
+}
+
 /// Explicit file-to-file controls keep horizontal swipes reserved for back.
-struct AdjacentFileNavigatorControls: View {
+struct AdjacentFileNavigatorControls: ViewModifier {
     let canGoPrevious: Bool
     let canGoNext: Bool
     let onPrevious: () -> Void
     let onNext: () -> Void
 
-    var body: some View {
-        if canGoPrevious || canGoNext {
-            HStack(spacing: 14) {
-                navigatorButton(
-                    systemImage: "chevron.left",
-                    accessibilityLabel: "Previous file",
-                    isEnabled: canGoPrevious,
-                    action: onPrevious
-                )
-                navigatorButton(
-                    systemImage: "chevron.right",
-                    accessibilityLabel: "Next file",
-                    isEnabled: canGoNext,
-                    action: onNext
-                )
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottomLeading) {
+                slotButton(corner: .leading, action: onPrevious)
             }
-            .padding(.horizontal, FullScreenFloatingControlChrome.groupHorizontalPadding)
-            .padding(.vertical, FullScreenFloatingControlChrome.groupVerticalPadding)
-            .fullScreenFloatingControlGlass(in: Capsule())
-            .accessibilityElement(children: .contain)
-        }
+            .overlay(alignment: .bottomTrailing) {
+                slotButton(corner: .trailing, action: onNext)
+            }
     }
 
-    private func navigatorButton(
-        systemImage: String,
-        accessibilityLabel: String,
-        isEnabled: Bool,
+    @ViewBuilder
+    private func slotButton(
+        corner: AdjacentFileNavigatorLayout.Corner,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(isEnabled ? .themeFg : .themeComment)
-                .frame(
-                    width: FullScreenFloatingControlChrome.groupedButtonSize,
-                    height: FullScreenFloatingControlChrome.groupedButtonSize
-                )
-                .contentShape(Circle())
+        if let slot = AdjacentFileNavigatorLayout.slots(
+            canGoPrevious: canGoPrevious,
+            canGoNext: canGoNext
+        ).first(where: { $0.corner == corner }) {
+            Button(action: action) {
+                Image(systemName: slot.systemImage)
+                    .font(.system(size: FullScreenFloatingControlChrome.symbolPointSize, weight: .semibold))
+                    .foregroundStyle(.themeFg)
+                    .frame(
+                        width: FullScreenFloatingControlChrome.controlSize,
+                        height: FullScreenFloatingControlChrome.controlSize
+                    )
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .fullScreenFloatingControlGlass(in: Capsule())
+            .accessibilityLabel(slot.accessibilityLabel)
+            .padding(.leading, corner == .leading ? FullScreenFloatingControlChrome.leadingPadding : 0)
+            .padding(.trailing, corner == .trailing ? FullScreenFloatingControlChrome.trailingPadding : 0)
+            .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
         }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-        .accessibilityLabel(accessibilityLabel)
     }
 }
 

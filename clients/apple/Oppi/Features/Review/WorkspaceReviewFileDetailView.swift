@@ -153,10 +153,12 @@ struct WorkspaceReviewFileDetailView: View {
         .environment(\.horizontalBackSwipeAction, horizontalBackSwipeAction)
         .filePushTransition(id: currentFile.path, direction: fileTransitionDirection)
         .horizontalBackSwipeGesture(isEnabled: allowsHorizontalBackSwipe && parentOwnsBackSwipe) { dismiss() }
-        .overlay(alignment: .bottom) {
-            reviewNavigatorControls
-                .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
-        }
+        .modifier(AdjacentFileNavigatorControls(
+            canGoPrevious: adjacentReviewFile(.previous) != nil,
+            canGoNext: adjacentReviewFile(.next) != nil,
+            onPrevious: { navigateToAdjacentReviewFile(.previous) },
+            onNext: { navigateToAdjacentReviewFile(.next) }
+        ))
         .navigationTitle(currentFile.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: diffTaskID) {
@@ -491,15 +493,6 @@ struct WorkspaceReviewFileDetailView: View {
         return navigationFiles.filter { file in
             seen.insert(file.path).inserted
         }
-    }
-
-    private var reviewNavigatorControls: some View {
-        AdjacentFileNavigatorControls(
-            canGoPrevious: adjacentReviewFile(.previous) != nil,
-            canGoNext: adjacentReviewFile(.next) != nil,
-            onPrevious: { navigateToAdjacentReviewFile(.previous) },
-            onNext: { navigateToAdjacentReviewFile(.next) }
-        )
     }
 
     private func adjacentReviewFile(_ direction: FileBrowserNavigationDirection) -> WorkspaceReviewFile? {

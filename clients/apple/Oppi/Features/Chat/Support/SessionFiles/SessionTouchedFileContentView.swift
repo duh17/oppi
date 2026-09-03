@@ -129,10 +129,12 @@ struct SessionTouchedFileContentView: View {
             .filePushTransition(id: currentFilePath, direction: fileTransitionDirection)
             .background(.themeBgDark)
             .horizontalBackSwipeGesture(isEnabled: parentOwnsBackSwipe) { dismiss() }
-            .overlay(alignment: .bottom) {
-                fileNavigatorControls
-                    .padding(.bottom, FullScreenFloatingControlChrome.bottomPadding)
-            }
+            .modifier(AdjacentFileNavigatorControls(
+                canGoPrevious: adjacentSelection(.previous) != nil,
+                canGoNext: adjacentSelection(.next) != nil,
+                onPrevious: { navigateToAdjacentFile(.previous) },
+                onNext: { navigateToAdjacentFile(.next) }
+            ))
         .navigationTitle(
             isUsingFileViewer
                 ? ""
@@ -361,15 +363,6 @@ struct SessionTouchedFileContentView: View {
 
     private func isCurrentFile(_ requestedPath: String) -> Bool {
         !Task.isCancelled && currentFilePath == requestedPath
-    }
-
-    private var fileNavigatorControls: some View {
-        AdjacentFileNavigatorControls(
-            canGoPrevious: adjacentSelection(.previous) != nil,
-            canGoNext: adjacentSelection(.next) != nil,
-            onPrevious: { navigateToAdjacentFile(.previous) },
-            onNext: { navigateToAdjacentFile(.next) }
-        )
     }
 
     private func adjacentSelection(_ direction: FileBrowserNavigationDirection) -> FileBrowserSelection? {

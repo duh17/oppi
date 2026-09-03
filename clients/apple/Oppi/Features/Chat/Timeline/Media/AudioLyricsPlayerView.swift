@@ -154,7 +154,7 @@ struct AudioLyricsPlayerView: View {
             if showsCloseButton {
                 Button("Done") { dismiss() }
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(.themePurple)
+                    .foregroundStyle(.themeCyan)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(.themeBgHighlight.opacity(0.9), in: Capsule())
@@ -286,7 +286,7 @@ struct AudioLyricsPlayerView: View {
                 Button(action: togglePlay) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 36, weight: .semibold))
-                        .foregroundStyle(.themePurple)
+                        .foregroundStyle(.themeFg)
                         .frame(width: 56, height: 56)
                         .contentShape(Rectangle())
                 }
@@ -338,7 +338,7 @@ struct AudioLyricsPlayerView: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.themePurple)
+                .foregroundStyle(.themeFg)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
@@ -385,10 +385,10 @@ private struct AudioPlaybackSeekBar: View {
                     .fill(Color.themeComment.opacity(0.35))
                     .frame(height: 4)
                 Capsule()
-                    .fill(Color.themePurple)
+                    .fill(.themeFg)
                     .frame(width: width * clamped, height: 4)
                 Circle()
-                    .fill(Color.themePurple)
+                    .fill(.themeFg)
                     .frame(width: 12, height: 12)
                     .offset(x: (width * clamped) - 6)
             }

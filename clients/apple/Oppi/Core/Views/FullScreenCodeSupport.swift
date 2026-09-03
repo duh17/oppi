@@ -43,9 +43,6 @@ enum FullScreenFloatingControlChrome {
     static let leadingPadding: CGFloat = 16
     static let trailingPadding: CGFloat = 16
     static let controlSize: CGFloat = 56
-    static let groupedButtonSize: CGFloat = 36
-    static let groupHorizontalPadding: CGFloat = 14
-    static let groupVerticalPadding: CGFloat = (controlSize - groupedButtonSize) / 2
     static let symbolPointSize: CGFloat = 20
     static let standaloneContentPadding: CGFloat = (controlSize - symbolPointSize) / 2
 
