@@ -132,10 +132,13 @@ struct InAppNowPlayingChromeTests {
     @Test func pillsUseFilenameWithoutWaveformAndKeepPlayPauseHit() throws {
         #expect(InAppNowPlayingChrome.PillDensity.sessionList.showsTitle)
         #expect(InAppNowPlayingChrome.PillDensity.sessionList.playPauseHitSize == 44)
+        #expect(InAppNowPlayingChrome.PillDensity.sessionList.stopHitSize == 44)
         #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsTitle)
         #expect(InAppNowPlayingChrome.PillDensity.sessionListCompact.playPauseHitSize == 44)
+        #expect(InAppNowPlayingChrome.PillDensity.sessionListCompact.stopHitSize == 44)
         #expect(InAppNowPlayingChrome.PillDensity.chat.showsTitle)
         #expect(InAppNowPlayingChrome.PillDensity.chat.playPauseHitSize == 44)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.stopHitSize == 44)
         #expect(InAppNowPlayingChrome.PillDensity.chat.titleMaxWidth > 180)
         #expect(InAppNowPlayingChrome.PillDensity.chat.visualHeight == ExtensionStripPillMetrics.visualHeight)
 
@@ -624,6 +627,132 @@ struct InAppNowPlayingChromeTests {
         )
         #expect(ids.isEmpty)
     }
+
+    @Test func stopControlIsLabeledIdentifiedAnd44pt() throws {
+        let chrome = try nowPlayingChromeSource()
+        #expect(chrome.contains("Stop Playback"))
+        #expect(chrome.contains("\\(accessibilityPrefix).stop"))
+        #expect(chrome.contains("\\(accessibilityPrefix).drawer.stop"))
+        #expect(chrome.contains("stopHitSize"))
+        #expect(chrome.contains("frame(width: size, height: size)"))
+
+        let lyrics = try audioLyricsPlayerSource()
+        #expect(lyrics.contains("InAppNowPlayingStopButton"))
+        #expect(lyrics.contains("audioLyrics.stop"))
+    }
+
+    @Test func stopEndsActivePlaybackWhilePauseAndDoneDoNot() throws {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "voice-1", loading: nil)
+        player.pause()
+        #expect(player.hasActivePlayback)
+        #expect(player.isPaused)
+        player.stop()
+        #expect(!player.hasActivePlayback)
+
+        let chrome = try nowPlayingChromeSource()
+        let stopButton = try #require(sourceSlice(
+            chrome,
+            from: "struct InAppNowPlayingStopButton",
+            to: "struct InAppNowPlayingPill"
+        ))
+        #expect(stopButton.contains("audioPlayer.stop()"))
+        #expect(!stopButton.contains("audioPlayer.pause()"))
+        #expect(stopButton.contains("Stop Playback"))
+        #expect(stopButton.contains("xmark"))
+        #expect(chrome.contains("case .pause:\n            audioPlayer.pause()"))
+        #expect(chrome.contains("case .cancelLoading:\n            audioPlayer.stop()"))
+
+        let lyrics = try audioLyricsPlayerSource()
+        let header = try #require(sourceSlice(
+            lyrics,
+            from: "private var header:",
+            to: "private var languageControl"
+        ))
+        #expect(header.contains("Button(\"Done\") { dismiss() }"))
+        #expect(!header.contains("audioPlayer.stop()"))
+        #expect(!header.contains("audioPlayer?.stop()"))
+        #expect(header.contains("InAppNowPlayingStopButton") || header.contains("audioLyrics.stop"))
+    }
+
+    @Test func titlePlayAndStopHitRegionsStayDistinct() throws {
+        let chrome = try nowPlayingChromeSource()
+        #expect(chrome.contains("overlay(alignment: .leading)"))
+        #expect(chrome.contains("overlay(alignment: .trailing)"))
+        #expect(chrome.contains("frame(width: density.playPauseHitSize)"))
+        #expect(chrome.contains("frame(width: density.stopHitSize)"))
+        #expect(chrome.contains("allowsHitTesting(false)"))
+        #expect(chrome.contains("TapGesture(count: 2)"))
+        #expect(chrome.contains(".exclusively(before:"))
+        #expect(chrome.contains("TapGesture(count: 1)"))
+        #expect(!chrome.contains("highPriorityGesture"))
+    }
+
+    @Test func compactSessionListKeepsPlayAndStopWithoutTitle() throws {
+        #expect(!InAppNowPlayingChrome.PillDensity.sessionListCompact.showsTitle)
+        #expect(InAppNowPlayingChrome.PillDensity.sessionListCompact.playPauseHitSize == 44)
+        let chrome = try nowPlayingChromeSource()
+        let toolbar = try #require(sourceSlice(
+            chrome,
+            from: "private var toolbarPill:",
+            to: "private var playPauseButton"
+        ))
+        #expect(toolbar.contains("playPauseButton"))
+        #expect(toolbar.contains("InAppNowPlayingStopButton") || toolbar.contains("stopButton"))
+        #expect(toolbar.contains("if density.showsTitle"))
+    }
+
+    @Test func loadingCancelStaysOnLeadingPlayControl() throws {
+        #expect(AudioLoadingCancelControl.cancelSymbolName == "xmark")
+        let chrome = try nowPlayingChromeSource()
+        let playPause = try #require(sourceSlice(
+            chrome,
+            from: "private var playPauseButton:",
+            to: "private var controlAccessibilityLabel"
+        ))
+        #expect(playPause.contains("AudioLoadingCancelControl"))
+        #expect(playPause.contains("Cancel Loading") || chrome.contains("case .cancelLoading: return \"Cancel Loading\""))
+        #expect(!playPause.contains("Stop Playback"))
+    }
+
+    @Test func embeddedLyricsPlayerOmitsStopWhilePresentedPlayerKeepsIt() throws {
+        let lyrics = try audioLyricsPlayerSource()
+        let header = try #require(sourceSlice(
+            lyrics,
+            from: "private var header:",
+            to: "private var languageControl"
+        ))
+        #expect(header.contains("InAppNowPlayingStopButton"))
+        #expect(header.contains("audioLyrics.stop"))
+        #expect(header.contains("if showsCloseButton, let audioPlayer"))
+        #expect(!header.contains("if let audioPlayer {"))
+
+        let presenter = try #require(sourceSlice(
+            lyrics,
+            from: "static func present(",
+            to: "struct AudioLyricsPlayerView"
+        ))
+        #expect(presenter.contains("showsCloseButton: true"))
+
+        let chrome = try nowPlayingChromeSource()
+        let screen = try #require(sourceSlice(
+            chrome,
+            from: "struct InAppNowPlayingPlayerScreen",
+            to: "private func dismissIfPlaybackEnded"
+        ))
+        #expect(!screen.contains("showsCloseButton: false"))
+        #expect(!screen.contains("showsStopButton: false"))
+
+        let fileBrowser = try fileBrowserContentSource()
+        let audioView = try #require(sourceSlice(
+            fileBrowser,
+            from: "private func audioView(",
+            to: "// MARK: - Loading"
+        ))
+        #expect(audioView.contains("showsCloseButton: false"))
+        #expect(!audioView.contains("showsStopButton: true"))
+        #expect(!audioView.contains("InAppNowPlayingStopButton"))
+    }
 }
 
 private func nowPlayingChromeSource() throws -> String {
@@ -633,6 +762,33 @@ private func nowPlayingChromeSource() throws -> String {
         .deletingLastPathComponent()
         .appending(path: "Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
     return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func audioLyricsPlayerSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerView.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func fileBrowserContentSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/FileBrowser/FileBrowserContentView.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func sourceSlice(_ source: String, from start: String, to end: String) -> String? {
+    guard let startRange = source.range(of: start) else { return nil }
+    let rest = source[startRange.lowerBound...]
+    guard let endRange = rest.range(of: end), endRange.lowerBound > rest.startIndex else {
+        return String(rest)
+    }
+    return String(rest[..<endRange.lowerBound])
 }
 
 private func audioPlayerServiceSource() throws -> String {

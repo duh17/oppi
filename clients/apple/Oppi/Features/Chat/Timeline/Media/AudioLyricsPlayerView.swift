@@ -194,6 +194,15 @@ struct AudioLyricsPlayerView: View {
                     .lineLimit(1)
             }
             Spacer()
+            // File browser embeds this view with the shared player and
+            // `showsCloseButton: false`. Stop belongs only on presented
+            // Now Playing chrome so it cannot kill unrelated playback.
+            if showsCloseButton, let audioPlayer {
+                InAppNowPlayingStopButton(
+                    audioPlayer: audioPlayer,
+                    accessibilityIdentifier: "audioLyrics.stop"
+                )
+            }
             languageControl
                 .frame(width: 72, alignment: .trailing)
         }

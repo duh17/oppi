@@ -54,6 +54,7 @@ enum InAppNowPlayingChrome {
 
         var visualHeight: CGFloat { ExtensionStripPillMetrics.visualHeight }
         var playPauseHitSize: CGFloat { 44 }
+        var stopHitSize: CGFloat { 44 }
     }
 
     static let directSpeakPlaybackPrefix = "audio-stream-"
@@ -188,6 +189,25 @@ enum InAppNowPlayingChrome {
     }
 }
 
+struct InAppNowPlayingStopButton: View {
+    let audioPlayer: AudioPlayerService
+    var accessibilityIdentifier: String
+    var size: CGFloat = 44
+
+    var body: some View {
+        Button(action: { audioPlayer.stop() }) {
+            Image(systemName: "xmark")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .frame(width: size, height: size)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Stop Playback")
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
 struct InAppNowPlayingPill: View {
     @Bindable var audioPlayer: AudioPlayerService
     var accessibilityPrefix: String
@@ -235,6 +255,14 @@ struct InAppNowPlayingPill: View {
                 .accessibilityHidden(true)
             titleContent
                 .accessibilityHidden(true)
+            Color.clear
+                .frame(
+                    width: density.stopHitSize
+                        - ExtensionStripPillMetrics.horizontalPadding
+                        - 7,
+                    height: 20
+                )
+                .accessibilityHidden(true)
         }
         .extensionStripPillSurface(isActive: isExpanded, activeStroke: .themeFg)
         .frame(minHeight: density.visualHeight)
@@ -243,6 +271,9 @@ struct InAppNowPlayingPill: View {
         }
         .overlay {
             chatTitleHitTarget
+        }
+        .overlay(alignment: .trailing) {
+            stopButton
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("\(accessibilityPrefix).pill")
@@ -254,6 +285,7 @@ struct InAppNowPlayingPill: View {
             if density.showsTitle {
                 toolbarTitleButton
             }
+            stopButton
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("\(accessibilityPrefix).pill")
@@ -337,7 +369,18 @@ struct InAppNowPlayingPill: View {
                         handleTitleTaps(1)
                     })
                 )
+            Color.clear
+                .frame(width: density.stopHitSize)
+                .allowsHitTesting(false)
         }
+    }
+
+    private var stopButton: some View {
+        InAppNowPlayingStopButton(
+            audioPlayer: audioPlayer,
+            accessibilityIdentifier: "\(accessibilityPrefix).stop",
+            size: density.stopHitSize
+        )
     }
 
     private func handleTitleTaps(_ tapCount: Int) {
@@ -443,6 +486,11 @@ struct InAppNowPlayingDrawer: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("\(accessibilityPrefix).drawer.collapse")
                 .accessibilityLabel("Collapse Now Playing")
+
+                InAppNowPlayingStopButton(
+                    audioPlayer: audioPlayer,
+                    accessibilityIdentifier: "\(accessibilityPrefix).drawer.stop"
+                )
             }
 
             AudioPlaybackTransportControls(
