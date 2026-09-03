@@ -553,6 +553,68 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func expandedMarkdownWriteViewportStaysInsideOuterRoundedCard() throws {
+        // Screenshot regression: expanded write/markdown fill, scroll edge overlays,
+        // and the top-right viewport edge covered the outer rounded tool-card border.
+        let markdown = """
+        You are the independent final reviewer for Oppi chat-timeline performance slice 2. Work read-only. Do not edit, format, commit, or generate files.
+
+        Review the exact current uncommitted worktree diff, including the two untracked files shown by `git status`. Read relevant source files in full rather than relying only on diff snippets. The current branch is feat/timeline-perf-prefetch-runway.
+        """
+        let config = makeTimelineToolConfiguration(
+            title: "review-prompt.md",
+            expandedContent: .markdown(text: markdown),
+            languageBadge: "markdown",
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: true
+        )
+        let view = ToolTimelineRowContentView(configuration: config)
+        let size = fittedTimelineSize(for: view, width: 370)
+        view.frame = CGRect(origin: .zero, size: CGSize(width: 370, height: size.height))
+        view.layoutIfNeeded()
+
+        let outerCard = try #require(timelineAllViews(in: view).first {
+            $0.layer.borderWidth == 1 && abs($0.layer.cornerRadius - 10) < 0.5
+        })
+        let markdownViewport = try #require(
+            timelineFirstView(ofType: NativeFullScreenMarkdownBody.self, in: view)
+        )
+        markdownViewport.debugLayoutVisibleMarkdownCellsForTesting()
+        let collection = try #require(
+            timelineFirstView(ofType: UICollectionView.self, in: markdownViewport)
+        )
+        let textView = try #require(timelineFirstTextView(in: markdownViewport))
+
+        let cardBounds = outerCard.convert(outerCard.bounds, to: view)
+        let viewportFrame = markdownViewport.convert(markdownViewport.bounds, to: view)
+        let scrollFrame = view.expandedScrollView.convert(view.expandedScrollView.bounds, to: view)
+        let collectionFrame = collection.convert(collection.bounds, to: view)
+        let textFrame = textView.convert(textView.bounds, to: view)
+        let visibleText = textFrame.intersection(collectionFrame)
+        let containmentSlop = cardBounds.insetBy(dx: -0.5, dy: -0.5)
+
+        #expect(containmentSlop.contains(viewportFrame), "Markdown viewport background escaped the outer card")
+        #expect(containmentSlop.contains(scrollFrame), "Expanded scroll surface escaped the outer card")
+        #expect(containmentSlop.contains(collectionFrame), "Markdown collection overlay escaped the outer card")
+        #expect(!visibleText.isNull && !visibleText.isEmpty)
+        #expect(containmentSlop.contains(visibleText), "Readable markdown text was clipped or laid out outside the outer card")
+        #expect(visibleText.width > 40)
+        #expect(visibleText.height > 8)
+
+        // Nested iOS 26 scroll-edge overlays paint outside rounded clip paths.
+        // Hide them on the expanded owner so they cannot cover the outer border.
+        #expect(view.expandedScrollView.topEdgeEffect.isHidden)
+        #expect(view.expandedScrollView.rightEdgeEffect.isHidden)
+        #expect(view.expandedScrollView.bottomEdgeEffect.isHidden)
+        #expect(view.expandedScrollView.leftEdgeEffect.isHidden)
+        #expect(collection.topEdgeEffect.isHidden)
+        #expect(collection.rightEdgeEffect.isHidden)
+        #expect(collection.bottomEdgeEffect.isHidden)
+        #expect(collection.leftEdgeEffect.isHidden)
+    }
+
+    @MainActor
     @Test func emptyExpandedBodyProducesFiniteCompactHeight() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .bash(command: nil, output: nil, unwrapped: true),

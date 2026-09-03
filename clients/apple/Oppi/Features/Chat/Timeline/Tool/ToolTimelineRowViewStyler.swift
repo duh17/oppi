@@ -162,6 +162,12 @@ enum ToolTimelineRowViewStyler {
         expandedScrollView.showsVerticalScrollIndicator = true
         expandedScrollView.showsHorizontalScrollIndicator = false
         expandedScrollView.delegate = delegate
+        // Nested inside the rounded tool card. iOS 26 scroll-edge overlays paint
+        // outside this clip path and cover the outer border; hide them here.
+        expandedScrollView.topEdgeEffect.isHidden = true
+        expandedScrollView.bottomEdgeEffect.isHidden = true
+        expandedScrollView.leftEdgeEffect.isHidden = true
+        expandedScrollView.rightEdgeEffect.isHidden = true
 
         expandedLabel.translatesAutoresizingMaskIntoConstraints = false
         expandedLabel.font = ToolFont.regular

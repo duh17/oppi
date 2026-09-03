@@ -2011,6 +2011,15 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         collectionView.bounces = allowsVerticalBounce && allowsVerticalScrolling
         collectionView.isScrollEnabled = allowsVerticalScrolling
         collectionView.showsVerticalScrollIndicator = allowsVerticalScrolling
+        if !allowsVerticalScrolling {
+            // Inline expanded tool rows nest this reader inside a rounded card.
+            // Default iOS 26 edge overlays escape that clip and cover the border.
+            collectionView.contentInsetAdjustmentBehavior = .never
+            collectionView.topEdgeEffect.isHidden = true
+            collectionView.bottomEdgeEffect.isHidden = true
+            collectionView.leftEdgeEffect.isHidden = true
+            collectionView.rightEdgeEffect.isHidden = true
+        }
         collectionView.keyboardDismissMode = .interactive
         collectionView.dataSource = self
         collectionView.delegate = self
