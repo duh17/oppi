@@ -411,7 +411,6 @@ struct InAppNowPlayingPill: View {
 struct InAppNowPlayingDrawer: View {
     @Bindable var audioPlayer: AudioPlayerService
     var accessibilityPrefix: String
-    let onCollapse: () -> Void
     let onOpen: () -> Void
 
     private var itemID: String {
@@ -437,7 +436,6 @@ struct InAppNowPlayingDrawer: View {
             Text(text)
                 .font(.body.weight(.medium))
                 .foregroundStyle(.themeFg)
-                .lineLimit(2)
         case .loading:
             HStack(spacing: 6) {
                 ProgressView()
@@ -460,38 +458,20 @@ struct InAppNowPlayingDrawer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    subtitleView
-                }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
-                .accessibilityElement(children: .combine)
-                .accessibilityHint("Double tap to open the full-screen audio player")
-                .accessibilityAction(named: Text("Open Full Screen"), onOpen)
-                .onTapGesture(count: 2, perform: onOpen)
-
-                Button(action: onCollapse) {
-                    Image(systemName: "chevron.up")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.themeComment)
-                        .frame(width: 44, height: 44)
-                        .background(.themeFg.opacity(0.04), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("\(accessibilityPrefix).drawer.collapse")
-                .accessibilityLabel("Collapse Now Playing")
-
-                InAppNowPlayingStopButton(
-                    audioPlayer: audioPlayer,
-                    accessibilityIdentifier: "\(accessibilityPrefix).drawer.stop"
-                )
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                subtitleView
             }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+            .accessibilityElement(children: .combine)
+            .accessibilityHint("Double tap to open the full-screen audio player")
+            .accessibilityAction(named: Text("Open Full Screen"), onOpen)
+            .onTapGesture(count: 2, perform: onOpen)
 
             AudioPlaybackTransportControls(
                 itemID: itemID,

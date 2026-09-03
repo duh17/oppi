@@ -533,6 +533,66 @@ struct InAppNowPlayingChromeTests {
         #expect(source.contains("density: .drawer"))
     }
 
+    @Test func expandedDrawerOmitsCollapseAndStopWhileChatPillKeepsThem() throws {
+        let chrome = try nowPlayingChromeSource()
+        let drawer = try #require(sourceSlice(
+            chrome,
+            from: "struct InAppNowPlayingDrawer",
+            to: "struct InAppNowPlayingPlayerScreen"
+        ))
+        #expect(!drawer.contains("onCollapse"))
+        #expect(!drawer.contains("drawer.collapse"))
+        #expect(!drawer.contains("drawer.stop"))
+        #expect(!drawer.contains("Collapse Now Playing"))
+        #expect(!drawer.contains("InAppNowPlayingStopButton"))
+        #expect(!drawer.contains("chevron.up"))
+        #expect(drawer.contains("AudioPlaybackTransportControls("))
+        #expect(drawer.contains("density: .drawer"))
+
+        let pill = try #require(sourceSlice(
+            chrome,
+            from: "struct InAppNowPlayingPill",
+            to: "struct InAppNowPlayingDrawer"
+        ))
+        #expect(pill.contains("stopButton"))
+        #expect(pill.contains("\\(accessibilityPrefix).stop"))
+        #expect(pill.contains("onExpand"))
+        #expect(pill.contains("chevron.right"))
+        #expect(InAppNowPlayingChrome.titleAction(tapCount: 1, expandsOnTap: true) == .expandOrCollapse)
+        #expect(InAppNowPlayingChrome.titleAction(tapCount: 2, expandsOnTap: true) == .openFullScreen)
+
+        let chat = try chatViewSource()
+        let callSite = try #require(sourceSlice(
+            chat,
+            from: "InAppNowPlayingDrawer(",
+            to: ".padding(.horizontal, 16)"
+        ))
+        #expect(!callSite.contains("onCollapse"))
+        #expect(callSite.contains("onOpen:"))
+    }
+
+    @Test func expandedDrawerShowsCurrentLyricInFullWithoutTruncation() throws {
+        let chrome = try nowPlayingChromeSource()
+        let drawer = try #require(sourceSlice(
+            chrome,
+            from: "struct InAppNowPlayingDrawer",
+            to: "struct InAppNowPlayingPlayerScreen"
+        ))
+        let cue = try #require(sourceSlice(
+            drawer,
+            from: "case .cue(let text):",
+            to: "case .loading:"
+        ))
+        #expect(!cue.contains("lineLimit"))
+        #expect(!cue.contains("truncationMode"))
+        #expect(!cue.contains("minimumScaleFactor"))
+        #expect(drawer.contains("case .loading:"))
+        #expect(drawer.contains("Loading lyrics…"))
+        #expect(drawer.contains("case .gap:"))
+        #expect(drawer.contains("case .unavailable:"))
+        #expect(drawer.contains("No lyrics"))
+    }
+
     @Test func chatTitleTapExpandsAndDoubleTapOpensFullscreen() {
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 1, expandsOnTap: true) == .expandOrCollapse)
         #expect(InAppNowPlayingChrome.titleAction(tapCount: 2, expandsOnTap: true) == .openFullScreen)
@@ -632,7 +692,6 @@ struct InAppNowPlayingChromeTests {
         let chrome = try nowPlayingChromeSource()
         #expect(chrome.contains("Stop Playback"))
         #expect(chrome.contains("\\(accessibilityPrefix).stop"))
-        #expect(chrome.contains("\\(accessibilityPrefix).drawer.stop"))
         #expect(chrome.contains("stopHitSize"))
         #expect(chrome.contains("frame(width: size, height: size)"))
 
@@ -761,6 +820,15 @@ private func nowPlayingChromeSource() throws -> String {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .appending(path: "Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func chatViewSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/Chat/ChatView.swift")
     return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 
