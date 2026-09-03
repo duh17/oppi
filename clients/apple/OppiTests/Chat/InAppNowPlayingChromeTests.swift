@@ -96,48 +96,102 @@ struct InAppNowPlayingChromeTests {
         )
     }
 
+    @Test func sessionListPillDensityIsTitleOnlyAndNarrowerThanChat() {
+        #expect(!InAppNowPlayingChrome.PillDensity.sessionList.showsSubtitle)
+        #expect(InAppNowPlayingChrome.PillDensity.sessionList.titleMaxWidth == 120)
+        #expect(InAppNowPlayingChrome.PillDensity.sessionList.playPauseHitSize == 44)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.showsSubtitle)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.titleMaxWidth == 180)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.playPauseHitSize == 44)
+    }
+
     @Test func visibleStripCollectorFindsOnscreenNativeAudioStrip() {
-        let root = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
-        let strip = NativeAudioPlayerStripView(frame: CGRect(x: 12, y: 40, width: 296, height: 64))
-        strip.apply(
+        let fixture = nestedAudioStripFixture(
             itemID: "voice-visible",
-            title: "Reply",
-            durationSeconds: 4,
-            audioPlayer: nil,
-            showsTitle: true,
-            isUnavailable: false,
-            onPlay: {},
-            onExpand: {}
+            stripFrame: CGRect(x: 12, y: 40, width: 296, height: 64)
         )
-        root.addSubview(strip)
 
         let ids = InAppNowPlayingChrome.visibleStripItemIDs(
-            in: root,
-            unobstructedRect: root.bounds
+            from: [fixture.contentView],
+            in: fixture.root,
+            unobstructedRect: fixture.root.bounds
         )
         #expect(ids == ["voice-visible"])
     }
 
     @Test func visibleStripCollectorIgnoresCoveredNativeAudioStrip() {
-        let root = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
-        let strip = NativeAudioPlayerStripView(frame: CGRect(x: 12, y: 360, width: 296, height: 64))
-        strip.apply(
+        let fixture = nestedAudioStripFixture(
             itemID: "voice-covered",
-            title: "Reply",
-            durationSeconds: 4,
-            audioPlayer: nil,
-            showsTitle: true,
-            isUnavailable: false,
-            onPlay: {},
-            onExpand: {}
+            stripFrame: CGRect(x: 12, y: 360, width: 296, height: 64)
         )
-        root.addSubview(strip)
 
         let unobstructed = CGRect(x: 0, y: 0, width: 320, height: 300)
         let ids = InAppNowPlayingChrome.visibleStripItemIDs(
-            in: root,
+            from: [fixture.contentView],
+            in: fixture.root,
             unobstructedRect: unobstructed
         )
         #expect(ids.isEmpty)
     }
+
+    @Test func visibleStripCollectorIgnoresStripIntersectingOnlyBottomOverlapInset() {
+        let rootHeight: CGFloat = 400
+        let bottomOverlap: CGFloat = 100
+        let fixture = nestedAudioStripFixture(
+            itemID: "voice-composer-covered",
+            rootHeight: rootHeight,
+            stripFrame: CGRect(x: 12, y: 320, width: 296, height: 64)
+        )
+        let unobstructed = fixture.root.bounds.inset(
+            by: UIEdgeInsets(top: 0, left: 0, bottom: bottomOverlap, right: 0)
+        )
+
+        #expect(fixture.stripFrame.intersects(fixture.root.bounds))
+        #expect(!fixture.stripFrame.intersects(unobstructed))
+
+        let ids = InAppNowPlayingChrome.visibleStripItemIDs(
+            from: [fixture.contentView],
+            in: fixture.root,
+            unobstructedRect: unobstructed
+        )
+        #expect(ids.isEmpty)
+    }
+}
+
+@MainActor
+private struct NestedAudioStripFixture {
+    let root: UIView
+    let contentView: UIView
+    let stripFrame: CGRect
+}
+
+@MainActor
+private func nestedAudioStripFixture(
+    itemID: String,
+    rootHeight: CGFloat = 400,
+    stripFrame: CGRect
+) -> NestedAudioStripFixture {
+    let root = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: rootHeight))
+    let cell = UICollectionViewCell(frame: stripFrame)
+    cell.contentView.frame = cell.bounds
+    let wrapper = UIView(frame: cell.contentView.bounds)
+    let strip = NativeAudioPlayerStripView(frame: wrapper.bounds)
+    strip.apply(
+        itemID: itemID,
+        title: "Reply",
+        durationSeconds: 4,
+        audioPlayer: nil,
+        showsTitle: true,
+        isUnavailable: false,
+        onPlay: {},
+        onExpand: {}
+    )
+    wrapper.addSubview(strip)
+    cell.contentView.addSubview(wrapper)
+    root.addSubview(cell)
+    return NestedAudioStripFixture(
+        root: root,
+        contentView: cell.contentView,
+        stripFrame: stripFrame
+    )
 }

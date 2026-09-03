@@ -531,6 +531,7 @@ struct SessionInboxView: View {
                     InAppNowPlayingPill(
                         audioPlayer: player,
                         accessibilityPrefix: "sessionList.nowPlaying",
+                        density: .sessionList,
                         onOpen: { presentsNowPlayingPlayer = true }
                     )
                 }

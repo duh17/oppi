@@ -7,6 +7,24 @@ enum InAppNowPlayingChrome {
         case collapsedSearchWithNowPlaying
     }
 
+    enum PillDensity: Equatable {
+        case chat
+        case sessionList
+
+        var showsSubtitle: Bool {
+            self == .chat
+        }
+
+        var titleMaxWidth: CGFloat {
+            switch self {
+            case .chat: return 180
+            case .sessionList: return 120
+            }
+        }
+
+        var playPauseHitSize: CGFloat { 44 }
+    }
+
     static let directSpeakPlaybackPrefix = "audio-stream-"
     static let streamPlaybackPrefix = "stream:"
 
@@ -38,9 +56,20 @@ enum InAppNowPlayingChrome {
     }
 
     @MainActor
-    static func visibleStripItemIDs(in root: UIView, unobstructedRect: CGRect) -> Set<String> {
+    static func visibleStripItemIDs(
+        from searchRoots: [UIView],
+        in coordinateSpace: UIView,
+        unobstructedRect: CGRect
+    ) -> Set<String> {
         var ids = Set<String>()
-        collectStripItemIDs(from: root, root: root, unobstructedRect: unobstructedRect, into: &ids)
+        for searchRoot in searchRoots {
+            collectStripItemIDs(
+                from: searchRoot,
+                root: coordinateSpace,
+                unobstructedRect: unobstructedRect,
+                into: &ids
+            )
+        }
         return ids
     }
 
@@ -71,6 +100,7 @@ enum InAppNowPlayingChrome {
 struct InAppNowPlayingPill: View {
     @Bindable var audioPlayer: AudioPlayerService
     var accessibilityPrefix: String
+    var density: InAppNowPlayingChrome.PillDensity = .chat
     let onOpen: () -> Void
 
     private var presentation: AudioPlayerService.NowPlayingPresentation? {
@@ -99,7 +129,7 @@ struct InAppNowPlayingPill: View {
                 Image(systemName: isActivelyPlaying ? "pause.fill" : "play.fill")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.themeFg)
-                    .frame(width: 44, height: 44)
+                    .frame(width: density.playPauseHitSize, height: density.playPauseHitSize)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -113,7 +143,7 @@ struct InAppNowPlayingPill: View {
                         .foregroundStyle(.themeFg)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    if let subtitle {
+                    if density.showsSubtitle, let subtitle {
                         Text(subtitle)
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.themeComment)
@@ -121,7 +151,7 @@ struct InAppNowPlayingPill: View {
                             .truncationMode(.tail)
                     }
                 }
-                .frame(maxWidth: 180, minHeight: 44, alignment: .leading)
+                .frame(maxWidth: density.titleMaxWidth, minHeight: density.playPauseHitSize, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

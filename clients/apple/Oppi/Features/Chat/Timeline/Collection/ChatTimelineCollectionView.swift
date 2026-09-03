@@ -604,6 +604,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private func handleAudioStateChangeNotification(_ notification: Notification) {
             guard let collectionView else { return }
 
+            // Progress ticks omit previous* keys. Identity changes must republish
+            // unobstructed strip IDs because idle scrolling skipped the walk.
+            if notification.userInfo?[AudioPlayerService.previousPlayingItemIDUserInfoKey] != nil {
+                publishVisibleAudioStripItemIDs(in: collectionView)
+            }
+
             let changedIDs = Set(Self.audioStateItemIDs(from: notification.userInfo))
             let targetIDs: [String]
             if changedIDs.isEmpty {
@@ -1139,6 +1145,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         }
 
         func publishVisibleAudioStripItemIDs(in collectionView: UICollectionView) {
+            // Idle scrolling must not walk the timeline looking for audio strips.
+            guard audioPlayer?.hasActivePlayback == true else { return }
+
             let unobstructed = collectionView.bounds.inset(
                 by: UIEdgeInsets(
                     top: timelineTopOverlap,
@@ -1148,6 +1157,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 )
             )
             let ids = InAppNowPlayingChrome.visibleStripItemIDs(
+                from: collectionView.visibleCells.map(\.contentView),
                 in: collectionView,
                 unobstructedRect: unobstructed
             )

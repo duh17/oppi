@@ -644,6 +644,7 @@ struct WorkspaceDetailView: View {
                         InAppNowPlayingPill(
                             audioPlayer: connection.audioPlayer,
                             accessibilityPrefix: "sessionList.nowPlaying",
+                            density: .sessionList,
                             onOpen: { presentsNowPlayingPlayer = true }
                         )
                     }
