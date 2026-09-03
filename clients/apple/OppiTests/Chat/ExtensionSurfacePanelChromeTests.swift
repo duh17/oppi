@@ -3,12 +3,12 @@ import Testing
 
 @Suite("ExtensionSurfacePanel chrome")
 struct ExtensionSurfacePanelChromeTests {
-    @Test("Collapsed strip uses the live elevated glass panel")
-    func collapsedStripUsesElevatedGlassPanel() throws {
+    @Test("Collapsed strip has no panel fill; pills use elevatedPanel capsules")
+    func collapsedStripUsesElevatedPillsWithoutBar() throws {
         let source = try extensionSurfacePanelSource()
-        let helper = try extensionSurfacePanelSourceSlice(
-            named: "func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {",
-            until: "func extensionStripPillSurface",
+        let pill = try extensionSurfacePanelSourceSlice(
+            named: "func extensionStripPillSurface(isActive: Bool, activeStroke: Color) -> some View {",
+            until: "private extension View {",
             in: source
         )
         let collapsedStrip = try extensionSurfacePanelSourceSlice(
@@ -16,13 +16,32 @@ struct ExtensionSurfacePanelChromeTests {
             until: "if let activeEntry {",
             in: source
         )
+        let drawer = try extensionSurfacePanelSourceSlice(
+            named: "private struct ExtensionSurfaceDrawer",
+            until: "struct ExtensionSurfacePanel<LeadingStripContent: View>",
+            in: source
+        )
 
-        #expect(helper.contains(".themedSurface("))
-        #expect(helper.contains(".elevatedPanel"))
-        #expect(collapsedStrip.contains(".extensionGlassPanel(cornerRadius: 18)"))
-        #expect(collapsedStrip.contains("extension-strip-\\(placement.accessibilityIdentifierComponent)-collapsed"))
-        #expect(!collapsedStrip.contains("extensionStripGlassPanel"))
+        #expect(!collapsedStrip.contains(".extensionGlassPanel"))
+        #expect(!collapsedStrip.contains("minHeight: 50"))
+        #expect(!collapsedStrip.contains(".padding(.horizontal, 8)"))
+        #expect(!collapsedStrip.contains(".padding(.vertical, 7)"))
         #expect(!collapsedStrip.contains(".glassEffect(.regular"))
+        #expect(collapsedStrip.contains(".frame(maxWidth: .infinity"))
+        #expect(collapsedStrip.contains("extension-strip-\\(placement.accessibilityIdentifierComponent)-collapsed"))
+
+        #expect(pill.contains(".themedSurface(.elevatedPanel, in: Capsule())"))
+        #expect(pill.contains("ExtensionStripPillMetrics.horizontalPadding"))
+        #expect(pill.contains("ExtensionStripPillMetrics.verticalPadding"))
+        #expect(pill.contains("ExtensionStripPillMetrics.visualHeight"))
+        #expect(pill.contains(".contentShape(Capsule())"))
+        #expect(pill.contains("activeStroke.opacity(0.45)"))
+        #expect(!pill.contains(".themeFg.opacity(0.08)"))
+        #expect(!pill.contains("0.045"))
+        #expect(!pill.contains(".background(\n                .themeFg.opacity(isActive ? 0.1 : 0.045)"))
+
+        #expect(drawer.contains(".extensionGlassPanel(cornerRadius: 18)"))
+        #expect(source.contains("func extensionGlassPanel(cornerRadius: CGFloat = 18)"))
         #expect(!source.contains("extensionStripGlassPanel"))
         #expect(!source.contains("func extensionStripGlassPanel"))
     }

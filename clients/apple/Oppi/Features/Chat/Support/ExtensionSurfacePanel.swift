@@ -23,13 +23,12 @@ extension View {
             .padding(.horizontal, ExtensionStripPillMetrics.horizontalPadding)
             .padding(.vertical, ExtensionStripPillMetrics.verticalPadding)
             .frame(minHeight: ExtensionStripPillMetrics.visualHeight)
-            .background(
-                .themeFg.opacity(isActive ? 0.1 : 0.045),
-                in: Capsule()
-            )
+            .themedSurface(.elevatedPanel, in: Capsule())
             .overlay {
-                Capsule()
-                    .stroke(isActive ? activeStroke.opacity(0.45) : .themeFg.opacity(0.08), lineWidth: 1)
+                if isActive {
+                    Capsule()
+                        .stroke(activeStroke.opacity(0.45), lineWidth: 1)
+                }
             }
             .contentShape(Capsule())
     }
@@ -1742,12 +1741,9 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
                             )
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
                 }
-                .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-collapsed")
-                .extensionGlassPanel(cornerRadius: 18)
             }
 
             if let activeEntry {
