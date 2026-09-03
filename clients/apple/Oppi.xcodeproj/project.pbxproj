@@ -818,6 +818,7 @@
 		866907193FF505D1A83D6F04 /* MermaidPieRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AAA171971789277768C06B0 /* MermaidPieRenderer.swift */; };
 		866C4D488447AC8C7B7CB146 /* ServerConnectionSendAckTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E307D44B5687F15C9FB6DEBE /* ServerConnectionSendAckTests.swift */; };
 		868FD48AD996C0CAD6352124 /* DailyCostChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09AE7A4DECD96D8C38F51E1A /* DailyCostChartView.swift */; };
+		86A72170AE2F195904B6B01E /* AudioPlayerSkipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6F9DDEE95C822151949FE9 /* AudioPlayerSkipTests.swift */; };
 		86CB0CF6E4173C1CA0FDDBD5 /* FileType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A1274DDD1127FF0B0D38668 /* FileType.swift */; };
 		86EBEFF5F4A6C58EFD5230E8 /* NativeMutableFullScreenMarkdownBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F7545604EA7285133F8CD3 /* NativeMutableFullScreenMarkdownBody.swift */; };
 		876EC3166F3CECFDC96431DD /* InlineFileContentChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D469EFDF86AF5C0F3FEAC55 /* InlineFileContentChrome.swift */; };
@@ -2520,6 +2521,7 @@
 		AEF895A9115EF9F2143B7A6F /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		AF0F61E6AC81FFAD782D49F0 /* TimelineCellFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineCellFactory.swift; sourceTree = "<group>"; };
 		AF62E83D666C51FC2AB5B0BF /* ServerConnectionInvariantTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionInvariantTests.swift; sourceTree = "<group>"; };
+		AF6F9DDEE95C822151949FE9 /* AudioPlayerSkipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerSkipTests.swift; sourceTree = "<group>"; };
 		AF7B1A03CDC499D1CAEB9359 /* ToolTimelineRowViewStyler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTimelineRowViewStyler.swift; sourceTree = "<group>"; };
 		AFB51C9B31EDB9813506AD28 /* MacWorkspaceFileBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceFileBrowserView.swift; sourceTree = "<group>"; };
 		AFF7C0004B660C36F1A39721 /* MarkdownInlineVideoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInlineVideoTests.swift; sourceTree = "<group>"; };
@@ -3361,6 +3363,7 @@
 				E188AE025B910D6C8927E630 /* AskCardTests.swift */,
 				E45BD6FBFC2355EB638F7947 /* AskResponseEncoderTests.swift */,
 				2CF404D5D3F62FCAA48D6158 /* AudioLifecycleCoordinatorTests.swift */,
+				AF6F9DDEE95C822151949FE9 /* AudioPlayerSkipTests.swift */,
 				27806A6C72201BADCF5532F9 /* BottomOverlapScrollGapTests.swift */,
 				CD31CB66E8787D521802C4D4 /* ChatActionHandlerReconnectTests.swift */,
 				D1F54EBF5A2788A7C540F408 /* ChatActionHandlerRecoveryTests.swift */,
@@ -6355,6 +6358,7 @@
 				67D01348D22AACA4E1C0DB4A /* AssistantRowContentViewTests.swift in Sources */,
 				1695B9EE4ABD50E896294793 /* AttentionNotificationServiceTests.swift in Sources */,
 				B477E1376BD25F1C5E7711C2 /* AudioLifecycleCoordinatorTests.swift in Sources */,
+				86A72170AE2F195904B6B01E /* AudioPlayerSkipTests.swift in Sources */,
 				7BC2CF416A45D6BE510A9C6C /* BashEmbeddedLanguageDetectorTests.swift in Sources */,
 				05E91AA578210F3782F37870 /* BashToolRowViewTests.swift in Sources */,
 				3E40E8E4A5BD17F1B4BF14E0 /* BiometricServiceTests.swift in Sources */,

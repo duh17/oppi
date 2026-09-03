@@ -264,13 +264,28 @@ struct AudioLyricsPlayerView: View {
                 .font(.caption)
                 .foregroundStyle(.themeComment)
             }
-            Button(action: togglePlay) {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 36, weight: .semibold))
-                    .foregroundStyle(.themePurple)
-                    .frame(width: 56, height: 56)
+            HStack(spacing: 28) {
+                skipButton(
+                    interval: -AudioPlayerService.skipInterval,
+                    symbol: "gobackward.15",
+                    label: "Skip back 15 seconds",
+                    identifier: "audioLyrics.skipBack"
+                )
+                Button(action: togglePlay) {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 36, weight: .semibold))
+                        .foregroundStyle(.themePurple)
+                        .frame(width: 56, height: 56)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel(isPlaying ? "Pause" : "Play")
+                skipButton(
+                    interval: AudioPlayerService.skipInterval,
+                    symbol: "goforward.15",
+                    label: "Skip forward 15 seconds",
+                    identifier: "audioLyrics.skipForward"
+                )
             }
-            .accessibilityLabel(isPlaying ? "Pause" : "Play")
             if !matchesPlayback, openFile != nil {
                 Button("Open file", action: { openFile?() })
                     .font(.subheadline)
@@ -285,6 +300,30 @@ struct AudioLyricsPlayerView: View {
     private var progressValue: Double {
         guard let duration, duration > 0 else { return 0 }
         return min(max(elapsed / duration, 0), 1)
+    }
+
+    private func skipButton(
+        interval: TimeInterval,
+        symbol: String,
+        label: String,
+        identifier: String
+    ) -> some View {
+        Button {
+            skip(by: interval)
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.themePurple)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func skip(by interval: TimeInterval) {
+        guard matchesPlayback else { return }
+        audioPlayer?.skip(by: interval)
     }
 
     private func togglePlay() {

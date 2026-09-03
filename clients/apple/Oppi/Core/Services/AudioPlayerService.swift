@@ -280,6 +280,39 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         )
     }
 
+    /// Control Center and the full-screen player both skip by this interval.
+    static let skipInterval: TimeInterval = 15
+
+    func skip(by interval: TimeInterval) {
+        guard playingItemID != nil else { return }
+        guard let target = Self.skipTarget(
+            currentTime: currentTime,
+            duration: duration,
+            interval: interval
+        ) else { return }
+        seek(to: target)
+    }
+
+    /// Live streams have no duration: skip back uses elapsed time, skip forward is a no-op.
+    nonisolated private static func skipTarget(
+        currentTime: TimeInterval,
+        duration: TimeInterval?,
+        interval: TimeInterval
+    ) -> TimeInterval? {
+        guard currentTime.isFinite, interval.isFinite, interval != 0 else { return nil }
+        let knownDuration = duration.flatMap { value in
+            value.isFinite && value >= 0 ? value : nil
+        }
+        if interval > 0, knownDuration == nil {
+            return nil
+        }
+        let unclamped = currentTime + interval
+        if let knownDuration {
+            return min(knownDuration, max(0, unclamped))
+        }
+        return max(0, unclamped)
+    }
+
     func seek(to time: TimeInterval) {
         guard playingItemID != nil, time.isFinite, time >= 0 else { return }
         if let player {
@@ -292,6 +325,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
         currentTime = time
         publishProgress()
+        // Pass the seek target, not currentTime: publishProgress can read a stale AVPlayer clock.
+        updateNowPlayingInfo(
+            durationSeconds: duration ?? lastNowPlayingDurationSeconds,
+            isLiveStream: lastNowPlayingIsLiveStream,
+            playbackRate: isPaused ? 0 : 1,
+            elapsed: time
+        )
     }
 
     func shouldAutoplayAudioMessage(itemID: String, playbackBehavior: AudioPlaybackBehavior?, sessionId: String? = nil) -> Bool {
@@ -731,6 +771,12 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         handleDataPlaybackFinished()
     }
 
+    // periphery:ignore - test seam used by audio skip clamp tests
+    func _setProgressForTesting(currentTime: TimeInterval, duration: TimeInterval?) {
+        self.currentTime = currentTime
+        self.duration = duration
+    }
+
     // periphery:ignore - test seam used by AudioPlayer/ConnectionCoordinator lifecycle tests
     func _setPlaybackStateForTesting(playing: String?, loading: String?) {
         if (playing != nil || loading != nil), playingItemID == nil, loadingItemID == nil {
@@ -932,7 +978,12 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         waveformLevels = Self.waveformLevels(fromMeterLevel: level, isPlaying: isPlaying)
     }
 
-    private func updateNowPlayingInfo(durationSeconds: Double?, isLiveStream: Bool, playbackRate: Float = 1.0) {
+    private func updateNowPlayingInfo(
+        durationSeconds: Double?,
+        isLiveStream: Bool,
+        playbackRate: Float = 1.0,
+        elapsed: TimeInterval? = nil
+    ) {
         lastNowPlayingDurationSeconds = durationSeconds
         lastNowPlayingIsLiveStream = isLiveStream
 
@@ -942,7 +993,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
 
         let mediaElapsed = mediaPlayer?.currentTime().seconds
-        let elapsedPlaybackTime = player?.currentTime
+        let elapsedPlaybackTime = elapsed
+            ?? player?.currentTime
             ?? (mediaElapsed?.isFinite == true ? mediaElapsed ?? 0 : 0)
         let presentation = nowPlayingPresentation
         var info: [String: Any] = [
@@ -977,6 +1029,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         center.pauseCommand.isEnabled = true
         center.stopCommand.isEnabled = true
         center.togglePlayPauseCommand.isEnabled = true
+        center.skipForwardCommand.isEnabled = true
+        center.skipBackwardCommand.isEnabled = true
+        center.skipForwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
+        center.skipBackwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
         center.playCommand.addTarget { _ in
             Task { @MainActor in
                 Self.activePlaybackOwner?.resume()
@@ -998,6 +1054,20 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 } else {
                     owner.pause()
                 }
+            }
+            return .success
+        }
+        center.skipForwardCommand.addTarget { event in
+            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? Self.skipInterval
+            Task { @MainActor in
+                Self.activePlaybackOwner?.skip(by: interval)
+            }
+            return .success
+        }
+        center.skipBackwardCommand.addTarget { event in
+            let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? Self.skipInterval
+            Task { @MainActor in
+                Self.activePlaybackOwner?.skip(by: -abs(interval))
             }
             return .success
         }
