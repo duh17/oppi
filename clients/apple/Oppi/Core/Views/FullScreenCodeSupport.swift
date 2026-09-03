@@ -412,9 +412,11 @@ private struct HorizontalBackSwipeGestureModifier: ViewModifier {
     let isEnabled: Bool
     let onBack: () -> Void
 
-    /// Sticky for one parent drag, then reset automatically on both end and
-    /// cancellation so an interrupted scrub cannot suppress the next swipe.
-    @GestureState private var didLatchSuppression = false
+    /// GestureState detects both normal completion and cancellation. The sticky
+    /// suppression value lives in State because GestureState resets before
+    /// `onEnded` is guaranteed to read it.
+    @GestureState private var isTrackingBackSwipe = false
+    @State private var didLatchSuppression = false
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -423,17 +425,33 @@ private struct HorizontalBackSwipeGestureModifier: ViewModifier {
                 .contentShape(Rectangle())
                 .simultaneousGesture(
                     DragGesture(minimumDistance: HorizontalBackSwipeGesturePolicy.minimumHorizontalDistance)
-                        .updating($didLatchSuppression) { _, latched, _ in
-                            latched = HorizontalBackSwipeGesturePolicy.latchingExclusiveClaim(latched)
+                        .updating($isTrackingBackSwipe) { _, tracking, _ in
+                            tracking = true
+                        }
+                        .onChanged { _ in
+                            didLatchSuppression = HorizontalBackSwipeGesturePolicy
+                                .latchingExclusiveClaim(didLatchSuppression)
                         }
                         .onEnded { value in
+                            let latched = didLatchSuppression
+                            didLatchSuppression = false
                             HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
                                 translation: value.translation,
-                                didLatchSuppression: didLatchSuppression,
+                                didLatchSuppression: latched,
                                 onBack: onBack
                             )
                         }
                 )
+                .onChange(of: isTrackingBackSwipe) { _, tracking in
+                    guard !tracking else { return }
+                    // A successful `onEnded` consumes State synchronously. A
+                    // cancelled gesture has no callback, so clear one turn later;
+                    // the guard avoids clearing a new drag that started meanwhile.
+                    DispatchQueue.main.async {
+                        guard !isTrackingBackSwipe else { return }
+                        didLatchSuppression = false
+                    }
+                }
         } else {
             content
         }
