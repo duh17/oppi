@@ -233,6 +233,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             preparationRunway.onArtifactReady = { [weak self] scope, itemID, _ in
                 self?.handlePreparedArtifact(scope: scope, itemID: itemID)
             }
+            applyResourcePressure(.current())
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleThemeDidChange),
@@ -243,6 +244,18 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 self,
                 selector: #selector(handleTimelineMemoryWarning),
                 name: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleResourcePressureDidChange),
+                name: ProcessInfo.thermalStateDidChangeNotification,
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleResourcePressureDidChange),
+                name: .NSProcessInfoPowerStateDidChange,
                 object: nil
             )
         }
@@ -438,6 +451,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var lastBusyAmbientScrollReconcileNs: UInt64 = 0
         let toolOutputLoader = ExpandedToolOutputLoader()
         let preparationRunway = ChatTimelinePreparationRunway()
+        var resourcePressure = StreamingRenderPolicy.ResourcePressure.nominal
         var lastPrefetchCenterIndex: Int?
         var lastPrefetchDirection = 0
 
@@ -465,6 +479,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             private(set) var _audioStateRefreshCountForTesting = 0
             private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
             var debugPreparedArtifactReconfiguredItemIDs: [String] = []
+            var debugReconfiguredItemIDs: [String] = []
+            var debugIgnoresLiveProcessInfoResourcePressureForTesting = false
+            var debugNextNotificationPressureForTesting: StreamingRenderPolicy.ResourcePressure?
+            var debugLastResourcePressureAppliedOnMainActorForTesting = false
 
             // periphery:ignore - used by ChatTimelineTests via @testable import
             var _toolOutputLoadTaskCountForTesting: Int {
@@ -516,6 +534,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 NotificationCenter.default.removeObserver(
                     self,
                     name: UIApplication.didReceiveMemoryWarningNotification,
+                    object: nil
+                )
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: ProcessInfo.thermalStateDidChangeNotification,
+                    object: nil
+                )
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: .NSProcessInfoPowerStateDidChange,
                     object: nil
                 )
             }
@@ -1625,6 +1653,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         }
 
         func reconfigureItems(_ itemIDs: [String], in collectionView: UICollectionView) {
+            #if DEBUG
+            debugReconfiguredItemIDs.append(contentsOf: itemIDs)
+            #endif
             TimelineSnapshotApplier.reconfigureItems(
                 itemIDs,
                 dataSource: dataSource,

@@ -47,6 +47,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var sessionFileMediaSourceProvider: ((String) async throws -> AuthenticatedMediaSource)? = nil
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
     var reviewCommentSessionId: String? = nil
+    var resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -797,7 +798,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,
                 perfSurface: .toolExpanded,
-                renderingMode: .live
+                renderingMode: .live,
+                resourcePressure: currentConfiguration.resourcePressure
             ))
             expandedMarkdownView.setNeedsLayout()
             setNeedsLayout()
@@ -1755,7 +1757,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 isCurrentModeCode: expandedViewportMode == .code,
                 wasExpandedVisible: wasExpandedVisible,
                 sessionId: perfSessionId,
-                viewportPolicy: viewportPolicy
+                viewportPolicy: viewportPolicy,
+                resourcePressure: configuration.resourcePressure
             )
 
         case .markdown(let text):

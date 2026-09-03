@@ -145,7 +145,8 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            audioPlayer: audioPlayer
+            audioPlayer: audioPlayer,
+            resourcePressure: resourcePressure
         )
     }
 
@@ -268,7 +269,8 @@ extension ChatTimelineCollectionHost.Controller {
                 isExpanded: isExpanded,
                 onToggleExpand: onToggleExpand,
                 interactionContext: interactionContext,
-                itemID: itemID
+                itemID: itemID,
+                resourcePressure: resourcePressure
             )
         }
 
@@ -433,6 +435,7 @@ extension ChatTimelineCollectionHost.Controller {
             from: audioLifecycleCoordinator?.presentation.timelinePresentation(for: itemID),
             fallback: configuration.expandedContent
         )
+        configuration.resourcePressure = resourcePressure
         return configuration
             .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)
             .withAudioPlayer(audioPlayer)

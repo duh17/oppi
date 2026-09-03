@@ -257,6 +257,7 @@ final class NativeMarkdownImageView: UIView {
         renderingMode: ContentRenderingMode = .live,
         preferredDisplayWidth: CGFloat? = nil,
         preparesForDisplay: Bool = true,
+        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal,
         preparationContext: TimelineImagePreparationContext? = nil
     ) {
         let canonicalWidth = preferredDisplayWidth.flatMap {
@@ -270,11 +271,33 @@ final class NativeMarkdownImageView: UIView {
             preparationTarget: preparationContext?.target
         )
         currentAltText = alt
+        let rasterDecision: StreamingRenderPolicy.DecorativeDecision
+        if renderingMode == .live {
+            rasterDecision = StreamingRenderPolicy.decision(
+                for: .rasterImage,
+                pressure: resourcePressure,
+                consumer: .visible
+            )
+        } else {
+            rasterDecision = .allow
+        }
+        let allowsCanonicalLoad = rasterDecision == .allow || rasterDecision == .deferToPlain
+        let alreadyVisible = imageView.image != nil || svgPreviewData != nil
+        if renderingMode == .live, alreadyVisible, !allowsCanonicalLoad {
+            self.preparesForDisplay = self.preparesForDisplay || preparesForDisplay
+            if self.preparesForDisplay { activatePreparedDisplay() }
+            return
+        }
         if identity == currentRequestIdentity {
             self.preparesForDisplay = self.preparesForDisplay || preparesForDisplay
             if usesCanonicalLoadingForCurrentRequest {
-                refreshLoadedAccessibilityIfNeeded()
-                if self.preparesForDisplay { activatePreparedDisplay() }
+                if allowsCanonicalLoad {
+                    refreshLoadedAccessibilityIfNeeded()
+                    if self.preparesForDisplay { activatePreparedDisplay() }
+                    return
+                }
+                usesCanonicalLoadingForCurrentRequest = false
+                showExportPlaceholder(alt: alt)
                 return
             }
             currentPreparationContext = preparationContext
@@ -283,6 +306,10 @@ final class NativeMarkdownImageView: UIView {
                 url: url,
                 alt: alt
             ) {
+                return
+            }
+            if !allowsCanonicalLoad {
+                showExportPlaceholder(alt: alt)
                 return
             }
             usesCanonicalLoadingForCurrentRequest = true
@@ -308,6 +335,10 @@ final class NativeMarkdownImageView: UIView {
                 url: url,
                 alt: alt
             ) {
+                return
+            }
+            if !allowsCanonicalLoad {
+                showExportPlaceholder(alt: alt)
                 return
             }
             usesCanonicalLoadingForCurrentRequest = true

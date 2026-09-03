@@ -7,19 +7,22 @@ struct CompactionTimelineRowConfiguration: UIContentConfiguration {
     let onToggleExpand: (() -> Void)?
     let interactionContext: TimelineInteractionContext?
     let itemID: String?
+    var resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
 
     init(
         presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation,
         isExpanded: Bool,
         onToggleExpand: (() -> Void)? = nil,
         interactionContext: TimelineInteractionContext? = nil,
-        itemID: String? = nil
+        itemID: String? = nil,
+        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
     ) {
         self.presentation = presentation
         self.isExpanded = isExpanded
         self.onToggleExpand = onToggleExpand
         self.interactionContext = interactionContext
         self.itemID = itemID
+        self.resourcePressure = resourcePressure
     }
 
     var canExpand: Bool { presentation.canExpand }
@@ -234,7 +237,8 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
                         isStreaming: false,
                         themeID: ThemeRuntimeState.currentThemeID(),
                         reviewCommentSelectionRouter: configuration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
-                        reviewCommentSourceContext: reviewCommentSourceContext
+                        reviewCommentSourceContext: reviewCommentSourceContext,
+                        resourcePressure: configuration.resourcePressure
                     )
                 )
             } else {

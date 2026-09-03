@@ -186,6 +186,8 @@ final class NativeLatexBlockView: UIView {
         currentCode = code
     }
 
+    var isDisplayingRenderedFormula: Bool { isShowingFormula }
+
     /// Render synchronously on the current thread. Used by export paths that
     /// snapshot the view immediately after layout.
     func applyAsFormulaSync(

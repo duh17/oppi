@@ -1262,6 +1262,198 @@ struct ChatTimelinePreparationRunwayTests {
         })
     }
 
+    @Test func seriousPressureCancelsSpeculativeRunwayAndKeepsVisibleDemand() async throws {
+        let gate = TimelineRunwayParseGate()
+        let runway = ChatTimelinePreparationRunway(parse: { content, themeID, scope, serverBaseURL in
+            await gate.parse(
+                content: content,
+                themeID: themeID,
+                scope: scope,
+                serverBaseURL: serverBaseURL
+            )
+        })
+        let speculative = request(itemID: "assistant-speculative", content: "Speculative **body**")
+        let visible = request(itemID: "assistant-visible", content: "Visible **body**")
+
+        #expect(runway.request(speculative, demand: .prefetch) == .inFlight)
+        #expect(runway.request(visible, demand: .prefetch) == .inFlight)
+        #expect(runway.request(visible, demand: .visible) == .inFlight)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await gate.startedCount() == 2
+        })
+
+        runway.resourcePressure = .serious
+        #expect(runway.state(for: speculative) == .neverRequested)
+        #expect(runway.state(for: visible) == .inFlight)
+        #expect(
+            runway.request(
+                request(itemID: "assistant-new-prefetch", content: "Should refuse"),
+                demand: .prefetch
+            ) == .neverRequested
+        )
+
+        await gate.open()
+        #expect(await waitForTimelineCondition(timeoutMs: 2_000) { @MainActor in
+            runway.state(for: visible) == .ready
+        })
+        #expect(runway.preparedBlocks(for: visible) != nil)
+        #expect(runway.preparedBlocks(for: speculative) == nil)
+    }
+
+    @Test func recoveringPressureDoesNotDrainAPrefetchBacklog() async throws {
+        let gate = TimelineRunwayParseGate()
+        let runway = ChatTimelinePreparationRunway(parse: { content, themeID, scope, serverBaseURL in
+            await gate.parse(
+                content: content,
+                themeID: themeID,
+                scope: scope,
+                serverBaseURL: serverBaseURL
+            )
+        })
+        let queued = (0..<6).map { index in
+            request(itemID: "assistant-queued-\(index)", content: "Queued \(index)")
+        }
+        let queuedCount = queued.count
+        for item in queued {
+            #expect(runway.request(item, demand: .prefetch) == .inFlight)
+        }
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await gate.startedCount() == queuedCount
+        })
+
+        runway.resourcePressure = .serious
+        runway.resourcePressure = .nominal
+        for item in queued {
+            #expect(runway.state(for: item) == .neverRequested)
+        }
+        #expect(await gate.startedCount() == queuedCount)
+        let recovered = request(itemID: "assistant-after-recovery", content: "After recovery")
+        #expect(runway.request(recovered, demand: .prefetch) == .inFlight)
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) {
+            await gate.startedCount() == queuedCount + 1
+        })
+        await gate.open()
+    }
+
+    @Test func seriousVisibleRasterStartsSerializedReducedPreparation() async throws {
+        let sourceImage = UIGraphicsImageRenderer(
+            size: CGSize(width: 900, height: 450)
+        ).image { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 900, height: 450))
+        }
+        let png = try #require(sourceImage.pngData())
+        let broker = TimelineImagePreparationBroker()
+        let url = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://oppi.example")!,
+            workspaceID: "workspace-a",
+            filePath: "images/serious.png"
+        ))
+        let reducedTarget = ChatTimelinePreparationRunway.ImageTarget(
+            pointWidth: 320,
+            displayScale: 3,
+            screenHeight: 844,
+            detailScale: StreamingRenderPolicy.imageDetailScale(for: .serious)
+        )
+        let loaders = ChatTimelinePreparationRunway.ImageLoaders(
+            fetchWorkspaceFile: { _, _ in png }
+        )
+
+        #expect(broker.request(
+            url: url,
+            scope: scope,
+            itemID: "assistant-serious-visible",
+            target: reducedTarget,
+            loaders: loaders,
+            demand: .visible(itemID: "assistant-serious-visible", id: UUID()),
+            onReady: {},
+            serverBaseURL: trustedServerBaseURL,
+            resourcePressure: .nominal
+        ) == .neverRequested)
+        #expect(broker.request(
+            url: url,
+            scope: scope,
+            itemID: "assistant-serious-visible",
+            target: reducedTarget,
+            loaders: loaders,
+            demand: .visible(itemID: "assistant-serious-visible", id: UUID()),
+            onReady: {},
+            serverBaseURL: trustedServerBaseURL,
+            resourcePressure: .serious
+        ) == .inFlight)
+        #expect(await waitForTimelineCondition(timeoutMs: 5_000) { @MainActor in
+            broker.preparedImage(url: url, scope: scope, target: reducedTarget) != nil
+        })
+        let artifact = try #require(broker.preparedImage(
+            url: url,
+            scope: scope,
+            target: reducedTarget
+        ))
+        #expect(artifact.preparedPixelSize.width <= CGFloat(reducedTarget.widthPixelBucket))
+        #expect(artifact.preparedPixelSize.width < 900)
+    }
+
+    @Test func seriousImageTargetUsesReducedPixelBuckets() {
+        let full = ChatTimelinePreparationRunway.ImageTarget(
+            pointWidth: 320,
+            displayScale: 3,
+            screenHeight: 844
+        )
+        let reduced = ChatTimelinePreparationRunway.ImageTarget(
+            pointWidth: 320,
+            displayScale: 3,
+            screenHeight: 844,
+            detailScale: StreamingRenderPolicy.imageDetailScale(for: .serious)
+        )
+        #expect(reduced.widthPixelBucket < full.widthPixelBucket)
+        #expect(reduced.maximumHeightPixelBucket < full.maximumHeightPixelBucket)
+        #expect(StreamingRenderPolicy.imageDetailScale(for: .serious) < 1)
+    }
+
+    @Test func controllerSeriousPressureCancelsPrefetchWithoutReconfiguringAllRows() {
+        let harness = makeTimelineHarness(sessionId: "session-pressure")
+        let items = (0..<8).map { index in
+            ChatItem.assistantMessage(
+                id: "pressure-\(index)",
+                text: "# Row \(index)\n\nBody",
+                timestamp: Date(timeIntervalSince1970: Double(index))
+            )
+        }
+        harness.applyAndLayout(items: items)
+        let runway = harness.coordinator.debugPreparationRunwayForTesting
+        let baselineCancel = runway.debugCancelAllPrefetchCount
+        let baselineReconfigure = harness.coordinator.debugReconfiguredItemIDs.count
+
+        harness.coordinator.collectionView(
+            harness.collectionView,
+            prefetchItemsAt: [IndexPath(item: 0, section: 0), IndexPath(item: 1, section: 0)]
+        )
+        #expect(!runway.debugPrefetchRequestedItemIDs.isEmpty)
+
+        harness.coordinator.applyResourcePressure(.serious)
+        #expect(runway.debugCancelAllPrefetchCount == baselineCancel + 1)
+        #expect(runway.resourcePressure == .serious)
+        #expect(
+            runway.request(
+                request(itemID: "pressure-0", content: "# Row 0\n\nBody"),
+                demand: .prefetch
+            ) == .neverRequested
+        )
+
+        let afterSerious = harness.coordinator.debugReconfiguredItemIDs.count
+        #expect(afterSerious == baselineReconfigure)
+
+        harness.coordinator.applyResourcePressure(.nominal)
+        #expect(harness.coordinator.debugReconfiguredItemIDs.count == afterSerious)
+        #expect(runway.debugCancelAllPrefetchCount == baselineCancel + 1)
+        #expect(
+            runway.request(
+                request(itemID: "pressure-after-recovery", content: "After recovery"),
+                demand: .prefetch
+            ) == .inFlight
+        )
+    }
+
     private func segmentContentSignature(_ segments: [FlatSegment]) -> [String] {
         segments.map { segment in
             switch segment {

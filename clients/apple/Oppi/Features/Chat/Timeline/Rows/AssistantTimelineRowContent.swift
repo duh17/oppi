@@ -45,6 +45,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     var preparedBlocks: [MarkdownBlock]?
     var preparationRevision: UInt64
     var imagePreparationContext: TimelineImagePreparationContext?
+    var resourcePressure: StreamingRenderPolicy.ResourcePressure
 
     var renderedMarkdownSource: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -74,7 +75,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         audioPlayer: AudioPlayerService? = nil,
         preparedBlocks: [MarkdownBlock]? = nil,
         preparationRevision: UInt64 = 0,
-        imagePreparationContext: TimelineImagePreparationContext? = nil
+        imagePreparationContext: TimelineImagePreparationContext? = nil,
+        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
     ) {
         self.text = text
         self.isStreaming = isStreaming
@@ -100,6 +102,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.preparedBlocks = preparedBlocks
         self.preparationRevision = preparationRevision
         self.imagePreparationContext = imagePreparationContext
+        self.resourcePressure = resourcePressure
     }
 
     func makeContentView() -> any UIView & UIContentView {
@@ -360,7 +363,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             sessionID: configuration.sessionId,
             serverBaseURL: configuration.serverBaseURL,
             preparationRevision: configuration.preparationRevision,
-            perfSurface: .inlineAssistant
+            perfSurface: .inlineAssistant,
+            resourcePressure: configuration.resourcePressure
         ))
     }
 

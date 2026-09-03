@@ -653,7 +653,7 @@ final class AssistantMarkdownSegmentApplier {
             codeView.apply(language: language, code: code, palette: palette, isOpen: isOpen)
             stackView.addArrangedSubview(codeView)
             codeBlockViews[index] = codeView
-            if !isOpen {
+            if !isOpen, config.decorativeDecision(for: .syntaxHighlight) == .allow {
                 applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
             }
 
@@ -690,6 +690,7 @@ final class AssistantMarkdownSegmentApplier {
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth,
                 preparesForDisplay: preparesImagesForDisplay,
+                resourcePressure: config.resourcePressure,
                 preparationContext: imagePreparationContext
             )
             stackView.addArrangedSubview(imageView)
@@ -739,13 +740,13 @@ final class AssistantMarkdownSegmentApplier {
                     lineRange: sourceLineRange(at: index)
                 )
             )
-            if isOpen {
-                mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
-            } else {
-                config.renderingMode.rendersHeightChangingBlocksSynchronously
-                    ? mermaidView.applyAsDiagramSync(code: code, palette: palette, availableWidth: preparationWidth)
-                    : mermaidView.applyAsDiagram(code: code, palette: palette, availableWidth: preparationWidth)
-            }
+            applyMermaid(
+                mermaidView,
+                code: code,
+                isOpen: isOpen,
+                config: config,
+                palette: palette
+            )
             stackView.addArrangedSubview(mermaidView)
             mermaidViews[index] = mermaidView
 
@@ -765,13 +766,13 @@ final class AssistantMarkdownSegmentApplier {
                     lineRange: sourceLineRange(at: index)
                 )
             )
-            if isOpen {
-                latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
-            } else {
-                config.renderingMode.rendersHeightChangingBlocksSynchronously
-                    ? latexView.applyAsFormulaSync(code: code, palette: palette, availableWidth: preparationWidth)
-                    : latexView.applyAsFormula(code: code, palette: palette, availableWidth: preparationWidth)
-            }
+            applyLatex(
+                latexView,
+                code: code,
+                isOpen: isOpen,
+                config: config,
+                palette: palette
+            )
             stackView.addArrangedSubview(latexView)
             latexViews[index] = latexView
         }
@@ -955,7 +956,8 @@ final class AssistantMarkdownSegmentApplier {
                         if isOpen {
                             ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: codeView)
                         }
-                        if !isOpen && highlightTasks[index] == nil {
+                        if !isOpen && highlightTasks[index] == nil,
+                           config.decorativeDecision(for: .syntaxHighlight) == .allow {
                             applyHighlight(index: index, language: language, code: code, mode: config.renderingMode)
                         }
                     }
@@ -997,6 +999,7 @@ final class AssistantMarkdownSegmentApplier {
                         renderingMode: config.renderingMode,
                         preferredDisplayWidth: preparationWidth,
                         preparesForDisplay: preparesImagesForDisplay,
+                        resourcePressure: config.resourcePressure,
                         preparationContext: imagePreparationContext
                     )
                 }
@@ -1039,14 +1042,14 @@ final class AssistantMarkdownSegmentApplier {
                             lineRange: sourceLineRange(at: index)
                         )
                     )
-                    if isOpen {
-                        mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
-                        ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: mermaidView)
-                    } else {
-                        config.renderingMode.rendersHeightChangingBlocksSynchronously
-                            ? mermaidView.applyAsDiagramSync(code: code, palette: palette, availableWidth: preparationWidth)
-                            : mermaidView.applyAsDiagram(code: code, palette: palette, availableWidth: preparationWidth)
-                    }
+                    applyMermaid(
+                        mermaidView,
+                        code: code,
+                        isOpen: isOpen,
+                        config: config,
+                        palette: palette,
+                        invalidateStreamingHeightOnCode: true
+                    )
                 }
 
             case .latexBlock(let code):
@@ -1062,14 +1065,14 @@ final class AssistantMarkdownSegmentApplier {
                             lineRange: sourceLineRange(at: index)
                         )
                     )
-                    if isOpen {
-                        latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
-                        ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: latexView)
-                    } else {
-                        config.renderingMode.rendersHeightChangingBlocksSynchronously
-                            ? latexView.applyAsFormulaSync(code: code, palette: palette, availableWidth: preparationWidth)
-                            : latexView.applyAsFormula(code: code, palette: palette, availableWidth: preparationWidth)
-                    }
+                    applyLatex(
+                        latexView,
+                        code: code,
+                        isOpen: isOpen,
+                        config: config,
+                        palette: palette,
+                        invalidateStreamingHeightOnCode: true
+                    )
                 }
             }
         }
@@ -1309,6 +1312,64 @@ final class AssistantMarkdownSegmentApplier {
         hr.translatesAutoresizingMaskIntoConstraints = false
         hr.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return hr
+    }
+
+    private func applyMermaid(
+        _ mermaidView: NativeMermaidBlockView,
+        code: String,
+        isOpen: Bool,
+        config: AssistantMarkdownContentView.Configuration,
+        palette: ThemePalette,
+        invalidateStreamingHeightOnCode: Bool = false
+    ) {
+        if isOpen {
+            mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
+            if invalidateStreamingHeightOnCode {
+                ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: mermaidView)
+            }
+            return
+        }
+
+        switch config.decorativeDecision(for: .mermaidDiagram) {
+        case .allow, .reducedDetail:
+            config.renderingMode.rendersHeightChangingBlocksSynchronously
+                ? mermaidView.applyAsDiagramSync(code: code, palette: palette, availableWidth: preparationWidth)
+                : mermaidView.applyAsDiagram(code: code, palette: palette, availableWidth: preparationWidth)
+        case .deferToPlain, .refuse:
+            if mermaidView.isDisplayingRenderedDiagram {
+                return
+            }
+            mermaidView.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: false)
+        }
+    }
+
+    private func applyLatex(
+        _ latexView: NativeLatexBlockView,
+        code: String,
+        isOpen: Bool,
+        config: AssistantMarkdownContentView.Configuration,
+        palette: ThemePalette,
+        invalidateStreamingHeightOnCode: Bool = false
+    ) {
+        if isOpen {
+            latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
+            if invalidateStreamingHeightOnCode {
+                ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: latexView)
+            }
+            return
+        }
+
+        switch config.decorativeDecision(for: .latexDiagram) {
+        case .allow, .reducedDetail:
+            config.renderingMode.rendersHeightChangingBlocksSynchronously
+                ? latexView.applyAsFormulaSync(code: code, palette: palette, availableWidth: preparationWidth)
+                : latexView.applyAsFormula(code: code, palette: palette, availableWidth: preparationWidth)
+        case .deferToPlain, .refuse:
+            if latexView.isDisplayingRenderedFormula {
+                return
+            }
+            latexView.applyAsCode(language: "latex", code: code, palette: palette, isOpen: false)
+        }
     }
 
     private func applyHighlight(index: Int, language: String?, code: String, mode: ContentRenderingMode) {

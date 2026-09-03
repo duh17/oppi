@@ -15,6 +15,7 @@ struct TimelineImagePreparationContext {
     let target: ChatTimelinePreparationRunway.ImageTarget
     let loaders: ChatTimelinePreparationRunway.ImageLoaders
     let serverBaseURL: URL?
+    let resourcePressure: StreamingRenderPolicy.ResourcePressure
     let onReady: () -> Void
     let onCancelled: () -> Void
 
@@ -27,7 +28,8 @@ struct TimelineImagePreparationContext {
             loaders: loaders,
             demand: .visible(itemID: itemID, id: visibleDemandID),
             onReady: onReady,
-            serverBaseURL: serverBaseURL
+            serverBaseURL: serverBaseURL,
+            resourcePressure: resourcePressure
         )
     }
 
@@ -71,9 +73,23 @@ final class ChatTimelinePreparationRunway {
         let pointWidth: CGFloat
         let displayScale: CGFloat
         let screenHeight: CGFloat
+        let detailScale: CGFloat
+
+        init(
+            pointWidth: CGFloat,
+            displayScale: CGFloat,
+            screenHeight: CGFloat,
+            detailScale: CGFloat = 1
+        ) {
+            self.pointWidth = pointWidth
+            self.displayScale = displayScale
+            self.screenHeight = screenHeight
+            let finite = detailScale.isFinite ? detailScale : 1
+            self.detailScale = min(1, max(0.01, finite))
+        }
 
         var widthPixelBucket: Int {
-            Self.bucket(pointWidth * displayScale)
+            Self.bucket(pointWidth * displayScale * detailScale)
         }
 
         var maximumHeightPixelBucket: Int {
@@ -81,7 +97,7 @@ final class ChatTimelinePreparationRunway {
                 for: .inlineProse,
                 screenHeight: screenHeight
             ).maximumHeight ?? screenHeight
-            return Self.bucket(maximumHeight * displayScale)
+            return Self.bucket(maximumHeight * displayScale * detailScale)
         }
 
         private static func bucket(_ value: CGFloat) -> Int {
@@ -186,6 +202,14 @@ final class ChatTimelinePreparationRunway {
     private var order: UInt64 = 0
     private let imageBroker: TimelineImagePreparationBroker
     private let parse: Parse
+    var resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal {
+        didSet {
+            guard oldValue != resourcePressure else { return }
+            if !StreamingRenderPolicy.admitsSpeculativeRunwayWork(for: resourcePressure) {
+                cancelAllPrefetch()
+            }
+        }
+    }
     #if DEBUG
     private(set) var debugPrefetchRequestedItemIDs = Set<String>()
     private(set) var debugCancelAllPrefetchCount = 0
@@ -215,6 +239,12 @@ final class ChatTimelinePreparationRunway {
     }
 
     func request(_ request: Request, demand: Demand) -> State {
+        if demand == .prefetch,
+           !StreamingRenderPolicy.admitsSpeculativeRunwayWork(for: resourcePressure) {
+            cancel(itemID: request.itemID, demand: .prefetch)
+            return .neverRequested
+        }
+
         guard !request.isStreaming,
               !request.content.isEmpty,
               request.content.utf8.count <= Self.maximumSourceBytesPerRequest else {
@@ -244,7 +274,12 @@ final class ChatTimelinePreparationRunway {
 
         // A never-prefetched visible cell uses the canonical synchronous
         // renderer. Starting another parse here would duplicate that work.
-        guard demand == .prefetch else { return .neverRequested }
+        // Still track identity so visible image consumers can join the serial
+        // raster broker, including reduced-detail work under serious pressure.
+        guard demand == .prefetch else {
+            replaceCurrentKeyIfNeeded(with: key)
+            return .neverRequested
+        }
 
         replaceCurrentKeyIfNeeded(with: key)
         guard operations.count < Self.maximumParseOperations else {
@@ -319,6 +354,7 @@ final class ChatTimelinePreparationRunway {
             target: request.target,
             loaders: request.imageLoaders,
             serverBaseURL: request.serverBaseURL,
+            resourcePressure: resourcePressure,
             onReady: { [weak self] in
                 self?.handleImagePreparationCompletion(key: key)
             },
@@ -450,7 +486,8 @@ final class ChatTimelinePreparationRunway {
                 onReady: { [weak self] in
                     self?.handleImagePreparationCompletion(key: key)
                 },
-                serverBaseURL: key.serverBaseURL
+                serverBaseURL: key.serverBaseURL,
+                resourcePressure: resourcePressure
             )
         }
     }
@@ -698,7 +735,8 @@ final class TimelineImagePreparationBroker {
         loaders: ChatTimelinePreparationRunway.ImageLoaders,
         demand: Demand,
         onReady: @escaping () -> Void,
-        serverBaseURL: URL? = nil
+        serverBaseURL: URL? = nil,
+        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
     ) -> State {
         guard demand.itemID == itemID,
               RemoteMarkdownImagePolicy.decision(for: url) == .internalImageURL,
@@ -750,7 +788,21 @@ final class TimelineImagePreparationBroker {
         if failedKeys[key] != nil {
             return .neverRequested
         }
-        guard case .prefetch = demand,
+        let mayStart: Bool
+        switch demand {
+        case .prefetch:
+            mayStart = StreamingRenderPolicy.admitsSpeculativeRunwayWork(for: resourcePressure)
+        case .visible:
+            // Nominal visible misses stay on the canonical renderer. Serious
+            // visible work starts here so destination-size decode stays serial
+            // and reduced.
+            mayStart = StreamingRenderPolicy.decision(
+                for: .rasterImage,
+                pressure: resourcePressure,
+                consumer: .visible
+            ) == .reducedDetail
+        }
+        guard mayStart,
               admittedKeysByItemID[itemID, default: []].count < Self.maximumImagesPerItem,
               operations.count < Self.maximumOperations,
               demandRegistrationCount < Self.maximumDemandRegistrations else {
@@ -1157,6 +1209,10 @@ extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefe
         }
         lastPrefetchCenterIndex = center
 
+        guard StreamingRenderPolicy.admitsSpeculativeRunwayWork(for: resourcePressure) else {
+            return
+        }
+
         for itemID in boundedIDs {
             guard let item = currentItemByID[itemID],
                   case .assistantMessage = item,
@@ -1190,6 +1246,46 @@ extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefe
         lastPrefetchCenterIndex = nil
         lastPrefetchDirection = 0
     }
+
+    func applyResourcePressure(_ pressure: StreamingRenderPolicy.ResourcePressure) {
+        #if DEBUG
+        debugLastResourcePressureAppliedOnMainActorForTesting = Thread.isMainThread
+        #endif
+        resourcePressure = pressure
+        // Entering serious/critical cancels speculative runway work only.
+        // Visible/explicit consumers stay; prepared artifacts stay cached.
+        // Recovery does not reconfigure the window or drain a backlog.
+        preparationRunway.resourcePressure = pressure
+    }
+
+    @objc nonisolated func handleResourcePressureDidChange() {
+        Task { @MainActor [weak self] in
+            self?.applyResourcePressureFromNotification()
+        }
+    }
+
+    private func applyResourcePressureFromNotification() {
+        #if DEBUG
+        if let injected = debugNextNotificationPressureForTesting {
+            debugNextNotificationPressureForTesting = nil
+            applyResourcePressure(injected)
+            return
+        }
+        if debugIgnoresLiveProcessInfoResourcePressureForTesting {
+            return
+        }
+        #endif
+        applyResourcePressure(.current())
+    }
+
+    #if DEBUG
+    func debugInstallResourcePressureSnapshotForTesting(
+        _ pressure: StreamingRenderPolicy.ResourcePressure
+    ) {
+        debugIgnoresLiveProcessInfoResourcePressureForTesting = true
+        applyResourcePressure(pressure)
+    }
+    #endif
 
     @objc func handleTimelineMemoryWarning() {
         preparationRunway.trimUnreferencedArtifacts()
@@ -1228,7 +1324,8 @@ extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefe
         return ChatTimelinePreparationRunway.ImageTarget(
             pointWidth: pointWidth,
             displayScale: screen?.scale ?? UIScreen.main.scale,
-            screenHeight: screen?.bounds.height ?? fallbackBounds.height
+            screenHeight: screen?.bounds.height ?? fallbackBounds.height,
+            detailScale: StreamingRenderPolicy.imageDetailScale(for: resourcePressure)
         )
     }
 

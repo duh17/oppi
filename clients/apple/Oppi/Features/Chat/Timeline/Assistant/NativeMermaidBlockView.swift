@@ -92,6 +92,7 @@ final class NativeMermaidBlockView: UIView {
     private var currentCode: String?
     private var currentPalette: ThemePalette?
     private var isShowingDiagram = false
+    var isDisplayingRenderedDiagram: Bool { isShowingDiagram }
     /// Natural (unscaled) diagram size from the latest successful render.
     /// Used to recompute inline height if the view width changes later.
     private var renderedDiagramNaturalSize: CGSize?

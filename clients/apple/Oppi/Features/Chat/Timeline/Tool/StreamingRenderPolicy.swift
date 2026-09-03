@@ -27,6 +27,149 @@ enum StreamingRenderPolicy {
         case full
     }
 
+    // MARK: - Resource pressure
+
+    /// Injected iOS thermal/power snapshot. The timeline controller owns the
+    /// current value; policy functions stay pure so tests can drive the matrix.
+    struct ResourcePressure: Equatable, Sendable {
+        var thermalState: ProcessInfo.ThermalState
+        var isLowPowerModeEnabled: Bool
+
+        static let nominal = ResourcePressure(
+            thermalState: .nominal,
+            isLowPowerModeEnabled: false
+        )
+        static let fair = ResourcePressure(
+            thermalState: .fair,
+            isLowPowerModeEnabled: false
+        )
+        static let serious = ResourcePressure(
+            thermalState: .serious,
+            isLowPowerModeEnabled: false
+        )
+        static let critical = ResourcePressure(
+            thermalState: .critical,
+            isLowPowerModeEnabled: false
+        )
+
+        static func current(processInfo: ProcessInfo = .processInfo) -> ResourcePressure {
+            ResourcePressure(
+                thermalState: processInfo.thermalState,
+                isLowPowerModeEnabled: processInfo.isLowPowerModeEnabled
+            )
+        }
+    }
+
+    /// Coarse work-admission level derived from thermal state and Low Power Mode.
+    enum WorkAdmission: Int, Sendable, Comparable {
+        case nominal = 0
+        case serious = 1
+        case critical = 2
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            lhs.rawValue < rhs.rawValue
+        }
+    }
+
+    /// Who is asking for the work. Speculative is runway/prefetch; explicit is
+    /// an existing user action such as expansion or full-screen.
+    enum WorkConsumer: Sendable, Equatable {
+        case speculative
+        case visible
+        case explicit
+    }
+
+    enum DecorativeWork: Sendable, Equatable {
+        case syntaxHighlight
+        case mermaidDiagram
+        case latexDiagram
+        case rasterImage
+        case offscreenMarkdownParse
+    }
+
+    enum DecorativeDecision: Sendable, Equatable {
+        case allow
+        case reducedDetail
+        case deferToPlain
+        case refuse
+    }
+
+    /// Destination pixel scale for internal raster work. Serious/critical use
+    /// half detail so decode/vImage work shrinks rather than moving to another queue.
+    static let seriousImageDetailScale: CGFloat = 0.5
+
+    static func workAdmission(for pressure: ResourcePressure) -> WorkAdmission {
+        let thermal: WorkAdmission
+        switch pressure.thermalState {
+        case .nominal, .fair:
+            thermal = .nominal
+        case .serious:
+            thermal = .serious
+        case .critical:
+            thermal = .critical
+        @unknown default:
+            thermal = .critical
+        }
+        if pressure.isLowPowerModeEnabled {
+            return max(thermal, .serious)
+        }
+        return thermal
+    }
+
+    static func admitsSpeculativeRunwayWork(for pressure: ResourcePressure) -> Bool {
+        workAdmission(for: pressure) == .nominal
+    }
+
+    static func imageDetailScale(for pressure: ResourcePressure) -> CGFloat {
+        workAdmission(for: pressure) == .nominal ? 1 : seriousImageDetailScale
+    }
+
+    static func decision(
+        for work: DecorativeWork,
+        pressure: ResourcePressure,
+        consumer: WorkConsumer
+    ) -> DecorativeDecision {
+        let admission = workAdmission(for: pressure)
+        if consumer == .speculative {
+            return admission == .nominal ? .allow : .refuse
+        }
+
+        switch work {
+        case .offscreenMarkdownParse:
+            return admission == .nominal ? .allow : .refuse
+
+        case .rasterImage:
+            switch admission {
+            case .nominal:
+                return .allow
+            case .serious:
+                return .reducedDetail
+            case .critical:
+                return consumer == .explicit ? .reducedDetail : .refuse
+            }
+
+        case .syntaxHighlight:
+            switch admission {
+            case .nominal:
+                return .allow
+            case .serious:
+                return .deferToPlain
+            case .critical:
+                return consumer == .explicit ? .deferToPlain : .refuse
+            }
+
+        case .mermaidDiagram, .latexDiagram:
+            switch admission {
+            case .nominal:
+                return .allow
+            case .serious:
+                return consumer == .explicit ? .allow : .deferToPlain
+            case .critical:
+                return consumer == .explicit ? .allow : .refuse
+            }
+        }
+    }
+
     // MARK: - Content Kind
 
     /// Discriminated content type for policy decisions.
@@ -93,13 +236,18 @@ enum StreamingRenderPolicy {
     ///   - byteCount: Total byte count of the content.
     ///   - lineCount: Total line count of the content.
     ///   - maxLineByteCount: Byte count of the longest single line.
+    ///   - pressure: Injected thermal/power snapshot. Defaults to nominal so
+    ///     existing call sites keep current behavior until they pass one.
+    ///   - consumer: Visible timeline work vs an explicit user action.
     /// - Returns: The render tier to use.
     static func tier(
         isStreaming: Bool,
         contentKind: ContentKind,
         byteCount: Int,
         lineCount: Int,
-        maxLineByteCount: Int = 0
+        maxLineByteCount: Int = 0,
+        pressure: ResourcePressure = .nominal,
+        consumer: WorkConsumer = .visible
     ) -> RenderTier {
         // Media/embedded views are always fully rendered — they have no
         // streaming path (renderExpandedReadMediaMode/renderExpandedPlotMode
@@ -111,6 +259,24 @@ enum StreamingRenderPolicy {
         // All text-based strategies agree: streaming → cheap
         if isStreaming {
             return .cheap
+        }
+
+        switch workAdmission(for: pressure) {
+        case .nominal:
+            break
+        case .serious:
+            // Plain/live text first. Serious defers syntax-color even on an
+            // expanded tool; explicit full-screen/export uses other surfaces.
+            switch contentKind {
+            case .code, .markdown:
+                return .cheap
+            default:
+                break
+            }
+        case .critical:
+            if consumer != .explicit {
+                return .cheap
+            }
         }
 
         // Only code has a deferred path in the current implementation

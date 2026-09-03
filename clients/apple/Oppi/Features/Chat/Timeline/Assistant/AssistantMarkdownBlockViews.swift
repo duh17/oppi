@@ -390,6 +390,8 @@ struct NativeCodeBlockLayoutDiagnostics {
 }
 
 extension NativeCodeBlockView {
+    var debugHasHighlightedTextForTesting: Bool { highlightedText != nil }
+
     var debugWrapButtonAccessibilityLabelForTesting: String? {
         wrapButton.accessibilityLabel
     }

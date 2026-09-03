@@ -400,6 +400,7 @@ func makeWindowedTimelineHarness(
 @MainActor
 private func makeTimelineHarness(sessionId: String, collectionView: UICollectionView) -> TimelineTestHarness {
     let coordinator = ChatTimelineCollectionHost.Controller()
+    coordinator.debugInstallResourcePressureSnapshotForTesting(.nominal)
     coordinator.configureDataSource(collectionView: collectionView)
 
     let reducer = TimelineReducer()

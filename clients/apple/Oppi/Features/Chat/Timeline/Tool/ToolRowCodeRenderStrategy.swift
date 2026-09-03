@@ -23,7 +23,8 @@ struct ToolRowCodeRenderStrategy {
         isCurrentModeCode: Bool,
         wasExpandedVisible: Bool,
         sessionId: String? = nil,
-        viewportPolicy: ToolRowViewportPolicy = .code
+        viewportPolicy: ToolRowViewportPolicy = .code,
+        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
     ) -> ExpandedRenderOutput {
         let displayText = ToolTimelineRowRenderMetrics.displayOutputText(text)
         let resolvedStartLine = startLine ?? 1
@@ -73,7 +74,9 @@ struct ToolRowCodeRenderStrategy {
                     contentKind: .code(language: languageCategory),
                     byteCount: profile.byteCount,
                     lineCount: profile.lineCount,
-                    maxLineByteCount: profile.maxLineByteCount
+                    maxLineByteCount: profile.maxLineByteCount,
+                    pressure: resourcePressure,
+                    consumer: .explicit
                 )
             }
 

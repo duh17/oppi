@@ -85,6 +85,9 @@ final class AssistantMarkdownContentView: UIView {
         /// - `.live`: async rendering for scroll performance (default)
         /// - `.export`: synchronous rendering so snapshots capture all content
         let renderingMode: ContentRenderingMode
+        /// Timeline-owned thermal/power snapshot. Export and full-screen readers
+        /// keep full decorative work; live chat consults StreamingRenderPolicy.
+        let resourcePressure: StreamingRenderPolicy.ResourcePressure
 
         private init(
             content: String,
@@ -103,7 +106,8 @@ final class AssistantMarkdownContentView: UIView {
             readerPreferences: FullScreenReaderPreferences? = nil,
             preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
-            renderingMode: ContentRenderingMode = .live
+            renderingMode: ContentRenderingMode = .live,
+            resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
         ) {
             self.content = content
             self.isStreaming = isStreaming
@@ -122,6 +126,7 @@ final class AssistantMarkdownContentView: UIView {
             self.preparationRevision = preparationRevision
             self.perfSurface = perfSurface
             self.renderingMode = renderingMode
+            self.resourcePressure = resourcePressure
         }
 
         static func make(
@@ -141,7 +146,8 @@ final class AssistantMarkdownContentView: UIView {
             readerPreferences: FullScreenReaderPreferences? = nil,
             preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
-            renderingMode: ContentRenderingMode = .live
+            renderingMode: ContentRenderingMode = .live,
+            resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
         ) -> Self {
             Self(
                 content: content,
@@ -160,7 +166,8 @@ final class AssistantMarkdownContentView: UIView {
                 readerPreferences: readerPreferences,
                 preparationRevision: preparationRevision,
                 perfSurface: perfSurface,
-                renderingMode: renderingMode
+                renderingMode: renderingMode,
+                resourcePressure: resourcePressure
             )
         }
 
@@ -182,6 +189,19 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.preparationRevision == rhs.preparationRevision
                 && lhs.perfSurface == rhs.perfSurface
                 && lhs.renderingMode == rhs.renderingMode
+                && lhs.resourcePressure == rhs.resourcePressure
+        }
+
+        @MainActor
+        func decorativeDecision(
+            for work: StreamingRenderPolicy.DecorativeWork
+        ) -> StreamingRenderPolicy.DecorativeDecision {
+            guard renderingMode == .live else { return .allow }
+            return StreamingRenderPolicy.decision(
+                for: work,
+                pressure: resourcePressure,
+                consumer: .visible
+            )
         }
     }
 
