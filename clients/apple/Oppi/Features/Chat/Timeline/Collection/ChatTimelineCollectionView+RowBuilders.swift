@@ -257,14 +257,90 @@ extension ChatTimelineCollectionHost.Controller {
         return ErrorTimelineRowConfiguration(message: message)
     }
 
-    func toolRowConfiguration(itemID: String, item: ChatItem) -> ToolTimelineRowConfiguration? {
+    func toolRowConfiguration(itemID: String, item: ChatItem) -> (any UIContentConfiguration)? {
         guard case .toolCall(_, let tool, let argsSummary, let outputPreview, _, let isError, let isDone) = item else {
             return nil
         }
 
+        let details = toolDetailsStore?.details(for: itemID)
+        let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
+        let hasCanonicalAudioDetails = ToolPresentationBuilder.toolAudioPresentationDetails(from: details) != nil
+        let hasLifecycleVoicePresentation = audioLifecycleCoordinator.map {
+            $0.presentation.timelinePresentation(for: itemID) != .hidden
+        } ?? false
+
+        // Ordinary collapsed tools paint chrome only. Branch before full-output
+        // lookup, expanded descriptors, media adapters, and fetcher closures.
+        // Voice-while-collapsed stays full when serialized audio details exist
+        // or the lifecycle coordinator already has a non-hidden presentation.
+        if !isExpanded && !hasCanonicalAudioDetails && !hasLifecycleVoicePresentation {
+            return makeCollapsedToolRowConfiguration(
+                itemID: itemID,
+                tool: tool,
+                argsSummary: argsSummary,
+                outputPreview: outputPreview,
+                isError: isError,
+                isDone: isDone,
+                details: details
+            )
+        }
+
+        return makeFullToolRowConfiguration(
+            itemID: itemID,
+            tool: tool,
+            argsSummary: argsSummary,
+            outputPreview: outputPreview,
+            isError: isError,
+            isDone: isDone,
+            details: details
+        )
+    }
+
+    private func makeCollapsedToolRowConfiguration(
+        itemID: String,
+        tool: String,
+        argsSummary: String,
+        outputPreview: String,
+        isError: Bool,
+        isDone: Bool,
+        details: JSONValue?
+    ) -> CollapsedToolTimelineRowConfiguration {
         let context = ToolPresentationBuilder.Context(
             args: toolArgsStore?.args(for: itemID),
-            details: toolDetailsStore?.details(for: itemID),
+            details: details,
+            expandedItemIDs: [],
+            fullOutput: "",
+            isLoadingOutput: false,
+            callSegments: toolSegmentStore?.callSegments(for: itemID),
+            resultSegments: toolSegmentStore?.resultSegments(for: itemID),
+            startedAt: reducer?.toolStartTime(for: itemID),
+            elapsedSeconds: reducer?.toolElapsed(for: itemID)
+        )
+        let chrome = ToolPresentationBuilder.build(
+            itemID: itemID,
+            tool: tool,
+            argsSummary: argsSummary,
+            outputPreview: outputPreview,
+            isError: isError,
+            isDone: isDone,
+            isInterrupted: reducer?.isToolInterrupted(itemID) == true,
+            context: context
+        )
+        return CollapsedToolTimelineRowConfiguration(chrome: chrome)
+    }
+
+    private func makeFullToolRowConfiguration(
+        itemID: String,
+        tool: String,
+        argsSummary: String,
+        outputPreview: String,
+        isError: Bool,
+        isDone: Bool,
+        details: JSONValue?
+    ) -> ToolTimelineRowConfiguration {
+        let context = ToolPresentationBuilder.Context(
+            args: toolArgsStore?.args(for: itemID),
+            details: details,
             expandedItemIDs: reducer?.expandedItemIDs ?? [],
             fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
             isLoadingOutput: toolOutputLoader.isLoading(itemID),

@@ -58,6 +58,7 @@
 		08452F59BD5D5A35DE507B16 /* ShareQuickSessionComposerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C163A37C3B639CAE8420C462 /* ShareQuickSessionComposerViewController.swift */; };
 		0885D505BC21AFA6FE02FFB1 /* MacWorkspaceWorktreeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 702BC47E7ABC614F3A2C7A0D /* MacWorkspaceWorktreeTests.swift */; };
 		08B507FC7E52C507B6A5C83B /* ExtensionUIWireDecoding.swift in Sources */ = {isa = PBXBuildFile; fileRef = C06F312FB9AB528776C77D7F /* ExtensionUIWireDecoding.swift */; };
+		08B71B833159309A2D9E5F20 /* CollapsedToolTimelineRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBC79E55351FBB91C420735C /* CollapsedToolTimelineRowContent.swift */; };
 		08BB4EBC6BA7328B0CA69DE7 /* WorkspaceDetailSortTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E4708C3677D2364AFE9EFA /* WorkspaceDetailSortTests.swift */; };
 		09E4800E3D9F819651788276 /* MacComposerDictationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8163D251F7507D0D12DD35A7 /* MacComposerDictationController.swift */; };
 		0A0BE2B2E8404B7380DC44E9 /* DeviceCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979FDD56F528B3731944F74D /* DeviceCredential.swift */; };
@@ -2586,6 +2587,7 @@
 		BB3D29F13D78371746017409 /* IconAssetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconAssetCache.swift; sourceTree = "<group>"; };
 		BB45322CC7906C889DDA0B15 /* ServerTransportAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTransportAPIClient.swift; sourceTree = "<group>"; };
 		BBC05F7A98BD9C37D0A5EA5B /* SessionGridRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionGridRendererTests.swift; sourceTree = "<group>"; };
+		BBC79E55351FBB91C420735C /* CollapsedToolTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollapsedToolTimelineRowContent.swift; sourceTree = "<group>"; };
 		BBE970BF876A686C51DB91D6 /* JetBrainsMono-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-SemiBold.ttf"; sourceTree = "<group>"; };
 		BCA069FF2800CFB20DFDC09A /* WorkspaceWorktree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWorktree.swift; sourceTree = "<group>"; };
 		BCB8D14CE76E0FADA85E98C8 /* WorkspaceCRUDHappyPathE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCRUDHappyPathE2ETests.swift; sourceTree = "<group>"; };
@@ -4125,6 +4127,7 @@
 			isa = PBXGroup;
 			children = (
 				42BB6A03DD8FEF3287493701 /* BashToolRowView.swift */,
+				BBC79E55351FBB91C420735C /* CollapsedToolTimelineRowContent.swift */,
 				215A2085CF481FF99A7DEE2E /* ExpandedRenderOutput.swift */,
 				A804FAE0B4AC1C99A553070D /* NativeAudioPlayerStripView.swift */,
 				0C57BE9C65CE037A604BBB75 /* NativeExpandedToolViews.swift */,
@@ -6821,6 +6824,7 @@
 				BBA54BCDABDFB541F27A09BA /* CodeBlockWrappingHarnessView.swift in Sources */,
 				CCFF41F07E0FF7A644D18514 /* CodeFileView.swift in Sources */,
 				28F108EA9F51CF1D051BE4A5 /* CodeGutterAlignmentHarnessView.swift in Sources */,
+				08B71B833159309A2D9E5F20 /* CollapsedToolTimelineRowContent.swift in Sources */,
 				8386BF24BFE6E1D58EC70875 /* Color+Theme.swift in Sources */,
 				0DDA0AEB25EFC3D3F98D0D66 /* CommandTracker.swift in Sources */,
 				49B5B90D560D517C6CC9CEF1 /* CommitDetailView.swift in Sources */,

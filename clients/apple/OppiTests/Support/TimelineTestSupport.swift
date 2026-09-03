@@ -525,6 +525,19 @@ func configuredTimelineCell(
 }
 
 @MainActor
+func timelineToolRowConfiguration(
+    from config: (any UIContentConfiguration)?
+) -> ToolTimelineRowConfiguration? {
+    if let full = config as? ToolTimelineRowConfiguration {
+        return full
+    }
+    if let collapsed = config as? CollapsedToolTimelineRowConfiguration {
+        return collapsed.chrome
+    }
+    return nil
+}
+
+@MainActor
 func expectTimelineRowsUseConfigurationType<T>(
     in collectionView: UICollectionView,
     items: [Int],

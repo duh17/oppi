@@ -408,4 +408,107 @@ struct StreamingApplyPerfBench {
         print("METRIC long_timeline_layout_max_ms=\(timelineStats.layoutMaxMs)")
         print("METRIC long_cell_configure_max_ms=\(timelineStats.cellConfigureMaxMs)")
     }
+
+    /// Cold configure+size of 80 real collapsed tool `SafeSizingCell`s.
+    /// Descriptor-only builder time is not the measurement; each sample paints
+    /// a cell and asks it to self-size.
+    @Test("Cold 80-tool SafeSizingCell configure and size")
+    func coldCollapsedToolConfigureAndSize() {
+        ChatTimelinePerf.reset()
+        let h = Harness()
+        var items: [ChatItem] = []
+        items.reserveCapacity(80)
+
+        for index in 0..<80 {
+            let itemID = "cold-tool-\(index)"
+            let tool: String
+            let argsSummary: String
+            switch index % 4 {
+            case 0:
+                tool = "bash"
+                argsSummary = "command: echo \(index)"
+                h.toolArgsStore.set(["command": .string("echo \(index)")], for: itemID)
+            case 1:
+                tool = "read"
+                argsSummary = "path: src/file\(index).swift"
+                h.toolArgsStore.set(["path": .string("src/file\(index).swift")], for: itemID)
+            case 2:
+                tool = "edit"
+                argsSummary = "path: src/file\(index).swift"
+                h.toolArgsStore.set([
+                    "path": .string("src/file\(index).swift"),
+                    "edits": .array([
+                        .object([
+                            "oldText": .string("let value = \(index)\n"),
+                            "newText": .string("let value = \(index + 1)\n"),
+                        ]),
+                    ]),
+                ], for: itemID)
+            default:
+                tool = "extensions.backlog"
+                argsSummary = "action: list-all"
+            }
+            items.append(.toolCall(
+                id: itemID,
+                tool: tool,
+                argsSummary: argsSummary,
+                outputPreview: "output \(index)",
+                outputByteCount: 64,
+                isError: false,
+                isDone: true
+            ))
+        }
+
+        let applyStartNs = DispatchTime.now().uptimeNanoseconds
+        h.apply(items: items, isBusy: false)
+        h.collectionView.layoutIfNeeded()
+        let applyMs = Double(DispatchTime.now().uptimeNanoseconds &- applyStartNs) / 1_000_000.0
+
+        var configureDurationsNs: [UInt64] = []
+        var sizeDurationsNs: [UInt64] = []
+        configureDurationsNs.reserveCapacity(items.count)
+        sizeDurationsNs.reserveCapacity(items.count)
+
+        let width = h.collectionView.bounds.width > 0 ? h.collectionView.bounds.width : 390
+        for (index, item) in items.enumerated() {
+            let configureStartNs = DispatchTime.now().uptimeNanoseconds
+            let configuration = h.coordinator.toolRowConfiguration(itemID: item.id, item: item)
+            let cell = SafeSizingCell(frame: CGRect(x: 0, y: 0, width: width, height: 44))
+            cell.contentConfiguration = configuration
+            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            cell.contentView.clipsToBounds = true
+            configureDurationsNs.append(DispatchTime.now().uptimeNanoseconds &- configureStartNs)
+
+            #expect(
+                !(configuration?.makeContentView() is ToolTimelineRowContentView),
+                "collapsed tool \(item.id) must use cheap content view"
+            )
+
+            let attributes = UICollectionViewLayoutAttributes(
+                forCellWith: IndexPath(item: index, section: 0)
+            )
+            attributes.size = CGSize(width: width, height: 100)
+            let sizeStartNs = DispatchTime.now().uptimeNanoseconds
+            let fitted = cell.preferredLayoutAttributesFitting(attributes)
+            sizeDurationsNs.append(DispatchTime.now().uptimeNanoseconds &- sizeStartNs)
+            #expect(fitted.size.height.isFinite && fitted.size.height > 0)
+        }
+
+        let configureStats = Stats(durationsNs: configureDurationsNs)
+        let sizeStats = Stats(durationsNs: sizeDurationsNs)
+        let timelineStats = ChatTimelinePerf.snapshot()
+
+        print("METRIC cold_80_tool_apply_ms=\(String(format: "%.1f", applyMs))")
+        print("METRIC collapsed_tool_configure_p50_us=\(String(format: "%.1f", configureStats.p50Us))")
+        print("METRIC collapsed_tool_configure_p95_us=\(String(format: "%.1f", configureStats.p95Us))")
+        print("METRIC collapsed_tool_configure_max_us=\(String(format: "%.1f", configureStats.maxUs))")
+        print("METRIC collapsed_tool_size_p50_us=\(String(format: "%.1f", sizeStats.p50Us))")
+        print("METRIC collapsed_tool_size_p95_us=\(String(format: "%.1f", sizeStats.p95Us))")
+        print("METRIC collapsed_tool_size_max_us=\(String(format: "%.1f", sizeStats.maxUs))")
+        print("METRIC cold_80_cell_configure_max_ms=\(timelineStats.cellConfigureMaxMs)")
+        print("METRIC cold_80_failsafe_configure_count=\(timelineStats.failsafeConfigureCount)")
+
+        #expect(items.count == 80)
+        #expect(timelineStats.failsafeConfigureCount == 0)
+    }
 }

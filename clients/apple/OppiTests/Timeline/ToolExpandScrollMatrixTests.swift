@@ -154,6 +154,7 @@ struct ToolExpandScrollMatrixTests {
         let item = try #require(fixture.items.first { $0.id == toolCase.targetItemID })
         let config = try #require(
             fixture.harness.coordinator.toolRowConfiguration(itemID: toolCase.targetItemID, item: item)
+                as? ToolTimelineRowConfiguration
         )
         let expandedContent = try #require(config.expandedContent)
         let policy = ToolTimelineRowInteractionPolicy.forExpandedContent(expandedContent, isDone: config.isDone)

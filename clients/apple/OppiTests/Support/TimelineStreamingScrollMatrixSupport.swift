@@ -407,7 +407,8 @@ final class TimelineStreamingScrollScenarioRunner {
             }
         }
 
-        guard let config = harness.coordinator.toolRowConfiguration(itemID: toolEventID, item: toolItem) else {
+        guard let config = harness.coordinator.toolRowConfiguration(itemID: toolEventID, item: toolItem)
+                as? ToolTimelineRowConfiguration else {
             Issue.record("\(step): missing tool configuration for \(toolEventID)")
             return
         }

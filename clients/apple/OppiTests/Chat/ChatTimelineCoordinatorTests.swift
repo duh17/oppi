@@ -105,6 +105,9 @@ struct ChatTimelineCoordinatorTests {
         controller.apply(configuration: config, to: collectionView)
         collectionView.layoutIfNeeded()
 
+        controller.collectionView(collectionView, didSelectItemAt: IndexPath(item: 0, section: 0))
+        collectionView.layoutIfNeeded()
+
         let cell = try configuredTimelineCell(in: collectionView, item: 0)
         let rowConfig = try #require(cell.contentConfiguration as? ToolTimelineRowConfiguration)
         #expect(rowConfig.sessionAttachmentFetcher != nil)
@@ -153,6 +156,9 @@ struct ChatTimelineCoordinatorTests {
             workspaceId: nil
         )
         controller.apply(configuration: config, to: collectionView)
+        collectionView.layoutIfNeeded()
+
+        controller.collectionView(collectionView, didSelectItemAt: IndexPath(item: 0, section: 0))
         collectionView.layoutIfNeeded()
 
         let cell = try configuredTimelineCell(in: collectionView, item: 0)
@@ -753,7 +759,7 @@ struct ChatTimelineCoordinatorTests {
         )
 
         let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
-        let config = try #require(cell.contentConfiguration as? ToolTimelineRowConfiguration)
+        let config = try #require(timelineToolRowConfiguration(from: cell.contentConfiguration))
         #expect(config.collapsedImageBase64 == nil)
 
         harness.coordinator.collectionView(

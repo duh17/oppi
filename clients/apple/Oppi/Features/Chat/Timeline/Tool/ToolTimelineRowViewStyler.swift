@@ -87,6 +87,28 @@ enum ToolTimelineRowViewStyler {
     /// Refresh fixed UIKit colors whenever a reusable row configuration is
     /// applied. SwiftUI invalidates the timeline for theme changes, but these
     /// UIKit views outlive a single body evaluation and must be recolored.
+    static func applyChromeTheme(
+        statusImageView: UIImageView,
+        toolImageView: UIImageView,
+        titleLabel: UILabel,
+        languageBadgeIconView: UIImageView,
+        addedLabel: UILabel,
+        removedLabel: UILabel,
+        trailingLabel: UILabel,
+        elapsedLabel: UILabel
+    ) {
+        let palette = ThemeRuntimeState.currentPalette()
+        toolImageView.tintColor = UIColor(palette.cyan)
+        titleLabel.textColor = UIColor(palette.toolTitle)
+        languageBadgeIconView.tintColor = UIColor(palette.blue)
+        addedLabel.textColor = UIColor(palette.toolDiffAdded)
+        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
+        trailingLabel.textColor = UIColor(palette.comment)
+        elapsedLabel.textColor = UIColor(palette.comment)
+        // Status is assigned after rendering from the current configuration.
+        statusImageView.tintColor = UIColor(palette.comment)
+    }
+
     static func applyTheme(
         statusImageView: UIImageView,
         toolImageView: UIImageView,
@@ -99,21 +121,21 @@ enum ToolTimelineRowViewStyler {
         previewLabel: UILabel,
         expandedContainer: UIView
     ) {
+        applyChromeTheme(
+            statusImageView: statusImageView,
+            toolImageView: toolImageView,
+            titleLabel: titleLabel,
+            languageBadgeIconView: languageBadgeIconView,
+            addedLabel: addedLabel,
+            removedLabel: removedLabel,
+            trailingLabel: trailingLabel,
+            elapsedLabel: elapsedLabel
+        )
         let palette = ThemeRuntimeState.currentPalette()
-        toolImageView.tintColor = UIColor(palette.cyan)
-        titleLabel.textColor = UIColor(palette.toolTitle)
-        languageBadgeIconView.tintColor = UIColor(palette.blue)
-        addedLabel.textColor = UIColor(palette.toolDiffAdded)
-        removedLabel.textColor = UIColor(palette.toolDiffRemoved)
-        trailingLabel.textColor = UIColor(palette.comment)
-        elapsedLabel.textColor = UIColor(palette.comment)
         previewLabel.textColor = UIColor(palette.toolOutput)
         expandedContainer.backgroundColor = UIColor(
             ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
         )
-
-        // Status is assigned after rendering from the current configuration.
-        statusImageView.tintColor = UIColor(palette.comment)
     }
 
     static func styleExpanded(

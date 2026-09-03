@@ -16,6 +16,14 @@ enum ToolTimelineRowLayoutBuilder {
         let all: [NSLayoutConstraint]
     }
 
+    struct CollapsedChromeConstraints {
+        let toolLeading: NSLayoutConstraint
+        let toolWidth: NSLayoutConstraint
+        let titleLeadingToStatus: NSLayoutConstraint
+        let titleLeadingToTool: NSLayoutConstraint
+        let all: [NSLayoutConstraint]
+    }
+
     static func makeLanguageBadgeConstraints(
         languageBadgeIconView: UIImageView
     ) -> [NSLayoutConstraint] {
@@ -23,6 +31,58 @@ enum ToolTimelineRowLayoutBuilder {
             languageBadgeIconView.widthAnchor.constraint(equalToConstant: 14),
             languageBadgeIconView.heightAnchor.constraint(equalToConstant: 14),
         ]
+    }
+
+    static func makeCollapsedChromeConstraints(
+        containerView: UIView,
+        borderView: UIView,
+        statusImageView: UIImageView,
+        toolImageView: UIImageView,
+        titleLabel: UILabel,
+        trailingStack: UIStackView,
+        bodyStack: UIStackView
+    ) -> CollapsedChromeConstraints {
+        let toolLeading = toolImageView.leadingAnchor.constraint(equalTo: statusImageView.trailingAnchor, constant: 0)
+        let toolWidth = toolImageView.widthAnchor.constraint(equalToConstant: 0)
+        let titleLeadingToStatus = titleLabel.leadingAnchor.constraint(equalTo: statusImageView.trailingAnchor, constant: 5)
+        let titleLeadingToTool = titleLabel.leadingAnchor.constraint(equalTo: toolImageView.trailingAnchor, constant: 5)
+
+        let all: [NSLayoutConstraint] = [
+            borderView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            borderView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            borderView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            borderView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+
+            statusImageView.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: 8),
+            statusImageView.topAnchor.constraint(equalTo: borderView.topAnchor, constant: 6),
+            statusImageView.widthAnchor.constraint(equalToConstant: 14),
+            statusImageView.heightAnchor.constraint(equalToConstant: 14),
+
+            toolLeading,
+            toolImageView.centerYAnchor.constraint(equalTo: statusImageView.centerYAnchor),
+            toolWidth,
+            toolImageView.heightAnchor.constraint(equalToConstant: 12),
+
+            titleLeadingToStatus,
+            titleLabel.topAnchor.constraint(equalTo: borderView.topAnchor, constant: 6),
+
+            trailingStack.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 6),
+            trailingStack.centerYAnchor.constraint(equalTo: statusImageView.centerYAnchor),
+            trailingStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
+
+            bodyStack.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: 8),
+            bodyStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
+            bodyStack.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            bodyStack.bottomAnchor.constraint(equalTo: borderView.bottomAnchor, constant: -6),
+        ]
+
+        return CollapsedChromeConstraints(
+            toolLeading: toolLeading,
+            toolWidth: toolWidth,
+            titleLeadingToStatus: titleLeadingToStatus,
+            titleLeadingToTool: titleLeadingToTool,
+            all: all
+        )
     }
 
     static func makeConstraints(

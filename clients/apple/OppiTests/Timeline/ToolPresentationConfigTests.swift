@@ -146,8 +146,177 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.languageBadge == "⚠︎media")
+    }
+
+    @Test func collapsedOrdinaryToolsSkipExpansionMachinery() throws {
+        let harness = makeTimelineHarness(sessionId: "session-collapsed-cheap")
+        harness.toolArgsStore.set(["path": .string("src/main.swift")], for: "read-1")
+        harness.toolArgsStore.set(["command": .string("echo hi")], for: "bash-1")
+        harness.toolArgsStore.set([
+            "path": .string("src/main.swift"),
+            "edits": .array([
+                .object([
+                    "oldText": .string("let value = 1\n"),
+                    "newText": .string("let value = 2\n"),
+                ]),
+            ]),
+        ], for: "edit-1")
+
+        let rows: [ChatItem] = [
+            .toolCall(
+                id: "read-1",
+                tool: "read",
+                argsSummary: "path: src/main.swift",
+                outputPreview: "line1",
+                outputByteCount: 32,
+                isError: false,
+                isDone: true
+            ),
+            .toolCall(
+                id: "bash-1",
+                tool: "bash",
+                argsSummary: "command: echo hi",
+                outputPreview: "hi",
+                outputByteCount: 16,
+                isError: false,
+                isDone: true
+            ),
+            .toolCall(
+                id: "edit-1",
+                tool: "edit",
+                argsSummary: "path: src/main.swift",
+                outputPreview: "",
+                outputByteCount: 16,
+                isError: false,
+                isDone: true
+            ),
+            .toolCall(
+                id: "extension-1",
+                tool: "extensions.backlog",
+                argsSummary: "action: list-all",
+                outputPreview: "",
+                outputByteCount: 0,
+                isError: false,
+                isDone: true
+            ),
+        ]
+
+        for item in rows {
+            harness.toolOutputStore.append("full output for \(item.id)", to: item.id)
+
+            let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+            let collapsed = try #require(
+                config as? CollapsedToolTimelineRowConfiguration,
+                "collapsed \(item.id) must use cheap chrome configuration"
+            )
+            #expect(
+                collapsed.chrome.expandedContent == nil,
+                "collapsed \(item.id) must not set expandedContent"
+            )
+            #expect(collapsed.chrome.sessionAttachmentFetcher == nil)
+            #expect(collapsed.chrome.sessionAttachmentMediaSourceProvider == nil)
+            #expect(collapsed.chrome.sessionFileDataFetcher == nil)
+            #expect(collapsed.chrome.sessionFileMediaSourceProvider == nil)
+            #expect(
+                !(collapsed.makeContentView() is ToolTimelineRowContentView),
+                "collapsed \(item.id) must not build ToolTimelineRowContentView"
+            )
+        }
+    }
+
+    @Test func expandedAndVoiceCollapsedToolsKeepFullConfiguration() throws {
+        let harness = makeTimelineHarness(sessionId: "session-full-tool-config")
+        harness.toolArgsStore.set(["path": .string("src/main.swift")], for: "read-expanded")
+        harness.reducer.expandedItemIDs.insert("read-expanded")
+        harness.toolOutputStore.append("func app() {}", to: "read-expanded")
+
+        let expandedItem = ChatItem.toolCall(
+            id: "read-expanded",
+            tool: "read",
+            argsSummary: "path: src/main.swift",
+            outputPreview: "func app() {}",
+            outputByteCount: 12,
+            isError: false,
+            isDone: true
+        )
+        let expandedConfig = try #require(
+            harness.coordinator.toolRowConfiguration(itemID: expandedItem.id, item: expandedItem)
+                as? ToolTimelineRowConfiguration
+        )
+        #expect(expandedConfig.expandedContent != nil)
+        #expect(expandedConfig.sessionAttachmentFetcher != nil)
+        #expect(expandedConfig.sessionFileDataFetcher != nil)
+        #expect(expandedConfig.makeContentView() is ToolTimelineRowContentView)
+
+        let voiceDetails: JSONValue = .object([
+            "kind": .string("audio_presentation"),
+            "text": .string("You need to restart the server."),
+            "audio": .object([
+                "kind": .string("audio"),
+                "id": .string("att-1"),
+                "mimeType": .string("audio/wav"),
+                "durationSeconds": .number(1.2),
+            ]),
+        ])
+        harness.reducer.toolDetailsStore.set(voiceDetails, for: "voice-collapsed")
+        let voiceItem = ChatItem.toolCall(
+            id: "voice-collapsed",
+            tool: "voice_speak",
+            argsSummary: "text: hi",
+            outputPreview: "You need to restart the server.",
+            outputByteCount: 32,
+            isError: false,
+            isDone: true
+        )
+        let voiceConfig = try #require(
+            harness.coordinator.toolRowConfiguration(itemID: voiceItem.id, item: voiceItem)
+                as? ToolTimelineRowConfiguration
+        )
+        guard case .audioMessage = voiceConfig.expandedContent else {
+            Issue.record("voice-collapsed must keep full configuration with audio content")
+            return
+        }
+        #expect(voiceConfig.sessionAttachmentFetcher != nil)
+        #expect(voiceConfig.makeContentView() is ToolTimelineRowContentView)
+    }
+
+    @Test func lifecycleOnlyCollapsedVoiceKeepsFullConfiguration() throws {
+        let harness = makeTimelineHarness(sessionId: "session-lifecycle-voice")
+        let audioLifecycle = AudioLifecycleCoordinator()
+        harness.coordinator.audioLifecycleCoordinator = audioLifecycle
+        audioLifecycle.updateAudioText(
+            itemID: "voice-lifecycle-collapsed",
+            text: "Hello from direct voice.",
+            playbackBehavior: .playNow
+        )
+
+        let voiceItem = ChatItem.toolCall(
+            id: "voice-lifecycle-collapsed",
+            tool: "voice_speak",
+            argsSummary: "text: hi",
+            outputPreview: "Hello from direct voice.",
+            outputByteCount: 24,
+            isError: false,
+            isDone: false
+        )
+        #expect(harness.reducer.toolDetailsStore.details(for: voiceItem.id) == nil)
+        #expect(ToolPresentationBuilder.toolAudioPresentationDetails(from: nil) == nil)
+
+        let voiceConfig = try #require(
+            harness.coordinator.toolRowConfiguration(itemID: voiceItem.id, item: voiceItem)
+                as? ToolTimelineRowConfiguration,
+            "lifecycle-only collapsed voice must keep ToolTimelineRowConfiguration"
+        )
+        guard case .audioMessage(let text, _, _, _, let playbackBehavior) = voiceConfig.expandedContent else {
+            Issue.record("lifecycle-only collapsed voice must keep audio expandedContent")
+            return
+        }
+        #expect(text == "Hello from direct voice.")
+        #expect(playbackBehavior == .playNow)
+        #expect(voiceConfig.sessionAttachmentFetcher != nil)
+        #expect(voiceConfig.makeContentView() is ToolTimelineRowContentView)
     }
 
     @Test func collapsedParityToolsUseNativeToolConfiguration() {
@@ -188,7 +357,7 @@ struct ToolPresentationConfigTests {
         try expectTimelineRowsUseConfigurationType(
             in: harness.collectionView,
             items: Array(rows.indices),
-            as: ToolTimelineRowConfiguration.self
+            as: CollapsedToolTimelineRowConfiguration.self
         )
     }
 
@@ -204,7 +373,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.editAdded == nil)
         #expect(config.editRemoved == nil)
         #expect(config.trailing == "modified")
@@ -233,7 +402,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         guard case .diff(let diffLines, _) = config.expandedContent else { Issue.record("Expected .diff"); return }
 
         let stats = diffLines.reduce(into: (added: 0, removed: 0)) { acc, line in
@@ -275,7 +444,7 @@ struct ToolPresentationConfigTests {
             isDone: false
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         guard case .code(let text, let language, let startLine, let filePath) = config.expandedContent else {
             Issue.record("Expected streaming edit to stay on cheap .code surface")
             return
@@ -304,7 +473,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         // Error edit falls back to code viewer with language from file path
         guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for error edit fallback"); return }
         #expect(language == .typescript)
@@ -328,7 +497,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         guard case .code(let text, let language, _, let filePath) = config.expandedContent else {
             Issue.record("Expected .code for edit markdown fallback")
             return
@@ -357,7 +526,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         guard case .code(_, let language, _, _) = config.expandedContent else { Issue.record("Expected .code"); return }
         #expect(language == .swift)
         #expect(config.languageBadge == "Swift")
@@ -380,7 +549,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         if case .code(_, _, let startLine, _) = config.expandedContent { #expect(startLine == 1) }
         if case .code(_, _, _, let filePath) = config.expandedContent { #expect(filePath == "Sources/Agent.swift") }
     }
@@ -405,7 +574,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.collapsedImageBase64 == nil)
         #expect(config.collapsedImageMimeType == nil)
         #expect(config.languageBadge == FileType.image.displayLabel)
@@ -426,7 +595,7 @@ struct ToolPresentationConfigTests {
             isDone: false
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.collapsedImageBase64 == nil, "No image preview before output arrives")
     }
 
@@ -447,7 +616,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         // Write without content arg falls back to code viewer with language from file path
         guard case .code(_, let language, _, let filePath) = config.expandedContent else { Issue.record("Expected .code for write fallback"); return }
         #expect(language == .swift)
@@ -472,7 +641,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         guard case .markdown(let text) = config.expandedContent else { Issue.record("Expected .markdown for write file content"); return }
         #expect(text == "# Title\n\nBody")
         #expect(config.languageBadge == "Markdown")
@@ -496,7 +665,7 @@ struct ToolPresentationConfigTests {
             isDone: false
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         guard case .markdown(let text) = config.expandedContent else {
             Issue.record("Expected streaming markdown write to use .markdown (incremental pipeline), got \(String(describing: config.expandedContent))")
             return
@@ -524,7 +693,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         guard case .markdown = config.expandedContent else { Issue.record("Expected .markdown"); return }
         // startLine is implicit in content case
         #expect(config.languageBadge == "Markdown")
@@ -579,7 +748,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
         guard case .text(let output, let language) = config.expandedContent else {
             Issue.record("Expected .text")
             return
@@ -613,7 +782,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
         #expect(config.trailing == nil)
         guard case .text(let text, let language) = config.expandedContent else {
             Issue.record("Expected .text")
@@ -650,7 +819,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: itemID, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: itemID, item: item)))
         #expect(config.trailing == nil)
         guard case .text(let text, let language) = config.expandedContent else {
             Issue.record("Expected .text")
@@ -695,7 +864,7 @@ struct ToolPresentationConfigTests {
         try expectTimelineRowsUseConfigurationType(
             in: harness.collectionView,
             items: Array(collapsedParityToolRows.indices),
-            as: ToolTimelineRowConfiguration.self
+            as: CollapsedToolTimelineRowConfiguration.self
         )
 
         let snapshot = ChatTimelinePerf.snapshot()
@@ -714,7 +883,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: "tool-1", item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: "tool-1", item: item)))
 
         #expect(config.preview == nil)
         #expect(config.trailing == nil)
@@ -736,7 +905,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: "read-1", item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: "read-1", item: item)))
         #expect(config.preview == nil)
         #expect(config.trailing == nil)
     }
@@ -760,7 +929,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: "read-image-1", item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: "read-image-1", item: item)))
         guard case .readMedia = config.expandedContent else { Issue.record("Expected .readMedia"); return }
         // startLine is implicit in content case
     }
@@ -797,9 +966,9 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let bashConfig = try #require(harness.coordinator.toolRowConfiguration(itemID: "bash-1", item: bash))
-        let readConfig = try #require(harness.coordinator.toolRowConfiguration(itemID: "read-1", item: read))
-        let writeConfig = try #require(harness.coordinator.toolRowConfiguration(itemID: "write-1", item: write))
+        let bashConfig = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: "bash-1", item: bash)))
+        let readConfig = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: "read-1", item: read)))
+        let writeConfig = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: "write-1", item: write)))
 
         #expect(bashConfig.trailing == nil)
         #expect(readConfig.trailing == nil)
@@ -826,7 +995,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: toolID, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: toolID, item: item)))
         #expect(config.preview == nil)
     }
 
@@ -852,7 +1021,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: item.id, item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
         #expect(config.languageBadge == "Swift")
     }
 
@@ -870,7 +1039,7 @@ struct ToolPresentationConfigTests {
             isDone: true
         )
 
-        let config = try #require(harness.coordinator.toolRowConfiguration(itemID: "bash-1", item: item))
+        let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: "bash-1", item: item)))
         guard case .bash = config.expandedContent else { Issue.record("Expected .bash"); return }
         if case .bash(_, _, let unwrapped) = config.expandedContent { #expect(unwrapped) }
         #expect(config.toolNamePrefix == "$")

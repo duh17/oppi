@@ -96,7 +96,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
 }
 
 final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDelegate {
-    private static var activeInlineFeatureTipIDs: Set<String> = []
+    static var activeInlineFeatureTipIDs: Set<String> = []
 #if DEBUG
     static var forcesInlineFeatureTipsForTesting = false
     static var featureEducationTipLayoutInvalidationHookForTesting: (() -> Void)?

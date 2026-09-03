@@ -1367,8 +1367,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             indexPath: IndexPath,
             in collectionView: UICollectionView
         ) -> Bool {
-            guard let config = toolRowConfiguration(itemID: itemID, item: item),
-                  config.collapsedImageBase64 != nil else {
+            guard let config = toolRowConfiguration(itemID: itemID, item: item) else {
+                return false
+            }
+            let collapsedImageBase64 = (config as? ToolTimelineRowConfiguration)?.collapsedImageBase64
+                ?? (config as? CollapsedToolTimelineRowConfiguration)?.chrome.collapsedImageBase64
+            guard collapsedImageBase64 != nil else {
                 return false
             }
 

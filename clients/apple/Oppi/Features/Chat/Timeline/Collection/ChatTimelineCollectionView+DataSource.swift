@@ -525,14 +525,24 @@ extension ChatTimelineCollectionHost.Controller {
         }
 
         let toolContext: ChatTimelinePerf.ToolCellContext?
-        if let toolConfig = nativeConfig as? ToolTimelineRowConfiguration,
-           case .toolCall(_, let tool, _, _, let outputByteCount, _, _) = item {
-            toolContext = ChatTimelinePerf.ToolCellContext(
-                tool: tool,
-                isExpanded: toolConfig.isExpanded,
-                contentType: toolConfig.expandedContent.map(Self.contentTypeName) ?? "collapsed",
-                outputBytes: outputByteCount
-            )
+        if case .toolCall(_, let tool, _, _, let outputByteCount, _, _) = item {
+            if let toolConfig = nativeConfig as? ToolTimelineRowConfiguration {
+                toolContext = ChatTimelinePerf.ToolCellContext(
+                    tool: tool,
+                    isExpanded: toolConfig.isExpanded,
+                    contentType: toolConfig.expandedContent.map(Self.contentTypeName) ?? "collapsed",
+                    outputBytes: outputByteCount
+                )
+            } else if nativeConfig is CollapsedToolTimelineRowConfiguration {
+                toolContext = ChatTimelinePerf.ToolCellContext(
+                    tool: tool,
+                    isExpanded: false,
+                    contentType: "collapsed",
+                    outputBytes: outputByteCount
+                )
+            } else {
+                toolContext = nil
+            }
         } else {
             toolContext = nil
         }
