@@ -41,6 +41,14 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
     let makeTimedTextSidecar: TimedTextSidecarProvider?
     let audioPlayer: AudioPlayerService?
+    /// Runway-owned artifacts are hints; nil keeps the canonical renderer.
+    var preparedBlocks: [MarkdownBlock]?
+    var preparationRevision: UInt64
+    var imagePreparationContext: TimelineImagePreparationContext?
+
+    var renderedMarkdownSource: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     init(
         text: String,
@@ -63,7 +71,10 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
-        audioPlayer: AudioPlayerService? = nil
+        audioPlayer: AudioPlayerService? = nil,
+        preparedBlocks: [MarkdownBlock]? = nil,
+        preparationRevision: UInt64 = 0,
+        imagePreparationContext: TimelineImagePreparationContext? = nil
     ) {
         self.text = text
         self.isStreaming = isStreaming
@@ -86,6 +97,9 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
         self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
+        self.preparedBlocks = preparedBlocks
+        self.preparationRevision = preparationRevision
+        self.imagePreparationContext = imagePreparationContext
     }
 
     func makeContentView() -> any UIView & UIContentView {
@@ -316,8 +330,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         )
         bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
 
-        let trimmedText = configuration.text.trimmingCharacters(in: .whitespacesAndNewlines)
-
         // Unified markdown path for both streaming and done states.
         // During streaming, the incremental parser (tail-only CommonMark parse
         // with FNV-1a prefix caching) keeps main-thread cost low. The segment
@@ -330,12 +342,14 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         markdownView.makeMarkdownAudioSource = configuration.makeMarkdownAudioSource
         markdownView.makeTimedTextSidecar = configuration.makeTimedTextSidecar
         markdownView.audioPlayer = configuration.audioPlayer
+        markdownView.preparedBlocks = configuration.preparedBlocks
+        markdownView.imagePreparationContext = configuration.imagePreparationContext
         let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .assistantProse,
             timelineItemId: configuration.itemID
         )
         markdownView.apply(configuration: .make(
-            content: trimmedText,
+            content: configuration.renderedMarkdownSource,
             isStreaming: configuration.isStreaming,
             themeID: ThemeRuntimeState.currentThemeID(),
             reviewCommentSelectionRouter: configuration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
@@ -345,6 +359,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             worktreeId: configuration.worktreeId,
             sessionID: configuration.sessionId,
             serverBaseURL: configuration.serverBaseURL,
+            preparationRevision: configuration.preparationRevision,
             perfSurface: .inlineAssistant
         ))
     }

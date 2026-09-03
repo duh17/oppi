@@ -30,9 +30,26 @@ final class AssistantMarkdownSegmentSource {
 
     func buildSegments(
         _ config: AssistantMarkdownContentView.Configuration,
-        mergeAdjacentTextSegments: Bool = true
+        mergeAdjacentTextSegments: Bool = true,
+        preparedBlocks: [MarkdownBlock]? = nil
     ) -> [FlatSegment] {
         let content = config.content
+
+        if !config.isStreaming,
+           mergeAdjacentTextSegments,
+           let preparedBlocks {
+            let segments = FlatSegment.build(
+                from: preparedBlocks,
+                themeID: config.themeID,
+                serverID: config.serverID,
+                workspaceID: config.workspaceID,
+                sessionID: config.sessionID,
+                serverBaseURL: config.serverBaseURL,
+                sourceDirectory: config.sourceDirectory,
+                worktreeId: config.worktreeId
+            )
+            return Self.applyReaderPreferences(to: segments, config: config)
+        }
 
         if !config.isStreaming,
            mergeAdjacentTextSegments,

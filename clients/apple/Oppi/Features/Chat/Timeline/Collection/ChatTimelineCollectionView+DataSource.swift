@@ -46,6 +46,8 @@ final class SafeSizingCell: UICollectionViewCell {
 
     private let navigationHighlightOverlay = UIView()
     private var navigationHighlightToken: UInt = 0
+    private var preparationItemID: String?
+    private var cancelPreparationDemand: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -70,6 +72,23 @@ final class SafeSizingCell: UICollectionViewCell {
         // wrapped-table row after UIKit recycles the cell.
         isStreamingAssistant = false
         invalidateStreamingHeightCache()
+        cancelTimelinePreparationDemand()
+    }
+
+    func bindTimelinePreparationDemand(
+        itemID: String,
+        cancel: @escaping () -> Void
+    ) {
+        guard preparationItemID != itemID else { return }
+        cancelTimelinePreparationDemand()
+        preparationItemID = itemID
+        cancelPreparationDemand = cancel
+    }
+
+    func cancelTimelinePreparationDemand() {
+        cancelPreparationDemand?()
+        cancelPreparationDemand = nil
+        preparationItemID = nil
     }
 
     private func configureNavigationHighlightOverlay() {
@@ -206,8 +225,12 @@ extension ChatTimelineCollectionHost.Controller {
     func configureDataSource(collectionView: UICollectionView) {
         self.collectionView = collectionView
         collectionView.delegate = self
+        collectionView.prefetchDataSource = self
 
         let assistantRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+            cell.bindTimelinePreparationDemand(itemID: itemID) { [weak self] in
+                self?.preparationRunway.cancel(itemID: itemID, demand: .visible)
+            }
             // Set streaming flag for self-sizing throttle. When streaming,
             // the cell skips expensive auto layout on alternate ticks.
             let isStreaming = self?.isAssistantStreamingPresentationActive == true

@@ -167,6 +167,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         collectionView.contentInset.bottom = configuration.bottomOverlap
         context.coordinator.attachHardwareKeybindingResponder(to: collectionView)
         context.coordinator.configureDataSource(collectionView: collectionView)
+        collectionView.prefetchDataSource = context.coordinator
         return collectionView
     }
 
@@ -176,6 +177,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
     static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Controller) {
         coordinator.stopMarkdownVideoPlayback(in: collectionView)
+        coordinator.cancelTimelinePreparation()
     }
 
     func makeCoordinator() -> Controller {
@@ -228,10 +230,19 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         override init() {
             super.init()
+            preparationRunway.onArtifactReady = { [weak self] scope, itemID, _ in
+                self?.handlePreparedArtifact(scope: scope, itemID: itemID)
+            }
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleThemeDidChange),
                 name: .oppiThemeDidChange,
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleTimelineMemoryWarning),
+                name: UIApplication.didReceiveMemoryWarningNotification,
                 object: nil
             )
         }
@@ -426,6 +437,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var lastDistanceFromBottom: CGFloat = 0
         private var lastBusyAmbientScrollReconcileNs: UInt64 = 0
         let toolOutputLoader = ExpandedToolOutputLoader()
+        let preparationRunway = ChatTimelinePreparationRunway()
+        var lastPrefetchCenterIndex: Int?
+        var lastPrefetchDirection = 0
 
         #if DEBUG
             var _fetchToolOutputForTesting: ((_ sessionId: String, _ toolCallId: String) async throws -> String)? {
@@ -450,6 +464,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             private(set) var _audioStateRefreshCountForTesting = 0
             private(set) var _audioStateRefreshedItemIDsForTesting: [String] = []
+            var debugPreparedArtifactReconfiguredItemIDs: [String] = []
 
             // periphery:ignore - used by ChatTimelineTests via @testable import
             var _toolOutputLoadTaskCountForTesting: Int {
@@ -487,6 +502,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             MainActor.assumeIsolated {
                 let observedAudioPlayer = audioPlayer
                 toolOutputLoader.cancelAllWork()
+                preparationRunway.cancelAll()
                 NotificationCenter.default.removeObserver(
                     self,
                     name: AudioPlayerService.stateDidChangeNotification,
@@ -495,6 +511,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 NotificationCenter.default.removeObserver(
                     self,
                     name: .oppiThemeDidChange,
+                    object: nil
+                )
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: UIApplication.didReceiveMemoryWarningNotification,
                     object: nil
                 )
             }
@@ -707,6 +728,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             if sessionScopeChanged {
                 cancelAllToolOutputLoadTasks()
+                cancelTimelinePreparation()
                 lastObservedContentOffsetY = nil
                 lastObservedContentHeight = nil
                 detachedProgrammaticTargetOffsetY = nil
@@ -776,6 +798,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     && $0 != ChatTimelineCollectionHost.workingIndicatorID
             }
             let nextDisplayIDs = configuration.displayRows.map(\.id)
+            if nextDisplayIDs != previousDisplayIDs {
+                preparationRunway.cancelAllPrefetch()
+                lastPrefetchCenterIndex = nil
+                lastPrefetchDirection = 0
+            }
             let structurallyUnchanged = nextDisplayIDs == previousDisplayIDs
                 && configuration.streamingAssistantID == previousStreamingAssistantID
                 && configuration.isBusy == isTimelineBusy
@@ -984,6 +1011,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             if !applyPlan.removedIDs.isEmpty {
                 cancelToolOutputLoadTasks(for: applyPlan.removedIDs)
+                preparationRunway.remove(itemIDs: applyPlan.removedIDs)
             }
 
             // Capture identity against the current layout / currentIDs before

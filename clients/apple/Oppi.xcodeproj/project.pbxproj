@@ -95,6 +95,7 @@
 		1060BEFE92E9178A99A4C0BF /* UserFacingErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AE40E89C8600D4F9F9F4082 /* UserFacingErrorText.swift */; };
 		1083A90B05B115D5BA6F25A7 /* MacCatalogPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 739B94067C52ED759F8D4B63 /* MacCatalogPresentation.swift */; };
 		10DB6B042D33E8CF8036A08A /* ToolEventMapperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62F659A4E66A248F204ED42E /* ToolEventMapperTests.swift */; };
+		10EAA7A143D27A83DD15E417 /* ChatTimelinePreparationRunway.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDEDD278773415825E72EA7A /* ChatTimelinePreparationRunway.swift */; };
 		10F9C91247308E121ED85978 /* MarkdownBlockSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C3E2292E082C2BDAC152D8A /* MarkdownBlockSerializer.swift */; };
 		10FAE471D81D0CC088A778B9 /* ServerStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51F61A141BEB8DA25E77A836 /* ServerStoreTests.swift */; };
 		11FEA347B8AD78308888DEBC /* ServerExtensionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36964003E762EE478FA46720 /* ServerExtensionDetailView.swift */; };
@@ -1125,6 +1126,7 @@
 		BACCBB31E95E52D3478D656F /* ToolCallCorrelator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBE3A22BCC0566F3784EFFFB /* ToolCallCorrelator.swift */; };
 		BB2D35961783877A69ADBA9D /* ChatTimelineToolOutputLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73C39843AB74EC910286912 /* ChatTimelineToolOutputLoaderTests.swift */; };
 		BB355B8755937E98D064A766 /* HostDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38806E81D6A6DFA26CEFFA0A /* HostDirectory.swift */; };
+		BB36DE8161FAC644F9DB84BC /* ChatTimelinePreparationRunwayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2560271BF1E3DF433653661D /* ChatTimelinePreparationRunwayTests.swift */; };
 		BB5A08CF04C1C28490CDAB2F /* MacComposerVisualGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB5FF0D877AADE6BD04C7FA /* MacComposerVisualGateTests.swift */; };
 		BB612261A2C59369B6343A4C /* MacModelSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0413D9B519772B076E8EB9 /* MacModelSelection.swift */; };
 		BB6BF1D67D2D368370532654 /* FileIndexStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 585CE55C9F00B5EFE4A62B78 /* FileIndexStoreTests.swift */; };
@@ -1828,6 +1830,7 @@
 		252668A2818D83CF2622BA9B /* VoiceInputRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputRouting.swift; sourceTree = "<group>"; };
 		252E234C474F5A173CD9CFB9 /* TimelineReducerRecoveredThinkingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerRecoveredThinkingTests.swift; sourceTree = "<group>"; };
 		2538F87D78752BAA4B634D5A /* LocalServerTrustDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServerTrustDelegate.swift; sourceTree = "<group>"; };
+		2560271BF1E3DF433653661D /* ChatTimelinePreparationRunwayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelinePreparationRunwayTests.swift; sourceTree = "<group>"; };
 		256D9FCDB731B72E903ABEBF /* AttentionNotificationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttentionNotificationPolicy.swift; sourceTree = "<group>"; };
 		25711154EFC224B8FE7389BE /* MathNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathNode.swift; sourceTree = "<group>"; };
 		25832C3D5A1994403B773C4C /* AskRequestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskRequestTests.swift; sourceTree = "<group>"; };
@@ -2918,6 +2921,7 @@
 		FD74BFB51E36F2963ECEA270 /* BrowserPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPreferencesTests.swift; sourceTree = "<group>"; };
 		FD7E2974DF478F10B8903BFA /* StatsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsTabView.swift; sourceTree = "<group>"; };
 		FDBD218B41E970D77BA08818 /* SegmentRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentRendererTests.swift; sourceTree = "<group>"; };
+		FDEDD278773415825E72EA7A /* ChatTimelinePreparationRunway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelinePreparationRunway.swift; sourceTree = "<group>"; };
 		FE34744C5E5872BA3FCD38FD /* APIClient+SessionSearching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "APIClient+SessionSearching.swift"; sourceTree = "<group>"; };
 		FE34D58B157E268CF02B3DB9 /* StatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusView.swift; sourceTree = "<group>"; };
 		FE4E210755821503F8D2B192 /* SlashCommandSuggestionList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandSuggestionList.swift; sourceTree = "<group>"; };
@@ -3873,6 +3877,7 @@
 				87C7A1F1C83E8BC9D04AC406 /* AssistantRowContentViewTests.swift */,
 				628DF4C77332B9B1C1F8879F /* BashToolRowViewTests.swift */,
 				48F75EF9A22E86B076534912 /* ChatScrollControllerTests.swift */,
+				2560271BF1E3DF433653661D /* ChatTimelinePreparationRunwayTests.swift */,
 				98A2760E0D6FFA8D1B6BA55F /* CodeBlockStreamingWidthTests.swift */,
 				776AE8C837C63B110792EC2D /* DiffEngineTests.swift */,
 				052ED4EFFD20E33352F71034 /* FeatureEducationTipPresentationCoordinatorTests.swift */,
@@ -4942,6 +4947,7 @@
 				F21F5F213A93C77751FCD261 /* ChatTimelineCollectionView+ScrollDelegate.swift */,
 				8132ED4F6C31E12489DB9449 /* ChatTimelineControllerContext.swift */,
 				C2D67ADB6CCCF099AFBB5D52 /* ChatTimelinePerf.swift */,
+				FDEDD278773415825E72EA7A /* ChatTimelinePreparationRunway.swift */,
 				4122E8A769DCB4812A9933BF /* ChatTimelineToolOutputLoader.swift */,
 				0FF6746D222A7B263141452D /* TimelineOffsetController.swift */,
 				6703059B6CFE97D4EA1BFBD6 /* TimelineSnapshotApplier.swift */,
@@ -6388,6 +6394,7 @@
 				9FC4595239656A498A3E839B /* ChatSessionStateTests.swift in Sources */,
 				A8EE64F2CBE4916A82325B73 /* ChatTimelineApplyPlanTests.swift in Sources */,
 				91767C6A79C5720CDBDE7FB9 /* ChatTimelineCoordinatorTests.swift in Sources */,
+				BB36DE8161FAC644F9DB84BC /* ChatTimelinePreparationRunwayTests.swift in Sources */,
 				BB2D35961783877A69ADBA9D /* ChatTimelineToolOutputLoaderTests.swift in Sources */,
 				8E7047383CF8BF1EF1E2D5F8 /* ChatViewLifecycleTests.swift in Sources */,
 				92AA6C0FFBB6A9BA56DDB695 /* ChatViewSessionReuseTests.swift in Sources */,
@@ -6813,6 +6820,7 @@
 				8097373927BC5B94A82C3BFB /* ChatTimelineCollectionView.swift in Sources */,
 				207BAC40775DEBD15A9D74CE /* ChatTimelineControllerContext.swift in Sources */,
 				A746CFB55760190FC923495D /* ChatTimelinePerf.swift in Sources */,
+				10EAA7A143D27A83DD15E417 /* ChatTimelinePreparationRunway.swift in Sources */,
 				DB8E0AA5141252118E1EDD7B /* ChatTimelineToolOutputLoader.swift in Sources */,
 				C69C3D1013E3774C9AF18AB4 /* ChatTimelineView.swift in Sources */,
 				403D00DAE1BE398C32C40BD9 /* ChatView.swift in Sources */,

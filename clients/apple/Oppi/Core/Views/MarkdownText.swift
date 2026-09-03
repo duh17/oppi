@@ -1850,7 +1850,7 @@ enum FlatSegment: Sendable {
     /// - **Absolute http(s) URLs**: passed through for tap-to-load / block.
     ///
     /// Skips `data:` URIs and other non-file schemes.
-    private static func resolveImageURL(
+    static func resolveImageURL(
         source: String?,
         serverID: String?,
         workspaceID: String?,

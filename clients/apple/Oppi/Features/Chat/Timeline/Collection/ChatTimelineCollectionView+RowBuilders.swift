@@ -18,6 +18,29 @@ private extension UIView {
 
 extension ChatTimelineCollectionHost.Controller {
     func assistantRowConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
+        guard var rowConfiguration = assistantBaseRowConfiguration(itemID: itemID, item: item) else {
+            return nil
+        }
+        let preparationRequest = makeTimelinePreparationRequest(
+            itemID: itemID,
+            text: rowConfiguration.renderedMarkdownSource,
+            isStreaming: rowConfiguration.isStreaming,
+            rowConfiguration: rowConfiguration
+        )
+        _ = preparationRunway.request(preparationRequest, demand: .visible)
+        rowConfiguration.preparedBlocks = preparationRunway.preparedBlocks(
+            for: preparationRequest
+        )
+        rowConfiguration.preparationRevision = preparationRunway.presentationRevision(
+            for: preparationRequest
+        )
+        rowConfiguration.imagePreparationContext = preparationRunway.imagePreparationContext(
+            for: preparationRequest
+        )
+        return rowConfiguration
+    }
+
+    func assistantBaseRowConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {
         guard case .assistantMessage(_, let text, _) = item else { return nil }
 
         let isStreaming = isAssistantStreamingPresentationActive

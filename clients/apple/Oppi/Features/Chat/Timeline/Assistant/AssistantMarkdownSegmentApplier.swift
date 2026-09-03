@@ -352,6 +352,9 @@ final class AssistantMarkdownSegmentApplier {
     /// Runway probes prepare image metadata/decode without creating WKWebView.
     /// A real cell activates SVG display when it installs the prepared view.
     var preparesImagesForDisplay = true
+    /// Timeline-only destination-size raster broker. Other markdown surfaces
+    /// keep their existing direct image lifecycle.
+    var imagePreparationContext: TimelineImagePreparationContext?
 
     /// Avatar hang geometry from the assistant row. Applied after each rebuild
     /// so the first text segment clears the badge and later content is full width.
@@ -388,6 +391,10 @@ final class AssistantMarkdownSegmentApplier {
             task.cancel()
         }
         highlightTasks.removeAll()
+
+        for view in imageViews.values {
+            view.cancelPreparationDemand()
+        }
 
         let preserved = Set(preservingVideos.map { ObjectIdentifier($0) })
         for view in videoViews.values where !preserved.contains(ObjectIdentifier(view)) {
@@ -682,7 +689,8 @@ final class AssistantMarkdownSegmentApplier {
                 fetchHostFile: fetchHostFile,
                 renderingMode: config.renderingMode,
                 preferredDisplayWidth: preparationWidth,
-                preparesForDisplay: preparesImagesForDisplay
+                preparesForDisplay: preparesImagesForDisplay,
+                preparationContext: imagePreparationContext
             )
             stackView.addArrangedSubview(imageView)
             imageViews[index] = imageView
@@ -988,7 +996,8 @@ final class AssistantMarkdownSegmentApplier {
                         fetchHostFile: fetchHostFile,
                         renderingMode: config.renderingMode,
                         preferredDisplayWidth: preparationWidth,
-                        preparesForDisplay: preparesImagesForDisplay
+                        preparesForDisplay: preparesImagesForDisplay,
+                        preparationContext: imagePreparationContext
                     )
                 }
 

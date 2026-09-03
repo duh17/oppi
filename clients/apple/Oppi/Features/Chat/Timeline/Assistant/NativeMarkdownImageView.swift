@@ -70,6 +70,9 @@ final class NativeMarkdownImageView: UIView {
     private struct RequestIdentity: Equatable {
         let url: URL
         let displayWidth: CGFloat?
+        let preparationScope: ChatTimelinePreparationRunway.Scope?
+        let preparationItemID: String?
+        let preparationTarget: ChatTimelinePreparationRunway.ImageTarget?
     }
 
     private var currentURL: URL?
@@ -79,6 +82,9 @@ final class NativeMarkdownImageView: UIView {
     private var preparesForDisplay = true
     private var pendingRemoteLoad: PendingImageLoad?
     private var loadTask: Task<Void, Never>?
+    private let visiblePreparationDemandID = UUID()
+    private var currentPreparationContext: TimelineImagePreparationContext?
+    private var usesCanonicalLoadingForCurrentRequest = false
 
     typealias FetchWorkspaceFile = (_ workspaceID: String, _ path: String) async throws -> Data
     typealias FetchSessionFile = (_ workspaceID: String, _ sessionID: String, _ path: String) async throws -> Data
@@ -118,6 +124,12 @@ final class NativeMarkdownImageView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        MainActor.assumeIsolated {
+            cancelPreparationDemand()
+        }
+    }
 
     /// Active height constraint — managed explicitly so we can swap between
     /// loading placeholder, loaded aspect-fit media, and error states.
@@ -244,33 +256,65 @@ final class NativeMarkdownImageView: UIView {
         fetchHostFile: FetchHostFile? = nil,
         renderingMode: ContentRenderingMode = .live,
         preferredDisplayWidth: CGFloat? = nil,
-        preparesForDisplay: Bool = true
+        preparesForDisplay: Bool = true,
+        preparationContext: TimelineImagePreparationContext? = nil
     ) {
         let canonicalWidth = preferredDisplayWidth.flatMap {
             $0.isFinite && $0 > 0 ? $0 : nil
         }
-        let identity = RequestIdentity(url: url, displayWidth: canonicalWidth)
+        let identity = RequestIdentity(
+            url: url,
+            displayWidth: canonicalWidth,
+            preparationScope: preparationContext?.scope,
+            preparationItemID: preparationContext?.itemID,
+            preparationTarget: preparationContext?.target
+        )
         currentAltText = alt
         if identity == currentRequestIdentity {
             self.preparesForDisplay = self.preparesForDisplay || preparesForDisplay
-            refreshLoadedAccessibilityIfNeeded()
-            if self.preparesForDisplay { activatePreparedDisplay() }
-            return
+            if usesCanonicalLoadingForCurrentRequest {
+                refreshLoadedAccessibilityIfNeeded()
+                if self.preparesForDisplay { activatePreparedDisplay() }
+                return
+            }
+            currentPreparationContext = preparationContext
+            if consumeTimelinePreparationIfAvailable(
+                context: preparationContext,
+                url: url,
+                alt: alt
+            ) {
+                return
+            }
+            usesCanonicalLoadingForCurrentRequest = true
+        } else {
+            cancelPreparationDemand()
+            currentRequestIdentity = identity
+            currentURL = url
+            self.preferredDisplayWidth = canonicalWidth
+            self.preparesForDisplay = preparesForDisplay
+            currentPreparationContext = preparationContext
+            usesCanonicalLoadingForCurrentRequest = false
+            svgPreviewData = nil
+            svgPreviewMimeType = nil
+            svgHTMLTracker.resetLoadedContent()
+            #if DEBUG
+            debugPixelReservedHeightForTesting = nil
+            #endif
+
+            loadTask?.cancel()
+
+            if consumeTimelinePreparationIfAvailable(
+                context: preparationContext,
+                url: url,
+                alt: alt
+            ) {
+                return
+            }
+            usesCanonicalLoadingForCurrentRequest = true
         }
-        currentRequestIdentity = identity
-        currentURL = url
-        self.preferredDisplayWidth = canonicalWidth
-        self.preparesForDisplay = preparesForDisplay
-        svgPreviewData = nil
-        svgPreviewMimeType = nil
-        svgHTMLTracker.resetLoadedContent()
-        #if DEBUG
-        debugPixelReservedHeightForTesting = nil
-        #endif
 
-        loadTask?.cancel()
-
-        // Check synchronous cache first — works for both live and export modes.
+        // Check synchronous cache first — works for markdown surfaces that do
+        // not use the timeline's destination-size broker.
         if let cached = Self.imageCache.object(forKey: url as NSURL) {
             showLoadedState(image: cached)
             return
@@ -315,6 +359,51 @@ final class NativeMarkdownImageView: UIView {
                 showBlockedRemoteState(alt: alt)
             }
         }
+    }
+
+    func cancelPreparationDemand() {
+        guard let currentURL, let currentPreparationContext else { return }
+        currentPreparationContext.cancel(
+            url: currentURL,
+            visibleDemandID: visiblePreparationDemandID
+        )
+        self.currentPreparationContext = nil
+    }
+
+    private func consumeTimelinePreparationIfAvailable(
+        context: TimelineImagePreparationContext?,
+        url: URL,
+        alt: String
+    ) -> Bool {
+        guard let context,
+              RemoteMarkdownImagePolicy.decision(for: url) == .internalImageURL else {
+            return false
+        }
+        if let prepared = context.preparedImage(for: url) {
+            showPreparedTimelineRaster(prepared)
+            return true
+        }
+
+        switch context.request(url: url, visibleDemandID: visiblePreparationDemandID) {
+        case .ready:
+            guard let prepared = context.preparedImage(for: url) else { return false }
+            showPreparedTimelineRaster(prepared)
+        case .inFlight:
+            showLoadingState(alt: alt)
+        case .neverRequested:
+            currentPreparationContext = nil
+            return false
+        }
+        return true
+    }
+
+    private func showPreparedTimelineRaster(_ prepared: TimelinePreparedRasterImage) {
+        applyFittedDisplayHeight(
+            width: prepared.sourcePixelSize.width,
+            height: prepared.sourcePixelSize.height
+        )
+        imageView.image = prepared.image
+        showLoadedState(image: prepared.image)
     }
 
     private func startImageLoad(

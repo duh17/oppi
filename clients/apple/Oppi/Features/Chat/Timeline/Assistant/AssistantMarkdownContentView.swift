@@ -71,6 +71,9 @@ final class AssistantMarkdownContentView: UIView {
             let dir = (sourceFilePath as NSString).deletingLastPathComponent
             return dir.isEmpty || dir == "." ? nil : dir
         }
+        /// Runway completion generation. It changes only to make an existing
+        /// content view consume a newly prepared identity-keyed artifact.
+        let preparationRevision: UInt64
         /// Surface tag for streaming markdown perf instrumentation.
         let perfSurface: MarkdownStreamingPerf.Surface?
         /// Optional full-screen reader styling. Inline/timeline markdown leaves
@@ -98,6 +101,7 @@ final class AssistantMarkdownContentView: UIView {
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
+            preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live
         ) {
@@ -115,6 +119,7 @@ final class AssistantMarkdownContentView: UIView {
             self.sourceFilePath = sourceFilePath
             self.lineAnchor = lineAnchor
             self.readerPreferences = readerPreferences
+            self.preparationRevision = preparationRevision
             self.perfSurface = perfSurface
             self.renderingMode = renderingMode
         }
@@ -134,6 +139,7 @@ final class AssistantMarkdownContentView: UIView {
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
             readerPreferences: FullScreenReaderPreferences? = nil,
+            preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live
         ) -> Self {
@@ -152,6 +158,7 @@ final class AssistantMarkdownContentView: UIView {
                 sourceFilePath: sourceFilePath,
                 lineAnchor: lineAnchor,
                 readerPreferences: readerPreferences,
+                preparationRevision: preparationRevision,
                 perfSurface: perfSurface,
                 renderingMode: renderingMode
             )
@@ -172,6 +179,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.sourceFilePath == rhs.sourceFilePath
                 && lhs.lineAnchor == rhs.lineAnchor
                 && lhs.readerPreferences == rhs.readerPreferences
+                && lhs.preparationRevision == rhs.preparationRevision
                 && lhs.perfSurface == rhs.perfSurface
                 && lhs.renderingMode == rhs.renderingMode
         }
@@ -193,6 +201,10 @@ final class AssistantMarkdownContentView: UIView {
     )
 
     private var currentConfig: Configuration?
+    var preparedBlocks: [MarkdownBlock]?
+    var imagePreparationContext: TimelineImagePreparationContext? {
+        didSet { segmentApplier.imagePreparationContext = imagePreparationContext }
+    }
 
     /// Width at which Auto Layout last captured `intrinsicContentSize`.
     /// The intrinsic height is width-dependent (320pt fallback while bounds is
@@ -322,7 +334,10 @@ final class AssistantMarkdownContentView: UIView {
             build = segmentSource.buildSegmentsWithSourceLineRanges(config)
         } else {
             build = FlatSegment.BuildResult(
-                segments: segmentSource.buildSegments(config),
+                segments: segmentSource.buildSegments(
+                    config,
+                    preparedBlocks: preparedBlocks
+                ),
                 sourceLineRanges: []
             )
         }
