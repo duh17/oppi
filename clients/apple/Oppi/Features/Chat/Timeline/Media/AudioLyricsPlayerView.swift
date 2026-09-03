@@ -397,6 +397,8 @@ private struct AudioPlaybackSeekBar: View {
     var onScrub: (Double) -> Void
     var onCommit: (Double) -> Void
 
+    @State private var holdsBackSwipeClaim = false
+
     var body: some View {
         GeometryReader { geo in
             let width = max(geo.size.width, 1)
@@ -415,19 +417,22 @@ private struct AudioPlaybackSeekBar: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
-            .gesture(
+            .highPriorityGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
+                        beginBackSwipeClaim()
                         onScrub(Self.fraction(forX: value.location.x, width: width))
                     }
                     .onEnded { value in
                         onCommit(Self.fraction(forX: value.location.x, width: width))
+                        endBackSwipeClaim()
                     }
             )
         }
         .frame(height: 44)
         .allowsHitTesting(isSeekable)
         .opacity(isSeekable ? 1 : 0.55)
+        .onDisappear { endBackSwipeClaim() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback position")
         .accessibilityValue(percentValue)
@@ -448,6 +453,18 @@ private struct AudioPlaybackSeekBar: View {
 
     private var percentValue: String {
         "\(Int((min(1, max(0, fraction)) * 100).rounded())) percent"
+    }
+
+    private func beginBackSwipeClaim() {
+        guard !holdsBackSwipeClaim else { return }
+        holdsBackSwipeClaim = true
+        HorizontalBackSwipeGesturePolicy.beginExclusiveClaim()
+    }
+
+    private func endBackSwipeClaim() {
+        guard holdsBackSwipeClaim else { return }
+        holdsBackSwipeClaim = false
+        HorizontalBackSwipeGesturePolicy.endExclusiveClaim()
     }
 
     private static func fraction(forX x: CGFloat, width: CGFloat) -> Double {

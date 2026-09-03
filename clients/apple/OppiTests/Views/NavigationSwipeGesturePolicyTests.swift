@@ -362,6 +362,29 @@ struct NavigationSwipeGesturePolicyTests {
         ))
     }
 
+    @Test func swiftUIBackSwipeOnEndedIsIgnoredWhileExclusiveClaimIsActive() {
+        let swipe = CGSize(width: 90, height: 12)
+        var backCount = 0
+        func fire() {
+            HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(translation: swipe) {
+                backCount += 1
+            }
+        }
+
+        fire()
+        #expect(backCount == 1)
+
+        do {
+            HorizontalBackSwipeGesturePolicy.beginExclusiveClaim()
+            defer { HorizontalBackSwipeGesturePolicy.endExclusiveClaim() }
+            fire()
+            #expect(backCount == 1)
+        }
+
+        fire()
+        #expect(backCount == 2)
+    }
+
     @Test func downDismissIgnoresScrollViewInsideNonInteractiveAncestor() {
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
         container.isUserInteractionEnabled = false

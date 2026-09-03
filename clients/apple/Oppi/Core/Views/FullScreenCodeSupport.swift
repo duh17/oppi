@@ -327,10 +327,16 @@ enum NavigationSwipeGesturePolicy {
 ///
 /// Distance/velocity thresholds are shared with ``NavigationSwipeGesturePolicy``.
 /// Scroll-edge gating lives on the UIKit installer path; pure SwiftUI
-/// ``horizontalBackSwipeGesture`` hosts still only apply the translation gate.
+/// ``horizontalBackSwipeGesture`` hosts apply the translation gate and ignore
+/// `onEnded` while an exclusive claim is held.
 enum HorizontalBackSwipeGesturePolicy {
     static let minimumHorizontalDistance = NavigationSwipeGesturePolicy.minimumDistance
     static let horizontalDominanceRatio = NavigationSwipeGesturePolicy.dominanceRatio
+
+    /// Nested seek-bar (or similar) drags increment this so SwiftUI back-swipe
+    /// `onEnded` does not pop the host while the finger is still scrubbing.
+    @MainActor
+    private static var exclusiveClaimCount = 0
 
     static func isBackSwipe(translation: CGSize) -> Bool {
         NavigationSwipeGesturePolicy.isSwipe(translation: translation, direction: .right)
@@ -338,6 +344,30 @@ enum HorizontalBackSwipeGesturePolicy {
 
     static func shouldBegin(velocity: CGPoint) -> Bool {
         NavigationSwipeGesturePolicy.shouldBegin(velocity: velocity, direction: .right)
+    }
+
+    @MainActor
+    static func beginExclusiveClaim() {
+        exclusiveClaimCount += 1
+    }
+
+    @MainActor
+    static func endExclusiveClaim() {
+        if exclusiveClaimCount > 0 {
+            exclusiveClaimCount -= 1
+        }
+    }
+
+    /// SwiftUI ``horizontalBackSwipeGesture`` `onEnded` consults this so a
+    /// simultaneous parent drag cannot pop while an exclusive claim is held.
+    @MainActor
+    static func handleSwiftUIBackSwipeEnded(
+        translation: CGSize,
+        onBack: () -> Void
+    ) {
+        guard exclusiveClaimCount == 0 else { return }
+        guard isBackSwipe(translation: translation) else { return }
+        onBack()
     }
 }
 
@@ -353,8 +383,10 @@ private struct HorizontalBackSwipeGestureModifier: ViewModifier {
                 .simultaneousGesture(
                     DragGesture(minimumDistance: HorizontalBackSwipeGesturePolicy.minimumHorizontalDistance)
                         .onEnded { value in
-                            guard HorizontalBackSwipeGesturePolicy.isBackSwipe(translation: value.translation) else { return }
-                            onBack()
+                            HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
+                                translation: value.translation,
+                                onBack: onBack
+                            )
                         }
                 )
         } else {
