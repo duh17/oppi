@@ -6,6 +6,13 @@ enum SessionListPromptSwipePolicy {
         case none
     }
 
+    /// Live-row trailing swipe buttons in SwiftUI declaration order
+    /// (from the trailing edge toward center).
+    enum TrailingLiveButton: Equatable, Sendable {
+        case stop
+        case prompt
+    }
+
     /// Trailing (swipe-left) Prompt for session-list rows.
     ///
     /// Prompt is only offered on live rows that belong to a workspace, because
@@ -19,6 +26,21 @@ enum SessionListPromptSwipePolicy {
         let trimmed = workspaceId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmed.isEmpty, status != .stopped else { return .none }
         return .prompt
+    }
+
+    /// Live-row trailing swipe buttons in SwiftUI declaration order.
+    ///
+    /// SwiftUI trailing `swipeActions` declare from the trailing edge toward
+    /// center, so Stop is first (screen edge) and Prompt is inward.
+    /// Visual when swiping left: `[Prompt] [Stop] | screen edge`.
+    static func trailingLiveButtons(
+        status: SessionStatus,
+        workspaceId: String?
+    ) -> [TrailingLiveButton] {
+        if trailingAction(status: status, workspaceId: workspaceId) == .prompt {
+            return [.stop, .prompt]
+        }
+        return [.stop]
     }
 
     /// HTTP command body for a picked prompt template.

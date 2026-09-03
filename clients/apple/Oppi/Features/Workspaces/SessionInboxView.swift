@@ -813,6 +813,16 @@ struct SessionInboxView: View {
                 .accessibilityIdentifier("session.delete.\(item.session.id)")
             }
         } else {
+            // SwiftUI trailing swipeActions declare from the trailing edge toward
+            // center. Stop first so it sits at the screen edge: [Prompt] [Stop] |.
+            Button {
+                Task { await stopSession(item) }
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .tint(.themeOrange)
+            .accessibilityIdentifier("session.stop.\(item.session.id)")
+
             if SessionListPromptSwipePolicy.trailingAction(
                 status: item.session.status,
                 workspaceId: item.session.workspaceId ?? item.workspace?.id
@@ -825,14 +835,6 @@ struct SessionInboxView: View {
                 .tint(.themeCyan)
                 .accessibilityIdentifier("session.prompt.\(item.session.id)")
             }
-
-            Button {
-                Task { await stopSession(item) }
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .tint(.themeOrange)
-            .accessibilityIdentifier("session.stop.\(item.session.id)")
         }
     }
 

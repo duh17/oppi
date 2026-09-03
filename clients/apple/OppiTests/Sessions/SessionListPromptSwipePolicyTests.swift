@@ -23,6 +23,47 @@ struct SessionListPromptSwipePolicyTests {
         )
     }
 
+    @Test(arguments: [SessionStatus.starting, .ready, .busy, .stopping, .error])
+    func liveWorkspaceTrailingButtonsDeclareStopThenPrompt(status: SessionStatus) {
+        #expect(
+            SessionListPromptSwipePolicy.trailingLiveButtons(
+                status: status,
+                workspaceId: "ws-1"
+            ) == [.stop, .prompt]
+        )
+    }
+
+    @Test func stoppedWorkspaceTrailingLiveButtonsAreStopOnly() {
+        #expect(
+            SessionListPromptSwipePolicy.trailingLiveButtons(
+                status: .stopped,
+                workspaceId: "ws-1"
+            ) == [.stop]
+        )
+    }
+
+    @Test(arguments: [SessionStatus.ready, .busy, .stopped])
+    func sessionWithoutWorkspaceTrailingLiveButtonsAreStopOnly(status: SessionStatus) {
+        #expect(
+            SessionListPromptSwipePolicy.trailingLiveButtons(
+                status: status,
+                workspaceId: nil
+            ) == [.stop]
+        )
+        #expect(
+            SessionListPromptSwipePolicy.trailingLiveButtons(
+                status: status,
+                workspaceId: ""
+            ) == [.stop]
+        )
+        #expect(
+            SessionListPromptSwipePolicy.trailingLiveButtons(
+                status: status,
+                workspaceId: "   "
+            ) == [.stop]
+        )
+    }
+
     @Test(arguments: [SessionStatus.ready, .busy, .stopped])
     func sessionWithoutWorkspaceShowsNoTrailingPrompt(status: SessionStatus) {
         #expect(

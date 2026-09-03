@@ -752,6 +752,16 @@ struct WorkspaceDetailView: View {
             .tint(.themeRed)
             .accessibilityIdentifier("session.delete.\(session.id)")
         } else {
+            // SwiftUI trailing swipeActions declare from the trailing edge toward
+            // center. Stop first so it sits at the screen edge: [Prompt] [Stop] |.
+            Button {
+                Task { await stopSession(session) }
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .accessibilityIdentifier("session.stop.\(session.id)")
+            .tint(.themeOrange)
+
             if SessionListPromptSwipePolicy.trailingAction(
                 status: session.status,
                 workspaceId: session.workspaceId ?? workspace.id
@@ -764,14 +774,6 @@ struct WorkspaceDetailView: View {
                 .tint(.themeCyan)
                 .accessibilityIdentifier("session.prompt.\(session.id)")
             }
-
-            Button {
-                Task { await stopSession(session) }
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-            }
-            .accessibilityIdentifier("session.stop.\(session.id)")
-            .tint(.themeOrange)
         }
     }
 
