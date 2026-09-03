@@ -1,6 +1,24 @@
 import Combine
 import SwiftUI
 
+/// Whether the player draws its own title in its header.
+///
+/// Embedded surfaces (the file browser) already show the filename in the host
+/// navigation bar, so the player must not repeat it. Modal, timeline, and
+/// full-screen Now Playing surfaces own their header and draw the title once.
+/// This is an explicit presentation choice, independent of `showsCloseButton`.
+enum AudioLyricsPlayerTitlePresentation: Equatable {
+    case playerShowsTitle
+    case hostOwnsTitle
+
+    var showsInternalTitle: Bool {
+        switch self {
+        case .playerShowsTitle: return true
+        case .hostOwnsTitle: return false
+        }
+    }
+}
+
 enum AudioLyricsPlayerPresenter {
     @MainActor
     static func shouldAutoplayOnAppear(
@@ -69,6 +87,7 @@ struct AudioLyricsPlayerView: View {
     let openFile: (() -> Void)?
     var autoplayOnAppear = false
     var showsCloseButton = true
+    var titlePresentation: AudioLyricsPlayerTitlePresentation = .playerShowsTitle
     var timedText: TimedText.LoadResult? = nil
     var sidecarLoader: (() async -> TimedText.LoadResult)? = nil
 
@@ -160,10 +179,12 @@ struct AudioLyricsPlayerView: View {
                     .background(.themeBgHighlight.opacity(0.9), in: Capsule())
             }
             Spacer()
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .lineLimit(1)
+            if titlePresentation.showsInternalTitle {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.themeFg)
+                    .lineLimit(1)
+            }
             Spacer()
             languageControl
                 .frame(width: 72, alignment: .trailing)

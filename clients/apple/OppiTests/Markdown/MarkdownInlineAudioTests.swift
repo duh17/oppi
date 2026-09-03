@@ -344,6 +344,13 @@ struct MarkdownInlineAudioTests {
         #expect(!MarkdownInlineAudioLayout.autoplay)
     }
 
+    @Test("file browser explicitly delegates the audio title to host navigation")
+    func internalTitlePresentationIsExplicit() {
+        #expect(AudioLyricsPlayerTitlePresentation.playerShowsTitle.showsInternalTitle)
+        #expect(!AudioLyricsPlayerTitlePresentation.hostOwnsTitle.showsInternalTitle)
+        #expect(FileBrowserContentRenderingPolicy.audioPlayerTitlePresentation == .hostOwnsTitle)
+    }
+
     @MainActor
     @Test("markdown audio view reserves compact height and does not autoplay")
     func markdownAudioViewDoesNotAutoplay() throws {

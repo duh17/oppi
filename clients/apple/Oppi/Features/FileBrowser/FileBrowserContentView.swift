@@ -53,6 +53,9 @@ enum FileBrowserContentRenderingPolicy {
     ) -> String {
         source == .hostFile ? path : fileName
     }
+
+    /// The file browser already owns the filename in navigation chrome.
+    static let audioPlayerTitlePresentation: AudioLyricsPlayerTitlePresentation = .hostOwnsTitle
 }
 
 enum FileBrowserMediaLoadPolicy {
@@ -417,6 +420,7 @@ struct FileBrowserContentView: View {
             openFile: nil,
             autoplayOnAppear: false,
             showsCloseButton: false,
+            titlePresentation: FileBrowserContentRenderingPolicy.audioPlayerTitlePresentation,
             timedText: timedText
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
