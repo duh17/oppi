@@ -96,13 +96,69 @@ struct InAppNowPlayingChromeTests {
         )
     }
 
-    @Test func sessionListPillDensityIsTitleOnlyAndNarrowerThanChat() {
+    @Test func sessionListPillHidesTitleAndKeepsPlayPauseHit() {
+        #expect(!InAppNowPlayingChrome.PillDensity.sessionList.showsTitle)
         #expect(!InAppNowPlayingChrome.PillDensity.sessionList.showsSubtitle)
-        #expect(InAppNowPlayingChrome.PillDensity.sessionList.titleMaxWidth == 120)
         #expect(InAppNowPlayingChrome.PillDensity.sessionList.playPauseHitSize == 44)
-        #expect(InAppNowPlayingChrome.PillDensity.chat.showsSubtitle)
-        #expect(InAppNowPlayingChrome.PillDensity.chat.titleMaxWidth == 180)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.showsTitle)
+        #expect(!InAppNowPlayingChrome.PillDensity.chat.showsSubtitle)
         #expect(InAppNowPlayingChrome.PillDensity.chat.playPauseHitSize == 44)
+        #expect(InAppNowPlayingChrome.PillDensity.chat.titleMaxWidth == 180)
+    }
+
+    @Test func pausedWaveformBarsAreResting() {
+        let paused = AudioPlayerService.waveformLevels(fromMeterLevel: 0.92, isPlaying: false)
+        #expect(paused.count == AudioPlayerService.waveformBarCount)
+        #expect(paused == Array(repeating: AudioPlayerService.restingWaveformLevel, count: AudioPlayerService.waveformBarCount))
+
+        let playing = AudioPlayerService.waveformLevels(fromMeterLevel: 0.92, isPlaying: true)
+        #expect(playing != paused)
+        #expect(playing.allSatisfy { $0 >= 0 && $0 <= 1 })
+    }
+
+    @Test func reduceMotionWaveformBarsAreStatic() {
+        let quiet = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: AudioPlayerService.waveformLevels(fromMeterLevel: 0.2, isPlaying: true),
+            isPlaying: true,
+            reduceMotion: true
+        )
+        let loud = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: AudioPlayerService.waveformLevels(fromMeterLevel: 0.95, isPlaying: true),
+            isPlaying: true,
+            reduceMotion: true
+        )
+        #expect(quiet.count == AudioPlayerService.waveformBarCount)
+        #expect(quiet == loud)
+
+        let liveQuiet = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: AudioPlayerService.waveformLevels(fromMeterLevel: 0.2, isPlaying: true),
+            isPlaying: true,
+            reduceMotion: false
+        )
+        let liveLoud = InAppNowPlayingChrome.displayedWaveformLevels(
+            snapshot: AudioPlayerService.waveformLevels(fromMeterLevel: 0.95, isPlaying: true),
+            isPlaying: true,
+            reduceMotion: false
+        )
+        #expect(liveQuiet != liveLoud)
+    }
+
+    @Test func meterMappingClampsToUnitInterval() {
+        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: 0) == 1)
+        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: 12) == 1)
+        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: -160) == 0)
+        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: -.infinity) == 0)
+        #expect(AudioPlayerService.normalizedMeterLevel(fromAveragePower: .nan) == 0)
+
+        let mid = AudioPlayerService.normalizedMeterLevel(fromAveragePower: -25)
+        #expect(mid > 0 && mid < 1)
+
+        let overflow = AudioPlayerService.waveformLevels(fromMeterLevel: 2.4, isPlaying: true)
+        #expect(overflow.count == AudioPlayerService.waveformBarCount)
+        #expect(overflow.allSatisfy { $0 >= 0 && $0 <= 1 })
+
+        let underflow = AudioPlayerService.waveformLevels(fromMeterLevel: -1.2, isPlaying: true)
+        #expect(underflow.allSatisfy { $0 >= 0 && $0 <= 1 })
     }
 
     @Test func visibleStripCollectorFindsOnscreenNativeAudioStrip() {
