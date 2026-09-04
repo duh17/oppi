@@ -9,14 +9,25 @@
 
 export interface DictationConfig {
   /** Explicit backend. Omitted with a non-empty sttEndpoint means "http". */
-  backend?: "http" | "pi-extension";
-  /** Package name, npm: spec, or absolute package directory. */
-  extension?: string;
+  backend?: "http";
   /** STT backend endpoint for the HTTP backend. */
   sttEndpoint?: string;
 
   /** Model to request from the STT backend. */
   sttModel: string;
+}
+
+/** True when HTTP/Yuwp dictation has a non-empty STT endpoint. */
+export function isDictationStreamEnabled(
+  asr:
+    | {
+        backend?: string;
+        extension?: string;
+        sttEndpoint?: string;
+      }
+    | undefined,
+): boolean {
+  return typeof asr?.sttEndpoint === "string" && asr.sttEndpoint.trim().length > 0;
 }
 
 export const DEFAULT_DICTATION_CONFIG: DictationConfig = {

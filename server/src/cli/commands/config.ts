@@ -49,11 +49,7 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   "autoTitle.enabled": { type: "boolean", desc: "Enable automatic session titles" },
   "autoTitle.model": { type: "string", desc: "Auto-title model" },
   asr: { type: "json", desc: "ASR config JSON object" },
-  "asr.backend": { type: "string", desc: "STT backend: http or pi-extension" },
-  "asr.extension": {
-    type: "string",
-    desc: "Pi STT package name, npm: spec, or absolute package directory",
-  },
+  "asr.backend": { type: "string", desc: "STT backend: http" },
   "asr.sttEndpoint": { type: "string", desc: "STT backend base URL" },
   images: { type: "json", desc: "Image attachment preprocessing config JSON object" },
   "images.autoResize": { type: "boolean", desc: "Resize large image attachments before upload" },

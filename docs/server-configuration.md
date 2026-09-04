@@ -22,7 +22,7 @@ oppi config set --help
 
 ## Dictation (ASR / STT)
 
-HTTP backend (Yuwp or any compatible streaming STT URL):
+HTTP/Yuwp backend (Yuwp or any compatible streaming STT URL):
 
 ```bash
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
@@ -30,28 +30,14 @@ oppi config validate
 oppi server restart   # or restart `oppi serve`
 ```
 
-Pi package `./host` backend:
-
-```bash
-pi install @earendil-works/pi-transcribe
-oppi config set asr.extension @earendil-works/pi-transcribe
-oppi config set asr.backend pi-extension
-oppi config validate
-oppi server restart
-```
-
-- `asr.backend` is `http` or `pi-extension`. Omitted backend with a non-empty `sttEndpoint` means HTTP.
-- Unset `asr.sttEndpoint` disables HTTP dictation. For `pi-extension`, Oppi ignores `sttEndpoint` and requires a valid `asr.extension` whose package directory exports `./host`.
-- `asr.extension` must be a package name, an `npm:` spec, or an absolute package directory. It must not be a Node subpath or the TUI entry.
-- Oppi does not install the package. Use `pi install` or an absolute package directory.
+- Set a non-empty `asr.sttEndpoint` to enable server dictation. Unset it to disable.
+- Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load.
 - The Apple app learns dictation availability from the server identity payload after pairing.
 
 Inspect:
 
 ```bash
 oppi config get asr
-oppi config get asr.backend
-oppi config get asr.extension
 oppi config get asr.sttEndpoint
 ```
 
@@ -94,8 +80,6 @@ Provider API keys use `pi auth`, not Oppi config.
 | --------------------------------------- | ------------------------------------------------------------------- |
 | `port` / `host`                         | Listen address (restart)                                            |
 | `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart)          |
-| `asr.backend`                           | `http` or `pi-extension` (restart)                                  |
-| `asr.extension`                         | Pi STT package name, `npm:` spec, or absolute package dir (restart) |
 | `asr.sttEndpoint`                       | HTTP dictation STT backend (restart)                                |
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |

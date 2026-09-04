@@ -13,7 +13,6 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createLogger } from "../logger.js";
-import { ASR_EXTENSION_FORMAT_ERROR, isValidAsrExtensionSpec } from "../pi-extension-stt-host.js";
 import type { DevicePublicKey, ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
@@ -544,11 +543,17 @@ function normalizeConfig(
   // ASR / dictation pipeline config
   if ("asr" in obj && isRecord(obj.asr)) {
     const asr = obj.asr;
-    const allowedAsrKeys = new Set(["sttEndpoint", "backend", "extension"]);
+    const allowedAsrKeys = new Set(["sttEndpoint", "backend"]);
+    const retiredAsrKeys = new Set(["extension"]);
+
+    if ("extension" in asr) {
+      warnings.push("config.asr.extension: ignored; Pi-extension STT is no longer supported");
+      changed = true;
+    }
 
     if (strictUnknown) {
       for (const key of Object.keys(asr)) {
-        if (!allowedAsrKeys.has(key)) {
+        if (!allowedAsrKeys.has(key) && !retiredAsrKeys.has(key)) {
           errors.push(`config.asr.${key}: unknown key`);
         }
       }
@@ -557,26 +562,17 @@ function normalizeConfig(
     const asrConfig: NonNullable<ServerConfig["asr"]> = {};
 
     if ("backend" in asr) {
-      if (asr.backend === "http" || asr.backend === "pi-extension") {
-        asrConfig.backend = asr.backend;
+      if (asr.backend === "http") {
+        asrConfig.backend = "http";
+      } else if (asr.backend === "pi-extension") {
+        warnings.push(
+          "config.asr.backend: ignored pi-extension; server dictation is HTTP/Yuwp only",
+        );
+        changed = true;
       } else {
-        errors.push("config.asr.backend: expected http or pi-extension");
+        errors.push("config.asr.backend: expected http");
         changed = true;
       }
-    }
-
-    if ("extension" in asr) {
-      if (typeof asr.extension === "string" && isValidAsrExtensionSpec(asr.extension)) {
-        asrConfig.extension = asr.extension.trim();
-      } else {
-        errors.push(`config.asr.extension: ${ASR_EXTENSION_FORMAT_ERROR}`);
-        changed = true;
-      }
-    }
-
-    if (asrConfig.backend === "pi-extension" && !asrConfig.extension) {
-      errors.push("config.asr.extension: required when backend=pi-extension");
-      changed = true;
     }
 
     if (typeof asr.sttEndpoint === "string" && asr.sttEndpoint.trim().length > 0) {

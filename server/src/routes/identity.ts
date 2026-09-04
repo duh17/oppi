@@ -5,7 +5,7 @@ import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js
 import { createLogger } from "../logger.js";
 import { isLocalRequest } from "../request-trust.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
-import { isDictationStreamEnabled } from "../pi-extension-stt-host.js";
+import { isDictationStreamEnabled } from "../dictation-types.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {

@@ -152,7 +152,7 @@ Configures routing for server-side dictation to an external STT backend.
 
 | Setting           | Type   | Default | Description                                                                                                                                                                                |
 | ----------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `asr.sttEndpoint` | string | -       | STT backend base URL. When set, server dictation is enabled on the session audio stream and audio is forwarded to the backend in real time. Oppi does not persist dictation audio locally. |
+| `asr.sttEndpoint` | string | -       | STT backend base URL. When set, server dictation is enabled on the session audio stream and audio is forwarded to the backend in real time. Oppi does not persist dictation audio locally. Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load. |
 
 ### Images
 

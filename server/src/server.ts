@@ -96,12 +96,6 @@ import {
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
 import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
-import {
-  importTranscriptionHost,
-  resolvePiExtensionHostExport,
-  type TranscriptionHost,
-} from "./pi-extension-stt-host.js";
-import { PiExtensionSttProvider } from "./pi-extension-stt-provider.js";
 import { StreamingSttProvider } from "./stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { fetchProviderQuotas } from "./provider-quota.js";
@@ -458,8 +452,6 @@ export class Server {
   // Dictation pipeline capability source for ASR streams
   private dictationManager: DictationManager | undefined;
   private dictationConfig: DictationConfig | undefined;
-  private transcriptionHost: TranscriptionHost | undefined;
-  private transcriptionHostPromise: Promise<TranscriptionHost> | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
   private scheduleRunner!: AgentScheduleRunner;
 
@@ -506,22 +498,12 @@ export class Server {
     });
 
     // Dictation pipeline. Dictation streams create one DictationManager per WebSocket.
-    // Explicit backend wins. pi-extension ignores sttEndpoint for enablement and must
-    // not inherit DEFAULT_DICTATION_CONFIG.sttEndpoint (that would look like HTTP).
-    // Enable from config so a post-boot `pi install` can serve; identity still
-    // advertises dictationStream only when ./host currently exists.
+    // Server dictation is HTTP/Yuwp only: a non-empty asr.sttEndpoint enables it.
+    // Do not inherit DEFAULT_DICTATION_CONFIG.sttEndpoint (that would enable HTTP
+    // when the operator left asr unset).
     const asr = config.asr;
-    const piExtensionEnabled = asr?.backend === "pi-extension";
-    const httpEnabled =
-      !piExtensionEnabled && typeof asr?.sttEndpoint === "string" && asr.sttEndpoint.length > 0;
-    if (piExtensionEnabled) {
-      this.dictationConfig = {
-        backend: "pi-extension",
-        extension: asr?.extension,
-        sttModel: DEFAULT_DICTATION_CONFIG.sttModel,
-      };
-      this.dictationManager = this.createDictationManager();
-    } else if (httpEnabled) {
+    const httpEnabled = typeof asr?.sttEndpoint === "string" && asr.sttEndpoint.length > 0;
+    if (httpEnabled) {
       this.dictationConfig = {
         backend: "http",
         sttEndpoint: asr?.sttEndpoint,
@@ -1119,14 +1101,6 @@ export class Server {
   // ─── Dictation ───
 
   private createDictationManager(): DictationManager | undefined {
-    if (this.dictationConfig?.backend === "pi-extension") {
-      return new DictationManager(
-        new PiExtensionSttProvider({
-          getHost: () => this.getTranscriptionHost(),
-        }),
-        this.opsMetrics,
-      );
-    }
     if (!this.dictationConfig?.sttEndpoint) return undefined;
     const sttProvider = new StreamingSttProvider(
       {
@@ -1136,34 +1110,6 @@ export class Server {
       globalThis.fetch,
     );
     return new DictationManager(sttProvider, this.opsMetrics);
-  }
-
-  private getTranscriptionHost(): Promise<TranscriptionHost> {
-    if (this.transcriptionHost) {
-      return Promise.resolve(this.transcriptionHost);
-    }
-    if (this.transcriptionHostPromise) {
-      return this.transcriptionHostPromise;
-    }
-
-    const resolved = resolvePiExtensionHostExport(this.dictationConfig?.extension);
-    if (!resolved) {
-      return Promise.reject(new Error("Pi extension STT host is not installed"));
-    }
-
-    const pending = importTranscriptionHost(resolved.packageDir).then((host) => {
-      this.transcriptionHost = host;
-      return host;
-    });
-    this.transcriptionHostPromise = pending;
-    // Observe rejection so a missing factory cannot become unhandledRejection
-    // and take down `oppi serve`. getHost() still returns the rejected promise.
-    void pending.catch((err) => {
-      log.warn("dictation.pi_extension_host.import_failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    return pending;
   }
 
   private trackConnection(ws: WebSocket): void {

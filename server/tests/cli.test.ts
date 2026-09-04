@@ -461,8 +461,7 @@ describe("oppi help", () => {
           "Usage: oppi config set <key> <value>",
           "runtimeEnv.<NAME>",
           "tls.mode",
-          "asr.backend",
-          "asr.extension",
+          "asr.sttEndpoint",
         ],
       },
       {
@@ -829,12 +828,12 @@ describe("oppi config", () => {
     );
     run(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]);
     expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
-    run(["config", "set", "asr.extension", "@earendil-works/pi-transcribe"]);
+    const setExtension = run(["config", "set", "asr.extension", "@earendil-works/pi-transcribe"]);
+    expect(setExtension.exitCode).toBe(1);
+    expect(`${setExtension.stdout}${setExtension.stderr}`).toContain("Unknown config key");
     run(["config", "set", "asr.backend", "pi-extension"]);
-    expect(run(["config", "get", "asr.backend"]).stdout.trim()).toBe("pi-extension");
-    expect(run(["config", "get", "asr.extension"]).stdout.trim()).toBe(
-      "@earendil-works/pi-transcribe",
-    );
+    expect(run(["config", "get", "asr.backend"]).exitCode).toBe(1);
+    expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
     run(["config", "set", "oppiDocsPrompt.enabled", "false"]);
     expect(run(["config", "get", "oppiDocsPrompt.enabled"]).stdout.trim()).toBe("false");
     run(["config", "set", "runtimeEnv.TTS_BASE_URL", "http://127.0.0.1:7937"]);

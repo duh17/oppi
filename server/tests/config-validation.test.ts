@@ -315,24 +315,33 @@ describe("Storage config validation", () => {
     });
   });
 
-  it("preserves asr backend pi-extension with a package name", () => {
-    const raw = {
-      ...Storage.getDefaultConfig(dir),
-      asr: {
-        backend: "pi-extension",
-        extension: "@earendil-works/pi-transcribe",
+  it("warns and drops asr backend pi-extension, keeping sttEndpoint", () => {
+    const result = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        asr: {
+          backend: "pi-extension",
+          extension: "@earendil-works/pi-transcribe",
+          sttEndpoint: "http://localhost:9847",
+        },
       },
-    };
-
-    const result = Storage.validateConfig(raw, dir, true);
+      dir,
+      true,
+    );
     expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toContain(
+      "config.asr.backend: ignored pi-extension; server dictation is HTTP/Yuwp only",
+    );
+    expect(result.warnings).toContain(
+      "config.asr.extension: ignored; Pi-extension STT is no longer supported",
+    );
     expect(result.config?.asr).toEqual({
-      backend: "pi-extension",
-      extension: "@earendil-works/pi-transcribe",
+      sttEndpoint: "http://localhost:9847",
     });
   });
 
-  it("preserves asr backend pi-extension with an npm: spec or absolute directory", () => {
+  it("omits asr when backend is pi-extension without sttEndpoint", () => {
     const npmSpec = Storage.validateConfig(
       {
         ...Storage.getDefaultConfig(dir),
@@ -342,7 +351,13 @@ describe("Storage config validation", () => {
       true,
     );
     expect(npmSpec.valid).toBe(true);
-    expect(npmSpec.config?.asr?.extension).toBe("npm:@earendil-works/pi-transcribe");
+    expect(npmSpec.config?.asr).toBeUndefined();
+    expect(npmSpec.warnings).toContain(
+      "config.asr.backend: ignored pi-extension; server dictation is HTTP/Yuwp only",
+    );
+    expect(npmSpec.warnings).toContain(
+      "config.asr.extension: ignored; Pi-extension STT is no longer supported",
+    );
 
     const abs = Storage.validateConfig(
       {
@@ -353,54 +368,7 @@ describe("Storage config validation", () => {
       true,
     );
     expect(abs.valid).toBe(true);
-    expect(abs.config?.asr?.extension).toBe("/opt/pi-transcribe");
-  });
-
-  it("requires extension when backend is pi-extension", () => {
-    const result = Storage.validateConfig(
-      {
-        ...Storage.getDefaultConfig(dir),
-        asr: { backend: "pi-extension" },
-      },
-      dir,
-      true,
-    );
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContain("config.asr.extension: required when backend=pi-extension");
-  });
-
-  it("rejects a Node subpath or TUI entry as asr.extension", () => {
-    const subpath = Storage.validateConfig(
-      {
-        ...Storage.getDefaultConfig(dir),
-        asr: {
-          backend: "pi-extension",
-          extension: "@earendil-works/pi-transcribe/host",
-        },
-      },
-      dir,
-      true,
-    );
-    expect(subpath.valid).toBe(false);
-    expect(subpath.errors).toContain(
-      "config.asr.extension: expected package name, npm: spec, or absolute package directory",
-    );
-
-    const tui = Storage.validateConfig(
-      {
-        ...Storage.getDefaultConfig(dir),
-        asr: {
-          backend: "pi-extension",
-          extension: "./extensions/transcribe.ts",
-        },
-      },
-      dir,
-      true,
-    );
-    expect(tui.valid).toBe(false);
-    expect(tui.errors).toContain(
-      "config.asr.extension: expected package name, npm: spec, or absolute package directory",
-    );
+    expect(abs.config?.asr).toBeUndefined();
   });
 
   it("rejects an invalid asr.backend", () => {
@@ -413,10 +381,10 @@ describe("Storage config validation", () => {
       true,
     );
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain("config.asr.backend: expected http or pi-extension");
+    expect(result.errors).toContain("config.asr.backend: expected http");
   });
 
-  it("survives round-trip through Storage constructor with pi-extension asr config", () => {
+  it("drops pi-extension asr on Storage load and keeps sttEndpoint", () => {
     const configPath = join(dir, "config.json");
     writeFileSync(
       configPath,
@@ -425,14 +393,14 @@ describe("Storage config validation", () => {
         asr: {
           backend: "pi-extension",
           extension: "@earendil-works/pi-transcribe",
+          sttEndpoint: "http://localhost:9847",
         },
       }),
     );
 
     const storage = new Storage(dir);
     expect(storage.getConfig().asr).toEqual({
-      backend: "pi-extension",
-      extension: "@earendil-works/pi-transcribe",
+      sttEndpoint: "http://localhost:9847",
     });
   });
 
