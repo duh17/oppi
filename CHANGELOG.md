@@ -38,9 +38,45 @@ Example:
 
 ## [Unreleased]
 
+## [0.47.4] - 2026-09-03
+
+Target: iOS `1.1.2` build `48`, `oppi-server@0.47.4` with bundled Pi runtime `0.84.4`. npm `oppi-mirror@0.47.3` stays published and does not include the session-tree navigation fix.
+
+### Added
+
+- **Client:** One audio player for Oppi-backed Files and chat embeds, with lyrics when a timed-text sidecar exists. Session lists show a Now Playing pill while it plays.
+- **Client:** Swipe left on a live workspace session to pick a prompt template and send it without opening chat.
+- **Client:** The host pill opens Usage, Model Providers, and Server Settings for the selected server.
+- **Client:** README-style Markdown file links such as `[Contributing](CONTRIBUTING.md)` open in the document viewer.
+- **Client:** Oppi-backed `![]()` and `![[]]` both embed image, audio, and video after origin checks. Remote HTTPS images stay tap-to-load.
+- **Server:** `oppi session`, `wait`, and `schedule` accept an exact `Session.id` or a unique prefix. JSON, HTTP, and `oppi://session` links stay full UUIDs.
+- **Server:** `oppi session create --auto-stop` stops the session when the turn settles. Pending Ask/select/confirm keep it alive.
+- **Server:** Live Pi `registerEntryRenderer` custom entries can show as the existing system timeline card on HTTP trace. File-only sessions stay hidden; raw entry data is never serialized. Refs #28.
+
+### Changed
+
+- **Compatibility:** Build 48 requires `oppi-server@0.47.4`. Bundled and installed Pi is `0.84.4`. npm `oppi-mirror@0.47.3` does not include the session-tree navigation fix.
+- **Client:** Commit-detail New Session attaches a commit pointer, not every changed file.
+- **Client:** The in-chat extension strip is pills only. The full-width glass bar is gone.
+- **Server:** Bundled Pi runtime moves to `0.84.4` and can compact between tools in the same run when the next model call would overflow.
+
 ### Fixed
 
-- **Server:** `npm pack` / `release-npm` clean-build from current source and fail if packed JS has no matching `server/src` file or if `/server/mobile-output-guide` is missing. npm `0.47.3` shipped stale `dist` (deleted Oppi agent files, and no Mobile Output Guide route), including Cursor Cloud packs.
+- **Server:** `npm pack` clean-builds from current source and fails if packed JS has no matching `server/src` file or if `/server/mobile-output-guide` is missing. npm `0.47.3` shipped stale `dist` (deleted Oppi agent files, and no Mobile Output Guide route), including Cursor Cloud packs.
+- **Client:** Leaving Pi Tools writes the Back-time selection and checkbox/mode changes. Nested `NavigationLink.onDisappear` never PUT in Build 47.
+- **Client:** Streaming GFM tables no longer leave raw header pipes above the table.
+- **Client:** Replayed cache-miss notices stay beside the paying assistant.
+- **Client:** iPad composer hides Write with Siri.
+- **Client:** Composer turn-ack caption hides after send.
+- **Client:** Photo picker presenter stays mounted so a second pick can complete.
+- **Client:** Expanded Markdown in tool cards stays inside the card, and expanded row height republishes so the card does not clip.
+- **Client:** Annotate Add to Chat attaches the PNG only. PaperKit OCR text is not dumped into the composer.
+- **Client/Server:** Expired short-lived `at_` closes live streams with `4001` and refreshes without logout or a new `dt_`. Dictation delivers `dictation_final` before that close; leftover `dt_` is migrate-only.
+- **Server:** `oppi server install` uses `gui/<uid>` when available and falls back to `user/<uid>` for headless macOS. Fixes #31.
+
+### Notes
+
+- The Oppi Mirror session-tree navigation fix (Fixes #30) is in this repository's `oppi-mirror` source. It is not in npm `oppi-mirror@0.47.3` and does not ship with `oppi-server@0.47.4`.
 
 ## [0.47.3] - 2026-08-27
 
@@ -347,7 +383,9 @@ Target: iOS `1.1.0` build `45`, `oppi-server@0.46.0` with bundled Pi runtime `0.
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.47.4...HEAD
+[0.47.4]: https://github.com/duh17/oppi/compare/v0.47.3...v0.47.4
+[0.47.3]: https://github.com/duh17/oppi/compare/v0.46.0...v0.47.3
 [0.46.0]: https://github.com/duh17/oppi/compare/v0.44.1...v0.46.0
 [0.44.1]: https://github.com/duh17/oppi/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/duh17/oppi/compare/v0.43.1...v0.44.0

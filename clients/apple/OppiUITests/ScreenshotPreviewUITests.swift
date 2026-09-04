@@ -469,18 +469,18 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "workspace-edit-skills")
     }
 
-    func testWhatsNewBuild47LightScreenshot() throws {
+    func testWhatsNewBuild48LightScreenshot() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(screen: "whats-new-build47-light", reduceMotion: true)
-        assertWhatsNewBuild47Content()
-        saveScreenshot(name: "whats-new-build47-light")
+        launchPreview(screen: "whats-new-build48-light", reduceMotion: true)
+        assertWhatsNewBuild48Content()
+        saveScreenshot(name: "whats-new-build48-light")
     }
 
-    func testWhatsNewBuild47DarkScreenshot() throws {
+    func testWhatsNewBuild48DarkScreenshot() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(screen: "whats-new-build47-dark", reduceMotion: true)
-        assertWhatsNewBuild47Content()
-        saveScreenshot(name: "whats-new-build47-dark")
+        launchPreview(screen: "whats-new-build48-dark", reduceMotion: true)
+        assertWhatsNewBuild48Content()
+        saveScreenshot(name: "whats-new-build48-dark")
     }
 
     func testModelProvidersQuotaInlinePreview() throws {
@@ -1417,7 +1417,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         )
     }
 
-    private func assertWhatsNewBuild47Content() {
+    private func assertWhatsNewBuild48Content() {
         // The launch arguments request reduced motion; this extra settle makes
         // the artifact safe even on simulators that ignore that preference.
         sleep(1)
@@ -1431,39 +1431,29 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
         let expectedFeatures = [
             (
-                id: "hardened-markdown",
-                title: "Hardened Markdown",
-                description: "Rendering and streaming are refactored, with fewer crash risks."
+                id: "audio-player",
+                title: "Audio player",
+                description: "Play Oppi-backed audio from Files or a chat embed. Lyrics appear when a sidecar exists."
             ),
             (
-                id: "native-mermaid",
-                title: "More polished Mermaid diagrams",
-                description: "Diagrams use the app theme, render clearer nodes, and cover more graph types."
+                id: "host-pill",
+                title: "Usage and Server Settings",
+                description: "The host pill opens Usage, Model Providers, and Server Settings for this server."
             ),
             (
-                id: "inline-wiki-video",
-                title: "Inline wiki videos",
-                description: "Oppi-backed videos play in the chat timeline."
+                id: "markdown-file-links",
+                title: "Markdown file links",
+                description: "README-style [label](path) links open in the document viewer."
             ),
             (
-                id: "compact-mode",
-                title: "Compact mode",
-                description: "Live work stays condensed into compact strips for a quieter timeline."
+                id: "session-prompt-swipe",
+                title: "Prompt from the session list",
+                description: "Swipe a live workspace session to send a prompt template without opening chat."
             ),
             (
-                id: "paperkit-canvas",
-                title: "Canvas and Annotate",
-                description: "Sketch or mark up from chat. Add to Chat attaches a PNG to this chat."
-            ),
-            (
-                id: "importable-themes",
-                title: "Tokyo Night and Rosé Pine",
-                description: "Import these server themes. They are not built-in iOS presets."
-            ),
-            (
-                id: "quota-pace",
-                title: "Quota remaining and pace",
-                description: "Model Providers show remaining percent and burn pace, not only used."
+                id: "commit-new-session",
+                title: "New Session from a commit",
+                description: "Starting from a commit attaches that commit, not every changed file."
             ),
         ]
 
@@ -1487,10 +1477,18 @@ final class ScreenshotPreviewUITests: XCTestCase {
         for pair in zip(rowFrames, rowFrames.dropFirst()) {
             XCTAssertLessThan(pair.0.maxY, pair.1.minY, "What’s New rows overlap")
         }
-        XCTAssertFalse(
-            app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "turn your workspace into")).firstMatch.exists,
-            "The wiki-link point must use factual workspace-file framing"
-        )
+        for forbidden in [
+            "15s",
+            "seek",
+            "fail closed",
+            "always one tap",
+            "turn your workspace into",
+        ] {
+            XCTAssertFalse(
+                app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", forbidden)).firstMatch.exists,
+                "What's New must not claim \(forbidden)"
+            )
+        }
 
         let done = app.buttons["Done"]
         XCTAssertTrue(done.waitForExistence(timeout: 5), "Done CTA not visible")

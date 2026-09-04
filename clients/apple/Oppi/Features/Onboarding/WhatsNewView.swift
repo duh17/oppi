@@ -78,56 +78,42 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Build 47 · Changes since Build 46
+    /// Build 48 · Changes since Build 47
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "hardened-markdown",
-            icon: "doc.richtext",
-            iconColor: .themeBlue,
-            title: String(localized: "Hardened Markdown"),
-            description: String(localized: "Rendering and streaming are refactored, with fewer crash risks.")
-        ),
-        WhatsNewFeature(
-            id: "native-mermaid",
-            icon: "point.3.connected.trianglepath.dotted",
+            id: "audio-player",
+            icon: "waveform",
             iconColor: .themeCyan,
-            title: String(localized: "More polished Mermaid diagrams"),
-            description: String(localized: "Diagrams use the app theme, render clearer nodes, and cover more graph types.")
+            title: String(localized: "Audio player"),
+            description: String(localized: "Play Oppi-backed audio from Files or a chat embed. Lyrics appear when a sidecar exists.")
         ),
         WhatsNewFeature(
-            id: "inline-wiki-video",
-            icon: "play.rectangle",
-            iconColor: .themeOrange,
-            title: String(localized: "Inline wiki videos"),
-            description: String(localized: "Oppi-backed videos play in the chat timeline.")
-        ),
-        WhatsNewFeature(
-            id: "compact-mode",
-            icon: "rectangle.split.1x2",
-            iconColor: .themeGreen,
-            title: String(localized: "Compact mode"),
-            description: String(localized: "Live work stays condensed into compact strips for a quieter timeline.")
-        ),
-        WhatsNewFeature(
-            id: "paperkit-canvas",
-            icon: "pencil.and.outline",
+            id: "host-pill",
+            icon: "server.rack",
             iconColor: .themePurple,
-            title: String(localized: "Canvas and Annotate"),
-            description: String(localized: "Sketch or mark up from chat. Add to Chat attaches a PNG to this chat.")
+            title: String(localized: "Usage and Server Settings"),
+            description: String(localized: "The host pill opens Usage, Model Providers, and Server Settings for this server.")
         ),
         WhatsNewFeature(
-            id: "importable-themes",
-            icon: "paintpalette",
-            iconColor: .themeOrange,
-            title: String(localized: "Tokyo Night and Rosé Pine"),
-            description: String(localized: "Import these server themes. They are not built-in iOS presets.")
-        ),
-        WhatsNewFeature(
-            id: "quota-pace",
-            icon: "gauge.with.dots.needle.67percent",
+            id: "markdown-file-links",
+            icon: "link",
             iconColor: .themeBlue,
-            title: String(localized: "Quota remaining and pace"),
-            description: String(localized: "Model Providers show remaining percent and burn pace, not only used.")
+            title: String(localized: "Markdown file links"),
+            description: String(localized: "README-style [label](path) links open in the document viewer.")
+        ),
+        WhatsNewFeature(
+            id: "session-prompt-swipe",
+            icon: "paperplane",
+            iconColor: .themeOrange,
+            title: String(localized: "Prompt from the session list"),
+            description: String(localized: "Swipe a live workspace session to send a prompt template without opening chat.")
+        ),
+        WhatsNewFeature(
+            id: "commit-new-session",
+            icon: "plus.square.on.square",
+            iconColor: .themeGreen,
+            title: String(localized: "New Session from a commit"),
+            description: String(localized: "Starting from a commit attaches that commit, not every changed file.")
         ),
     ]
 
