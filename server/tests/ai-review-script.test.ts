@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildChecks,
+  didAppleProtocolWireChange,
   didWebSocketContractChange,
   extractFileDiff,
   isPackageJsonCiTestingChange,
@@ -112,6 +113,29 @@ describe("ai-review script", () => {
     });
   });
 
+  it("passes protocol lockstep for Apple helper-only ClientMessage.swift changes without protocol.ts", () => {
+    const checks = buildChecks(["clients/apple/OppiCore/Models/ClientMessage.swift"], [], "", {
+      appleWireContractChanged: false,
+    });
+
+    const protocolCheck = checks.find((check) => check.id === "protocol-lockstep");
+    expect(protocolCheck?.status).toBe("pass");
+    expect(protocolCheck?.reason).toContain("wire contract shapes");
+  });
+
+  it("fails protocol lockstep for Apple wire-shape changes without protocol.ts", () => {
+    const checks = buildChecks(["clients/apple/OppiCore/Models/ClientMessage.swift"], [], "", {
+      appleWireContractChanged: true,
+    });
+
+    const protocolCheck = checks.find((check) => check.id === "protocol-lockstep");
+    expect(protocolCheck?.status).toBe("fail");
+    expect(protocolCheck?.details).toEqual({
+      touched: ["clients/apple/OppiCore/Models/ClientMessage.swift"],
+      missing: ["server/src/types/protocol.ts"],
+    });
+  });
+
   it("detects websocket contract changes only when ClientMessage/ServerMessage shapes differ", () => {
     const previous = [
       'export type ChatMetricName = "chat.ttft_ms";',
@@ -145,6 +169,69 @@ describe("ai-review script", () => {
 
     expect(didWebSocketContractChange(previous, nonWireChange)).toBe(false);
     expect(didWebSocketContractChange(previous, wireChange)).toBe(true);
+  });
+
+  it("detects Apple protocol wire changes only for ClientMessage/ServerMessage Codable shapes", () => {
+    const previous = [
+      "enum ClientMessage: Sendable {",
+      "    case abort(requestId: String? = nil)",
+      "}",
+      "",
+      "enum ThinkingLevel: String, Codable, Sendable {",
+      "    case off, medium",
+      "",
+      "    var displayTitle: String {",
+      "        switch self {",
+      "        case .off: \"Off\"",
+      "        case .medium: \"Medium\"",
+      "        }",
+      "    }",
+      "}",
+      "",
+      "extension ClientMessage: Encodable {",
+      "    func encode(to encoder: Encoder) throws {",
+      "        var c = encoder.container(keyedBy: CodingKeys.self)",
+      "        switch self {",
+      "        case .abort(let reqId):",
+      "            try c.encode(\"abort\", forKey: .type)",
+      "            try c.encodeIfPresent(reqId, forKey: .requestId)",
+      "        }",
+      "    }",
+      "",
+      "    enum CodingKeys: String, CodingKey {",
+      "        case type, requestId",
+      "    }",
+      "}",
+    ].join("\n");
+
+    const helperOnly = previous.replace(
+      "    var displayTitle: String {",
+      [
+        "    /// Parse a session-stored thinking-level string.",
+        "    init(sessionValue: String?) {",
+        "        self = .medium",
+        "    }",
+        "",
+        "    var displayTitle: String {",
+      ].join("\n"),
+    );
+
+    const clientCaseChange = previous.replace(
+      "    case abort(requestId: String? = nil)",
+      "    case abort(requestId: String? = nil)\n    case ping",
+    );
+
+    const thinkingLevelChange = previous.replace("    case off, medium", "    case off, medium, high");
+
+    const encodeChange = previous.replace(
+      'try c.encode("abort", forKey: .type)',
+      'try c.encode("abort_all", forKey: .type)',
+    );
+
+    expect(didAppleProtocolWireChange(previous, helperOnly)).toBe(false);
+    expect(didAppleProtocolWireChange(previous, clientCaseChange)).toBe(true);
+    expect(didAppleProtocolWireChange(previous, thinkingLevelChange)).toBe(true);
+    expect(didAppleProtocolWireChange(previous, encodeChange)).toBe(true);
   });
 
   it("parses imports with AST and ignores comment/string lookalikes", () => {

@@ -128,6 +128,136 @@ export function didWebSocketContractChange(previousSource, nextSource) {
   return changes.clientMessageChanged || changes.serverMessageChanged;
 }
 
+function stripSwiftComments(source) {
+  let out = "";
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (char === "/" && next === "/") {
+      index += 2;
+      while (index < source.length && source[index] !== "\n") index += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index + 1 < source.length && !(source[index] === "*" && source[index + 1] === "/")) index += 1;
+      index += 2;
+      out += " ";
+      continue;
+    }
+    if (char === '"') {
+      out += char;
+      index += 1;
+      while (index < source.length) {
+        const current = source[index];
+        out += current;
+        if (current === "\\" && index + 1 < source.length) {
+          out += source[index + 1];
+          index += 2;
+          continue;
+        }
+        index += 1;
+        if (current === '"') break;
+      }
+      continue;
+    }
+    out += char;
+    index += 1;
+  }
+  return out;
+}
+
+function indexOfMatchingBrace(source, openIndex) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = openIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function maskRanges(source, ranges) {
+  if (ranges.length === 0) return source;
+  const chars = source.split("");
+  for (const [start, end] of ranges) {
+    for (let index = start; index < end && index < chars.length; index += 1) {
+      if (chars[index] !== "\n") chars[index] = " ";
+    }
+  }
+  return chars.join("");
+}
+
+function isWireEncodeOrDecodeHeader(header) {
+  return (
+    /\bfunc\s+encode\s*\(\s*to\s+\w+\s*:\s*Encoder\s*\)\s*throws/.test(header) ||
+    /\binit\s*\(\s*from\s+\w+\s*:\s*Decoder\s*\)\s*throws/.test(header)
+  );
+}
+
+function collectHelperBodyRanges(source) {
+  const ranges = [];
+  const funcRe = /\b(?:func|init)\b/g;
+  let match;
+  while ((match = funcRe.exec(source))) {
+    const brace = source.indexOf("{", match.index);
+    if (brace === -1) break;
+    const headerSlice = source.slice(match.index, brace);
+    if (/\n\s*(?:enum|struct|extension|func|init)\b/.test(headerSlice)) {
+      funcRe.lastIndex = match.index + match[0].length;
+      continue;
+    }
+    const close = indexOfMatchingBrace(source, brace);
+    if (close === -1) break;
+    if (!isWireEncodeOrDecodeHeader(headerSlice.replace(/\s+/g, " "))) ranges.push([match.index, close + 1]);
+    funcRe.lastIndex = close + 1;
+  }
+
+  const computedRe =
+    /(?:^|\n)[ \t]*(?:(?:open|public|internal|fileprivate|private)[ \t]+)?(?:(?:static|class)[ \t]+)?(?:let|var)[ \t]+[A-Za-z_]\w*[ \t]*:[^{=\n]*\{/g;
+  while ((match = computedRe.exec(source))) {
+    const brace = match.index + match[0].length - 1;
+    const close = indexOfMatchingBrace(source, brace);
+    if (close === -1) break;
+    ranges.push([match.index, close + 1]);
+    computedRe.lastIndex = close + 1;
+  }
+  return ranges;
+}
+
+// Apple protocol files mix wire-enum / Codable shapes with helpers such as
+// display titles and session parsers. Compare only the remaining wire surface.
+function extractAppleWireContract(source) {
+  const code = stripSwiftComments(source ?? "");
+  return maskRanges(code, collectHelperBodyRanges(code)).replace(/\s+/g, " ").trim();
+}
+
+export function didAppleProtocolWireChange(previousSource, nextSource) {
+  return extractAppleWireContract(previousSource) !== extractAppleWireContract(nextSource);
+}
+
 function changedAppleProtocolFiles(files) {
   return files.filter((file) => APPLE_PROTOCOL_FILES.includes(file));
 }
@@ -157,17 +287,26 @@ function checkProtocolLockstep(files, context) {
   }
 
   if (appleProtocolTouched.length > 0 && !serverTypesTouched) {
-    return fail("protocol-lockstep", "Apple protocol model changed without server/src/types/protocol.ts lockstep", {
-      touched: appleProtocolTouched,
-      missing: [SERVER_PROTOCOL_TYPES],
-    });
+    const appleWireChanged =
+      context.appleWireContractChanged ??
+      context.appleClientMessageChanged ??
+      context.appleServerMessageChanged ??
+      true;
+    if (appleWireChanged) {
+      return fail("protocol-lockstep", "Apple protocol model changed without server/src/types/protocol.ts lockstep", {
+        touched: appleProtocolTouched,
+        missing: [SERVER_PROTOCOL_TYPES],
+      });
+    }
   }
 
   return pass(
     "protocol-lockstep",
     serverTypesTouched && !serverWireChanged
       ? "server/src/types/protocol.ts changed, but ClientMessage/ServerMessage wire contract shapes did not"
-      : "protocol files are unchanged or changed in lockstep",
+      : appleProtocolTouched.length > 0 && !serverTypesTouched
+        ? "Apple protocol model changed, but ClientMessage/ServerMessage wire contract shapes did not"
+        : "protocol files are unchanged or changed in lockstep",
   );
 }
 
@@ -234,14 +373,40 @@ function readFileAt(ref, file) {
   }
 }
 
+function readInputSource(input, file) {
+  if (input.nextRef === ":") {
+    return (
+      readFileAt(":", file) ||
+      (existsSync(path.join(repoRoot(), file)) ? readFileSync(path.join(repoRoot(), file), "utf8") : "")
+    );
+  }
+  return readFileAt(input.nextRef, file);
+}
+
 function computeContext(input) {
-  if (!input.files.includes(SERVER_PROTOCOL_TYPES)) return {};
-  const nextSource = input.nextRef === ":"
-    ? readFileAt(":", SERVER_PROTOCOL_TYPES) || (existsSync(path.join(repoRoot(), SERVER_PROTOCOL_TYPES)) ? readFileSync(path.join(repoRoot(), SERVER_PROTOCOL_TYPES), "utf8") : "")
-    : readFileAt(input.nextRef, SERVER_PROTOCOL_TYPES);
-  const previousSource = readFileAt(input.baseRef, SERVER_PROTOCOL_TYPES);
-  const changes = getWebSocketContractChanges(previousSource, nextSource);
-  return { serverTypesWireContractChanged: changes.clientMessageChanged || changes.serverMessageChanged, ...changes };
+  const context = {};
+  if (input.files.includes(SERVER_PROTOCOL_TYPES)) {
+    const nextSource = readInputSource(input, SERVER_PROTOCOL_TYPES);
+    const previousSource = readFileAt(input.baseRef, SERVER_PROTOCOL_TYPES);
+    const changes = getWebSocketContractChanges(previousSource, nextSource);
+    Object.assign(context, {
+      serverTypesWireContractChanged: changes.clientMessageChanged || changes.serverMessageChanged,
+      ...changes,
+    });
+  }
+
+  const appleTouched = changedAppleProtocolFiles(input.files);
+  if (appleTouched.length > 0) {
+    for (const file of appleTouched) {
+      const changed = didAppleProtocolWireChange(readFileAt(input.baseRef, file), readInputSource(input, file));
+      if (file.endsWith("ClientMessage.swift")) context.appleClientMessageChanged = changed;
+      if (file.endsWith("ServerMessage.swift")) context.appleServerMessageChanged = changed;
+    }
+    context.appleWireContractChanged = Boolean(
+      context.appleClientMessageChanged || context.appleServerMessageChanged,
+    );
+  }
+  return context;
 }
 
 function formatCheck(check) {
