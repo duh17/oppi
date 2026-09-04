@@ -1233,7 +1233,8 @@ enum MarkdownWikiLinkRewriter {
 
         // Origin is an allowed workspace or owner-host file. FileType decides
         // the embed category only after that origin check.
-        switch FileType.detect(from: classified.path).previewCategory {
+        let fileType = FileType.detect(from: classified.path)
+        switch fileType.previewCategory {
         case .image:
             return .image(source: classified.path)
         case .video:
@@ -1251,6 +1252,12 @@ enum MarkdownWikiLinkRewriter {
                 context: context
             )))
         default:
+            // Markdown `![]()` is image syntax. Extensionless workspace/host
+            // targets stay images so byte inspection can still choose GIF/WebP/
+            // SVG. Wiki `![[]]` keeps the `.md` suffix and file-link behavior.
+            if dialect == .markdown, fileType == .plain {
+                return .image(source: classified.path)
+            }
             return .fileLink(fileLinkInline(
                 rawTarget: trimmed,
                 classified: classified,
