@@ -31,6 +31,10 @@ import * as path from "path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { $ } from "bun";
+import {
+  nextIosReleaseBuild,
+  readLastShippedIosBuild,
+} from "../next-ios-build.ts";
 
 // ── Constants ──
 
@@ -722,7 +726,10 @@ async function cmdBuild(opts: {
     newBuild = parseInt(explicitBuild, 10);
     if (isNaN(newBuild)) die(`Invalid build number: ${explicitBuild}`);
   } else if (bump) {
-    newBuild = currentBuild + 1;
+    newBuild = nextIosReleaseBuild(
+      currentBuild,
+      readLastShippedIosBuild(REPO_ROOT),
+    );
   } else {
     die("Specify --bump or --build-number <N>");
     return; // unreachable but satisfies TS

@@ -2,6 +2,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "node:url";
+import {
+  nextIosReleaseBuild,
+  readLastShippedIosBuild,
+} from "./next-ios-build.ts";
 
 export function defaultRepoRoot(moduleUrl = import.meta.url): string {
   return path.resolve(path.dirname(fileURLToPath(moduleUrl)), "../..");
@@ -147,7 +151,11 @@ function resolveBuildNumber(
     if (!/^\d+$/.test(explicit)) die(`Invalid build number: ${explicit}`);
     return explicit;
   }
-  if (bump) return String(readCurrentBuild() + 1);
+  if (bump) {
+    return String(
+      nextIosReleaseBuild(readCurrentBuild(), readLastShippedIosBuild(OPPI_ROOT)),
+    );
+  }
   die("Pass --bump or --build-number N");
 }
 
