@@ -67,33 +67,127 @@ enum DocumentRenderPipeline {
 
     // MARK: - Render Cache
 
-    /// Cross-surface raster cache for graphically rendered blocks (LaTeX
-    /// formulas, Mermaid diagrams).
+    /// Three-layer cache: parse (source only) → CPU layout (no scale) → raster.
     ///
-    /// The full-screen markdown reader renders these blocks synchronously so
-    /// cell self-sizing sees final heights on the first pass. Without a cache,
-    /// every cell reuse re-pays parse + layout + rasterize on the main thread.
+    /// Width-estimation retries and theme-stable redraws must not re-parse.
+    /// A 1 pt width change still produces its own raster, but the AST is reused.
+    /// Scale is raster-only so a 2x/3x bitmap can reuse the same point layout.
+    /// Theme stays in the layout key because flowchart/math draw captures it.
     /// Parse failures are deterministic per input, so negative results are
     /// cached too. NSCache is thread-safe and evicts under memory pressure.
-    /// `NSCache` is documented thread-safe but not `Sendable`; this holder
-    /// lets the static satisfy strict-concurrency checking while concurrent
+    /// `NSCache` is documented thread-safe but not `Sendable`; these holders
+    /// let the statics satisfy strict-concurrency checking while concurrent
     /// render calls from detached tasks share one cache.
     private final class GraphicalRenderCacheStore: @unchecked Sendable {
         let cache: NSCache<NSString, CachedGraphicalRender> = {
             let cache = NSCache<NSString, CachedGraphicalRender>()
             cache.totalCostLimit = 64 * 1_024 * 1_024
-            cache.name = "org.oppi.DocumentRenderPipeline"
+            cache.name = "org.oppi.DocumentRenderPipeline.raster"
+            return cache
+        }()
+    }
+
+    private final class GraphicalParseCacheStore: @unchecked Sendable {
+        let cache: NSCache<NSString, CachedParsedDocument> = {
+            let cache = NSCache<NSString, CachedParsedDocument>()
+            cache.countLimit = 512
+            cache.totalCostLimit = 4 * 1_024 * 1_024
+            cache.name = "org.oppi.DocumentRenderPipeline.parse"
+            return cache
+        }()
+    }
+
+    private final class GraphicalLayoutCacheStore: @unchecked Sendable {
+        let cache: NSCache<NSString, CachedGraphicalLayout> = {
+            let cache = NSCache<NSString, CachedGraphicalLayout>()
+            cache.countLimit = 256
+            cache.totalCostLimit = 16 * 1_024 * 1_024
+            cache.name = "org.oppi.DocumentRenderPipeline.layout"
             return cache
         }()
     }
 
     private static let renderCache = GraphicalRenderCacheStore()
+    private static let parseCache = GraphicalParseCacheStore()
+    private static let layoutCache = GraphicalLayoutCacheStore()
 
     #if DEBUG
+    private final class DebugCacheCounters: @unchecked Sendable {
+        private let lock = NSLock()
+        private var parseCount = 0
+        private var layoutCount = 0
+
+        func reset() {
+            lock.lock()
+            parseCount = 0
+            layoutCount = 0
+            lock.unlock()
+        }
+
+        func incrementParse() {
+            lock.lock()
+            parseCount += 1
+            lock.unlock()
+        }
+
+        func incrementLayout() {
+            lock.lock()
+            layoutCount += 1
+            lock.unlock()
+        }
+
+        var parses: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return parseCount
+        }
+
+        var layouts: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return layoutCount
+        }
+    }
+
+    private static let debugCounters = DebugCacheCounters()
+
     static func debugRemoveAllCachedRendersForTesting() {
         renderCache.cache.removeAllObjects()
+        parseCache.cache.removeAllObjects()
+        layoutCache.cache.removeAllObjects()
+        debugCounters.reset()
     }
+
+    static var debugParseCountForTesting: Int { debugCounters.parses }
+    static var debugLayoutCountForTesting: Int { debugCounters.layouts }
     #endif
+
+    private final class CachedParsedDocument: @unchecked Sendable {
+        let document: Any
+
+        init(_ document: Any) {
+            self.document = document
+        }
+    }
+
+    private final class CachedGraphicalLayout: @unchecked Sendable {
+        let size: CGSize
+        let draw: (CGContext, CGPoint) -> Void
+        let baseline: CGFloat?
+        let isRenderable: Bool
+
+        init(
+            size: CGSize,
+            draw: @escaping (CGContext, CGPoint) -> Void,
+            baseline: CGFloat? = nil,
+            isRenderable: Bool = true
+        ) {
+            self.size = size
+            self.draw = draw
+            self.baseline = baseline
+            self.isRenderable = isRenderable
+        }
+    }
 
     private final class CachedGraphicalRender: @unchecked Sendable {
         /// `nil` means the source is deterministically unrenderable — callers
@@ -109,8 +203,8 @@ enum DocumentRenderPipeline {
         }
     }
 
-    /// Cache key includes the full source text (formulas are small) so hash
-    /// collisions can never surface the wrong raster.
+    /// Raster key includes scale and theme. Layout key omits scale so a
+    /// 1 pt width retry can rebuild a bitmap without re-parsing.
     private static func renderCacheKey(
         kind: String,
         text: String,
@@ -118,6 +212,18 @@ enum DocumentRenderPipeline {
         scale: CGFloat
     ) -> NSString {
         "\(kind)|\(config.fontSize)|\(Int(config.maxWidth.rounded()))|\(config.displayMode)|\(scale)|\(renderThemeSignature(config.theme))|\(text)" as NSString
+    }
+
+    private static func parseCacheKey(kind: String, text: String) -> NSString {
+        "\(kind)|\(text)" as NSString
+    }
+
+    private static func layoutCacheKey(
+        kind: String,
+        text: String,
+        config: RenderConfiguration
+    ) -> NSString {
+        "\(kind)|\(config.fontSize)|\(Int(config.maxWidth.rounded()))|\(config.displayMode)|\(renderThemeSignature(config.theme))|\(text)" as NSString
     }
 
     private static func renderThemeSignature(_ theme: RenderTheme) -> String {
@@ -154,6 +260,98 @@ enum DocumentRenderPipeline {
         return cgImage.bytesPerRow * cgImage.height
     }
 
+    private static func cachedLayoutCost(size: CGSize, text: String) -> Int {
+        let area = max(size.width, 1) * max(size.height, 1)
+        return min(512 * 1_024, max(256, text.utf8.count + Int(area)))
+    }
+
+    private static func graphicalKind<P, R>(_: P.Type, _: R.Type) -> String {
+        "graphical:\(String(reflecting: P.self))/\(String(reflecting: R.self))"
+    }
+
+    private static func cachedDocument<P: DocumentParser>(
+        parser: P,
+        kind: String,
+        text: String
+    ) -> P.Document {
+        let key = parseCacheKey(kind: kind, text: text)
+        if let hit = parseCache.cache.object(forKey: key),
+           let document = hit.document as? P.Document {
+            return document
+        }
+        #if DEBUG
+        debugCounters.incrementParse()
+        #endif
+        let document = parser.parse(text)
+        parseCache.cache.setObject(
+            CachedParsedDocument(document),
+            forKey: key,
+            cost: max(1, text.utf8.count)
+        )
+        return document
+    }
+
+    private static func cachedLatexParse(_ text: String) -> TeXMathParseResult {
+        let key = parseCacheKey(kind: "latex", text: text)
+        if let hit = parseCache.cache.object(forKey: key),
+           let result = hit.document as? TeXMathParseResult {
+            return result
+        }
+        #if DEBUG
+        debugCounters.incrementParse()
+        #endif
+        let result = TeXMathParser().parseValidated(text)
+        parseCache.cache.setObject(
+            CachedParsedDocument(result),
+            forKey: key,
+            cost: max(1, text.utf8.count)
+        )
+        return result
+    }
+
+    private static func cachedLatexGraphicalLayout(
+        text: String,
+        config: RenderConfiguration,
+        kind: String
+    ) -> CachedGraphicalLayout {
+        let layoutKey = layoutCacheKey(kind: kind, text: text, config: config)
+        if let hit = layoutCache.cache.object(forKey: layoutKey) {
+            return hit
+        }
+
+        let parsed = cachedLatexParse(text)
+        guard parsed.isRenderable else {
+            let negative = CachedGraphicalLayout(
+                size: .zero,
+                draw: { _, _ in },
+                isRenderable: false
+            )
+            layoutCache.cache.setObject(negative, forKey: layoutKey, cost: 16)
+            return negative
+        }
+
+        #if DEBUG
+        debugCounters.incrementLayout()
+        #endif
+        let renderer = MathCoreGraphicsRenderer()
+        let layoutResult = renderer.layout(parsed.nodes, configuration: config)
+        let size = renderer.boundingBox(layoutResult)
+        let entry = CachedGraphicalLayout(
+            size: size,
+            draw: { ctx, origin in
+                renderer.draw(layoutResult, in: ctx, at: origin)
+            },
+            baseline: layoutResult.rootBox.baseline,
+            isRenderable: true
+        )
+        layoutCache.cache.setObject(
+            entry,
+            forKey: layoutKey,
+            cost: cachedLayoutCost(size: size, text: text)
+        )
+        return entry
+    }
+
     private static func renderCached(
         kind: String,
         text: String,
@@ -182,19 +380,36 @@ enum DocumentRenderPipeline {
     /// Parse and layout a single graphical document.
     ///
     /// Works for any parser/renderer pair conforming to the protocol
-    /// (Mermaid, future Graphviz, etc.).
+    /// (Mermaid, future Graphviz, etc.). Layout is cached independently of
+    /// raster scale so fullscreen vector/CG zoom and a 1 pt width retry do
+    /// not re-parse.
     static func layoutGraphical<P: DocumentParser, R: GraphicalDocumentRenderer>(
         parser: P,
         renderer: R,
         text: String,
         config: RenderConfiguration
     ) -> GraphicalLayout where P.Document == R.Document {
-        let document = parser.parse(text)
+        let kind = graphicalKind(P.self, R.self)
+        let layoutKey = layoutCacheKey(kind: kind, text: text, config: config)
+        if let hit = layoutCache.cache.object(forKey: layoutKey) {
+            return GraphicalLayout(size: hit.size, draw: hit.draw)
+        }
+
+        let document = cachedDocument(parser: parser, kind: kind, text: text)
+        #if DEBUG
+        debugCounters.incrementLayout()
+        #endif
         let layoutResult = renderer.layout(document, configuration: config)
         let size = renderer.boundingBox(layoutResult)
-        return GraphicalLayout(size: size) { ctx, origin in
+        let draw: (CGContext, CGPoint) -> Void = { ctx, origin in
             renderer.draw(layoutResult, in: ctx, at: origin)
         }
+        layoutCache.cache.setObject(
+            CachedGraphicalLayout(size: size, draw: draw),
+            forKey: layoutKey,
+            cost: cachedLayoutCost(size: size, text: text)
+        )
+        return GraphicalLayout(size: size, draw: draw)
     }
 
     static func renderInlineGraphicalImage<P: DocumentParser, R: GraphicalDocumentRenderer>(
@@ -204,7 +419,7 @@ enum DocumentRenderPipeline {
         config: RenderConfiguration,
         scale: CGFloat = 2.0
     ) -> (image: UIImage, size: CGSize)? where P.Document == R.Document {
-        let kind = "graphical:\(String(reflecting: P.self))/\(String(reflecting: R.self))"
+        let kind = graphicalKind(P.self, R.self)
         let entry = renderCached(kind: kind, text: text, config: config, scale: scale) {
             let layout = layoutGraphical(
                 parser: parser,
@@ -237,26 +452,25 @@ enum DocumentRenderPipeline {
         scale: CGFloat = 2.0
     ) -> (image: UIImage, size: CGSize)? {
         let entry = renderCached(kind: "latex-display", text: text, config: config, scale: scale) {
-            let parser = TeXMathParser()
-            let parsed = parser.parseValidated(text)
-            guard parsed.isRenderable else {
+            let layout = cachedLatexGraphicalLayout(
+                text: text,
+                config: config,
+                kind: "latex-display"
+            )
+            guard layout.isRenderable else {
                 return CachedGraphicalRender(image: nil, size: .zero)
             }
-
-            let renderer = MathCoreGraphicsRenderer()
-            let layoutResult = renderer.layout(parsed.nodes, configuration: config)
-            let size = renderer.boundingBox(layoutResult)
-            guard naturalRasterBudget.permits(pointSize: size, scale: scale) else {
-                return CachedGraphicalRender(image: nil, size: size)
+            guard naturalRasterBudget.permits(pointSize: layout.size, scale: scale) else {
+                return CachedGraphicalRender(image: nil, size: layout.size)
             }
 
             let format = UIGraphicsImageRendererFormat()
             format.scale = scale
-            let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
+            let imageRenderer = UIGraphicsImageRenderer(size: layout.size, format: format)
             let image = imageRenderer.image { context in
-                renderer.draw(layoutResult, in: context.cgContext, at: .zero)
+                layout.draw(context.cgContext, .zero)
             }
-            return CachedGraphicalRender(image: image, size: size)
+            return CachedGraphicalRender(image: image, size: layout.size)
         }
         guard let image = entry.image else { return nil }
         return (image: image, size: entry.size)
@@ -271,25 +485,29 @@ enum DocumentRenderPipeline {
         scale: CGFloat = 2.0
     ) -> (image: UIImage, size: CGSize, baseline: CGFloat)? {
         let entry = renderCached(kind: "latex-inline", text: text, config: config, scale: scale) {
-            let parser = TeXMathParser()
-            let parsed = parser.parseValidated(text)
-            guard parsed.isRenderable else {
+            let layout = cachedLatexGraphicalLayout(
+                text: text,
+                config: config,
+                kind: "latex-inline"
+            )
+            guard layout.isRenderable else {
                 return CachedGraphicalRender(image: nil, size: .zero)
             }
-            let renderer = MathCoreGraphicsRenderer()
-            let layout = renderer.layout(parsed.nodes, configuration: config)
-            let size = renderer.boundingBox(layout)
-            guard naturalRasterBudget.permits(pointSize: size, scale: scale) else {
-                return CachedGraphicalRender(image: nil, size: size)
+            guard naturalRasterBudget.permits(pointSize: layout.size, scale: scale) else {
+                return CachedGraphicalRender(image: nil, size: layout.size)
             }
 
             let format = UIGraphicsImageRendererFormat()
             format.scale = scale
-            let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
+            let imageRenderer = UIGraphicsImageRenderer(size: layout.size, format: format)
             let image = imageRenderer.image { context in
-                renderer.draw(layout, in: context.cgContext, at: .zero)
+                layout.draw(context.cgContext, .zero)
             }
-            return CachedGraphicalRender(image: image, size: size, baseline: layout.rootBox.baseline)
+            return CachedGraphicalRender(
+                image: image,
+                size: layout.size,
+                baseline: layout.baseline
+            )
         }
         guard let image = entry.image, let baseline = entry.baseline else { return nil }
         return (image: image, size: entry.size, baseline: baseline)
@@ -334,16 +552,17 @@ enum DocumentRenderPipeline {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        let parser = TeXMathParser()
-        let renderer = MathCoreGraphicsRenderer()
-
         var expressions: [GraphicalLayout] = []
         var totalHeight: CGFloat = 0
         var maxWidth: CGFloat = 0
 
         for source in sources {
-            let parsed = parser.parseValidated(source)
-            guard parsed.isRenderable else {
+            let laidOut = cachedLatexGraphicalLayout(
+                text: source,
+                config: config,
+                kind: "latex-display"
+            )
+            guard laidOut.isRenderable else {
                 return LatexMultiLayout(
                     expressions: [],
                     sources: [],
@@ -352,14 +571,9 @@ enum DocumentRenderPipeline {
                     exactSourceFallback: text
                 )
             }
-            let layoutResult = renderer.layout(parsed.nodes, configuration: config)
-            let size = renderer.boundingBox(layoutResult)
-            let layout = GraphicalLayout(size: size) { ctx, origin in
-                renderer.draw(layoutResult, in: ctx, at: origin)
-            }
-            expressions.append(layout)
-            totalHeight += size.height
-            maxWidth = max(maxWidth, size.width)
+            expressions.append(GraphicalLayout(size: laidOut.size, draw: laidOut.draw))
+            totalHeight += laidOut.size.height
+            maxWidth = max(maxWidth, laidOut.size.width)
         }
 
         totalHeight += spacing * CGFloat(max(0, expressions.count - 1))

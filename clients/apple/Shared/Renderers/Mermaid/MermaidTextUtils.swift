@@ -347,6 +347,66 @@ enum MermaidTextUtils {
 
     // MARK: - Text measurement
 
+    /// CTLine metrics reused across wrap, layout, and draw. Color is applied
+    /// at draw time, so the cache key is font + markdown + text only.
+    private final class LineMetricsStore: @unchecked Sendable {
+        let cache: NSCache<NSString, CachedLineMetrics> = {
+            let cache = NSCache<NSString, CachedLineMetrics>()
+            cache.countLimit = 4_096
+            cache.name = "org.oppi.MermaidTextUtils.ctLineMetrics"
+            return cache
+        }()
+    }
+
+    private static let lineMetricsStore = LineMetricsStore()
+
+    private final class CachedLineMetrics: @unchecked Sendable {
+        let paddedSize: CGSize
+        let boundsWidth: CGFloat
+        let boundsHeight: CGFloat
+
+        init(paddedSize: CGSize, boundsWidth: CGFloat, boundsHeight: CGFloat) {
+            self.paddedSize = paddedSize
+            self.boundsWidth = boundsWidth
+            self.boundsHeight = boundsHeight
+        }
+    }
+
+    private static func lineMetricsKey(
+        text: String,
+        font: CTFont,
+        fontSize: CGFloat,
+        isMarkdown: Bool
+    ) -> NSString {
+        let fontName = (CTFontCopyPostScriptName(font) as String?) ?? ""
+        return "\(fontName)|\(fontSize)|\(isMarkdown ? "1" : "0")|\(text)" as NSString
+    }
+
+    private static func lineMetrics(
+        _ text: String,
+        font: CTFont,
+        fontSize: CGFloat,
+        isMarkdown: Bool
+    ) -> CachedLineMetrics {
+        let key = lineMetricsKey(text: text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
+        if let hit = lineMetricsStore.cache.object(forKey: key) {
+            return hit
+        }
+        let attrStr = attributedLabel(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
+        let line = CTLineCreateWithAttributedString(attrStr)
+        let bounds = CTLineGetBoundsWithOptions(line, [])
+        let metrics = CachedLineMetrics(
+            paddedSize: CGSize(
+                width: max(bounds.width, fontSize * 2),
+                height: max(bounds.height, fontSize * 1.4)
+            ),
+            boundsWidth: bounds.width,
+            boundsHeight: bounds.height
+        )
+        lineMetricsStore.cache.setObject(metrics, forKey: key, cost: max(1, text.utf8.count))
+        return metrics
+    }
+
     /// Measure text size, supporting multi-line text (split on `\n`).
     ///
     /// Returns the bounding size of the full text block.
@@ -390,13 +450,7 @@ enum MermaidTextUtils {
         fontSize: CGFloat,
         isMarkdown: Bool = false
     ) -> CGSize {
-        let attrStr = attributedLabel(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
-        let line = CTLineCreateWithAttributedString(attrStr)
-        let bounds = CTLineGetBoundsWithOptions(line, [])
-        return CGSize(
-            width: max(bounds.width, fontSize * 2),
-            height: max(bounds.height, fontSize * 1.4)
-        )
+        lineMetrics(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown).paddedSize
     }
 
     // MARK: - Text drawing
@@ -466,6 +520,21 @@ enum MermaidTextUtils {
         var currentY = origin.y
 
         for line in lines {
+            let metrics = lineMetrics(line, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
+            let lineHeight = max(metrics.boundsHeight, fontSize * 1.4)
+
+            let x: CGFloat
+            switch alignment {
+            case .left:
+                x = origin.x
+            case .center:
+                let blockWidth = width ?? metrics.boundsWidth
+                x = origin.x + (blockWidth - metrics.boundsWidth) / 2
+            case .right:
+                let blockWidth = width ?? metrics.boundsWidth
+                x = origin.x + (blockWidth - metrics.boundsWidth)
+            }
+
             let attrStr = attributedLabel(
                 line,
                 font: font,
@@ -474,21 +543,6 @@ enum MermaidTextUtils {
                 isMarkdown: isMarkdown
             )
             let ctLine = CTLineCreateWithAttributedString(attrStr)
-            let bounds = CTLineGetBoundsWithOptions(ctLine, [])
-            let lineHeight = max(bounds.height, fontSize * 1.4)
-
-            let x: CGFloat
-            switch alignment {
-            case .left:
-                x = origin.x
-            case .center:
-                let blockWidth = width ?? bounds.width
-                x = origin.x + (blockWidth - bounds.width) / 2
-            case .right:
-                let blockWidth = width ?? bounds.width
-                x = origin.x + (blockWidth - bounds.width)
-            }
-
             drawCTLine(ctLine, at: CGPoint(x: x, y: currentY), fontSize: fontSize, in: ctx)
             currentY += lineHeight + spacing
         }

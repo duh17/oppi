@@ -1049,7 +1049,38 @@ struct MathLayoutEngine: Sendable {
 
     // MARK: - Core Text Measurement
 
+    /// Glyph advances are reused across layout and later rasters of the same
+    /// formula. Draw still builds a colored CTLine; this cache is metrics only.
+    private final class GlyphMetricsStore: @unchecked Sendable {
+        let cache: NSCache<NSString, CachedGlyphMetrics> = {
+            let cache = NSCache<NSString, CachedGlyphMetrics>()
+            cache.countLimit = 4_096
+            cache.name = "org.oppi.MathLayoutEngine.ctLineMetrics"
+            return cache
+        }()
+    }
+
+    private static let glyphMetricsStore = GlyphMetricsStore()
+
+    private final class CachedGlyphMetrics: @unchecked Sendable {
+        let width: CGFloat
+        let ascent: CGFloat
+        let descent: CGFloat
+
+        init(width: CGFloat, ascent: CGFloat, descent: CGFloat) {
+            self.width = width
+            self.ascent = ascent
+            self.descent = descent
+        }
+    }
+
     private func measureText(_ text: String, font: CTFont) -> (width: CGFloat, ascent: CGFloat, descent: CGFloat) {
+        let fontName = (CTFontCopyPostScriptName(font) as String?) ?? ""
+        let key = "\(fontName)|\(CTFontGetSize(font))|\(text)" as NSString
+        if let hit = Self.glyphMetricsStore.cache.object(forKey: key) {
+            return (hit.width, hit.ascent, hit.descent)
+        }
+
         let ascent = CTFontGetAscent(font)
         let descent = CTFontGetDescent(font)
 
@@ -1058,9 +1089,13 @@ struct MathLayoutEngine: Sendable {
             attributes: [.font: font as Any]
         )
         let line = CTLineCreateWithAttributedString(attrString)
-        let width = CTLineGetTypographicBounds(line, nil, nil, nil)
-
-        return (CGFloat(width), ascent, descent)
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        Self.glyphMetricsStore.cache.setObject(
+            CachedGlyphMetrics(width: width, ascent: ascent, descent: descent),
+            forKey: key,
+            cost: max(1, text.utf8.count)
+        )
+        return (width, ascent, descent)
     }
 
     // MARK: - Font Creation

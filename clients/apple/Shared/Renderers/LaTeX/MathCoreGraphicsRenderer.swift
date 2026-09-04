@@ -87,19 +87,63 @@ struct MathCoreGraphicsRenderer: GraphicalDocumentRenderer, Sendable {
 
     // MARK: - Glyph Drawing
 
+    /// Colored CTLines reused across fullscreen vector redraws of the same
+    /// formula. Layout metrics live in `MathLayoutEngine`; this cache is draw.
+    private final class GlyphLineStore: @unchecked Sendable {
+        let cache: NSCache<NSString, CachedGlyphLine> = {
+            let cache = NSCache<NSString, CachedGlyphLine>()
+            cache.countLimit = 4_096
+            cache.name = "org.oppi.MathCoreGraphicsRenderer.ctLine"
+            return cache
+        }()
+    }
+
+    private static let glyphLineStore = GlyphLineStore()
+
+    private final class CachedGlyphLine: @unchecked Sendable {
+        let line: CTLine
+        init(_ line: CTLine) { self.line = line }
+    }
+
+    private static func colorKey(_ color: CGColor) -> String {
+        guard
+            let space = CGColorSpace(name: CGColorSpace.sRGB),
+            let converted = color.converted(to: space, intent: .defaultIntent, options: nil),
+            let components = converted.components, components.count >= 3
+        else {
+            return "?"
+        }
+        let alpha = components.count > 3 ? components[3] : 1
+        return String(
+            format: "%.3f,%.3f,%.3f,%.3f",
+            components[0], components[1], components[2], alpha
+        )
+    }
+
     private func drawGlyph(
         _ text: String,
         fontSize: CGFloat,
         in context: CGContext,
         foreground: CGColor
     ) {
-        let font = CTFontCreateWithName("TimesNewRomanPSMT" as CFString, fontSize, nil)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: foreground,
-        ]
-        let attrString = NSAttributedString(string: text, attributes: attributes)
-        let line = CTLineCreateWithAttributedString(attrString)
+        let key = "\(fontSize)|\(Self.colorKey(foreground))|\(text)" as NSString
+        let line: CTLine
+        if let hit = Self.glyphLineStore.cache.object(forKey: key) {
+            line = hit.line
+        } else {
+            let font = CTFontCreateWithName("TimesNewRomanPSMT" as CFString, fontSize, nil)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: foreground,
+            ]
+            let attrString = NSAttributedString(string: text, attributes: attributes)
+            line = CTLineCreateWithAttributedString(attrString)
+            Self.glyphLineStore.cache.setObject(
+                CachedGlyphLine(line),
+                forKey: key,
+                cost: max(1, text.utf8.count)
+            )
+        }
 
         // CTLineDraw expects CG coordinates (Y-up), but UIKit context is Y-down.
         // Flip locally around the text position.

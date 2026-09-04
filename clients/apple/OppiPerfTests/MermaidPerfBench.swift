@@ -739,4 +739,49 @@ struct MermaidPerfBench {
             config: config, prefix: "mermaid", label: "journey_larger", totalBudgetUs: 5000
         )
     }
+
+    @Test("Pipeline cache — 1pt width retry does not reparse")
+    func pipelineCachedWidthRetryDoesNotReparse() {
+        DocumentRenderPipeline.debugRemoveAllCachedRendersForTesting()
+        let source = Self.smallFlowchart
+        let base = RenderConfiguration(
+            fontSize: 13,
+            maxWidth: 320,
+            theme: config.theme,
+            displayMode: .inline
+        )
+        let retry = RenderConfiguration(
+            fontSize: 13,
+            maxWidth: 321,
+            theme: config.theme,
+            displayMode: .inline
+        )
+        #expect(
+            DocumentRenderPipeline.renderInlineGraphicalImage(
+                parser: parser,
+                renderer: renderer,
+                text: source,
+                config: base
+            ) != nil
+        )
+        let parses = DocumentRenderPipeline.debugParseCountForTesting
+        #expect(parses == 1)
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        let retried = DocumentRenderPipeline.renderInlineGraphicalImage(
+            parser: parser,
+            renderer: renderer,
+            text: source,
+            config: retry
+        )
+        let us = RendererTestSupport.nsToUs(
+            Double(DispatchTime.now().uptimeNanoseconds &- start)
+        )
+        print("METRIC mermaid_pipeline_width_retry_us=\(String(format: "%.1f", us))")
+        #expect(retried != nil)
+        #expect(
+            DocumentRenderPipeline.debugParseCountForTesting == parses,
+            "1 pt width retry must reuse the cached Mermaid AST"
+        )
+    }
 }
