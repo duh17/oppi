@@ -153,8 +153,8 @@ enum ComposerShared {
     @discardableResult
     static func applyCanvasToComposer(
         attachment: PendingAttachment,
-        recognizedText: String,
-        text: Binding<String>,
+        recognizedText _: String,
+        text _: Binding<String>,
         pendingAttachments: Binding<[PendingAttachment]>,
         replacingAttachmentID: String? = nil
     ) -> Bool {
@@ -166,10 +166,6 @@ enum ComposerShared {
         guard pendingAttachments.wrappedValue.contains(where: { $0.id == attachment.id }) else {
             return false
         }
-        text.wrappedValue = PaperMarkupCanvasSession.prependRecognizedText(
-            recognizedText,
-            into: text.wrappedValue
-        )
         return true
     }
 

@@ -643,17 +643,12 @@ final class PaperMarkupCanvasHostController: UIViewController {
         guard let rendered = await renderPNG(markup: markup, bounds: bounds) else {
             return nil
         }
-        let indexable = await markup.indexableContent
-        let handwriting = await PaperMarkupHandwritingFallback.recognizedText(from: markup)
-        let recognized = PaperMarkupCanvasSession.resolvedRecognizedText(
-            indexableContent: indexable,
-            handwritingFallback: handwriting
-        )
         let attachment = PaperMarkupCanvasSession.makePendingImageAttachment(
             pngData: rendered.data,
             image: rendered.image
         )
-        return (attachment, recognized)
+        // Image-only: never read PaperKit OCR into the composer.
+        return (attachment, "")
     }
 
     private func renderPNG(
@@ -875,10 +870,3 @@ private final class PaperMarkupChangeRelay: NSObject, PaperMarkupViewController.
     }
 }
 
-enum PaperMarkupHandwritingFallback {
-    /// Prefer `PaperMarkup.indexableContent`. PencilKit's stroke recognizer is
-    /// only on newer SDKs, so this stays a compile-safe seam for that fallback.
-    static func recognizedText(from markup: PaperMarkup) async -> String? {
-        nil
-    }
-}

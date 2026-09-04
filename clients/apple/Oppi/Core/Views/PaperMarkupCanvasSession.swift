@@ -6,7 +6,7 @@ import UIKit
 /// Shared PaperKit markup contract used by the composer and full-screen viewers.
 ///
 /// The host never writes markup back to a source file. Add to Chat always
-/// produces a PNG pending image attachment plus any recognized text.
+/// produces a PNG pending image attachment. Recognized text stays out of the composer.
 enum PaperMarkupCanvasSession {
     enum Background {
         case blank
@@ -204,25 +204,6 @@ enum PaperMarkupCanvasSession {
         }
     }
 
-    static func resolvedRecognizedText(
-        indexableContent: String?,
-        handwritingFallback: String?
-    ) -> String {
-        let indexable = indexableContent?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !indexable.isEmpty {
-            return indexable
-        }
-        return handwritingFallback?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    }
-
-    static func prependRecognizedText(_ recognized: String, into composerText: String) -> String {
-        let trimmed = recognized.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return composerText }
-        let existing = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !existing.isEmpty else { return trimmed }
-        return "\(trimmed)\n\n\(composerText)"
-    }
-
     static func nativePixelSize(of image: UIImage) -> CGSize {
         if let cgImage = image.cgImage {
             return CGSize(width: cgImage.width, height: cgImage.height)
@@ -289,12 +270,11 @@ enum PaperMarkupCanvasSession {
     static func applyAddToChat(
         pngData: Data,
         image: UIImage,
-        recognizedText: String,
-        composerText: inout String,
+        recognizedText _: String,
+        composerText _: inout String,
         pendingAttachments: inout [PendingAttachment]
     ) {
         pendingAttachments.append(makePendingImageAttachment(pngData: pngData, image: image))
-        composerText = prependRecognizedText(recognizedText, into: composerText)
     }
 
     /// Image annotate keeps drawing, text, and shapes. Stickers, links, loupes,

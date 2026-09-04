@@ -1,5 +1,6 @@
 import PaperKit
 import PencilKit
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -16,8 +17,8 @@ struct PaperMarkupCanvasSessionTests {
         #expect(ComposerShared.attachmentMenuOrder == .priority)
     }
 
-    @Test("Add to Chat yields a PNG pending image and prepends recognized text")
-    func addToChatYieldsPNGPendingImageAndPrependsRecognizedText() throws {
+    @Test("Add to Chat yields a PNG pending image and leaves composer text unchanged")
+    func addToChatYieldsPNGPendingImageAndLeavesComposerTextUnchanged() throws {
         let (image, pngData) = try makePNG()
         var composerText = "existing prompt"
         var pendingAttachments: [PendingAttachment] = []
@@ -38,30 +39,38 @@ struct PaperMarkupCanvasSessionTests {
         #expect(attachment.source == .image)
         #expect(encoded.mimeType == "image/png")
         #expect(decoded.starts(with: [0x89, 0x50, 0x4E, 0x47]))
-        #expect(composerText.hasPrefix("login box"))
-        #expect(composerText.contains("existing prompt"))
-    }
+        #expect(composerText == "existing prompt")
+        #expect(!composerText.contains("login box"))
 
-    @Test("Add to Chat prefers indexable content and uses handwriting when that string is empty")
-    func addToChatPrefersIndexableContentThenHandwritingFallback() {
-        #expect(
-            PaperMarkupCanvasSession.resolvedRecognizedText(
-                indexableContent: "typed label",
-                handwritingFallback: "ink words"
-            ) == "typed label"
+        var coverText = "existing prompt"
+        var coverAttachments: [PendingAttachment] = []
+        let coverAccepted = ComposerShared.applyCanvasToComposer(
+            attachment: attachment,
+            recognizedText: "8 8 日 8",
+            text: Binding(
+                get: { coverText },
+                set: { coverText = $0 }
+            ),
+            pendingAttachments: Binding(
+                get: { coverAttachments },
+                set: { coverAttachments = $0 }
+            )
         )
-        #expect(
-            PaperMarkupCanvasSession.resolvedRecognizedText(
-                indexableContent: "   ",
-                handwritingFallback: "ink words"
-            ) == "ink words"
+        #expect(coverAccepted)
+        #expect(coverText == "existing prompt")
+        #expect(coverAttachments.count == 1)
+
+        let draft = ChatComposerDraftController(initialText: "existing prompt")
+        var destinationPending: [PendingAttachment] = []
+        let delivered = ChatView.deliverCanvasToComposer(
+            attachment: attachment,
+            recognizedText: "login box",
+            draftController: draft,
+            pendingAttachments: &destinationPending
         )
-        #expect(
-            PaperMarkupCanvasSession.resolvedRecognizedText(
-                indexableContent: nil,
-                handwritingFallback: nil
-            ).isEmpty
-        )
+        #expect(delivered)
+        #expect(draft.text == "existing prompt")
+        #expect(destinationPending.count == 1)
     }
 
     @Test("Add to Chat leaves composer text unchanged when recognized text is empty")

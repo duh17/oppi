@@ -310,7 +310,7 @@ struct ChatView: View {
     @discardableResult
     static func deliverCanvasToComposer(
         attachment: PendingAttachment,
-        recognizedText: String,
+        recognizedText _: String,
         draftController: ChatComposerDraftController,
         pendingAttachments: inout [PendingAttachment]
     ) -> Bool {
@@ -323,13 +323,6 @@ struct ChatView: View {
             return false
         }
         pendingAttachments = draftController.pendingAttachments
-        let next = PaperMarkupCanvasSession.prependRecognizedText(
-            recognizedText,
-            into: draftController.text
-        )
-        if next != draftController.text {
-            draftController.updateVisibleText(next, for: .message)
-        }
         return true
     }
 
