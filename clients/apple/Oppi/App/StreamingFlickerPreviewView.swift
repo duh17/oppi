@@ -48,12 +48,10 @@ struct StreamingFlickerPreviewView: View {
                     .padding(.bottom, 32)
                 }
                 .onChange(of: tick) { _, _ in
-                    // The real user repro expands/opens the output and watches
-                    // the live tail. Keep the deterministic harness pinned to
-                    // the writer's live edge instead of sampling stale prefix rows.
-                    withAnimation(.linear(duration: 0.055)) {
-                        proxy.scrollTo("stream-bottom", anchor: .bottom)
-                    }
+                    // Snap the live edge. A 0.055s linear scroll on every tick
+                    // was continuous motion under the island; streaming text
+                    // should keep earlier lines still and only reveal the tail.
+                    proxy.scrollTo("stream-bottom", anchor: .bottom)
                 }
             }
 
