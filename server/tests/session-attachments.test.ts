@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { closeSync, ftruncateSync, openSync, writeSync } from "node:fs";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -569,6 +570,130 @@ describe("session attachments", () => {
     expect(attachment ? await readFile(attachment.path) : null).toEqual(bytes);
   });
 
+  it("copies a path video larger than 50MB without putting media bytes in details", async () => {
+    const size = 50 * 1024 * 1024 + 1;
+    const header = Buffer.from("BEGINVID");
+    const trailer = Buffer.from("ENDVIDEO!");
+    const videoPath = join(root, "large-run.mp4");
+    writeSparseFile(videoPath, size, header, trailer);
+
+    const video = addSessionAttachmentFile({
+      dataDir: root,
+      sessionId: "s-video-large",
+      toolCallId: "tool-video-large",
+      path: videoPath,
+      kind: "video",
+      mimeType: "video/mp4",
+      fileName: "large-run.mp4",
+      durationSeconds: 12.5,
+      width: 1280,
+      height: 720,
+    }) as {
+      id: string;
+      kind: string;
+      mimeType: string;
+      fileName: string;
+      sizeBytes: number;
+      storageKey?: string;
+      sha256?: string;
+      base64?: string;
+      data?: string;
+      path?: string;
+      width?: number;
+      height?: number;
+      durationSeconds?: number;
+    };
+
+    expect(video.id).toContain("att_tool-video-large_");
+    expect(video.kind).toBe("video");
+    expect(video.mimeType).toBe("video/mp4");
+    expect(video.fileName).toBe("large-run.mp4");
+    expect(video.sizeBytes).toBe(size);
+    expect(video.width).toBe(1280);
+    expect(video.height).toBe(720);
+    expect(video.durationSeconds).toBe(12.5);
+    expect(video.sha256).toEqual(expect.any(String));
+    expect(video.base64).toBeUndefined();
+    expect(video.data).toBeUndefined();
+    expect(video.path).toBeUndefined();
+    expect(JSON.stringify(video)).not.toMatch(/BEGINVID|ENDVIDEO/);
+
+    const attachment = await getSessionAttachment(root, "s-video-large", video.id);
+    expect(attachment?.size).toBe(size);
+    expect(attachment ? (await stat(attachment.path)).size : null).toBe(size);
+
+    const startRes = new MockWritableResponse();
+    const startFinished = once(startRes, "finish");
+    streamSessionAttachment(
+      attachment!,
+      makeIncoming({ range: "bytes=0-7" }),
+      startRes as unknown as ServerResponse,
+    );
+    await startFinished;
+    expect(startRes.statusCode).toBe(206);
+    expect(startRes.headers["Accept-Ranges"]).toBe("bytes");
+    expect(startRes.body).toEqual(header);
+
+    const endStart = size - trailer.length;
+    const endRes = new MockWritableResponse();
+    const endFinished = once(endRes, "finish");
+    streamSessionAttachment(
+      attachment!,
+      makeIncoming({ range: `bytes=${endStart}-${size - 1}` }),
+      endRes as unknown as ServerResponse,
+    );
+    await endFinished;
+    expect(endRes.statusCode).toBe(206);
+    expect(endRes.body).toEqual(trailer);
+  });
+
+  it("rejects a path attachment larger than 2GB with a clear size error", () => {
+    const size = 2 * 1024 * 1024 * 1024 + 1;
+    const videoPath = join(root, "too-big.mp4");
+    writeSparseFile(videoPath, size);
+
+    expect(() =>
+      addSessionAttachmentFile({
+        dataDir: root,
+        sessionId: "s-video-too-big",
+        path: videoPath,
+        kind: "video",
+        mimeType: "video/mp4",
+        fileName: "too-big.mp4",
+      }),
+    ).toThrow(/exceeds 2147483648 bytes/);
+  });
+
+  it("does not materialize video base64 larger than 50MB", () => {
+    const bytes = Buffer.alloc(50 * 1024 * 1024 + 1);
+    const details = materializeToolMediaDetails({
+      dataDir: root,
+      sessionId: "s-video-base64-too-big",
+      toolCallId: "tool-video-base64-too-big",
+      details: {
+        media: [
+          {
+            kind: "video",
+            mimeType: "video/mp4",
+            base64: bytes.toString("base64"),
+            fileName: "huge.mp4",
+          },
+        ],
+      },
+    }) as { media: Array<{ id?: string; base64?: string; path?: string }> };
+
+    expect(details.media[0]?.id).toBeUndefined();
+    expect(details.media[0]?.base64).toBeUndefined();
+    expect(details.media[0]?.path).toBeUndefined();
+    expect(
+      sessionAttachmentMediaDetailsForToolCall(
+        root,
+        "s-video-base64-too-big",
+        "tool-video-base64-too-big",
+      ),
+    ).toEqual([]);
+  });
+
   it("materializes video entries from details.media and strips inline bytes", async () => {
     const bytes = Buffer.from("mp4-inline-video");
     const details = materializeToolMediaDetails({
@@ -760,6 +885,21 @@ function makeTIFF(width: number, height: number): Buffer {
   bytes.writeUInt32LE(1, 26);
   bytes.writeUInt32LE(height, 30);
   return bytes;
+}
+
+function writeSparseFile(path: string, size: number, header?: Buffer, trailer?: Buffer): void {
+  const fd = openSync(path, "w");
+  try {
+    if (header && header.length > 0) {
+      writeSync(fd, header, 0, header.length, 0);
+    }
+    if (trailer && trailer.length > 0) {
+      writeSync(fd, trailer, 0, trailer.length, size - trailer.length);
+    }
+    ftruncateSync(fd, size);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function makeICO(width: number, height: number): Buffer {

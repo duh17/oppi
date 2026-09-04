@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   createReadStream,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative } from "node:path";
@@ -18,6 +24,9 @@ import { generateId } from "./id.js";
 
 const MANIFEST_VERSION = 1;
 const MAX_SESSION_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const MAX_SESSION_ATTACHMENT_PATH_BYTES = 2 * 1024 * 1024 * 1024;
+const ATTACHMENT_COPY_CHUNK_BYTES = 64 * 1024;
+const IMAGE_DIMENSION_HEADER_BYTES = 256 * 1024;
 const DEFAULT_AUDIO_MIME_TYPE = "audio/wav";
 const DEFAULT_IMAGE_MIME_TYPE = "image/png";
 const DEFAULT_VIDEO_MIME_TYPE = "video/mp4";
@@ -293,10 +302,23 @@ function attachmentSha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function attachmentIdFor(toolCallId: string | undefined, bytes: Buffer): string {
-  const digest = createHash("sha256").update(bytes).digest("base64url").slice(0, 16);
+function formatAttachmentId(toolCallId: string | undefined, digest: string): string {
   if (toolCallId) return `att_${toolCallId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 32)}_${digest}`;
   return `att_${generateId(12)}_${digest}`;
+}
+
+function attachmentIdForSha256(toolCallId: string | undefined, sha256Hex: string): string {
+  return formatAttachmentId(
+    toolCallId,
+    Buffer.from(sha256Hex, "hex").toString("base64url").slice(0, 16),
+  );
+}
+
+function attachmentIdFor(toolCallId: string | undefined, bytes: Buffer): string {
+  return formatAttachmentId(
+    toolCallId,
+    createHash("sha256").update(bytes).digest("base64url").slice(0, 16),
+  );
 }
 
 function base64FromMediaRecord(media: Record<string, unknown>): string | undefined {
@@ -542,6 +564,159 @@ function imageAttachmentDetails(record: SessionAttachmentRecord): Record<string,
   return attachmentDetails(record);
 }
 
+function upsertAttachmentRecord(
+  dataDir: string,
+  sessionId: string,
+  record: SessionAttachmentRecord,
+): void {
+  const manifest = readManifest(dataDir, sessionId);
+  const existingIndex = manifest.attachments.findIndex((item) => item.id === record.id);
+  if (existingIndex >= 0) {
+    manifest.attachments[existingIndex] = { ...manifest.attachments[existingIndex], ...record };
+  } else {
+    manifest.attachments.push(record);
+  }
+  writeManifest(dataDir, sessionId, manifest);
+}
+
+function copyFileStreamingWithSha256(
+  sourcePath: string,
+  destPath: string,
+  maxBytes: number,
+): { sizeBytes: number; sha256: string } {
+  const hash = createHash("sha256");
+  const chunk = Buffer.alloc(ATTACHMENT_COPY_CHUNK_BYTES);
+  let inFd = -1;
+  let outFd = -1;
+  let sizeBytes = 0;
+  try {
+    inFd = openSync(sourcePath, "r");
+    outFd = openSync(destPath, "w", 0o600);
+    while (true) {
+      const n = readSync(inFd, chunk, 0, chunk.length, null);
+      if (n === 0) break;
+      sizeBytes += n;
+      if (sizeBytes > maxBytes) {
+        throw new Error(`Attachment source exceeds ${maxBytes} bytes`);
+      }
+      hash.update(chunk.subarray(0, n));
+      writeSync(outFd, chunk, 0, n);
+    }
+  } catch (error) {
+    if (outFd >= 0) {
+      try {
+        closeSync(outFd);
+      } catch {
+        // already closed
+      }
+      outFd = -1;
+    }
+    try {
+      unlinkSync(destPath);
+    } catch {
+      // dest may not exist yet
+    }
+    throw error;
+  } finally {
+    if (inFd >= 0) {
+      try {
+        closeSync(inFd);
+      } catch {
+        // already closed
+      }
+    }
+    if (outFd >= 0) {
+      try {
+        closeSync(outFd);
+      } catch {
+        // already closed
+      }
+    }
+  }
+  return { sizeBytes, sha256: hash.digest("hex") };
+}
+
+function imageDimensionsFromPath(
+  filePath: string,
+  mimeType: string,
+  sizeBytes: number,
+): { width: number; height: number } | undefined {
+  if (sizeBytes <= 0) return undefined;
+  const header = Buffer.alloc(Math.min(IMAGE_DIMENSION_HEADER_BYTES, sizeBytes));
+  const fd = openSync(filePath, "r");
+  try {
+    const n = readSync(fd, header, 0, header.length, 0);
+    return imageDimensions(header.subarray(0, n), mimeType);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function storeAttachmentFromFile(options: {
+  dataDir: string;
+  sessionId: string;
+  toolCallId?: string;
+  kind: SessionAttachmentKind;
+  mimeType: string;
+  fileName: string;
+  sourcePath: string;
+  durationSeconds?: number;
+  width?: number;
+  height?: number;
+  text?: string;
+}): SessionAttachmentRecord {
+  const { dataDir, sessionId, toolCallId, kind, mimeType, fileName, sourcePath } = options;
+  const dir = sessionDir(dataDir, sessionId);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmpPath = join(dir, `.copy-${generateId(16)}.tmp`);
+  try {
+    const { sizeBytes, sha256 } = copyFileStreamingWithSha256(
+      sourcePath,
+      tmpPath,
+      MAX_SESSION_ATTACHMENT_PATH_BYTES,
+    );
+    const id = attachmentIdForSha256(toolCallId, sha256);
+    const extension = mimeExtension(mimeType, fileName);
+    const storageKey = `${sessionId}/${id}.${extension}`;
+    const filePath = join(dir, `${id}.${extension}`);
+    if (existsSync(filePath)) {
+      unlinkSync(tmpPath);
+    } else {
+      renameSync(tmpPath, filePath);
+    }
+
+    const detectedDimensions =
+      kind === "image" ? imageDimensionsFromPath(filePath, mimeType, sizeBytes) : undefined;
+    const providedDimensions = validDimensions(options.width ?? 0, options.height ?? 0);
+    const dimensions = providedDimensions ?? detectedDimensions;
+    const record: SessionAttachmentRecord = {
+      id,
+      kind,
+      mimeType,
+      fileName,
+      sizeBytes,
+      storageKey,
+      createdAt: Date.now(),
+      sha256,
+      ...(toolCallId ? { toolCallId } : {}),
+      ...(options.durationSeconds !== undefined
+        ? { durationSeconds: options.durationSeconds }
+        : {}),
+      ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
+      ...(options.text !== undefined ? { text: options.text } : {}),
+    };
+    upsertAttachmentRecord(dataDir, sessionId, record);
+    return record;
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // temp may already be renamed or removed
+    }
+    throw error;
+  }
+}
+
 function storeAttachment(options: {
   dataDir: string;
   sessionId: string;
@@ -585,14 +760,7 @@ function storeAttachment(options: {
     ...(options.text !== undefined ? { text: options.text } : {}),
   };
 
-  const manifest = readManifest(dataDir, sessionId);
-  const existingIndex = manifest.attachments.findIndex((item) => item.id === id);
-  if (existingIndex >= 0) {
-    manifest.attachments[existingIndex] = { ...manifest.attachments[existingIndex], ...record };
-  } else {
-    manifest.attachments.push(record);
-  }
-  writeManifest(dataDir, sessionId, manifest);
+  upsertAttachmentRecord(dataDir, sessionId, record);
   return record;
 }
 
@@ -607,8 +775,8 @@ export function addSessionAttachmentFile(
   if (info.size <= 0) {
     throw new Error("Attachment source is empty");
   }
-  if (info.size > MAX_SESSION_ATTACHMENT_BYTES) {
-    throw new Error(`Attachment source exceeds ${MAX_SESSION_ATTACHMENT_BYTES} bytes`);
+  if (info.size > MAX_SESSION_ATTACHMENT_PATH_BYTES) {
+    throw new Error(`Attachment source exceeds ${MAX_SESSION_ATTACHMENT_PATH_BYTES} bytes`);
   }
 
   const kind = options.kind ?? sessionAttachmentKindFromMimeType(options.mimeType);
@@ -616,15 +784,14 @@ export function addSessionAttachmentFile(
     throw new Error("Attachment kind or media MIME type is required");
   }
   const mimeType = normalizeMimeTypeForKind(kind, options.mimeType);
-  const bytes = readFileSync(realPath);
-  const record = storeAttachment({
+  const record = storeAttachmentFromFile({
     dataDir: options.dataDir,
     sessionId: options.sessionId,
     toolCallId: options.toolCallId,
     kind,
     mimeType,
     fileName: safeFileName(options.fileName ?? options.path, mimeType, kind),
-    bytes,
+    sourcePath: realPath,
     ...(options.durationSeconds !== undefined ? { durationSeconds: options.durationSeconds } : {}),
     ...(options.width !== undefined ? { width: options.width } : {}),
     ...(options.height !== undefined ? { height: options.height } : {}),
