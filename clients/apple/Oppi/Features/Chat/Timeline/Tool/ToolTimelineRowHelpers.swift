@@ -740,20 +740,71 @@ enum ToolTimelineRowUIHelpers {
         )
     }
 
-    /// Settle content size and scroll to bottom in one synchronous step.
+    /// Settle content size and scroll to bottom without a full TextKit 2
+    /// `layoutIfNeeded()` of the expanded `UITextView`.
     ///
-    /// Call from `apply()` after setting text — never from `layoutSubviews()`.
-    /// UITextView doesn't always propagate intrinsic-size invalidation through
-    /// the content layout guide on the same run-loop pass as `.text=`, so we
-    /// explicitly invalidate, force layout, then scroll.
+    /// Streaming follow-tail used to force scroll-view layout, which created
+    /// and destroyed text fragment views for the whole document. Measure the
+    /// attributed string with Core Text instead, then set `contentSize` and
+    /// offset. Non-text content still takes the Auto Layout path.
     static func followTail(
         in scrollView: UIScrollView,
         contentLabel: UIView
     ) {
         contentLabel.invalidateIntrinsicContentSize()
+        if let textView = contentLabel as? UITextView,
+           let height = estimatedTextViewContentHeight(textView, in: scrollView) {
+            var size = scrollView.contentSize
+            if size.width < 1 {
+                size.width = max(scrollView.bounds.width, textView.bounds.width, 1)
+            }
+            size.height = height
+            if abs(scrollView.contentSize.width - size.width) > 0.5
+                || abs(scrollView.contentSize.height - size.height) > 0.5 {
+                scrollView.contentSize = size
+            }
+            scrollToBottom(scrollView, animated: false)
+            return
+        }
         scrollView.setNeedsLayout()
         scrollView.layoutIfNeeded()
         scrollToBottom(scrollView, animated: false)
+    }
+
+    /// Core Text measurement of a non-scrolling expanded `UITextView`.
+    /// Uses the TextKit container width, not the scroll-view viewport, so
+    /// unwrapped code/diff is not measured as wrapped prose.
+    /// Returns nil when that width is not yet valid so callers can fall back
+    /// to Auto Layout.
+    private static func estimatedTextViewContentHeight(
+        _ textView: UITextView,
+        in scrollView: UIScrollView
+    ) -> CGFloat? {
+        guard scrollView.bounds.height > 0 else { return nil }
+        let inset = textView.textContainerInset
+        let padding = textView.textContainer.lineFragmentPadding
+        let containerWidth = textView.textContainer.size.width
+        let width: CGFloat
+        if containerWidth > 1, containerWidth.isFinite {
+            width = containerWidth
+        } else if textView.bounds.width > 1 {
+            width = max(
+                1,
+                textView.bounds.width - inset.left - inset.right - (padding * 2)
+            )
+        } else {
+            return nil
+        }
+        let text = textView.attributedText ?? NSAttributedString()
+        guard text.length > 0 else {
+            return max(1, inset.top + inset.bottom)
+        }
+        let rect = text.boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+        return ceil(rect.height) + inset.top + inset.bottom
     }
 
     /// Pure computation of auto-follow state after a render pass.
