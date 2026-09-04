@@ -20,12 +20,22 @@ final class AssistantMarkdownSegmentSource {
         var buildContext: SegmentBuildContext
     }
 
+    /// Last merged streaming prose so a frozen prefix AttributedString is not
+    /// copied on every tail-only tick.
+    private struct StreamingTextMergeCache {
+        let prefixCount: Int
+        let tailPlain: NSString
+        var merged: AttributedString
+    }
+
     private var streamingParser = CommonMarkStreamingParser()
     private var streamingSegmentState: StreamingSegmentState?
+    private var streamingTextMergeCache: StreamingTextMergeCache?
 
     func reset() {
         streamingParser.reset()
         streamingSegmentState = nil
+        streamingTextMergeCache = nil
     }
 
     func buildSegments(
@@ -187,10 +197,12 @@ final class AssistantMarkdownSegmentSource {
         let parseEnd = MarkdownStreamingPerf.timestampNs()
 
         let prefixSegments: [FlatSegment]
+        let prefixReused: Bool
         if let cached = streamingSegmentState,
            cached.prefixBlocks == parsed.prefixBlocks,
            cached.buildContext == buildContext {
             prefixSegments = cached.prefixSegments
+            prefixReused = true
         } else {
             prefixSegments = FlatSegment.build(
                 from: parsed.prefixBlocks,
@@ -202,6 +214,7 @@ final class AssistantMarkdownSegmentSource {
                 sourceDirectory: config.sourceDirectory,
                 worktreeId: config.worktreeId
             )
+            prefixReused = false
         }
 
         let tailSegments = FlatSegment.build(
@@ -232,27 +245,75 @@ final class AssistantMarkdownSegmentSource {
             isStreaming: true
         )
 
-        return mergeSegments(prefix: prefixSegments, tail: tailSegments)
+        return mergeSegments(
+            prefix: prefixSegments,
+            tail: tailSegments,
+            prefixReused: prefixReused
+        )
     }
 
     // MARK: - Segment merge
 
-    private func mergeSegments(prefix: [FlatSegment], tail: [FlatSegment]) -> [FlatSegment] {
-        guard !prefix.isEmpty, !tail.isEmpty else { return prefix + tail }
+    private func mergeSegments(
+        prefix: [FlatSegment],
+        tail: [FlatSegment],
+        prefixReused: Bool
+    ) -> [FlatSegment] {
+        guard !prefix.isEmpty, !tail.isEmpty else {
+            streamingTextMergeCache = nil
+            return prefix + tail
+        }
 
         if case .text(let prefixText) = prefix.last,
            case .text(let tailText) = tail.first {
+            if prefixReused,
+               let cache = streamingTextMergeCache,
+               cache.prefixCount == prefix.count,
+               StreamingMarkdownDelta.renderedUTF16PrefixMatches(tailText, prefix: cache.tailPlain),
+               let suffix = StreamingMarkdownDelta.attributedSuffix(
+                   tailText,
+                   afterUTF16Offset: cache.tailPlain.length
+               ) {
+                var merged = cache.merged
+                if !suffix.characters.isEmpty {
+                    merged.append(suffix)
+                }
+                streamingTextMergeCache = StreamingTextMergeCache(
+                    prefixCount: prefix.count,
+                    tailPlain: String(tailText.characters) as NSString,
+                    merged: merged
+                )
+                return assembleMergedText(
+                    prefix: prefix,
+                    tail: tail,
+                    merged: merged
+                )
+            }
+
             var merged = prefixText
             merged.append(AttributedString("\n\n"))
             merged.append(tailText)
-
-            var result = Array(prefix.dropLast())
-            result.append(.text(merged))
-            result.append(contentsOf: tail.dropFirst())
-            return result
+            streamingTextMergeCache = StreamingTextMergeCache(
+                prefixCount: prefix.count,
+                tailPlain: String(tailText.characters) as NSString,
+                merged: merged
+            )
+            return assembleMergedText(prefix: prefix, tail: tail, merged: merged)
         }
 
+        streamingTextMergeCache = nil
         return prefix + tail
+    }
+
+    private func assembleMergedText(
+        prefix: [FlatSegment],
+        tail: [FlatSegment],
+        merged: AttributedString
+    ) -> [FlatSegment] {
+        var result = Array(prefix.dropLast())
+        result.append(.text(merged))
+        result.append(contentsOf: tail.dropFirst())
+        return result
     }
 
     static func applyReaderPreferences(
@@ -304,5 +365,66 @@ final class AssistantMarkdownSegmentSource {
             count += 1
         }
         return count
+    }
+}
+
+/// Slices a FlatSegment AttributedString without boxing the already-rendered prefix
+/// into NSAttributedString. UTF-16 offsets match TextKit / NSTextStorage.
+enum StreamingMarkdownDelta {
+    static func isNeutralSourceAppend(previousContent: String?, currentContent: String) -> Bool {
+        guard let previousContent else { return false }
+
+        let previousBytes = previousContent.utf8
+        let currentBytes = currentContent.utf8
+        guard currentBytes.count > previousBytes.count,
+              currentBytes.starts(with: previousBytes) else {
+            return false
+        }
+
+        for byte in currentBytes.dropFirst(previousBytes.count) {
+            switch byte {
+            case 33, 36, 38, 40, 41, 42, 60, 62, 91, 92, 93, 95, 96, 124, 126:
+                return false
+            default:
+                continue
+            }
+        }
+        return true
+    }
+
+    static func attributedSuffix(
+        _ attributed: AttributedString,
+        afterUTF16Offset offset: Int
+    ) -> AttributedString? {
+        guard offset >= 0 else { return nil }
+        guard let start = Range(NSRange(location: offset, length: 0), in: attributed)?.lowerBound else {
+            return nil
+        }
+        if start == attributed.endIndex {
+            return AttributedString()
+        }
+        return AttributedString(attributed[start...])
+    }
+
+    static func nsAttributedSuffix(
+        _ attributed: AttributedString,
+        afterUTF16Offset offset: Int
+    ) -> NSAttributedString? {
+        guard let suffix = attributedSuffix(attributed, afterUTF16Offset: offset) else {
+            return nil
+        }
+        return NSAttributedString(suffix)
+    }
+
+    static func renderedUTF16PrefixMatches(
+        _ attributed: AttributedString,
+        prefix: NSString
+    ) -> Bool {
+        let prefixLength = prefix.length
+        if prefixLength == 0 { return true }
+        guard let range = Range(NSRange(location: 0, length: prefixLength), in: attributed) else {
+            return false
+        }
+        return (String(attributed[range].characters) as NSString).isEqual(prefix)
     }
 }

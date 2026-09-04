@@ -665,6 +665,26 @@ extension AssistantMarkdownContentView {
         segmentApplier.releaseVideoViewOwnership()
     }
 
+    var debugStreamingFullNSConversionCountForTesting: Int {
+        segmentApplier.debugStreamingFullNSConversionCountForTesting
+    }
+
+    var debugStreamingDeltaNSConversionCountForTesting: Int {
+        segmentApplier.debugStreamingDeltaNSConversionCountForTesting
+    }
+
+    var debugStreamingDocumentLayoutCountForTesting: Int {
+        segmentApplier.debugStreamingDocumentLayoutCountForTesting
+    }
+
+    var debugStreamingPartialLayoutCountForTesting: Int {
+        segmentApplier.debugStreamingPartialLayoutCountForTesting
+    }
+
+    var debugTextContentStorageIdentifierForTesting: ObjectIdentifier? {
+        segmentApplier.debugTextContentStorageIdentifierForTesting()
+    }
+
     var debugRenderedContentOverflowPoints: CGFloat {
         let maxRenderedY = stackView.arrangedSubviews
             .filter { !$0.isHidden && $0.alpha > 0.01 }

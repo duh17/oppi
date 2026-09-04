@@ -196,16 +196,161 @@ struct LiveStreamingPresentationTests {
         #expect(applier.debugRenderingAlphaForTesting(at: 5) == nil)
     }
 
+    @Test("neutral streaming append converts only the attributed suffix")
+    func streamingNeutralAppendConvertsDeltaNotWholeTail() throws {
+        let stack = UIStackView()
+        let applier = makeMarkdownApplier(stackView: stack, motionAllowed: { false })
+
+        apply("Hello", isStreaming: true, to: applier)
+        #expect(applier.debugStreamingFullNSConversionCountForTesting == 0)
+        #expect(applier.debugStreamingDeltaNSConversionCountForTesting == 0)
+
+        apply("Hello world", isStreaming: true, to: applier)
+        #expect(
+            applier.debugStreamingDeltaNSConversionCountForTesting == 1,
+            "Append-only ticks must convert the new suffix, not the whole tail"
+        )
+        #expect(
+            applier.debugStreamingFullNSConversionCountForTesting == 0,
+            "Markdown-neutral append must not rebuild NSAttributedString for the prefix"
+        )
+
+        let textView = try #require(firstTextView(in: stack))
+        #expect(timelineRenderedText(of: textView) == "Hello world")
+    }
+
+    @Test("streaming append keeps the TextKit 2 document and layouts only a partial range")
+    func streamingAppendKeepsLongLivedStorageAndPartialLayout() throws {
+        let stack = UIStackView()
+        let applier = makeMarkdownApplier(stackView: stack, motionAllowed: { false })
+
+        apply("Hello", isStreaming: true, to: applier)
+        let storageID = try #require(applier.debugTextContentStorageIdentifierForTesting())
+        let documentLayoutsAfterSeed = applier.debugStreamingDocumentLayoutCountForTesting
+        let partialLayoutsAfterSeed = applier.debugStreamingPartialLayoutCountForTesting
+        #expect(documentLayoutsAfterSeed == 0)
+        #expect(partialLayoutsAfterSeed == 0)
+
+        apply("Hello world", isStreaming: true, to: applier)
+        #expect(applier.debugTextContentStorageIdentifierForTesting() == storageID)
+        #expect(
+            applier.debugStreamingDocumentLayoutCountForTesting == documentLayoutsAfterSeed,
+            "Streaming append must not force TextKit layout of the whole document"
+        )
+        #expect(applier.debugStreamingPartialLayoutCountForTesting > partialLayoutsAfterSeed)
+
+        let partialLayoutsAfterFirstAppend = applier.debugStreamingPartialLayoutCountForTesting
+        apply("Hello world!", isStreaming: true, to: applier)
+        #expect(applier.debugTextContentStorageIdentifierForTesting() == storageID)
+        #expect(applier.debugStreamingDocumentLayoutCountForTesting == documentLayoutsAfterSeed)
+        #expect(applier.debugStreamingPartialLayoutCountForTesting > partialLayoutsAfterFirstAppend)
+    }
+
+    @Test("CommonMark inline rewrites replace the tail instead of appending over stale glyphs")
+    func streamingInlineMarkdownRewriteDoesNotGarblePrefix() throws {
+        try expectStreamingRewrite(
+            open: "This is **bol",
+            closed: "This is **bold** text",
+            expected: "This is bold text",
+            forbidden: "**"
+        )
+        try expectStreamingRewrite(
+            open: "Use `fo",
+            closed: "Use `foo()` here",
+            expected: "Use foo() here",
+            forbidden: "`"
+        )
+        try expectStreamingRewrite(
+            open: "See [lin",
+            closed: "See [link](https://example.com) now",
+            expected: "See link now",
+            forbidden: "["
+        )
+    }
+
+    @Test("links, code spans, and tables stay put while later prose streams")
+    func streamingPrefixMarksAndTablesDoNotFlicker() throws {
+        let stack = UIStackView()
+        let applier = makeMarkdownApplier(stackView: stack, motionAllowed: { false })
+        let prefix = """
+        Use `foo()` and [docs](https://example.com) first.
+
+        | A | B |
+        | --- | --- |
+        | 1 | 2 |
+
+        Tail
+        """
+
+        apply(prefix, isStreaming: true, to: applier)
+        let textView = try #require(firstTextView(in: stack))
+        let table = try #require(stack.arrangedSubviews.compactMap { $0 as? NativeTableBlockView }.first)
+        let tableID = ObjectIdentifier(table)
+        let ns = try #require(textView.attributedText)
+        let codeRange = (ns.string as NSString).range(of: "foo()")
+        let linkRange = (ns.string as NSString).range(of: "docs")
+        #expect(codeRange.location != NSNotFound)
+        #expect(linkRange.location != NSNotFound)
+        #expect(ns.attribute(.link, at: linkRange.location, effectiveRange: nil) != nil)
+        let tableAppliesAfterMount = applier.debugInPlaceTableApplyCountForTesting
+
+        apply(prefix + " continues", isStreaming: true, to: applier)
+        let updated = try #require(firstTextView(in: stack))
+        let updatedNS = try #require(updated.attributedText)
+        #expect((updatedNS.string as NSString).range(of: "foo()") == codeRange)
+        #expect((updatedNS.string as NSString).range(of: "docs") == linkRange)
+        #expect(updatedNS.attribute(.link, at: linkRange.location, effectiveRange: nil) != nil)
+        #expect(ObjectIdentifier(try #require(stack.arrangedSubviews.compactMap { $0 as? NativeTableBlockView }.first)) == tableID)
+        #expect(applier.debugInPlaceTableApplyCountForTesting == tableAppliesAfterMount)
+        #expect(applier.debugStreamingDeltaNSConversionCountForTesting >= 1)
+    }
+
+    @Test("content view streaming rewrite and append keep glyphs and use a suffix delta")
+    func streamingContentViewKeepsGlyphsOnRewriteAndDeltaOnAppend() throws {
+        let view = AssistantMarkdownContentView()
+        view.apply(configuration: .make(content: "This is **bol", isStreaming: true, themeID: .dark))
+        view.apply(configuration: .make(content: "This is **bold** text", isStreaming: true, themeID: .dark))
+
+        let rewritten = try #require(timelineAllTextViews(in: view).first)
+        #expect(timelineRenderedText(of: rewritten) == "This is bold text")
+        #expect(applierStorageID(of: view) != nil)
+
+        let storageID = try #require(view.debugTextContentStorageIdentifierForTesting)
+        let fullBeforeAppend = view.debugStreamingFullNSConversionCountForTesting
+        let documentLayoutsAfterRewrite = view.debugStreamingDocumentLayoutCountForTesting
+        let partialLayoutsAfterRewrite = view.debugStreamingPartialLayoutCountForTesting
+        #expect(documentLayoutsAfterRewrite == 0)
+        view.apply(configuration: .make(content: "This is **bold** text now", isStreaming: true, themeID: .dark))
+
+        let appended = try #require(timelineAllTextViews(in: view).first)
+        #expect(timelineRenderedText(of: appended) == "This is bold text now")
+        #expect(view.debugTextContentStorageIdentifierForTesting == storageID)
+        #expect(view.debugStreamingDeltaNSConversionCountForTesting >= 1)
+        #expect(view.debugStreamingFullNSConversionCountForTesting == fullBeforeAppend)
+        #expect(view.debugStreamingDocumentLayoutCountForTesting == 0)
+        #expect(view.debugStreamingDocumentLayoutCountForTesting == documentLayoutsAfterRewrite)
+        #expect(view.debugStreamingPartialLayoutCountForTesting > partialLayoutsAfterRewrite)
+    }
+
     private func makeMarkdownApplier(
+        stackView: UIStackView = UIStackView(),
         motionAllowed: @escaping @MainActor @Sendable () -> Bool,
-        animationDriver: MarkdownChunkSettleAnimationDriver
+        animationDriver: MarkdownChunkSettleAnimationDriver = MarkdownChunkSettleAnimationDriverSpy()
     ) -> AssistantMarkdownSegmentApplier {
         AssistantMarkdownSegmentApplier(
-            stackView: UIStackView(),
+            stackView: stackView,
             textViewDelegate: LiveStreamingTextViewDelegate(),
             chunkSettleMotionAllowed: motionAllowed,
             chunkSettleAnimationDriver: animationDriver
         )
+    }
+
+    private func firstTextView(in stack: UIStackView) -> UITextView? {
+        stack.arrangedSubviews.compactMap { $0 as? UITextView }.first
+    }
+
+    private func applierStorageID(of view: AssistantMarkdownContentView) -> ObjectIdentifier? {
+        view.debugTextContentStorageIdentifierForTesting
     }
 
     private func apply(
@@ -217,6 +362,24 @@ struct LiveStreamingPresentationTests {
             segments: FlatSegment.build(from: parseCommonMark(content), themeID: .dark),
             config: .make(content: content, isStreaming: isStreaming, themeID: .dark)
         )
+    }
+
+    private func expectStreamingRewrite(
+        open: String,
+        closed: String,
+        expected: String,
+        forbidden: String
+    ) throws {
+        let stack = UIStackView()
+        let applier = makeMarkdownApplier(stackView: stack, motionAllowed: { false })
+        apply(open, isStreaming: true, to: applier)
+        apply(closed, isStreaming: true, to: applier)
+
+        let textView = try #require(firstTextView(in: stack))
+        let rendered = timelineRenderedText(of: textView)
+        #expect(rendered == expected, "Expected \(expected), got \(rendered)")
+        #expect(!rendered.contains(forbidden), "Rewrite left markup glyphs in \(rendered)")
+        #expect(applier.debugStreamingFullNSConversionCountForTesting >= 1)
     }
 
     @Test("thinking overflow follow uses the shared policy")

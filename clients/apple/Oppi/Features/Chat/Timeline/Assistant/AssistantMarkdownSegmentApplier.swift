@@ -111,6 +111,7 @@ private final class MarkdownChunkSettleAnimator {
     private var activeColorRuns: [ColorRun] = []
     #if DEBUG
     private(set) var lastCancelSnapAlphaForTesting: CGFloat?
+    private(set) var debugDocumentLayoutCountForTesting = 0
     #endif
 
     init(
@@ -201,6 +202,11 @@ private final class MarkdownChunkSettleAnimator {
         layoutManager.removeRenderingAttribute(.foregroundColor, for: textRange)
         layoutManager.invalidateLayout(for: textRange)
         layoutManager.ensureLayout(for: textRange)
+        #if DEBUG
+        if textRange.isEqual(to: layoutManager.documentRange) {
+            debugDocumentLayoutCountForTesting += 1
+        }
+        #endif
         textView.setNeedsDisplay()
     }
 
@@ -281,9 +287,18 @@ final class AssistantMarkdownSegmentApplier {
     /// markdown syntax and therefore do not need rendered-prefix validation.
     private var cachedStreamingSourceContent: String?
     private let chunkSettleAnimator: MarkdownChunkSettleAnimator
+    /// Extra TextKit 2 fragments to layout above and below the visible clip.
+    private static let streamingLayoutRunway: CGFloat = 320
     #if DEBUG
     private(set) var debugInPlaceTableApplyCountForTesting = 0
     private(set) var debugInPlaceMermaidApplyCountForTesting = 0
+    private(set) var debugStreamingFullNSConversionCountForTesting = 0
+    private(set) var debugStreamingDeltaNSConversionCountForTesting = 0
+    private var debugStreamingDocumentLayoutCount = 0
+    private(set) var debugStreamingPartialLayoutCountForTesting = 0
+    var debugStreamingDocumentLayoutCountForTesting: Int {
+        debugStreamingDocumentLayoutCount + chunkSettleAnimator.debugDocumentLayoutCountForTesting
+    }
     #endif
 
     /// Closure for fetching workspace files (for inline markdown images).
@@ -1092,96 +1107,176 @@ final class AssistantMarkdownSegmentApplier {
         if textView.dataDetectorTypes != [] {
             textView.dataDetectorTypes = []
         }
-        // Streaming fast path: avoid full O(total) NSAttributedString
-        // conversion on every tick. Build the full conversion only on
-        // the first tick or when text shrinks; on subsequent ticks,
-        // convert only the delta and extend the cached version.
+        // Convert only the new suffix to NSAttributedString. Boxing the whole
+        // tail on every 50ms tick is the remaining conversion cost; prefix
+        // validity still forces a full replace when CommonMark rewrites glyphs.
         let oldLength = textView.textStorage.length
 
         if let cached = cachedStreamingTailNS,
            let cachedPlain = cachedStreamingTailPlain,
            cached.length == oldLength {
-            // Incremental path: convert only the delta
-            let fullNS = NSAttributedString(attributed)
-            let newLength = fullNS.length
+            let markdownNeutral = StreamingMarkdownDelta.isNeutralSourceAppend(
+                previousContent: cachedStreamingSourceContent,
+                currentContent: config.content
+            )
+            let prefixValid = markdownNeutral
+                || StreamingMarkdownDelta.renderedUTF16PrefixMatches(attributed, prefix: cachedPlain)
 
-            if newLength > oldLength {
-                // Verify the rendered plain text prefix is unchanged.
-                // CommonMark re-parsing can change earlier character
-                // positions when inline syntax closes (e.g. **bold**,
-                // `code`, [link](url)). When this happens, the delta
-                // from position oldLength in the new string doesn't
-                // match what's in the textStorage, producing garbled
-                // output. Fall back to full replacement in that case.
-                let prefixValid = Self.isMarkdownNeutralAppend(
-                    previousContent: cachedStreamingSourceContent,
-                    currentContent: config.content
-                ) || fullNS.string.hasPrefix(cachedPlain as String)
-
-                if prefixValid {
-                    let appendedRange = NSRange(location: oldLength, length: newLength - oldLength)
-                    let delta = fullNS.attributedSubstring(from: appendedRange)
-                    chunkSettleAnimator.cancelAndSnap()
-                    textView.textStorage.beginEditing()
-                    textView.textStorage.append(delta)
-                    textView.textStorage.endEditing()
-                    cached.append(delta)
-                    cachedPlain.append(delta.string)
-                    cachedStreamingSourceContent = config.content
-                    refreshTextViewLayoutAfterContentChange(textView)
-                    // Layout TextKit for the chunk fade without Auto Layout.
-                    // `layoutIfNeeded()` grows the text view inside a stale
-                    // collection-view frame between self-sizing passes.
-                    if let layoutManager = textView.textLayoutManager {
-                        layoutManager.ensureLayout(for: layoutManager.documentRange)
-                    }
-                    chunkSettleAnimator.animateAppendedRange(
-                        appendedRange,
-                        attributedText: delta,
-                        in: textView
-                    )
-                } else {
-                    // Markdown structure changed — full replacement.
-                    chunkSettleAnimator.cancelAndSnap()
-                    let fullPlain = fullNS.string
-                    textView.attributedText = fullNS
-                    refreshTextViewLayoutAfterContentChange(textView)
-                    cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
-                    cachedStreamingTailPlain = NSMutableString(string: fullPlain)
-                    cachedStreamingSourceContent = config.content
+            if prefixValid,
+               let delta = StreamingMarkdownDelta.nsAttributedSuffix(
+                   attributed,
+                   afterUTF16Offset: oldLength
+               ) {
+                if delta.length == 0 {
+                    // Same rendered length: skip only when the source tick cannot
+                    // restyle earlier glyphs. Otherwise CommonMark closed markup
+                    // in place and the prefix needs a full replace.
+                    if markdownNeutral { return }
+                    replaceStreamingText(attributed, in: textView, config: config)
+                    return
                 }
-            } else if newLength != oldLength {
+                #if DEBUG
+                debugStreamingDeltaNSConversionCountForTesting += 1
+                #endif
+
+                let appendedRange = NSRange(location: oldLength, length: delta.length)
                 chunkSettleAnimator.cancelAndSnap()
-                let fullPlain = fullNS.string
-                textView.attributedText = fullNS
-                refreshTextViewLayoutAfterContentChange(textView)
-                cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
-                cachedStreamingTailPlain = NSMutableString(string: fullPlain)
+                appendStreamingDelta(delta, to: textView)
+                cached.append(delta)
+                cachedPlain.append(delta.string)
                 cachedStreamingSourceContent = config.content
-            } else if !fullNS.isEqual(cached) {
-                // Same rendered length but different content/attributes —
-                // markdown structure changed without changing character count
-                // (for example, inline markers closed while new characters
-                // arrived in the same tick). Fall back to full replacement.
-                chunkSettleAnimator.cancelAndSnap()
-                let fullPlain = fullNS.string
-                textView.attributedText = fullNS
                 refreshTextViewLayoutAfterContentChange(textView)
-                cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
-                cachedStreamingTailPlain = NSMutableString(string: fullPlain)
-                cachedStreamingSourceContent = config.content
+                // Layout the appended range (chunk fade) plus the on-screen
+                // runway. `layoutIfNeeded()` grows the text view inside a stale
+                // collection-view frame between self-sizing passes.
+                layoutStreamingText(in: textView, appendedRange: appendedRange)
+                chunkSettleAnimator.animateAppendedRange(
+                    appendedRange,
+                    attributedText: delta,
+                    in: textView
+                )
+            } else {
+                replaceStreamingText(attributed, in: textView, config: config)
             }
-            // else: same length and same attributed content — truly no change, skip
         } else {
-            // First tick or cache mismatch — full initialization
-            chunkSettleAnimator.cancelAndSnap()
-            let fullNS = NSAttributedString(attributed)
-            textView.attributedText = fullNS
-            refreshTextViewLayoutAfterContentChange(textView)
-            cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
-            cachedStreamingTailPlain = NSMutableString(string: fullNS.string)
-            cachedStreamingSourceContent = config.content
+            replaceStreamingText(attributed, in: textView, config: config)
         }
+    }
+
+    private func replaceStreamingText(
+        _ attributed: AttributedString,
+        in textView: BaselineSafeTextView,
+        config: AssistantMarkdownContentView.Configuration
+    ) {
+        chunkSettleAnimator.cancelAndSnap()
+        let fullNS = NSAttributedString(attributed)
+        #if DEBUG
+        debugStreamingFullNSConversionCountForTesting += 1
+        #endif
+        textView.attributedText = fullNS
+        refreshTextViewLayoutAfterContentChange(textView)
+        cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
+        cachedStreamingTailPlain = NSMutableString(string: fullNS.string)
+        cachedStreamingSourceContent = config.content
+    }
+
+    private func appendStreamingDelta(
+        _ delta: NSAttributedString,
+        to textView: BaselineSafeTextView
+    ) {
+        if let contentStorage = textView.textLayoutManager?.textContentManager as? NSTextContentStorage,
+           let storage = contentStorage.textStorage {
+            contentStorage.performEditingTransaction(for: storage) {
+                storage.append(delta)
+            }
+            return
+        }
+
+        textView.textStorage.beginEditing()
+        textView.textStorage.append(delta)
+        textView.textStorage.endEditing()
+    }
+
+    private func layoutStreamingText(
+        in textView: UITextView,
+        appendedRange: NSRange
+    ) {
+        guard let layoutManager = textView.textLayoutManager else { return }
+
+        if let textRange = Self.textKitRange(appendedRange, in: layoutManager) {
+            ensureStreamingLayout(layoutManager, for: textRange)
+        }
+
+        if let visible = Self.visibleRunwayRect(in: textView),
+           visible.width > 0.5, visible.height > 0.5 {
+            ensureStreamingLayout(layoutManager, for: visible)
+        }
+    }
+
+    private func ensureStreamingLayout(
+        _ layoutManager: NSTextLayoutManager,
+        for range: NSTextRange
+    ) {
+        layoutManager.ensureLayout(for: range)
+        #if DEBUG
+        if range.isEqual(to: layoutManager.documentRange) {
+            debugStreamingDocumentLayoutCount += 1
+        } else {
+            debugStreamingPartialLayoutCountForTesting += 1
+        }
+        #endif
+    }
+
+    private func ensureStreamingLayout(
+        _ layoutManager: NSTextLayoutManager,
+        for rect: CGRect
+    ) {
+        layoutManager.ensureLayout(for: rect)
+        #if DEBUG
+        debugStreamingPartialLayoutCountForTesting += 1
+        #endif
+    }
+
+    private static func textKitRange(
+        _ range: NSRange,
+        in layoutManager: NSTextLayoutManager
+    ) -> NSTextRange? {
+        guard range.location >= 0, range.length >= 0,
+              let contentStorage = layoutManager.textContentManager as? NSTextContentStorage else {
+            return nil
+        }
+        let documentStart = contentStorage.documentRange.location
+        guard let start = contentStorage.location(documentStart, offsetBy: range.location),
+              let end = contentStorage.location(start, offsetBy: range.length) else {
+            return nil
+        }
+        return NSTextRange(location: start, end: end)
+    }
+
+    private static func visibleRunwayRect(in textView: UITextView) -> CGRect? {
+        let visibleInText: CGRect
+        if let clip = enclosingClipView(of: textView) {
+            visibleInText = textView.convert(clip.bounds, from: clip)
+        } else if let window = textView.window {
+            visibleInText = textView.convert(window.bounds, from: window)
+        } else if textView.bounds.height > 1 {
+            visibleInText = textView.bounds
+        } else {
+            return nil
+        }
+
+        return visibleInText.insetBy(dx: 0, dy: -streamingLayoutRunway)
+    }
+
+    private static func enclosingClipView(of view: UIView) -> UIView? {
+        var current: UIView? = view.superview
+        while let candidate = current {
+            if candidate is UICollectionView || candidate is UIScrollView {
+                return candidate
+            }
+            current = candidate.superview
+        }
+        return nil
     }
 
     private func makeTextView(palette: ThemePalette) -> BaselineSafeTextView {
@@ -1215,30 +1310,6 @@ final class AssistantMarkdownSegmentApplier {
         textView.setNeedsLayout()
         stackView.setNeedsLayout()
         stackView.superview?.setNeedsLayout()
-    }
-
-    private static func isMarkdownNeutralAppend(
-        previousContent: String?,
-        currentContent: String
-    ) -> Bool {
-        guard let previousContent else { return false }
-
-        let previousBytes = previousContent.utf8
-        let currentBytes = currentContent.utf8
-        guard currentBytes.count > previousBytes.count,
-              currentBytes.starts(with: previousBytes) else {
-            return false
-        }
-
-        for byte in currentBytes.dropFirst(previousBytes.count) {
-            switch byte {
-            case 33, 36, 38, 40, 41, 42, 60, 62, 91, 92, 93, 95, 96, 124, 126:
-                return false
-            default:
-                continue
-            }
-        }
-        return true
     }
 
     private func sourceLineRange(at index: Int) -> ClosedRange<Int>? {
@@ -1411,6 +1482,15 @@ extension AssistantMarkdownSegmentApplier {
 
     var debugCancelSnapAlphaForTesting: CGFloat? {
         chunkSettleAnimator.lastCancelSnapAlphaForTesting
+    }
+
+    func debugTextContentStorageIdentifierForTesting() -> ObjectIdentifier? {
+        guard let index = textViews.keys.max(),
+              let textView = textViews[index],
+              let storage = textView.textLayoutManager?.textContentManager as? NSTextContentStorage else {
+            return nil
+        }
+        return ObjectIdentifier(storage)
     }
 }
 #endif
