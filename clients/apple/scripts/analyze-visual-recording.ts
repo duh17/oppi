@@ -31,10 +31,24 @@ export type VisualPerfReport = {
   max_average_delta: number;
   large_delta_frames: number[];
   freeze_runs: FreezeRun[];
+  freeze_run_count_all: number;
   freeze_threshold: number;
   large_delta_threshold: number;
   settle_s: number;
+  window_start_s: number;
+  window_end_s: number;
   honesty_note: string;
+};
+
+export type AnalyzeVisualDeltasInput = {
+  deltas: number[];
+  recordingFps: number;
+  frameCount?: number;
+  startS?: number;
+  endS?: number;
+  autoSkip?: boolean;
+  idleS?: number;
+  minFreezeS?: number;
 };
 
 export type CliOptions = {
@@ -42,9 +56,18 @@ export type CliOptions = {
   inputPath?: string;
   fps?: number;
   outPath?: string;
+  startS?: number;
+  endS?: number;
+  idleS?: number;
+  minFreezeS?: number;
+  autoSkip: boolean;
 };
 
 const DEFAULT_PNG_FPS = 30;
+export const DEFAULT_IDLE_S = 2;
+export const DEFAULT_MIN_FREEZE_S = 1;
+/** Jumps in this prefix are a recording flash, not UI motion. */
+const STARTUP_FLASH_S = 0.5;
 const FRAME_BYTE_SIZE = SAMPLE_WIDTH * SAMPLE_HEIGHT * 3;
 const FFMPEG_MAX_BUFFER = 512 * 1024 * 1024;
 
@@ -129,12 +152,137 @@ export function computeVisualMetrics(input: {
     max_average_delta,
     large_delta_frames,
     freeze_runs,
+    freeze_run_count_all: freeze_runs.length,
     freeze_threshold: FREEZE_THRESHOLD,
     large_delta_threshold: LARGE_DELTA_THRESHOLD,
     settle_s:
       lastLargeFrame === undefined || !(recordingFps > 0) ? 0 : lastLargeFrame / recordingFps,
+    window_start_s: 0,
+    window_end_s: duration_s,
     honesty_note: HONESTY_NOTE,
   };
+}
+
+export function analyzeVisualDeltas(input: AnalyzeVisualDeltasInput): VisualPerfReport {
+  const fps = input.recordingFps;
+  const sourceFrameCount =
+    input.frameCount ?? (input.deltas.length === 0 ? 0 : input.deltas.length + 1);
+  const autoSkip = input.autoSkip ?? true;
+  const idleS = input.idleS ?? DEFAULT_IDLE_S;
+  const minFreezeS = input.minFreezeS ?? DEFAULT_MIN_FREEZE_S;
+
+  let startFrame = 0;
+  let endFrame = sourceFrameCount;
+  if (input.startS !== undefined) {
+    startFrame = clampFrameIndex(frameIndexAtOrAfter(input.startS, fps), 0, sourceFrameCount);
+  }
+  if (input.endS !== undefined) {
+    endFrame = clampFrameIndex(frameIndexAtOrAfter(input.endS, fps), 0, sourceFrameCount);
+  }
+  if (startFrame > endFrame) {
+    startFrame = endFrame;
+  }
+
+  const sliced = { startFrame, endFrame };
+  if (autoSkip && idleS > 0) {
+    const skipped = skipIdleEnds(input.deltas, fps, sliced.startFrame, sliced.endFrame, idleS);
+    // A leftover still frame means idle covered the clip; keep the pre-skip window.
+    if (skipped.endFrame - skipped.startFrame > 1) {
+      startFrame = skipped.startFrame;
+      endFrame = skipped.endFrame;
+    }
+  }
+
+  const windowFrames = Math.max(0, endFrame - startFrame);
+  const windowDeltas =
+    windowFrames <= 1 ? [] : input.deltas.slice(startFrame, endFrame - 1);
+  const scored = computeVisualMetrics({
+    deltas: windowDeltas,
+    recordingFps: fps,
+    frameCount: windowFrames,
+  });
+  const freeze_run_count_all = scored.freeze_runs.length;
+  const freeze_runs = scored.freeze_runs.filter((run) => run.duration_s >= minFreezeS);
+
+  return {
+    ...scored,
+    freeze_runs,
+    freeze_run_count_all,
+    window_start_s: fps > 0 ? startFrame / fps : 0,
+    window_end_s: fps > 0 ? endFrame / fps : 0,
+  };
+}
+
+function frameIndexAtOrAfter(timeS: number, fps: number): number {
+  if (!(fps > 0)) return 0;
+  return Math.ceil(timeS * fps - 1e-9);
+}
+
+function clampFrameIndex(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function skipIdleEnds(
+  deltas: number[],
+  fps: number,
+  startFrame: number,
+  endFrame: number,
+  idleS: number,
+): { startFrame: number; endFrame: number } {
+  let start = startFrame;
+  let end = endFrame;
+
+  while (end > start) {
+    const frameCount = end - start;
+    const windowDeltas = frameCount <= 1 ? [] : deltas.slice(start, end - 1);
+    const scored = computeVisualMetrics({
+      deltas: windowDeltas,
+      recordingFps: fps,
+      frameCount,
+    });
+    if (scored.freeze_runs.length === 0) break;
+
+    const longRuns = scored.freeze_runs.filter((run) => run.duration_s >= idleS);
+    if (longRuns.length === 0) break;
+
+    let changed = false;
+    const first = longRuns[0];
+    const prefixS = first && fps > 0 ? first.start_frame / fps : Infinity;
+    const motionBeforeIdle =
+      first !== undefined &&
+      scored.large_delta_frames.some(
+        (frame) => frame < first.start_frame && fps > 0 && frame / fps > STARTUP_FLASH_S,
+      );
+    const firstIsTail = first !== undefined && first.end_frame >= frameCount - 1;
+    // Leading idle: freeze at t=0, or a long freeze after only a startup flash.
+    // A long freeze that already reaches the clip end is trailing, not leading.
+    if (
+      first &&
+      !firstIsTail &&
+      (first.start_frame === 0 || (prefixS <= idleS && !motionBeforeIdle))
+    ) {
+      const nextStart = start + first.end_frame;
+      if (nextStart > start && nextStart < end) {
+        start = nextStart;
+        changed = true;
+      }
+    }
+    if (changed) continue;
+
+    const last = longRuns[longRuns.length - 1];
+    const lastFrame = frameCount - 1;
+    const gapAfterS = fps > 0 && last ? (lastFrame - last.end_frame) / fps : 0;
+    if (last && gapAfterS <= idleS) {
+      const nextEnd = start + last.start_frame + 1;
+      if (nextEnd < end && nextEnd > start) {
+        end = nextEnd;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  return { startFrame: start, endFrame: end };
 }
 
 /** Numeric-aware order so `frame-2.png` precedes `frame-10.png`. */
@@ -143,7 +291,7 @@ export function compareFrameNames(a: string, b: string): number {
 }
 
 export function parseArgs(argv: string[]): CliOptions {
-  const options: CliOptions = { help: false };
+  const options: CliOptions = { help: false, autoSkip: true };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg || arg === "--") continue;
@@ -151,14 +299,33 @@ export function parseArgs(argv: string[]): CliOptions {
       options.help = true;
       continue;
     }
+    if (arg === "--no-auto-skip") {
+      options.autoSkip = false;
+      continue;
+    }
     if (arg === "--fps") {
-      const value = argv[i + 1];
+      options.fps = requirePositiveNumber(arg, argv[i + 1]);
       i += 1;
-      const fps = Number(value);
-      if (!Number.isFinite(fps) || fps <= 0) {
-        throw new Error(`--fps requires a positive number (got ${value ?? "nothing"})`);
-      }
-      options.fps = fps;
+      continue;
+    }
+    if (arg === "--start-s") {
+      options.startS = requireNonNegativeNumber(arg, argv[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (arg === "--end-s") {
+      options.endS = requirePositiveNumber(arg, argv[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (arg === "--idle-s") {
+      options.idleS = requireNonNegativeNumber(arg, argv[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (arg === "--min-freeze-s") {
+      options.minFreezeS = requireNonNegativeNumber(arg, argv[i + 1]);
+      i += 1;
       continue;
     }
     if (arg === "--out") {
@@ -178,10 +345,39 @@ export function parseArgs(argv: string[]): CliOptions {
     }
     options.inputPath = arg;
   }
+  if (options.startS !== undefined && options.endS !== undefined && options.endS <= options.startS) {
+    throw new Error("--end-s must be greater than --start-s (end is exclusive)");
+  }
   return options;
 }
 
-export function analyzeRecording(inputPath: string, options: { fps?: number } = {}): VisualPerfReport {
+function requirePositiveNumber(flag: string, value: string | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${flag} requires a positive number (got ${value ?? "nothing"})`);
+  }
+  return parsed;
+}
+
+function requireNonNegativeNumber(flag: string, value: string | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${flag} requires a non-negative number (got ${value ?? "nothing"})`);
+  }
+  return parsed;
+}
+
+export function analyzeRecording(
+  inputPath: string,
+  options: {
+    fps?: number;
+    startS?: number;
+    endS?: number;
+    autoSkip?: boolean;
+    idleS?: number;
+    minFreezeS?: number;
+  } = {},
+): VisualPerfReport {
   const resolved = resolve(inputPath);
   if (!existsSync(resolved)) {
     throw new Error(`Input not found: ${inputPath}`);
@@ -211,10 +407,15 @@ export function analyzeRecording(inputPath: string, options: { fps?: number } = 
     previous = luma;
   }
 
-  return computeVisualMetrics({
+  return analyzeVisualDeltas({
     deltas,
     recordingFps,
     frameCount: rgbFrames.length,
+    startS: options.startS,
+    endS: options.endS,
+    autoSkip: options.autoSkip,
+    idleS: options.idleS,
+    minFreezeS: options.minFreezeS,
   });
 }
 
@@ -223,12 +424,18 @@ function usageMessage(): string {
 
 Usage:
   bun clients/apple/scripts/analyze-visual-recording.ts <path> [--fps N] [--out report.json]
+    [--start-s N] [--end-s N] [--idle-s N] [--min-freeze-s N] [--no-auto-skip]
 
 Arguments:
   <path>           MP4 file, or directory of PNG frames (non-PNG files are ignored)
 
 Options:
   --fps N          Override recording fps (PNG directories default to ${DEFAULT_PNG_FPS})
+  --start-s N      Keep source frames at t >= N seconds
+  --end-s N        Exclusive source end: keep frames with t < N seconds
+  --idle-s N       Auto-skip leading/trailing freezes lasting >= N seconds (default ${DEFAULT_IDLE_S})
+  --min-freeze-s N Omit freeze_runs shorter than N seconds (default ${DEFAULT_MIN_FREEZE_S})
+  --no-auto-skip   Do not trim leading/trailing idle
   --out <path>     Write JSON report to this path (also prints to stdout)
   -h, --help       Show this help
 
@@ -236,7 +443,8 @@ Sampling:
   Downscale to ${SAMPLE_WIDTH}x${SAMPLE_HEIGHT}, Rec.601 luma, mean absolute per-pixel delta.
   Large-delta threshold: ${LARGE_DELTA_THRESHOLD} (same as StreamingFlickerCaptureUITests).
   Freeze threshold: ${FREEZE_THRESHOLD} (reported as freeze_threshold).
-  settle_s is the timestamp of the last large delta, or 0 if none.
+  settle_s is the last large-delta timestamp relative to window_start_s, or 0 if none.
+  window_start_s / window_end_s are the kept range on the source timeline.
 
 Honesty:
   ${HONESTY_NOTE}
@@ -264,7 +472,14 @@ function main(argv = process.argv.slice(2)): void {
   }
 
   try {
-    const report = analyzeRecording(options.inputPath, { fps: options.fps });
+    const report = analyzeRecording(options.inputPath, {
+      fps: options.fps,
+      startS: options.startS,
+      endS: options.endS,
+      autoSkip: options.autoSkip,
+      idleS: options.idleS,
+      minFreezeS: options.minFreezeS,
+    });
     const json = `${JSON.stringify(report, null, 2)}\n`;
     process.stdout.write(json);
     if (options.outPath) writeFileSync(options.outPath, json);
