@@ -55,7 +55,7 @@ Target: iOS `1.1.2` build `48`, `oppi-server@0.48.0` with bundled Pi runtime `0.
 
 ### Changed
 
-- **Compatibility:** Build 48 requires unpublished `oppi-server@0.48.0` and `oppi-mirror@0.48.0`. Bundled and installed Pi is `0.85.0`. npm `oppi-server@0.47.3` and `oppi-mirror@0.47.3` stay published until this cut is released.
+- **Compatibility:** Build 48 requires npm latest `oppi-server@0.48.0` and `oppi-mirror@0.48.0`. Bundled and installed Pi is `0.85.0`.
 - **Client:** Commit-detail New Session attaches a commit pointer, not every changed file.
 - **Client:** The in-chat extension strip is pills only. The full-width glass bar is gone.
 - **Server:** Bundled Pi runtime moves to `0.85.0`. In-turn compact remains. Anthropic thinking effort persists for the turn. Built-in tools honor `ctx.cwd`. Skills still load when Bash is the only tool. Session forks keep their compaction boundary. Grok Build 0.1 is removed from the xAI catalog.
@@ -77,7 +77,7 @@ Target: iOS `1.1.2` build `48`, `oppi-server@0.48.0` with bundled Pi runtime `0.
 
 ### Notes
 
-- Unpublished `oppi-mirror@0.48.0` includes the session-tree navigation fix. npm `oppi-mirror@0.47.3` does not.
+- `oppi-mirror@0.48.0` on npm latest includes the session-tree navigation fix.
 
 ## [0.47.3] - 2026-08-27
 
