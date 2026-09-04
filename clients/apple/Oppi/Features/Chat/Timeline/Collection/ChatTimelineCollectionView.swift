@@ -189,16 +189,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     static func makeTestLayout() -> UICollectionViewLayout { makeLayout() }
 
     private static func makeLayout() -> UICollectionViewLayout {
-        let itemSize = NSCollectionLayoutSize(
-            widthDimension: .fractionalWidth(1.0),
-            heightDimension: .estimated(100)
-        )
-        let item = NSCollectionLayoutItem(layoutSize: itemSize)
-        let group = NSCollectionLayoutGroup.horizontal(layoutSize: itemSize, subitems: [item])
-        let section = NSCollectionLayoutSection(group: group)
-        section.interGroupSpacing = 8
-        section.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
-        return UICollectionViewCompositionalLayout(section: section)
+        ChatTimelineCachedHeightLayout()
     }
 
     @MainActor
@@ -727,6 +718,55 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         // MARK: - Apply Configuration
 
+        /// Tell the cached-height layout which rows may only grow. Streaming
+        /// assistant text and expanded in-flight tool output append height.
+        /// Collapsed in-flight tools must still be allowed to shrink.
+        private func updateLiveTailItemIDs(
+            in collectionView: UICollectionView,
+            streamingAssistantID: String?,
+            items: [ChatItem],
+            expandedItemIDs: Set<String>
+        ) {
+            guard let layout = collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout else {
+                return
+            }
+            var liveIDs: Set<String> = []
+            if let streamingAssistantID {
+                liveIDs.insert(streamingAssistantID)
+            }
+            for item in items {
+                if case .toolCall(_, _, _, _, _, _, let isDone) = item,
+                   !isDone,
+                   expandedItemIDs.contains(item.id) {
+                    liveIDs.insert(item.id)
+                }
+            }
+            layout.setLiveTailItemIDs(liveIDs)
+        }
+
+        private func updateLiveTailItemIDs(
+            in collectionView: UICollectionView,
+            configuration: Configuration
+        ) {
+            updateLiveTailItemIDs(
+                in: collectionView,
+                streamingAssistantID: configuration.streamingAssistantID,
+                items: configuration.items,
+                expandedItemIDs: configuration.reducer.expandedItemIDs
+            )
+        }
+
+        private func updateLiveTailItemIDsFromCurrentState(
+            in collectionView: UICollectionView
+        ) {
+            updateLiveTailItemIDs(
+                in: collectionView,
+                streamingAssistantID: streamingAssistantID,
+                items: Array(currentItemByID.values),
+                expandedItemIDs: reducer?.expandedItemIDs ?? []
+            )
+        }
+
         func apply(configuration: Configuration, to collectionView: UICollectionView) {
             let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
             let agentPresentationChanged = context.didChangeAgentPresentation(for: configuration)
@@ -749,12 +789,15 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             currentWorkLineByID = configuration.workLineByID
             renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
+            updateLiveTailItemIDs(in: collectionView, configuration: configuration)
             let timelineBusyChanged = configuration.isBusy != isTimelineBusy
             isAssistantStreamingPresentationActive = configuration.isBusy
             // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
             // check so the comparison detects busy→idle transitions.
 
             if sessionScopeChanged {
+                (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
+                    .removeAllCachedHeights()
                 cancelAllToolOutputLoadTasks()
                 cancelTimelinePreparation()
                 lastObservedContentOffsetY = nil
@@ -851,9 +894,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // Lightweight streaming reconfigure: skip the full plan build
                 // (O(n) dedup + Set construction) but still go through
                 // dataSource.apply() so UIKit handles cell self-sizing.
-                // Raw cell.contentConfiguration bypasses the compositional
-                // layout's preferredLayoutAttributesFitting — the cell stays
-                // its old height and clips growing text.
+                // Raw cell.contentConfiguration bypasses the layout's
+                // preferredLayoutAttributesFitting — the cell stays its old
+                // height and clips growing text.
 
                 // Update the streaming item map entry.
                 currentItemByID[streamingID] = nextItem
@@ -1368,6 +1411,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ) {
                     if reducer.expandedItemIDs.contains(itemID) {
                         reducer.expandedItemIDs.remove(itemID)
+                        updateLiveTailItemIDsFromCurrentState(in: collectionView)
                         anchoredReconfigureToolRow(
                             itemID: itemID,
                             anchorIndexPath: indexPath,
@@ -1398,6 +1442,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                         in: collectionView
                     )
                 }
+                updateLiveTailItemIDsFromCurrentState(in: collectionView)
                 anchoredReconfigureToolRow(
                     itemID: itemID,
                     anchorIndexPath: indexPath,
@@ -1578,6 +1623,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             in collectionView: UICollectionView,
             preserveTopEdge: Bool = true
         ) {
+            // Callers mutate expandedItemIDs first. Refresh live-tail
+            // membership here so collapse can shrink: resolvedHeight uses
+            // max(cached, preferred) while the id is still in the live set.
+            // Keybinding collapse does not go through didSelect, and a busy
+            // streaming apply will not pick up a collapse-only expansion change.
+            updateLiveTailItemIDsFromCurrentState(in: collectionView)
+
             let anchoredCV = collectionView as? AnchoredCollectionView
 
             // Keep the tapped row header stable so expansion grows downward
@@ -1944,3 +1996,275 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 }
 
 // swiftlint:enable type_body_length
+
+// MARK: - Cached-height list layout
+
+/// Single-column timeline layout that stores measured row heights by item id
+/// and width so estimated-size invalidation cannot remeasure settled rows.
+///
+/// Visual metrics match the previous compositional section: 16pt side insets,
+/// 8pt section insets, 8pt inter-item spacing, 100pt first-pass estimate.
+/// `invalidateLayout()` keeps those cached heights; only a width change
+/// or session switch drops them. Dynamic Type preferred-size updates replace
+/// cache entries without a first-pass collapse to the estimate. Preferred-size
+/// updates dirty the changed row through the tail so origins below can shift
+/// without asking TextKit to size rows above.
+@MainActor
+final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
+    static let estimatedHeight: CGFloat = 100
+    static let interItemSpacing: CGFloat = 8
+    static let sectionInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
+    private static let heightMatchTolerance: CGFloat = 1
+
+    private struct CachedHeight {
+        var width: CGFloat
+        var height: CGFloat
+    }
+
+    private var cachedHeightByItemID: [String: CachedHeight] = [:]
+    private var liveTailItemIDs: Set<String> = []
+    private var attributesByIndex: [UICollectionViewLayoutAttributes] = []
+    private var contentSize: CGSize = .zero
+    private var lastLayoutWidth: CGFloat = 0
+
+    func setLiveTailItemIDs(_ itemIDs: Set<String>) {
+        liveTailItemIDs = itemIDs
+    }
+
+    func removeAllCachedHeights() {
+        cachedHeightByItemID.removeAll(keepingCapacity: true)
+    }
+
+    #if DEBUG
+        func cachedHeightForTesting(itemID: String) -> CGFloat? {
+            cachedHeightByItemID[itemID]?.height
+        }
+    #endif
+
+    override var collectionViewContentSize: CGSize { contentSize }
+
+    override func prepare() {
+        super.prepare()
+        rebuildAttributes()
+    }
+
+    override func layoutAttributesForElements(
+        in rect: CGRect
+    ) -> [UICollectionViewLayoutAttributes]? {
+        attributesByIndex.compactMap { attributes in
+            guard attributes.frame.intersects(rect) else { return nil }
+            return copyAttributes(attributes)
+        }
+    }
+
+    override func layoutAttributesForItem(
+        at indexPath: IndexPath
+    ) -> UICollectionViewLayoutAttributes? {
+        guard indexPath.section == 0,
+              indexPath.item >= 0,
+              indexPath.item < attributesByIndex.count else {
+            return nil
+        }
+        return copyAttributes(attributesByIndex[indexPath.item])
+    }
+
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
+        abs(newBounds.width - lastLayoutWidth) > 0.5
+    }
+
+    override func invalidationContext(
+        forBoundsChange newBounds: CGRect
+    ) -> UICollectionViewLayoutInvalidationContext {
+        let context = super.invalidationContext(forBoundsChange: newBounds)
+        if abs(newBounds.width - lastLayoutWidth) > 0.5 {
+            cachedHeightByItemID.removeAll(keepingCapacity: true)
+        }
+        return context
+    }
+
+    override func shouldInvalidateLayout(
+        forPreferredLayoutAttributes preferredAttributes: UICollectionViewLayoutAttributes,
+        withOriginalAttributes originalAttributes: UICollectionViewLayoutAttributes
+    ) -> Bool {
+        guard preferredAttributes.representedElementCategory == .cell else { return false }
+        let preferredHeight = preferredAttributes.size.height
+        guard preferredHeight.isFinite, preferredHeight > 0 else { return false }
+
+        let index = originalAttributes.indexPath.item
+        let width = originalAttributes.size.width
+        let resolved = resolvedHeight(
+            at: index,
+            width: width,
+            preferredHeight: preferredHeight,
+            store: false
+        )
+        // Compare against the cache, not the estimate still sitting in
+        // `originalAttributes`. Re-invalidating 100 → 250 after the cache
+        // already stores 250 loops layout forever.
+        if let itemID = itemIdentifier(at: index),
+           let cached = cachedHeightByItemID[itemID],
+           abs(cached.width - width) <= 0.5,
+           abs(resolved - cached.height) <= Self.heightMatchTolerance {
+            return false
+        }
+        if abs(resolved - originalAttributes.size.height) <= Self.heightMatchTolerance {
+            _ = resolvedHeight(
+                at: index,
+                width: width,
+                preferredHeight: preferredHeight,
+                store: true
+            )
+            return false
+        }
+        return true
+    }
+
+    override func invalidationContext(
+        forPreferredLayoutAttributes preferredAttributes: UICollectionViewLayoutAttributes,
+        withOriginalAttributes originalAttributes: UICollectionViewLayoutAttributes
+    ) -> UICollectionViewLayoutInvalidationContext {
+        let context = super.invalidationContext(
+            forPreferredLayoutAttributes: preferredAttributes,
+            withOriginalAttributes: originalAttributes
+        )
+        let index = originalAttributes.indexPath.item
+        let resolved = resolvedHeight(
+            at: index,
+            width: originalAttributes.size.width,
+            preferredHeight: preferredAttributes.size.height,
+            store: true
+        )
+        let delta = resolved - originalAttributes.size.height
+        if delta.isFinite {
+            context.contentSizeAdjustment = CGSize(width: 0, height: delta)
+        }
+        if let collectionView, delta.isFinite, abs(delta) > Self.heightMatchTolerance {
+            let firstVisibleItem = collectionView.indexPathsForVisibleItems
+                .min { $0.item < $1.item }?.item
+            // Rows at or above the first visible item change content above
+            // the viewport. Shift offset so the reading position stays.
+            // The live tail is below that item, so attached follow is left
+            // to keepLiveTailVisible.
+            if let firstVisibleItem, originalAttributes.indexPath.item <= firstVisibleItem {
+                context.contentOffsetAdjustment = CGPoint(x: 0, y: delta)
+            }
+        }
+
+        let itemCount = collectionView?.numberOfItems(inSection: 0) ?? 0
+        guard itemCount > index else {
+            context.invalidateItems(at: [originalAttributes.indexPath])
+            return context
+        }
+        // Origins below the changed row shift. Heights of those rows stay
+        // cached so this does not re-run TextKit on settled content.
+        let tail = (index..<itemCount).map { IndexPath(item: $0, section: 0) }
+        context.invalidateItems(at: tail)
+        return context
+    }
+
+    override func initialLayoutAttributesForAppearingItem(
+        at itemIndexPath: IndexPath
+    ) -> UICollectionViewLayoutAttributes? {
+        layoutAttributesForItem(at: itemIndexPath)
+    }
+
+    override func finalLayoutAttributesForDisappearingItem(
+        at itemIndexPath: IndexPath
+    ) -> UICollectionViewLayoutAttributes? {
+        layoutAttributesForItem(at: itemIndexPath)
+    }
+
+    private func rebuildAttributes() {
+        guard let collectionView else {
+            attributesByIndex = []
+            contentSize = .zero
+            return
+        }
+
+        let width = collectionView.bounds.width
+        if lastLayoutWidth > 1, abs(width - lastLayoutWidth) > 0.5 {
+            cachedHeightByItemID.removeAll(keepingCapacity: true)
+        }
+        lastLayoutWidth = width
+
+        guard width > 1 else {
+            attributesByIndex = []
+            contentSize = .zero
+            return
+        }
+
+        let sectionCount = collectionView.numberOfSections
+        let itemCount = sectionCount > 0 ? collectionView.numberOfItems(inSection: 0) : 0
+        let insets = Self.sectionInsets
+        let itemWidth = max(width - insets.leading - insets.trailing, 0)
+        var y = insets.top
+        var nextAttributes: [UICollectionViewLayoutAttributes] = []
+        nextAttributes.reserveCapacity(itemCount)
+        var liveIDs: Set<String> = []
+        liveIDs.reserveCapacity(itemCount)
+
+        for index in 0..<itemCount {
+            let indexPath = IndexPath(item: index, section: 0)
+            let itemID = itemIdentifier(at: index)
+            if let itemID {
+                liveIDs.insert(itemID)
+            }
+            let height: CGFloat
+            if let itemID,
+               let cached = cachedHeightByItemID[itemID],
+               abs(cached.width - itemWidth) <= 0.5 {
+                height = cached.height
+            } else {
+                height = Self.estimatedHeight
+            }
+            let attributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
+            attributes.frame = CGRect(x: insets.leading, y: y, width: itemWidth, height: height)
+            nextAttributes.append(attributes)
+            y += height
+            if index < itemCount - 1 {
+                y += Self.interItemSpacing
+            }
+        }
+        y += insets.bottom
+        attributesByIndex = nextAttributes
+        contentSize = CGSize(width: width, height: max(y, 0))
+
+        if itemCount > 0, cachedHeightByItemID.count > liveIDs.count {
+            cachedHeightByItemID = cachedHeightByItemID.filter { liveIDs.contains($0.key) }
+        }
+    }
+
+    private func resolvedHeight(
+        at index: Int,
+        width: CGFloat,
+        preferredHeight: CGFloat,
+        store: Bool
+    ) -> CGFloat {
+        var height = preferredHeight
+        let itemID = itemIdentifier(at: index)
+        if let itemID,
+           liveTailItemIDs.contains(itemID),
+           let cached = cachedHeightByItemID[itemID],
+           abs(cached.width - width) <= 0.5 {
+            height = max(cached.height, preferredHeight)
+        }
+        if store, let itemID, width > 1, height.isFinite, height > 0 {
+            cachedHeightByItemID[itemID] = CachedHeight(width: width, height: height)
+        }
+        return height
+    }
+
+    private func itemIdentifier(at index: Int) -> String? {
+        guard let collectionView,
+              let dataSource = collectionView.dataSource as? UICollectionViewDiffableDataSource<Int, String> else {
+            return nil
+        }
+        return dataSource.itemIdentifier(for: IndexPath(item: index, section: 0))
+    }
+
+    private func copyAttributes(
+        _ attributes: UICollectionViewLayoutAttributes
+    ) -> UICollectionViewLayoutAttributes? {
+        attributes.copy() as? UICollectionViewLayoutAttributes
+    }
+}

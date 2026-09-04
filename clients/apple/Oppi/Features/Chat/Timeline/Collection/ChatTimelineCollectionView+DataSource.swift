@@ -56,7 +56,7 @@ final class SafeSizingCell: UICollectionViewCell {
         // clipsToBounds. Setting it here provides persistent overflow
         // protection even when layoutSubviews hasn't fired yet (e.g. during
         // streaming when layoutIfNeeded is skipped and cells still have
-        // estimated heights from the compositional layout).
+        // estimated heights from the timeline layout).
         clipsToBounds = true
         contentView.clipsToBounds = true
         configureNavigationHighlightOverlay()
@@ -226,6 +226,10 @@ extension ChatTimelineCollectionHost.Controller {
         self.collectionView = collectionView
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
+        // Constraint changes (tool expand, mermaid settle) must republish
+        // height through the cached-height layout without a full estimated
+        // cascade. Tests that skip makeUIView still go through this path.
+        collectionView.selfSizingInvalidation = .enabledIncludingConstraints
 
         let assistantRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
             cell.bindTimelinePreparationDemand(itemID: itemID) { [weak self] in
