@@ -399,7 +399,10 @@ struct TimelineStressTests {
         cache.clearAll()
         defer { cache.clearAll() }
 
-        let huge = String(repeating: "z", count: 20_000) // > 16KB limit
+        let huge = String(
+            repeating: "z",
+            count: MarkdownSegmentCache.maxEntrySourceBytes + 1
+        )
         #expect(!cache.shouldCache(huge))
         cache.set(huge, segments: [.text(AttributedString("big"))])
         #expect(cache.get(huge) == nil)

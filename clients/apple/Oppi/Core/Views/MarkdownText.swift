@@ -5,8 +5,9 @@ import SwiftUI
 /// Process-wide cache for parsed markdown segments.
 ///
 /// Keyed by a stable content hash so scroll-back can hit instantly.
-/// Bounded by both entry count and total source text bytes to avoid
-/// retaining large markdown histories across session switches.
+/// Bounded by entry count, per-document source bytes, and total source
+/// bytes so fullscreen readers can reuse large documents without keeping
+/// unbounded markdown histories across session switches.
 final class MarkdownSegmentCache: @unchecked Sendable {
     // SAFETY (`@unchecked Sendable`):
     // - Every mutable field (`entries`, `counter`, `totalSourceBytes`) is read/written only under `lock`.
@@ -30,13 +31,16 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     /// Sized to hold a full session's worth of assistant messages (~128 items,
     /// ~50% are assistant messages with markdown).
     private let maxEntries = 128
-    /// Hard cap on total source text bytes retained in cache.
-    private let maxTotalSourceBytes = 1024 * 1024
-    /// Skip caching very large messages (still rendered on-demand).
-    private let maxEntrySourceBytes = 16 * 1024
+    /// Process-wide source-text budget. LRU eviction in `evictIfNeeded` keeps
+    /// `totalSourceBytes` at or below this cap.
+    static let maxTotalSourceBytes = 4 * 1024 * 1024
+    /// Per-document cap. Documents over this still render on demand.
+    /// 16 KB skipped real file readers; 512 KB covers typical workspace docs
+    /// while leaving the total budget as the memory bound.
+    static let maxEntrySourceBytes = 512 * 1024
 
     func shouldCache(_ content: String) -> Bool {
-        content.utf8.count <= maxEntrySourceBytes
+        content.utf8.count <= Self.maxEntrySourceBytes
     }
 
     func get(
@@ -81,7 +85,7 @@ final class MarkdownSegmentCache: @unchecked Sendable {
         segments: [FlatSegment]
     ) {
         let sourceBytes = content.utf8.count
-        guard sourceBytes <= maxEntrySourceBytes else { return }
+        guard sourceBytes <= Self.maxEntrySourceBytes else { return }
 
         let key = stableKey(
             for: content,
@@ -120,11 +124,11 @@ final class MarkdownSegmentCache: @unchecked Sendable {
     }
 
     private func evictIfNeeded() {
-        guard entries.count > maxEntries || totalSourceBytes > maxTotalSourceBytes else { return }
+        guard entries.count > maxEntries || totalSourceBytes > Self.maxTotalSourceBytes else { return }
 
         let sorted = entries.sorted { $0.value.order < $1.value.order }
         for (key, entry) in sorted {
-            guard entries.count > maxEntries || totalSourceBytes > maxTotalSourceBytes else { break }
+            guard entries.count > maxEntries || totalSourceBytes > Self.maxTotalSourceBytes else { break }
             entries.removeValue(forKey: key)
             totalSourceBytes -= entry.sourceBytes
         }

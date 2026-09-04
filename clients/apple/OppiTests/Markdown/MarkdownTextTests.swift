@@ -2402,8 +2402,19 @@ struct MarkdownSegmentCacheTests {
 
     @Test func shouldCacheReturnsFalseForLargeContent() {
         let cache = MarkdownSegmentCache()
-        let largeContent = String(repeating: "x", count: 20_000) // > 16KB threshold
+        let largeContent = String(
+            repeating: "x",
+            count: MarkdownSegmentCache.maxEntrySourceBytes + 1
+        )
         #expect(!cache.shouldCache(largeContent))
+    }
+
+    @Test func shouldCacheReturnsTrueForDocumentSizedContent() {
+        let cache = MarkdownSegmentCache()
+        let document = String(repeating: "x", count: 20_000)
+        #expect(cache.shouldCache(document))
+        cache.set(document, segments: [.thematicBreak])
+        #expect(cache.get(document)?.count == 1)
     }
 
     @Test func shouldCacheReturnsTrueForSmallContent() {

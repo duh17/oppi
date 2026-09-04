@@ -346,7 +346,10 @@ struct TimelineReducerEdgeCaseTests {
         cache.clearAll()
         defer { cache.clearAll() }
 
-        let oversized = String(repeating: "x", count: 50_000)
+        let oversized = String(
+            repeating: "x",
+            count: MarkdownSegmentCache.maxEntrySourceBytes + 1
+        )
         cache.set(oversized, segments: [.text(AttributedString("oversized"))])
 
         #expect(cache.get(oversized) == nil)
