@@ -34,6 +34,8 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool.sh
 !clients/apple/scripts/release-mac.sh
 !clients/apple/scripts/periphery-scan.ts
+!clients/apple/scripts/analyze-visual-recording.ts
+!clients/apple/scripts/analyze-visual-recording.test.ts
 !clients/apple/scripts/ipad-shell-diagnostic.sh
 server/scripts/manual/*
 !server/scripts/manual/telemetry-import-sqlite.mjs
