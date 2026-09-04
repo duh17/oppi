@@ -21,7 +21,7 @@ struct ReadMarkdownExpandOverlapTests {
 
     @Test func expandedReadMarkdownDoesNotOverlapNeighborSkillRows() async throws {
         let fixture = try Self.makeSkillReadSkillFixture()
-        defer { fixture.wh.window.isHidden = true }
+        defer { Self.tearDownSkillReadSkillFixture(fixture) }
 
         let beforeIP = fixture.beforeIP
         let readIP = fixture.readIP
@@ -201,7 +201,7 @@ struct ReadMarkdownExpandOverlapTests {
 
     @Test func anchoredRemeasureFollowsOriginalItemIdentityAfterStructuralInsert() async throws {
         let fixture = try Self.makeSkillReadSkillFixture()
-        defer { fixture.wh.window.isHidden = true }
+        defer { Self.tearDownSkillReadSkillFixture(fixture) }
 
         var remeasuredIDs: [String] = []
         ToolTimelineRowPresentationHelpers.anchoredRemeasureHookForTesting = { view, itemID in
@@ -253,7 +253,7 @@ struct ReadMarkdownExpandOverlapTests {
 
     @Test func expandedReadMarkdownDoesNotOverlapMoreThanEightInstalledFollowingRows() async throws {
         let fixture = try Self.makeSkillReadSkillFixture(followingSkillCount: 12)
-        defer { fixture.wh.window.isHidden = true }
+        defer { Self.tearDownSkillReadSkillFixture(fixture) }
 
         let collectionView = fixture.wh.collectionView
         let followingBefore = Self.installedFollowingIdentities(
@@ -376,7 +376,7 @@ struct ReadMarkdownExpandOverlapTests {
 
     @Test func disappearedExpandAnchorIdentityDoesNotRemeasureStaleIndexPath() async throws {
         let fixture = try Self.makeSkillReadSkillFixture()
-        defer { fixture.wh.window.isHidden = true }
+        defer { Self.tearDownSkillReadSkillFixture(fixture) }
 
         let collectionView = fixture.wh.collectionView
         let anchoredCV = try #require(collectionView as? AnchoredCollectionView)
@@ -504,7 +504,7 @@ struct ReadMarkdownExpandOverlapTests {
 
     @Test func offscreenValidExpandAnchorClearsWhenRemeasureHasNoInstalledCell() async throws {
         let fixture = try Self.makeSkillReadSkillFixture(followingSkillCount: 40)
-        defer { fixture.wh.window.isHidden = true }
+        defer { Self.tearDownSkillReadSkillFixture(fixture) }
 
         let collectionView = fixture.wh.collectionView
         let coordinator = fixture.wh.coordinator
@@ -573,7 +573,7 @@ struct ReadMarkdownExpandOverlapTests {
 
     @Test func rapidExpandCollapseReexpandKeepsFinalAnchoredRemeasure() async throws {
         let fixture = try Self.makeSkillReadSkillFixture()
-        defer { fixture.wh.window.isHidden = true }
+        defer { Self.tearDownSkillReadSkillFixture(fixture) }
 
         let collectionView = fixture.wh.collectionView
         let coordinator = fixture.wh.coordinator
@@ -998,9 +998,28 @@ struct ReadMarkdownExpandOverlapTests {
         let afterIP: IndexPath
     }
 
+    private static func isolateSharedPresentersForTesting() {
+        FeatureEducationTipPresentationCoordinator.shared.resetForTesting()
+        ToolTimelineRowContentView.forcesInlineFeatureTipsForTesting = false
+        // Occupy the shared presenter so leftover TipKit `shouldDisplay`
+        // cannot insert a `bodyStack` sibling. Do not invalidate TipKit;
+        // that cancelled the 200→620 remeasure in full OppiTests.
+        _ = FeatureEducationTipPresentationCoordinator.shared.claim(
+            tipID: "read-markdown-expand-overlap.block",
+            ownerID: UUID(),
+            force: true
+        )
+    }
+
+    private static func tearDownSkillReadSkillFixture(_ fixture: SkillReadSkillFixture) {
+        fixture.wh.window.isHidden = true
+        FeatureEducationTipPresentationCoordinator.shared.resetForTesting()
+    }
+
     private static func makeSkillReadSkillFixture(
         followingSkillCount: Int = 1
     ) throws -> SkillReadSkillFixture {
+        isolateSharedPresentersForTesting()
         let wh = makeWindowedTimelineHarness(
             sessionId: followingSkillCount > 1
                 ? "s-read-md-overlap-many-follow"
