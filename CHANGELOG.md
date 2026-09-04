@@ -38,9 +38,9 @@ Example:
 
 ## [Unreleased]
 
-## [0.47.4] - 2026-09-03
+## [0.48.0] - 2026-09-04
 
-Target: iOS `1.1.2` build `48`, `oppi-server@0.47.4` with bundled Pi runtime `0.85.0`. npm `oppi-mirror@0.47.3` stays published and does not include the session-tree navigation fix.
+Target: iOS `1.1.2` build `48`, `oppi-server@0.48.0` with bundled Pi runtime `0.85.0`. npm `oppi-mirror@0.47.3` stays published and does not include the session-tree navigation fix.
 
 ### Added
 
@@ -55,7 +55,7 @@ Target: iOS `1.1.2` build `48`, `oppi-server@0.47.4` with bundled Pi runtime `0.
 
 ### Changed
 
-- **Compatibility:** Build 48 requires `oppi-server@0.47.4`. Bundled and installed Pi is `0.85.0`. npm `oppi-mirror@0.47.3` does not include the session-tree navigation fix.
+- **Compatibility:** Build 48 requires `oppi-server@0.48.0`. Bundled and installed Pi is `0.85.0`. npm `oppi-mirror@0.47.3` does not include the session-tree navigation fix.
 - **Client:** Commit-detail New Session attaches a commit pointer, not every changed file.
 - **Client:** The in-chat extension strip is pills only. The full-width glass bar is gone.
 - **Server:** Bundled Pi runtime moves to `0.85.0`. In-turn compact remains. Anthropic thinking effort persists for the turn. Built-in tools honor `ctx.cwd`. Skills still load when Bash is the only tool. Session forks keep their compaction boundary. Grok Build 0.1 is removed from the xAI catalog.
@@ -76,7 +76,7 @@ Target: iOS `1.1.2` build `48`, `oppi-server@0.47.4` with bundled Pi runtime `0.
 
 ### Notes
 
-- The Oppi Mirror session-tree navigation fix (Fixes #30) is in this repository's `oppi-mirror` source. It is not in npm `oppi-mirror@0.47.3` and does not ship with `oppi-server@0.47.4`.
+- The Oppi Mirror session-tree navigation fix (Fixes #30) is in this repository's `oppi-mirror` source. It is not in npm `oppi-mirror@0.47.3` and does not ship with `oppi-server@0.48.0`.
 
 ## [0.47.3] - 2026-08-27
 
@@ -383,8 +383,8 @@ Target: iOS `1.1.0` build `45`, `oppi-server@0.46.0` with bundled Pi runtime `0.
 
 - Last public GitHub release before adopting this changelog. See the GitHub release and commit history for details.
 
-[Unreleased]: https://github.com/duh17/oppi/compare/v0.47.4...HEAD
-[0.47.4]: https://github.com/duh17/oppi/compare/v0.47.3...v0.47.4
+[Unreleased]: https://github.com/duh17/oppi/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/duh17/oppi/compare/v0.47.3...v0.48.0
 [0.47.3]: https://github.com/duh17/oppi/compare/v0.46.0...v0.47.3
 [0.46.0]: https://github.com/duh17/oppi/compare/v0.44.1...v0.46.0
 [0.44.1]: https://github.com/duh17/oppi/compare/v0.44.0...v0.44.1

@@ -3,7 +3,7 @@
   "components": {
     "server": {
       "release": true,
-      "version": "0.47.3"
+      "version": "0.47.4"
     },
     "mirror": {
       "release": true,
@@ -13,11 +13,11 @@
       "release": true,
       "target": "Oppi",
       "marketingVersion": "1.1.2",
-      "build": 47,
-      "whatsNewFromBuild": 46
+      "build": 48,
+      "whatsNewFromBuild": 47
     }
   },
   "candidateTTLHours": 336,
-  "whatToTestPath": ".internal/release-notes/testflight-build-47-what-to-test.md",
-  "changelogPath": ".internal/release-notes/testflight-build-47-changelog.md"
+  "whatToTestPath": ".internal/release-notes/testflight-build-48-what-to-test.md",
+  "changelogPath": ".internal/release-notes/testflight-build-48-changelog.md"
 }
