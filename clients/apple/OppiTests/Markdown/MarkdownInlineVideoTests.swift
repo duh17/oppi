@@ -950,10 +950,10 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("default FileBrowser player keeps one model across GeometryReader rebuilds")
     func defaultFileBrowserModelSurvivesGeometryRebuild() async {
-        AuthenticatedMediaPlayerTesting.reset()
+        let source = dummyMediaSource(fileName: "oppi-filebrowser-player-\(UUID().uuidString).mp4")
+        AuthenticatedMediaPlayerTesting.reset(allowingSource: source)
         defer { AuthenticatedMediaPlayerTesting.reset() }
 
-        let source = dummyMediaSource()
         let knob = FileBrowserPlayerRebuildKnob()
         let host = UIHostingController(
             rootView: FileBrowserStylePlayerHost(source: source, knob: knob)
@@ -985,11 +985,11 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("injected markdown playback model is reused instead of a throwaway")
     func injectedMarkdownModelIsPreserved() async {
-        AuthenticatedMediaPlayerTesting.reset()
+        let injected = AuthenticatedMediaPlayerModel()
+        let source = dummyMediaSource(fileName: "oppi-injected-player-\(UUID().uuidString).mp4")
+        AuthenticatedMediaPlayerTesting.reset(allowingSource: source)
         defer { AuthenticatedMediaPlayerTesting.reset() }
 
-        let injected = AuthenticatedMediaPlayerModel()
-        let source = dummyMediaSource()
         let host = UIHostingController(
             rootView: AuthenticatedMediaPlayerView(
                 source: source,
@@ -1616,9 +1616,11 @@ struct MarkdownInlineVideoTests {
         }
     }
 
-    private func dummyMediaSource() -> AuthenticatedMediaSource {
+    private func dummyMediaSource(
+        fileName: String = "oppi-missing-inline-video.mp4"
+    ) -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: URL(fileURLWithPath: "/tmp/oppi-missing-inline-video.mp4"),
+            url: URL(fileURLWithPath: "/tmp/\(fileName)"),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "video/mp4",

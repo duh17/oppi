@@ -1249,7 +1249,7 @@ private struct AuthenticatedMediaPlayerSurface: View {
 
     var body: some View {
 #if DEBUG
-        let _ = AuthenticatedMediaPlayerTesting.record(model)
+        let _ = AuthenticatedMediaPlayerTesting.record(model, source: source)
 #endif
         Group {
             if let player = model.player {
@@ -1557,14 +1557,23 @@ final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
 #if DEBUG
 enum AuthenticatedMediaPlayerTesting {
     @MainActor static var resolvedModels: [ObjectIdentifier] = []
+    /// Empty means recording is off. Parallel Swift Testing suites can mount
+    /// other players in the same process; only the opted-in source is kept.
+    @MainActor private static var allowedSourceIdentities: Set<String> = []
 
     @MainActor
-    static func reset() {
+    static func reset(allowingSource source: AuthenticatedMediaSource? = nil) {
         resolvedModels.removeAll()
+        if let source {
+            allowedSourceIdentities = [source.identity]
+        } else {
+            allowedSourceIdentities.removeAll()
+        }
     }
 
     @MainActor
-    static func record(_ model: AuthenticatedMediaPlayerModel) {
+    static func record(_ model: AuthenticatedMediaPlayerModel, source: AuthenticatedMediaSource) {
+        guard allowedSourceIdentities.contains(source.identity) else { return }
         resolvedModels.append(ObjectIdentifier(model))
     }
 }
