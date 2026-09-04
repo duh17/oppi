@@ -3,11 +3,11 @@
   "components": {
     "server": {
       "release": true,
-      "version": "0.47.4"
+      "version": "0.48.0"
     },
     "mirror": {
       "release": true,
-      "version": "0.47.3"
+      "version": "0.48.0"
     },
     "ios": {
       "release": true,
