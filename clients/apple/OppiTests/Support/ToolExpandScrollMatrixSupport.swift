@@ -424,7 +424,7 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
         }.joined(separator: "\n")
     }
 
-    private static func sampleMarkdownDocument(title: String, sections: Int) -> String {
+    static func sampleMarkdownDocument(title: String, sections: Int) -> String {
         var blocks: [String] = ["# \(title)"]
         for section in 1...sections {
             blocks.append("## Section \(section)")

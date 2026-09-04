@@ -1309,7 +1309,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             AppHaptics.toolbarExpansion()
             let anchoredCollectionView = collectionView as? AnchoredCollectionView
-            anchoredCollectionView?.setExpandCollapseAnchor(indexPath: indexPath)
+            let expandGeneration = anchoredCollectionView?.setExpandCollapseAnchor(
+                indexPath: indexPath
+            )
             onQuietWorkLineToggle?(workLine.turnID)
             DispatchQueue.main.async { [weak self, weak collectionView] in
                 guard let self, let collectionView else { return }
@@ -1322,8 +1324,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 // self-sizing invalidations without allowing idle tail settle
                 // to reclaim the viewport in between.
                 DispatchQueue.main.async {
-                    DispatchQueue.main.async { [weak anchoredCollectionView] in
-                        anchoredCollectionView?.clearExpandCollapseAnchor()
+                    DispatchQueue.main.async { [weak anchoredCollectionView, expandGeneration] in
+                        if let expandGeneration {
+                            anchoredCollectionView?.clearExpandCollapseAnchor(
+                                generation: expandGeneration
+                            )
+                        }
                     }
                 }
             }
@@ -1633,20 +1639,20 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // expand/collapse anchor clears.
             let isDetached = !(scrollController?.isCurrentlyNearBottom ?? true)
             anchoredCV?.isDetachedFromBottom = isDetached
+            let expandGeneration = anchoredCV?.setExpandCollapseAnchor(
+                indexPath: anchorIndexPath
+            )
 
-            // Set the expand/collapse anchor for the deferred async
-            // layout passes (invalidateEnclosingCollectionViewLayout,
-            // self-sizing cascades), then clear and hand off to the
-            // detached anchor for ongoing protection.
-            anchoredCV?.setExpandCollapseAnchor(indexPath: anchorIndexPath)
-            DispatchQueue.main.async { [weak anchoredCV, isDetached] in
-                DispatchQueue.main.async { [weak anchoredCV, isDetached] in
-                    anchoredCV?.clearExpandCollapseAnchor()
-                    // Re-capture the detached anchor at the settled position
-                    // so the detached system takes over from the expand/collapse
-                    // anchor seamlessly.
+            DispatchQueue.main.async { [weak anchoredCV, isDetached, expandGeneration] in
+                DispatchQueue.main.async { [weak anchoredCV, isDetached, expandGeneration] in
+                    guard let anchoredCV, let expandGeneration else { return }
+                    guard anchoredCV.clearExpandCollapseAnchor(
+                        generation: expandGeneration
+                    ) else {
+                        return
+                    }
                     if isDetached {
-                        anchoredCV?.captureDetachedAnchor()
+                        anchoredCV.captureDetachedAnchor()
                     }
                 }
             }

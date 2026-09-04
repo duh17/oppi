@@ -15,6 +15,15 @@ enum ToolTimelineRowPresentationHelpers {
     static func debugResetNestedLayoutInvalidationCountForTesting() {
         debugNestedLayoutInvalidationCountForTesting = 0
     }
+    // periphery:ignore - test seam for the anchored 200→620 remeasure.
+    static var anchoredRemeasureHookForTesting: ((UICollectionView, String) -> Void)?
+    // periphery:ignore - per-collection timeline-wide invalidateLayout() counts.
+    private static var timelineWideInvalidationCountsForTesting: [ObjectIdentifier: Int] = [:]
+    static func debugTimelineWideInvalidationCountForTesting(
+        _ collectionView: UICollectionView
+    ) -> Int {
+        timelineWideInvalidationCountsForTesting[ObjectIdentifier(collectionView)] ?? 0
+    }
 #endif
 
     @MainActor
@@ -481,7 +490,62 @@ enum ToolTimelineRowPresentationHelpers {
             || collectionView.isDecelerating
     }
 
-    private static var isPerformingSynchronousLayoutInvalidation = false
+    /// Per collection-view identity so one timeline's `apply`/`layoutSubviews`
+    /// re-entry cannot drop a legitimate invalidation on another timeline.
+    private static var performingSynchronousLayoutInvalidationIDs: Set<ObjectIdentifier> = []
+
+    private static func beginSynchronousLayoutInvalidation(
+        for collectionView: UICollectionView
+    ) -> Bool {
+        let identifier = ObjectIdentifier(collectionView)
+        if performingSynchronousLayoutInvalidationIDs.contains(identifier) {
+            #if DEBUG
+            debugNestedLayoutInvalidationCountForTesting += 1
+            #endif
+            return false
+        }
+        performingSynchronousLayoutInvalidationIDs.insert(identifier)
+        return true
+    }
+
+    private static func endSynchronousLayoutInvalidation(
+        for collectionView: UICollectionView
+    ) {
+        performingSynchronousLayoutInvalidationIDs.remove(ObjectIdentifier(collectionView))
+    }
+
+    /// Publish the installed tapped row's intrinsic size after its viewport
+    /// constraint settles. Stable identity resolves the current index and a
+    /// missing or off-screen row fails closed.
+    private static func remeasureAnchoredItem(
+        in collectionView: UICollectionView
+    ) {
+        guard let anchoredCollectionView = collectionView as? AnchoredCollectionView else {
+            return
+        }
+        anchoredCollectionView.expireExpandCollapseAnchorIfIdentityMissing()
+        let generation = anchoredCollectionView.expandCollapseAnchorGeneration
+        guard let itemID = anchoredCollectionView.expandCollapseAnchorItemID,
+              let controller = collectionView.delegate as? ChatTimelineCollectionHost.Controller,
+              let itemIndex = controller.currentIDs.firstIndex(of: itemID),
+              let cell = collectionView.cellForItem(
+                  at: IndexPath(item: itemIndex, section: 0)
+              ),
+              beginSynchronousLayoutInvalidation(for: collectionView) else {
+            return
+        }
+        defer { endSynchronousLayoutInvalidation(for: collectionView) }
+
+        cell.contentView.invalidateIntrinsicContentSize()
+        collectionView.layoutIfNeeded()
+#if DEBUG
+        anchoredRemeasureHookForTesting?(collectionView, itemID)
+#endif
+        if anchoredCollectionView.clearExpandCollapseAnchor(generation: generation),
+           anchoredCollectionView.isDetachedFromBottom {
+            anchoredCollectionView.captureDetachedAnchor()
+        }
+    }
 
     private static func invalidateCollectionViewLayout(
         _ collectionView: UICollectionView,
@@ -492,21 +556,13 @@ enum ToolTimelineRowPresentationHelpers {
         // Block views call this from `apply` / `layoutSubviews`. A nested
         // `invalidateLayout + layoutIfNeeded` re-enters `cellForItem` and
         // overflows the document-reader main-thread stack.
-        if isPerformingSynchronousLayoutInvalidation {
-            #if DEBUG
-            debugNestedLayoutInvalidationCountForTesting += 1
-            #endif
-            return
-        }
-        // Passive snapshot updates skip full invalidation while an anchor is
-        // active because the snapshot path already measured the changed cell.
-        // A full layout invalidation clears cached off-screen heights and can
-        // produce visible drift while UICollectionView re-measures cells.
-        // Explicit local controls, such as code wrapping, can opt into a
-        // detached-anchor invalidation because AnchoredCollectionView preserves
-        // the viewport during layoutSubviews.
+        // Passive snapshot updates skip timeline-wide invalidation while an
+        // expand/collapse anchor is active. Publish only the tapped row's
+        // intrinsic size; a full invalidation would clear off-screen heights.
         if let anchoredCV = collectionView as? AnchoredCollectionView {
-            if anchoredCV.expandCollapseAnchorIP != nil {
+            if anchoredCV.expandCollapseAnchorIP != nil
+                || anchoredCV.expandCollapseAnchorItemID != nil {
+                remeasureAnchoredItem(in: collectionView)
                 return
             }
             if !allowDetachedAnchorInvalidation,
@@ -515,6 +571,8 @@ enum ToolTimelineRowPresentationHelpers {
             }
         }
 
+        guard beginSynchronousLayoutInvalidation(for: collectionView) else { return }
+
         let shouldPreserveViewport = preserveCurrentViewport || sourceView != nil
         let viewportAnchor = shouldPreserveViewport
             ? captureDetachedLayoutViewportAnchor(in: collectionView, excluding: sourceView)
@@ -522,9 +580,14 @@ enum ToolTimelineRowPresentationHelpers {
         let attachedTail = shouldPreserveViewport
             ? captureAttachedLayoutTail(in: collectionView)
             : nil
-        isPerformingSynchronousLayoutInvalidation = true
-        defer { isPerformingSynchronousLayoutInvalidation = false }
+        defer { endSynchronousLayoutInvalidation(for: collectionView) }
         UIView.performWithoutAnimation {
+#if DEBUG
+            timelineWideInvalidationCountsForTesting[
+                ObjectIdentifier(collectionView),
+                default: 0
+            ] += 1
+#endif
             collectionView.collectionViewLayout.invalidateLayout()
             collectionView.layoutIfNeeded()
             if let viewportAnchor {

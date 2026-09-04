@@ -132,6 +132,7 @@
 		157160D302C999CD0CDE3C41 /* StreamingFastPathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE56D70F5102172ED38217E /* StreamingFastPathTests.swift */; };
 		15994AACB42B846822F72865 /* NativeMarkdownVideoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6F8B0D1C42982F06361F169 /* NativeMarkdownVideoView.swift */; };
 		15B71E5BBC1C1EF9769079B1 /* UserTimelineRowContentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55A0A8DFBC4F40F8AB653F73 /* UserTimelineRowContentTests.swift */; };
+		15B799FE96F38102959B5A6E /* ReadMarkdownExpandOverlapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE02A0DA4D10A4291BA38D3C /* ReadMarkdownExpandOverlapTests.swift */; };
 		15D3D7C810212A45F0FB408D /* MermaidStateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53B61B6C8D1C32195EA104E4 /* MermaidStateParser.swift */; };
 		15F0B4D42E7C451CB431B31B /* TeXMathParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C5FE18EB11C7F2BF511C7B9 /* TeXMathParser.swift */; };
 		15F0EDDE0593C87639DF2EED /* AgentManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC26E8749E02959A50F5C87C /* AgentManagement.swift */; };
@@ -2606,6 +2607,7 @@
 		BCB8D14CE76E0FADA85E98C8 /* WorkspaceCRUDHappyPathE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCRUDHappyPathE2ETests.swift; sourceTree = "<group>"; };
 		BDF3FC48464C4933B0A40EAF /* OppiControlWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = OppiControlWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BDF7BB701EFB61B938863972 /* LaTeXFileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXFileView.swift; sourceTree = "<group>"; };
+		BE02A0DA4D10A4291BA38D3C /* ReadMarkdownExpandOverlapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadMarkdownExpandOverlapTests.swift; sourceTree = "<group>"; };
 		BE36F01521C2BE513D545D6C /* MacMessageQueueEditorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMessageQueueEditorState.swift; sourceTree = "<group>"; };
 		BE432AA0664DBD017C1608D4 /* MacWorkspaceCreationDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceCreationDraft.swift; sourceTree = "<group>"; };
 		BE6E8E35884953F2071A6799 /* FullScreenReviewCommentHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenReviewCommentHarnessView.swift; sourceTree = "<group>"; };
@@ -3906,6 +3908,7 @@
 				AAEDF9E5A9DD4497BCBCB503 /* QuietTimelineProjectionTests.swift */,
 				CB33DBDBC1E76DAB5B2C0021 /* QuietTimelineScrollTests.swift */,
 				705FEE9AE99F071732D9F8B3 /* QuietWorkLineRowContentTests.swift */,
+				BE02A0DA4D10A4291BA38D3C /* ReadMarkdownExpandOverlapTests.swift */,
 				1889DE98F1487F71CBCE024C /* ScrollFollowBehaviorTests.swift */,
 				490D07E1EB1A8673A161ACC0 /* ScrollInvariantPropertyTests.swift */,
 				9EC3A1311FC05C15CFAC8136 /* ScrollStabilityTests.swift */,
@@ -6557,6 +6560,7 @@
 				42FDBDC0E55B2611F61D7B77 /* QuietTimelineProjectionTests.swift in Sources */,
 				A35E82EEB7BE7FC17395AC76 /* QuietTimelineScrollTests.swift in Sources */,
 				25D661284314C8AFBE1AFA75 /* QuietWorkLineRowContentTests.swift in Sources */,
+				15B799FE96F38102959B5A6E /* ReadMarkdownExpandOverlapTests.swift in Sources */,
 				03EAFE1FA63B1CF291D77BC2 /* ReadySessionScrollToBottomTests.swift in Sources */,
 				3B68390C5F9E2A8F7325E3E7 /* RecentModelsTests.swift in Sources */,
 				B00D4BDD71026E54A19B3FA2 /* ReliabilityTests.swift in Sources */,

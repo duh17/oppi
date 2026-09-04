@@ -535,8 +535,9 @@ extension ChatTimelineCollectionHost.Controller {
 
         // Anchor the compaction row so expand/collapse doesn't shift it.
         let anchoredCV = collectionView as? AnchoredCollectionView
+        var expandGeneration: UInt64?
         if let idx = currentIDs.firstIndex(of: itemID) {
-            anchoredCV?.setExpandCollapseAnchor(
+            expandGeneration = anchoredCV?.setExpandCollapseAnchor(
                 indexPath: IndexPath(item: idx, section: 0)
             )
         }
@@ -544,9 +545,11 @@ extension ChatTimelineCollectionHost.Controller {
         reconfigureItems([itemID], in: collectionView)
 
         // Clear after async layout passes settle.
-        DispatchQueue.main.async { [weak anchoredCV] in
-            DispatchQueue.main.async { [weak anchoredCV] in
-                anchoredCV?.clearExpandCollapseAnchor()
+        DispatchQueue.main.async { [weak anchoredCV, expandGeneration] in
+            DispatchQueue.main.async { [weak anchoredCV, expandGeneration] in
+                if let expandGeneration {
+                    anchoredCV?.clearExpandCollapseAnchor(generation: expandGeneration)
+                }
             }
         }
     }

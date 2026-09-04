@@ -54,7 +54,18 @@ final class AnchoredCollectionView: UICollectionView {
     /// visible item. Persists until explicitly cleared via
     /// `clearExpandCollapseAnchor()`. The caller is responsible for
     /// scheduling cleanup after all layout passes have settled.
+    ///
+    /// `expandCollapseAnchorItemID` is the stable identity for that row.
+    /// A structural snapshot can shift index paths before deferred
+    /// remeasurement, so layout and remeasure resolve through the ID.
+    /// If that captured ID disappears, the pin expires instead of falling
+    /// back to a stale index path.
     private(set) var expandCollapseAnchorIP: IndexPath?
+    private(set) var expandCollapseAnchorItemID: String?
+
+    /// Each `setExpandCollapseAnchor` starts a generation. Deferred cleanup
+    /// compares this token so generation N cannot clear generation N+1.
+    private(set) var expandCollapseAnchorGeneration: UInt64 = 0
 
     /// The screen-relative Y of the anchored item at the time the anchor
     /// was set. Used by `contentOffset.didSet` to force-restore position
@@ -65,18 +76,44 @@ final class AnchoredCollectionView: UICollectionView {
     /// passes. Uses top-edge (origin.y) for the deferred anchor because
     /// origin.y is stable across self-sizing cascade passes (only height
     /// changes during re-estimation, not origin).
-    func setExpandCollapseAnchor(indexPath: IndexPath) {
+    @discardableResult
+    func setExpandCollapseAnchor(indexPath: IndexPath) -> UInt64 {
+        expandCollapseAnchorGeneration &+= 1
         expandCollapseAnchorIP = indexPath
+        expandCollapseAnchorItemID = stableItemID(at: indexPath)
         expandCollapseSavedOffsetY = contentOffset.y
         if let attrs = layoutAttributesForItem(at: indexPath) {
             expandCollapseAnchorScreenY = attrs.frame.origin.y - contentOffset.y
         }
+        return expandCollapseAnchorGeneration
     }
 
     /// Clear the expand/collapse anchor after layout passes have settled.
+    /// User-scroll and identity-removal paths call this unconditionally.
     func clearExpandCollapseAnchor() {
         expandCollapseAnchorIP = nil
+        expandCollapseAnchorItemID = nil
         pendingCorrectionOffsetY = nil
+    }
+
+    /// Deferred expand/collapse hops must only clear their own generation.
+    /// Returns whether this generation was still current and the pin was dropped.
+    @discardableResult
+    func clearExpandCollapseAnchor(generation: UInt64) -> Bool {
+        guard expandCollapseAnchorGeneration == generation,
+              expandCollapseAnchorIP != nil || expandCollapseAnchorItemID != nil else {
+            return false
+        }
+        clearExpandCollapseAnchor()
+        return true
+    }
+
+    /// A captured stable ID that has left the timeline must not retarget the
+    /// row that now occupies the stale index path.
+    func expireExpandCollapseAnchorIfIdentityMissing() {
+        guard let expandCollapseAnchorItemID else { return }
+        if timelineItemIDs().contains(expandCollapseAnchorItemID) { return }
+        clearExpandCollapseAnchor()
     }
 
     /// Apply an absolute contentOffset.y correction while suppressing the
@@ -228,6 +265,7 @@ final class AnchoredCollectionView: UICollectionView {
             // writing bounds immediately. This batches N cascade adjustments
             // into 1 layout correction, avoiding the ~55μs UIView.bounds
             // setter on every didSet entry.
+            expireExpandCollapseAnchorIfIdentityMissing()
             if expandCollapseAnchorIP != nil {
                 let delta = contentOffset.y - expandCollapseSavedOffsetY
                 guard delta.isFinite, abs(delta) > 0.5 else { return }
@@ -336,6 +374,8 @@ final class AnchoredCollectionView: UICollectionView {
             return
         }
 
+        expireExpandCollapseAnchorIfIdentityMissing()
+
         // Apply deferred correction from contentOffset.didSet before
         // the regular anchor cycle. This batches multiple cascade
         // adjustments into a single contentOffset write.
@@ -426,6 +466,16 @@ final class AnchoredCollectionView: UICollectionView {
         isTracking || isDragging || isDecelerating
     }
 
+    private func currentExpandCollapseAnchorIndexPath() -> IndexPath? {
+        if let expandCollapseAnchorItemID {
+            guard let index = timelineItemIDs().firstIndex(of: expandCollapseAnchorItemID) else {
+                return nil
+            }
+            return IndexPath(item: index, section: 0)
+        }
+        return expandCollapseAnchorIP
+    }
+
     private func currentDetachedAnchorIndexPath() -> IndexPath? {
         if let detachedAnchorItemID {
             let controller = delegate as? ChatTimelineCollectionHost.Controller
@@ -446,7 +496,7 @@ final class AnchoredCollectionView: UICollectionView {
 
     private var shouldAnchorDuringThisPass: Bool {
         // Always anchor when an expand/collapse is in flight.
-        if expandCollapseAnchorIP != nil {
+        if expandCollapseAnchorIP != nil || expandCollapseAnchorItemID != nil {
             return true
         }
 
@@ -483,8 +533,9 @@ final class AnchoredCollectionView: UICollectionView {
         // When detached, prefer the captured item identity so a suffix-window
         // shift cannot retarget the first-visible index path mid-apply.
         let anchorIP: IndexPath?
-        if let ecIP = expandCollapseAnchorIP {
-            anchorIP = ecIP
+        if let identityIP = currentExpandCollapseAnchorIndexPath() {
+            expandCollapseAnchorIP = identityIP
+            anchorIP = identityIP
         } else if isDetachedFromBottom, let identityIP = currentDetachedAnchorIndexPath() {
             anchorIP = identityIP
         } else {
