@@ -158,7 +158,7 @@ struct FlatSegmentImageWorktreeIdentityTests {
         #expect(url.flatMap(WorkspaceFileURL.parse)?.worktreeId == nil)
     }
 
-    @Test func slashTildeAndFileSourcesStaySkippedWhenWorktreeIsPresent() {
+    @Test func slashTildeAndFileSourcesStayHostImagesWhenWorktreeIsPresent() {
         let blocks: [MarkdownBlock] = [
             .paragraph([.image(alt: "Abs", source: "/tmp/chart.png")]),
             .paragraph([.image(alt: "Home", source: "~/chart.png")]),
@@ -170,10 +170,15 @@ struct FlatSegmentImageWorktreeIdentityTests {
             serverBaseURL: baseURL,
             worktreeId: "wt_feature"
         )
-        #expect(segments.allSatisfy { segment in
-            if case .image = segment { return false }
-            return true
-        })
+        let urls = segments.compactMap { segment -> URL? in
+            if case .image(_, let url) = segment { return url }
+            return nil
+        }
+        #expect(urls.count == 3)
+        #expect(urls.allSatisfy { WorkspaceFileURL.parse($0) == nil })
+        #expect(HostFileURL.parse(urls[0]) == "/tmp/chart.png")
+        #expect(HostFileURL.parse(urls[1]) == "~/chart.png")
+        #expect(HostFileURL.parse(urls[2]) == "/tmp/chart.png")
     }
 
     private func imageURL(from segments: [FlatSegment]) -> URL? {

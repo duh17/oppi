@@ -3233,7 +3233,7 @@ struct AssistantMarkdownInlineImageRenderingTests {
         #expect(!renderedText.contains("[Red green]"))
     }
 
-    @Test func mixedParagraphFileURLFallsBackWithoutFetching() throws {
+    @Test func mixedParagraphFileURLEmbedsAsHostImageWithoutSessionFetch() throws {
         let markdownView = AssistantMarkdownContentView()
         markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
         markdownView.fetchSessionFile = { _, _, _ in
@@ -3252,13 +3252,13 @@ struct AssistantMarkdownInlineImageRenderingTests {
         ))
         markdownView.layoutIfNeeded()
 
-        #expect(timelineFirstView(ofType: NativeMarkdownImageView.self, in: markdownView) == nil)
+        #expect(timelineFirstView(ofType: NativeMarkdownImageView.self, in: markdownView) != nil)
         let renderedText = timelineAllTextViews(in: markdownView)
             .map { timelineRenderedText(of: $0) }
             .joined(separator: " ")
         #expect(renderedText.contains("Before"))
-        #expect(renderedText.contains("[Red green]"))
         #expect(renderedText.contains("after"))
+        #expect(!renderedText.contains("[Red green]"))
     }
 
     private func makeReadSupportedTestImageData(ext: String) throws -> Data {
