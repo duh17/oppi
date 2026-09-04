@@ -4,11 +4,13 @@ import os
 
 /// Deterministic expanded-viewport streaming markdown harness.
 ///
-/// This intentionally avoids model output. It feeds known markdown chunks through
-/// the same `AssistantMarkdownContentView` pipeline used by assistant prose while
-/// the preview is already in a full-screen/expanded viewport. UI tests record the
-/// simulator and sample frames + renderer debug metrics so performance experiments
-/// cannot optimize CPU by introducing clipping, overlap, or visible blanking.
+/// This intentionally avoids model output. It feeds a mixed assistant-like
+/// document (table, mermaid, LaTeX, display math, then unclosed fences that
+/// close last) through the same `AssistantMarkdownContentView` pipeline used
+/// by assistant prose while the preview is already in a full-screen/expanded
+/// viewport. UI tests record the simulator and sample frames + renderer debug
+/// metrics so performance experiments cannot optimize CPU by introducing
+/// clipping, overlap, or visible blanking.
 struct StreamingFlickerPreviewView: View {
     private static let signpostLog = OSLog(subsystem: "dev.chenda.Oppi", category: "StreamingFlicker")
 
@@ -64,7 +66,7 @@ struct StreamingFlickerPreviewView: View {
 
     private var overlay: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Streaming flicker probe")
+            Text("Streaming flicker probe · mixed stress")
                 .font(.caption.weight(.semibold))
             Text("tick=\(tick) running=\(isRunning ? 1 : 0) chars=\(renderedText.count)")
                 .font(.caption2.monospacedDigit())
@@ -99,7 +101,8 @@ struct StreamingFlickerPreviewView: View {
         signpostID = id
         os_signpost(.animationBegin, log: Self.signpostLog, name: "StreamingMarkdown", signpostID: id)
 
-        timer = Timer.scheduledTimer(withTimeInterval: 0.075, repeats: true) { _ in
+        // Slow enough that a recording can see incomplete mermaid/LaTeX before the fence closes.
+        timer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { _ in
             Task { @MainActor in
                 advanceStream()
             }
@@ -128,29 +131,42 @@ struct StreamingFlickerPreviewView: View {
         }
     }
 
-    private static let storyChunks: [String] = {
-        var chunks: [String] = []
-        chunks.append("# The Lantern Cartographer\n\n")
-        chunks.append("_A small markdown novel streamed one deterministic breath at a time._\n\n")
-        chunks.append("| Name | Trade | Problem |\n| --- | --- | --- |\n| Mira Vale | cartographer | maps streets that move |\n| Nox | lantern apprentice | hears the city through glass |\n| Orlo | ferry pilot | owns a boat that remembers storms |\n\n")
+    /// Mixed assistant-like document. Closed table / mermaid / latex / $$ arrive
+    /// first. The later mermaid and latex fences split across 2–4 ticks with the
+    /// closing fence last so those blocks can pop from code-or-empty to rendered.
+    private static let storyChunks: [String] = [
+        "# Mixed streaming stress\n\n",
+        "_A short assistant-like document streamed in deterministic ticks: a table, closed mermaid and LaTeX, display math, then fences that close late._\n\n",
+        "| Name | Trade | Problem |\n| --- | --- | --- |\n| Mira Vale | cartographer | maps streets that move |\n| Nox | lantern apprentice | hears the city through glass |\n| Orlo | ferry pilot | owns a boat that remembers storms |\n\n",
+        "Mira drew the road as a line, but Bellwether corrected her with a patient blue shimmer. A road is an argument with weather, memory, and whoever last promised to come home before dawn.\n\n",
+        "```mermaid\nflowchart TD\n    Start[Lantern] --> Map[Street map]\n    Map --> Fork{Name still true?}\n    Fork -->|no| Revise[Revise the street]\n    Revise --> Map\n    Fork -->|yes| Home[Honest route]\n```\n\n",
+        "Nox lifted the lantern. The flame bent toward an alley full of wet cobblestones, **bold shadows**, _italic rain_, and a sign that read `PLEASE MIND THE UNFINISHED FENCE`.\n\n",
+        "```mermaid\nsequenceDiagram\n    Mira->>Nox: Light the lantern\n    Nox->>City: Ask for the street\n    City-->>Mira: The name moved again\n```\n\n",
+        "- The bridge apologized.\n- The bakery sold tomorrow's bread.\n- The map tried to bite the margin.\n\n",
+        #"""
+        ```latex
+        \boxed{e^{i\pi} + 1 = 0}
+        ```
 
-        for chapter in 1...64 {
-            chunks.append("## Chapter \(chapter): The Street That Forgot Its Name\n\n")
-            chunks.append("Mira drew the road as a line, but Bellwether corrected her with a patient blue shimmer. A road, the city seemed to say, is not a line. A road is an argument with weather, memory, and whoever last promised to come home before dawn.\n\n")
-            chunks.append("Nox lifted the lantern. The flame bent toward an alley full of wet cobblestones, **bold shadows**, _italic rain_, and a sign that read `PLEASE MIND THE UNFINISHED METAPHOR`.\n\n")
-            chunks.append("- The bridge apologized.\n- The bakery sold tomorrow's bread.\n- The map tried to bite the margin.\n- Captain Orlo pretended this was normal.\n\n")
-            chunks.append("> The city does not vanish, Mira wrote. It revises itself while the eye is busy elsewhere.\n\n")
-            if chapter.isMultiple(of: 4) {
-                chunks.append("```swift\nstruct LanternReading {\n    let chapter: Int\n    let streetName: String\n    let renderedOverflow: Double\n}\n```\n\n")
-            }
-            if chapter.isMultiple(of: 6) {
-                chunks.append("| Bell | Direction | Mood |\n| ---: | --- | --- |\n| \(chapter) | east by northeast | suspicious |\n| \(chapter + 1) | riverward | apologetic |\n\n")
-            }
-        }
+        """#,
+        "> The city does not vanish, Mira wrote. It revises itself while the eye is busy elsewhere.\n\n",
+        #"""
+        $$
+        \int_{0}^{\infty} e^{-x^{2}}\,dx = \frac{\sqrt{\pi}}{2}
+        $$
 
-        chunks.append("## Epilogue\n\nAt sunrise the lantern cooled, the map folded itself into the brass watchcase, and Bellwether kept one honest route home. Mira marked it with a star and a warning: _if the words flicker, the street is still moving._\n")
-        return chunks
-    }()
+        """#,
+        "An unclosed mermaid fence follows. The closing tick arrives last so the block can pop from code-or-empty to a rendered diagram.\n\n",
+        "```mermaid\n",
+        "flowchart LR\n",
+        "    Open[code] --> Closed[rendered]\n",
+        "```\n\n",
+        "Same treatment for LaTeX: body first, fence close last.\n\n",
+        "```latex\n",
+        "\\sum_{k=1}^{n} k = \\frac{n(n+1)}{2}\n",
+        "```\n\n",
+        "At sunrise the lantern cooled. Mira marked the route with a star and a warning: _if the words flicker, the street is still moving._\n",
+    ]
 }
 
 private struct StreamingMarkdownProbeMetrics: Equatable {
