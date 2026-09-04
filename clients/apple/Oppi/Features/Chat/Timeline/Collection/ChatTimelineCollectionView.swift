@@ -720,10 +720,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         /// Tell the cached-height layout which rows may only grow. Streaming
         /// assistant text and expanded in-flight tool output append height.
-        /// Collapsed in-flight tools must still be allowed to shrink.
+        /// Idle rows and collapsed in-flight tools must still be allowed to shrink.
         private func updateLiveTailItemIDs(
             in collectionView: UICollectionView,
             streamingAssistantID: String?,
+            isBusy: Bool,
             items: [ChatItem],
             expandedItemIDs: Set<String>
         ) {
@@ -731,7 +732,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 return
             }
             var liveIDs: Set<String> = []
-            if let streamingAssistantID {
+            if isBusy, let streamingAssistantID {
                 liveIDs.insert(streamingAssistantID)
             }
             for item in items {
@@ -751,6 +752,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             updateLiveTailItemIDs(
                 in: collectionView,
                 streamingAssistantID: configuration.streamingAssistantID,
+                isBusy: configuration.isBusy,
                 items: configuration.items,
                 expandedItemIDs: configuration.reducer.expandedItemIDs
             )
@@ -762,6 +764,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             updateLiveTailItemIDs(
                 in: collectionView,
                 streamingAssistantID: streamingAssistantID,
+                isBusy: isTimelineBusy,
                 items: Array(currentItemByID.values),
                 expandedItemIDs: reducer?.expandedItemIDs ?? []
             )
@@ -790,6 +793,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
             updateLiveTailItemIDs(in: collectionView, configuration: configuration)
+            let expandedChanged = (reducer?.expandedItemIDs ?? [])
+                .symmetricDifference(configuration.reducer.expandedItemIDs)
+            if !expandedChanged.isEmpty {
+                (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
+                    .removeCachedHeights(for: expandedChanged)
+            }
             let timelineBusyChanged = configuration.isBusy != isTimelineBusy
             isAssistantStreamingPresentationActive = configuration.isBusy
             // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
@@ -952,16 +961,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     configuration.scrollCommand,
                     in: collectionView
                 )
-                if !didScroll,
-                   !hadPendingScrollCommand,
-                   configuration.scrollCommand?.anchor != .top {
-                    reconcileAmbientScrollAfterTimelineUpdate(
-                        collectionView,
-                        isBusy: configuration.isBusy,
-                        itemCount: currentIDs.count,
-                        sessionId: configuration.sessionId
-                    )
-                }
+                reconcileScrollAfterTimelineApply(
+                    didScroll: didScroll,
+                    hadPendingScrollCommand: hadPendingScrollCommand,
+                    configuration: configuration,
+                    collectionView: collectionView,
+                    itemCount: currentIDs.count
+                )
                 ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
                 updateDetachedStreamingHintVisibility()
                 return
@@ -1056,16 +1062,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     configuration.scrollCommand,
                     in: collectionView
                 )
-                if !didScroll,
-                   !hadPendingScrollCommand,
-                   configuration.scrollCommand?.anchor != .top {
-                    reconcileAmbientScrollAfterTimelineUpdate(
-                        collectionView,
-                        isBusy: configuration.isBusy,
-                        itemCount: currentIDs.count,
-                        sessionId: configuration.sessionId
-                    )
-                }
+                reconcileScrollAfterTimelineApply(
+                    didScroll: didScroll,
+                    hadPendingScrollCommand: hadPendingScrollCommand,
+                    configuration: configuration,
+                    collectionView: collectionView,
+                    itemCount: currentIDs.count
+                )
                 ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
                 updateDetachedStreamingHintVisibility()
                 return
@@ -1211,17 +1214,14 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 configuration.scrollCommand,
                 in: collectionView
             )
-            if !didScroll,
-               !hadPendingScrollCommand,
-               configuration.scrollCommand?.anchor != .top {
-                reconcileAmbientScrollAfterTimelineUpdate(
-                    collectionView,
-                    isBusy: configuration.isBusy,
-                    itemCount: applyPlan.nextIDs.count,
-                    sessionId: configuration.sessionId,
-                    structuralAppend: applyPlan.nextIDs.count > previousIDs.count
-                )
-            }
+            reconcileScrollAfterTimelineApply(
+                didScroll: didScroll,
+                hadPendingScrollCommand: hadPendingScrollCommand,
+                configuration: configuration,
+                collectionView: collectionView,
+                itemCount: applyPlan.nextIDs.count,
+                structuralAppend: applyPlan.nextIDs.count > previousIDs.count
+            )
 
             // When the session is busy (streaming or running tools), ambient
             // follow is handled by the tail governor and user-initiated scroll
@@ -1758,6 +1758,36 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             return true
         }
 
+        /// Scroll commands measure against first-pass estimated heights. After
+        /// preferred sizes land, pin an idle attached timeline to the true bottom.
+        private func reconcileScrollAfterTimelineApply(
+            didScroll: Bool,
+            hadPendingScrollCommand: Bool,
+            configuration: Configuration,
+            collectionView: UICollectionView,
+            itemCount: Int,
+            structuralAppend: Bool = false
+        ) {
+            guard configuration.scrollCommand?.anchor != .top else { return }
+            if didScroll || hadPendingScrollCommand {
+                collectionView.layoutIfNeeded()
+                guard scrollController?.isCurrentlyNearBottom ?? true else { return }
+                if configuration.isBusy {
+                    keepLiveTailVisible(collectionView)
+                } else {
+                    settleAttachedBottom(collectionView)
+                }
+                return
+            }
+            reconcileAmbientScrollAfterTimelineUpdate(
+                collectionView,
+                isBusy: configuration.isBusy,
+                itemCount: itemCount,
+                sessionId: configuration.sessionId,
+                structuralAppend: structuralAppend
+            )
+        }
+
         private func reconcileAmbientScrollAfterTimelineUpdate(
             _ collectionView: UICollectionView,
             isBusy: Bool,
@@ -2033,6 +2063,13 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
 
     func removeAllCachedHeights() {
         cachedHeightByItemID.removeAll(keepingCapacity: true)
+    }
+
+    func removeCachedHeights(for itemIDs: Set<String>) {
+        guard !itemIDs.isEmpty else { return }
+        for itemID in itemIDs {
+            cachedHeightByItemID.removeValue(forKey: itemID)
+        }
     }
 
     #if DEBUG

@@ -503,7 +503,7 @@ struct ReadMarkdownExpandOverlapTests {
     }
 
     @Test func offscreenValidExpandAnchorClearsWhenRemeasureHasNoInstalledCell() async throws {
-        let fixture = try Self.makeSkillReadSkillFixture()
+        let fixture = try Self.makeSkillReadSkillFixture(followingSkillCount: 40)
         defer { fixture.wh.window.isHidden = true }
 
         let collectionView = fixture.wh.collectionView
@@ -511,7 +511,9 @@ struct ReadMarkdownExpandOverlapTests {
         let anchoredCV = try #require(collectionView as? AnchoredCollectionView)
         let lastIndexPath = IndexPath(item: coordinator.currentIDs.count - 1, section: 0)
         collectionView.scrollToItem(at: lastIndexPath, at: .bottom, animated: false)
-        collectionView.reloadData()
+        let viewportHeight = max(collectionView.bounds.height, 844)
+        let bottomOffset = max(0, collectionView.contentSize.height - viewportHeight)
+        setTimelineUserScrollOffsetY(collectionView, bottomOffset)
         settleTimelineLayout(collectionView, passes: 2)
 
         #expect(coordinator.currentIDs.contains(fixture.readID))
