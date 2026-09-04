@@ -130,6 +130,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       identity = null;
     }
 
+    const piCliVersion = typeof ctx.piCliVersion === "string" ? ctx.piCliVersion.trim() : "";
     helpers.json(res, {
       name: hostname(),
       version: ctx.serverVersion,
@@ -139,6 +140,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       hostname: hostname(),
       nodeVersion: process.version,
       piVersion: ctx.piVersion,
+      ...(piCliVersion && piCliVersion !== "unknown" ? { piCliVersion } : {}),
       configVersion: config.configVersion ?? 1,
       identity,
       uploadProtocol: {

@@ -359,7 +359,13 @@ export function formatStartupSecurityWarnings(config: ServerConfig): string[] {
   return warnings;
 }
 
-/** Resolve the pi executable path for version detection. */
+function optionalPiCliVersion(detected: string): string | undefined {
+  const trimmed = detected.trim();
+  if (!trimmed || trimmed === "unknown") return undefined;
+  return trimmed;
+}
+
+/** Resolve the pi executable path for CLI version detection. Not the Agent field. */
 function resolvePiExecutable(): string {
   const envPath = process.env.OPPI_PI_BIN;
   if (envPath && existsSync(envPath)) {
@@ -378,6 +384,10 @@ function resolvePiExecutable(): string {
 export class Server {
   static readonly VERSION = getPackageInfo().version;
 
+  /**
+   * Installed CLI version via `pi --version`.
+   * Agent (`piVersion`) is readEmbeddedPiAgentVersion() — never this PATH/Homebrew spawn.
+   */
   static detectPiVersion(piExecutable: string): string {
     try {
       // pi --version writes to stderr (not stdout), so capture both.
@@ -393,6 +403,36 @@ export class Server {
     } catch {
       return "unknown";
     }
+  }
+
+  /** Version of the imported `@earendil-works/pi-coding-agent` package.json. */
+  static readEmbeddedPiAgentVersion(): string {
+    try {
+      const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+      let dir = dirname(entry);
+      for (let i = 0; i < 8; i++) {
+        const candidate = join(dir, "package.json");
+        if (existsSync(candidate)) {
+          const raw = JSON.parse(readFileSync(candidate, "utf-8")) as {
+            name?: unknown;
+            version?: unknown;
+          };
+          if (
+            raw.name === "@earendil-works/pi-coding-agent" &&
+            typeof raw.version === "string" &&
+            raw.version.trim().length > 0
+          ) {
+            return raw.version.trim();
+          }
+        }
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+    } catch {
+      // Missing or unreadable package.json.
+    }
+    return "unknown";
   }
 
   private storage: Storage;
@@ -774,7 +814,8 @@ export class Server {
       appEvents: this.appEventStreamMux,
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
-      piVersion: Server.detectPiVersion(this.piExecutable),
+      piVersion: Server.readEmbeddedPiAgentVersion(),
+      piCliVersion: optionalPiCliVersion(Server.detectPiVersion(this.piExecutable)),
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),

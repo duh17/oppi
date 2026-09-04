@@ -240,6 +240,88 @@ describe("identity module", () => {
     });
   });
 
+  it("uses ctx.piVersion as Agent and includes piCliVersion when a CLI version is known", async () => {
+    const ctx = {
+      storage: {
+        getConfig: vi.fn(() => ({ configVersion: 1 })),
+        listWorkspaces: vi.fn(() => []),
+        listSessions: vi.fn(() => []),
+      },
+      sessions: {
+        getActiveSessionIds: vi.fn(() => new Set()),
+      },
+      sessionRuntimes: {
+        getActiveSessionIds: vi.fn(() => new Set()),
+      },
+      skillRegistry: {
+        list: vi.fn(() => []),
+      },
+      getModelCatalog: vi.fn(() => []),
+      serverStartedAt: Date.now(),
+      serverVersion: "0.48.0",
+      piVersion: "0.85.0",
+      piCliVersion: "0.84.4",
+    } as unknown as RouteContext;
+
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "GET",
+      path: "/server/info",
+      url: new URL("http://localhost/server/info"),
+      req: {} as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(body.piVersion).toBe("0.85.0");
+    expect(body.piCliVersion).toBe("0.84.4");
+  });
+
+  it("omits piCliVersion on GET /server/info when CLI detection is unknown or empty", async () => {
+    for (const piCliVersion of [undefined, "unknown", "", "   "]) {
+      const ctx = {
+        storage: {
+          getConfig: vi.fn(() => ({ configVersion: 1 })),
+          listWorkspaces: vi.fn(() => []),
+          listSessions: vi.fn(() => []),
+        },
+        sessions: {
+          getActiveSessionIds: vi.fn(() => new Set()),
+        },
+        sessionRuntimes: {
+          getActiveSessionIds: vi.fn(() => new Set()),
+        },
+        skillRegistry: {
+          list: vi.fn(() => []),
+        },
+        getModelCatalog: vi.fn(() => []),
+        serverStartedAt: Date.now(),
+        serverVersion: "0.48.0",
+        piVersion: "0.85.0",
+        piCliVersion,
+      } as unknown as RouteContext;
+
+      const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      const handled = await dispatch({
+        method: "GET",
+        path: "/server/info",
+        url: new URL("http://localhost/server/info"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as Record<string, unknown>;
+      expect(body.piVersion).toBe("0.85.0");
+      expect(body).not.toHaveProperty("piCliVersion");
+    }
+  });
+
   it("returns false for unrelated routes", async () => {
     const dispatch = createIdentityRoutes({} as RouteContext, createRouteHelpers());
 

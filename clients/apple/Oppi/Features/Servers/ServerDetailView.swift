@@ -224,6 +224,9 @@ struct ServerDetailView: View {
             if let info {
                 LabeledContent("Uptime", value: info.uptimeLabel)
                 LabeledContent("Agent", value: info.piVersion)
+                if let piCliVersion = info.piCliVersion, !piCliVersion.isEmpty {
+                    LabeledContent("Pi CLI", value: piCliVersion)
+                }
                 LabeledContent("Server", value: info.version)
             }
         } header: {
@@ -1412,7 +1415,8 @@ struct ServerSettingsChromePreview: View {
                 Section {
                     LabeledContent("Connection", value: "Connected via paired HTTPS")
                     LabeledContent("Uptime", value: "2d 4h")
-                    LabeledContent("Agent", value: "pi")
+                    LabeledContent("Agent", value: "0.85.0")
+                    LabeledContent("Pi CLI", value: "0.84.4")
                     LabeledContent("Server", value: "oppi")
                 } header: {
                     Text("Status")

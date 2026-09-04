@@ -24,6 +24,54 @@ struct ServerInfoVersionTests {
         let info = try JSONDecoder().decode(ServerInfo.self, from: data)
 
         #expect(info.piVersion == "0.81.0")
+        #expect(info.piCliVersion == nil)
+    }
+
+    @Test func decodesOptionalPiCliVersion() throws {
+        let data = Data(#"""
+        {
+          "name":"test",
+          "version":"0.45.0",
+          "uptime":1,
+          "os":"darwin",
+          "arch":"arm64",
+          "hostname":"test.local",
+          "nodeVersion":"v24.0.0",
+          "piVersion":"0.85.0",
+          "piCliVersion":"0.84.4",
+          "configVersion":1,
+          "identity":null,
+          "stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}
+        }
+        """#.utf8)
+
+        let info = try JSONDecoder().decode(ServerInfo.self, from: data)
+
+        #expect(info.piVersion == "0.85.0")
+        #expect(info.piCliVersion == "0.84.4")
+    }
+
+    @Test func decodesPayloadsWithoutPiCliVersion() throws {
+        let data = Data(#"""
+        {
+          "name":"test",
+          "version":"0.45.0",
+          "uptime":1,
+          "os":"darwin",
+          "arch":"arm64",
+          "hostname":"test.local",
+          "nodeVersion":"v24.0.0",
+          "piVersion":"0.85.0",
+          "configVersion":1,
+          "identity":null,
+          "stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}
+        }
+        """#.utf8)
+
+        let info = try JSONDecoder().decode(ServerInfo.self, from: data)
+
+        #expect(info.piVersion == "0.85.0")
+        #expect(info.piCliVersion == nil)
     }
 
     @Test func decodesControlSessionCapability() throws {

@@ -13,6 +13,7 @@ struct ServerInfo: Codable, Sendable, Equatable {
     let hostname: String
     let nodeVersion: String
     let piVersion: String
+    var piCliVersion: String? = nil
     let configVersion: Int
     let identity: IdentityInfo?
     let uploadProtocol: UploadProtocolInfo?

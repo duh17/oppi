@@ -30,6 +30,8 @@ export interface RouteContext {
   serverStartedAt: number;
   serverVersion: string;
   piVersion: string;
+  /** Installed CLI version. Omit when detection is unknown/empty. */
+  piCliVersion?: string;
   /** Close upgraded sockets owned by a newly revoked device. */
   onDeviceRevoked?: (deviceId: string) => void;
   /** Close legacy `dt_` sockets when the migration window finalizes. */
