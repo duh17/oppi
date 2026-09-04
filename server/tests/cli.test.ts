@@ -831,7 +831,9 @@ describe("oppi config", () => {
     const setExtension = run(["config", "set", "asr.extension", "@earendil-works/pi-transcribe"]);
     expect(setExtension.exitCode).toBe(1);
     expect(`${setExtension.stdout}${setExtension.stderr}`).toContain("Unknown config key");
-    run(["config", "set", "asr.backend", "pi-extension"]);
+    const setBackend = run(["config", "set", "asr.backend", "pi-extension"]);
+    expect(setBackend.exitCode).toBe(1);
+    expect(`${setBackend.stdout}${setBackend.stderr}`).toContain("expected http");
     expect(run(["config", "get", "asr.backend"]).exitCode).toBe(1);
     expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
     run(["config", "set", "oppiDocsPrompt.enabled", "false"]);

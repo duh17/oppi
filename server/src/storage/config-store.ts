@@ -565,9 +565,13 @@ function normalizeConfig(
       if (asr.backend === "http") {
         asrConfig.backend = "http";
       } else if (asr.backend === "pi-extension") {
-        warnings.push(
-          "config.asr.backend: ignored pi-extension; server dictation is HTTP/Yuwp only",
-        );
+        if (strictUnknown) {
+          errors.push("config.asr.backend: expected http");
+        } else {
+          warnings.push(
+            "config.asr.backend: ignored pi-extension; server dictation is HTTP/Yuwp only",
+          );
+        }
         changed = true;
       } else {
         errors.push("config.asr.backend: expected http");

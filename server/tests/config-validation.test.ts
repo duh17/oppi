@@ -326,7 +326,7 @@ describe("Storage config validation", () => {
         },
       },
       dir,
-      true,
+      false,
     );
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
@@ -348,7 +348,7 @@ describe("Storage config validation", () => {
         asr: { backend: "pi-extension", extension: "npm:@earendil-works/pi-transcribe" },
       },
       dir,
-      true,
+      false,
     );
     expect(npmSpec.valid).toBe(true);
     expect(npmSpec.config?.asr).toBeUndefined();
@@ -365,10 +365,26 @@ describe("Storage config validation", () => {
         asr: { backend: "pi-extension", extension: "/opt/pi-transcribe" },
       },
       dir,
-      true,
+      false,
     );
     expect(abs.valid).toBe(true);
     expect(abs.config?.asr).toBeUndefined();
+  });
+
+  it("rejects asr.backend pi-extension in strict updates", () => {
+    const result = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        asr: {
+          backend: "pi-extension",
+          sttEndpoint: "http://localhost:9847",
+        },
+      },
+      dir,
+      true,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("config.asr.backend: expected http");
   });
 
   it("rejects an invalid asr.backend", () => {
