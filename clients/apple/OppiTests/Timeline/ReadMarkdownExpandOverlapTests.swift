@@ -7,10 +7,9 @@ import UIKit
 /// completed markdown paints its H1 over the previous collapsed skill row.
 ///
 /// Production layout uses `.estimated(100)` and 8pt `interGroupSpacing`.
-/// Completed markdown first-fits at the 200pt streaming viewport when width
-/// has not settled, then grows to 620pt. That outer sizing pass must land
-/// while the expand/collapse anchor is still active, without reloading the
-/// following row.
+/// Completed markdown publishes the 620pt capped viewport immediately.
+/// That outer sizing pass must land while the expand/collapse anchor is
+/// still active, without reloading the following row.
 @Suite("Expanded read markdown row overlap", .serialized)
 @MainActor
 struct ReadMarkdownExpandOverlapTests {

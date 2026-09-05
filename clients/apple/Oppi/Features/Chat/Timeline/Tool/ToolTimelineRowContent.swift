@@ -496,25 +496,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     geometry: geometry
                 ))
             } else {
+                // Completed markdown is always a capped viewport. Do not first-fit
+                // at the 200pt streaming height: that grow is the tap animation
+                // and it replays when fitting runs before the row is parented.
                 let availableHeight = ToolRowViewportCalculator.availableViewportHeight(
                     for: mode,
                     geometry: geometry
                 )
-                let hasSettledWidth = bounds.width > 10 && expandedContainer.bounds.width > 10
-                // Tap expand first-fits at 200pt while width is unset. Scroll-back
-                // remounts land in a cell that already has the expanded height, so
-                // skip that first-fit or the 200→max grow animates again.
-                let cellIsAlreadyExpanded = enclosingCollectionCellHeight()
-                    > Self.streamingViewportHeight + 80
-                let targetHeight = hasSettledWidth || cellIsAlreadyExpanded
+                let targetHeight = window == nil
                     ? maxHeight
-                    : Self.streamingViewportHeight
-                let resolved = min(availableHeight, max(mode.minHeight, targetHeight))
-                if cellIsAlreadyExpanded {
-                    UIView.performWithoutAnimation { setHeight(resolved) }
-                } else {
-                    setHeight(resolved)
-                }
+                    : min(availableHeight, maxHeight)
+                setHeight(max(mode.minHeight, targetHeight))
             }
 
         case .naturalReadMedia(let minHeight, let maxHeight):
@@ -713,17 +705,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             safeAreaInsets: safeInsets,
             cellWidth: cellWidth
         )
-    }
-
-    private func enclosingCollectionCellHeight() -> CGFloat {
-        var view: UIView? = superview
-        while let current = view {
-            if current is UICollectionViewCell {
-                return current.bounds.height
-            }
-            view = current.superview
-        }
-        return 0
     }
 
     private static func sanitizedFittingSize(_ size: CGSize, fallbackWidth: CGFloat) -> CGSize {
