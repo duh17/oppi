@@ -198,6 +198,15 @@ Do not run this command concurrently. It deliberately has no local lock and uses
 
 The local pool gives a simulator boot two 120-second readiness waits by default. For a new simulator, the second wait continues the same first-boot data migration instead of erasing and restarting it. Set `OPPI_SIM_POOL_BOOT_TIMEOUT` to change each wait or `OPPI_SIM_POOL_BOOT_RETRIES` to change the number of additional waits. An already-booted pool simulator is reused instead of shutdown/boot. After boot, `sim-pool.sh`, `ci-simulator.sh`, and `sim-lab.sh` disable unused background daemons (Siri extras, Spotlight, iCloud, PosterBoard, and similar) unless `OPPI_SIM_SLIM=0`. Those overrides persist across reboot and are reapplied after hang-recovery erase. Live Activities, speech, Photos, push, and universal links stay enabled. CI never creates or erases a simulator; it still slims the existing runner device. Pool simulators stay booted after a run; set `OPPI_SIM_POOL_KEEP_BOOTED=0` to shut them down, `OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1` to recycle before xcodebuild, or `./scripts/sim-pool.sh shutdown-idle` to stop unused pool devices. Hang detection treats DerivedData directory mtime as progress, not only log growth. Pool `xcodebuild` injects `COMPILER_INDEX_STORE_ENABLE=NO` unless the command already sets that setting or `OPPI_SIM_POOL_INDEX_STORE=1`. The default pool is eight iPhone slots (`OPPI_SIM_POOL_COUNT`, slots 0-7). Dedicated iPad lanes should start at slot 8 or higher.
 
+Parked worktrees keep Apple DerivedData in `clients/apple/.build/pool-<digits>` until the tree is removed. Reclaim that cache without deleting logs, videos, Mac caches, or CI artifacts:
+
+```bash
+./clients/apple/scripts/sim-pool.sh prune-cache
+./clients/apple/scripts/sim-pool.sh prune-cache --apply
+```
+
+Dry-run is the default. `--apply` deletes only this checkout's numeric `pool-*` directories after taking each slot's simulator-pool lock. Live or ambiguous locks are skipped. The next simulator build in that tree recompiles from scratch (typically minutes per slot, about 2 GB/slot). This does not remove the worktree.
+
 The tracked pre-push hook is `.githooks/pre-push`. It does not collect coverage; it runs the faster local checks described above. Install it into a clone's configured hook directory after reviewing any existing local hook:
 
 ```bash

@@ -6,6 +6,8 @@
 # Usage:
 #   ./sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi build
 #   ./sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
+#   ./sim-pool.sh prune-cache
+#   ./sim-pool.sh prune-cache --apply
 #   From the repo root: ./scripts/sim-pool.sh ...  or  clients/apple/scripts/sim-pool.sh ...
 #
 # The script auto-injects -destination and -derivedDataPath — do NOT pass your own.
@@ -48,7 +50,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Detect repo root from CWD (supports git worktrees) or fall back to env/default.
 # This is critical for autoresearch sessions running in worktrees —
 # without it, DerivedData from different worktrees would collide.
-if [[ -z "${OPPI_ROOT:-}" ]]; then
+OPPI_ROOT_FROM_ENV=0
+if [[ -n "${OPPI_ROOT:-}" ]]; then
+  OPPI_ROOT_FROM_ENV=1
+else
   _git_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
   if [[ -n "$_git_root" && -d "$_git_root/clients/apple" ]]; then
     OPPI_ROOT="$_git_root"
@@ -509,7 +514,247 @@ EOF
     || die "self-test: ALLOW_SLOW override still rewrote the scheme"
   unset OPPI_SIM_POOL_ALLOW_SLOW_UNIT_TEST_SCHEME || true
 
+  run_prune_cache_self_test
+
   echo "sim-pool self-test passed."
+}
+
+run_prune_cache_self_test() {
+  local script="$SCRIPT_DIR/sim-pool.sh"
+
+  init_prune_fixture() {
+    local root="$1"
+    git init -q "$root"
+    mkdir -p "$root/clients/apple"
+  }
+
+  run_prune_cli() {
+    env -u OPPI_ROOT -u PIOS_ROOT \
+      OPPI_SIM_POOL_LOCK_DIR="$LOCK_DIR" \
+      "$script" prune-cache "$@"
+  }
+
+  (
+    local fixture lock_dir
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-dry.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-dry-locks.XXXXXX)"
+    trap 'rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    mkdir -p "$fixture/clients/apple/.build/pool-0/DerivedData"
+    mkdir -p "$fixture/clients/apple/.build/logs"
+    echo cache > "$fixture/clients/apple/.build/pool-0/DerivedData/x"
+    echo keep > "$fixture/clients/apple/.build/logs/summary.json"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli >/dev/null \
+      || die "self-test: dry-run prune-cache failed"
+    [[ -d "$fixture/clients/apple/.build/pool-0/DerivedData" ]] \
+      || die "self-test: dry-run deleted pool-0"
+    [[ -f "$fixture/clients/apple/.build/logs/summary.json" ]] \
+      || die "self-test: dry-run removed logs"
+    [[ -z "$(find "$lock_dir" -mindepth 1 -maxdepth 1 2>/dev/null)" ]] \
+      || die "self-test: dry-run created slot locks"
+  )
+
+  (
+    local fixture lock_dir build
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-apply.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-apply-locks.XXXXXX)"
+    trap 'rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    build="$fixture/clients/apple/.build"
+    mkdir -p "$build/pool-0/DerivedData" "$build/pool-12/DerivedData" "$build/pool-foo"
+    mkdir -p "$build/logs" "$build/videos" "$build/mac-tests" "$build/mac-debug" "$build/pre-push-mac" "$build/ci"
+    echo cache0 > "$build/pool-0/DerivedData/x"
+    echo cache12 > "$build/pool-12/DerivedData/x"
+    echo keep-foo > "$build/pool-foo/keep"
+    echo log > "$build/logs/summary.json"
+    echo vid > "$build/videos/clip.mp4"
+    echo mac > "$build/mac-tests/x"
+    echo macd > "$build/mac-debug/x"
+    echo prep > "$build/pre-push-mac/x"
+    echo ci > "$build/ci/x"
+    echo file > "$build/pool-3"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli --apply >/dev/null \
+      || die "self-test: apply prune-cache failed"
+    [[ ! -e "$build/pool-0" ]] || die "self-test: apply left pool-0"
+    [[ ! -e "$build/pool-12" ]] || die "self-test: apply left pool-12 outside the default slot range"
+    [[ -f "$build/pool-foo/keep" ]] || die "self-test: apply deleted nonnumeric pool-foo"
+    [[ -f "$build/logs/summary.json" ]] || die "self-test: apply deleted logs"
+    [[ -f "$build/videos/clip.mp4" ]] || die "self-test: apply deleted videos"
+    [[ -f "$build/mac-tests/x" ]] || die "self-test: apply deleted mac-tests"
+    [[ -f "$build/mac-debug/x" ]] || die "self-test: apply deleted mac-debug"
+    [[ -f "$build/pre-push-mac/x" ]] || die "self-test: apply deleted pre-push-mac"
+    [[ -f "$build/ci/x" ]] || die "self-test: apply deleted ci"
+    [[ -f "$build/pool-3" ]] || die "self-test: apply deleted non-directory pool-3"
+    [[ -z "$(find "$lock_dir" -mindepth 1 -maxdepth 1 2>/dev/null)" ]] \
+      || die "self-test: apply left slot locks behind"
+  )
+
+  (
+    local fixture lock_dir
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-missing.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-missing-locks.XXXXXX)"
+    trap 'rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli --apply >/dev/null \
+      || die "self-test: missing .build was not harmless"
+    mkdir -p "$fixture/clients/apple/.build"
+    run_prune_cli --apply >/dev/null \
+      || die "self-test: empty .build was not harmless"
+    [[ -d "$fixture/clients/apple/.build" ]] \
+      || die "self-test: missing-dir apply removed .build"
+  )
+
+  (
+    local parent fixture sibling lock_dir
+    parent="$(mktemp -d -t oppi-sim-pool-prune-sib.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-sib-locks.XXXXXX)"
+    fixture="$parent/tree-a"
+    sibling="$parent/tree-b"
+    trap 'rm -rf "$parent" "$lock_dir"' EXIT
+    mkdir -p "$fixture" "$sibling"
+    init_prune_fixture "$fixture"
+    init_prune_fixture "$sibling"
+    mkdir -p "$fixture/clients/apple/.build/pool-0" "$sibling/clients/apple/.build/pool-0"
+    echo a > "$fixture/clients/apple/.build/pool-0/x"
+    echo b > "$sibling/clients/apple/.build/pool-0/x"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli --apply >/dev/null \
+      || die "self-test: sibling prune-cache failed"
+    [[ ! -e "$fixture/clients/apple/.build/pool-0" ]] \
+      || die "self-test: apply did not delete this checkout's pool-0"
+    [[ -f "$sibling/clients/apple/.build/pool-0/x" ]] \
+      || die "self-test: apply deleted a sibling worktree pool dir"
+  )
+
+  (
+    local fixture lock_dir build real status=0
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-symlink-root.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-symlink-root-locks.XXXXXX)"
+    trap 'rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    build="$fixture/clients/apple/.build"
+    real="$fixture/real-build"
+    rm -rf "$build"
+    mkdir -p "$real/pool-0"
+    echo cache > "$real/pool-0/x"
+    ln -s "$real" "$build"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli --apply >/dev/null || status=$?
+    [[ "$status" -ne 0 ]] || die "self-test: symlinked cleanup root was accepted"
+    [[ -f "$real/pool-0/x" ]] || die "self-test: symlinked cleanup root deleted the target"
+  )
+
+  (
+    local fixture lock_dir build outside
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-symlink-target.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-symlink-target-locks.XXXXXX)"
+    trap 'rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    build="$fixture/clients/apple/.build"
+    outside="$fixture/outside-pool"
+    mkdir -p "$outside" "$build/pool-1"
+    echo keep > "$outside/x"
+    echo gone > "$build/pool-1/x"
+    ln -s "$outside" "$build/pool-0"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli --apply >/dev/null \
+      || die "self-test: symlink target skip failed the prune"
+    [[ -L "$build/pool-0" ]] || die "self-test: pool-0 symlink was removed"
+    [[ -f "$outside/x" ]] || die "self-test: symlink pool dir deleted its target"
+    [[ ! -e "$build/pool-1" ]] || die "self-test: apply left a numeric pool dir after skipping a symlink"
+  )
+
+  (
+    local fixture lock_dir status=0
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-oppi-root.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-oppi-root-locks.XXXXXX)"
+    trap 'rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    mkdir -p "$fixture/clients/apple/.build/pool-0"
+    echo cache > "$fixture/clients/apple/.build/pool-0/x"
+    cd "$fixture"
+    env PIOS_ROOT="" OPPI_ROOT="/tmp/oppi-prune-cache-other" \
+      OPPI_SIM_POOL_LOCK_DIR="$lock_dir" \
+      "$script" prune-cache --apply >/dev/null || status=$?
+    [[ "$status" -ne 0 ]] || die "self-test: conflicting OPPI_ROOT was accepted"
+    [[ -f "$fixture/clients/apple/.build/pool-0/x" ]] \
+      || die "self-test: conflicting OPPI_ROOT still deleted pool dirs"
+  )
+
+  (
+    local fixture lock_dir build
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-live-lock.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-live-lock-locks.XXXXXX)"
+    trap 'rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    build="$fixture/clients/apple/.build"
+    mkdir -p "$build/pool-0" "$build/pool-1"
+    echo live > "$build/pool-0/x"
+    echo idle > "$build/pool-1/x"
+    mkdir -p "$lock_dir/slot-0"
+    echo $$ > "$lock_dir/slot-0/pid"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli --apply >/dev/null \
+      || die "self-test: live lock skip failed the prune"
+    [[ -f "$build/pool-0/x" ]] || die "self-test: live lock did not prevent pool-0 deletion"
+    [[ ! -e "$build/pool-1" ]] || die "self-test: apply left an unlocked pool dir"
+    [[ -f "$lock_dir/slot-0/pid" ]] || die "self-test: live lock was removed"
+    [[ ! -e "$lock_dir/slot-1" ]] || die "self-test: apply left a lock for a deleted slot"
+  )
+
+  (
+    local fixture lock_dir build
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-ambiguous.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-ambiguous-locks.XXXXXX)"
+    trap 'rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    build="$fixture/clients/apple/.build"
+    mkdir -p "$build/pool-0" "$build/pool-1" "$build/pool-2"
+    echo a > "$build/pool-0/x"
+    echo b > "$build/pool-1/x"
+    echo c > "$build/pool-2/x"
+    mkdir -p "$lock_dir/slot-0" "$lock_dir/slot-1"
+    echo 'not-a-pid' > "$lock_dir/slot-1/pid"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli --apply >/dev/null \
+      || die "self-test: ambiguous lock skip failed the prune"
+    [[ -f "$build/pool-0/x" ]] || die "self-test: lock without pid was treated as idle"
+    [[ -f "$build/pool-1/x" ]] || die "self-test: nonnumeric lock pid was treated as idle"
+    [[ ! -e "$build/pool-2" ]] || die "self-test: apply left an unambiguous idle pool dir"
+  )
+
+  (
+    local fixture lock_dir build status=0
+    fixture="$(mktemp -d -t oppi-sim-pool-prune-lock-fail.XXXXXX)"
+    lock_dir="$(mktemp -d -t oppi-sim-pool-prune-lock-fail-locks.XXXXXX)"
+    trap 'chflags -R nouchg "$fixture" 2>/dev/null || true; rm -rf "$fixture" "$lock_dir"' EXIT
+    init_prune_fixture "$fixture"
+    build="$fixture/clients/apple/.build"
+    mkdir -p "$build/pool-0"
+    echo cache > "$build/pool-0/x"
+    chflags uchg "$build/pool-0"
+    LOCK_DIR="$lock_dir"
+    cd "$fixture"
+    run_prune_cli --apply >/dev/null || status=$?
+    chflags nouchg "$build/pool-0"
+    [[ "$status" -ne 0 ]] || die "self-test: immutable pool dir deletion was reported as success"
+    [[ -f "$build/pool-0/x" ]] || die "self-test: immutable pool dir was deleted"
+    [[ -z "$(find "$lock_dir" -mindepth 1 -maxdepth 1 2>/dev/null)" ]] \
+      || die "self-test: slot lock was not released after deletion failure"
+  )
+
+  unset -f init_prune_fixture run_prune_cli
 }
 
 has_only_testing_target() {
@@ -799,6 +1044,160 @@ acquire_slot() {
 release_slot() {
   local slot="$1"
   rm -rf "$LOCK_DIR/slot-${slot}"
+}
+
+canonical_path() {
+  python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+try:
+    print(Path(sys.argv[1]).resolve(strict=False))
+except OSError:
+    sys.exit(1)
+PY
+}
+
+is_numeric_pool_name() {
+  local base="$1"
+  local slot="${base#pool-}"
+  [[ "$base" == pool-* ]] || return 1
+  case "$slot" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  return 0
+}
+
+try_acquire_prune_slot() {
+  local slot="$1"
+  local lock_path="$LOCK_DIR/slot-${slot}"
+  mkdir -p "$LOCK_DIR" || return 1
+
+  if mkdir "$lock_path" 2>/dev/null; then
+    if ! echo $$ > "$lock_path/pid"; then
+      rm -rf "$lock_path"
+      return 1
+    fi
+    return 0
+  fi
+
+  local pid=""
+  if [[ -f "$lock_path/pid" ]]; then
+    pid="$(cat "$lock_path/pid" 2>/dev/null || true)"
+  fi
+  pid="${pid//$'\n'/}"
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+
+  if kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+
+  echo "[sim-pool] prune-cache: reaping stale lock for slot $slot (PID $pid dead)" >&2
+  rm -rf "$lock_path"
+  if mkdir "$lock_path" 2>/dev/null; then
+    if ! echo $$ > "$lock_path/pid"; then
+      rm -rf "$lock_path"
+      return 1
+    fi
+    return 0
+  fi
+  return 1
+}
+
+resolve_prune_cache_root() {
+  local git_root
+  git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$git_root" ]] || die "prune-cache requires a Git checkout"
+  [[ -d "$git_root/clients/apple" ]] || die "prune-cache: checkout is missing clients/apple"
+
+  if [[ "${OPPI_ROOT_FROM_ENV:-0}" == "1" ]]; then
+    local env_canon git_canon
+    env_canon="$(canonical_path "$OPPI_ROOT")" || die "prune-cache: OPPI_ROOT is not resolvable"
+    git_canon="$(canonical_path "$git_root")" || die "prune-cache: git checkout is not resolvable"
+    if [[ "$env_canon" != "$git_canon" ]]; then
+      die "prune-cache: OPPI_ROOT '$OPPI_ROOT' does not match Git checkout '$git_root'"
+    fi
+  fi
+
+  PRUNE_CHECKOUT="$git_root"
+  PRUNE_APPLE_DIR="$git_root/clients/apple"
+  PRUNE_BUILD_BASE="$PRUNE_APPLE_DIR/.build"
+}
+
+prune_cache() {
+  local apply=0
+  case "${1:-}" in
+    "")
+      ;;
+    --apply)
+      apply=1
+      [[ -z "${2:-}" ]] || die "usage: sim-pool.sh prune-cache [--apply]"
+      ;;
+    *)
+      die "usage: sim-pool.sh prune-cache [--apply]"
+      ;;
+  esac
+
+  resolve_prune_cache_root
+
+  if [[ -L "$PRUNE_CHECKOUT" || -L "$PRUNE_APPLE_DIR" || -L "$PRUNE_BUILD_BASE" ]]; then
+    die "prune-cache: refusing symlinked cleanup root"
+  fi
+
+  if [[ ! -e "$PRUNE_BUILD_BASE" ]]; then
+    echo "[sim-pool] prune-cache: no $PRUNE_BUILD_BASE" >&2
+    return 0
+  fi
+  if [[ ! -d "$PRUNE_BUILD_BASE" ]]; then
+    die "prune-cache: cleanup root is not a directory: $PRUNE_BUILD_BASE"
+  fi
+
+  if (( apply == 0 )); then
+    echo "[sim-pool] prune-cache: dry-run (pass --apply to delete numeric pool dirs; next build recompiles)" >&2
+  fi
+
+  local path base slot parent status=0
+  for path in "$PRUNE_BUILD_BASE"/pool-*; do
+    [[ -e "$path" ]] || continue
+    base="${path##*/}"
+    is_numeric_pool_name "$base" || continue
+    parent="$(dirname "$path")"
+    [[ "$parent" == "$PRUNE_BUILD_BASE" ]] || continue
+    slot="${base#pool-}"
+
+    if [[ -L "$path" ]]; then
+      echo "[sim-pool] prune-cache: skipping symlinked $path" >&2
+      continue
+    fi
+    if [[ ! -d "$path" ]]; then
+      echo "[sim-pool] prune-cache: skipping non-directory $path" >&2
+      continue
+    fi
+
+    if (( apply == 0 )); then
+      echo "[sim-pool] prune-cache: would delete $path" >&2
+      continue
+    fi
+
+    if ! try_acquire_prune_slot "$slot"; then
+      echo "[sim-pool] prune-cache: skipping busy or ambiguous slot $slot" >&2
+      continue
+    fi
+
+    echo "[sim-pool] prune-cache: deleting $path" >&2
+    if rm -rf "$path" && [[ ! -e "$path" ]]; then
+      release_slot "$slot"
+      continue
+    fi
+
+    echo "[sim-pool] prune-cache: failed to delete $path" >&2
+    release_slot "$slot"
+    status=1
+  done
+
+  return "$status"
 }
 
 cleanup_run() {
@@ -1297,6 +1696,7 @@ Usage:
   sim-pool.sh self-test
   sim-pool.sh status
   sim-pool.sh shutdown-idle
+  sim-pool.sh prune-cache [--apply]
 
 run acquires a simulator pool slot, injects -destination and -derivedDataPath,
 runs xcodebuild, and releases the slot on exit. An already-booted pool
@@ -1308,6 +1708,9 @@ COMPILER_INDEX_STORE_ENABLE.
 
 status prints pool locks, pool devices, build-cache sizes, and recent run timing.
 shutdown-idle shuts down Oppi-Pool simulators that do not have a live lock.
+prune-cache dry-runs deletion of this checkout's numeric clients/apple/.build/pool-*
+directories. Pass --apply to delete them. Live or ambiguous slot locks are skipped.
+The next simulator build in that tree recompiles DerivedData from scratch.
 
 Do NOT pass -destination or -derivedDataPath — they are auto-injected.
 Use '-scheme OppiUnitTests' for OppiTests unit-test runs.
@@ -1467,6 +1870,11 @@ case "${1:-}" in
     validate_pool_config
     shutdown_idle
     exit 0
+    ;;
+  prune-cache)
+    shift
+    prune_cache "$@"
+    exit $?
     ;;
   run)
     shift
