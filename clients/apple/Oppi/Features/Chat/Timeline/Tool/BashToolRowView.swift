@@ -143,11 +143,13 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     func applyTheme(_ palette: ThemePalette) {
         commandContainer.backgroundColor = UIColor(palette.bgHighlight)
         commandContainer.layer.borderColor = UIColor(palette.blue.opacity(0.35)).cgColor
-        commandLabel.textColor = UIColor(palette.fg)
+        // Do not assign UITextView.textColor here. That property paints the
+        // entire attributed string, wiping shell/ANSI colors. Command and
+        // output signatures already include the active theme, so `apply`
+        // re-highlights when the palette actually changes.
 
         outputContainer.backgroundColor = UIColor(palette.bgDark)
         outputContainer.layer.borderColor = UIColor(palette.comment.opacity(0.2)).cgColor
-        outputLabel.textColor = UIColor(palette.fg)
     }
 
     /// Render bash content.

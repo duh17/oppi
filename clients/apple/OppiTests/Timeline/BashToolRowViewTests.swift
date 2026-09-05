@@ -325,4 +325,64 @@ struct BashToolRowViewTests {
         // Same attributed string object (no rerender means same reference)
         #expect(firstAttr === secondAttr || firstAttr.string == secondAttr.string)
     }
+
+    @Test("highlighted command keeps mixed syntax colors after applyTheme")
+    func applyThemePreservesCommandSyntaxColors() throws {
+        let view = BashToolRowView()
+        let input = BashRenderInput(
+            command: "echo 'hello' && ls -la",
+            output: nil,
+            unwrapped: false,
+            isError: false,
+            isStreaming: false
+        )
+        _ = view.apply(input: input, outputColor: .white, wasOutputVisible: false)
+
+        let highlighted = try #require(view.commandLabel.attributedText)
+        let colorsBefore = uniqueForegroundColorCount(highlighted)
+        #expect(colorsBefore >= 2)
+
+        view.applyTheme(ThemePalettes.dark)
+        _ = view.apply(input: input, outputColor: .white, wasOutputVisible: false)
+
+        let after = try #require(view.commandLabel.attributedText)
+        #expect(uniqueForegroundColorCount(after) >= 2)
+    }
+
+    @Test("highlighted ANSI output keeps mixed colors after applyTheme")
+    func applyThemePreservesOutputANSIColors() throws {
+        let view = BashToolRowView()
+        let input = BashRenderInput(
+            command: nil,
+            output: "\u{1B}[32mgreen\u{1B}[0m plain",
+            unwrapped: false,
+            isError: false,
+            isStreaming: false
+        )
+        _ = view.apply(input: input, outputColor: .white, wasOutputVisible: false)
+
+        let highlighted = try #require(view.outputLabel.attributedText)
+        let colorsBefore = uniqueForegroundColorCount(highlighted)
+        #expect(colorsBefore >= 2)
+
+        view.applyTheme(ThemePalettes.dark)
+        _ = view.apply(input: input, outputColor: .white, wasOutputVisible: false)
+
+        let after = try #require(view.outputLabel.attributedText)
+        #expect(uniqueForegroundColorCount(after) >= 2)
+    }
+}
+
+private func uniqueForegroundColorCount(_ attributed: NSAttributedString) -> Int {
+    var colors: [UIColor] = []
+    attributed.enumerateAttribute(
+        .foregroundColor,
+        in: NSRange(location: 0, length: attributed.length)
+    ) { value, _, _ in
+        guard let color = value as? UIColor else { return }
+        if !colors.contains(where: { $0.isEqual(color) }) {
+            colors.append(color)
+        }
+    }
+    return colors.count
 }
