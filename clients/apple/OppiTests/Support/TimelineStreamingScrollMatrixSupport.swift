@@ -162,7 +162,7 @@ final class TimelineStreamingScrollScenarioRunner {
     init(
         sessionSuffix: String,
         followState: TimelineFollowAttachmentState,
-        useAnchoredCollectionView: Bool = false
+        useAnchoredCollectionView: Bool = true
     ) {
         self.sessionId = "s-stream-scroll-matrix-\(sessionSuffix)"
         self.followState = followState

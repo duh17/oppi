@@ -35,30 +35,6 @@ struct TimelineOffsetControllerTests {
         #expect(collectionView.contentOffset.y == 120)
     }
 
-    @Test func detachedFallbackAppliesOnlyWhileDetached() {
-        let (collectionView, scrollController) = makeOffsetPolicyFixture(startingOffsetY: 120)
-        scrollController.detachFromBottomForUserScroll()
-
-        let detachedApplied = TimelineOffsetController.apply(
-            targetOffsetY: 360,
-            reason: .detachedFallback,
-            collectionView: collectionView,
-            scrollController: scrollController
-        )
-        #expect(detachedApplied)
-        #expect(collectionView.contentOffset.y == 360)
-
-        scrollController.updateNearBottom(true)
-        let attachedApplied = TimelineOffsetController.apply(
-            targetOffsetY: 520,
-            reason: .detachedFallback,
-            collectionView: collectionView,
-            scrollController: scrollController
-        )
-        #expect(!attachedApplied)
-        #expect(collectionView.contentOffset.y == 360)
-    }
-
     @Test func programmaticTopAlignmentCanApplyWhileDetached() {
         let (collectionView, scrollController) = makeOffsetPolicyFixture(startingOffsetY: 120)
         scrollController.detachFromBottomForUserScroll()

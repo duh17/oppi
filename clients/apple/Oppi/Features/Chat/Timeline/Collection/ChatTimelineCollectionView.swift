@@ -357,8 +357,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         /// reading, including a tall just-sent user message.
         let nearBottomEnterThreshold: CGFloat = 32
         let nearBottomExitThreshold: CGFloat = 32
-        let detachedProgrammaticArmMinDelta: CGFloat = 120
-        let detachedProgrammaticCorrectionMaxDelta: CGFloat = 100
 
         var currentIDs: [String] = []
 
@@ -431,8 +429,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var lastHandledScrollCommandNonce = 0
         var lastObservedContentOffsetY: CGFloat?
         var lastObservedContentHeight: CGFloat?
-        var detachedProgrammaticTargetOffsetY: CGFloat?
-        var isApplyingDetachedProgrammaticCorrection = false
         var isTimelineBusy = false
         /// Rendering/sizing must stop treating an assistant as streaming as soon
         /// as execution becomes idle, even if the reducer retains its final ID
@@ -811,8 +807,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 cancelTimelinePreparation()
                 lastObservedContentOffsetY = nil
                 lastObservedContentHeight = nil
-                detachedProgrammaticTargetOffsetY = nil
-                isApplyingDetachedProgrammaticCorrection = false
                 configuration.scrollController.setUserInteracting(false)
                 configuration.scrollController.setDetachedStreamingHintVisible(false)
                 configuration.scrollController.setJumpToBottomHintVisible(false)

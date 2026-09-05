@@ -8,9 +8,6 @@ import Foundation
 /// policy to determine the render tier (cheap/deferred/full) instead of
 /// making independent `isStreaming` decisions. One place to tune
 /// thresholds, one place to test tier logic.
-///
-/// Auto-follow and scroll-reset behavior remain per-strategy for now
-/// (documented here as behavioral metadata for future unification).
 @MainActor
 enum StreamingRenderPolicy {
 
@@ -183,15 +180,6 @@ enum StreamingRenderPolicy {
         /// Read-media, plot, and other embedded views — always full.
         // periphery:ignore - exhaustive switch coverage; tested in StreamingRenderPolicyTests
         case media
-
-        /// Whether this content kind has a deferred path in the current
-        /// implementation. Only code does.
-        var supportsDeferredRendering: Bool {
-            switch self {
-            case .code: true
-            case .markdown, .diff, .plainText, .bash, .media: false
-            }
-        }
     }
 
     /// Coarse language category for threshold decisions.
@@ -322,97 +310,6 @@ enum StreamingRenderPolicy {
                 return .deferred
             }
             return .full
-        }
-    }
-
-    // MARK: - Signature Inclusion
-
-    /// Whether `isStreaming` is included in the render signature hash for
-    /// the given content kind.
-    ///
-    /// All text-based strategies include `isStreaming` in their signature
-    /// so the streaming→done transition forces a re-render (upgrading from
-    /// cheap plain text to full highlighting/parsing).
-    ///
-    /// Media has no streaming concept and no signature-based re-render gate.
-    static func signatureIncludesStreamingFlag(for contentKind: ContentKind) -> Bool {
-        switch contentKind {
-        case .code, .plainText, .diff, .bash, .markdown:
-            return true
-        case .media:
-            return false
-        }
-    }
-
-    // MARK: - Auto-Follow Behavior
-
-    /// Describes how a strategy handles auto-follow on cell reuse during streaming.
-    enum CellReuseAutoFollowBehavior: String, Sendable, Equatable {
-        /// Enables auto-follow when content is not a continuation (code, text).
-        case enableOnNonContinuation
-        /// Disables auto-follow when content is not a continuation (diff).
-        case disableOnNonContinuation
-        /// Disables auto-follow based on done state, not continuation (markdown).
-        case disableOnDone
-        /// No continuation check at all (bash).
-        case noCheck
-    }
-
-    /// Returns how the given content kind handles auto-follow when a cell is
-    /// reused during streaming and the new content is NOT a continuation of
-    /// the previous content.
-    ///
-    /// This exposes a real inconsistency: code and text enable auto-follow
-    /// for the new content, but diff disables it, and bash doesn't check.
-    static func cellReuseAutoFollowBehavior(for contentKind: ContentKind) -> CellReuseAutoFollowBehavior {
-        switch contentKind {
-        case .code:
-            return .enableOnNonContinuation
-        case .plainText:
-            return .enableOnNonContinuation
-        case .diff:
-            return .disableOnNonContinuation
-        case .markdown:
-            return .disableOnDone
-        case .bash:
-            return .noCheck
-        case .media:
-            return .noCheck
-        }
-    }
-
-    // MARK: - Scroll Reset Behavior
-
-    /// Describes when a strategy resets scroll position on re-render.
-    // periphery:ignore - used by StreamingRenderPolicyTests via @testable import
-    enum ScrollResetBehavior: String, Sendable, Equatable {
-        /// Resets only when `!isStreaming` (code, diff).
-        case onlyWhenNotStreaming
-        /// Always resets on re-render, no streaming guard (text).
-        case always
-        /// Resets only when not auto-following (markdown).
-        case onlyWhenNotAutoFollowing
-        /// No scroll reset logic (bash output uses auto-follow only).
-        case noReset
-    }
-
-    /// Returns how the given content kind handles scroll position reset
-    /// when a re-render occurs.
-    ///
-    /// Inconsistency: text always resets (even during streaming rerenders
-    /// triggered by signature changes), while code/diff guard against it.
-    static func scrollResetBehavior(for contentKind: ContentKind) -> ScrollResetBehavior {
-        switch contentKind {
-        case .code, .diff:
-            return .onlyWhenNotStreaming
-        case .plainText:
-            return .always
-        case .markdown:
-            return .onlyWhenNotAutoFollowing
-        case .bash:
-            return .noReset
-        case .media:
-            return .noReset
         }
     }
 

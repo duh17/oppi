@@ -111,7 +111,7 @@ struct ScrollStabilityTests {
         // Reproduce: user is scrolled up; tool calls transition from running
         // to done (height changes), new items are inserted. Viewport must stay.
         let window = makeScrollTestWindow()
-        let collectionView = UICollectionView(
+        let collectionView = AnchoredCollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
         )
@@ -229,7 +229,7 @@ struct ScrollStabilityTests {
         // must stay pinned. This exercises the estimated-size layout path
         // where items above AND below the viewport have been estimated.
         let window = makeScrollTestWindow()
-        let collectionView = UICollectionView(
+        let collectionView = AnchoredCollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
         )
@@ -459,7 +459,7 @@ struct ScrollStabilityTests {
         // Key: the target cell must be visible (cellForItem != nil) so this
         // exercises the real tap/reconfigure path.
         let window = makeScrollTestWindow()
-        let collectionView = UICollectionView(
+        let collectionView = AnchoredCollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
         )
@@ -557,7 +557,7 @@ struct ScrollStabilityTests {
         // animateToolRowExpansion invalidates layout, scrollViewDidScroll fires
         // with negative deltaY, detachFromBottomForUserScroll() breaks follow.
         let window = makeScrollTestWindow()
-        let collectionView = UICollectionView(
+        let collectionView = AnchoredCollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
         )
@@ -637,7 +637,7 @@ struct ScrollStabilityTests {
         // via tap. The row shrinks below its header, so the header's top edge
         // must remain stable on screen.
         let window = makeScrollTestWindow()
-        let collectionView = UICollectionView(
+        let collectionView = AnchoredCollectionView(
             frame: window.bounds,
             collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
         )

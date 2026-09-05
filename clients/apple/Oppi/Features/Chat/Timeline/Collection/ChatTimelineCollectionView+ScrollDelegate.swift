@@ -61,86 +61,22 @@ extension ChatTimelineCollectionHost.Controller {
         let previousOffset = lastObservedContentOffsetY ?? scrollView.contentOffset.y
         let deltaY = scrollView.contentOffset.y - previousOffset
 
-        if isApplyingDetachedProgrammaticCorrection {
+        if isUserDriven, deltaY < -0.5 {
+            // User is scrolling up: detach and skip position-based
+            // re-evaluation so updateScrollState cannot immediately
+            // re-attach within the same callback.
+            scrollController?.detachFromBottomForUserScroll()
             lastObservedContentOffsetY = scrollView.contentOffset.y
+            // Detaching must still sample the live viewport. Returning
+            // without this left navigation restoration holding the last
+            // tail-attached anchor from before the user's drag.
+            updateScrollState(collectionView, preserveDetachedState: true)
+            if let anchoredCV = collectionView as? AnchoredCollectionView {
+                anchoredCV.isDetachedFromBottom = true
+                anchoredCV.captureDetachedAnchor()
+            }
+            updateDetachedStreamingHintVisibility()
             return
-        }
-
-        if isUserDriven {
-            if deltaY < -0.5 {
-                // User is scrolling up: detach and skip position-based
-                // re-evaluation so updateScrollState cannot immediately
-                // re-attach within the same callback.
-                scrollController?.detachFromBottomForUserScroll()
-                detachedProgrammaticTargetOffsetY = nil
-                lastObservedContentOffsetY = scrollView.contentOffset.y
-                // Detaching must still sample the live viewport. Returning
-                // without this left navigation restoration holding the last
-                // tail-attached anchor from before the user's drag.
-                updateScrollState(collectionView, preserveDetachedState: true)
-                if let anchoredCV = collectionView as? AnchoredCollectionView {
-                    anchoredCV.isDetachedFromBottom = true
-                    anchoredCV.captureDetachedAnchor()
-                }
-                updateDetachedStreamingHintVisibility()
-                return
-            }
-
-            detachedProgrammaticTargetOffsetY = nil
-        } else if !alreadyAttached,
-                  !(collectionView is AnchoredCollectionView) {
-            // Detached + programmatic offset changes can trigger UIKit
-            // offset jumps while self-sizing settles. For detached users,
-            // preserve viewport stability across large passive jumps caused
-            // by busy timeline growth (append/reflow), but still allow
-            // intentional programmatic navigation jumps.
-            if isTimelineBusy,
-               abs(contentHeightDelta) > 0.5,
-               abs(deltaY) >= detachedProgrammaticCorrectionMaxDelta {
-                isApplyingDetachedProgrammaticCorrection = true
-                let didApply = TimelineOffsetController.apply(
-                    targetOffsetY: previousOffset,
-                    reason: .detachedFallback,
-                    collectionView: collectionView,
-                    scrollController: scrollController
-                )
-                isApplyingDetachedProgrammaticCorrection = false
-                detachedProgrammaticTargetOffsetY = nil
-                let correctedOffsetY = didApply ? collectionView.contentOffset.y : previousOffset
-                lastObservedContentOffsetY = correctedOffsetY
-                updateLastDistanceFromBottom(scrollView)
-                updateDetachedStreamingHintVisibility()
-                return
-            }
-
-            // Keep the large jump target and ignore a single small
-            // follow-up snap (estimated -> actual heights).
-            if let targetOffsetY = detachedProgrammaticTargetOffsetY,
-               abs(deltaY) > 0.5,
-               abs(deltaY) < detachedProgrammaticCorrectionMaxDelta {
-                isApplyingDetachedProgrammaticCorrection = true
-                let didApply = TimelineOffsetController.apply(
-                    targetOffsetY: targetOffsetY,
-                    reason: .detachedFallback,
-                    collectionView: collectionView,
-                    scrollController: scrollController
-                )
-                isApplyingDetachedProgrammaticCorrection = false
-                detachedProgrammaticTargetOffsetY = nil
-                let correctedOffsetY = didApply ? collectionView.contentOffset.y : targetOffsetY
-                lastObservedContentOffsetY = correctedOffsetY
-                updateLastDistanceFromBottom(scrollView)
-                updateDetachedStreamingHintVisibility()
-                return
-            }
-
-            if abs(deltaY) >= detachedProgrammaticArmMinDelta {
-                detachedProgrammaticTargetOffsetY = scrollView.contentOffset.y
-            } else if abs(deltaY) >= detachedProgrammaticCorrectionMaxDelta {
-                detachedProgrammaticTargetOffsetY = nil
-            }
-        } else {
-            detachedProgrammaticTargetOffsetY = nil
         }
 
         if !isUserDriven,

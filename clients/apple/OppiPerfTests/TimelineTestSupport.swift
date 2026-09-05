@@ -353,7 +353,7 @@ func makeTimelineHarness(sessionId: String) -> TimelineTestHarness {
 func makeWindowedTimelineHarness(
     sessionId: String,
     frame: CGRect = CGRect(x: 0, y: 0, width: 390, height: 844),
-    useAnchoredCollectionView: Bool = false
+    useAnchoredCollectionView: Bool = true
 ) -> WindowedTimelineHarness {
     let window = UIWindow(frame: frame)
     let layout = ChatTimelineCollectionHost.makeTestLayout()

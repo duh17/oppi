@@ -274,13 +274,9 @@ final class AssistantMarkdownSegmentApplier {
     private var highlightTasks: [Int: Task<Void, Never>] = [:]
     private var sourceLineRanges: [ClosedRange<Int>?] = []
 
-    /// Cached NSAttributedString for the streaming tail segment. Maintained
-    /// incrementally (append-only) to avoid O(total) NSAttributedString conversion
-    /// on every streaming tick.
-    private var cachedStreamingTailNS: NSMutableAttributedString?
-    /// Plain-text mirror of `cachedStreamingTailNS` for prefix validation.
-    /// Reading `NSMutableAttributedString.string` rebuilds a Swift string; keep
-    /// the append-only plain text beside the attributed cache instead.
+    /// Plain-text UTF-16 mirror of the streaming tail for prefix validation
+    /// and append eligibility. Reading `NSAttributedString.string` rebuilds a
+    /// Swift string; keep the append-only plain text instead.
     private var cachedStreamingTailPlain: NSMutableString?
     /// Full raw markdown content that produced the cached streaming tail.
     /// Used only to detect append-only prose deltas that cannot close inline
@@ -398,7 +394,6 @@ final class AssistantMarkdownSegmentApplier {
 
     func clear(preservingVideos: [NativeMarkdownVideoView] = []) {
         chunkSettleAnimator.cancelAndSnap()
-        cachedStreamingTailNS = nil
         cachedStreamingTailPlain = nil
         cachedStreamingSourceContent = nil
 
@@ -527,7 +522,6 @@ final class AssistantMarkdownSegmentApplier {
         self.sourceLineRanges = sourceLineRanges
         if !config.isStreaming {
             chunkSettleAnimator.cancelAndSnap()
-            cachedStreamingTailNS = nil
             cachedStreamingTailPlain = nil
             cachedStreamingSourceContent = nil
         }
@@ -607,7 +601,6 @@ final class AssistantMarkdownSegmentApplier {
             if case .text = $0 { return true } else { return false }
         }), let tv = textViews[lastIdx] {
             let fullText = tv.attributedText ?? NSAttributedString()
-            cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullText)
             cachedStreamingTailPlain = NSMutableString(string: fullText.string)
             cachedStreamingSourceContent = config.content
         }
@@ -883,7 +876,6 @@ final class AssistantMarkdownSegmentApplier {
         renderedSegmentSignatures = signatures
 
         // Reset incremental cache on structural change.
-        cachedStreamingTailNS = nil
         cachedStreamingTailPlain = nil
         cachedStreamingSourceContent = nil
 
@@ -891,7 +883,6 @@ final class AssistantMarkdownSegmentApplier {
         let lastTextIndex = segments.lastIndex(where: { if case .text = $0 { return true } else { return false } })
         if let lastIdx = lastTextIndex, let tv = textViews[lastIdx] {
             let fullText = tv.attributedText ?? NSAttributedString()
-            cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullText)
             cachedStreamingTailPlain = NSMutableString(string: fullText.string)
             cachedStreamingSourceContent = config.content
         }
@@ -1112,9 +1103,9 @@ final class AssistantMarkdownSegmentApplier {
         // validity still forces a full replace when CommonMark rewrites glyphs.
         let oldLength = textView.textStorage.length
 
-        if let cached = cachedStreamingTailNS,
-           let cachedPlain = cachedStreamingTailPlain,
-           cached.length == oldLength {
+        if let cachedPlain = cachedStreamingTailPlain,
+           cachedStreamingSourceContent != nil,
+           cachedPlain.length == oldLength {
             let markdownNeutral = StreamingMarkdownDelta.isNeutralSourceAppend(
                 previousContent: cachedStreamingSourceContent,
                 currentContent: config.content
@@ -1142,7 +1133,6 @@ final class AssistantMarkdownSegmentApplier {
                 let appendedRange = NSRange(location: oldLength, length: delta.length)
                 chunkSettleAnimator.cancelAndSnap()
                 appendStreamingDelta(delta, to: textView)
-                cached.append(delta)
                 cachedPlain.append(delta.string)
                 cachedStreamingSourceContent = config.content
                 refreshTextViewLayoutAfterContentChange(textView)
@@ -1175,7 +1165,6 @@ final class AssistantMarkdownSegmentApplier {
         #endif
         textView.attributedText = fullNS
         refreshTextViewLayoutAfterContentChange(textView)
-        cachedStreamingTailNS = NSMutableAttributedString(attributedString: fullNS)
         cachedStreamingTailPlain = NSMutableString(string: fullNS.string)
         cachedStreamingSourceContent = config.content
     }

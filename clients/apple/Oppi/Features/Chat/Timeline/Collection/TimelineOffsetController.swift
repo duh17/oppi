@@ -14,7 +14,6 @@ enum TimelineOffsetReason: Equatable {
     case expandCollapse(edge: TimelineAnchorEdge)
     case programmaticTopAlign
     case navigationViewportRestore
-    case detachedFallback
     case viewportPreservation
 }
 
@@ -77,11 +76,6 @@ enum TimelineOffsetController {
             return true
 
         case .expandCollapse, .programmaticTopAlign, .navigationViewportRestore:
-            guard !isUserInteracting(with: collectionView) else { return false }
-            return true
-
-        case .detachedFallback:
-            guard !(scrollController?.isCurrentlyNearBottom ?? true) else { return false }
             guard !isUserInteracting(with: collectionView) else { return false }
             return true
 

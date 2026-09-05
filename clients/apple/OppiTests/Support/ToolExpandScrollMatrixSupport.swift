@@ -452,7 +452,7 @@ struct ToolExpandScrollMatrixFixture {
     static func make(
         for toolCase: ToolExpandScrollMatrixCase,
         sessionSuffix: String,
-        useAnchoredCollectionView: Bool = false
+        useAnchoredCollectionView: Bool = true
     ) -> Self? {
         let harness = makeWindowedTimelineHarness(
             sessionId: "s-tool-matrix-\(toolCase.name)-\(sessionSuffix)",

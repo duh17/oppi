@@ -345,25 +345,6 @@ struct StreamingRenderPolicyInconsistencyTests {
     // FIXED (Phase 2): Markdown signature now includes isStreaming, consistent
     // with all other strategies. Streaming->done transition forces re-render.
 
-    @Test("FIXED: all strategies include isStreaming in signature")
-    func allStrategiesIncludeStreamingInSignature() {
-        let kinds: [StreamingRenderPolicy.ContentKind] = [
-            .code(language: .known),
-            .plainText,
-            .diff,
-            .bash,
-            .markdown,
-        ]
-        for kind in kinds {
-            #expect(
-                StreamingRenderPolicy.signatureIncludesStreamingFlag(for: kind) == true,
-                "All text-based strategies should include isStreaming in signature"
-            )
-        }
-        // Media has no signature-based re-render gate
-        #expect(StreamingRenderPolicy.signatureIncludesStreamingFlag(for: .media) == false)
-    }
-
     @Test("FIXED: verify markdown signature now changes on streaming transition")
     func verifyMarkdownSignatureFixedWithRealImplementation() {
         // Code: signature changes when isStreaming changes
@@ -486,141 +467,6 @@ struct StreamingRenderPolicyInconsistencyTests {
             """)
     }
 
-    // MARK: - INCONSISTENCY 3: Auto-follow on cell reuse during streaming
-
-    // When a cell is reused during streaming (content is NOT a continuation),
-    // strategies disagree about whether to enable or disable auto-follow.
-
-    @Test("INCONSISTENCY: code enables auto-follow on cell reuse but diff disables it")
-    func codeEnablesDiffDisablesOnCellReuse() {
-        let codeBehavior = StreamingRenderPolicy.cellReuseAutoFollowBehavior(for: .code(language: .known))
-        let diffBehavior = StreamingRenderPolicy.cellReuseAutoFollowBehavior(for: .diff)
-
-        #expect(codeBehavior == .enableOnNonContinuation)
-        #expect(diffBehavior == .disableOnNonContinuation,
-            """
-            INCONSISTENCY: When a cell is reused during streaming and the new \
-            content is not a continuation of the old (different tool's output), \
-            code re-enables auto-follow for the new content, but diff DISABLES \
-            it. This means reused diff cells won't auto-scroll to show new \
-            streaming content, while code cells will.
-
-            Code strategy (line ~134):
-                } else if !isStreamingContinuation, shouldRerender {
-                    expandedShouldAutoFollow = true  // re-enable
-
-            Diff strategy (line ~90):
-                } else if !isStreamingContinuation {
-                    expandedShouldAutoFollow = false  // disable (opposite!)
-            """)
-    }
-
-    @Test("INCONSISTENCY: text uses shouldAutoFollowOnFirstRender but code checks isStreaming directly")
-    func textUsesParameterCodeChecksDirectly() {
-        let codeBehavior = StreamingRenderPolicy.cellReuseAutoFollowBehavior(for: .code(language: .known))
-        let textBehavior = StreamingRenderPolicy.cellReuseAutoFollowBehavior(for: .plainText)
-
-        // Both ultimately enable, but the condition paths differ.
-        // Code checks: isStreaming && !isStreamingContinuation && shouldRerender
-        // Text checks: shouldAutoFollowOnFirstRender && shouldRerender && !isStreamingContinuation
-        // The difference: text couples auto-follow to a parameter, code couples to isStreaming.
-        // If shouldAutoFollowOnFirstRender != isStreaming (which shouldn't happen, but
-        // could if called incorrectly), behavior diverges.
-        #expect(codeBehavior == .enableOnNonContinuation)
-        #expect(textBehavior == .enableOnNonContinuation,
-            """
-            Code and text AGREE on the outcome (both enable auto-follow on \
-            cell reuse during streaming), but DISAGREE on the mechanism. Code \
-            checks isStreaming directly; text checks a shouldAutoFollowOnFirstRender \
-            parameter (always set to !isDone by the caller). If a future caller \
-            passes a different value, text behavior would silently diverge.
-            """)
-    }
-
-    @Test("INCONSISTENCY: bash has no cell reuse auto-follow check at all")
-    func bashHasNoCellReuseCheck() {
-        let bashBehavior = StreamingRenderPolicy.cellReuseAutoFollowBehavior(for: .bash)
-
-        #expect(bashBehavior == .noCheck,
-            """
-            INCONSISTENCY: Bash strategy has no isStreamingContinuation check. \
-            When a cell is reused, outputShouldAutoFollow is only set on first \
-            visibility (!wasOutputVisible). If a bash cell is reused for a \
-            different tool's output while already visible, the auto-follow \
-            state from the PREVIOUS tool persists. A user who manually scrolled \
-            up in tool A's output would see tool B's output also not auto-follow, \
-            even though it's fresh content.
-            """)
-    }
-
-    @Test("INCONSISTENCY: markdown disables on done rather than checking continuation")
-    func markdownDisablesOnDoneNotContinuation() {
-        let markdownBehavior = StreamingRenderPolicy.cellReuseAutoFollowBehavior(for: .markdown)
-
-        #expect(markdownBehavior == .disableOnDone,
-            """
-            INCONSISTENCY: Markdown strategy's auto-follow condition is: \
-            if visible && !shouldAutoFollowOnFirstRender && shouldRerender \
-            && !isStreamingContinuation → disable. This is structurally \
-            different from all other strategies: it only acts when content \
-            is DONE (!shouldAutoFollowOnFirstRender), never during streaming. \
-            During streaming cell reuse, markdown auto-follow state is not \
-            updated for the new content.
-            """)
-    }
-
-    // MARK: - INCONSISTENCY 4: Scroll reset behavior
-
-    @Test("INCONSISTENCY: text always resets scroll but code guards with !isStreaming")
-    func textAlwaysResetsScrollCodeGuards() {
-        let textBehavior = StreamingRenderPolicy.scrollResetBehavior(for: .plainText)
-        let codeBehavior = StreamingRenderPolicy.scrollResetBehavior(for: .code(language: .known))
-
-        #expect(textBehavior == .always)
-        #expect(codeBehavior == .onlyWhenNotStreaming,
-            """
-            INCONSISTENCY: When a re-render occurs, text strategy always resets \
-            scroll position (including during streaming signature changes caused \
-            by error state or language changes). Code and diff only reset when \
-            !isStreaming, preserving the user's scroll position during streaming. \
-
-            Text strategy (line ~88):
-                if shouldRerender {
-                    if expandedShouldAutoFollow {
-                        scheduleExpandedAutoScrollToBottomIfNeeded()
-                    } else {
-                        ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
-                    }
-                }
-            // ^ No !isStreaming guard — always enters this block on re-render.
-
-            Code strategy (line ~140):
-                if shouldRerender {
-                    if expandedShouldAutoFollow {
-                        ...
-                    } else if !isStreaming {  // <-- guard
-                        ToolTimelineRowUIHelpers.resetScrollPosition(expandedScrollView)
-                    }
-                }
-            """)
-    }
-
-    @Test("INCONSISTENCY: markdown uses auto-follow guard instead of streaming guard")
-    func markdownUsesAutoFollowGuardForScroll() {
-        let markdownBehavior = StreamingRenderPolicy.scrollResetBehavior(for: .markdown)
-        let codeBehavior = StreamingRenderPolicy.scrollResetBehavior(for: .code(language: .known))
-
-        #expect(markdownBehavior == .onlyWhenNotAutoFollowing)
-        #expect(codeBehavior == .onlyWhenNotStreaming,
-            """
-            INCONSISTENCY: Markdown resets scroll only when NOT auto-following \
-            (regardless of streaming state). Code/diff reset only when NOT streaming \
-            (regardless of auto-follow state). These conditions overlap but aren't \
-            equivalent: during streaming with auto-follow disabled (user scrolled up), \
-            code preserves scroll position but markdown resets it.
-            """)
-    }
-
     // MARK: - INCONSISTENCY 5: Threshold asymmetry
 
     @Test("INCONSISTENCY: unknown language gets 2x tolerance but no other strategy adjusts for content complexity")
@@ -651,31 +497,6 @@ struct StreamingRenderPolicyInconsistencyTests {
             and not applied to any other content kind. If text or bash \
             got a deferred path, they'd need their own complexity-adjusted \
             thresholds but have no infrastructure for it.
-            """)
-    }
-
-    // MARK: - INCONSISTENCY 6: supportsDeferredRendering gap
-
-    @Test("INCONSISTENCY: only code supports deferred rendering")
-    func onlyCodeSupportsDeferredRendering() {
-        let codeSupports = StreamingRenderPolicy.ContentKind.code(language: .known).supportsDeferredRendering
-        let textSupports = StreamingRenderPolicy.ContentKind.plainText.supportsDeferredRendering
-        let diffSupports = StreamingRenderPolicy.ContentKind.diff.supportsDeferredRendering
-        let bashSupports = StreamingRenderPolicy.ContentKind.bash.supportsDeferredRendering
-        let mdSupports = StreamingRenderPolicy.ContentKind.markdown.supportsDeferredRendering
-
-        #expect(codeSupports == true)
-        #expect(textSupports == false)
-        #expect(diffSupports == false)
-        #expect(bashSupports == false)
-        #expect(mdSupports == false,
-            """
-            Only code has a deferred rendering path. This means the transition \
-            from streaming to done is a binary cheap->full jump for all other \
-            content types. For large bash outputs (build logs) or large diffs, \
-            this jump can block the main thread. The policy's tier() function \
-            reflects this current reality — text/diff/bash/markdown can never \
-            return .deferred.
             """)
     }
 
@@ -953,79 +774,6 @@ struct StreamingRenderPolicyCrossStrategyTests {
 
         #expect(deferredCount == 1, "Only 1 content kind defers large content")
         #expect(fullCount == 4, "4 content kinds do full rendering on large content")
-    }
-
-    // MARK: - Signature behavior matrix
-
-    @Test("signature flag matrix: 5 include streaming, 1 does not")
-    func signatureFlagMatrix() {
-        let includesStreaming: [(StreamingRenderPolicy.ContentKind, Bool)] = [
-            (.code(language: .known), true),
-            (.plainText, true),
-            (.diff, true),
-            (.bash, true),
-            (.markdown, true),   // fixed in Phase 2
-            (.media, false),
-        ]
-
-        for (kind, expected) in includesStreaming {
-            let actual = StreamingRenderPolicy.signatureIncludesStreamingFlag(for: kind)
-            #expect(actual == expected, "Signature streaming flag for \(kind)")
-        }
-    }
-
-    // MARK: - Auto-follow behavior matrix
-
-    @Test("auto-follow behavior matrix: strategies disagree on cell reuse")
-    func autoFollowBehaviorMatrix() {
-        let behaviors: [(StreamingRenderPolicy.ContentKind, StreamingRenderPolicy.CellReuseAutoFollowBehavior)] = [
-            (.code(language: .known), .enableOnNonContinuation),
-            (.plainText, .enableOnNonContinuation),
-            (.diff, .disableOnNonContinuation),     // opposite of code!
-            (.markdown, .disableOnDone),             // different mechanism entirely
-            (.bash, .noCheck),                       // no check at all
-            (.media, .noCheck),
-        ]
-
-        for (kind, expected) in behaviors {
-            let actual = StreamingRenderPolicy.cellReuseAutoFollowBehavior(for: kind)
-            #expect(actual == expected, "Cell reuse auto-follow for \(kind)")
-        }
-
-        // Verify the inconsistency: 3 different behaviors across 5 strategy types
-        let uniqueBehaviors = Set(behaviors.prefix(5).map(\.1))
-        #expect(uniqueBehaviors.count >= 3,
-            """
-            At least 3 different auto-follow behaviors exist across 5 strategy \
-            types. A unified policy should pick ONE behavior for cell reuse.
-            """)
-    }
-
-    // MARK: - Scroll reset behavior matrix
-
-    @Test("scroll reset behavior matrix: strategies disagree on when to reset")
-    func scrollResetBehaviorMatrix() {
-        let behaviors: [(StreamingRenderPolicy.ContentKind, StreamingRenderPolicy.ScrollResetBehavior)] = [
-            (.code(language: .known), .onlyWhenNotStreaming),
-            (.diff, .onlyWhenNotStreaming),
-            (.plainText, .always),                   // different from code!
-            (.markdown, .onlyWhenNotAutoFollowing),   // different mechanism
-            (.bash, .noReset),
-            (.media, .noReset),
-        ]
-
-        for (kind, expected) in behaviors {
-            let actual = StreamingRenderPolicy.scrollResetBehavior(for: kind)
-            #expect(actual == expected, "Scroll reset behavior for \(kind)")
-        }
-
-        let uniqueBehaviors = Set(behaviors.prefix(4).map(\.1))
-        #expect(uniqueBehaviors.count >= 3,
-            """
-            At least 3 different scroll reset behaviors exist across 4 text-based \
-            strategy types. Code/diff guard with !isStreaming, text always resets, \
-            markdown guards with !autoFollow.
-            """)
     }
 }
 

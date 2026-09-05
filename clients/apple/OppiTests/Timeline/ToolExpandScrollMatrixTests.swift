@@ -176,7 +176,7 @@ struct ToolExpandScrollMatrixTests {
         let runner = TimelineStreamingScrollScenarioRunner(
             sessionSuffix: matrixCase.name,
             followState: matrixCase.followState,
-            useAnchoredCollectionView: matrixCase.followState == .detachedFollow
+            useAnchoredCollectionView: true
         )
 
         runner.runRound(
