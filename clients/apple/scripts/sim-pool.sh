@@ -16,7 +16,7 @@
 #   builds UI/E2E/perf bundles, which looks like a hung unit-test run.
 #
 # Environment:
-#   OPPI_SIM_POOL_COUNT              Number of pool slots to consider (default: 4)
+#   OPPI_SIM_POOL_COUNT              Number of pool slots to consider (default: 8)
 #   OPPI_SIM_POOL_SLOT_START         First pool slot index to consider (default: 0; OPPI_SIM_POOL_SLOT_OFFSET alias)
 #   OPPI_SIM_DEVICE_TYPE             com.apple.CoreSimulator.SimDeviceType identifier (default: iPhone-16-Pro)
 #   OPPI_SIM_RUNTIME                 com.apple.CoreSimulator.SimRuntime identifier (auto-detected)
@@ -28,6 +28,8 @@
 #   OPPI_SIM_POOL_HANG_RETRIES       Retry count after a silent hang with simulator reset (default: 1)
 #   OPPI_SIM_POOL_KEEP_BOOTED        Keep pool simulator booted after run (default: 1)
 #   OPPI_SIM_POOL_FORCE_CLEAN_BOOT   Recycle the simulator even if it is already booted (default: 0)
+#   OPPI_SIM_SLIM                    Disable unused simulator daemons after boot (default: 1)
+#   OPPI_SIM_POOL_SLIM               Compatibility alias for OPPI_SIM_SLIM
 #   OPPI_SIM_POOL_INDEX_STORE        Set 1 to keep compiler index store enabled (default: 0, injects COMPILER_INDEX_STORE_ENABLE=NO)
 #   OPPI_SIM_POOL_LOCK_DIR           Lock directory (default: /tmp/oppi-sim-pool)
 #   OPPI_SIM_POOL_VIDEO_POLICY       Simulator video policy: off, on-failure, or always (default: off)
@@ -56,7 +58,7 @@ if [[ -z "${OPPI_ROOT:-}" ]]; then
 fi
 APPLE_DIR="$OPPI_ROOT/clients/apple"
 
-POOL_COUNT="${OPPI_SIM_POOL_COUNT:-4}"
+POOL_COUNT="${OPPI_SIM_POOL_COUNT:-8}"
 POOL_SLOT_START="${OPPI_SIM_POOL_SLOT_START:-${OPPI_SIM_POOL_SLOT_OFFSET:-0}}"
 DEVICE_TYPE="${OPPI_SIM_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro}"
 LOCK_DIR="${OPPI_SIM_POOL_LOCK_DIR:-/tmp/oppi-sim-pool}"
@@ -70,6 +72,8 @@ HANG_RETRIES="${OPPI_SIM_POOL_HANG_RETRIES:-1}"
 # ── Helpers ──
 
 die() { echo "error: $*" >&2; exit 1; }
+# shellcheck source=sim-slim.sh
+source "$SCRIPT_DIR/sim-slim.sh"
 
 validate_pool_config() {
   case "$POOL_COUNT" in
@@ -371,9 +375,10 @@ EOF
   rm -rf "$progress_dir"
 
   (
-    local boot_calls=0 shutdown_calls=0
+    local boot_calls=0 shutdown_calls=0 slim_calls=0
     simulator_state() { echo Booted; }
     wait_for_boot_ready_with_retries() { return 0; }
+    slim_simulator() { slim_calls=$((slim_calls + 1)); }
     xcrun() {
       case "$1 $2" in
         "simctl shutdown") shutdown_calls=$((shutdown_calls + 1)) ;;
@@ -381,15 +386,16 @@ EOF
       esac
     }
     prepare_simulator "self-test-udid" normal
-    [[ "$boot_calls" -eq 0 && "$shutdown_calls" -eq 0 ]] \
-      || die "self-test: already-booted simulator was recycled (boot=$boot_calls shutdown=$shutdown_calls)"
+    [[ "$boot_calls" -eq 0 && "$shutdown_calls" -eq 0 && "$slim_calls" -eq 1 ]] \
+      || die "self-test: already-booted simulator was recycled (boot=$boot_calls shutdown=$shutdown_calls slim=$slim_calls)"
   )
 
   (
-    local boot_calls=0 shutdown_calls=0
+    local boot_calls=0 shutdown_calls=0 slim_calls=0
     OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1
     simulator_state() { echo Booted; }
     wait_for_boot_ready_with_retries() { return 0; }
+    slim_simulator() { slim_calls=$((slim_calls + 1)); }
     xcrun() {
       case "$1 $2" in
         "simctl shutdown") shutdown_calls=$((shutdown_calls + 1)) ;;
@@ -397,8 +403,76 @@ EOF
       esac
     }
     prepare_simulator "self-test-udid" normal
-    [[ "$boot_calls" -eq 1 && "$shutdown_calls" -eq 1 ]] \
-      || die "self-test: FORCE_CLEAN_BOOT did not recycle (boot=$boot_calls shutdown=$shutdown_calls)"
+    [[ "$boot_calls" -eq 1 && "$shutdown_calls" -eq 1 && "$slim_calls" -eq 1 ]] \
+      || die "self-test: FORCE_CLEAN_BOOT did not recycle (boot=$boot_calls shutdown=$shutdown_calls slim=$slim_calls)"
+  )
+
+  grep -qx 'com.apple.PosterBoard' "$SCRIPT_DIR/sim-pool-slim-labels.txt" \
+    || die "self-test: slim label list is missing PosterBoard"
+  for keep_label in \
+    com.apple.chronod \
+    com.apple.liveactivitiesd \
+    com.apple.corespeechd \
+    com.apple.voiced \
+    com.apple.assetsd \
+    com.apple.apsd \
+    com.apple.swcd \
+    com.apple.mobileassetd; do
+    if grep -qx "$keep_label" "$SCRIPT_DIR/sim-pool-slim-labels.txt"; then
+      die "self-test: slim label list disables kept daemon $keep_label"
+    fi
+  done
+
+  (
+    local spawn_calls=0
+    OPPI_SIM_POOL_SLIM=0
+    xcrun() { spawn_calls=$((spawn_calls + 1)); }
+    slim_simulator "self-test-udid"
+    [[ "$spawn_calls" -eq 0 ]] \
+      || die "self-test: OPPI_SIM_POOL_SLIM=0 still spawned launchctl"
+  )
+
+  (
+    local disable_calls=0 shutdown_calls=0 boot_calls=0
+    wait_for_boot_ready_with_retries() { return 0; }
+    xcrun() {
+      case "$*" in
+        "simctl spawn self-test-udid launchctl print-disabled system")
+          printf '%s\n' '"com.apple.PosterBoard" => disabled'
+          ;;
+        *"launchctl disable "*)
+          disable_calls=$((disable_calls + 1))
+          ;;
+        "simctl shutdown self-test-udid") shutdown_calls=$((shutdown_calls + 1)) ;;
+        "simctl boot self-test-udid") boot_calls=$((boot_calls + 1)) ;;
+      esac
+    }
+    slim_simulator "self-test-udid"
+    [[ "$disable_calls" -eq 0 && "$shutdown_calls" -eq 0 && "$boot_calls" -eq 0 ]] \
+      || die "self-test: already-slim simulator was reconfigured (disable=$disable_calls shutdown=$shutdown_calls boot=$boot_calls)"
+  )
+
+  (
+    local disable_file shutdown_calls=0 boot_calls=0 disable_calls=0
+    disable_file=$(mktemp -t oppi-sim-pool-slim-disable.XXXXXX)
+    wait_for_boot_ready_with_retries() { return 0; }
+    xcrun() {
+      case "$*" in
+        "simctl spawn self-test-udid launchctl print-disabled system")
+          printf '%s\n' '"com.apple.PosterBoard" => enabled'
+          ;;
+        *"launchctl disable "*)
+          printf '%s\n' "$*" >> "$disable_file"
+          ;;
+        "simctl shutdown self-test-udid") shutdown_calls=$((shutdown_calls + 1)) ;;
+        "simctl boot self-test-udid") boot_calls=$((boot_calls + 1)) ;;
+      esac
+    }
+    slim_simulator "self-test-udid"
+    disable_calls=$(wc -l < "$disable_file" | tr -d ' ')
+    rm -f "$disable_file"
+    [[ "$disable_calls" -gt 0 && "$shutdown_calls" -eq 1 && "$boot_calls" -eq 1 ]] \
+      || die "self-test: stock simulator was not slimmed (disable=$disable_calls shutdown=$shutdown_calls boot=$boot_calls)"
   )
 
   (
@@ -633,6 +707,7 @@ prepare_simulator() {
   elif [[ "$(simulator_state "$udid")" == "Booted" ]]; then
     echo "[sim-pool] Reusing already-booted simulator $udid" >&2
     if wait_for_boot_ready_with_retries "$udid"; then
+      slim_simulator "$udid"
       return 0
     fi
     echo "[sim-pool] Booted simulator was not ready; recycling $udid" >&2
@@ -646,6 +721,7 @@ prepare_simulator() {
   if ! wait_for_boot_ready_with_retries "$udid"; then
     die "simulator $udid failed to reach boot-ready state after $((BOOT_RETRIES + 1)) readiness waits of ${BOOT_TIMEOUT}s"
   fi
+  slim_simulator "$udid"
 }
 
 kill_process_tree() {
@@ -1225,9 +1301,10 @@ Usage:
 run acquires a simulator pool slot, injects -destination and -derivedDataPath,
 runs xcodebuild, and releases the slot on exit. An already-booted pool
 simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1. Pool simulators
-stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0. Compiler index
-store is disabled unless OPPI_SIM_POOL_INDEX_STORE=1 or the command already
-sets COMPILER_INDEX_STORE_ENABLE.
+stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0. Unused simulator
+daemons are disabled unless OPPI_SIM_SLIM=0. Compiler index store is
+disabled unless OPPI_SIM_POOL_INDEX_STORE=1 or the command already sets
+COMPILER_INDEX_STORE_ENABLE.
 
 status prints pool locks, pool devices, build-cache sizes, and recent run timing.
 shutdown-idle shuts down Oppi-Pool simulators that do not have a live lock.
@@ -1241,8 +1318,8 @@ Pool selection:
   OPPI_SIM_DEVICE_TYPE=TYPE   Device type used when creating a missing slot.
 
 Example iPad lane:
-  OPPI_SIM_POOL_SLOT_START=4 OPPI_SIM_POOL_COUNT=1 \
-  OPPI_SIM_DEVICE_TYPE=com.apple.CoreSimulator.SimDeviceType.iPad-Air-13-inch-M2 \
+  OPPI_SIM_POOL_SLOT_START=8 OPPI_SIM_POOL_COUNT=1 \
+  OPPI_SIM_DEVICE_TYPE=com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB \
     sim-pool.sh run -- xcodebuild -project Oppi.xcodeproj -scheme Oppi test -only-testing:OppiE2ETests
 EOF
   exit 1

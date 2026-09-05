@@ -36,7 +36,8 @@ Usage:
   ci-simulator.sh self-test
 
 The run command selects an existing simulator whose runtime matches the active
-Xcode iOS Simulator SDK. It never creates or erases a simulator.
+Xcode iOS Simulator SDK. It never creates or erases a simulator. Unused
+background daemons are disabled unless OPPI_SIM_SLIM=0.
 
 Environment:
   OPPI_CI_SIM_DEVICE_NAME       Existing device name (default: iPhone 17 Pro)
@@ -49,6 +50,7 @@ Environment:
   OPPI_CI_SIM_CONTROL_TIMEOUT  Timeout for simulator boot/shutdown commands (default: 90)
   OPPI_CI_SIM_RETRY_DEADLINE   Skip retry after this elapsed run time; 0 disables (default: 0)
   OPPI_CI_DERIVED_DATA_PATH     DerivedData path (default: clients/apple/.build/ci)
+  OPPI_SIM_SLIM                 Disable unused simulator daemons after boot (default: 1)
 EOF
   exit 1
 }
@@ -57,6 +59,9 @@ die() {
   echo "error: $*" >&2
   exit 1
 }
+
+# shellcheck source=sim-slim.sh
+source "$SCRIPT_DIR/sim-slim.sh"
 
 runtime_for_active_xcode() {
   local sdk_version
@@ -263,6 +268,9 @@ wait_for_boot_ready_with_retries() {
 
 run_self_test() {
   local fixture selected result_bundle self_test_dir=""
+  # Keep fake xcrun call sequences exact; slim is covered by sim-pool self-test.
+  OPPI_SIM_SLIM=0
+  export OPPI_SIM_SLIM
   fixture="$(mktemp -t oppi-ci-simulator.XXXXXX.json)"
   trap 'rm -f "$fixture"; rm -rf "${self_test_dir:-}"' RETURN
 
@@ -734,6 +742,7 @@ restart_existing_simulator() {
   reboot_existing_simulator
   wait_for_boot_ready "$SIM_UDID" \
     || die "existing simulator $SIM_UDID failed to reboot within ${BOOT_TIMEOUT}s"
+  slim_simulator "$SIM_UDID"
 }
 
 cleanup() {
@@ -902,7 +911,7 @@ case "$INITIAL_STATE" in
     ;;
 esac
 if wait_for_boot_ready_with_retries "$SIM_UDID"; then
-  :
+  slim_simulator "$SIM_UDID"
 else
   COMMAND_STATUS=$?
   ENDED_AT="$(date +%s)"

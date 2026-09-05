@@ -32,6 +32,8 @@ clients/apple/scripts/*
 !clients/apple/scripts/check-privacy-manifests.sh
 !clients/apple/scripts/ci-simulator.sh
 !clients/apple/scripts/sim-pool.sh
+!clients/apple/scripts/sim-slim.sh
+!clients/apple/scripts/sim-pool-slim-labels.txt
 !clients/apple/scripts/release-mac.sh
 !clients/apple/scripts/periphery-scan.ts
 !clients/apple/scripts/analyze-visual-recording.ts
