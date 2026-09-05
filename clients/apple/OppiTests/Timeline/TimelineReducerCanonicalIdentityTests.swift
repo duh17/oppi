@@ -209,6 +209,38 @@ struct TimelineReducerCanonicalIdentityTests {
         ])
     }
 
+    @Test func canonicalMessageEndRecoversUnstreamedThinkingBeforeText() {
+        let reducer = TimelineReducer()
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .textDelta(sessionId: "s1", delta: "Here's the answer"),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Here's the answer",
+            assistantContent: [
+                AssistantMessageContentPart(
+                    kind: "thinking",
+                    content: "hmm",
+                    contentIndex: 0,
+                    id: "entry-1-think-0"
+                ),
+                AssistantMessageContentPart(
+                    kind: "text",
+                    content: "Here's the answer",
+                    contentIndex: 1,
+                    id: "entry-1-text-1"
+                ),
+            ]
+        ))
+
+        #expect(structuralProjection(reducer.items) == [
+            "thinking:entry-1-think-0:hmm",
+            "assistant:entry-1-text-1:Here's the answer",
+        ])
+    }
+
     @Test func provisionalRowsRekeyToCanonicalIDs() {
         let reducer = TimelineReducer()
         reducer.processBatch([
@@ -241,8 +273,8 @@ struct TimelineReducerCanonicalIdentityTests {
         ))
 
         #expect(structuralProjection(reducer.items) == [
-            "assistant:entry-1-text-1:streaming",
             "thinking:entry-1-think-0:hmm",
+            "assistant:entry-1-text-1:streaming",
         ])
         #expect(reducer.expandedItemIDs == ["entry-1-think-0"])
         #expect(reducer.items.allSatisfy { UUID(uuidString: $0.id) == nil })
@@ -279,11 +311,202 @@ struct TimelineReducerCanonicalIdentityTests {
         ))
 
         #expect(structuralProjection(reducer.items) == [
-            "assistant:entry-1-text-1:streaming",
             "thinking:entry-1-think-0:hmm",
+            "assistant:entry-1-text-1:streaming",
         ])
         #expect(reducer.expandedItemIDs == ["entry-1-think-0"])
         #expect(reducer.items.allSatisfy { UUID(uuidString: $0.id) == nil })
+    }
+
+    @Test func canonicalMessageEndRecoversThreeThinkingBlocksBeforeText() {
+        let reducer = TimelineReducer()
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .textDelta(sessionId: "s1", delta: "## Verdict"),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "## Verdict",
+            assistantContent: [
+                AssistantMessageContentPart(
+                    kind: "thinking",
+                    content: "Using existing AST ranges",
+                    contentIndex: 0,
+                    id: "entry-1-think-0"
+                ),
+                AssistantMessageContentPart(
+                    kind: "thinking",
+                    content: "Selecting proof fields",
+                    contentIndex: 1,
+                    id: "entry-1-think-1"
+                ),
+                AssistantMessageContentPart(
+                    kind: "thinking",
+                    content: "Reducing iOS scan wrappers",
+                    contentIndex: 2,
+                    id: "entry-1-think-2"
+                ),
+                AssistantMessageContentPart(
+                    kind: "text",
+                    content: "## Verdict",
+                    contentIndex: 3,
+                    id: "entry-1-text-3"
+                ),
+            ]
+        ))
+
+        #expect(structuralProjection(reducer.items) == [
+            "thinking:entry-1-think-0:Using existing AST ranges",
+            "thinking:entry-1-think-1:Selecting proof fields",
+            "thinking:entry-1-think-2:Reducing iOS scan wrappers",
+            "assistant:entry-1-text-3:## Verdict",
+        ])
+    }
+
+    @Test func canonicalRebuildPreservesTimestampsAndExpandedIDs() {
+        let reducer = TimelineReducer()
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .textDelta(sessionId: "s1", delta: "streaming"),
+        ])
+        guard case .assistantMessage(let liveTextID, _, let liveTimestamp) = reducer.items[0] else {
+            Issue.record("Expected a live assistant row before message_end")
+            return
+        }
+        reducer.expandedItemIDs.insert(liveTextID)
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "streaming",
+            assistantContent: [
+                AssistantMessageContentPart(
+                    kind: "thinking",
+                    content: "hmm",
+                    contentIndex: 0,
+                    id: "entry-1-think-0"
+                ),
+                AssistantMessageContentPart(
+                    kind: "text",
+                    content: "streaming",
+                    contentIndex: 1,
+                    id: "entry-1-text-1"
+                ),
+            ]
+        ))
+
+        #expect(structuralProjection(reducer.items) == [
+            "thinking:entry-1-think-0:hmm",
+            "assistant:entry-1-text-1:streaming",
+        ])
+        guard case .assistantMessage(_, _, let preservedTimestamp) = reducer.items[1] else {
+            Issue.record("Expected the rekeyed assistant row")
+            return
+        }
+        #expect(preservedTimestamp == liveTimestamp)
+        #expect(reducer.expandedItemIDs == ["entry-1-text-1"])
+    }
+
+    @Test func canonicalRebuildReordersToolsAndMultipleTextRuns() {
+        let reducer = TimelineReducer()
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .textDelta(sessionId: "s1", delta: "Before", contentIndex: 0),
+            .textDelta(sessionId: "s1", delta: "After", contentIndex: 2),
+            .toolStart(sessionId: "s1", toolEventId: "call-1", tool: "bash", args: [:]),
+            .toolEnd(sessionId: "s1", toolEventId: "call-1"),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Before\n\nAfter",
+            assistantContent: [
+                AssistantMessageContentPart(
+                    kind: "text",
+                    content: "Before",
+                    contentIndex: 0,
+                    id: "e1-text-0"
+                ),
+                AssistantMessageContentPart(kind: "tool", contentIndex: 1, toolCallId: "call-1", id: "call-1"),
+                AssistantMessageContentPart(
+                    kind: "text",
+                    content: "After",
+                    contentIndex: 2,
+                    id: "e1-text-2"
+                ),
+            ]
+        ))
+
+        #expect(structuralProjection(reducer.items) == [
+            "assistant:e1-text-0:Before",
+            "tool:call-1:bash",
+            "assistant:e1-text-2:After",
+        ])
+    }
+
+    @Test func canonicalRebuildKeepsHistoricalRowsAndUserPromptBeforeMessage() {
+        let reducer = TimelineReducer()
+        reducer.loadSession([
+            TraceEvent(
+                id: "u1",
+                type: .user,
+                timestamp: "2026-01-01T00:00:00Z",
+                text: "old"
+            ),
+            TraceEvent(
+                id: "a1",
+                type: .assistant,
+                timestamp: "2026-01-01T00:00:01Z",
+                text: "Historical"
+            ),
+        ])
+        _ = reducer.appendUserMessage("new prompt")
+        reducer.processBatch([
+            .agentStart(sessionId: "s1"),
+            .textDelta(sessionId: "s1", delta: "Answer"),
+        ])
+
+        reducer.process(.messageEnd(
+            sessionId: "s1",
+            content: "Answer",
+            assistantContent: [
+                AssistantMessageContentPart(
+                    kind: "thinking",
+                    content: "hmm",
+                    contentIndex: 0,
+                    id: "entry-2-think-0"
+                ),
+                AssistantMessageContentPart(
+                    kind: "text",
+                    content: "Answer",
+                    contentIndex: 1,
+                    id: "entry-2-text-1"
+                ),
+            ]
+        ))
+
+        #expect(reducer.items.count == 5)
+        guard case .userMessage(let historicalUserID, let historicalUserText, _, _) = reducer.items[0] else {
+            Issue.record("Expected historical user row to stay first")
+            return
+        }
+        #expect(historicalUserID == "u1")
+        #expect(historicalUserText == "old")
+        guard case .assistantMessage(let historicalAssistantID, let historicalAssistantText, _) = reducer.items[1] else {
+            Issue.record("Expected historical assistant row to stay second")
+            return
+        }
+        #expect(historicalAssistantID == "a1")
+        #expect(historicalAssistantText == "Historical")
+        guard case .userMessage(_, let prompt, _, _) = reducer.items[2] else {
+            Issue.record("Expected the new user prompt to stay before reconstructed thinking")
+            return
+        }
+        #expect(prompt == "new prompt")
+        #expect(structuralProjection(Array(reducer.items.suffix(2))) == [
+            "thinking:entry-2-think-0:hmm",
+            "assistant:entry-2-text-1:Answer",
+        ])
     }
 
     @Test func mixedCanonicalPartsPreserveOrderAndToolIdentity() {

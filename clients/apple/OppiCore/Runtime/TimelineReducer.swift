@@ -1634,10 +1634,68 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             }
         }
 
+        rebuildLiveCanonicalMessageOrder(from: parts)
+
         lastAssistantIDThisTurn = items.reversed().first(where: { item in
             if case .assistantMessage = item { return true }
             return false
         })?.id
+    }
+
+    /// Rebuild this message's live rows into `assistantContent` order.
+    ///
+    /// Canonical upsert rekeys and inserts in place; recovered thinking therefore
+    /// lands after already-streamed text. Identity stays with that machinery.
+    /// This splice only reorders live participants so the timeline matches JSONL.
+    ///
+    /// `messageRegionStart` is an adoption lower bound, not an insert index — a
+    /// user prompt can sit in the live region ahead of this message. Anchor at
+    /// the earliest participating live row, or leave items unchanged when none
+    /// exist. Historical rows below the bound are never moved.
+    private func rebuildLiveCanonicalMessageOrder(from parts: [AssistantMessageContentPart]) {
+        var orderedLiveIDs: [String] = []
+        var seen: Set<String> = []
+        for part in parts {
+            let partID: String?
+            switch part.kind {
+            case "text":
+                guard let text = part.content,
+                      !StringFastChecks.isEffectivelyEmpty(text) else { continue }
+                partID = part.id
+            case "thinking":
+                guard let thinking = part.content,
+                      !thinking.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    continue
+                }
+                partID = part.id
+            case "tool":
+                partID = part.toolCallId
+            default:
+                continue
+            }
+            guard let partID, seen.insert(partID).inserted, let idx = indexForID(partID) else {
+                continue
+            }
+            guard idx >= messageRegionStart else { continue }
+            orderedLiveIDs.append(partID)
+        }
+        guard orderedLiveIDs.count >= 2 else { return }
+
+        var insertionIndex = items.endIndex
+        var orderedItems: [ChatItem] = []
+        orderedItems.reserveCapacity(orderedLiveIDs.count)
+        for id in orderedLiveIDs {
+            guard let idx = indexForID(id) else { return }
+            insertionIndex = min(insertionIndex, idx)
+            orderedItems.append(items[idx])
+        }
+        guard orderedItems.count == orderedLiveIDs.count else { return }
+
+        let removalIDs = Set(orderedLiveIDs)
+        items.removeAll { removalIDs.contains($0.id) }
+        items.insert(contentsOf: orderedItems, at: min(insertionIndex, items.endIndex))
+        rebuildIndex()
+        bumpItemsMutationSeq()
     }
 
     private func upsertCanonicalText(
