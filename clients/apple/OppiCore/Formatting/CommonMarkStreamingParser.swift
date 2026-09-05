@@ -122,6 +122,14 @@ struct CommonMarkStreamingParser: Sendable {
             state = previousState
             return
         }
+        if Self.shouldHoldTableOpen(
+            blocks: tailBlocks,
+            content: tailContent,
+            lastBlockLine: tailLastBlockLine
+        ) {
+            state = previousState
+            return
+        }
 
         let tailPrefixByteCount = Self.utf8ByteOffset(
             forLine: tailLastBlockLine,
@@ -149,6 +157,13 @@ struct CommonMarkStreamingParser: Sendable {
         lastBlockLine: Int
     ) -> (state: State?, prefixBlocks: [MarkdownBlock], tailBlocks: [MarkdownBlock]) {
         guard blocks.count >= 2, lastBlockLine > 1 else {
+            return (nil, [], blocks)
+        }
+        if Self.shouldHoldTableOpen(
+            blocks: blocks,
+            content: content,
+            lastBlockLine: lastBlockLine
+        ) {
             return (nil, [], blocks)
         }
 
@@ -205,6 +220,34 @@ struct CommonMarkStreamingParser: Sendable {
             hasPotentialDefinition: found
         )
         return found
+    }
+
+    /// A mid-row chunk can make cmark emit a short table plus a pipe paragraph.
+    /// Freezing that table permanently parses later `|` rows without a header.
+    /// Hold the table in the open tail until a blank line or a non-row follows.
+    private static func shouldHoldTableOpen(
+        blocks: [MarkdownBlock],
+        content: String,
+        lastBlockLine: Int
+    ) -> Bool {
+        guard blocks.count >= 2,
+              case .table = blocks[blocks.count - 2],
+              case .paragraph = blocks.last else {
+            return false
+        }
+        let offset = utf8ByteOffset(forLine: lastBlockLine, in: content)
+        guard offset < content.utf8.count else { return false }
+        let start = content.utf8.index(content.utf8.startIndex, offsetBy: offset)
+        return looksLikeGFMTableContinuation(String(content[start...]))
+    }
+
+    private static func looksLikeGFMTableContinuation(_ tail: String) -> Bool {
+        for line in tail.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { return false }
+            return trimmed.hasPrefix("|")
+        }
+        return false
     }
 
     /// Skip FNV-1a when content only grew. Streaming appends leave the prefix
