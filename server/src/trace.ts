@@ -493,18 +493,31 @@ export function findLatestForkableUserEntryIdFromFile(filePath: string): string 
   }
 }
 
-export function buildSessionContext(
+interface VisibleSessionContext {
+  view: TraceViewMode;
+  path: SessionEntry[];
+  visibleEntries: SessionEntry[];
+  compaction: SessionEntry | null;
+}
+
+/**
+ * Selected branch + compaction visibility. Shared by mobile timeline projection
+ * and search field extraction so search does not rebuild TraceEvents.
+ */
+function selectVisibleSessionContext(
   entries: SessionEntry[],
   options: TraceReadOptions = {},
-): TraceEvent[] {
-  if (entries.length === 0) return [];
-
+): VisibleSessionContext {
   const view = options.view ?? "context";
+  if (entries.length === 0) {
+    return { view, path: [], visibleEntries: [], compaction: null };
+  }
+
   const path = buildEntryPath(entries, options.leafId);
+  if (path.length === 0) {
+    return { view, path, visibleEntries: [], compaction: null };
+  }
 
-  if (path.length === 0) return [];
-
-  // Find the LAST compaction in the path (most recent takes precedence)
   let compaction: SessionEntry | null = null;
   for (const entry of path) {
     if (entry.type === "compaction") {
@@ -512,18 +525,12 @@ export function buildSessionContext(
     }
   }
 
-  // Build the visible entries list.
   let visibleEntries: SessionEntry[];
-
   if (view === "full") {
     visibleEntries = path;
   } else if (compaction) {
     const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
-
     visibleEntries = [];
-
-    // 1. Add compaction summary as a synthetic entry (handled below)
-    // 2. Kept messages: from firstKeptEntryId to compaction
     let foundFirstKept = false;
     for (let i = 0; i < compactionIdx; i++) {
       const entry = path[i];
@@ -534,15 +541,22 @@ export function buildSessionContext(
         visibleEntries.push(entry);
       }
     }
-
-    // 3. Post-compaction entries
     for (let i = compactionIdx + 1; i < path.length; i++) {
       visibleEntries.push(path[i]);
     }
   } else {
-    // No compaction — all path entries are visible
     visibleEntries = path;
   }
+
+  return { view, path, visibleEntries, compaction };
+}
+
+export function buildSessionContext(
+  entries: SessionEntry[],
+  options: TraceReadOptions = {},
+): TraceEvent[] {
+  const { view, path, visibleEntries, compaction } = selectVisibleSessionContext(entries, options);
+  if (path.length === 0) return [];
 
   const visibleEntryById = new Map(visibleEntries.map((entry) => [entry.id, entry]));
 
@@ -1030,6 +1044,103 @@ function parseEntries(content: string): SessionEntry[] {
 export function parseJsonl(content: string, options: TraceReadOptions = {}): TraceEvent[] {
   const entries = parseEntries(content);
   return buildSessionContext(entries, options);
+}
+
+/** Historical search FTS caps. Applied during direct extraction. */
+const SEARCH_USER_MESSAGE_CAP = 50_000;
+const SEARCH_ASSISTANT_MESSAGE_CAP = 100_000;
+
+export interface SearchTranscriptContent {
+  userMessages: string;
+  assistantMessages: string;
+  toolNames: string;
+}
+
+/**
+ * Extract the FTS fields search indexes from selected session entries.
+ * Reuses branch/compaction visibility and the same user/assistant/tool-name
+ * sources as mobile TraceEvents, without constructing thinking, tool results,
+ * custom cards, or the mobile normalization tree.
+ */
+export function extractSearchTranscriptFromEntries(
+  entries: SessionEntry[],
+): SearchTranscriptContent {
+  const userCap = SEARCH_USER_MESSAGE_CAP;
+  const assistantCap = SEARCH_ASSISTANT_MESSAGE_CAP;
+  const { visibleEntries } = selectVisibleSessionContext(entries);
+  const userParts: string[] = [];
+  const assistantParts: string[] = [];
+  const toolNameSet = new Set<string>();
+  let userLen = 0;
+  let assistantLen = 0;
+
+  for (const entry of visibleEntries) {
+    if (entry.type !== "message") continue;
+    const msg = entry.message;
+    if (!msg) continue;
+
+    if (msg.role === "user") {
+      const text = extractText(msg.content);
+      if (text && userLen < userCap) {
+        const normalized = replaceUnpairedSurrogates(text);
+        userParts.push(normalized);
+        userLen += normalized.length;
+      }
+      continue;
+    }
+
+    if (msg.role !== "assistant") continue;
+
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      for (const projected of projectAssistantContentRuns(msg)) {
+        if (projected.kind === "text") {
+          if (projected.text && assistantLen < assistantCap) {
+            const normalized = replaceUnpairedSurrogates(projected.text);
+            if (normalized) {
+              assistantParts.push(normalized);
+              assistantLen += normalized.length;
+            }
+          }
+          continue;
+        }
+        const block = projected.block;
+        if (block.type === "toolCall") {
+          const tool = (block.name as string) || "unknown";
+          if (tool) {
+            toolNameSet.add(normalizeTraceValueForMobile(tool) as string);
+          }
+        }
+      }
+      continue;
+    }
+
+    if (typeof content === "string" && content && assistantLen < assistantCap) {
+      const normalized = replaceUnpairedSurrogates(content);
+      assistantParts.push(normalized);
+      assistantLen += normalized.length;
+    }
+  }
+
+  return {
+    userMessages: userParts.join("\n").slice(0, userCap),
+    assistantMessages: assistantParts.join("\n").slice(0, assistantCap),
+    toolNames: [...toolNameSet].join(" "),
+  };
+}
+
+/**
+ * Read a JSONL session file and extract search transcript fields.
+ * Still whole-file I/O; this only skips mobile TraceEvent construction.
+ */
+export function extractSearchTranscriptFromFile(jsonlPath: string): SearchTranscriptContent | null {
+  if (!existsSync(jsonlPath)) return null;
+  try {
+    const content = readFileSync(jsonlPath, "utf-8");
+    return extractSearchTranscriptFromEntries(parseEntries(content));
+  } catch {
+    return null;
+  }
 }
 
 // ─── JSONL File Readers ───

@@ -7,7 +7,7 @@
  *
  * Lifecycle:
  * - Server boot: open db, incremental sync (JSONL state + session metadata)
- * - Live: debounced re-index on message_end / agent_end events
+ * - Live: re-index on agent_end (debounced mark + immediate flush)
  * - Shutdown: close db
  */
 
@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import type { Session } from "./types.js";
 import { createLogger } from "./logger.js";
-import { readSessionTraceFromFile } from "./trace.js";
+import { extractSearchTranscriptFromFile } from "./trace.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,8 +67,6 @@ export interface SearchIndexBackgroundSyncResult extends SearchIndexSyncResult {
 // Content extraction
 // ---------------------------------------------------------------------------
 
-const USER_MESSAGE_CAP = 50_000;
-const ASSISTANT_MESSAGE_CAP = 100_000;
 const DEFAULT_BACKGROUND_SYNC_BUDGET_MS = 8;
 const DEFAULT_BACKGROUND_SYNC_BATCH_SIZE = Number.MAX_SAFE_INTEGER;
 
@@ -133,31 +131,11 @@ function extractTranscriptContent(jsonlPath: string): TranscriptContent | null {
     return null;
   }
 
-  const events = readSessionTraceFromFile(jsonlPath);
-  if (!events) return null;
-
-  const userParts: string[] = [];
-  const assistantParts: string[] = [];
-  const toolNameSet = new Set<string>();
-  let userLen = 0;
-  let assistantLen = 0;
-
-  for (const event of events) {
-    if (event.type === "user" && event.text && userLen < USER_MESSAGE_CAP) {
-      userParts.push(event.text);
-      userLen += event.text.length;
-    } else if (event.type === "assistant" && event.text && assistantLen < ASSISTANT_MESSAGE_CAP) {
-      assistantParts.push(event.text);
-      assistantLen += event.text.length;
-    } else if (event.type === "toolCall" && event.tool) {
-      toolNameSet.add(event.tool);
-    }
-  }
+  const transcript = extractSearchTranscriptFromFile(jsonlPath);
+  if (!transcript) return null;
 
   return {
-    userMessages: userParts.join("\n").slice(0, USER_MESSAGE_CAP),
-    assistantMessages: assistantParts.join("\n").slice(0, ASSISTANT_MESSAGE_CAP),
-    toolNames: [...toolNameSet].join(" "),
+    ...transcript,
     bytesRead,
   };
 }
