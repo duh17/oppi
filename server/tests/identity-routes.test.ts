@@ -240,7 +240,7 @@ describe("identity module", () => {
     });
   });
 
-  it("uses ctx.piVersion as Agent and includes piCliVersion when a CLI version is known", async () => {
+  it("uses ctx.piVersion as Pi SDK and includes piCliVersion when a TUI/CLI version is known", async () => {
     const ctx = {
       storage: {
         getConfig: vi.fn(() => ({ configVersion: 1 })),

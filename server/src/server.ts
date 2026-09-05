@@ -385,8 +385,8 @@ export class Server {
   static readonly VERSION = getPackageInfo().version;
 
   /**
-   * Installed CLI version via `pi --version`.
-   * Agent (`piVersion`) is readEmbeddedPiAgentVersion() — never this PATH/Homebrew spawn.
+   * Installed Pi TUI/CLI version via `pi --version`.
+   * Pi SDK (`piVersion`) is readEmbeddedPiAgentVersion() — never this PATH/Homebrew spawn.
    */
   static detectPiVersion(piExecutable: string): string {
     try {

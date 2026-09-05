@@ -223,14 +223,16 @@ struct ServerDetailView: View {
             LabeledContent("Connection", value: connectionStatusTitle)
             if let info {
                 LabeledContent("Uptime", value: info.uptimeLabel)
-                LabeledContent("Agent", value: info.piVersion)
+                LabeledContent("Pi SDK", value: info.piVersion)
                 if let piCliVersion = info.piCliVersion, !piCliVersion.isEmpty {
-                    LabeledContent("Pi CLI", value: piCliVersion)
+                    LabeledContent("Pi TUI", value: piCliVersion)
                 }
                 LabeledContent("Server", value: info.version)
             }
         } header: {
             Text("Status")
+        } footer: {
+            Text("Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the installed pi CLI on this host.")
         }
 
         Section {
@@ -1415,11 +1417,13 @@ struct ServerSettingsChromePreview: View {
                 Section {
                     LabeledContent("Connection", value: "Connected via paired HTTPS")
                     LabeledContent("Uptime", value: "2d 4h")
-                    LabeledContent("Agent", value: "0.85.0")
-                    LabeledContent("Pi CLI", value: "0.84.4")
+                    LabeledContent("Pi SDK", value: "0.85.1")
+                    LabeledContent("Pi TUI", value: "0.85.1")
                     LabeledContent("Server", value: "oppi")
                 } header: {
                     Text("Status")
+                } footer: {
+                    Text("Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the installed pi CLI on this host.")
                 }
 
                 Section {

@@ -26,7 +26,7 @@ struct StatusView: View {
                     }
                 }
                 if let piVersion = healthMonitor.piCLIVersion {
-                    LabeledContent("Pi CLI") {
+                    LabeledContent("Pi TUI") {
                         Text(piVersion)
                     }
                 }

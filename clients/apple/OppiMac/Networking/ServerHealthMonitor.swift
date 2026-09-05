@@ -72,7 +72,7 @@ final class ServerHealthMonitor {
         consecutiveFailures = 0
     }
 
-    /// Check the pi CLI version by spawning `pi --version`.
+    /// Check the installed Pi TUI/CLI version by spawning `pi --version`.
     func checkPiCLIVersion() {
         Task.detached {
             var version: String?
