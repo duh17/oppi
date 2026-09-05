@@ -2174,9 +2174,17 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
                 .min { $0.item < $1.item }?.item
             // Rows at or above the first visible item change content above
             // the viewport. Shift offset so the reading position stays.
-            // The live tail is below that item, so attached follow is left
-            // to keepLiveTailVisible.
-            if let firstVisibleItem, originalAttributes.indexPath.item <= firstVisibleItem {
+            let followsReadingPosition = firstVisibleItem.map {
+                originalAttributes.indexPath.item <= $0
+            } ?? false
+            if followsReadingPosition {
+                context.contentOffsetAdjustment = CGPoint(x: 0, y: delta)
+            } else if delta > 0, shouldFollowAttachedLiveTail(in: collectionView) {
+                // Attached live tail: the growing thinking/assistant/tool row
+                // is below the first visible item, so reading-position follow
+                // does not run. Keep the working indicator from falling into
+                // the composer during in-place height growth. Never follow
+                // shrinks (upward busy jitter) or detached readers.
                 context.contentOffsetAdjustment = CGPoint(x: 0, y: delta)
             }
         }
@@ -2263,6 +2271,13 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         if itemCount > 0, cachedHeightByItemID.count > liveIDs.count {
             cachedHeightByItemID = cachedHeightByItemID.filter { liveIDs.contains($0.key) }
         }
+    }
+
+    private func shouldFollowAttachedLiveTail(in collectionView: UICollectionView) -> Bool {
+        if let anchored = collectionView as? AnchoredCollectionView {
+            return !anchored.isDetachedFromBottom
+        }
+        return true
     }
 
     private func resolvedHeight(
