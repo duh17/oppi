@@ -486,6 +486,49 @@ struct AssistantMarkdownLayoutTests {
         )
     }
 
+    /// A closed fence during a busy turn still reserves graphical height. Open
+    /// fences stay code; `isBusy` must not keep a completed fence on the
+    /// placeholder path.
+    @Test func busyClosedLatexFenceReservesLayoutHeightBeforeRaster() throws {
+        NativeLatexBlockView.renderDelayForTesting = .milliseconds(180)
+        defer { NativeLatexBlockView.renderDelayForTesting = nil }
+
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "assistant-busy-closed-latex-reserve",
+            useAnchoredCollectionView: true
+        )
+        let formula = #"""
+        $$
+        \begin{bmatrix}1\\2\\3\\4\\5\\6\\7\\8\end{bmatrix}
+        $$
+
+        Closed fence tail.
+        """#
+
+        wh.applyItems(
+            [
+                .assistantMessage(id: "formula", text: formula, timestamp: Date(timeIntervalSince1970: 0)),
+            ],
+            isBusy: true,
+            streamingID: "formula"
+        )
+        wh.window.layoutIfNeeded()
+        wh.collectionView.layoutIfNeeded()
+
+        let formulaIP = IndexPath(item: 0, section: 0)
+        let cell = try #require(wh.collectionView.cellForItem(at: formulaIP))
+        let latexView = try #require(
+            timelineFirstView(ofType: NativeLatexBlockView.self, in: cell.contentView)
+        )
+        let reservedHeight = try #require(
+            wh.collectionView.layoutAttributesForItem(at: formulaIP)?.frame.height
+        )
+
+        #expect(latexView.debugFormulaHeightConstraintIsActiveForTesting)
+        #expect(latexView.debugFormulaImageForTesting == nil)
+        #expect(reservedHeight > 80, "busy closed latex fence must reserve layout height before raster")
+    }
+
     @Test func streamingTextGrowthInvalidatesTextViewHeight() throws {
         let markdownView = AssistantMarkdownContentView()
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 350, height: 900))

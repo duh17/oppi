@@ -245,7 +245,7 @@ final class NativeMermaidBlockView: UIView {
         #if DEBUG
         debugApplyAsDiagramCallCount += 1
         #endif
-        guard let generation = beginRasterRequest(request) else { return }
+        guard let generation = beginRasterRequest(request, replacesInFlight: true) else { return }
         #if DEBUG
         debugRenderCount += 1
         #endif
@@ -292,11 +292,14 @@ final class NativeMermaidBlockView: UIView {
         #if DEBUG
         debugRenderCount += 1
         #endif
-        reserveDiagramHeightFromLayout(
+        guard reserveDiagramHeightFromLayout(
             code: code,
             availableWidth: availableWidth,
             theme: theme
-        )
+        ) else {
+            showAsCodeFallback(code: code, palette: palette)
+            return
+        }
         renderTask = Task { [weak self] in
             guard let self else { return }
 
@@ -368,7 +371,10 @@ final class NativeMermaidBlockView: UIView {
         return true
     }
 
-    private func beginRasterRequest(_ request: RasterRequest) -> UInt? {
+    private func beginRasterRequest(
+        _ request: RasterRequest,
+        replacesInFlight: Bool = false
+    ) -> UInt? {
         if desiredRasterRequest != request {
             rasterRequestGeneration &+= 1
             renderTask?.cancel()
@@ -376,11 +382,15 @@ final class NativeMermaidBlockView: UIView {
             inFlightRasterRequest = nil
             desiredRasterRequest = request
         }
-        if isShowingDiagram, displayedRasterRequest == request {
+        if displayedRasterRequest == request, diagramImageView.image != nil {
             return nil
         }
-        if inFlightRasterRequest == request {
+        if inFlightRasterRequest == request, !replacesInFlight {
             return nil
+        }
+        if replacesInFlight {
+            renderTask?.cancel()
+            renderTask = nil
         }
         inFlightRasterRequest = request
         return rasterRequestGeneration
@@ -403,11 +413,13 @@ final class NativeMermaidBlockView: UIView {
 
     /// Fence-close reservation: activate the layout-cache height before the
     /// async raster arrives so the image swap does not change cell height.
+    /// Same natural-raster budget as `renderInlineGraphicalImage`.
+    @discardableResult
     private func reserveDiagramHeightFromLayout(
         code: String,
         availableWidth: CGFloat,
         theme: RenderTheme
-    ) {
+    ) -> Bool {
         let layout = DocumentRenderPipeline.layoutGraphical(
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
@@ -419,7 +431,13 @@ final class NativeMermaidBlockView: UIView {
                 displayMode: .inline
             )
         )
-        guard layout.size.width > 0, layout.size.height > 0 else { return }
+        guard layout.size.width > 0, layout.size.height > 0,
+              DocumentRenderPipeline.naturalRasterBudget.permits(
+                pointSize: layout.size,
+                scale: 2
+              ) else {
+            return false
+        }
 
         renderedDiagramNaturalSize = layout.size
         let width = bounds.width > 0 ? bounds.width : availableWidth
@@ -437,6 +455,7 @@ final class NativeMermaidBlockView: UIView {
         if heightOrRevealChanged {
             invalidateTimelineLayout()
         }
+        return true
     }
 
     private func showDiagram(

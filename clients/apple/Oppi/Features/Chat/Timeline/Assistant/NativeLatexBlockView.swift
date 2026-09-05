@@ -204,7 +204,10 @@ final class NativeLatexBlockView: UIView {
         )
         // Re-entrant collection-view measurement reuses this cell. Rendering
         // again would rasterize a new image and force another layout pass.
-        if identity == currentRenderIdentity && isShowingFormula { return }
+        // A pending reservation has no image yet — do not treat it as done.
+        if identity == currentRenderIdentity && isShowingFormula && formulaImageView.image != nil {
+            return
+        }
         renderTask?.cancel()
         renderTask = nil
         currentCode = code
@@ -258,11 +261,14 @@ final class NativeLatexBlockView: UIView {
         #if DEBUG
         debugRenderCount += 1
         #endif
-        reserveFormulaHeightFromLayout(
+        guard reserveFormulaHeightFromLayout(
             code: code,
             availableWidth: availableWidth,
             palette: palette
-        )
+        ) else {
+            showAsCodeFallback(code: code, palette: palette)
+            return
+        }
         renderTask = Task { [weak self] in
             guard let self else { return }
             #if DEBUG
@@ -334,11 +340,13 @@ final class NativeLatexBlockView: UIView {
 
     /// Fence-close reservation: activate the layout-cache height before the
     /// async raster arrives so the image swap does not change cell height.
+    /// Same renderability and natural-raster budget as `renderLatexGraphicalImage`.
+    @discardableResult
     private func reserveFormulaHeightFromLayout(
         code: String,
         availableWidth: CGFloat,
         palette: ThemePalette
-    ) {
+    ) -> Bool {
         guard let layout = DocumentRenderPipeline.layoutLatexGraphical(
             text: code,
             config: RenderConfiguration(
@@ -347,8 +355,12 @@ final class NativeLatexBlockView: UIView {
                 theme: ThemeRuntimeState.currentRenderTheme(),
                 displayMode: .document
             )
-        ), layout.size.width > 0, layout.size.height > 0 else {
-            return
+        ), layout.size.width > 0, layout.size.height > 0,
+              DocumentRenderPipeline.naturalRasterBudget.permits(
+                pointSize: layout.size,
+                scale: 2
+              ) else {
+            return false
         }
 
         let heightOrRevealChanged = updateFormulaHeight(naturalSize: layout.size)
@@ -364,6 +376,7 @@ final class NativeLatexBlockView: UIView {
         if heightOrRevealChanged {
             invalidateTimelineLayout()
         }
+        return true
     }
 
     private func showFormula(

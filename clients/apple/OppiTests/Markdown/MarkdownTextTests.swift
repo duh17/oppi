@@ -4541,6 +4541,125 @@ struct NativeLatexBlockViewTests {
             "image swap must not force-invalidate again when reserved height already matches"
         )
     }
+
+    @Test func overBudgetOrUnrenderableClosedFenceStaysExactSourceWithoutReservedBox() async throws {
+        NativeLatexBlockView.renderDelayForTesting = .milliseconds(180)
+        defer { NativeLatexBlockView.renderDelayForTesting = nil }
+
+        let availableWidth: CGFloat = 320
+        let palette = ThemeID.dark.palette
+        let config = RenderConfiguration(
+            fontSize: NativeLatexBlockView.displayFormulaFontSize(
+                compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
+            ),
+            maxWidth: availableWidth,
+            theme: ThemeRuntimeState.currentRenderTheme(),
+            displayMode: .document
+        )
+        let cases: [(name: String, source: String)] = [
+            ("over-budget", String(repeating: "x", count: 600)),
+            ("unrenderable", #"\unsupported{x}"#),
+        ]
+
+        for testCase in cases {
+            if testCase.name == "over-budget" {
+                let layout = try #require(DocumentRenderPipeline.layoutLatexGraphical(
+                    text: testCase.source,
+                    config: config
+                ))
+                #expect(
+                    !DocumentRenderPipeline.naturalRasterBudget.permits(
+                        pointSize: layout.size,
+                        scale: 2
+                    ),
+                    "over-budget fixture must fail the natural raster budget"
+                )
+            } else {
+                #expect(
+                    DocumentRenderPipeline.layoutLatexGraphical(
+                        text: testCase.source,
+                        config: config
+                    ) == nil,
+                    "unrenderable fixture must fail latex isRenderable"
+                )
+            }
+
+            let view = NativeLatexBlockView()
+            view.frame = CGRect(x: 0, y: 0, width: availableWidth, height: 100)
+            view.layoutIfNeeded()
+            view.applyAsCode(
+                language: "latex",
+                code: testCase.source,
+                palette: palette,
+                isOpen: true
+            )
+            view.applyAsFormula(
+                code: testCase.source,
+                palette: palette,
+                availableWidth: availableWidth
+            )
+
+            #expect(
+                !view.debugFormulaHeightConstraintIsActiveForTesting,
+                "\(testCase.name) reserved a blank box"
+            )
+            #expect(
+                !view.debugIsShowingFormulaForTesting,
+                "\(testCase.name) entered graphical presentation"
+            )
+            #expect(view.debugFormulaImageForTesting == nil)
+            #expect(
+                visibleExactSource(in: view).contains(testCase.source),
+                "\(testCase.name) lost exact source"
+            )
+
+            let reservedOrRasteredLater = await waitForTimelineCondition(timeoutMs: 600) { @MainActor in
+                view.debugFormulaHeightConstraintIsActiveForTesting
+                    || view.debugIsShowingFormulaForTesting
+                    || view.debugFormulaImageForTesting != nil
+            }
+            #expect(!reservedOrRasteredLater, "\(testCase.name) later reserved or collapsed from a blank box")
+            #expect(visibleExactSource(in: view).contains(testCase.source))
+            #expect(!view.debugFormulaHeightConstraintIsActiveForTesting)
+        }
+    }
+
+    @Test func applyAsFormulaSyncRastersPendingReservationOfSameIdentity() async throws {
+        NativeLatexBlockView.renderDelayForTesting = .milliseconds(180)
+        defer { NativeLatexBlockView.renderDelayForTesting = nil }
+
+        let code = #"\frac{1}{2} + x"#
+        let availableWidth: CGFloat = 360
+        let palette = ThemeID.dark.palette
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: availableWidth, height: 80)
+        view.layoutIfNeeded()
+
+        view.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
+        view.applyAsFormula(code: code, palette: palette, availableWidth: availableWidth)
+
+        #expect(view.debugFormulaHeightConstraintIsActiveForTesting)
+        #expect(view.debugFormulaImageForTesting == nil)
+        let reservedHeight = try #require(view.debugFormulaHeightConstantForTesting)
+        let rendersBeforeSync = view.debugRenderCountForTesting
+
+        view.applyAsFormulaSync(code: code, palette: palette, availableWidth: availableWidth)
+
+        #expect(
+            view.debugFormulaImageForTesting != nil,
+            "sync must raster a pending reservation, not return as already rendered"
+        )
+        #expect(view.debugRenderCountForTesting > rendersBeforeSync)
+        #expect(abs((view.debugFormulaHeightConstantForTesting ?? 0) - reservedHeight) <= 0.5)
+        #expect(view.debugIsShowingFormulaForTesting)
+    }
+
+    private func visibleExactSource(in root: UIView) -> String {
+        timelineAllTextViews(in: root)
+            .filter { timelineViewIsVisible($0) }
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+    }
 }
 
 // MARK: - NativeMermaidBlockView tests
@@ -4900,6 +5019,119 @@ struct NativeMermaidBlockViewTests {
             view.debugInvalidateTimelineLayoutCountForTesting == invalidationsBeforeRaster,
             "image swap must not force-invalidate again when reserved height already matches"
         )
+    }
+
+    @Test func overBudgetClosedFenceStaysExactSourceWithoutReservedBox() async throws {
+        let availableWidth: CGFloat = 360
+        let palette = ThemeID.dark.palette
+        let source = try #require(overBudgetMermaidSource(
+            availableWidth: availableWidth,
+            theme: palette.renderTheme
+        ))
+        let view = NativeMermaidBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: availableWidth, height: 80)
+        view.layoutIfNeeded()
+
+        view.applyAsCode(language: "mermaid", code: source, palette: palette, isOpen: true)
+        view.applyAsDiagram(code: source, palette: palette, availableWidth: availableWidth)
+
+        #expect(!view.debugDiagramHeightConstraintIsActiveForTesting, "over-budget mermaid reserved a blank box")
+        #expect(!view.debugIsShowingDiagramForTesting)
+        #expect(view.debugRenderedImageForTesting == nil)
+        #expect(visibleExactSource(in: view).contains("graph TD"))
+
+        let reservedOrRasteredLater = await waitForTimelineCondition(timeoutMs: 600) { @MainActor in
+            view.debugDiagramHeightConstraintIsActiveForTesting
+                || view.debugIsShowingDiagramForTesting
+                || view.debugRenderedImageForTesting != nil
+        }
+        #expect(!reservedOrRasteredLater, "over-budget mermaid later reserved or collapsed from a blank box")
+        #expect(visibleExactSource(in: view).contains("graph TD"))
+        #expect(!view.debugDiagramHeightConstraintIsActiveForTesting)
+    }
+
+    @Test func applyAsDiagramSyncRastersPendingReservationOfSameIdentity() async throws {
+        let code = "graph TD\n    A-->B"
+        let availableWidth: CGFloat = 360
+        let palette = ThemeID.dark.palette
+        let layout = DocumentRenderPipeline.layoutGraphical(
+            parser: MermaidParser(),
+            renderer: MermaidRenderer(),
+            text: code,
+            config: RenderConfiguration(
+                fontSize: 13,
+                maxWidth: availableWidth,
+                theme: palette.renderTheme,
+                displayMode: .inline
+            )
+        )
+        let expectedHeight = max(1, min(layout.size.height * min(1.0, availableWidth / layout.size.width), 400))
+        let controlled = ControlledMermaidRasterizer()
+        let result = NativeMermaidBlockView.RasterResult(
+            image: solidImage(color: .red),
+            size: layout.size
+        )
+        let view = NativeMermaidBlockView(rasterizer: .init(
+            renderSync: { _, _, _ in result },
+            renderAsync: { _, _, _ in await controlled.render() }
+        ))
+        view.frame = CGRect(x: 0, y: 0, width: availableWidth, height: 80)
+        view.layoutIfNeeded()
+
+        view.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
+        view.applyAsDiagram(code: code, palette: palette, availableWidth: availableWidth)
+        await controlled.waitUntilRequested()
+
+        #expect(view.debugDiagramHeightConstraintIsActiveForTesting)
+        #expect(view.debugRenderedImageForTesting == nil)
+        let rendersBeforeSync = view.debugRenderCountForTesting
+
+        view.applyAsDiagramSync(code: code, palette: palette, availableWidth: availableWidth)
+
+        #expect(
+            view.debugRenderedImageForTesting != nil,
+            "sync must raster a pending reservation, not return as already rendered"
+        )
+        #expect(view.debugRenderCountForTesting > rendersBeforeSync)
+        #expect(abs((view.debugDiagramHeightConstantForTesting ?? 0) - expectedHeight) <= 0.5)
+
+        await controlled.finish(with: nil)
+    }
+
+    private func visibleExactSource(in root: UIView) -> String {
+        timelineAllTextViews(in: root)
+            .filter { timelineViewIsVisible($0) }
+            .map { timelineRenderedText(of: $0) }
+            .joined(separator: "\n")
+    }
+
+    private func overBudgetMermaidSource(
+        availableWidth: CGFloat,
+        theme: RenderTheme
+    ) -> String? {
+        for count in [400, 800, 1_600] {
+            let source = "graph TD\n    A[\"\(String(repeating: "W", count: count))\"]"
+            let layout = DocumentRenderPipeline.layoutGraphical(
+                parser: MermaidParser(),
+                renderer: MermaidRenderer(),
+                text: source,
+                config: RenderConfiguration(
+                    fontSize: 13,
+                    maxWidth: availableWidth,
+                    theme: theme,
+                    displayMode: .inline
+                )
+            )
+            if layout.size.width > 0,
+               layout.size.height > 0,
+               !DocumentRenderPipeline.naturalRasterBudget.permits(
+                pointSize: layout.size,
+                scale: 2
+               ) {
+                return source
+            }
+        }
+        return nil
     }
 
     private func solidImage(color: UIColor) -> UIImage {
