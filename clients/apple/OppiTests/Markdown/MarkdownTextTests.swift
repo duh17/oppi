@@ -4495,6 +4495,52 @@ struct NativeLatexBlockViewTests {
             "Displayed glyphs should exceed the message body scale; band=\(largestVisibleBand), body=\(AppFont.messageBody.pointSize)"
         )
     }
+
+    @Test func closedFenceReservesLayoutHeightBeforeRasterWithoutSecondJump() async throws {
+        NativeLatexBlockView.renderDelayForTesting = .milliseconds(180)
+        defer { NativeLatexBlockView.renderDelayForTesting = nil }
+
+        let code = #"\frac{1}{2} + x"#
+        let availableWidth: CGFloat = 360
+        let palette = ThemeID.dark.palette
+        let view = NativeLatexBlockView()
+        view.frame = CGRect(x: 0, y: 0, width: availableWidth, height: 80)
+        view.layoutIfNeeded()
+
+        let layout = try #require(DocumentRenderPipeline.layoutLatexGraphical(
+            text: code,
+            config: RenderConfiguration(
+                fontSize: NativeLatexBlockView.displayFormulaFontSize(
+                    compatibleWith: view.traitCollection
+                ),
+                maxWidth: availableWidth,
+                theme: ThemeRuntimeState.currentRenderTheme(),
+                displayMode: .document
+            )
+        ))
+        let expectedHeight = min(max(layout.size.height, 44), 400)
+        #expect(expectedHeight > 1)
+
+        view.applyAsCode(language: "latex", code: code, palette: palette, isOpen: true)
+        #expect(!view.debugFormulaHeightConstraintIsActiveForTesting)
+
+        view.applyAsFormula(code: code, palette: palette, availableWidth: availableWidth)
+
+        #expect(view.debugFormulaHeightConstraintIsActiveForTesting)
+        #expect(abs((view.debugFormulaHeightConstantForTesting ?? 0) - expectedHeight) <= 0.5)
+        #expect(view.debugFormulaImageForTesting == nil)
+        let invalidationsBeforeRaster = view.debugInvalidateTimelineLayoutCountForTesting
+
+        let imageArrived = await waitForTimelineCondition(timeoutMs: 1_800) { @MainActor in
+            view.debugFormulaImageForTesting != nil
+        }
+        #expect(imageArrived)
+        #expect(abs((view.debugFormulaHeightConstantForTesting ?? 0) - expectedHeight) <= 0.5)
+        #expect(
+            view.debugInvalidateTimelineLayoutCountForTesting == invalidationsBeforeRaster,
+            "image swap must not force-invalidate again when reserved height already matches"
+        )
+    }
 }
 
 // MARK: - NativeMermaidBlockView tests
@@ -4800,5 +4846,91 @@ struct NativeMermaidBlockViewTests {
             image.size.height / max(image.size.width, 1) < 1.4,
             "Wide pie should keep a side-legend ratio, not a stacked column (\(image.size))"
         )
+    }
+
+    @Test func closedFenceReservesLayoutHeightBeforeRasterWithoutSecondJump() async throws {
+        let code = "graph TD\n    A-->B"
+        let availableWidth: CGFloat = 360
+        let palette = ThemeID.dark.palette
+        let layout = DocumentRenderPipeline.layoutGraphical(
+            parser: MermaidParser(),
+            renderer: MermaidRenderer(),
+            text: code,
+            config: RenderConfiguration(
+                fontSize: 13,
+                maxWidth: availableWidth,
+                theme: palette.renderTheme,
+                displayMode: .inline
+            )
+        )
+        #expect(layout.size.width > 0 && layout.size.height > 0)
+        let scale = min(1.0, availableWidth / layout.size.width)
+        let expectedHeight = max(1, min(layout.size.height * scale, 400))
+
+        let controlled = ControlledMermaidRasterizer()
+        let result = NativeMermaidBlockView.RasterResult(
+            image: solidImage(color: .red),
+            size: layout.size
+        )
+        let view = NativeMermaidBlockView(rasterizer: .init(
+            renderSync: { _, _, _ in result },
+            renderAsync: { _, _, _ in await controlled.render() }
+        ))
+        view.frame = CGRect(x: 0, y: 0, width: availableWidth, height: 80)
+        view.layoutIfNeeded()
+
+        view.applyAsCode(language: "mermaid", code: code, palette: palette, isOpen: true)
+        #expect(!view.debugDiagramHeightConstraintIsActiveForTesting)
+
+        view.applyAsDiagram(code: code, palette: palette, availableWidth: availableWidth)
+
+        #expect(view.debugDiagramHeightConstraintIsActiveForTesting)
+        #expect(abs((view.debugDiagramHeightConstantForTesting ?? 0) - expectedHeight) <= 0.5)
+        #expect(view.debugRenderedImageForTesting == nil)
+        let invalidationsBeforeRaster = view.debugInvalidateTimelineLayoutCountForTesting
+
+        await controlled.waitUntilRequested()
+        await controlled.finish(with: result)
+        let imageArrived = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            view.debugRenderedImageForTesting != nil
+        }
+        #expect(imageArrived)
+        #expect(abs((view.debugDiagramHeightConstantForTesting ?? 0) - expectedHeight) <= 0.5)
+        #expect(
+            view.debugInvalidateTimelineLayoutCountForTesting == invalidationsBeforeRaster,
+            "image swap must not force-invalidate again when reserved height already matches"
+        )
+    }
+
+    private func solidImage(color: UIColor) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
+            color.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        }
+    }
+}
+
+private actor ControlledMermaidRasterizer {
+    private var pending: CheckedContinuation<NativeMermaidBlockView.RasterResult?, Never>?
+    private var requestWaiter: CheckedContinuation<Void, Never>?
+
+    func render() async -> NativeMermaidBlockView.RasterResult? {
+        await withCheckedContinuation { continuation in
+            pending = continuation
+            requestWaiter?.resume()
+            requestWaiter = nil
+        }
+    }
+
+    func waitUntilRequested() async {
+        guard pending == nil else { return }
+        await withCheckedContinuation { continuation in
+            requestWaiter = continuation
+        }
+    }
+
+    func finish(with result: NativeMermaidBlockView.RasterResult?) {
+        pending?.resume(returning: result)
+        pending = nil
     }
 }

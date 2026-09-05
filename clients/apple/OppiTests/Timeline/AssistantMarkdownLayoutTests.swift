@@ -317,9 +317,9 @@ struct AssistantMarkdownLayoutTests {
         window.resignKey()
     }
 
-    /// Display math settles asynchronously from source fallback to a natural-size
-    /// horizontal viewport. Detached readers must keep the following row at the
-    /// same screen position while that height change invalidates the timeline.
+    /// Closed display math reserves layout height before the delayed raster.
+    /// Detached readers must keep the following row still while the image swaps
+    /// into that already-sized box.
     @Test func asyncLatexSettlementPreservesDetachedTimelineAnchor() async throws {
         NativeLatexBlockView.renderDelayForTesting = .milliseconds(180)
         defer { NativeLatexBlockView.renderDelayForTesting = nil }
@@ -375,15 +375,15 @@ struct AssistantMarkdownLayoutTests {
                       let latexView = timelineFirstView(ofType: NativeLatexBlockView.self, in: cell.contentView) else {
                     return false
                 }
-                let formulaGrew = settledFormulaFrame.height > initialFormulaFrame.height + 8
+                let heightUnchanged = abs(settledFormulaFrame.height - initialFormulaFrame.height) <= 0.5
                 let rowsDoNotOverlap = settledFollowingFrame.minY >= settledFormulaFrame.maxY - 0.5
-                return formulaGrew
+                return heightUnchanged
                     && rowsDoNotOverlap
                     && latexView.isAccessibilityElement
                     && latexView.accessibilityTraits.contains(.button)
             }
         }
-        #expect(formulaSettled, "LaTeX formula did not grow and reflow without overlap")
+        #expect(formulaSettled, "LaTeX image swap moved the reserved formula height or overlapping rows")
 
         let finalFormulaFrame = try #require(
             wh.collectionView.layoutAttributesForItem(at: formulaIP)?.frame
@@ -392,16 +392,16 @@ struct AssistantMarkdownLayoutTests {
             wh.collectionView.layoutAttributesForItem(at: followingIP)?.frame
         )
         let finalFollowingScreenY = finalFollowingFrame.minY - anchoredCollection.contentOffset.y
-        #expect(finalFormulaFrame.height > initialFormulaFrame.height + 8)
+        #expect(initialFormulaFrame.height > 80, "closed formula must reserve layout height before raster")
+        #expect(abs(finalFormulaFrame.height - initialFormulaFrame.height) <= 0.5)
         #expect(finalFollowingFrame.minY >= finalFormulaFrame.maxY - 0.5)
         #expect(abs(finalFollowingScreenY - initialFollowingScreenY) < 1)
         #expect(anchoredCollection.detachedAnchorIsActive)
     }
 
-    /// Regression: mermaid renders asynchronously after the assistant row is
-    /// first measured. If the enclosing collection view layout is not
-    /// invalidated when the diagram appears, the row keeps its old height until
-    /// the next user interaction, and following rows can overlap it.
+    /// Closed mermaid reserves layout height before the raster arrives, so the
+    /// following row is already clear of the diagram box. The image swap must
+    /// not require a second user-driven reflow.
     @Test func asyncMermaidRenderReflowsTimelineWithoutUserTouch() async throws {
         let wh = makeWindowedTimelineHarness(
             sessionId: "assistant-mermaid-async-relayout",
@@ -434,15 +434,19 @@ struct AssistantMarkdownLayoutTests {
         wh.applyItems(
             [
                 .assistantMessage(id: "msg-mermaid", text: mermaidMessage, timestamp: Date(timeIntervalSince1970: 0)),
-                .assistantMessage(id: "msg-after", text: "This row must move down after diagram render.", timestamp: Date(timeIntervalSince1970: 1)),
+                .assistantMessage(id: "msg-after", text: "This row must stay below the reserved diagram box.", timestamp: Date(timeIntervalSince1970: 1)),
             ],
             isBusy: false
         )
+        wh.window.layoutIfNeeded()
+        wh.collectionView.layoutIfNeeded()
 
         let firstIP = IndexPath(item: 0, section: 0)
         let secondIP = IndexPath(item: 1, section: 0)
 
+        let initialFirstHeight = try #require(wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame.height)
         let initialSecondMinY = try #require(wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame.minY)
+        #expect(initialFirstHeight > 80, "closed mermaid must reserve layout height before raster")
 
         let diagramRendered = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
@@ -456,7 +460,7 @@ struct AssistantMarkdownLayoutTests {
 
         #expect(diagramRendered, "Mermaid fixture did not render image in time")
 
-        let layoutReflowedWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_400) {
+        let layoutStableWithoutTouch = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
                 guard let firstFrame = wh.collectionView.layoutAttributesForItem(at: firstIP)?.frame,
                       let secondFrame = wh.collectionView.layoutAttributesForItem(at: secondIP)?.frame else {
@@ -464,8 +468,8 @@ struct AssistantMarkdownLayoutTests {
                 }
 
                 let rowsSeparated = secondFrame.minY >= firstFrame.maxY - 0.5
-                let secondRowMovedDown = secondFrame.minY > initialSecondMinY + 20
-                return rowsSeparated && secondRowMovedDown
+                let noSecondJump = abs(secondFrame.minY - initialSecondMinY) <= 1
+                return rowsSeparated && noSecondJump
             }
         }
 
@@ -477,8 +481,8 @@ struct AssistantMarkdownLayoutTests {
         }
 
         #expect(
-            layoutReflowedWithoutTouch,
-            "Timeline did not reflow after async mermaid render (initial second.minY=\(initialSecondMinY), final first=\(String(describing: finalFrames.0)), final second=\(String(describing: finalFrames.1)))"
+            layoutStableWithoutTouch,
+            "Timeline jumped or overlapped after mermaid image swap (initial second.minY=\(initialSecondMinY), final first=\(String(describing: finalFrames.0)), final second=\(String(describing: finalFrames.1)))"
         )
     }
 

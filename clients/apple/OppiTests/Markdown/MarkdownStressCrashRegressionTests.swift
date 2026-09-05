@@ -142,14 +142,26 @@ struct MarkdownStressCrashRegressionTests {
         )
     }
 
-    @Test("first mermaid reveal at the inactive default height force-invalidates; same-height second raster does not")
+    @Test("reserved layout height force-invalidates once; matching raster does not")
     func mermaidHeightUnchangedDoesNotForceInvalidate() async throws {
-        // Natural width is 1 so scale stays 1 for any real bounds. That pins
-        // the first reveal to the inactive 200pt default instead of a
-        // bounds-scaled height that would already look like a change.
+        let code = "graph TD\n    A-->B"
+        let availableWidth: CGFloat = 360
+        let layout = DocumentRenderPipeline.layoutGraphical(
+            parser: MermaidParser(),
+            renderer: MermaidRenderer(),
+            text: code,
+            config: RenderConfiguration(
+                fontSize: 13,
+                maxWidth: availableWidth,
+                theme: ThemeID.dark.palette.renderTheme,
+                displayMode: .inline
+            )
+        )
+        let scale = min(1.0, availableWidth / max(layout.size.width, 1))
+        let expectedHeight = max(1, min(layout.size.height * scale, 400))
         let result = NativeMermaidBlockView.RasterResult(
             image: solidImage(color: .red),
-            size: CGSize(width: 1, height: 200)
+            size: layout.size
         )
         let view = NativeMermaidBlockView(rasterizer: .init(
             renderSync: { _, _, _ in result },
@@ -161,7 +173,7 @@ struct MarkdownStressCrashRegressionTests {
             collectionViewLayout: UICollectionViewFlowLayout()
         )
         collectionView.addSubview(view)
-        view.frame = CGRect(x: 0, y: 0, width: 360, height: 200)
+        view.frame = CGRect(x: 0, y: 0, width: availableWidth, height: 200)
         view.layoutIfNeeded()
 
         var hostedInvalidations = 0
@@ -184,33 +196,35 @@ struct MarkdownStressCrashRegressionTests {
         }
 
         view.applyAsDiagram(
-            code: "graph TD\n    A-->B",
-            palette: ThemeID.dark.palette
+            code: code,
+            palette: ThemeID.dark.palette,
+            availableWidth: availableWidth
         )
         for _ in 0..<40 where !view.debugIsShowingDiagramForTesting {
             await Task.yield()
         }
         #expect(view.debugIsShowingDiagramForTesting)
         #expect(view.debugDiagramHeightConstraintIsActiveForTesting)
-        #expect(abs((view.debugDiagramHeightConstantForTesting ?? 0) - 200) <= 0.5)
+        #expect(abs((view.debugDiagramHeightConstantForTesting ?? 0) - expectedHeight) <= 0.5)
         let invalidationsAfterFirst = view.debugInvalidateTimelineLayoutCountForTesting
         #expect(
             invalidationsAfterFirst >= 1,
-            "first reveal must force-invalidate even when the raster height matches the inactive 200pt default"
+            "reserving layout height must force-invalidate the timeline"
         )
         #expect(
             hostedInvalidations >= 1,
-            "first reveal must force-invalidate the enclosing collection view"
+            "reserving layout height must force-invalidate the enclosing collection view"
         )
         #expect(
             !invalidationSawInactiveConstraint && !invalidationSawHiddenDiagram,
             "force-invalidation must wait until the diagram constraint is active and the placeholder is gone"
         )
-        #expect(abs((hostedHeightAtInvalidation ?? 0) - 200) <= 0.5)
+        #expect(abs((hostedHeightAtInvalidation ?? 0) - expectedHeight) <= 0.5)
 
         view.applyAsDiagram(
-            code: "graph TD\n    A-->C",
-            palette: ThemeID.dark.palette
+            code: code,
+            palette: ThemeID.dark.palette,
+            availableWidth: availableWidth
         )
         for _ in 0..<40 where view.debugRenderedImageForTesting == nil {
             await Task.yield()

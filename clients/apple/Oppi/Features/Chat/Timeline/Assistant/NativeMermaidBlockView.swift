@@ -292,6 +292,11 @@ final class NativeMermaidBlockView: UIView {
         #if DEBUG
         debugRenderCount += 1
         #endif
+        reserveDiagramHeightFromLayout(
+            code: code,
+            availableWidth: availableWidth,
+            theme: theme
+        )
         renderTask = Task { [weak self] in
             guard let self else { return }
 
@@ -394,6 +399,44 @@ final class NativeMermaidBlockView: UIView {
         desiredRasterRequest = nil
         displayedRasterRequest = nil
         inFlightRasterRequest = nil
+    }
+
+    /// Fence-close reservation: activate the layout-cache height before the
+    /// async raster arrives so the image swap does not change cell height.
+    private func reserveDiagramHeightFromLayout(
+        code: String,
+        availableWidth: CGFloat,
+        theme: RenderTheme
+    ) {
+        let layout = DocumentRenderPipeline.layoutGraphical(
+            parser: MermaidParser(),
+            renderer: MermaidRenderer(),
+            text: code,
+            config: RenderConfiguration(
+                fontSize: 13,
+                maxWidth: availableWidth,
+                theme: theme,
+                displayMode: .inline
+            )
+        )
+        guard layout.size.width > 0, layout.size.height > 0 else { return }
+
+        renderedDiagramNaturalSize = layout.size
+        let width = bounds.width > 0 ? bounds.width : availableWidth
+        let heightOrRevealChanged = updateDiagramHeight(
+            naturalSize: layout.size,
+            availableWidth: width
+        )
+        diagramHeightConstraint?.isActive = true
+        codeBlockView.isHidden = true
+        diagramImageView.isHidden = false
+        isShowingDiagram = true
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+        superview?.setNeedsLayout()
+        if heightOrRevealChanged {
+            invalidateTimelineLayout()
+        }
     }
 
     private func showDiagram(

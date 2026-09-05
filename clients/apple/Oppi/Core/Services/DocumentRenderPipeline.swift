@@ -443,6 +443,21 @@ enum DocumentRenderPipeline {
         return (image: image, size: entry.size)
     }
 
+    /// Layout one display formula without rasterizing. Shares the existing
+    /// latex graphical layout cache used by ``renderLatexGraphicalImage``.
+    static func layoutLatexGraphical(
+        text: String,
+        config: RenderConfiguration
+    ) -> GraphicalLayout? {
+        let layout = cachedLatexGraphicalLayout(
+            text: text,
+            config: config,
+            kind: "latex-display"
+        )
+        guard layout.isRenderable else { return nil }
+        return GraphicalLayout(size: layout.size, draw: layout.draw)
+    }
+
     /// Validate and rasterize one natural-size display formula. Unsupported or
     /// recovered TeX and formulas beyond the bitmap budget return nil so callers
     /// can show exact source deterministically.

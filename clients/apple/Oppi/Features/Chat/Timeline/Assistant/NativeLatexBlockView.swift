@@ -97,6 +97,7 @@ final class NativeLatexBlockView: UIView {
     #if DEBUG
     static var renderDelayForTesting: Duration?
     private var debugRenderCount = 0
+    private var debugInvalidateTimelineLayoutCount = 0
     #endif
 
     // MARK: - Init
@@ -257,6 +258,11 @@ final class NativeLatexBlockView: UIView {
         #if DEBUG
         debugRenderCount += 1
         #endif
+        reserveFormulaHeightFromLayout(
+            code: code,
+            availableWidth: availableWidth,
+            palette: palette
+        )
         renderTask = Task { [weak self] in
             guard let self else { return }
             #if DEBUG
@@ -326,6 +332,40 @@ final class NativeLatexBlockView: UIView {
             : (window?.windowScene?.screen.bounds.width ?? 360)
     }
 
+    /// Fence-close reservation: activate the layout-cache height before the
+    /// async raster arrives so the image swap does not change cell height.
+    private func reserveFormulaHeightFromLayout(
+        code: String,
+        availableWidth: CGFloat,
+        palette: ThemePalette
+    ) {
+        guard let layout = DocumentRenderPipeline.layoutLatexGraphical(
+            text: code,
+            config: RenderConfiguration(
+                fontSize: displayFormulaFontSize,
+                maxWidth: availableWidth,
+                theme: ThemeRuntimeState.currentRenderTheme(),
+                displayMode: .document
+            )
+        ), layout.size.width > 0, layout.size.height > 0 else {
+            return
+        }
+
+        let heightOrRevealChanged = updateFormulaHeight(naturalSize: layout.size)
+        formulaHeightConstraint?.isActive = true
+        formulaScrollView.backgroundColor = UIColor(palette.bgHighlight)
+        formulaCanvas.backgroundColor = UIColor(palette.bgHighlight)
+        codeBlockView.isHidden = true
+        formulaScrollView.isHidden = false
+        isShowingFormula = true
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+        superview?.setNeedsLayout()
+        if heightOrRevealChanged {
+            invalidateTimelineLayout()
+        }
+    }
+
     private func showFormula(
         image: UIImage,
         naturalSize: CGSize,
@@ -333,9 +373,8 @@ final class NativeLatexBlockView: UIView {
         invalidateHostLayout: Bool
     ) {
         let canvasHeight = max(naturalSize.height, 44)
-        let displayHeight = min(canvasHeight, Self.maxInlineHeight)
+        let heightOrRevealChanged = updateFormulaHeight(naturalSize: naturalSize)
 
-        formulaHeightConstraint?.constant = displayHeight
         formulaHeightConstraint?.isActive = true
         formulaCanvasHeightConstraint?.constant = canvasHeight
         formulaImageWidthConstraint?.constant = max(naturalSize.width, 1)
@@ -354,9 +393,24 @@ final class NativeLatexBlockView: UIView {
         superview?.setNeedsLayout()
         // Sync reader apply already runs inside a collection-view layout pass.
         // Nested invalidation there re-enters `cellForItem` and overflows.
-        if invalidateHostLayout {
+        if invalidateHostLayout && heightOrRevealChanged {
             invalidateTimelineLayout()
         }
+    }
+
+    @discardableResult
+    private func updateFormulaHeight(naturalSize: CGSize) -> Bool {
+        let canvasHeight = max(naturalSize.height, 44)
+        let displayHeight = min(canvasHeight, Self.maxInlineHeight)
+        let constraintIsActive = formulaHeightConstraint?.isActive == true
+        let heightUnchanged = abs((formulaHeightConstraint?.constant ?? 0) - displayHeight) <= 0.5
+        guard !isShowingFormula || !constraintIsActive || !heightUnchanged else {
+            return false
+        }
+        formulaHeightConstraint?.constant = displayHeight
+        invalidateIntrinsicContentSize()
+        superview?.setNeedsLayout()
+        return true
     }
 
     private func showAsCodeFallback(code: String, palette: ThemePalette) {
@@ -370,6 +424,9 @@ final class NativeLatexBlockView: UIView {
     }
 
     private func invalidateTimelineLayout() {
+        #if DEBUG
+        debugInvalidateTimelineLayoutCount += 1
+        #endif
         ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
@@ -427,5 +484,10 @@ extension NativeLatexBlockView {
     var debugFormulaImageForTesting: UIImage? { formulaImageView.image }
     var debugRenderWidthForTesting: CGFloat? { currentRenderIdentity?.availableWidth }
     var debugRenderCountForTesting: Int { debugRenderCount }
+    var debugFormulaHeightConstantForTesting: CGFloat? { formulaHeightConstraint?.constant }
+    var debugFormulaHeightConstraintIsActiveForTesting: Bool {
+        formulaHeightConstraint?.isActive == true
+    }
+    var debugInvalidateTimelineLayoutCountForTesting: Int { debugInvalidateTimelineLayoutCount }
 }
 #endif
