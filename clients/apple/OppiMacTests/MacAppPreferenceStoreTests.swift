@@ -134,8 +134,7 @@ struct FontPreferenceStoreTests {
 
         let attributed = MacSyntaxHighlighter.attributedCode(
             "let value = 42",
-            language: .swift,
-            includeLineNumbers: false
+            language: .swift
         )
         let font = try #require(attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
         let expectedSize = CGFloat(FontPreferenceStore.codePointSize(baseSize: 11))

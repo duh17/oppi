@@ -213,10 +213,10 @@ enum StreamingRenderPolicy {
 
     /// Determines the render tier for a content update.
     ///
-    /// This mirrors the current scattered behavior:
-    /// - Streaming → always `.cheap` (all strategies agree here)
-    /// - Not streaming + code + large → `.deferred` (only code strategy)
-    /// - Not streaming + everything else → `.full`
+    /// Syntax-bearing `.code` composes decorative admission first, then the
+    /// existing bounded sync/deferred size schedule. Streaming is still cheap.
+    /// Export and full-screen readers do not use this tier; they keep their
+    /// own deterministic/explicit surfaces.
     ///
     /// - Parameters:
     ///   - isStreaming: Whether the tool is still receiving content.
@@ -249,32 +249,36 @@ enum StreamingRenderPolicy {
             return .cheap
         }
 
+        if case .code(let languageCategory) = contentKind {
+            switch decision(
+                for: .syntaxHighlight,
+                pressure: pressure,
+                consumer: consumer
+            ) {
+            case .allow:
+                return codeTier(
+                    languageCategory: languageCategory,
+                    byteCount: byteCount,
+                    lineCount: lineCount,
+                    maxLineByteCount: maxLineByteCount
+                )
+            case .deferToPlain, .refuse, .reducedDetail:
+                return .cheap
+            }
+        }
+
         switch workAdmission(for: pressure) {
         case .nominal:
             break
         case .serious:
-            // Plain/live text first. Serious defers syntax-color even on an
-            // expanded tool; explicit full-screen/export uses other surfaces.
-            switch contentKind {
-            case .code, .markdown:
+            // Plain/live markdown first. Syntax admission already handled `.code`.
+            if case .markdown = contentKind {
                 return .cheap
-            default:
-                break
             }
         case .critical:
             if consumer != .explicit {
                 return .cheap
             }
-        }
-
-        // Only code has a deferred path in the current implementation
-        if case .code(let languageCategory) = contentKind {
-            return codeTier(
-                languageCategory: languageCategory,
-                byteCount: byteCount,
-                lineCount: lineCount,
-                maxLineByteCount: maxLineByteCount
-            )
         }
 
         // Text, markdown, diff, bash: always full when not streaming

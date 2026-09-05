@@ -183,7 +183,7 @@ enum FileViewerDescriptorBuilder {
                 text: text,
                 filePath: path,
                 fileType: fileType,
-                language: language(from: fileType),
+                language: fileType.syntaxLanguage,
                 startLine: 1,
                 attachments: []
             )
@@ -233,24 +233,4 @@ enum FileViewerDescriptorBuilder {
         }
     }
 
-    private static func language(from fileType: FileType) -> SyntaxLanguage? {
-        switch fileType {
-        case .code(let language):
-            return language
-        case .json:
-            return .json
-        case .html:
-            return .html
-        case .latex:
-            return .latex
-        case .orgMode:
-            return .orgMode
-        case .mermaid:
-            return .mermaid
-        case .graphviz:
-            return .dot
-        case .markdown, .image, .audio, .video, .pdf, .binary, .plain:
-            return nil
-        }
-    }
 }

@@ -3,6 +3,14 @@ import UIKit
 
 // MARK: - SyntaxHighlighter
 
+/// Identity of one highlight request. Views keep one current identity so a
+/// delayed paint cannot install onto replaced content or a stale theme.
+struct SyntaxHighlightIdentity: Equatable, Sendable {
+    let code: String
+    let language: String?
+    let themeID: ThemeID
+}
+
 /// UIKit syntax-highlighting adapter used by the iOS app.
 ///
 /// Token ranges come from OppiCore's shared provider (`TreeSitterHighlighter`
@@ -13,7 +21,7 @@ enum SyntaxHighlighter {
     typealias TokenKind = SyntaxTokenKind
     typealias TokenRange = SyntaxTokenRange
 
-    /// Maximum lines to highlight before truncating.
+    /// Maximum lines that receive syntax color. Displayed source is not truncated.
     static let maxLines = SyntaxTokenScanner.maxLines
 
     // MARK: - Pre-computed Token Attributes
@@ -40,17 +48,15 @@ enum SyntaxHighlighter {
             private var cached: TokenAttrs?
             private var cachedThemeID: ThemeID?
 
-            func current() -> TokenAttrs {
-                let currentThemeID = ThemeRuntimeState.currentThemeID()
-
+            func attrs(for themeID: ThemeID) -> TokenAttrs {
                 lock.lock()
-                if let cached, cachedThemeID == currentThemeID {
+                if let cached, cachedThemeID == themeID {
                     lock.unlock()
                     return cached
                 }
                 lock.unlock()
 
-                let palette = currentThemeID.palette
+                let palette = themeID.palette
                 let attrs = TokenAttrs(
                     comment: [.foregroundColor: UIColor(palette.syntaxComment)],
                     keyword: [.foregroundColor: UIColor(palette.syntaxKeyword)],
@@ -65,7 +71,7 @@ enum SyntaxHighlighter {
 
                 lock.lock()
                 cached = attrs
-                cachedThemeID = currentThemeID
+                cachedThemeID = themeID
                 lock.unlock()
                 return attrs
             }
@@ -74,17 +80,17 @@ enum SyntaxHighlighter {
         private static let cacheBox = CacheBox()
 
         // Called from Task.detached for performance — must remain nonisolated.
-        static func current() -> Self {
-            cacheBox.current()
+        static func forTheme(_ themeID: ThemeID) -> Self {
+            cacheBox.attrs(for: themeID)
         }
     }
 
     // MARK: - Public API
 
     /// Resolve a token kind to its UIColor using the cached TokenAttrs.
-    static func color(for kind: TokenKind) -> UIColor? {
+    static func color(for kind: TokenKind, themeID: ThemeID = ThemeRuntimeState.currentThemeID()) -> UIColor? {
         guard kind != .variable else { return nil }
-        let attrs = TokenAttrs.current()
+        let attrs = TokenAttrs.forTheme(themeID)
         let dict: [NSAttributedString.Key: Any]
         switch kind {
         case .variable: return nil
@@ -127,14 +133,19 @@ enum SyntaxHighlighter {
     /// (variable) color, then applies token-specific colors by NSRange. This avoids
     /// creating thousands of intermediate NSAttributedString objects per token.
     static func highlight(_ code: String, language: SyntaxLanguage) -> NSAttributedString {
-        let truncated = SyntaxTokenScanner.truncatedCode(code)
-        let attrs = TokenAttrs.current()
+        highlight(code, language: language, themeID: ThemeRuntimeState.currentThemeID())
+    }
 
-        // Build the full attributed string with default variable color.
-        let result = NSMutableAttributedString(string: truncated, attributes: attrs.variable)
+    static func highlight(_ code: String, language: SyntaxLanguage, themeID: ThemeID) -> NSAttributedString {
+        let attrs = TokenAttrs.forTheme(themeID)
+
+        // Keep the full source. Token scanning may still be bounded to maxLines.
+        let result = NSMutableAttributedString(string: code, attributes: attrs.variable)
+        let scanSource = SyntaxTokenScanner.truncatedCode(code)
 
         // Scan for token ranges via the shared OppiCore provider.
-        let tokenRanges = TreeSitterHighlighter.resolvedTokenRanges(truncated, language: language)
+        let tokenRanges = TreeSitterHighlighter.resolvedTokenRanges(scanSource, language: language)
+        let nsLength = result.length
 
         // Pre-extract UIColors to avoid dictionary lookup + cast per token.
         let commentColor = attrs.comment[.foregroundColor] as? UIColor
@@ -161,14 +172,62 @@ enum SyntaxHighlighter {
             case .operator: color = operatorColor
             }
             if let color {
+                let range = NSRange(location: token.location, length: token.length)
+                guard range.location >= 0, NSMaxRange(range) <= nsLength else { continue }
                 result.addAttribute(
                     .foregroundColor,
                     value: color,
-                    range: NSRange(location: token.location, length: token.length)
+                    range: range
                 )
             }
         }
 
         return result
+    }
+
+    /// Maps one source-space token onto sorted line starts, then walks only
+    /// forward while a line can still overlap the token.
+    ///
+    /// Used by guttered code and per-hunk diff painting. Each token is located
+    /// independently so out-of-order captures (XML `<`/`>` after attributes)
+    /// still hit earlier lines. Returns how many lines the inner walk inspected.
+    @discardableResult
+    static func forEachOverlappingSourceLine(
+        lineStarts: [Int],
+        tokenStart: Int,
+        tokenEnd: Int,
+        lineLengthAt: (Int) -> Int,
+        body: (_ lineIndex: Int, _ overlapStart: Int, _ overlapEnd: Int) -> Void
+    ) -> Int {
+        var examined = 0
+        guard tokenEnd > tokenStart, !lineStarts.isEmpty else { return 0 }
+
+        // Last start <= tokenStart is the line that contains the token start
+        // (or line 0 if the token begins before the first line).
+        var low = 0
+        var high = lineStarts.count
+        while low < high {
+            let mid = low + (high - low) / 2
+            if lineStarts[mid] <= tokenStart {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        var lineIdx = low == 0 ? 0 : low - 1
+
+        while lineIdx < lineStarts.count {
+            let lineStart = lineStarts[lineIdx]
+            if lineStart >= tokenEnd { break }
+            examined += 1
+            let lineEnd = lineStart + lineLengthAt(lineIdx)
+            let overlapStart = max(tokenStart, lineStart)
+            let overlapEnd = min(tokenEnd, lineEnd)
+            if overlapStart < overlapEnd {
+                body(lineIdx, overlapStart, overlapEnd)
+            }
+            lineIdx += 1
+        }
+        return examined
     }
 }

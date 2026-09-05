@@ -233,7 +233,7 @@ struct ResourcePressurePolicyTests {
                 maxLineByteCount: 20,
                 pressure: pressure,
                 consumer: .explicit
-            ) == .full
+            ) == .cheap
         )
     }
 

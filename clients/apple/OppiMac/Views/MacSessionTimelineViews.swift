@@ -1687,8 +1687,7 @@ struct MacCodeOutputPreview: View {
                 text: model.text,
                 attributedText: MacSyntaxHighlighter.attributedCode(
                     model.text,
-                    language: model.syntaxLanguage,
-                    includeLineNumbers: false
+                    language: model.syntaxLanguage
                 ),
                 source: source,
                 fillsColumn: false,

@@ -438,6 +438,32 @@ struct XMLHighlightingTests {
     }
 }
 
+@Suite("HTML Highlighting")
+struct HTMLHighlightingTests {
+    @Test func htmlCommentsAndTagsUseXMLScanner() {
+        let html = "<!-- note --><div class=\"x\">"
+        let ranges = SyntaxHighlighter.scanTokenRanges(html, language: .html)
+        #expect(ranges.contains { $0.kind == .comment }, "HTML comments should use the XML comment scanner")
+        #expect(ranges.contains { $0.kind == .keyword }, "HTML tags should highlight as keywords")
+        #expect(ranges.contains { $0.kind == .type }, "HTML attributes should highlight as types")
+        #expect(ranges.contains { $0.kind == .string }, "HTML attribute values should highlight as strings")
+    }
+
+    @Test func htmlScannerDoesNotClaimEmbeddedJavaScript() {
+        let html = "<script>let hidden = 1</script>"
+        let ranges = SyntaxHighlighter.scanTokenRanges(html, language: .html)
+        let utf16 = Array(html.utf16)
+        let keywordTexts = ranges.compactMap { range -> String? in
+            guard range.kind == .keyword else { return nil }
+            let end = range.location + range.length
+            guard range.location >= 0, end <= utf16.count else { return nil }
+            return String(utf16CodeUnits: Array(utf16[range.location..<end]), count: range.length)
+        }
+        #expect(keywordTexts.contains("script"))
+        #expect(!keywordTexts.contains("let"), "XML fallback must not treat embedded JS keywords as HTML tag names")
+    }
+}
+
 // MARK: - Diff Highlighting
 
 @Suite("Diff Highlighting")
@@ -721,5 +747,111 @@ struct SyntaxHighlighterUTF8ScannerTests {
             guard range.location < end else { return nil }
             return String(chars[range.location..<end])
         }
+    }
+}
+
+@Suite("Syntax token line overlap")
+struct SyntaxTokenLineOverlapTests {
+    private struct Overlap: Equatable {
+        let lineIndex: Int
+        let start: Int
+        let end: Int
+    }
+
+    private let lineLength = 8
+    private let newline = 1
+
+    @Test func multilineTokenVisitsEveryOverlappingLine() {
+        let lineStarts = evenlySpacedLineStarts(lineCount: 4)
+        var overlaps: [Overlap] = []
+        let examined = SyntaxHighlighter.forEachOverlappingSourceLine(
+            lineStarts: lineStarts,
+            tokenStart: 6,
+            tokenEnd: 20,
+            lineLengthAt: { _ in lineLength }
+        ) { lineIdx, overlapStart, overlapEnd in
+            overlaps.append(Overlap(lineIndex: lineIdx, start: overlapStart, end: overlapEnd))
+        }
+        #expect(overlaps == [
+            Overlap(lineIndex: 0, start: 6, end: 8),
+            Overlap(lineIndex: 1, start: 9, end: 17),
+            Overlap(lineIndex: 2, start: 18, end: 20),
+        ])
+        #expect(examined == 3)
+    }
+
+    /// XML emits `<`/`>` after later attribute tokens. Mapping must not keep a
+    /// monotonic cursor across tokens, or the earlier punctuation is skipped.
+    @Test func outOfOrderTokensStillHitEarlierLines() {
+        let lineStarts = evenlySpacedLineStarts(lineCount: 3)
+        var overlaps: [Overlap] = []
+        for (tokenStart, tokenEnd) in [(18, 19), (0, 1)] {
+            _ = SyntaxHighlighter.forEachOverlappingSourceLine(
+                lineStarts: lineStarts,
+                tokenStart: tokenStart,
+                tokenEnd: tokenEnd,
+                lineLengthAt: { _ in lineLength }
+            ) { lineIdx, overlapStart, overlapEnd in
+                overlaps.append(Overlap(lineIndex: lineIdx, start: overlapStart, end: overlapEnd))
+            }
+        }
+        #expect(overlaps == [
+            Overlap(lineIndex: 2, start: 18, end: 19),
+            Overlap(lineIndex: 0, start: 0, end: 1),
+        ])
+    }
+
+    /// 10,000 lines with one token per line. A prefix rescan examines
+    /// n(n+1)/2 = 50,005,000 rows. Binary search + overlap walk stays near n.
+    @Test func largeFileAndSingleHunkMappingStaysNearLinear() {
+        let lineCount = 10_000
+        let lineStarts = evenlySpacedLineStarts(lineCount: lineCount)
+        let prefixScanRows = lineCount * (lineCount + 1) / 2
+
+        var inOrderExamined = 0
+        var inOrderOverlaps = 0
+        for index in 0..<lineCount {
+            let tokenStart = lineStarts[index]
+            inOrderExamined += SyntaxHighlighter.forEachOverlappingSourceLine(
+                lineStarts: lineStarts,
+                tokenStart: tokenStart,
+                tokenEnd: tokenStart + lineLength,
+                lineLengthAt: { _ in lineLength }
+            ) { _, _, _ in inOrderOverlaps += 1 }
+        }
+
+        var reverseExamined = 0
+        var reverseOverlaps = 0
+        for index in stride(from: lineCount - 1, through: 0, by: -1) {
+            let tokenStart = lineStarts[index]
+            reverseExamined += SyntaxHighlighter.forEachOverlappingSourceLine(
+                lineStarts: lineStarts,
+                tokenStart: tokenStart,
+                tokenEnd: tokenStart + lineLength,
+                lineLengthAt: { _ in lineLength }
+            ) { _, _, _ in reverseOverlaps += 1 }
+        }
+
+        #expect(inOrderOverlaps == lineCount)
+        #expect(reverseOverlaps == lineCount)
+        #expect(
+            inOrderExamined < lineCount * 3,
+            "In-order prefix scan would examine \(prefixScanRows) rows, got \(inOrderExamined)"
+        )
+        #expect(
+            reverseExamined < lineCount * 3,
+            "Out-of-order prefix scan would examine \(prefixScanRows) rows, got \(reverseExamined)"
+        )
+    }
+
+    private func evenlySpacedLineStarts(lineCount: Int) -> [Int] {
+        var starts: [Int] = []
+        starts.reserveCapacity(lineCount)
+        var position = 0
+        for _ in 0..<lineCount {
+            starts.append(position)
+            position += lineLength + newline
+        }
+        return starts
     }
 }

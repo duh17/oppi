@@ -168,6 +168,80 @@ struct CodeTests {
             #expect(numColor == lineNumberColor, "Line 2 number colored by cross-line $() token")
         }
     }
+
+    /// UTF-16 token offsets must not be compared against Character counts.
+    /// A family emoji is one Character and many UTF-16 units; the next line's
+    /// keyword must still receive syntax color, and no gutter may be painted.
+    @Test func familyEmojiBeforeSecondLineKeywordColorsKeywordNotGutter() throws {
+        let text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}\nlet value = 1"
+        let result = ToolRowTextRenderer.makeCodeAttributedText(
+            text: text, language: .swift, startLine: 1
+        )
+        let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
+        let nsText = result.string as NSString
+        let letRange = nsText.range(of: "let")
+        #expect(letRange.location != NSNotFound)
+        let letColor = result.attribute(.foregroundColor, at: letRange.location, effectiveRange: nil) as? UIColor
+        #expect(letColor == keywordColor, "Second-line keyword after a family emoji must be keyword-colored")
+        assertGuttersHaveNoSyntaxColor(in: result, syntaxColor: keywordColor)
+    }
+
+    @Test func multilineShellStringColorsContinuationNotGutter() throws {
+        let text = """
+        git commit -m "feat: show blue
+        when agent asks"
+        """
+        let result = ToolRowTextRenderer.makeCodeAttributedText(
+            text: text, language: .shell, startLine: 1
+        )
+        let stringColor = try #require(SyntaxHighlighter.color(for: .string))
+        let nsText = result.string as NSString
+        let whenRange = nsText.range(of: "when")
+        #expect(whenRange.location != NSNotFound)
+        let whenColor = result.attribute(.foregroundColor, at: whenRange.location, effectiveRange: nil) as? UIColor
+        #expect(whenColor == stringColor, "Continuation of a multiline shell string must stay string-colored")
+        assertGuttersHaveNoSyntaxColor(in: result, syntaxColor: stringColor)
+    }
+
+    /// XML emits `<`/`>` punctuation after later attribute tokens, so mapping
+    /// cannot assume monotonically ordered starts. Continuation-line fragments
+    /// of a multiline tag must also keep their colors.
+    @Test func multilineXMLTagColorsEveryFragmentNotGutter() throws {
+        let text = """
+        <person
+          name="Ada
+        Lovelace">
+        """
+        let result = ToolRowTextRenderer.makeCodeAttributedText(
+            text: text, language: .xml, startLine: 1
+        )
+        let punctuationColor = try #require(SyntaxHighlighter.color(for: .punctuation))
+        let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
+        let typeColor = try #require(SyntaxHighlighter.color(for: .type))
+        let stringColor = try #require(SyntaxHighlighter.color(for: .string))
+        let nsText = result.string as NSString
+
+        let openRange = nsText.range(of: "<")
+        let nameRange = nsText.range(of: "person")
+        let attrRange = nsText.range(of: "name")
+        let adaRange = nsText.range(of: "Ada")
+        let lovelaceRange = nsText.range(of: "Lovelace")
+        #expect(openRange.location != NSNotFound)
+        #expect(nameRange.location != NSNotFound)
+        #expect(attrRange.location != NSNotFound)
+        #expect(adaRange.location != NSNotFound)
+        #expect(lovelaceRange.location != NSNotFound)
+
+        #expect(result.attribute(.foregroundColor, at: openRange.location, effectiveRange: nil) as? UIColor == punctuationColor)
+        #expect(result.attribute(.foregroundColor, at: nameRange.location, effectiveRange: nil) as? UIColor == keywordColor)
+        #expect(result.attribute(.foregroundColor, at: attrRange.location, effectiveRange: nil) as? UIColor == typeColor)
+        #expect(result.attribute(.foregroundColor, at: adaRange.location, effectiveRange: nil) as? UIColor == stringColor)
+        #expect(result.attribute(.foregroundColor, at: lovelaceRange.location, effectiveRange: nil) as? UIColor == stringColor)
+        assertGuttersHaveNoSyntaxColor(in: result, syntaxColor: stringColor)
+        assertGuttersHaveNoSyntaxColor(in: result, syntaxColor: punctuationColor)
+        assertGuttersHaveNoSyntaxColor(in: result, syntaxColor: keywordColor)
+        assertGuttersHaveNoSyntaxColor(in: result, syntaxColor: typeColor)
+    }
 }
 
 // MARK: - Test Helpers
@@ -176,6 +250,19 @@ private struct GutterInfo {
     let lineNumber: Int
     let lineNumStart: Int  // UTF-16 offset of line number in attributed string
     let sepStart: Int      // UTF-16 offset of separator character
+}
+
+private func assertGuttersHaveNoSyntaxColor(in attributed: NSAttributedString, syntaxColor: UIColor) {
+    let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
+    let separatorColor = UIColor(Color.themeComment.opacity(0.35))
+    for gutter in findGutterRanges(in: attributed) {
+        let numColor = attributed.attribute(.foregroundColor, at: gutter.lineNumStart, effectiveRange: nil) as? UIColor
+        let sepColor = attributed.attribute(.foregroundColor, at: gutter.sepStart, effectiveRange: nil) as? UIColor
+        #expect(numColor != syntaxColor, "Line \(gutter.lineNumber) number must not receive syntax color")
+        #expect(sepColor != syntaxColor, "Line \(gutter.lineNumber) separator must not receive syntax color")
+        #expect(numColor == lineNumberColor, "Line \(gutter.lineNumber) number must keep gutter color")
+        #expect(sepColor == separatorColor, "Line \(gutter.lineNumber) separator must keep gutter color")
+    }
 }
 
 /// Find the gutter positions (line number + separator) in a makeCodeAttributedText result.
@@ -248,6 +335,14 @@ struct DiffHelperTests {
     @Test func diffLanguageReturnsNilForEmptyPath() {
         #expect(ToolRowTextRenderer.diffLanguage(for: nil) == nil)
         #expect(ToolRowTextRenderer.diffLanguage(for: "") == nil)
+    }
+
+    @Test func diffLanguageUsesSharedFileTypeProjection() {
+        #expect(ToolRowTextRenderer.diffLanguage(for: "config.json") == .json)
+        #expect(ToolRowTextRenderer.diffLanguage(for: "page.html") == .html)
+        #expect(ToolRowTextRenderer.diffLanguage(for: "Makefile") == .shell)
+        #expect(ToolRowTextRenderer.diffLanguage(for: "graph.dot") == .dot)
+        #expect(ToolRowTextRenderer.diffLanguage(for: "notes.org") == .orgMode)
     }
 
 }

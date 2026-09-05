@@ -60,13 +60,6 @@ enum MacToolDocumentColumnPaint {
         return false
     }
 
-    static func highlightedCode(_ code: ToolContentDescriptor.Code) -> NSAttributedString {
-        MacSyntaxHighlighter.attributedCode(
-            code.text,
-            language: code.language,
-            includeLineNumbers: true
-        )
-    }
 }
 
 struct MacToolDocumentDiffRow: Equatable, Sendable {
@@ -550,8 +543,7 @@ private struct MacToolDocumentCodeView: View {
             text: code.text,
             attributedText: MacSyntaxHighlighter.attributedCode(
                 code.text,
-                language: code.language,
-                includeLineNumbers: false
+                language: code.language
             ),
             source: code.filePath == nil
                 ? MacReviewCommentSource(

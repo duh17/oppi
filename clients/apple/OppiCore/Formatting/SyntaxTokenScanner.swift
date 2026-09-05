@@ -60,7 +60,7 @@ enum SyntaxTokenScanner {
     ) -> [SyntaxTokenRange] {
         guard language != .unknown else { return [] }
 
-        if language == .json || language == .xml || language == .diff {
+        if language == .json || language == .xml || language == .html || language == .diff {
             return scanFallbackTokenRanges(text, language: language)
         }
 
@@ -129,7 +129,9 @@ private static func scanTokenRangesByCharacter(
         return tokenRanges
     }
 
-    if language == .xml {
+    if language == .xml || language == .html {
+        // HTML uses the XML scanner as a bounded fallback. Embedded JS/CSS
+        // are not parsed as those languages.
         scanXMLRanges(allChars, ranges: &tokenRanges)
         return tokenRanges
     }

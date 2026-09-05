@@ -306,6 +306,24 @@ struct FileTypeTests {
         #expect(FileType.code(language: .graphql).displayLabel == "GraphQL")
         #expect(FileType.code(language: .diff).displayLabel == "Diff")
     }
+
+    @Test func syntaxLanguageProjectionCoversFencesAndPaths() {
+        #expect(FileType.detect(from: "a.swift").syntaxLanguage == .swift)
+        #expect(FileType.detect(from: "config.json").syntaxLanguage == .json)
+        #expect(FileType.detect(from: "rows.jsonl").syntaxLanguage == .json)
+        #expect(FileType.json.syntaxLanguage == .json)
+        #expect(FileType.json != .code(language: .json))
+        #expect(FileType.detect(from: "page.html").syntaxLanguage == .html)
+        #expect(FileType.detect(from: "Makefile").syntaxLanguage == .shell)
+        #expect(FileType.detect(from: "scripts/run", content: "#!/bin/bash\necho hi").syntaxLanguage == .shell)
+        #expect(FileType.detect(from: "LICENSE").syntaxLanguage == nil)
+        #expect(FileType.detect(from: "graph.dot").syntaxLanguage == .dot)
+        #expect(FileType.detect(from: "README.md").syntaxLanguage == nil)
+        #expect(FileType.detect(from: "notes.org").syntaxLanguage == .orgMode)
+        #expect(FileType.latex.syntaxLanguage == .latex)
+        #expect(FileType.mermaid.syntaxLanguage == .mermaid)
+        #expect(FileType.html.syntaxLanguage == .html)
+    }
 }
 
 @Suite("File preview category")

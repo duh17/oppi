@@ -18,38 +18,19 @@ struct SendableNSAttributedString: @unchecked Sendable {
 
 /// Pure-function highlighting pipeline for the full-screen code viewer.
 ///
-/// Extracts the highlight + remainder-append logic from
-/// `NativeFullScreenCodeBody.loadHighlighting()` into a testable static
-/// method. Returns `NSAttributedString` directly (no `AttributedString`
-/// round-trip).
+/// Returns `NSAttributedString` directly (no `AttributedString` round-trip).
+/// Source is preserved by `SyntaxHighlighter`; this wrapper only captures the
+/// theme identity used to paint.
 enum FullScreenCodeHighlighter {
 
-    /// Highlight source code, appending an unhighlighted remainder if the
-    /// content exceeds `SyntaxHighlighter.maxLines`.
-    ///
-    /// The returned string's `.string` always equals the input `text`.
-    /// All attribute ranges are guaranteed to be within `0..<length`.
+    /// Highlight source code. The returned string's `.string` equals `text`.
+    /// Token color is bounded by `SyntaxHighlighter.maxLines`; the tail keeps
+    /// the explicit base (variable) color.
     static func buildHighlightedText(
         _ text: String,
-        language: SyntaxLanguage
+        language: SyntaxLanguage,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
     ) -> NSAttributedString {
-        let highlighted = SyntaxHighlighter.highlight(text, language: language)
-        let highlightedStr = highlighted.string
-
-        // If highlighting covered the full text, return as-is.
-        guard highlightedStr.count < text.count else {
-            return highlighted
-        }
-
-        // SyntaxHighlighter truncates at maxLines. Append the unhighlighted
-        // remainder so the full-screen viewer shows all content.
-        let mutable = NSMutableAttributedString(attributedString: highlighted)
-        let splitIndex = text.index(text.startIndex, offsetBy: highlightedStr.count)
-        let remainder = String(text[splitIndex...])
-        let baseAttrs: [NSAttributedString.Key: Any] = highlighted.length > 0
-            ? highlighted.attributes(at: 0, effectiveRange: nil)
-            : [:]
-        mutable.append(NSAttributedString(string: remainder, attributes: baseAttrs))
-        return NSAttributedString(attributedString: mutable)
+        SyntaxHighlighter.highlight(text, language: language, themeID: themeID)
     }
 }

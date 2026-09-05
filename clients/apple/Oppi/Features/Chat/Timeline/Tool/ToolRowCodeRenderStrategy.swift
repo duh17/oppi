@@ -3,11 +3,30 @@ import UIKit
 
 @MainActor
 struct ToolRowCodeRenderStrategy {
+    #if DEBUG
+    nonisolated(unsafe) static var highlightWorkCountForTesting = 0
+    #endif
+
     struct DeferredHighlight: Sendable {
         let text: String
         let language: SyntaxLanguage
         let startLine: Int
         let signature: Int
+        let themeID: ThemeID
+
+        init(
+            text: String,
+            language: SyntaxLanguage,
+            startLine: Int,
+            signature: Int,
+            themeID: ThemeID = ThemeRuntimeState.currentThemeID()
+        ) {
+            self.text = text
+            self.language = language
+            self.startLine = startLine
+            self.signature = signature
+            self.themeID = themeID
+        }
     }
 
     static func render(
@@ -80,33 +99,38 @@ struct ToolRowCodeRenderStrategy {
                 )
             }
 
-            switch tier {
-            case .cheap:
-                if isStreaming && usesFullReplaceStreamingRender {
-                    applyPlainText(displayText, to: expandedLabel)
-                } else if isCurrentModeCode {
-                    applyStreamingPlainText(
-                        displayText,
-                        previousRenderedText: previousRenderedText,
-                        to: expandedLabel
-                    )
-                } else {
-                    applyPlainText(displayText, to: expandedLabel)
-                }
+            if !isStreaming, let cached = ToolRowRenderCache.get(signature: signature) {
+                expandedLabel.text = nil
+                expandedLabel.attributedText = cached
+            } else {
+                switch tier {
+                case .cheap:
+                    if isStreaming && usesFullReplaceStreamingRender {
+                        applyPlainText(displayText, to: expandedLabel)
+                    } else if isCurrentModeCode {
+                        applyStreamingPlainText(
+                            displayText,
+                            previousRenderedText: previousRenderedText,
+                            to: expandedLabel
+                        )
+                    } else {
+                        applyPlainText(displayText, to: expandedLabel)
+                    }
 
-            case .deferred, .full:
-                if let cached = ToolRowRenderCache.get(signature: signature) {
-                    expandedLabel.text = nil
-                    expandedLabel.attributedText = cached
-                } else if tier == .deferred {
+                case .deferred:
                     applyPlainText(displayText, to: expandedLabel)
                     deferred = DeferredHighlight(
                         text: displayText,
                         language: language ?? .unknown,
                         startLine: resolvedStartLine,
-                        signature: signature
+                        signature: signature,
+                        themeID: ThemeRuntimeState.currentThemeID()
                     )
-                } else {
+
+                case .full:
+                    #if DEBUG
+                    highlightWorkCountForTesting += 1
+                    #endif
                     let codeText = ToolRowTextRenderer.makeCodeAttributedText(
                         text: displayText,
                         language: language,

@@ -90,13 +90,14 @@ final class NativeFullScreenCodeBody: UIView {
     private let startLine: Int
     private let lineCount: Int
     private var palette: ThemePalette
+    private var highlightThemeID: ThemeID
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let alwaysBounceVertical: Bool
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
     private var readerPreferences: FullScreenReaderPreferences
-    private var appliedPaletteSignature: String = ""
+    private var appliedThemeID: ThemeID?
     private var gutterWidthConstraint: NSLayoutConstraint?
     private var contentContainerWidthConstraint: NSLayoutConstraint?
     private var highlightedSourceText: NSAttributedString?
@@ -104,6 +105,10 @@ final class NativeFullScreenCodeBody: UIView {
     private var highlightTask: Task<Void, Never>?
     private var lineAnchorFocusTask: Task<Void, Never>?
     private var lineAnchorFocusPending = false
+    #if DEBUG
+    nonisolated(unsafe) static var highlightDelayForTesting: Duration?
+    private(set) var debugHighlightWorkCountForTesting = 0
+    #endif
 
     private struct GutterLayoutSignature: Equatable {
         let wrapsText: Bool
@@ -119,6 +124,7 @@ final class NativeFullScreenCodeBody: UIView {
         palette: ThemePalette,
         alwaysBounceVertical: Bool = true,
         readerPreferences: FullScreenReaderPreferences = FullScreenReaderContentFamily.code.defaultPreferences,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter?,
         reviewCommentSourceContext: ReviewCommentSourceContext?,
         lineAnchor: SourceLineAnchor? = nil,
@@ -131,6 +137,8 @@ final class NativeFullScreenCodeBody: UIView {
         self.startLine = startLine
         self.lineCount = lineCount
         self.palette = palette
+        self.highlightThemeID = themeID
+        self.appliedThemeID = themeID
         self.lineAnchor = lineAnchor
         self.lineAnchorResolution = lineAnchor?.resolution(
             fileContent: content,
@@ -260,16 +268,18 @@ final class NativeFullScreenCodeBody: UIView {
         FullScreenCodeTypography.codeFont(for: readerPreferences)
     }
 
-    func applyPalette(_ newPalette: ThemePalette) {
-        let signature = "\(newPalette.bg.description)|\(newPalette.fg.description)|\(newPalette.comment.description)"
-        guard signature != appliedPaletteSignature else { return }
-        appliedPaletteSignature = signature
+    func applyPalette(_ newPalette: ThemePalette, themeID: ThemeID = ThemeRuntimeState.currentThemeID()) {
+        guard themeID != appliedThemeID else { return }
+        appliedThemeID = themeID
+        highlightThemeID = themeID
         palette = newPalette
         backgroundColor = UIColor(palette.bgDark)
         scrollView.backgroundColor = UIColor(palette.bgDark)
         gutterView.textColor = UIColor(palette.comment)
         separatorView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        codeTextView.textColor = UIColor(palette.fg)
+        if highlightedSourceText == nil {
+            codeTextView.textColor = UIColor(palette.fg)
+        }
         highlightTask?.cancel()
         loadHighlighting()
         invalidateGutterLayout()
@@ -281,23 +291,38 @@ final class NativeFullScreenCodeBody: UIView {
         guard syntaxLang != .unknown else { return }
 
         let text = content
+        let themeID = highlightThemeID
+        #if DEBUG
+        debugHighlightWorkCountForTesting += 1
+        #endif
         highlightTask = Task { [weak self] in
+            #if DEBUG
+            if let delay = NativeFullScreenCodeBody.highlightDelayForTesting {
+                try? await Task.sleep(for: delay)
+            }
+            #endif
+            guard !Task.isCancelled else { return }
             // Use SendableNSAttributedString to avoid the lossy
             // NSAttributedString → AttributedString → NSAttributedString round-trip
             // that can corrupt UIKit's internal NSMutableRLEArray. (APPLE-IOS-1Y)
             let wrapper = await Task.detached(priority: .userInitiated) {
                 SendableNSAttributedString(
-                    FullScreenCodeHighlighter.buildHighlightedText(text, language: syntaxLang)
+                    FullScreenCodeHighlighter.buildHighlightedText(
+                        text,
+                        language: syntaxLang,
+                        themeID: themeID
+                    )
                 )
             }.value
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                self?.highlightedSourceText = wrapper.value
-                self?.codeTextView.setAttributedTextPreservingSelection(fullScreenAttributedCodeText(
+                guard let self, self.highlightThemeID == themeID else { return }
+                self.highlightedSourceText = wrapper.value
+                self.codeTextView.setAttributedTextPreservingSelection(fullScreenAttributedCodeText(
                     from: wrapper.value,
-                    font: self?.codeFont ?? FullScreenCodeTypography.codeFont
+                    font: self.codeFont
                 ))
-                self?.invalidateGutterLayout()
+                self.invalidateGutterLayout()
             }
         }
     }

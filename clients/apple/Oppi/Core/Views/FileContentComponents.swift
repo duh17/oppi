@@ -185,6 +185,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
             startLine: startLine,
             palette: themeID.palette,
             alwaysBounceVertical: maxHeight == nil,
+            themeID: themeID,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext ?? environmentReviewCommentSourceContext
         )
@@ -193,7 +194,7 @@ struct NativeCodeBodyView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: NativeFullScreenCodeBody, context: Context) {
-        uiView.applyPalette(themeID.palette)
+        uiView.applyPalette(themeID.palette, themeID: themeID)
         context.coordinator.installBackSwipe(action: horizontalBackSwipeAction, on: uiView)
     }
 

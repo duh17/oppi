@@ -854,6 +854,7 @@ final class FullScreenCodeViewController: UIViewController {
                 startLine: startLine,
                 palette: palette,
                 readerPreferences: readerPreferences(for: content),
+                themeID: themeID,
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,
@@ -1023,6 +1024,7 @@ final class FullScreenCodeViewController: UIViewController {
                 startLine: 1,
                 palette: palette,
                 readerPreferences: readerPreferences(for: content),
+                themeID: themeID,
                 reviewCommentSelectionRouter: reviewCommentSelectionContext?.dispatcher,
                 reviewCommentSourceContext: makeSourceContext(
                     surface: .fullScreenCode,

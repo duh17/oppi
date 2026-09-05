@@ -186,7 +186,7 @@ struct MacToolDocumentColumnTests {
             startLine: 1,
             filePath: "App.swift"
         )
-        let highlighted = MacToolDocumentColumnPaint.highlightedCode(code)
+        let highlighted = MacSyntaxHighlighter.attributedCode(code.text, language: code.language)
         let keywordRange = (highlighted.string as NSString).range(of: "let")
         let commentRange = (highlighted.string as NSString).range(of: "// comment")
         let keywordColor = try #require(
@@ -196,7 +196,8 @@ struct MacToolDocumentColumnTests {
             highlighted.attribute(.foregroundColor, at: commentRange.location, effectiveRange: nil) as? NSColor
         )
 
-        #expect(highlighted.string.contains("let value = 42"))
+        #expect(highlighted.string == code.text)
+        #expect(!highlighted.string.contains("1  let"))
         #expect(keywordColor == MacSyntaxHighlighter.color(for: .keyword))
         #expect(commentColor == MacSyntaxHighlighter.color(for: .comment))
     }
@@ -218,6 +219,7 @@ struct MacToolDocumentColumnTests {
         #expect(codeSource.contains("@Environment(\\.themeID) private var themeID"))
         #expect(codeSource.contains("let _ = themeID"))
         #expect(codeSource.contains("MacSyntaxHighlighter.attributedCode"))
+        #expect(!codeSource.contains("includeLineNumbers"))
     }
 
     @Test func diffPaintKeepsStructuredLineNumbersInsteadOfPlaintextDump() {

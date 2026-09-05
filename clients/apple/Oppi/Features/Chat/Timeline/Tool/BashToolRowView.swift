@@ -10,6 +10,7 @@ struct BashRenderInput {
     let isError: Bool
     let isStreaming: Bool
     let sessionId: String?
+    let resourcePressure: StreamingRenderPolicy.ResourcePressure
 
     init(
         command: String?,
@@ -17,7 +18,8 @@ struct BashRenderInput {
         unwrapped: Bool,
         isError: Bool,
         isStreaming: Bool,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
     ) {
         self.command = command
         self.output = output
@@ -25,6 +27,7 @@ struct BashRenderInput {
         self.isError = isError
         self.isStreaming = isStreaming
         self.sessionId = sessionId
+        self.resourcePressure = resourcePressure
     }
 }
 
@@ -87,6 +90,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     // MARK: - Private render state
 
     private var commandRenderSignature: Int?
+    private var commandShowsHighlight = false
     private var pendingFollowTail = false
     private var perfSessionId: String?
 
@@ -98,9 +102,13 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
     private var deferredANSITask: Task<Void, Never>?
     private var deferredANSISignature: Int?
+    private var deferredCommandTask: Task<Void, Never>?
+    private var deferredCommandSignature: Int?
 
     #if DEBUG
     nonisolated(unsafe) static var deferredANSIDelayForTesting: Duration?
+    nonisolated(unsafe) static var deferredCommandHighlightDelayForTesting: Duration?
+    private(set) var debugCommandHighlightWorkCountForTesting = 0
     #endif
 
     // MARK: - Streaming append state (step 7)
@@ -172,30 +180,17 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         if let command = input.command, !command.isEmpty {
             let displayCmd = ToolTimelineRowRenderMetrics.displayCommandText(command)
             let signature = ToolTimelineRowRenderMetrics.commandSignature(displayCommand: displayCmd)
-            if signature != commandRenderSignature {
-                let startNs = ChatTimelinePerf.timestampNs()
-                if let cached = ToolRowRenderCache.get(signature: signature) {
-                    commandLabel.attributedText = cached
-                } else if displayCmd.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes {
-                    let highlighted = ToolRowTextRenderer.bashCommandHighlighted(displayCmd)
-                    ToolRowRenderCache.set(signature: signature, attributed: highlighted)
-                    commandLabel.attributedText = highlighted
-                } else {
-                    commandLabel.attributedText = nil
-                    commandLabel.text = displayCmd
-                    commandLabel.textColor = UIColor(Color.themeFg)
-                }
-                ChatTimelinePerf.recordRenderStrategy(
-                    mode: "bash.command",
-                    durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
-                    inputBytes: displayCmd.utf8.count,
-                    sessionId: input.sessionId
-                )
-                commandRenderSignature = signature
-            }
+            applyCommandHighlight(
+                displayCmd: displayCmd,
+                signature: signature,
+                pressure: input.resourcePressure,
+                sessionId: input.sessionId
+            )
             showCommand = true
         } else {
+            cancelDeferredCommandHighlight()
             commandRenderSignature = nil
+            commandShowsHighlight = false
         }
 
         // MARK: Output
@@ -424,10 +419,154 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
     /// Reset command render state. Called when command container is hidden.
     func resetCommandState() {
         cancelDeferredANSIHighlight()
+        cancelDeferredCommandHighlight()
         commandLabel.attributedText = nil
         commandLabel.text = nil
         commandLabel.textColor = UIColor(Color.themeFg)
         commandRenderSignature = nil
+        commandShowsHighlight = false
+    }
+
+    // MARK: - Command syntax highlight
+
+    private struct DeferredCommandResult: @unchecked Sendable {
+        let attributed: NSAttributedString
+    }
+
+    private func applyCommandHighlight(
+        displayCmd: String,
+        signature: Int,
+        pressure: StreamingRenderPolicy.ResourcePressure,
+        sessionId: String?
+    ) {
+        if let cached = ToolRowRenderCache.get(signature: signature) {
+            if commandLabel.attributedText !== cached {
+                commandLabel.attributedText = cached
+            }
+            cancelDeferredCommandHighlight()
+            commandRenderSignature = signature
+            commandShowsHighlight = true
+            return
+        }
+
+        if signature == commandRenderSignature, commandShowsHighlight {
+            return
+        }
+
+        let profile = StreamingRenderPolicy.ContentProfile.from(text: displayCmd)
+        let tier = StreamingRenderPolicy.tier(
+            isStreaming: false,
+            contentKind: .code(language: .known),
+            byteCount: profile.byteCount,
+            lineCount: profile.lineCount,
+            maxLineByteCount: profile.maxLineByteCount,
+            pressure: pressure,
+            consumer: .explicit
+        )
+
+        let startNs = ChatTimelinePerf.timestampNs()
+        switch tier {
+        case .cheap:
+            cancelDeferredCommandHighlight()
+            applyPlainCommand(displayCmd)
+            commandShowsHighlight = false
+
+        case .deferred:
+            applyPlainCommand(displayCmd)
+            commandShowsHighlight = false
+            scheduleDeferredCommandHighlight(
+                text: displayCmd,
+                signature: signature,
+                sessionId: sessionId
+            )
+
+        case .full:
+            cancelDeferredCommandHighlight()
+            #if DEBUG
+            debugCommandHighlightWorkCountForTesting += 1
+            #endif
+            let highlighted = ToolRowTextRenderer.bashCommandHighlighted(displayCmd)
+            ToolRowRenderCache.set(signature: signature, attributed: highlighted)
+            commandLabel.attributedText = highlighted
+            commandShowsHighlight = true
+        }
+
+        ChatTimelinePerf.recordRenderStrategy(
+            mode: tier == .deferred ? "bash.command.deferred" : "bash.command",
+            durationMs: ChatTimelinePerf.elapsedMs(since: startNs),
+            inputBytes: displayCmd.utf8.count,
+            sessionId: sessionId
+        )
+        commandRenderSignature = signature
+    }
+
+    private func applyPlainCommand(_ text: String) {
+        commandLabel.attributedText = nil
+        commandLabel.text = text
+        commandLabel.textColor = UIColor(Color.themeFg)
+    }
+
+    private func cancelDeferredCommandHighlight() {
+        deferredCommandTask?.cancel()
+        deferredCommandTask = nil
+        deferredCommandSignature = nil
+    }
+
+    private func scheduleDeferredCommandHighlight(
+        text: String,
+        signature: Int,
+        sessionId: String?
+    ) {
+        if deferredCommandSignature == signature,
+           let task = deferredCommandTask,
+           !task.isCancelled {
+            return
+        }
+
+        cancelDeferredCommandHighlight()
+        deferredCommandSignature = signature
+        let themeID = ThemeRuntimeState.currentThemeID()
+
+        deferredCommandTask = Task.detached(priority: .utility) { [weak self] in
+            #if DEBUG
+            if let artificialDelay = BashToolRowView.deferredCommandHighlightDelayForTesting {
+                try? await Task.sleep(for: artificialDelay)
+            }
+            #endif
+            guard !Task.isCancelled else { return }
+
+            let renderStart = ContinuousClock.now
+            let highlighted = ToolRowTextRenderer.bashCommandHighlighted(text, themeID: themeID)
+            let result = DeferredCommandResult(attributed: highlighted)
+            let durationMs = Int((ContinuousClock.now - renderStart) / .milliseconds(1))
+
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.deferredCommandSignature == signature else {
+                    return
+                }
+
+                defer {
+                    self.deferredCommandTask = nil
+                    self.deferredCommandSignature = nil
+                }
+
+                guard self.commandRenderSignature == signature else { return }
+
+                #if DEBUG
+                self.debugCommandHighlightWorkCountForTesting += 1
+                #endif
+                ToolRowRenderCache.set(signature: signature, attributed: result.attributed)
+                ChatTimelinePerf.recordRenderStrategy(
+                    mode: "bash.command.deferred.highlight",
+                    durationMs: durationMs,
+                    inputBytes: text.utf8.count,
+                    sessionId: sessionId
+                )
+                self.commandLabel.attributedText = result.attributed
+                self.commandShowsHighlight = true
+            }
+        }
     }
 
     // MARK: - Deferred ANSI Highlight

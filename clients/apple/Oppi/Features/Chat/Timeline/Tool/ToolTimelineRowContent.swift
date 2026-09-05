@@ -1330,7 +1330,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     unwrapped: unwrapped,
                     isError: configuration.isError,
                     isStreaming: !configuration.isDone,
-                    sessionId: perfSessionId
+                    sessionId: perfSessionId,
+                    resourcePressure: configuration.resourcePressure
                 )
                 let result = bashToolRowView.apply(
                     input: input,

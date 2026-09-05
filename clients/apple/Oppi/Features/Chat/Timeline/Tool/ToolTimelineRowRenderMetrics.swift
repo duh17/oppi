@@ -33,7 +33,6 @@ enum ToolTimelineRowRenderMetrics {
         hasher.combine("command")
         combineActiveTheme(into: &hasher)
         hasher.combine(displayCommand)
-        hasher.combine(displayCommand.utf8.count <= ToolRowTextRenderer.maxShellHighlightBytes)
         return hasher.finalize()
     }
 

@@ -685,6 +685,14 @@ extension AssistantMarkdownContentView {
         segmentApplier.debugTextContentStorageIdentifierForTesting()
     }
 
+    var debugHighlightWorkCountForTesting: Int {
+        segmentApplier.debugHighlightWorkCountForTesting
+    }
+
+    func debugClearHighlightTasksForTesting() {
+        segmentApplier.debugClearHighlightTasksForTesting()
+    }
+
     var debugRenderedContentOverflowPoints: CGFloat {
         let maxRenderedY = stackView.arrangedSubviews
             .filter { !$0.isHidden && $0.alpha > 0.01 }

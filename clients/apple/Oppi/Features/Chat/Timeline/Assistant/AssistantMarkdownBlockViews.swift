@@ -104,8 +104,11 @@ final class NativeCodeBlockView: UIView {
 
     private let headerBackground = UIView()
     private var currentCode: String = ""
+    private var currentLanguage: String?
     private var highlightedText: NSAttributedString?
     private var currentPalette: ThemePalette?
+    private var desiredHighlightIdentity: SyntaxHighlightIdentity?
+    private var installedHighlightIdentity: SyntaxHighlightIdentity?
     private var isLineWrappingEnabled = false
     private var measuredUnwrappedCodeWidth: CGFloat = 0
 
@@ -235,7 +238,13 @@ final class NativeCodeBlockView: UIView {
     }
 
     // periphery:ignore:parameters isOpen
-    func apply(language: String?, code: String, palette: ThemePalette, isOpen: Bool) {
+    func apply(
+        language: String?,
+        code: String,
+        palette: ThemePalette,
+        isOpen: Bool,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
+    ) {
         currentPalette = palette
         backgroundColor = UIColor(palette.bgDark)
         headerBackground.backgroundColor = UIColor(palette.bgHighlight)
@@ -246,32 +255,55 @@ final class NativeCodeBlockView: UIView {
         copyButton.tintColor = UIColor(palette.fgDim)
         updateWrapButton()
 
+        let identity = SyntaxHighlightIdentity(code: code, language: language, themeID: themeID)
+        desiredHighlightIdentity = identity
         let font = AppFont.monoMedium
 
-        if code == currentCode, let highlighted = highlightedText {
+        if identity == installedHighlightIdentity, let highlighted = highlightedText {
+            currentCode = code
+            currentLanguage = language
             codeLabel.attributedText = highlighted
             applyCurrentLineWrapping(resetHorizontalOffset: false)
             return
         }
 
+        let contentChanged = code != currentCode || language != currentLanguage
         currentCode = code
-        highlightedText = nil
+        currentLanguage = language
 
-        codeLabel.font = font
-        codeLabel.textColor = UIColor(palette.fg)
-        codeLabel.attributedText = nil
-        codeLabel.text = code
+        if contentChanged || highlightedText == nil {
+            highlightedText = nil
+            installedHighlightIdentity = nil
+            codeLabel.font = font
+            codeLabel.textColor = UIColor(palette.fg)
+            codeLabel.attributedText = nil
+            codeLabel.text = code
+            updateMeasuredCodeWidth(NSAttributedString(string: code, attributes: [.font: font]))
+            return
+        }
 
-        updateMeasuredCodeWidth(NSAttributedString(string: code, attributes: [.font: font]))
+        applyCurrentLineWrapping(resetHorizontalOffset: false)
     }
 
-    func applyHighlightedCode(_ highlighted: NSAttributedString) {
+    var hasCurrentHighlight: Bool {
+        installedHighlightIdentity == desiredHighlightIdentity && highlightedText != nil
+    }
+
+    func applyHighlightedCode(
+        _ highlighted: NSAttributedString,
+        identity: SyntaxHighlightIdentity? = nil
+    ) {
+        guard let desired = desiredHighlightIdentity else { return }
+        if let identity, identity != desired { return }
+        if identity == nil, highlighted.string != desired.code { return }
+
         let mutable = NSMutableAttributedString(attributedString: highlighted)
         let font = AppFont.monoMedium
         let fullRange = NSRange(location: 0, length: mutable.length)
         mutable.addAttribute(.font, value: font, range: fullRange)
         codeLabel.attributedText = mutable
         highlightedText = mutable
+        installedHighlightIdentity = desired
 
         updateMeasuredCodeWidth(mutable)
     }

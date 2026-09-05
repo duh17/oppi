@@ -312,8 +312,7 @@ final class MacSessionShellVisualGateTests: XCTestCase {
         let code = "echo boundary"
         let attributedCode = MacSyntaxHighlighter.attributedCode(
             code,
-            language: .shell,
-            includeLineNumbers: false
+            language: .shell
         )
         let width = unwrappedCodeWidth(attributedCode)
         let root = MacReviewCommentTextView(
@@ -363,8 +362,7 @@ final class MacSessionShellVisualGateTests: XCTestCase {
             text: code,
             attributedText: MacSyntaxHighlighter.attributedCode(
                 code,
-                language: .shell,
-                includeLineNumbers: false
+                language: .shell
             ),
             source: MacReviewCommentSource(kind: .timelineText),
             fillsColumn: false,

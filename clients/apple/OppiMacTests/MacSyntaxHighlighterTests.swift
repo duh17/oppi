@@ -8,8 +8,8 @@ struct MacSyntaxHighlighterTests {
         let code = "let value = 42\n// comment"
         let attributed = MacSyntaxHighlighter.attributedCode(code, language: .swift)
 
-        #expect(attributed.string.contains("1  let value = 42"))
-        #expect(attributed.string.contains("2  // comment"))
+        #expect(attributed.string == code)
+        #expect(!attributed.string.contains("1  let"))
 
         let keywordRange = (attributed.string as NSString).range(of: "let")
         let commentRange = (attributed.string as NSString).range(of: "// comment")
@@ -20,9 +20,9 @@ struct MacSyntaxHighlighterTests {
         #expect(commentColor == MacSyntaxHighlighter.color(for: .comment))
     }
 
-    @Test func omitsLineNumbersWhenRequested() throws {
+    @Test func preservesUnicodeSourceWithoutLineNumbers() throws {
         let code = "let café = \"crème\""
-        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .swift, includeLineNumbers: false)
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .swift)
 
         #expect(attributed.string == code)
         let stringRange = (attributed.string as NSString).range(of: "\"crème\"")
@@ -38,7 +38,7 @@ struct MacSyntaxHighlighterTests {
         let ranges = TreeSitterHighlighter.resolvedTokenRanges(code, language: .shell)
         #expect(ranges.contains { $0.kind == .function })
 
-        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .shell, includeLineNumbers: false)
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .shell)
         #expect(attributed.string == code)
 
         for token in ranges {
@@ -66,7 +66,7 @@ struct MacSyntaxHighlighterTests {
         #expect(functionTexts.contains("git"))
         #expect(!functionTexts.contains("when"))
 
-        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .shell, includeLineNumbers: false)
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .shell)
         let whenRange = (attributed.string as NSString).range(of: "when")
         let whenColor = try #require(
             attributed.attribute(.foregroundColor, at: whenRange.location, effectiveRange: nil) as? NSColor

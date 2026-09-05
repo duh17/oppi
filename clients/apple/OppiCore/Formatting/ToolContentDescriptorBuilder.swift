@@ -260,7 +260,7 @@ enum ToolContentDescriptorBuilder {
         return FileMetadata(
             filePath: filePath,
             fileType: fileType,
-            language: language(from: fileType)
+            language: fileType?.syntaxLanguage
         )
     }
 
@@ -276,21 +276,7 @@ enum ToolContentDescriptorBuilder {
     }
 
     static func readOutputLanguage(args: [String: JSONValue]?, argsSummary: String) -> SyntaxLanguage? {
-        language(from: readOutputFileType(args: args, argsSummary: argsSummary))
-    }
-
-    private static func language(from fileType: FileType?) -> SyntaxLanguage? {
-        switch fileType {
-        case .code(let language): return language
-        case .json: return .json
-        case .html: return .html
-        case .latex: return .latex
-        case .orgMode: return .orgMode
-        case .mermaid: return .mermaid
-        case .graphviz: return .dot
-        case .markdown, .image, .audio, .video, .pdf, .binary, .plain, .none:
-            return nil
-        }
+        readOutputFileType(args: args, argsSummary: argsSummary)?.syntaxLanguage
     }
 
     static func mediaAttachments(from details: JSONValue?) -> [ToolContentMediaAttachment] {
@@ -891,7 +877,7 @@ enum ToolContentDescriptorBuilder {
         }
 
         if let filePathHint {
-            return language(from: FileType.detect(from: filePathHint))
+            return FileType.detect(from: filePathHint).syntaxLanguage
         }
 
         return nil

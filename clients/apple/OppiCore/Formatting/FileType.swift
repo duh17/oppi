@@ -168,6 +168,31 @@ enum FileType: Equatable {
         case .graphviz: return "Graphviz"
         }
     }
+
+    /// Source-listing syntax language for this file kind.
+    ///
+    /// Rendering distinctions stay on `FileType` (JSON vs `.code`, HTML preview
+    /// vs source, document renderers). This projection is only for painters.
+    var syntaxLanguage: SyntaxLanguage? {
+        switch self {
+        case .code(let language):
+            return language
+        case .json:
+            return .json
+        case .html:
+            return .html
+        case .latex:
+            return .latex
+        case .orgMode:
+            return .orgMode
+        case .mermaid:
+            return .mermaid
+        case .graphviz:
+            return .dot
+        case .markdown, .image, .audio, .video, .pdf, .binary, .plain:
+            return nil
+        }
+    }
 }
 
 // MARK: - FilePreviewCategory

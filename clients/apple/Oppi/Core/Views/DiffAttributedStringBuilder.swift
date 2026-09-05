@@ -159,6 +159,50 @@ enum DiffAttributedStringBuilder {
         let spans: [WorkspaceReviewDiffSpan]?
     }
 
+    /// Old and new source projections for one contiguous hunk.
+    /// Context is included in both so later removed/added lines see real lexer state,
+    /// but displayed context is painted only from the new projection.
+    private struct HunkSyntaxProjection {
+        var oldCode = ""
+        var newCode = ""
+        var oldUTF16 = 0
+        var newUTF16 = 0
+        var oldLines: [(lineIndex: Int, start: Int)] = []
+        var newLines: [(lineIndex: Int, start: Int)] = []
+
+        mutating func append(lineIndex: Int, kind: WorkspaceReviewDiffLine.Kind, codeText: String) {
+            switch kind {
+            case .removed:
+                appendOld(lineIndex: lineIndex, codeText: codeText)
+            case .added:
+                appendNew(lineIndex: lineIndex, codeText: codeText)
+            case .context:
+                appendOld(lineIndex: lineIndex, codeText: codeText)
+                appendNew(lineIndex: lineIndex, codeText: codeText)
+            }
+        }
+
+        private mutating func appendOld(lineIndex: Int, codeText: String) {
+            if oldUTF16 > 0 {
+                oldCode.append("\n")
+                oldUTF16 += 1
+            }
+            oldLines.append((lineIndex, oldUTF16))
+            oldCode.append(codeText)
+            oldUTF16 += codeText.utf16.count
+        }
+
+        private mutating func appendNew(lineIndex: Int, codeText: String) {
+            if newUTF16 > 0 {
+                newCode.append("\n")
+                newUTF16 += 1
+            }
+            newLines.append((lineIndex, newUTF16))
+            newCode.append(codeText)
+            newUTF16 += codeText.utf16.count
+        }
+    }
+
     /// Collapsed unchanged-lines separator position.
     private struct HeaderInfo {
         let fullRange: NSRange
@@ -196,8 +240,7 @@ enum DiffAttributedStringBuilder {
         filePath: String,
         options: Options = Options()
     ) -> BuildResult {
-        let ext = (filePath as NSString).pathExtension
-        let language = ext.isEmpty ? SyntaxLanguage.unknown : SyntaxLanguage.detect(ext)
+        let language = FileType.detect(from: filePath).syntaxLanguage ?? .unknown
         let style = StyleAttrs.current()
 
         var maxLineNum = 1
@@ -224,16 +267,12 @@ enum DiffAttributedStringBuilder {
         }
 
         let text = NSMutableString()
-        var batchCode = ""
-        var allTokens: [SyntaxHighlighter.TokenRange] = []
-        var batchUTF16Offsets: [Int] = []
         var lineInfos: [LineInfo] = []
         lineInfos.reserveCapacity(totalLines)
         var headers: [HeaderInfo] = []
-
+        var hunkProjections: [HunkSyntaxProjection] = []
         if language != .unknown {
-            batchCode.reserveCapacity(totalLines * 60)
-            batchUTF16Offsets.reserveCapacity(totalLines)
+            hunkProjections.reserveCapacity(hunks.count)
         }
 
         var statsSegs: StatsSegments?
@@ -267,7 +306,6 @@ enum DiffAttributedStringBuilder {
             )
         }
 
-        var batchUTF16Offset = 0
         for (hunkIndex, hunk) in hunks.enumerated() {
             if hunkIndex > 0 {
                 text.append("\n")
@@ -286,6 +324,7 @@ enum DiffAttributedStringBuilder {
                 }
             }
 
+            var projection = HunkSyntaxProjection()
             for line in hunk.lines {
                 let displayLineNumber = displayedLineNumber(for: line)
 
@@ -307,16 +346,6 @@ enum DiffAttributedStringBuilder {
                 text.append(codeText)
                 let codeLen = text.length - codeStart
 
-                if language != .unknown {
-                    if batchUTF16Offset > 0 {
-                        batchCode.append("\n")
-                        batchUTF16Offset += 1
-                    }
-                    batchUTF16Offsets.append(batchUTF16Offset)
-                    batchCode.append(codeText)
-                    batchUTF16Offset += codeText.utf16.count
-                }
-
                 text.append("\n")
                 let rowEnd = text.length
 
@@ -331,11 +360,18 @@ enum DiffAttributedStringBuilder {
                     kind: line.kind,
                     spans: line.spans
                 ))
-            }
-        }
 
-        if language != .unknown {
-            allTokens = SyntaxHighlighter.scanTokenRangesUTF8(batchCode, language: language)
+                if language != .unknown {
+                    projection.append(
+                        lineIndex: lineInfos.count - 1,
+                        kind: line.kind,
+                        codeText: codeText
+                    )
+                }
+            }
+            if language != .unknown {
+                hunkProjections.append(projection)
+            }
         }
 
         let result = NSMutableAttributedString(string: text as String, attributes: style.codeDefaultAttrs)
@@ -409,50 +445,26 @@ enum DiffAttributedStringBuilder {
             }
         }
 
-        if !allTokens.isEmpty {
+        if language != .unknown {
             let colorArray = style.syntaxColorArray
-            var lineIdx = 0
-            let lineCount = lineInfos.count
-            for token in allTokens {
-                guard let color = colorArray[Int(token.kind.rawValue)] else { continue }
-                let tokenEnd = token.location + token.length
-                guard tokenEnd > token.location else { continue }
-
-                while lineIdx + 1 < lineCount,
-                      batchUTF16Offsets[lineIdx + 1] <= token.location {
-                    lineIdx += 1
-                }
-
-                // Batch syntax tokens may span newlines (XML comments, heredocs).
-                // Split them back across diff rows so syntax color never paints gutters.
-                var segmentLineIdx = lineIdx
-                var segmentStart = token.location
-                while segmentLineIdx < lineCount, segmentStart < tokenEnd {
-                    let lineStart = batchUTF16Offsets[segmentLineIdx]
-                    let lineEnd = lineStart + lineInfos[segmentLineIdx].codeLen
-                    if segmentStart < lineStart {
-                        segmentStart = lineStart
-                    }
-
-                    if segmentStart < lineEnd {
-                        let segmentEnd = min(tokenEnd, lineEnd)
-                        result.addAttribute(
-                            .foregroundColor,
-                            value: color,
-                            range: NSRange(
-                                location: lineInfos[segmentLineIdx].codeStart + segmentStart - lineStart,
-                                length: segmentEnd - segmentStart
-                            )
-                        )
-                        segmentStart = segmentEnd
-                    }
-
-                    if segmentStart >= tokenEnd { break }
-                    segmentLineIdx += 1
-                    if segmentLineIdx < lineCount {
-                        segmentStart = max(segmentStart, batchUTF16Offsets[segmentLineIdx])
-                    }
-                }
+            for projection in hunkProjections {
+                let oldTokens = SyntaxHighlighter.scanTokenRangesUTF8(projection.oldCode, language: language)
+                let newTokens = SyntaxHighlighter.scanTokenRangesUTF8(projection.newCode, language: language)
+                // Removed rows use the old projection. Added and context rows use the new one.
+                applySyntaxTokens(
+                    oldTokens,
+                    onto: projection.oldLines.filter { lineInfos[$0.lineIndex].kind == .removed },
+                    lineInfos: lineInfos,
+                    in: result,
+                    colorArray: colorArray
+                )
+                applySyntaxTokens(
+                    newTokens,
+                    onto: projection.newLines.filter { lineInfos[$0.lineIndex].kind != .removed },
+                    lineInfos: lineInfos,
+                    in: result,
+                    colorArray: colorArray
+                )
             }
         }
 
@@ -470,6 +482,39 @@ enum DiffAttributedStringBuilder {
 
         result.endEditing()
         return BuildResult(attributedText: result)
+    }
+
+    private static func applySyntaxTokens(
+        _ tokens: [SyntaxHighlighter.TokenRange],
+        onto lines: [(lineIndex: Int, start: Int)],
+        lineInfos: [LineInfo],
+        in result: NSMutableAttributedString,
+        colorArray: [UIColor?]
+    ) {
+        guard !tokens.isEmpty, !lines.isEmpty else { return }
+        let nsLength = result.length
+        let lineStarts = lines.map(\.start)
+        for token in tokens {
+            guard let color = colorArray[Int(token.kind.rawValue)] else { continue }
+            let tokenEnd = token.location + token.length
+            guard tokenEnd > token.location else { continue }
+
+            SyntaxHighlighter.forEachOverlappingSourceLine(
+                lineStarts: lineStarts,
+                tokenStart: token.location,
+                tokenEnd: tokenEnd,
+                lineLengthAt: { lineInfos[lines[$0].lineIndex].codeLen }
+            ) { lineIdx, overlapStart, overlapEnd in
+                let mapped = lines[lineIdx]
+                let info = lineInfos[mapped.lineIndex]
+                let range = NSRange(
+                    location: info.codeStart + overlapStart - mapped.start,
+                    length: overlapEnd - overlapStart
+                )
+                guard range.location >= 0, NSMaxRange(range) <= nsLength else { return }
+                result.addAttribute(.foregroundColor, value: color, range: range)
+            }
+        }
     }
 
     private static func displayedLineNumber(for line: WorkspaceReviewDiffLine) -> Int? {

@@ -315,4 +315,116 @@ struct DiffSyntaxHighlightOffsetTests {
         ) as? UIColor
         #expect(rColor == keywordColor, "'r' of 'return' must be keyword color")
     }
+
+    /// A removed `/*` must not put added code or a later hunk into comment state.
+    /// Context is painted from the new-side projection of its own hunk.
+    @Test func removedBlockCommentDoesNotRecolorAddedCodeOrDistantHunk() throws {
+        let hunks = [
+            WorkspaceReviewDiffHunk(
+                oldStart: 1,
+                oldCount: 2,
+                newStart: 1,
+                newCount: 2,
+                lines: [
+                    WorkspaceReviewDiffLine(kind: .removed, text: "/*", oldLine: 1, newLine: nil, spans: nil),
+                    WorkspaceReviewDiffLine(kind: .added, text: "let added = true", oldLine: nil, newLine: 1, spans: nil),
+                    WorkspaceReviewDiffLine(kind: .context, text: "run()", oldLine: 2, newLine: 2, spans: nil),
+                ]
+            ),
+            WorkspaceReviewDiffHunk(
+                oldStart: 40,
+                oldCount: 1,
+                newStart: 40,
+                newCount: 1,
+                lines: [
+                    WorkspaceReviewDiffLine(kind: .context, text: "let distant = 1", oldLine: 40, newLine: 40, spans: nil),
+                ]
+            ),
+        ]
+
+        let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.swift")
+        let text = result.string as NSString
+        let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
+        let commentColor = try #require(SyntaxHighlighter.color(for: .comment))
+
+        let commentRange = text.range(of: "/*")
+        let addedRange = text.range(of: "let added")
+        let distantRange = text.range(of: "let distant")
+        #expect(commentRange.location != NSNotFound)
+        #expect(addedRange.location != NSNotFound)
+        #expect(distantRange.location != NSNotFound)
+
+        #expect(result.attribute(.foregroundColor, at: commentRange.location, effectiveRange: nil) as? UIColor == commentColor)
+        #expect(result.attribute(.foregroundColor, at: addedRange.location, effectiveRange: nil) as? UIColor == keywordColor)
+        #expect(result.attribute(.foregroundColor, at: distantRange.location, effectiveRange: nil) as? UIColor == keywordColor)
+
+        let addedLine = text.lineRange(for: addedRange)
+        let addedGutterColor = result.attribute(.foregroundColor, at: addedLine.location, effectiveRange: nil) as? UIColor
+        #expect(addedGutterColor != commentColor)
+        #expect(addedGutterColor != keywordColor)
+    }
+
+    @Test func wordSpanForegroundOverridesSyntaxAndKeepsBackground() throws {
+        let hunks = [
+            WorkspaceReviewDiffHunk(
+                oldStart: 1,
+                oldCount: 1,
+                newStart: 1,
+                newCount: 1,
+                lines: [
+                    WorkspaceReviewDiffLine(
+                        kind: .removed,
+                        text: "return false",
+                        oldLine: 1,
+                        newLine: nil,
+                        spans: [WorkspaceReviewDiffSpan(start: 7, end: 12, kind: .changed)]
+                    ),
+                    WorkspaceReviewDiffLine(
+                        kind: .added,
+                        text: "return true",
+                        oldLine: nil,
+                        newLine: 1,
+                        spans: [WorkspaceReviewDiffSpan(start: 7, end: 11, kind: .changed)]
+                    ),
+                ]
+            )
+        ]
+
+        let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.swift")
+        let text = result.string as NSString
+        let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
+        let fgColor = UIColor(ThemeRuntimeState.currentThemeID().palette.fg)
+
+        let returnRange = text.range(of: "return")
+        let trueRange = text.range(of: "true")
+        #expect(returnRange.location != NSNotFound)
+        #expect(trueRange.location != NSNotFound)
+
+        #expect(result.attribute(.foregroundColor, at: returnRange.location, effectiveRange: nil) as? UIColor == keywordColor)
+        #expect(result.attribute(.foregroundColor, at: trueRange.location, effectiveRange: nil) as? UIColor == fgColor)
+        #expect(result.attribute(.backgroundColor, at: trueRange.location, effectiveRange: nil) != nil)
+
+        let addedLine = text.lineRange(for: trueRange)
+        let gutterColor = result.attribute(.foregroundColor, at: addedLine.location, effectiveRange: nil) as? UIColor
+        #expect(gutterColor != keywordColor, "Word-span syntax colors must not paint the gutter")
+    }
+
+    @Test func makefilePathUsesShellSyntaxInsteadOfExtensionOnly() throws {
+        let hunks = [
+            WorkspaceReviewDiffHunk(
+                oldStart: 1,
+                oldCount: 1,
+                newStart: 1,
+                newCount: 1,
+                lines: [
+                    WorkspaceReviewDiffLine(kind: .added, text: "# build the app", oldLine: nil, newLine: 1, spans: nil),
+                ]
+            )
+        ]
+        let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "Makefile")
+        let commentColor = try #require(SyntaxHighlighter.color(for: .comment))
+        let range = (result.string as NSString).range(of: "# build the app")
+        #expect(range.location != NSNotFound)
+        #expect(result.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor == commentColor)
+    }
 }

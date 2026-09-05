@@ -34,16 +34,23 @@ extension ToolTimelineRowContentView {
                 try? await Task.sleep(for: artificialDelay)
             }
             #endif
+            guard !Task.isCancelled else { return }
 
             let renderStart = ContinuousClock.now
             let highlighted = DeferredHighlightedCode(attributed: ToolRowTextRenderer.makeCodeAttributedText(
                 text: deferredHighlight.text,
                 language: deferredHighlight.language,
-                startLine: deferredHighlight.startLine
+                startLine: deferredHighlight.startLine,
+                themeID: deferredHighlight.themeID
             ))
             let durationMs = Int((ContinuousClock.now - renderStart) / .milliseconds(1))
 
             await MainActor.run { [weak self] in
+                guard let self,
+                      self.expandedCodeDeferredHighlightSignature == deferredHighlight.signature else {
+                    return
+                }
+
                 ToolRowRenderCache.set(
                     signature: deferredHighlight.signature,
                     attributed: highlighted.attributed
@@ -55,11 +62,6 @@ extension ToolTimelineRowContentView {
                     language: deferredHighlight.language.displayName,
                     sessionId: sessionId
                 )
-
-                guard let self,
-                      self.expandedCodeDeferredHighlightSignature == deferredHighlight.signature else {
-                    return
-                }
 
                 defer {
                     self.expandedCodeDeferredHighlightTask = nil

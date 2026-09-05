@@ -14,7 +14,6 @@ enum ToolRowTextRenderer {
     static let maxRenderedCommandCharacters = 6_000
     // periphery:ignore - used by ToolRowTextRendererTests via @testable import
     static let maxRenderedOutputCharacters = 2_000
-    static let maxShellHighlightBytes = 64 * 1024
 
     // MARK: - Types
 
@@ -89,7 +88,8 @@ enum ToolRowTextRenderer {
     static func makeCodeAttributedText(
         text: String,
         language: SyntaxLanguage?,
-        startLine: Int
+        startLine: Int,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
     ) -> NSAttributedString {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let safeStartLine = max(1, startLine)
@@ -100,9 +100,10 @@ enum ToolRowTextRenderer {
         paragraph.lineBreakMode = .byClipping
         paragraph.lineSpacing = 1
 
-        let lineNumberColor = UIColor(Color.themeComment.opacity(0.55))
-        let separatorColor = UIColor(Color.themeComment.opacity(0.35))
-        let foregroundColor = UIColor(Color.themeFg)
+        let palette = themeID.palette
+        let lineNumberColor = UIColor(palette.comment).withAlphaComponent(0.55)
+        let separatorColor = UIColor(palette.comment).withAlphaComponent(0.35)
+        let foregroundColor = UIColor(palette.fg)
         let codeFont = ToolFont.regular
         let lineNumberFont = ToolFont.small
 
@@ -117,12 +118,13 @@ enum ToolRowTextRenderer {
 
         let lineCount = lines.count
         var codeStartOffsets = [Int](repeating: 0, count: lineCount)
-        var codeCharOffsets = [Int](repeating: 0, count: lineCount)
+        var sourceUTF16Starts = [Int](repeating: 0, count: lineCount)
+        var sourceUTF16Lengths = [Int](repeating: 0, count: lineCount)
         var lineNumStarts = [Int](repeating: 0, count: lineCount)
         var sepStarts = [Int](repeating: 0, count: lineCount)
 
         var utf16Pos = 0
-        var origCharOffset = 0
+        var sourceUTF16Offset = 0
 
         for index in 0..<lineCount {
             let rawLine = lines[index]
@@ -138,7 +140,8 @@ enum ToolRowTextRenderer {
             utf16Pos += sepLen
 
             codeStartOffsets[index] = utf16Pos
-            codeCharOffsets[index] = origCharOffset
+            sourceUTF16Starts[index] = sourceUTF16Offset
+            sourceUTF16Lengths[index] = rawLine.utf16.count
 
             if rawLine.isEmpty {
                 nsText.append(" ")
@@ -148,7 +151,7 @@ enum ToolRowTextRenderer {
                 utf16Pos += rawLine.utf16.count
             }
 
-            origCharOffset += rawLine.count + 1
+            sourceUTF16Offset += rawLine.utf16.count + 1
 
             if index < lineCount - 1 {
                 nsText.append("\n")
@@ -182,42 +185,32 @@ enum ToolRowTextRenderer {
             )
         }
 
-        // Apply syntax highlight colors using precomputed offset table.
+        // Map tokens from source UTF-16 space onto guttered code columns.
+        // Intersect with every overlapping source line so multiline tokens
+        // color continuations, and do not assume tokens are ordered by start.
         if let language, language != .unknown {
             let tokenRanges = SyntaxHighlighter.scanTokenRanges(text, language: language)
-
-            // Map each token from original-text space to guttered-text space.
-            // Both tokenRanges and codeCharOffsets are sorted by offset, so we
-            // advance lineIdx forward in O(tokens + lines) total.
-            var lineIdx = 0
-            let lineCount = codeCharOffsets.count
+            let nsLength = result.length
 
             for token in tokenRanges {
-                guard let color = SyntaxHighlighter.color(for: token.kind) else { continue }
+                guard let color = SyntaxHighlighter.color(for: token.kind, themeID: themeID) else { continue }
+                guard token.length > 0 else { continue }
+                let tokenStart = token.location
+                let tokenEnd = token.location + token.length
 
-                // Advance lineIdx until we find the line containing this token.
-                while lineIdx + 1 < lineCount,
-                      codeCharOffsets[lineIdx + 1] <= token.location {
-                    lineIdx += 1
+                SyntaxHighlighter.forEachOverlappingSourceLine(
+                    lineStarts: sourceUTF16Starts,
+                    tokenStart: tokenStart,
+                    tokenEnd: tokenEnd,
+                    lineLengthAt: { sourceUTF16Lengths[$0] }
+                ) { lineIdx, overlapStart, overlapEnd in
+                    let range = NSRange(
+                        location: codeStartOffsets[lineIdx] + (overlapStart - sourceUTF16Starts[lineIdx]),
+                        length: overlapEnd - overlapStart
+                    )
+                    guard range.location >= 0, NSMaxRange(range) <= nsLength else { return }
+                    result.addAttribute(.foregroundColor, value: color, range: range)
                 }
-
-                let offsetInLine = token.location - codeCharOffsets[lineIdx]
-                guard offsetInLine >= 0 else { continue }
-
-                let gutterPos = codeStartOffsets[lineIdx] + offsetInLine
-
-                // Clamp token length to stay within this line's code area.
-                // Prevents cross-line scanner bugs from coloring the next
-                // line's gutter (line number + separator).
-                let lineCodeLen = lines[lineIdx].count
-                let clampedLen = min(token.length, lineCodeLen - offsetInLine)
-                guard clampedLen > 0 else { continue }
-
-                result.addAttribute(
-                    .foregroundColor,
-                    value: color,
-                    range: NSRange(location: gutterPos, length: clampedLen)
-                )
             }
         }
 
@@ -241,21 +234,7 @@ enum ToolRowTextRenderer {
 
     static func diffLanguage(for filePath: String?) -> SyntaxLanguage? {
         guard let filePath, !filePath.isEmpty else { return nil }
-
-        switch FileType.detect(from: filePath) {
-        case .code(let language):
-            return language
-        case .json:
-            return .json
-        case .html:
-            return .html
-        case .latex: return .latex
-        case .orgMode: return .orgMode
-        case .mermaid: return .mermaid
-        case .graphviz: return .dot
-        case .plain, .markdown, .image, .audio, .video, .pdf, .binary:
-            return nil
-        }
+        return FileType.detect(from: filePath).syntaxLanguage
     }
 
     private static func withMonospaceFont(
@@ -271,9 +250,12 @@ enum ToolRowTextRenderer {
 
     // MARK: - Shell / ANSI
 
-    static func shellHighlighted(_ text: String) -> NSAttributedString {
+    static func shellHighlighted(
+        _ text: String,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
+    ) -> NSAttributedString {
         withMonospaceFont(
-            SyntaxHighlighter.highlight(text, language: .shell),
+            SyntaxHighlighter.highlight(text, language: .shell, themeID: themeID),
             font: ToolFont.regular
         )
     }
@@ -285,12 +267,15 @@ enum ToolRowTextRenderer {
     /// language-specific syntax highlighting while the shell portions keep
     /// bash highlighting. Falls back to plain shell highlighting when no
     /// embedded language is detected.
-    static func bashCommandHighlighted(_ text: String) -> NSAttributedString {
+    static func bashCommandHighlighted(
+        _ text: String,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
+    ) -> NSAttributedString {
         let segments = BashEmbeddedLanguageDetector.detect(text)
 
         // Fast path: no embedded language detected
         guard segments.count > 1 else {
-            return shellHighlighted(text)
+            return shellHighlighted(text, themeID: themeID)
         }
 
         let font = ToolFont.regular
@@ -300,12 +285,12 @@ enum ToolRowTextRenderer {
             switch segment.kind {
             case .shell:
                 result.append(withMonospaceFont(
-                    SyntaxHighlighter.highlight(segment.text, language: .shell),
+                    SyntaxHighlighter.highlight(segment.text, language: .shell, themeID: themeID),
                     font: font
                 ))
             case .embeddedCode(let language):
                 result.append(withMonospaceFont(
-                    SyntaxHighlighter.highlight(segment.text, language: language),
+                    SyntaxHighlighter.highlight(segment.text, language: language, themeID: themeID),
                     font: font
                 ))
             }

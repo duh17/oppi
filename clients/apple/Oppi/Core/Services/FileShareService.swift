@@ -908,6 +908,17 @@ enum FileShareService {
         }
     }
 
+    private static func attributedCodeWithExportFont(
+        _ attributed: NSAttributedString,
+        font: UIFont
+    ) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributed)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        guard fullRange.length > 0 else { return mutable }
+        mutable.addAttribute(.font, value: font, range: fullRange)
+        return mutable
+    }
+
     /// Build a syntax-highlighted NSAttributedString for code export.
     /// Shared between image and PDF code renderers.
     private static func buildHighlightedAttributedString(
@@ -918,7 +929,12 @@ enum FileShareService {
         let font = UIFont.monospacedSystemFont(ofSize: codePDFFontSize, weight: .regular)
         let syntaxLang = language.map { SyntaxLanguage.detect($0) }
         if let syntaxLang, syntaxLang != .unknown {
-            return FullScreenCodeHighlighter.buildHighlightedText(source, language: syntaxLang)
+            let highlighted = FullScreenCodeHighlighter.buildHighlightedText(
+                source,
+                language: syntaxLang,
+                themeID: ThemeRuntimeState.currentThemeID()
+            )
+            return attributedCodeWithExportFont(highlighted, font: font)
         }
         return NSAttributedString(
             string: source,
@@ -1322,6 +1338,20 @@ enum FileShareService {
         DocumentRenderPipeline.placeholderImage()
     }
 }
+
+#if DEBUG
+extension FileShareService {
+    static var debugCodePDFFontSizeForTesting: CGFloat { codePDFFontSize }
+
+    static func debugHighlightedAttributedStringForTesting(
+        _ source: String,
+        language: String?,
+        palette: ThemePalette
+    ) -> NSAttributedString {
+        buildHighlightedAttributedString(source, language: language, palette: palette)
+    }
+}
+#endif
 
 // MARK: - PDF Navigation Delegate
 
