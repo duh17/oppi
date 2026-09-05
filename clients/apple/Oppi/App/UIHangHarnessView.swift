@@ -13,6 +13,7 @@ enum UIHangHarnessConfig {
         let mixedContentFixtures: Bool
         let queueHarnessEnabled: Bool
         let assistantOverlapFixture: Bool
+        let realBusyLane: Bool
     }
 
     // periphery:ignore - debug harness state container
@@ -23,6 +24,7 @@ enum UIHangHarnessConfig {
         let mixedContentFixtures: Bool
         let queueHarnessEnabled: Bool
         let assistantOverlapFixture: Bool
+        let realBusyLane: Bool
     }
 
     // XCTest repeat mode can transiently reinstall/relaunch the app without
@@ -42,6 +44,8 @@ enum UIHangHarnessConfig {
     private static let stickyQueueHarnessKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.queueHarness"
     // periphery:ignore - debug harness persistence keys
     private static let stickyAssistantOverlapFixtureKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.assistantOverlapFixture"
+    // periphery:ignore - debug harness persistence keys
+    private static let stickyRealBusyLaneKey = "\(AppIdentifiers.subsystem).uiHangHarness.sticky.realBusyLane"
     // Keep sticky harness launch knobs alive long enough for long-running UI
     // suites where CoreSimulator may relaunch the app mid-run.
     // periphery:ignore - debug harness TTL constant
@@ -121,6 +125,16 @@ enum UIHangHarnessConfig {
 #endif
     }
 
+    /// Opt-in XCTest lane: keep collection `isBusy` / streaming-assistant ID
+    /// while still driving tokens via Pulse (no auto stream loop).
+    static var realBusyLane: Bool {
+#if DEBUG
+        launchContext.realBusyLane
+#else
+        false
+#endif
+    }
+
 #if DEBUG
 #if targetEnvironment(simulator)
     private static func resolveLaunchContext() -> LaunchContext {
@@ -135,6 +149,7 @@ enum UIHangHarnessConfig {
         let explicitMixedContent = environment["PI_UI_HANG_MIXED_CONTENT"] == "1"
         let explicitQueueHarness = environment["PI_UI_HANG_QUEUE_HARNESS"] == "1"
         let explicitAssistantOverlapFixture = environment["PI_UI_HANG_ASSISTANT_OVERLAP_FIXTURE"] == "1"
+        let explicitRealBusyLane = environment["PI_UI_HANG_REAL_BUSY"] == "1"
 
         if explicitHarness {
             persistStickyState(
@@ -143,7 +158,8 @@ enum UIHangHarnessConfig {
                 includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
                 mixedContentFixtures: explicitMixedContent,
                 queueHarnessEnabled: explicitQueueHarness,
-                assistantOverlapFixture: explicitAssistantOverlapFixture
+                assistantOverlapFixture: explicitAssistantOverlapFixture,
+                realBusyLane: explicitRealBusyLane
             )
             return LaunchContext(
                 isEnabled: true,
@@ -152,7 +168,8 @@ enum UIHangHarnessConfig {
                 includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
                 mixedContentFixtures: explicitMixedContent,
                 queueHarnessEnabled: explicitQueueHarness,
-                assistantOverlapFixture: explicitAssistantOverlapFixture
+                assistantOverlapFixture: explicitAssistantOverlapFixture,
+                realBusyLane: explicitRealBusyLane
             )
         }
 
@@ -165,7 +182,8 @@ enum UIHangHarnessConfig {
                 includeWriteMarkdownFixture: stickyState.includeWriteMarkdownFixture,
                 mixedContentFixtures: stickyState.mixedContentFixtures,
                 queueHarnessEnabled: stickyState.queueHarnessEnabled,
-                assistantOverlapFixture: stickyState.assistantOverlapFixture
+                assistantOverlapFixture: stickyState.assistantOverlapFixture,
+                realBusyLane: stickyState.realBusyLane
             )
         }
 
@@ -180,7 +198,8 @@ enum UIHangHarnessConfig {
             includeWriteMarkdownFixture: explicitWriteMarkdownFixture,
             mixedContentFixtures: explicitMixedContent,
             queueHarnessEnabled: explicitQueueHarness,
-            assistantOverlapFixture: explicitAssistantOverlapFixture
+            assistantOverlapFixture: explicitAssistantOverlapFixture,
+            realBusyLane: explicitRealBusyLane
         )
     }
 
@@ -204,7 +223,8 @@ enum UIHangHarnessConfig {
         includeWriteMarkdownFixture: Bool,
         mixedContentFixtures: Bool,
         queueHarnessEnabled: Bool,
-        assistantOverlapFixture: Bool
+        assistantOverlapFixture: Bool,
+        realBusyLane: Bool
     ) {
         let now = Date().timeIntervalSince1970
         stickyDefaults.set(now, forKey: stickyTimestampKey)
@@ -214,6 +234,7 @@ enum UIHangHarnessConfig {
         stickyDefaults.set(mixedContentFixtures, forKey: stickyMixedContentKey)
         stickyDefaults.set(queueHarnessEnabled, forKey: stickyQueueHarnessKey)
         stickyDefaults.set(assistantOverlapFixture, forKey: stickyAssistantOverlapFixtureKey)
+        stickyDefaults.set(realBusyLane, forKey: stickyRealBusyLaneKey)
     }
 
     private static func loadStickyState(now: Date = Date()) -> StickyState? {
@@ -233,7 +254,8 @@ enum UIHangHarnessConfig {
             includeWriteMarkdownFixture: defaults.bool(forKey: stickyWriteMarkdownFixtureKey),
             mixedContentFixtures: defaults.bool(forKey: stickyMixedContentKey),
             queueHarnessEnabled: defaults.bool(forKey: stickyQueueHarnessKey),
-            assistantOverlapFixture: defaults.bool(forKey: stickyAssistantOverlapFixtureKey)
+            assistantOverlapFixture: defaults.bool(forKey: stickyAssistantOverlapFixtureKey),
+            realBusyLane: defaults.bool(forKey: stickyRealBusyLaneKey)
         )
     }
 
@@ -246,6 +268,7 @@ enum UIHangHarnessConfig {
         defaults.removeObject(forKey: stickyMixedContentKey)
         defaults.removeObject(forKey: stickyQueueHarnessKey)
         defaults.removeObject(forKey: stickyAssistantOverlapFixtureKey)
+        defaults.removeObject(forKey: stickyRealBusyLaneKey)
     }
 #else
     private static func resolveLaunchContext() -> LaunchContext {
@@ -256,7 +279,8 @@ enum UIHangHarnessConfig {
             includeWriteMarkdownFixture: false,
             mixedContentFixtures: false,
             queueHarnessEnabled: false,
-            assistantOverlapFixture: false
+            assistantOverlapFixture: false,
+            realBusyLane: false
         )
     }
 #endif
@@ -269,7 +293,8 @@ enum UIHangHarnessConfig {
             includeWriteMarkdownFixture: false,
             mixedContentFixtures: false,
             queueHarnessEnabled: false,
-            assistantOverlapFixture: false
+            assistantOverlapFixture: false,
+            realBusyLane: false
         )
     }
 #endif
@@ -681,20 +706,47 @@ struct UIHangHarnessView: View {
         assistantOverflowSnapshot
     }
 
-    /// For UI test harness mode, disable busy cursor/working indicator animations
-    /// so XCUITest can reach idle between interactions.
+    /// Default XCTest mode stays idle so the working indicator does not prevent
+    /// quiescence. `realBusyLane` is the explicit opt-in that feeds production
+    /// `isBusy` / streaming-assistant IDs while Pulse still owns progression.
+    private var preservesBusyStreaming: Bool {
+        !UIHangHarnessConfig.uiTestMode || UIHangHarnessConfig.realBusyLane
+    }
+
     private var collectionStreamingAssistantID: String? {
         if UIHangHarnessConfig.assistantOverlapFixture,
            currentItems.contains(where: { $0.id == assistantOverlapItemID }) {
             return assistantOverlapItemID
         }
 
-        guard streamEnabled, !UIHangHarnessConfig.uiTestMode else { return nil }
+        guard streamEnabled, preservesBusyStreaming else { return nil }
         return streamTargetID
     }
 
     private var collectionIsBusy: Bool {
-        streamEnabled && !UIHangHarnessConfig.uiTestMode
+        streamEnabled && preservesBusyStreaming
+    }
+
+    /// Spinner animation still blocks XCTest idle; collection busy/streaming
+    /// flags are the oracle. Keep the indicator off in UI tests.
+    private var collectionShowsWorkingIndicator: Bool {
+        collectionIsBusy && !UIHangHarnessConfig.uiTestMode
+    }
+
+    private var collectionIsBusyValue: Int {
+        collectionIsBusy ? 1 : 0
+    }
+
+    private var collectionStreamingValue: Int {
+        collectionStreamingAssistantID == nil ? 0 : 1
+    }
+
+    private var streamCharacterCount: Int {
+        guard let item = currentItems.first(where: { $0.id == streamTargetID }),
+              case .assistantMessage(_, let text, _) = item else {
+            return 0
+        }
+        return text.count
     }
 
     private var topVisibleIndex: Int {
@@ -812,6 +864,7 @@ struct UIHangHarnessView: View {
                     hiddenCount: hiddenCount,
                     renderWindowStep: Self.renderWindowStep,
                     isBusy: collectionIsBusy,
+                    showsWorkingIndicator: collectionShowsWorkingIndicator,
                     streamingAssistantID: collectionStreamingAssistantID,
                     sessionId: "harness-\(selectedSession.rawValue)",
                     workspaceId: "harness-workspace",
@@ -953,6 +1006,11 @@ struct UIHangHarnessView: View {
                 harnessControl("Pulse", id: "harness.stream.pulse") {
                     pulseStream(count: 6)
                 }
+                if UIHangHarnessConfig.realBusyLane {
+                    harnessControl("Pulse Fence", id: "harness.stream.pulseFence") {
+                        pulseFenceClose()
+                    }
+                }
                 harnessControl("Theme", id: "harness.theme.toggle") {
                     toggleTheme()
                 }
@@ -1016,6 +1074,9 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.topIndex", value: topVisibleIndex)
             diagnosticValue(id: "diag.offsetY", value: offsetYValue)
             diagnosticValue(id: "diag.streamTick", value: streamTick)
+            diagnosticValue(id: "diag.streamChars", value: streamCharacterCount)
+            diagnosticValue(id: "diag.isBusy", value: collectionIsBusyValue)
+            diagnosticValue(id: "diag.streaming", value: collectionStreamingValue)
             diagnosticValue(id: "diag.theme", value: themeOrdinal)
             diagnosticValue(id: "diag.nativeMode", value: nativeAssistantMode)
             diagnosticValue(id: "diag.nativeUserMode", value: nativeUserMode)
@@ -1045,9 +1106,11 @@ struct UIHangHarnessView: View {
             diagnosticValue(id: "diag.frameP95", value: frame.p95IntervalMs)
             diagnosticValue(id: "diag.frameP99", value: frame.p99IntervalMs)
             diagnosticValue(id: "diag.frameMax", value: frame.maxIntervalMs)
+            diagnosticValue(id: "diag.frameMaxFiltered", value: frame.filteredMaxIntervalMs)
             diagnosticValue(id: "diag.frameOver34Pct", value: frame.over34MsPercent)
             diagnosticValue(id: "diag.frameOver50Pct", value: frame.over50MsPercent)
             diagnosticValue(id: "diag.frameOver50", value: frame.over50MsCount)
+            diagnosticValue(id: "diag.frameOver50Filtered", value: frame.filteredOver50MsCount)
             diagnosticValue(id: "diag.queueVisible", value: queueVisibleValue)
             diagnosticValue(id: "diag.queueSteeringCount", value: queueSteeringCount)
             diagnosticValue(id: "diag.queueFollowUpCount", value: queueFollowUpCount)
@@ -1118,9 +1181,18 @@ struct UIHangHarnessView: View {
         ))
 
         sessionItems[session] = items
+        // Expanding all then starting a stream must not drop the first rows
+        // from the suffix render window.
+        if session == selectedSession, renderWindow >= items.count - 1 {
+            renderWindow = max(renderWindow, items.count)
+        }
     }
 
     private func appendStreamToken(session: HarnessSession, streamID: String) {
+        appendStreamText(session: session, streamID: streamID, fragment: " token_\(streamTick % 23)")
+    }
+
+    private func appendStreamText(session: HarnessSession, streamID: String, fragment: String) {
         var items = sessionItems[session] ?? []
 
         guard let index = items.firstIndex(where: { $0.id == streamID }) else {
@@ -1128,10 +1200,8 @@ struct UIHangHarnessView: View {
             return
         }
 
-        let token = " token_\(streamTick % 23)"
-
         if case .assistantMessage(_, let text, let timestamp) = items[index] {
-            items[index] = .assistantMessage(id: streamID, text: text + token, timestamp: timestamp)
+            items[index] = .assistantMessage(id: streamID, text: text + fragment, timestamp: timestamp)
         }
 
         sessionItems[session] = items
@@ -1159,6 +1229,33 @@ struct UIHangHarnessView: View {
         for _ in 0..<count {
             appendStreamToken(session: session, streamID: streamID)
         }
+    }
+
+    /// Cheap busy-lane path: close mermaid then latex fences on the live stream row.
+    private func pulseFenceClose() {
+        guard streamEnabled else {
+            streamEnabled = true
+            return
+        }
+
+        let session = selectedSession
+        let streamID = streamItemID(for: session)
+        ensureStreamItemExists(session: session, streamID: streamID)
+        appendStreamText(
+            session: session,
+            streamID: streamID,
+            fragment: "\n\n```mermaid\ngraph TD\n  A-->B\n"
+        )
+        appendStreamText(
+            session: session,
+            streamID: streamID,
+            fragment: "```\n\n$$\nx^2 + y^2 = z^2\n"
+        )
+        appendStreamText(
+            session: session,
+            streamID: streamID,
+            fragment: "$$\n"
+        )
     }
 
     private func streamItemID(for session: HarnessSession) -> String {
@@ -1810,29 +1907,102 @@ private enum QueueHarnessError: LocalizedError {
 // MARK: - Frame Interval Metrics
 
 struct HarnessFrameIntervalSnapshot: Sendable {
+    /// Continuity-window samples (`< 120ms`). p95/p99/percents use this set.
     let sampleCount: Int
     let p95IntervalMs: Int
     let p99IntervalMs: Int
+    /// Raw maximum including AX/idle discontinuities (`>= 120ms`).
     let maxIntervalMs: Int
+    /// Continuity-window maximum, excluding `>= 120ms` gaps.
+    let filteredMaxIntervalMs: Int
+    /// Raw count of `>= 50ms` frames, including discontinuities.
     let over50MsCount: Int
+    /// Continuity-window count of `>= 50ms` frames.
+    let filteredOver50MsCount: Int
     let over34MsPercent: Int
     let over50MsPercent: Int
+
+    static let empty = HarnessFrameIntervalSnapshot(
+        sampleCount: 0,
+        p95IntervalMs: 0,
+        p99IntervalMs: 0,
+        maxIntervalMs: 0,
+        filteredMaxIntervalMs: 0,
+        over50MsCount: 0,
+        filteredOver50MsCount: 0,
+        over34MsPercent: 0,
+        over50MsPercent: 0
+    )
+}
+
+struct HarnessFrameIntervalRecorder: Sendable {
+    /// Consecutive-frame cutoff: XCTest AX snapshots and idle gaps after reset
+    /// produce 100ms+ CADisplayLink jumps that are not dropped frames.
+    static let discontinuityMs = 120
+
+    private let interval34Ms = 34
+    private let interval50Ms = 50
+    private let maxSamples = 1_200
+    private var intervalsMs: [Int] = []
+
+    mutating func reset() {
+        intervalsMs.removeAll(keepingCapacity: false)
+    }
+
+    mutating func record(_ value: Int) {
+        intervalsMs.append(max(0, value))
+        if intervalsMs.count > maxSamples {
+            intervalsMs.removeFirst()
+        }
+    }
+
+    func snapshot() -> HarnessFrameIntervalSnapshot {
+        guard !intervalsMs.isEmpty else { return .empty }
+
+        let filtered = intervalsMs.filter { $0 < Self.discontinuityMs }
+        let sortedFiltered = filtered.sorted()
+        let sampleCount = sortedFiltered.count
+        let filteredOver34 = filtered.reduce(into: 0) { partial, value in
+            if value >= interval34Ms { partial &+= 1 }
+        }
+        let filteredOver50 = filtered.reduce(into: 0) { partial, value in
+            if value >= interval50Ms { partial &+= 1 }
+        }
+        let rawOver50 = intervalsMs.reduce(into: 0) { partial, value in
+            if value >= interval50Ms { partial &+= 1 }
+        }
+
+        return HarnessFrameIntervalSnapshot(
+            sampleCount: sampleCount,
+            p95IntervalMs: percentileValue(in: sortedFiltered, percentile: 0.95),
+            p99IntervalMs: percentileValue(in: sortedFiltered, percentile: 0.99),
+            maxIntervalMs: intervalsMs.max() ?? 0,
+            filteredMaxIntervalMs: sortedFiltered.last ?? 0,
+            over50MsCount: rawOver50,
+            filteredOver50MsCount: filteredOver50,
+            over34MsPercent: percent(part: filteredOver34, total: sampleCount),
+            over50MsPercent: percent(part: filteredOver50, total: sampleCount)
+        )
+    }
+
+    private func percentileValue(in sorted: [Int], percentile: Double) -> Int {
+        guard !sorted.isEmpty else { return 0 }
+        let clamped = min(1.0, max(0.0, percentile))
+        let index = Int((Double(sorted.count - 1) * clamped).rounded(.down))
+        return sorted[max(0, min(sorted.count - 1, index))]
+    }
+
+    private func percent(part: Int, total: Int) -> Int {
+        guard total > 0 else { return 0 }
+        return Int((Double(part) / Double(total) * 100).rounded())
+    }
 }
 
 @MainActor
 final class HarnessFrameIntervalMonitor: NSObject {
-    private let interval34Ms = 34
-    private let interval50Ms = 50
-    // Consecutive-frame cutoff: XCTest AX snapshots and idle gaps after reset
-    // produce 100ms+ CADisplayLink jumps that are not dropped frames.
-    private let discontinuityMs = 120
-    private let maxSamples = 1_200
-
     private var displayLink: CADisplayLink?
     private var previousTimestamp: CFTimeInterval?
-    private var intervalsMs: [Int] = []
-    private var over34MsCount = 0
-    private var over50MsCount = 0
+    private var recorder = HarnessFrameIntervalRecorder()
 
     func start() {
         guard displayLink == nil else { return }
@@ -1851,39 +2021,11 @@ final class HarnessFrameIntervalMonitor: NSObject {
 
     func reset() {
         previousTimestamp = nil
-        intervalsMs.removeAll(keepingCapacity: false)
-        over34MsCount = 0
-        over50MsCount = 0
+        recorder.reset()
     }
 
     func snapshot() -> HarnessFrameIntervalSnapshot {
-        guard !intervalsMs.isEmpty else {
-            return HarnessFrameIntervalSnapshot(
-                sampleCount: 0,
-                p95IntervalMs: 0,
-                p99IntervalMs: 0,
-                maxIntervalMs: 0,
-                over50MsCount: 0,
-                over34MsPercent: 0,
-                over50MsPercent: 0
-            )
-        }
-
-        let sorted = intervalsMs.sorted()
-        let sampleCount = sorted.count
-        let p95 = percentileValue(in: sorted, percentile: 0.95)
-        let p99 = percentileValue(in: sorted, percentile: 0.99)
-        let maxInterval = sorted.last ?? 0
-
-        return HarnessFrameIntervalSnapshot(
-            sampleCount: sampleCount,
-            p95IntervalMs: p95,
-            p99IntervalMs: p99,
-            maxIntervalMs: maxInterval,
-            over50MsCount: over50MsCount,
-            over34MsPercent: percent(part: over34MsCount, total: sampleCount),
-            over50MsPercent: percent(part: over50MsCount, total: sampleCount)
-        )
+        recorder.snapshot()
     }
 
     @objc
@@ -1896,39 +2038,7 @@ final class HarnessFrameIntervalMonitor: NSObject {
 
         let deltaMs = max(0, Int(((timestamp - previousTimestamp) * 1_000).rounded()))
         self.previousTimestamp = timestamp
-        guard deltaMs < discontinuityMs else { return }
-        recordInterval(deltaMs)
-    }
-
-    private func recordInterval(_ value: Int) {
-        intervalsMs.append(value)
-        if value >= interval34Ms {
-            over34MsCount &+= 1
-        }
-        if value >= interval50Ms {
-            over50MsCount &+= 1
-        }
-
-        if intervalsMs.count > maxSamples {
-            let removed = intervalsMs.removeFirst()
-            if removed >= interval34Ms {
-                over34MsCount = max(0, over34MsCount - 1)
-            }
-            if removed >= interval50Ms {
-                over50MsCount = max(0, over50MsCount - 1)
-            }
-        }
-    }
-
-    private func percentileValue(in sorted: [Int], percentile: Double) -> Int {
-        let clamped = min(1.0, max(0.0, percentile))
-        let index = Int((Double(sorted.count - 1) * clamped).rounded(.down))
-        return sorted[max(0, min(sorted.count - 1, index))]
-    }
-
-    private func percent(part: Int, total: Int) -> Int {
-        guard total > 0 else { return 0 }
-        return Int((Double(part) / Double(total) * 100).rounded())
+        recorder.record(deltaMs)
     }
 }
 

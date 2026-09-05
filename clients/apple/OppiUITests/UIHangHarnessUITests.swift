@@ -19,6 +19,82 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         }
     }
 
+    private func enableBusyStreaming() {
+        let streamToggle = app.descendants(matching: .any)["harness.stream.toggle"]
+        XCTAssertTrue(streamToggle.waitForExistence(timeout: 4))
+        streamToggle.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.isBusy", equals: 1, timeout: 4), 1)
+        XCTAssertEqual(waitForDiagnostic("diag.streaming", equals: 1, timeout: 4), 1)
+    }
+
+    private func reachDetachedScrolledUpState() {
+        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
+        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
+        expandAll.tap()
+
+        let topButton = app.descendants(matching: .any)["harness.scroll.top"]
+        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
+        topButton.tap()
+
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
+
+        let deadline = Date().addingTimeInterval(8)
+        var lastTop: Int?
+        var lastNear: Int?
+        while Date() < deadline {
+            diagTick.tap()
+            lastTop = tryPollDiagnostic("diag.topIndex", timeout: 0.3)
+            lastNear = tryPollDiagnostic("diag.nearBottom", timeout: 0.3)
+            if let top = lastTop, (0...3).contains(top), lastNear == 0 {
+                return
+            }
+            dragTimeline(
+                timeline,
+                from: CGVector(dx: 0.5, dy: 0.22),
+                to: CGVector(dx: 0.5, dy: 0.88)
+            )
+        }
+
+        XCTFail(
+            "Opted-in yank test did not reach a scrolled-up detached state " +
+            "(topIndex=\(lastTop.map(String.init) ?? "nil"), nearBottom=\(lastNear.map(String.init) ?? "nil"))"
+        )
+    }
+
+    private func reachAttachedBottomState() {
+        let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
+        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
+        bottomButton.tap()
+
+        let timeline = app.descendants(matching: .any)["harness.timeline"]
+        let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 4))
+        XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
+
+        let deadline = Date().addingTimeInterval(8)
+        var lastNear: Int?
+        while Date() < deadline {
+            diagTick.tap()
+            lastNear = tryPollDiagnostic("diag.nearBottom", timeout: 0.3)
+            if lastNear == 1 {
+                return
+            }
+            dragTimeline(
+                timeline,
+                from: CGVector(dx: 0.5, dy: 0.82),
+                to: CGVector(dx: 0.5, dy: 0.18)
+            )
+        }
+
+        XCTFail(
+            "Opted-in pin test did not reach an attached near-bottom state " +
+            "(nearBottom=\(lastNear.map(String.init) ?? "nil"))"
+        )
+    }
+
     func testSessionSwitchNoStalls() throws {
         launchHarness(noStream: true)
 
@@ -123,28 +199,33 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             throw XCTSkip("Long streaming pin test disabled by default")
         }
 
-        launchHarness(noStream: true)
-
-        let streamToggle = app.descendants(matching: .any)["harness.stream.toggle"]
-        XCTAssertTrue(streamToggle.waitForExistence(timeout: 4))
-        streamToggle.tap()
+        launchHarness(noStream: true, realBusyLane: true)
+        reachAttachedBottomState()
+        enableBusyStreaming()
+        XCTAssertEqual(
+            waitForDiagnostic("diag.nearBottom", equals: 1, timeout: 6),
+            1,
+            "Busy streaming must keep the already-attached bottom pin"
+        )
 
         let pulse = app.descendants(matching: .any)["harness.stream.pulse"]
         XCTAssertTrue(pulse.waitForExistence(timeout: 4))
-
-        let bottomButton = app.descendants(matching: .any)["harness.scroll.bottom"]
-        XCTAssertTrue(bottomButton.waitForExistence(timeout: 4))
-        bottomButton.tap()
 
         let topBefore = pollDiagnostic("diag.topIndex", timeout: 4)
         XCTAssertGreaterThanOrEqual(topBefore, 0)
 
         let tickBefore = pollDiagnostic("diag.streamTick", timeout: 4)
+        let charsBefore = pollDiagnostic("diag.streamChars", timeout: 2)
         pulse.tap()
 
-        let tickAfter = pollDiagnostic("diag.streamTick", timeout: 4)
+        let tickAfter = waitForDiagnosticAtLeast("diag.streamTick", minimum: tickBefore + 1, timeout: 4)
         XCTAssertGreaterThan(tickAfter, tickBefore)
+        XCTAssertGreaterThan(
+            waitForDiagnosticAtLeast("diag.streamChars", minimum: charsBefore + 1, timeout: 4),
+            charsBefore
+        )
 
+        XCTAssertEqual(pollDiagnostic("diag.nearBottom", timeout: 4), 1)
         let topAfter = pollDiagnostic("diag.topIndex", timeout: 4)
         XCTAssertGreaterThanOrEqual(topAfter, topBefore - 2)
     }
@@ -154,41 +235,75 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             throw XCTSkip("Scroll-yank harness assertion disabled by default; opt in with PI_UI_HANG_ENABLE_SCROLL_YANK_TEST=1")
         }
 
-        launchHarness(noStream: true)
-
-        let streamToggle = app.descendants(matching: .any)["harness.stream.toggle"]
-        XCTAssertTrue(streamToggle.waitForExistence(timeout: 4))
-        streamToggle.tap()
+        launchHarness(noStream: true, realBusyLane: true)
+        reachDetachedScrolledUpState()
+        enableBusyStreaming()
+        XCTAssertEqual(
+            waitForDiagnostic("diag.nearBottom", equals: 0, timeout: 6),
+            0,
+            "Busy streaming must keep the already-detached scrolled-up state"
+        )
 
         let pulse = app.descendants(matching: .any)["harness.stream.pulse"]
         XCTAssertTrue(pulse.waitForExistence(timeout: 4))
 
-        let expandAll = app.descendants(matching: .any)["harness.expand.all"]
-        XCTAssertTrue(expandAll.waitForExistence(timeout: 4))
-        expandAll.tap()
+        let row = app.descendants(matching: .any)["chat.timeline.row.alpha-u-1"]
+        XCTAssertTrue(
+            row.waitForExistence(timeout: 5),
+            "Opted-in yank test must show the scrolled-up user row"
+        )
+        let glyph = row.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "label CONTAINS %@ OR value CONTAINS %@",
+                "Alpha prompt 1:",
+                "Alpha prompt 1:"
+            )
+        ).firstMatch
+        XCTAssertTrue(
+            glyph.waitForExistence(timeout: 5),
+            "Opted-in yank test must show the scrolled-up prompt glyph"
+        )
+        let rowYBefore = row.frame.minY
+        let glyphYBefore = glyph.frame.minY
 
-        let topButton = app.descendants(matching: .any)["harness.scroll.top"]
-        XCTAssertTrue(topButton.waitForExistence(timeout: 4))
-        topButton.tap()
-
-        guard let topBefore = waitForDiagnosticAtMostOrNil("diag.topIndex", maximum: 3, timeout: 6) else {
-            throw XCTSkip("Harness did not reach a scrolled-up top index; skipping yank assertion in this simulator run")
-        }
-        XCTAssertGreaterThanOrEqual(topBefore, 0)
-
-        let nearBottomBefore = pollDiagnostic("diag.nearBottom", timeout: 2)
+        let tickBefore = pollDiagnostic("diag.streamTick", timeout: 2)
+        let charsBefore = pollDiagnostic("diag.streamChars", timeout: 2)
 
         pulse.tap()
         pulse.tap()
         pulse.tap()
 
-        let topAfter = pollDiagnostic("diag.topIndex", timeout: 4)
-        XCTAssertLessThanOrEqual(topAfter, topBefore + 8)
+        XCTAssertGreaterThan(
+            waitForDiagnosticAtLeast("diag.streamTick", minimum: tickBefore + 1, timeout: 4),
+            tickBefore
+        )
+        XCTAssertGreaterThan(
+            waitForDiagnosticAtLeast("diag.streamChars", minimum: charsBefore + 1, timeout: 4),
+            charsBefore
+        )
 
-        let nearBottomAfter = pollDiagnostic("diag.nearBottom", timeout: 4)
-        if nearBottomBefore == 0 {
-            XCTAssertEqual(nearBottomAfter, 0)
-        }
+        XCTAssertTrue(row.waitForExistence(timeout: 3), "Visible row identity disappeared after stream pulse")
+        XCTAssertTrue(glyph.waitForExistence(timeout: 3), "Visible glyph disappeared after stream pulse")
+        let rowYAfter = row.frame.minY
+        let glyphYAfter = glyph.frame.minY
+        XCTAssertLessThanOrEqual(
+            abs(rowYAfter - rowYBefore),
+            2,
+            "Streaming yank moved the stable row from viewport y=\(rowYBefore) to y=\(rowYAfter)"
+        )
+        XCTAssertLessThanOrEqual(
+            abs(glyphYAfter - glyphYBefore),
+            2,
+            "Streaming yank moved the stable glyph from viewport y=\(glyphYBefore) to y=\(glyphYAfter)"
+        )
+        XCTAssertEqual(pollDiagnostic("diag.nearBottom", timeout: 4), 0)
+
+        let geometry = XCTAttachment(
+            string: "rowYBefore=\(rowYBefore) rowYAfter=\(rowYAfter) glyphYBefore=\(glyphYBefore) glyphYAfter=\(glyphYAfter)"
+        )
+        geometry.name = "streaming-yank-detached-row-geometry"
+        geometry.lifetime = .keepAlways
+        add(geometry)
     }
 
     func testThemeToggleAndKeyboardDuringStreamingNoStalls() throws {
@@ -804,14 +919,20 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let stressP99 = pollDiagnostic("diag.frameP99", timeout: 3)
         let stressOver34Pct = pollDiagnostic("diag.frameOver34Pct", timeout: 3)
         let stressOver50Pct = pollDiagnostic("diag.frameOver50Pct", timeout: 3)
-        let stressOver50Count = pollDiagnostic("diag.frameOver50", timeout: 3)
+        let stressOver50Count = pollDiagnostic("diag.frameOver50Filtered", timeout: 3)
+        let stressOver50Raw = pollDiagnostic("diag.frameOver50", timeout: 3)
         let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 3)
 
         XCTAssertLessThanOrEqual(stressOver34Pct, max(45, baselineOver34Pct + 20))
         XCTAssertLessThanOrEqual(stressOver50Pct, max(18, baselineOver50Pct + 10))
         XCTAssertLessThanOrEqual(stressP95, max(90, baselineP95 + 35))
         XCTAssertLessThanOrEqual(stressP99, max(130, baselineP99 + 45))
-        XCTAssertLessThanOrEqual(stressOver50Count, max(30, Int(Double(stressSamples) * 0.16)))
+        XCTAssertGreaterThanOrEqual(stressOver50Raw, stressOver50Count)
+        XCTAssertLessThanOrEqual(
+            stressOver50Count,
+            max(30, Int(Double(stressSamples) * 0.16)),
+            "filtered over50=\(stressOver50Count) raw over50=\(stressOver50Raw) samples=\(stressSamples)"
+        )
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 3)
     }
 

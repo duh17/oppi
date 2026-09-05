@@ -17,7 +17,8 @@ class UIHarnessTestCase: XCTestCase {
         mixedContent: Bool = false,
         queueHarness: Bool = false,
         includeWriteMarkdownFixture: Bool = false,
-        assistantOverlapFixture: Bool = false
+        assistantOverlapFixture: Bool = false,
+        realBusyLane: Bool = false
     ) {
         app = XCUIApplication()
         app.launchArguments.append(contentsOf: [
@@ -33,6 +34,7 @@ class UIHarnessTestCase: XCTestCase {
         app.launchEnvironment["PI_UI_HANG_INCLUDE_WRITE_MD_FIXTURE"] = includeWriteMarkdownFixture ? "1" : "0"
         app.launchEnvironment["PI_UI_HANG_QUEUE_HARNESS"] = queueHarness ? "1" : "0"
         app.launchEnvironment["PI_UI_HANG_ASSISTANT_OVERLAP_FIXTURE"] = assistantOverlapFixture ? "1" : "0"
+        app.launchEnvironment["PI_UI_HANG_REAL_BUSY"] = realBusyLane ? "1" : "0"
         app.launch()
 
         XCTAssertTrue(
@@ -181,6 +183,31 @@ class UIHarnessTestCase: XCTestCase {
         }
 
         return nil
+    }
+
+    func waitForDiagnosticInRange(
+        _ id: String,
+        range: ClosedRange<Int>,
+        timeout: TimeInterval
+    ) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastValue: Int?
+
+        while Date() < deadline {
+            if let value = tryPollDiagnostic(id, timeout: 0.3) {
+                lastValue = value
+                if range.contains(value) {
+                    return value
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+
+        XCTFail(
+            "Diagnostic \(id) did not reach range \(range.lowerBound)...\(range.upperBound) " +
+            "(last=\(lastValue.map(String.init) ?? "nil"))"
+        )
+        return lastValue ?? -1
     }
 
     func tapHarnessControl(
