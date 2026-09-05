@@ -1201,7 +1201,7 @@ struct ToolTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func expandedMarkdownInitialSizingBeforeLayoutPassAvoidsViewportMaxJump() {
+    @Test func expandedMarkdownInitialSizingBeforeLayoutPassPublishesCappedViewport() {
         let config = makeTimelineToolConfiguration(
             expandedContent: .markdown(text: "Oppi repo normalized per request."),
             toolNamePrefix: "extensions.notes",
@@ -1214,8 +1214,12 @@ struct ToolTimelineRowContentViewTests {
         #expect(firstPassSize.height.isFinite)
         #expect(firstPassSize.height > 0)
         #expect(
-            firstPassSize.height < 260,
-            "Initial markdown sizing should stay compact; got \(firstPassSize.height)"
+            firstPassSize.height > ToolTimelineRowContentView.streamingViewportHeight + 40,
+            "Unparented completed markdown must publish the capped viewport, not streaming first-fit; got \(firstPassSize.height)"
+        )
+        #expect(
+            firstPassSize.height <= ToolRowViewportPolicy.maxExtensionMarkdownViewportHeight + 80,
+            "Unparented extension markdown must stay near the 480pt cap; got \(firstPassSize.height)"
         )
     }
 

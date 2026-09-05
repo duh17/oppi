@@ -2179,12 +2179,13 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
             } ?? false
             if followsReadingPosition {
                 context.contentOffsetAdjustment = CGPoint(x: 0, y: delta)
-            } else if delta > 0, shouldFollowAttachedLiveTail(in: collectionView) {
+            } else if delta > 0, shouldFollowAttachedLiveTail(in: collectionView, growth: delta) {
                 // Attached live tail: the growing thinking/assistant/tool row
                 // is below the first visible item, so reading-position follow
                 // does not run. Keep the working indicator from falling into
                 // the composer during in-place height growth. Never follow
-                // shrinks (upward busy jitter) or detached readers.
+                // shrinks (upward busy jitter), detached readers, or a
+                // default-attached view that is not actually on the tail.
                 context.contentOffsetAdjustment = CGPoint(x: 0, y: delta)
             }
         }
@@ -2273,11 +2274,35 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         }
     }
 
-    private func shouldFollowAttachedLiveTail(in collectionView: UICollectionView) -> Bool {
-        if let anchored = collectionView as? AnchoredCollectionView {
-            return !anchored.isDetachedFromBottom
+    private func shouldFollowAttachedLiveTail(
+        in collectionView: UICollectionView,
+        growth: CGFloat
+    ) -> Bool {
+        if let anchored = collectionView as? AnchoredCollectionView,
+           anchored.isDetachedFromBottom {
+            return false
         }
-        return true
+        // `isDetachedFromBottom` defaults to false and is also cleared around
+        // restore/expand layout. Only chase growth when the offset is already
+        // on the live tail, using either pre- or post-adjustment contentSize.
+        return isOffsetNearLiveTail(in: collectionView, growth: growth)
+    }
+
+    private func isOffsetNearLiveTail(
+        in collectionView: UICollectionView,
+        growth: CGFloat
+    ) -> Bool {
+        let insets = collectionView.adjustedContentInset
+        let minOffsetY = -insets.top
+        let rawMaxY = collectionView.contentSize.height
+            - collectionView.bounds.height
+            + insets.bottom
+        let maxOffsetY = max(minOffsetY, rawMaxY)
+        let maxOffsetBeforeGrowth = max(minOffsetY, rawMaxY - growth)
+        let offsetY = collectionView.contentOffset.y
+        let threshold: CGFloat = 32
+        return abs(offsetY - maxOffsetY) <= threshold
+            || abs(offsetY - maxOffsetBeforeGrowth) <= threshold
     }
 
     private func resolvedHeight(

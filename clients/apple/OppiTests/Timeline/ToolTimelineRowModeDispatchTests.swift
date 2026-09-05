@@ -1864,7 +1864,7 @@ struct ToolTimelineRowModeDispatchTests {
         )
     }
 
-    @Test func swiftUIHostedMarkdownRemeasuresAfterAsyncMermaidGrowth() async throws {
+    @Test func swiftUIHostedMarkdownReservesMermaidHeightBeforeRaster() async throws {
         let content = """
         Intro prose above the diagram.
 
@@ -1909,6 +1909,10 @@ struct ToolTimelineRowModeDispatchTests {
         )
 
         let initialMarkdownHeight = markdownView.bounds.height
+        #expect(
+            initialMarkdownHeight > 180,
+            "SwiftUI-hosted closed mermaid must reserve height before raster; got \(initialMarkdownHeight)"
+        )
 
         let diagramRendered = await waitForTimelineCondition(timeoutMs: 1_400) {
             await MainActor.run {
@@ -1917,16 +1921,10 @@ struct ToolTimelineRowModeDispatchTests {
         }
         #expect(diagramRendered, "Mermaid fixture did not render image in time")
 
-        let remeasured = await waitForTimelineCondition(timeoutMs: 1_400) {
-            await MainActor.run {
-                host.view.layoutIfNeeded()
-                return markdownView.bounds.height > initialMarkdownHeight + 20
-            }
-        }
-
+        host.view.layoutIfNeeded()
         #expect(
-            remeasured,
-            "SwiftUI-hosted markdown stayed frozen after async mermaid growth (markdown \(markdownView.bounds.height) from \(initialMarkdownHeight), mermaid \(mermaidView.bounds.height))"
+            abs(markdownView.bounds.height - initialMarkdownHeight) <= 20,
+            "Raster must not jump reserved SwiftUI markdown (markdown \(markdownView.bounds.height) from \(initialMarkdownHeight), mermaid \(mermaidView.bounds.height))"
         )
     }
 }
