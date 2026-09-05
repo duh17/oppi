@@ -64,17 +64,37 @@ enum FileShareService {
 
     /// Content that can be shared. Maps from FullScreenCodeContent.
     enum ShareableContent {
-        case mermaid(String)
-        case latex(String)
-        case markdown(String)
-        case orgMode(String)
-        case code(String, language: String?)
-        case html(String)
-        case json(String)
-        case plainText(String)
+        case mermaid(String, fileName: String? = nil)
+        case latex(String, fileName: String? = nil)
+        case markdown(String, fileName: String? = nil)
+        case orgMode(String, fileName: String? = nil)
+        case code(String, language: String?, fileName: String? = nil)
+        case html(String, fileName: String? = nil)
+        case json(String, fileName: String? = nil)
+        case plainText(String, fileName: String? = nil)
         case diff([WorkspaceReviewDiffHunk], filePath: String)
         case imageData(Data, filename: String)
         case pdfData(Data, filename: String)
+
+        /// Original last-path-component, if this content came from a named file.
+        var originalFileName: String? {
+            switch self {
+            case .mermaid(_, let fileName),
+                 .latex(_, let fileName),
+                 .markdown(_, let fileName),
+                 .orgMode(_, let fileName),
+                 .html(_, let fileName),
+                 .json(_, let fileName),
+                 .plainText(_, let fileName):
+                return FileShareService.fileName(fromPath: fileName)
+            case .code(_, _, let fileName):
+                return FileShareService.fileName(fromPath: fileName)
+            case .diff(_, let filePath):
+                return FileShareService.fileName(fromPath: filePath)
+            case .imageData(_, let filename), .pdfData(_, let filename):
+                return FileShareService.fileName(fromPath: filename)
+            }
+        }
 
         /// Build shareable content from raw text and a file path.
         ///
@@ -83,17 +103,18 @@ enum FileShareService {
         /// viewer, review detail) to create share content for the toolbar.
         static func fromText(_ text: String, filePath: String?) -> ShareableContent {
             let fileType = FileType.detect(from: filePath, content: text)
+            let fileName = FileShareService.fileName(fromPath: filePath)
             switch fileType {
-            case .markdown: return .markdown(text)
-            case .html: return .html(text)
-            case .json: return .json(text)
-            case .latex: return .latex(text)
-            case .orgMode: return .orgMode(text)
-            case .mermaid: return .mermaid(text)
-            case .graphviz: return .code(text, language: "dot")
-            case .code(let lang): return .code(text, language: lang.displayName)
-            case .plain: return .plainText(text)
-            default: return .plainText(text)
+            case .markdown: return .markdown(text, fileName: fileName)
+            case .html: return .html(text, fileName: fileName)
+            case .json: return .json(text, fileName: fileName)
+            case .latex: return .latex(text, fileName: fileName)
+            case .orgMode: return .orgMode(text, fileName: fileName)
+            case .mermaid: return .mermaid(text, fileName: fileName)
+            case .graphviz: return .code(text, language: "dot", fileName: fileName)
+            case .code(let lang): return .code(text, language: lang.displayName, fileName: fileName)
+            case .plain: return .plainText(text, fileName: fileName)
+            default: return .plainText(text, fileName: fileName)
             }
         }
     }
@@ -116,7 +137,8 @@ enum FileShareService {
             case .image(let image):
                 return [image]
             case .pdf(let data, let filename):
-                return [SharePDFDataProvider(data: data, filename: filename)]
+                // Temp file URL so Save to Files / AirDrop use lastPathComponent.
+                return [FileShareService.writeTempData(data: data, filename: filename)]
             case .file(let url):
                 return [url]
             }
@@ -159,106 +181,111 @@ enum FileShareService {
     /// This is the single lookup for format metadata. All format-selection
     /// and filename functions below delegate here.
     static func exportSpec(for content: ShareableContent) -> ContentExportSpec {
+        let original = content.originalFileName
         switch content {
         case .mermaid:
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .pdf,
                 formats: [.pdf, .image, .source],
                 sourceLabel: "Mermaid Source",
-                sourceBaseName: "diagram",
-                sourceExtension: "mmd",
-                pdfFilename: "diagram.pdf"
+                genericBase: "diagram",
+                sourceExtension: "mmd"
             )
         case .latex:
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .pdf,
                 formats: [.pdf, .image, .source],
                 sourceLabel: "LaTeX Source",
-                sourceBaseName: "formula",
-                sourceExtension: "tex",
-                pdfFilename: "formula.pdf"
+                genericBase: "formula",
+                sourceExtension: "tex"
             )
         case .markdown:
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .pdf,
                 formats: [.pdf, .image, .source],
                 sourceLabel: "Markdown File",
-                sourceBaseName: "document",
-                sourceExtension: "md",
-                pdfFilename: "document.pdf"
+                genericBase: "document",
+                sourceExtension: "md"
             )
         case .orgMode:
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .pdf,
                 formats: [.pdf, .image, .source],
                 sourceLabel: "Org File",
-                sourceBaseName: "document",
-                sourceExtension: "org",
-                pdfFilename: "document.pdf"
+                genericBase: "document",
+                sourceExtension: "org"
             )
-        case .code(_, let language):
+        case .code(_, let language, _):
             let ext = fileExtension(for: language) ?? "txt"
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .pdf,
                 formats: [.pdf, .image, .source],
                 sourceLabel: "Source File",
-                sourceBaseName: "code",
-                sourceExtension: ext,
-                pdfFilename: "code.pdf"
+                genericBase: "code",
+                sourceExtension: ext
             )
         case .html:
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .pdf,
                 formats: [.pdf, .image, .source],
                 sourceLabel: "HTML Source",
-                sourceBaseName: "page",
-                sourceExtension: "html",
-                pdfFilename: "page.pdf"
+                genericBase: "page",
+                sourceExtension: "html"
             )
         case .json:
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .pdf,
                 formats: [.pdf, .image, .source],
                 sourceLabel: "JSON File",
-                sourceBaseName: "data",
-                sourceExtension: "json",
-                pdfFilename: "data.pdf"
+                genericBase: "data",
+                sourceExtension: "json"
             )
         case .plainText:
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .source,
                 formats: [.source],
                 sourceLabel: "Text File",
-                sourceBaseName: "text",
-                sourceExtension: "txt",
-                pdfFilename: "text.pdf"
+                genericBase: "text",
+                sourceExtension: "txt"
             )
         case .diff:
-            return ContentExportSpec(
+            return textExportSpec(
+                originalFileName: original,
                 defaultFormat: .image,
                 formats: [.image, .pdf, .source],
                 sourceLabel: "Diff File",
-                sourceBaseName: "diff",
-                sourceExtension: "diff",
-                pdfFilename: "diff.pdf"
+                genericBase: "diff",
+                sourceExtension: "diff"
             )
         case .imageData(_, let filename):
             return ContentExportSpec(
                 defaultFormat: .image,
                 formats: [.image],
                 sourceLabel: "Image File",
-                sourceBaseName: (filename as NSString).deletingPathExtension,
+                sourceBaseName: fileNameStem(filename),
                 sourceExtension: (filename as NSString).pathExtension,
-                pdfFilename: "image.pdf"
+                pdfFilename: exportFileName(
+                    originalFileName: original,
+                    genericBase: "image",
+                    ext: "pdf"
+                )
             )
         case .pdfData(_, let filename):
             return ContentExportSpec(
                 defaultFormat: .pdf,
                 formats: [.pdf],
                 sourceLabel: "PDF File",
-                sourceBaseName: (filename as NSString).deletingPathExtension,
+                sourceBaseName: fileNameStem(filename),
                 sourceExtension: "pdf",
-                pdfFilename: filename
+                pdfFilename: fileName(fromPath: filename) ?? filename
             )
         }
     }
@@ -331,32 +358,36 @@ enum FileShareService {
     // MARK: - Image Rendering
 
     private static func renderImage(_ content: ShareableContent) async -> ShareItem {
+        if case .imageData(let data, let filename) = content {
+            return .file(writeTempData(data: data, filename: fileName(fromPath: filename) ?? filename))
+        }
+
         let image: UIImage
         switch content {
-        case .mermaid(let source):
+        case .mermaid(let source, _):
             image = renderMermaidToImage(source)
-        case .latex(let source):
+        case .latex(let source, _):
             image = renderLatexToImage(source)
-        case .markdown(let source):
+        case .markdown(let source, _):
             image = renderMarkdownToImage(source)
-        case .orgMode(let source):
+        case .orgMode(let source, _):
             image = renderOrgModeToImage(source)
-        case .code(let source, let language):
+        case .code(let source, let language, _):
             image = renderCodeToImage(source, language: language)
-        case .html(let source):
+        case .html(let source, _):
             image = await renderHTMLToImage(source)
-        case .json(let source):
+        case .json(let source, _):
             image = renderCodeToImage(source, language: "json")
-        case .plainText(let source):
+        case .plainText(let source, _):
             image = renderCodeToImage(source, language: nil)
         case .diff(let hunks, let filePath):
             image = renderDiffToImage(hunks: hunks, filePath: filePath)
-        case .imageData(let data, _):
-            image = UIImage(data: data) ?? placeholderImage()
+        case .imageData:
+            image = placeholderImage()
         case .pdfData:
             image = placeholderImage()
         }
-        return .image(image)
+        return namedImageShareItem(image, for: content)
     }
 
     // MARK: - CGContext Renderers (Mermaid, LaTeX)
@@ -792,23 +823,23 @@ enum FileShareService {
         let pdfData: Data
 
         switch content {
-        case .mermaid(let source):
+        case .mermaid(let source, _):
             pdfData = renderMermaidToPDF(source)
-        case .latex(let source):
+        case .latex(let source, _):
             pdfData = renderLatexToPDF(source)
-        case .html(let source):
+        case .html(let source, _):
             pdfData = await renderHTMLToPDF(source)
         case .pdfData(let data, let name):
-            return .pdf(data, filename: name)
-        case .markdown(let source):
+            return .pdf(data, filename: fileName(fromPath: name) ?? name)
+        case .markdown(let source, _):
             pdfData = await renderMarkdownToPDF(source)
-        case .orgMode(let source):
+        case .orgMode(let source, _):
             pdfData = await renderMarkdownToPDF(DocumentRenderPipeline.orgToMarkdown(source))
-        case .code(let source, let language):
+        case .code(let source, let language, _):
             pdfData = renderCodeToPDF(source, language: language)
-        case .json(let source):
+        case .json(let source, _):
             pdfData = renderCodeToPDF(source, language: "json")
-        case .plainText(let source):
+        case .plainText(let source, _):
             pdfData = renderCodeToPDF(source, language: nil)
         case .diff(let hunks, let filePath):
             pdfData = renderDiffToPDF(hunks: hunks, filePath: filePath)
@@ -1060,41 +1091,39 @@ enum FileShareService {
     private static func renderSource(_ content: ShareableContent) -> ShareItem {
         let filename = sourceFilename(for: content, extension: nil)
         switch content {
-        case .mermaid(let text):
+        case .mermaid(let text, _):
             return .file(writeTempFile(content: text, filename: filename))
-        case .latex(let text):
+        case .latex(let text, _):
             return .file(writeTempFile(content: text, filename: filename))
-        case .markdown(let text):
+        case .markdown(let text, _):
             return .file(writeTempFile(content: text, filename: filename))
-        case .orgMode(let text):
+        case .orgMode(let text, _):
             return .file(writeTempFile(content: text, filename: filename))
-        case .code(let text, _):
+        case .code(let text, _, _):
             return .file(writeTempFile(content: text, filename: filename))
-        case .html(let text):
+        case .html(let text, _):
             return .file(writeTempFile(content: text, filename: filename))
-        case .json(let text):
+        case .json(let text, _):
             return .file(writeTempFile(content: text, filename: filename))
-        case .plainText(let text):
+        case .plainText(let text, _):
             return .file(writeTempFile(content: text, filename: filename))
         case .diff(let hunks, _):
             return .file(writeTempFile(content: buildUnifiedDiffText(hunks), filename: filename))
         case .imageData(let data, let name):
-            return .file(writeTempData(data: data, filename: name))
+            return .file(writeTempData(data: data, filename: fileName(fromPath: name) ?? name))
         case .pdfData(let data, let name):
-            return .file(writeTempData(data: data, filename: name))
+            return .file(writeTempData(data: data, filename: fileName(fromPath: name) ?? name))
         }
     }
 
     // MARK: - Temp File Management
 
-    private static let tempDirectoryName = "oppi-share"
-
-    private static var tempRootDirectoryURL: URL {
+    private nonisolated static var tempRootDirectoryURL: URL {
         FileManager.default.temporaryDirectory
-            .appendingPathComponent(tempDirectoryName, isDirectory: true)
+            .appendingPathComponent("oppi-share", isDirectory: true)
     }
 
-    private static func makeExportTempDirectory() -> URL {
+    private nonisolated static func makeExportTempDirectory() -> URL {
         let root = tempRootDirectoryURL
         let exportDir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
@@ -1108,7 +1137,7 @@ enum FileShareService {
         return url
     }
 
-    private static func writeTempData(data: Data, filename: String) -> URL {
+    fileprivate nonisolated static func writeTempData(data: Data, filename: String) -> URL {
         let dir = makeExportTempDirectory()
         let url = dir.appendingPathComponent(filename)
         try? data.write(to: url)
@@ -1125,8 +1154,84 @@ enum FileShareService {
 
     private static func sourceFilename(for content: ShareableContent, extension ext: String?) -> String {
         let spec = exportSpec(for: content)
+        if let original = content.originalFileName {
+            switch content {
+            case .diff:
+                return exportFileName(
+                    originalFileName: original,
+                    genericBase: spec.sourceBaseName,
+                    ext: spec.sourceExtension ?? "diff"
+                )
+            default:
+                return original
+            }
+        }
         let resolvedExt = ext ?? spec.sourceExtension ?? "txt"
         return "\(spec.sourceBaseName).\(resolvedExt)"
+    }
+
+    /// Last path component of a file path or already-bare file name.
+    nonisolated static func fileName(fromPath path: String?) -> String? {
+        guard let path else { return nil }
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let name = URL(fileURLWithPath: trimmed).lastPathComponent
+        guard !name.isEmpty, name != "/" else { return nil }
+        return name
+    }
+
+    /// Stem used when swapping a format suffix. Dotfiles whose
+    /// `deletingPathExtension` is empty (`.gitignore`) keep the original name.
+    nonisolated static func fileNameStem(_ original: String) -> String {
+        let deleted = (original as NSString).deletingPathExtension
+        return deleted.isEmpty ? original : deleted
+    }
+
+    /// Named files keep the original stem and only replace the last extension.
+    /// Unnamed content uses `genericBase`.`ext`.
+    nonisolated static func exportFileName(
+        originalFileName: String?,
+        genericBase: String,
+        ext: String
+    ) -> String {
+        guard let original = fileName(fromPath: originalFileName) else {
+            return "\(genericBase).\(ext)"
+        }
+        let ns = original as NSString
+        if ns.pathExtension.lowercased() == ext.lowercased() {
+            return original
+        }
+        return "\(fileNameStem(original)).\(ext)"
+    }
+
+    private static func textExportSpec(
+        originalFileName: String?,
+        defaultFormat: ExportFormat,
+        formats: [ExportFormat],
+        sourceLabel: String,
+        genericBase: String,
+        sourceExtension: String
+    ) -> ContentExportSpec {
+        ContentExportSpec(
+            defaultFormat: defaultFormat,
+            formats: formats,
+            sourceLabel: sourceLabel,
+            sourceBaseName: originalFileName.map(fileNameStem) ?? genericBase,
+            sourceExtension: sourceExtension,
+            pdfFilename: exportFileName(
+                originalFileName: originalFileName,
+                genericBase: genericBase,
+                ext: "pdf"
+            )
+        )
+    }
+
+    private static func namedImageShareItem(_ image: UIImage, for content: ShareableContent) -> ShareItem {
+        guard let original = content.originalFileName, let data = image.pngData() else {
+            return .image(image)
+        }
+        let filename = exportFileName(originalFileName: original, genericBase: "image", ext: "png")
+        return .file(writeTempData(data: data, filename: filename))
     }
 
     private static func fileExtension(for language: String?) -> String? {
@@ -1268,40 +1373,3 @@ private final class PDFNavigationDelegate: NSObject, WKNavigationDelegate {
     // swiftlint:enable no_force_unwrap_production
 }
 
-// MARK: - PDF Data Provider
-
-/// Provides PDF data to UIActivityViewController with a suggested filename.
-final class SharePDFDataProvider: NSObject, UIActivityItemSource {
-    private let data: Data
-    private let filename: String
-
-    init(data: Data, filename: String) {
-        self.data = data
-        self.filename = filename
-    }
-
-    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
-        data
-    }
-
-    func activityViewController(
-        _ activityViewController: UIActivityViewController,
-        itemForActivityType activityType: UIActivity.ActivityType?
-    ) -> Any? {
-        data
-    }
-
-    func activityViewController(
-        _ activityViewController: UIActivityViewController,
-        dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?
-    ) -> String {
-        "com.adobe.pdf"
-    }
-
-    func activityViewController(
-        _ activityViewController: UIActivityViewController,
-        subjectForActivityType activityType: UIActivity.ActivityType?
-    ) -> String {
-        filename
-    }
-}

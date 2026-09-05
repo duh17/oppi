@@ -876,12 +876,13 @@ struct FullScreenReviewCommentSelectionTests {
         let document = makeDistinguishingToolDiffDocument()
         let controller = makeController(content: .diff(document))
 
-        guard case .plainText(let shared)? = controller.shareableContentForTesting else {
+        guard case .plainText(let shared, let fileName)? = controller.shareableContentForTesting else {
             Issue.record("Expected full-screen diff share payload to be plain copy text")
             return
         }
         #expect(shared == document.copyText)
         #expect(shared != document.reconstructedNewSideText)
+        #expect(fileName == "Value.diff")
         #expect(controller.presentationCopyTextForTesting == document.copyText)
     }
 

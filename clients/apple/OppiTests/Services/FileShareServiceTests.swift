@@ -374,9 +374,9 @@ struct FileShareServiceTests {
         let spec = FileShareService.exportSpec(for: .diff(hunks, filePath: "test.swift"))
         #expect(spec.defaultFormat == .image)
         #expect(spec.sourceLabel == "Diff File")
-        #expect(spec.sourceBaseName == "diff")
+        #expect(spec.sourceBaseName == "test")
         #expect(spec.sourceExtension == "diff")
-        #expect(spec.pdfFilename == "diff.pdf")
+        #expect(spec.pdfFilename == "test.pdf")
     }
 
     @Test func diffFormatDisplayInfoShowsCorrectLabels() {
@@ -405,7 +405,7 @@ struct FileShareServiceTests {
             return
         }
 
-        #expect(url.lastPathComponent == "diff.diff")
+        #expect(url.lastPathComponent == "test.diff")
         let content = try? String(contentsOf: url, encoding: .utf8)
         guard let content else {
             Issue.record("Could not read diff file")
@@ -466,33 +466,20 @@ struct FileShareServiceTests {
     @Test func diffRendersToImage() async {
         let hunks = Self.sampleDiffHunks
         let item = await FileShareService.render(.diff(hunks, filePath: "test.swift"), as: .image)
-        guard case .image(let image) = item else {
-            Issue.record("Expected image, got \(item)")
-            return
-        }
-        #expect(image.size.width > 0)
-        #expect(image.size.height > 0)
+        assertRenderedImage(item, expectedFileName: "test.png")
     }
 
     @Test func emptyDiffRendersToImage() async {
         let item = await FileShareService.render(.diff([], filePath: "test.swift"), as: .image)
-        guard case .image(let image) = item else {
-            Issue.record("Expected image, got \(item)")
-            return
-        }
         // Should produce *something* even for empty input (attributed string is empty but layout still runs)
-        #expect(image.size.width > 0)
-        #expect(image.size.height > 0)
+        assertRenderedImage(item, expectedFileName: "test.png")
     }
 
     @Test func diffImageDefaultRenderUsesImageFormat() async {
         let hunks = Self.sampleDiffHunks
         let content = FileShareService.ShareableContent.diff(hunks, filePath: "test.swift")
         let item = await FileShareService.render(content, as: FileShareService.defaultFormat(for: content))
-        guard case .image = item else {
-            Issue.record("Expected image (default format for diff), got \(item)")
-            return
-        }
+        assertRenderedImage(item, expectedFileName: "test.png")
     }
 
     // MARK: - Diff PDF Rendering
@@ -505,7 +492,7 @@ struct FileShareServiceTests {
             return
         }
         #expect(!data.isEmpty)
-        #expect(filename == "diff.pdf")
+        #expect(filename == "test.pdf")
 
         // Validate PDF header
         let header = String(data: data.prefix(5), encoding: .ascii)
@@ -518,7 +505,7 @@ struct FileShareServiceTests {
             Issue.record("Expected PDF, got \(item)")
             return
         }
-        #expect(filename == "diff.pdf")
+        #expect(filename == "test.pdf")
         // Even empty diff should produce valid PDF structure
         if !data.isEmpty {
             let header = String(data: data.prefix(5), encoding: .ascii)
@@ -605,12 +592,7 @@ struct FileShareServiceTests {
             ),
         ]
         let item = await FileShareService.render(.diff(hunks, filePath: "test.swift"), as: .image)
-        guard case .image(let image) = item else {
-            Issue.record("Expected image, got \(item)")
-            return
-        }
-        #expect(image.size.width > 0)
-        #expect(image.size.height > 0)
+        assertRenderedImage(item, expectedFileName: "test.png")
     }
 
     @Test func diffWordSpansGetBackgroundAttributes() {
@@ -674,12 +656,7 @@ struct FileShareServiceTests {
         let hunks = [WorkspaceReviewDiffHunk(oldStart: 1, oldCount: 334, newStart: 1, newCount: 334, lines: lines)]
 
         let item = await FileShareService.render(.diff(hunks, filePath: "test.swift"), as: .image)
-        guard case .image(let image) = item else {
-            Issue.record("Expected image for large diff")
-            return
-        }
-        #expect(image.size.width > 0)
-        #expect(image.size.height > 0)
+        assertRenderedImage(item, expectedFileName: "test.png")
     }
 
     // MARK: - Diff Stats Summary
@@ -922,6 +899,230 @@ struct FileShareServiceTests {
             ]
         ),
     ]
+
+    // MARK: - Named vs Unnamed Export Filenames
+
+    @Test func unnamedContentKeepsGenericExportNames() async {
+        let cases: [(FileShareService.ShareableContent, String, String)] = [
+            (.markdown("# test"), "document.md", "document.pdf"),
+            (.html("<p>test</p>"), "page.html", "page.pdf"),
+            (.code("let x = 1", language: "swift"), "code.swift", "code.pdf"),
+            (.json("{\"a\":1}"), "data.json", "data.pdf"),
+            (.mermaid("graph TD"), "diagram.mmd", "diagram.pdf"),
+            (.latex("x^2"), "formula.tex", "formula.pdf"),
+            (.orgMode("* test"), "document.org", "document.pdf"),
+            (.plainText("hello"), "text.txt", "text.pdf"),
+        ]
+
+        for (content, expectedSource, expectedPDF) in cases {
+            let spec = FileShareService.exportSpec(for: content)
+            #expect(spec.pdfFilename == expectedPDF, "Unnamed PDF for \(expectedSource)")
+
+            let source = await FileShareService.render(content, as: .source)
+            guard case .file(let url) = source else {
+                Issue.record("Expected source file for \(expectedSource), got \(source)")
+                continue
+            }
+            #expect(url.lastPathComponent == expectedSource)
+        }
+
+        FileShareService.cleanupTempFiles()
+    }
+
+    @Test func fromTextWithPathPreservesOriginalFileName() async {
+        let cases: [(path: String, source: String, pdf: String)] = [
+            ("skills/SKILL.md", "SKILL.md", "SKILL.pdf"),
+            ("src/Foo.swift", "Foo.swift", "Foo.pdf"),
+            ("foo.test.ts", "foo.test.ts", "foo.test.pdf"),
+            ("Makefile", "Makefile", "Makefile.pdf"),
+            (".gitignore", ".gitignore", ".gitignore.pdf"),
+            ("docs/report.html", "report.html", "report.pdf"),
+            ("config.json", "config.json", "config.pdf"),
+            ("charts/flow.mmd", "flow.mmd", "flow.pdf"),
+            ("energy.tex", "energy.tex", "energy.pdf"),
+            ("notes.org", "notes.org", "notes.pdf"),
+        ]
+
+        defer { FileShareService.cleanupTempFiles() }
+
+        for item in cases {
+            let content = FileShareService.ShareableContent.fromText("content", filePath: item.path)
+            let spec = FileShareService.exportSpec(for: content)
+            #expect(spec.pdfFilename == item.pdf, "PDF name for \(item.path)")
+
+            let source = await FileShareService.render(content, as: .source)
+            guard case .file(let url) = source else {
+                Issue.record("Expected source file for \(item.path), got \(source)")
+                continue
+            }
+            #expect(url.lastPathComponent == item.source, "Source name for \(item.path)")
+        }
+    }
+
+    @Test func namedSkillMarkdownExportsOriginalStem() async {
+        defer { FileShareService.cleanupTempFiles() }
+
+        let content = FileShareService.ShareableContent.fromText("# Skill", filePath: "skills/SKILL.md")
+
+        let source = await FileShareService.render(content, as: .source)
+        guard case .file(let sourceURL) = source else {
+            Issue.record("Expected source file, got \(source)")
+            return
+        }
+        #expect(sourceURL.lastPathComponent == "SKILL.md")
+
+        let pdf = await FileShareService.render(content, as: .pdf)
+        guard case .pdf(_, let filename) = pdf else {
+            Issue.record("Expected PDF, got \(pdf)")
+            return
+        }
+        #expect(filename == "SKILL.pdf")
+        #expect(activityItemFileName(pdf) == "SKILL.pdf")
+
+        let image = await FileShareService.render(content, as: .image)
+        #expect(activityItemFileName(image) == "SKILL.png")
+    }
+
+    @Test func namedSwiftCodeExportsOriginalStem() async {
+        defer { FileShareService.cleanupTempFiles() }
+
+        let content = FileShareService.ShareableContent.fromText("let x = 1", filePath: "Foo.swift")
+
+        let source = await FileShareService.render(content, as: .source)
+        guard case .file(let sourceURL) = source else {
+            Issue.record("Expected source file, got \(source)")
+            return
+        }
+        #expect(sourceURL.lastPathComponent == "Foo.swift")
+
+        let pdf = await FileShareService.render(content, as: .pdf)
+        guard case .pdf(_, let filename) = pdf else {
+            Issue.record("Expected PDF, got \(pdf)")
+            return
+        }
+        #expect(filename == "Foo.pdf")
+        #expect(activityItemFileName(pdf) == "Foo.pdf")
+
+        let image = await FileShareService.render(content, as: .image)
+        #expect(activityItemFileName(image) == "Foo.png")
+    }
+
+    @Test func namedDiffReplacesLastExtensionOnly() async {
+        defer { FileShareService.cleanupTempFiles() }
+
+        let content = FileShareService.ShareableContent.diff(Self.sampleDiffHunks, filePath: "Foo.swift")
+        let spec = FileShareService.exportSpec(for: content)
+        #expect(spec.pdfFilename == "Foo.pdf")
+        #expect(spec.sourceBaseName == "Foo")
+        #expect(spec.sourceExtension == "diff")
+
+        let source = await FileShareService.render(content, as: .source)
+        guard case .file(let url) = source else {
+            Issue.record("Expected diff source file, got \(source)")
+            return
+        }
+        #expect(url.lastPathComponent == "Foo.diff")
+
+        let pdf = await FileShareService.render(content, as: .pdf)
+        guard case .pdf(_, let filename) = pdf else {
+            Issue.record("Expected PDF, got \(pdf)")
+            return
+        }
+        #expect(filename == "Foo.pdf")
+    }
+
+    @Test func unnamedPDFActivityItemCarriesGenericFilename() async {
+        defer { FileShareService.cleanupTempFiles() }
+        let item = await FileShareService.render(.markdown("# Hello"), as: .pdf)
+        guard case .pdf(_, let filename) = item else {
+            Issue.record("Expected PDF, got \(item)")
+            return
+        }
+        #expect(filename == "document.pdf")
+        #expect(activityItemFileName(item) == "document.pdf")
+    }
+
+    @Test func namedImageDataShareUsesOriginalFilename() async {
+        defer { FileShareService.cleanupTempFiles() }
+        let item = await FileShareService.render(
+            .imageData(Data([0x89, 0x50, 0x4E, 0x47]), filename: "photo.jpg"),
+            as: .image
+        )
+        #expect(activityItemFileName(item) == "photo.jpg")
+    }
+
+    @Test func fullScreenCodeShareableContentPreservesFilePathName() async {
+        let controller = FullScreenCodeViewController(
+            content: .markdown(content: "# Skill", filePath: "skills/SKILL.md")
+        )
+        let shareable = controller.shareableContentForTesting
+        guard let shareable else {
+            Issue.record("Expected shareable content from full-screen viewer")
+            return
+        }
+        let spec = FileShareService.exportSpec(for: shareable)
+        #expect(spec.pdfFilename == "SKILL.pdf")
+
+        let codeController = FullScreenCodeViewController(
+            content: .code(content: "let x = 1", language: "swift", filePath: "Foo.swift", startLine: 1)
+        )
+        let codeShareable = codeController.shareableContentForTesting
+        guard let codeShareable else {
+            Issue.record("Expected shareable code content from full-screen viewer")
+            return
+        }
+        let codeSpec = FileShareService.exportSpec(for: codeShareable)
+        #expect(codeSpec.pdfFilename == "Foo.pdf")
+
+        let diffDocument = ToolDiffDocument(
+            lines: [
+                DiffLine(kind: .added, text: "new", oldLineNumber: nil, newLineNumber: 1),
+            ],
+            filePath: "Value.swift",
+            copyText: "+new\n"
+        )
+        let diffController = FullScreenCodeViewController(content: .diff(diffDocument))
+        guard let diffShareable = diffController.shareableContentForTesting,
+              case .plainText(let shared, let diffFileName) = diffShareable else {
+            Issue.record("Expected named plain-text share payload for full-screen diff")
+            return
+        }
+        #expect(shared == diffDocument.copyText)
+        #expect(diffFileName == "Value.diff")
+        let diffSource = await FileShareService.render(diffShareable, as: .source)
+        guard case .file(let url) = diffSource else {
+            Issue.record("Expected source file for full-screen diff, got \(diffSource)")
+            return
+        }
+        #expect(url.lastPathComponent == "Value.diff")
+        FileShareService.cleanupTempFiles()
+    }
+
+    private func activityItemFileName(_ item: FileShareService.ShareItem) -> String? {
+        item.activityItems.compactMap { $0 as? URL }.first?.lastPathComponent
+    }
+
+    private func assertRenderedImage(
+        _ item: FileShareService.ShareItem,
+        expectedFileName: String? = nil
+    ) {
+        if let expectedFileName {
+            #expect(activityItemFileName(item) == expectedFileName)
+        }
+        switch item {
+        case .image(let image):
+            #expect(image.size.width > 0)
+            #expect(image.size.height > 0)
+        case .file(let url):
+            let image = UIImage(contentsOfFile: url.path)
+            #expect(image != nil, "Named image export should write a readable PNG")
+            #expect((image?.size.width ?? 0) > 0)
+            #expect((image?.size.height ?? 0) > 0)
+        default:
+            Issue.record("Expected image or named image file, got \(item)")
+        }
+        FileShareService.cleanupTempFiles()
+    }
 
     // MARK: - Activity Items
 

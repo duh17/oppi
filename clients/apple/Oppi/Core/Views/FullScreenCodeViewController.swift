@@ -1701,21 +1701,32 @@ final class FullScreenCodeViewController: UIViewController {
     private func shareableContent() -> FileShareService.ShareableContent? {
         let content = currentSemanticContent()
         switch content {
-        case .mermaid(let text, _): return .mermaid(text)
-        case .latex(let text, _): return .latex(text)
-        case .markdown(let text, _, _): return .markdown(text)
-        case .orgMode(let text, _): return .orgMode(text)
-        case .html(let text, _): return .html(text)
-        case .graphviz(let text, _): return .code(text, language: "dot")
-        case .code(let text, let lang, _, _): return .code(text, language: lang)
-        case .plainText(let text, _): return .plainText(text)
+        case .mermaid(let text, let filePath): return .mermaid(text, fileName: filePath)
+        case .latex(let text, let filePath): return .latex(text, fileName: filePath)
+        case .markdown(let text, let filePath, _): return .markdown(text, fileName: filePath)
+        case .orgMode(let text, let filePath): return .orgMode(text, fileName: filePath)
+        case .html(let text, let filePath): return .html(text, fileName: filePath)
+        case .graphviz(let text, let filePath): return .code(text, language: "dot", fileName: filePath)
+        case .code(let text, let lang, let filePath, _): return .code(text, language: lang, fileName: filePath)
+        case .plainText(let text, let filePath): return .plainText(text, fileName: filePath)
         case .thinking(let text, let stream):
             return .plainText(stream?.snapshot.text ?? text)
         case .terminal(let text, _, let stream):
             return .plainText(stream?.snapshot.output ?? text)
-        case .diff(let document): return .plainText(document.copyText)
+        case .diff(let document):
+            // Copy text is a unified patch, not the source file. Never keep
+            // the original suffix (Foo.swift) or Save to Files can overwrite it.
+            guard let path = document.filePath, !path.isEmpty else {
+                return .plainText(document.copyText)
+            }
+            let diffName = FileShareService.exportFileName(
+                originalFileName: path,
+                genericBase: "diff",
+                ext: "diff"
+            )
+            return .plainText(document.copyText, fileName: diffName)
         case .liveSource(let snapshot, _):
-            return .plainText(snapshot.text)
+            return .plainText(snapshot.text, fileName: snapshot.filePath)
         }
     }
 

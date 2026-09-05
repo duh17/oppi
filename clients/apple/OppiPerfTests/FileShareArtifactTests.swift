@@ -182,18 +182,28 @@ struct FileShareArtifactTests {
 
                 case .file(let url):
                     let exists = fm.fileExists(atPath: url.path)
-                    #expect(exists, "\(name)/source: file not found at \(url.path)")
+                    #expect(exists, "\(name)/file: file not found at \(url.path)")
                     if exists {
                         let dest = dir.appendingPathComponent(url.lastPathComponent)
                         try? fm.removeItem(at: dest)
                         try fm.copyItem(at: url, to: dest)
                         let fileData = try Data(contentsOf: url)
-                        let text = String(data: fileData, encoding: .utf8)
-                        #expect(text?.isEmpty == false, "\(name)/source: empty file")
-                        results.append(ExportResult(
-                            content: name, format: "source", status: "ok",
-                            detail: url.lastPathComponent
-                        ))
+                        #expect(!fileData.isEmpty, "\(name)/file: empty file")
+                        if format == .image {
+                            let image = UIImage(data: fileData)
+                            #expect(image != nil, "\(name)/image: named PNG was not readable")
+                            results.append(ExportResult(
+                                content: name, format: "image", status: "ok",
+                                detail: url.lastPathComponent
+                            ))
+                        } else {
+                            let text = String(data: fileData, encoding: .utf8)
+                            #expect(text != nil, "\(name)/source: not UTF-8")
+                            results.append(ExportResult(
+                                content: name, format: "source", status: "ok",
+                                detail: url.lastPathComponent
+                            ))
+                        }
                     }
                 }
             }
@@ -373,10 +383,10 @@ struct FileShareArtifactTests {
 
     private func extractText(from content: FileShareService.ShareableContent) -> String {
         switch content {
-        case .mermaid(let t), .latex(let t), .markdown(let t),
-             .orgMode(let t), .html(let t), .json(let t), .plainText(let t):
+        case .mermaid(let t, _), .latex(let t, _), .markdown(let t, _),
+             .orgMode(let t, _), .html(let t, _), .json(let t, _), .plainText(let t, _):
             return t
-        case .code(let t, _):
+        case .code(let t, _, _):
             return t
         case .diff:
             return ""
