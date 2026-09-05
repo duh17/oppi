@@ -744,9 +744,10 @@ enum ToolTimelineRowUIHelpers {
     /// `layoutIfNeeded()` of the expanded `UITextView`.
     ///
     /// Streaming follow-tail used to force scroll-view layout, which created
-    /// and destroyed text fragment views for the whole document. Measure the
-    /// attributed string with Core Text instead, then set `contentSize` and
-    /// offset. Non-text content still takes the Auto Layout path.
+    /// and destroyed text fragment views for the whole document. Clipped
+    /// unwrapped code uses native line-count height; wrapped prose still uses
+    /// Core Text at the container width. Then set `contentSize` and offset.
+    /// Non-text content still takes the Auto Layout path.
     static func followTail(
         in scrollView: UIScrollView,
         contentLabel: UIView
@@ -771,9 +772,14 @@ enum ToolTimelineRowUIHelpers {
         scrollToBottom(scrollView, animated: false)
     }
 
-    /// Core Text measurement of a non-scrolling expanded `UITextView`.
-    /// Uses the TextKit container width, not the scroll-view viewport, so
-    /// unwrapped code/diff is not measured as wrapped prose.
+    /// Height of a non-scrolling expanded `UITextView` without forcing TextKit
+    /// fragment layout.
+    ///
+    /// Unwrapped clipped code/diff uses NSString native line enumeration (LF,
+    /// CRLF, CR, U+2028, U+2029, including a trailing terminator) times the
+    /// view font when font and paragraph metrics are uniform across the whole
+    /// string. Mixed later runs fall back to Core Text at the TextKit container
+    /// width. Wrapped prose always uses that Core Text path.
     /// Returns nil when that width is not yet valid so callers can fall back
     /// to Auto Layout.
     private static func estimatedTextViewContentHeight(
@@ -782,6 +788,18 @@ enum ToolTimelineRowUIHelpers {
     ) -> CGFloat? {
         guard scrollView.bounds.height > 0 else { return nil }
         let inset = textView.textContainerInset
+        let text = textView.attributedText ?? NSAttributedString()
+        guard text.length > 0 else {
+            return max(1, inset.top + inset.bottom)
+        }
+        if textView.textContainer.lineBreakMode == .byClipping,
+           let clippedHeight = clippedUniformLineCountHeight(
+            text,
+            font: textView.font ?? ToolFont.regular,
+            inset: inset
+           ) {
+            return clippedHeight
+        }
         let padding = textView.textContainer.lineFragmentPadding
         let containerWidth = textView.textContainer.size.width
         let width: CGFloat
@@ -795,16 +813,91 @@ enum ToolTimelineRowUIHelpers {
         } else {
             return nil
         }
-        let text = textView.attributedText ?? NSAttributedString()
-        guard text.length > 0 else {
-            return max(1, inset.top + inset.bottom)
-        }
         let rect = text.boundingRect(
             with: CGSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
         )
         return ceil(rect.height) + inset.top + inset.bottom
+    }
+
+    /// Fast clipped height when line fragments match the view font. Nil means
+    /// the existing Core Text `boundingRect` path must measure instead.
+    /// One `longestEffectiveRange` query per relevant attribute must cover the
+    /// entire string; this is not a per-glyph walk.
+    private static func clippedUniformLineCountHeight(
+        _ text: NSAttributedString,
+        font: UIFont,
+        inset: UIEdgeInsets
+    ) -> CGFloat? {
+        guard font.lineHeight.isFinite, font.lineHeight > 0 else { return nil }
+        let fullRange = NSRange(location: 0, length: text.length)
+        if text.containsAttachments(in: fullRange) {
+            return nil
+        }
+        var fontRange = NSRange(location: 0, length: 0)
+        let runFont = text.attribute(
+            .font,
+            at: 0,
+            longestEffectiveRange: &fontRange,
+            in: fullRange
+        ) as? UIFont
+        guard fontRange.length == fullRange.length else { return nil }
+        if let runFont {
+            guard runFont.lineHeight.isFinite,
+                  abs(runFont.lineHeight - font.lineHeight) <= 0.5 else {
+                return nil
+            }
+        }
+        var paragraphRange = NSRange(location: 0, length: 0)
+        let paragraph = text.attribute(
+            .paragraphStyle,
+            at: 0,
+            longestEffectiveRange: &paragraphRange,
+            in: fullRange
+        ) as? NSParagraphStyle
+        guard paragraphRange.length == fullRange.length else { return nil }
+        if let paragraph,
+           paragraph.lineSpacing != 0
+            || paragraph.paragraphSpacing != 0
+            || paragraph.paragraphSpacingBefore != 0
+            || paragraph.minimumLineHeight > 0
+            || paragraph.maximumLineHeight > 0
+            || paragraph.lineHeightMultiple > 0 {
+            return nil
+        }
+        let lineCount = nativeLineCount(text.string)
+        return ceil(CGFloat(lineCount) * font.lineHeight) + inset.top + inset.bottom
+    }
+
+    /// Cocoa line breaks, including a trailing empty line after a terminator.
+    private static func nativeLineCount(_ string: String) -> Int {
+        let ns = string as NSString
+        let length = ns.length
+        guard length > 0 else { return 0 }
+        var lineCount = 0
+        var index = 0
+        while index < length {
+            ns.getLineStart(
+                nil,
+                end: &index,
+                contentsEnd: nil,
+                for: NSRange(location: index, length: 0)
+            )
+            lineCount += 1
+        }
+        var end = 0
+        var contentsEnd = 0
+        ns.getLineStart(
+            nil,
+            end: &end,
+            contentsEnd: &contentsEnd,
+            for: NSRange(location: length - 1, length: 0)
+        )
+        if contentsEnd < end {
+            lineCount += 1
+        }
+        return lineCount
     }
 
     /// Pure computation of auto-follow state after a render pass.
