@@ -929,7 +929,7 @@ enum FileShareService {
         let font = UIFont.monospacedSystemFont(ofSize: codePDFFontSize, weight: .regular)
         let syntaxLang = language.map { SyntaxLanguage.detect($0) }
         if let syntaxLang, syntaxLang != .unknown {
-            let highlighted = FullScreenCodeHighlighter.buildHighlightedText(
+            let highlighted = SyntaxHighlighter.highlight(
                 source,
                 language: syntaxLang,
                 themeID: ThemeRuntimeState.currentThemeID()

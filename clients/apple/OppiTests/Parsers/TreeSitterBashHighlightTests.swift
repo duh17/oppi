@@ -571,8 +571,8 @@ struct TreeSitterIntegrationTests {
                 == TreeSitterHighlighter.resolvedTokenRanges(swift, language: .swift)
         )
         #expect(
-            SyntaxHighlighter.scanTokenRangesUTF8(shell, language: .shell)
-                == TreeSitterHighlighter.resolvedTokenRangesUTF8(shell, language: .shell)
+            TreeSitterHighlighter.resolvedTokenRangesUTF8(shell, language: .shell)
+                == TreeSitterHighlighter.resolvedTokenRanges(shell, language: .shell)
         )
     }
 }

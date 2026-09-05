@@ -107,16 +107,16 @@ enum DiffAttributedStringBuilder {
             let wordAddedBg = UIColor(palette.toolDiffAdded.opacity(0.35))
             let wordRemovedBg = UIColor(palette.toolDiffRemoved.opacity(0.35))
 
-            // Build direct-indexed color array (0=variable=nil, 1=comment, etc.)
+            // Cache iOS painter colors once per theme. Keep the array for O(1)
+            // lookup; do not convert palette colors per token.
             var syntaxColorArray: [UIColor?] = Array(repeating: nil, count: 9)
-            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.comment.rawValue)] = UIColor(palette.syntaxComment)
-            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.keyword.rawValue)] = UIColor(palette.syntaxKeyword)
-            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.string.rawValue)] = UIColor(palette.syntaxString)
-            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.number.rawValue)] = UIColor(palette.syntaxNumber)
-            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.type.rawValue)] = UIColor(palette.syntaxType)
-            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.punctuation.rawValue)] = UIColor(palette.syntaxPunctuation)
-            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.function.rawValue)] = UIColor(palette.syntaxFunction)
-            syntaxColorArray[Int(SyntaxHighlighter.TokenKind.operator.rawValue)] = UIColor(palette.syntaxOperator)
+            let kinds: [SyntaxHighlighter.TokenKind] = [
+                .variable, .comment, .keyword, .string, .number,
+                .type, .punctuation, .function, .operator,
+            ]
+            for kind in kinds {
+                syntaxColorArray[Int(kind.rawValue)] = SyntaxHighlighter.color(for: kind, themeID: themeID)
+            }
 
             return Self(
                 codeFont: codeFont,
@@ -448,8 +448,8 @@ enum DiffAttributedStringBuilder {
         if language != .unknown {
             let colorArray = style.syntaxColorArray
             for projection in hunkProjections {
-                let oldTokens = SyntaxHighlighter.scanTokenRangesUTF8(projection.oldCode, language: language)
-                let newTokens = SyntaxHighlighter.scanTokenRangesUTF8(projection.newCode, language: language)
+                let oldTokens = TreeSitterHighlighter.resolvedTokenRangesUTF8(projection.oldCode, language: language)
+                let newTokens = TreeSitterHighlighter.resolvedTokenRangesUTF8(projection.newCode, language: language)
                 // Removed rows use the old projection. Added and context rows use the new one.
                 applySyntaxTokens(
                     oldTokens,

@@ -5,30 +5,30 @@ import UIKit
 @Suite("FullScreenCodeHighlighter")
 struct FullScreenCodeHighlighterTests {
 
-    // MARK: - buildHighlightedText
+    // MARK: - SyntaxHighlighter.highlight
 
     @Test func highlightedTextPreservesFullContent() {
         let code = "let x = 42\nprint(x)\n"
-        let result = FullScreenCodeHighlighter.buildHighlightedText(code, language: .swift)
+        let result = SyntaxHighlighter.highlight(code, language: .swift)
         #expect(result.string == code)
     }
 
     @Test func highlightedTextHasValidAttributeRanges() {
         let code = "func hello() {\n    return 1\n}\n"
-        let result = FullScreenCodeHighlighter.buildHighlightedText(code, language: .swift)
+        let result = SyntaxHighlighter.highlight(code, language: .swift)
         assertAttributeRangesValid(result)
     }
 
     @Test func highlightedTextWithEmoji() {
         let code = "let emoji = \"👨‍👩‍👧‍👦\"\nprint(emoji)\n"
-        let result = FullScreenCodeHighlighter.buildHighlightedText(code, language: .swift)
+        let result = SyntaxHighlighter.highlight(code, language: .swift)
         #expect(result.string == code)
         assertAttributeRangesValid(result)
     }
 
     @Test func highlightedTextWithMultiByteUnicode() {
         let code = "let café = \"über\"\n// résumé\n"
-        let result = FullScreenCodeHighlighter.buildHighlightedText(code, language: .swift)
+        let result = SyntaxHighlighter.highlight(code, language: .swift)
         #expect(result.string == code)
         assertAttributeRangesValid(result)
     }
@@ -59,7 +59,7 @@ struct FullScreenCodeHighlighterTests {
 
     @Test func highlightedTextForUnknownLanguage() {
         let code = "just plain text\n"
-        let result = FullScreenCodeHighlighter.buildHighlightedText(code, language: .unknown)
+        let result = SyntaxHighlighter.highlight(code, language: .unknown)
         #expect(result.string == code)
         assertAttributeRangesValid(result)
     }
@@ -70,13 +70,13 @@ struct FullScreenCodeHighlighterTests {
         let lines = (1...lineCount).map { "let x\($0) = \($0)" }
         let code = lines.joined(separator: "\n")
 
-        let result = FullScreenCodeHighlighter.buildHighlightedText(code, language: .swift)
+        let result = SyntaxHighlighter.highlight(code, language: .swift)
         #expect(result.string == code, "All content including remainder must be preserved")
         assertAttributeRangesValid(result)
     }
 
     @Test func highlightedTextEmptyString() {
-        let result = FullScreenCodeHighlighter.buildHighlightedText("", language: .swift)
+        let result = SyntaxHighlighter.highlight("", language: .swift)
         #expect(result.string == "")
         assertAttributeRangesValid(result)
     }

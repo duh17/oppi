@@ -291,11 +291,9 @@ final class NativeCodeBlockView: UIView {
 
     func applyHighlightedCode(
         _ highlighted: NSAttributedString,
-        identity: SyntaxHighlightIdentity? = nil
+        identity: SyntaxHighlightIdentity
     ) {
-        guard let desired = desiredHighlightIdentity else { return }
-        if let identity, identity != desired { return }
-        if identity == nil, highlighted.string != desired.code { return }
+        guard identity == desiredHighlightIdentity else { return }
 
         let mutable = NSMutableAttributedString(attributedString: highlighted)
         let font = AppFont.monoMedium
@@ -303,7 +301,7 @@ final class NativeCodeBlockView: UIView {
         mutable.addAttribute(.font, value: font, range: fullRange)
         codeLabel.attributedText = mutable
         highlightedText = mutable
-        installedHighlightIdentity = desired
+        installedHighlightIdentity = identity
 
         updateMeasuredCodeWidth(mutable)
     }

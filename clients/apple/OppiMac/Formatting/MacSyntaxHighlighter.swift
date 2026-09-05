@@ -50,7 +50,8 @@ extension FontPreferenceStore {
 ///
 /// Token ranges come from OppiCore's shared provider (`TreeSitterHighlighter`
 /// with `SyntaxTokenScanner` fallback). Colors and fonts stay here; Mac does
-/// not bake line-number gutters into the attributed string.
+/// not bake line-number gutters into the attributed string. Displayed source
+/// equals the input; token work is bounded by `SyntaxTokenScanner.maxLines`.
 enum MacSyntaxHighlighter {
     static func color(for kind: SyntaxTokenKind) -> NSColor? {
         let syntax = ThemeRuntimeState.currentThemeID().appTheme.syntax
@@ -80,12 +81,11 @@ enum MacSyntaxHighlighter {
         _ code: String,
         language: SyntaxLanguage?
     ) -> NSAttributedString {
-        let source = SyntaxTokenScanner.truncatedCode(code)
         let theme = ThemeRuntimeState.currentThemeID().appTheme
         let plainColor = NSColor(theme.syntax.plain)
         let defaultFont = FontPreferenceStore.macCodeFont()
         let result = NSMutableAttributedString(
-            string: source,
+            string: code,
             attributes: [
                 .font: defaultFont,
                 .foregroundColor: plainColor,
@@ -93,7 +93,7 @@ enum MacSyntaxHighlighter {
         )
 
         guard let language else { return result }
-        let tokenRanges = TreeSitterHighlighter.resolvedTokenRanges(source, language: language)
+        let tokenRanges = TreeSitterHighlighter.resolvedTokenRanges(code, language: language)
         let nsLength = result.length
         for token in tokenRanges {
             guard let color = color(for: token.kind) else { continue }

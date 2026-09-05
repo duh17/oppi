@@ -117,16 +117,6 @@ enum SyntaxHighlighter {
         TreeSitterHighlighter.resolvedTokenRanges(code, language: language)
     }
 
-    /// ASCII-optimized scanner using raw UTF-8 bytes where possible.
-    ///
-    /// Used by `DiffAttributedStringBuilder` for batch syntax scanning.
-    static func scanTokenRangesUTF8(
-        _ text: String,
-        language: SyntaxLanguage
-    ) -> [TokenRange] {
-        TreeSitterHighlighter.resolvedTokenRangesUTF8(text, language: language)
-    }
-
     /// Highlight source code using range-based attribute application.
     ///
     /// Builds a single NSMutableAttributedString from the full text with default
@@ -139,12 +129,9 @@ enum SyntaxHighlighter {
     static func highlight(_ code: String, language: SyntaxLanguage, themeID: ThemeID) -> NSAttributedString {
         let attrs = TokenAttrs.forTheme(themeID)
 
-        // Keep the full source. Token scanning may still be bounded to maxLines.
+        // Keep the full source. Token work is bounded by SyntaxTokenScanner.maxLines.
         let result = NSMutableAttributedString(string: code, attributes: attrs.variable)
-        let scanSource = SyntaxTokenScanner.truncatedCode(code)
-
-        // Scan for token ranges via the shared OppiCore provider.
-        let tokenRanges = TreeSitterHighlighter.resolvedTokenRanges(scanSource, language: language)
+        let tokenRanges = TreeSitterHighlighter.resolvedTokenRanges(code, language: language)
         let nsLength = result.length
 
         // Pre-extract UIColors to avoid dictionary lookup + cast per token.

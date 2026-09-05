@@ -284,7 +284,8 @@ enum TreeSitterHighlighter {
     ///
     /// Uses tree-sitter when a grammar is registered; otherwise falls back
     /// to the hand-written `SyntaxTokenScanner`. Token locations are UTF-16
-    /// code unit offsets (matching `NSRange`).
+    /// code unit offsets (matching `NSRange`). Token work is bounded by
+    /// `SyntaxTokenScanner.maxLines`.
     static func resolvedTokenRanges(
         _ code: String,
         language: SyntaxLanguage
@@ -318,10 +319,12 @@ enum TreeSitterHighlighter {
     /// caller to fall back to the hand-written scanner.
     ///
     /// Token locations are UTF-16 code unit offsets (matching NSRange).
+    /// Parsing is bounded by `SyntaxTokenScanner.maxLines`.
     static func scanTokenRanges(
         _ code: String,
         language: SyntaxLanguage
     ) -> [SyntaxTokenRange]? {
+        let source = SyntaxTokenScanner.truncatedCode(code)
         let registry = GrammarRegistry.shared
 
         guard let tsLanguage = registry.language(for: language) else {
@@ -336,13 +339,13 @@ enum TreeSitterHighlighter {
             return nil
         }
 
-        guard let mutableTree = parser.parse(code) else {
+        guard let mutableTree = parser.parse(source) else {
             return nil
         }
 
         // If we have a highlights query, use it (preferred path).
         if let query = registry.highlightsQuery(for: language) {
-            return scanWithQuery(query: query, tree: mutableTree, source: code)
+            return scanWithQuery(query: query, tree: mutableTree, source: source)
         }
 
         // Fallback: no highlights query. Walk AST manually.

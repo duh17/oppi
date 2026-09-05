@@ -307,7 +307,7 @@ final class NativeFullScreenCodeBody: UIView {
             // that can corrupt UIKit's internal NSMutableRLEArray. (APPLE-IOS-1Y)
             let wrapper = await Task.detached(priority: .userInitiated) {
                 SendableNSAttributedString(
-                    FullScreenCodeHighlighter.buildHighlightedText(
+                    SyntaxHighlighter.highlight(
                         text,
                         language: syntaxLang,
                         themeID: themeID

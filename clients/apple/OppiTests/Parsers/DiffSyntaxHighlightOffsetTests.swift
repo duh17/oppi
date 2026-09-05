@@ -427,4 +427,40 @@ struct DiffSyntaxHighlightOffsetTests {
         #expect(range.location != NSNotFound)
         #expect(result.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor == commentColor)
     }
+
+    @Test func syntaxTokenColorsComeFromIOSPainter() throws {
+        let hunks = [
+            WorkspaceReviewDiffHunk(
+                oldStart: 1,
+                oldCount: 0,
+                newStart: 1,
+                newCount: 1,
+                lines: [
+                    WorkspaceReviewDiffLine(
+                        kind: .added,
+                        text: "let name = \"hello\"",
+                        oldLine: nil,
+                        newLine: 1,
+                        spans: nil
+                    ),
+                ]
+            )
+        ]
+        let result = DiffAttributedStringBuilder.build(hunks: hunks, filePath: "test.swift")
+        let text = result.string as NSString
+        let keywordColor = try #require(SyntaxHighlighter.color(for: .keyword))
+        let stringColor = try #require(SyntaxHighlighter.color(for: .string))
+        let letRange = text.range(of: "let")
+        let stringRange = text.range(of: "\"hello\"")
+        #expect(letRange.location != NSNotFound)
+        #expect(stringRange.location != NSNotFound)
+        #expect(
+            result.attribute(.foregroundColor, at: letRange.location, effectiveRange: nil) as? UIColor
+                == keywordColor
+        )
+        #expect(
+            result.attribute(.foregroundColor, at: stringRange.location, effectiveRange: nil) as? UIColor
+                == stringColor
+        )
+    }
 }

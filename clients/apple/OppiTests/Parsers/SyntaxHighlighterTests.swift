@@ -238,13 +238,6 @@ struct SyntaxHighlighterTests {
         #expect(result.string == code)
     }
 
-    @Test func maxLinesEnforced() {
-        let lines = (0..<600).map { "line \($0)" }.joined(separator: "\n")
-        let result = SyntaxHighlighter.highlight(lines, language: .swift)
-        let outputLines = result.string.split(separator: "\n", omittingEmptySubsequences: false)
-        #expect(outputLines.count <= SyntaxHighlighter.maxLines)
-    }
-
     @Test func unknownLanguagePassesThrough() {
         let code = "just some text"
         let result = SyntaxHighlighter.highlight(code, language: .unknown)
@@ -374,6 +367,117 @@ struct SyntaxHighlighterTests {
     private func foregroundColor(of substring: String, at offset: Int, in attributed: NSAttributedString) -> UIColor? {
         guard offset < attributed.length else { return nil }
         return attributed.attribute(.foregroundColor, at: offset, effectiveRange: nil) as? UIColor
+    }
+}
+
+private func overBudgetSource(prefix: String, tail: String) -> String {
+    var lines: [String] = [prefix]
+    let fillerCount = max(SyntaxTokenScanner.maxLines - 1, 0)
+    lines.reserveCapacity(SyntaxTokenScanner.maxLines + 1)
+    if fillerCount > 0 {
+        lines.append(contentsOf: (1...fillerCount).map { "plainFiller\($0)" })
+    }
+    lines.append(tail)
+    return lines.joined(separator: "\n")
+}
+
+private func tokenRanges(
+    _ ranges: [SyntaxTokenRange],
+    overlap needle: String,
+    in code: String
+) -> Bool {
+    let needleRange = (code as NSString).range(of: needle)
+    guard needleRange.location != NSNotFound else { return false }
+    return ranges.contains { token in
+        let range = NSRange(location: token.location, length: token.length)
+        return NSIntersectionRange(range, needleRange).length > 0
+    }
+}
+
+@Suite("SyntaxHighlighter token budget")
+struct SyntaxHighlighterTokenBudgetTests {
+    @Test func highlightPreservesSourceBeyondMaxLines() {
+        let code = overBudgetSource(prefix: "let first = 1", tail: "let last = 10001")
+        let attributed = SyntaxHighlighter.highlight(code, language: .swift)
+
+        #expect(code.split(separator: "\n", omittingEmptySubsequences: false).count == SyntaxTokenScanner.maxLines + 1)
+        #expect(attributed.string == code)
+        #expect(attributed.length == (code as NSString).length)
+        #expect(attributed.string.utf16.count == code.utf16.count)
+        #expect(attributed.length > (SyntaxTokenScanner.truncatedCode(code) as NSString).length)
+    }
+
+    @Test func remainderBeyondMaxLinesUsesNeutralBaseColor() throws {
+        let tail = "plainTail10001 = 10001"
+        let code = overBudgetSource(prefix: "let first = 1", tail: tail)
+        let attributed = SyntaxHighlighter.highlight(code, language: .swift)
+        #expect(attributed.string == code)
+
+        let tailRange = (attributed.string as NSString).range(of: tail)
+        #expect(tailRange.location != NSNotFound)
+        let tailColor = try #require(
+            attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? UIColor
+        )
+        let plain = UIColor(ThemeRuntimeState.currentThemeID().palette.syntaxVariable)
+        #expect(tailColor == plain)
+        #expect(tailColor != SyntaxHighlighter.color(for: .keyword))
+    }
+
+    @Test func unicodeRangesStayUTF16AcrossTokenBudget() throws {
+        let prefix = "let café = \"crème 🎉\""
+        let tail = "let naïve = \"fin\""
+        let code = overBudgetSource(prefix: prefix, tail: tail)
+        let attributed = SyntaxHighlighter.highlight(code, language: .swift)
+
+        #expect(attributed.string == code)
+        #expect(attributed.length == (code as NSString).length)
+
+        let ns = attributed.string as NSString
+        let stringRange = ns.range(of: "\"crème 🎉\"")
+        #expect(stringRange.location != NSNotFound)
+        #expect(stringRange.length == ("\"crème 🎉\"" as NSString).length)
+        let stringColor = try #require(
+            attributed.attribute(.foregroundColor, at: stringRange.location, effectiveRange: nil) as? UIColor
+        )
+        #expect(stringColor == SyntaxHighlighter.color(for: .string))
+
+        let tailRange = ns.range(of: tail)
+        #expect(tailRange.location != NSNotFound)
+        let tailColor = try #require(
+            attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? UIColor
+        )
+        #expect(tailColor == UIColor(ThemeRuntimeState.currentThemeID().palette.syntaxVariable))
+    }
+
+    @Test func treeSitterShellPreservesSourceBeyondMaxLines() throws {
+        let tail = "echo lastcommand"
+        let code = overBudgetSource(prefix: "echo first", tail: tail)
+        let attributed = SyntaxHighlighter.highlight(code, language: .shell)
+        #expect(attributed.string == code)
+
+        let tailRange = (attributed.string as NSString).range(of: tail)
+        #expect(tailRange.location != NSNotFound)
+        let tailColor = try #require(
+            attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? UIColor
+        )
+        #expect(tailColor == UIColor(ThemeRuntimeState.currentThemeID().palette.syntaxVariable))
+        #expect(tailColor != SyntaxHighlighter.color(for: .function))
+    }
+
+    @Test func treeSitterRangesStayWithinTokenBudget() {
+        let tail = "echo lastcommand"
+        let code = overBudgetSource(prefix: "echo first", tail: tail)
+        let ranges = TreeSitterHighlighter.resolvedTokenRanges(code, language: .shell)
+        let overlapsTail = tokenRanges(ranges, overlap: tail, in: code)
+        #expect(!overlapsTail)
+    }
+
+    @Test func utf8RangesStayWithinTokenBudget() {
+        let tail = "let last = 10001"
+        let code = overBudgetSource(prefix: "let first = 1", tail: tail)
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8(code, language: .swift)
+        let overlapsTail = tokenRanges(ranges, overlap: tail, in: code)
+        #expect(!overlapsTail)
     }
 }
 
@@ -661,7 +765,7 @@ struct CrossLineBoundaryTests {
 
 // MARK: - UTF-8 Scanner Coverage
 
-@Suite("SyntaxHighlighter UTF8 scanner")
+@Suite("UTF8 token provider")
 struct SyntaxHighlighterUTF8ScannerTests {
     @Test func utf8ScannerHighlightsCStyleTokensAndNumbers() {
         let code = """
@@ -670,7 +774,7 @@ struct SyntaxHighlighterUTF8ScannerTests {
         let s = "escaped \"string\""
         """
 
-        let ranges = SyntaxHighlighter.scanTokenRangesUTF8(code, language: .c)
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8(code, language: .c)
         #expect(ranges.contains { $0.kind == .keyword })
         #expect(ranges.contains { $0.kind == .type })
         #expect(ranges.contains { $0.kind == .number })
@@ -684,7 +788,7 @@ struct SyntaxHighlighterUTF8ScannerTests {
 
     @Test func utf8ScannerCarriesBlockCommentsAcrossLines() {
         let code = "/* open\nstill open */\nint value = 1"
-        let ranges = SyntaxHighlighter.scanTokenRangesUTF8(code, language: .c)
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8(code, language: .c)
 
         let comments = tokenTexts(kind: .comment, in: code, ranges: ranges)
         #expect(comments.contains { $0.contains("still open") })
@@ -692,25 +796,25 @@ struct SyntaxHighlighterUTF8ScannerTests {
 
     @Test func utf8ScannerFallsBackForNonASCIIInput() {
         let code = "let café = 42"
-        let ranges = SyntaxHighlighter.scanTokenRangesUTF8(code, language: .swift)
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8(code, language: .swift)
 
         let numbers = tokenTexts(kind: .number, in: code, ranges: ranges)
         #expect(numbers.contains("42"))
     }
 
     @Test func utf8ScannerReturnsNoTokensForUnknownLanguage() {
-        let ranges = SyntaxHighlighter.scanTokenRangesUTF8("whatever", language: .unknown)
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8("whatever", language: .unknown)
         #expect(ranges.isEmpty)
     }
 
     @Test func utf8ScannerUsesTreeSitterForShellWhenAvailable() {
-        let ranges = SyntaxHighlighter.scanTokenRangesUTF8("echo $HOME", language: .shell)
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8("echo $HOME", language: .shell)
         #expect(!ranges.isEmpty)
     }
 
     @Test func utf8ScannerJsonPathAndEscapes() {
         let json = #"{"ok": false, "escaped": "a\"b", "notKeyword": truex}"#
-        let ranges = SyntaxHighlighter.scanTokenRangesUTF8(json, language: .json)
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8(json, language: .json)
 
         let keywords = tokenTexts(kind: .keyword, in: json, ranges: ranges)
         #expect(keywords.contains("false"))
@@ -719,7 +823,7 @@ struct SyntaxHighlighterUTF8ScannerTests {
 
     @Test func utf8ScannerClosesSingleLineBlockComment() {
         let code = "/* block */ let value = 1"
-        let ranges = SyntaxHighlighter.scanTokenRangesUTF8(code, language: .swift)
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8(code, language: .swift)
         let comments = tokenTexts(kind: .comment, in: code, ranges: ranges)
         #expect(comments.contains("/* block */"))
     }

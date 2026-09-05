@@ -14,13 +14,20 @@ struct SyntaxHighlightOwnershipTests {
         let palette = ThemePalettes.dark
         let codeA = "let alphaUnique = 1"
         let codeB = "let betaUnique = 2"
+        let identityA = SyntaxHighlightIdentity(code: codeA, language: "swift", themeID: .dark)
 
-        view.apply(language: "swift", code: codeA, palette: palette, isOpen: false)
-        view.applyHighlightedCode(SyntaxHighlighter.highlight(codeA, language: .swift))
+        view.apply(language: "swift", code: codeA, palette: palette, isOpen: false, themeID: .dark)
+        view.applyHighlightedCode(
+            SyntaxHighlighter.highlight(codeA, language: .swift, themeID: .dark),
+            identity: identityA
+        )
         #expect(codeText(in: view).contains("alphaUnique"))
 
-        view.apply(language: "swift", code: codeB, palette: palette, isOpen: false)
-        view.applyHighlightedCode(SyntaxHighlighter.highlight(codeA, language: .swift))
+        view.apply(language: "swift", code: codeB, palette: palette, isOpen: false, themeID: .dark)
+        view.applyHighlightedCode(
+            SyntaxHighlighter.highlight(codeA, language: .swift, themeID: .dark),
+            identity: identityA
+        )
 
         let displayed = codeText(in: view)
         #expect(displayed.contains("betaUnique"))
@@ -30,16 +37,63 @@ struct SyntaxHighlightOwnershipTests {
     @Test func codeBlockChromeRefreshDoesNotFlattenHighlightColors() throws {
         let view = NativeCodeBlockView()
         let code = "let value = \"hello\""
-        view.apply(language: "swift", code: code, palette: ThemePalettes.dark, isOpen: false)
-        view.applyHighlightedCode(SyntaxHighlighter.highlight(code, language: .swift, themeID: .dark))
+        let identity = SyntaxHighlightIdentity(code: code, language: "swift", themeID: .dark)
+        view.apply(language: "swift", code: code, palette: ThemePalettes.dark, isOpen: false, themeID: .dark)
+        view.applyHighlightedCode(
+            SyntaxHighlighter.highlight(code, language: .swift, themeID: .dark),
+            identity: identity
+        )
 
         let highlighted = try #require(codeAttributedText(in: view))
         #expect(uniqueForegroundColorCount(highlighted) >= 2)
 
-        view.apply(language: "swift", code: code, palette: ThemePalettes.light, isOpen: false)
+        view.apply(language: "swift", code: code, palette: ThemePalettes.light, isOpen: false, themeID: .dark)
         let after = try #require(codeAttributedText(in: view))
         #expect(uniqueForegroundColorCount(after) >= 2)
         #expect(after.string.contains("hello"))
+    }
+
+    @Test func codeBlockDoesNotInstallStaleHighlightAfterLanguageChangeWithSameCode() throws {
+        let view = NativeCodeBlockView()
+        let palette = ThemePalettes.dark
+        let code = "let value = 1"
+        let swiftIdentity = SyntaxHighlightIdentity(code: code, language: "swift", themeID: .dark)
+        let swiftPaint = SyntaxHighlighter.highlight(code, language: .swift, themeID: .dark)
+
+        view.apply(language: "swift", code: code, palette: palette, isOpen: false, themeID: .dark)
+        view.applyHighlightedCode(swiftPaint, identity: swiftIdentity)
+        #expect(view.hasCurrentHighlight)
+
+        view.apply(language: "python", code: code, palette: palette, isOpen: false, themeID: .dark)
+        #expect(!view.hasCurrentHighlight)
+
+        view.applyHighlightedCode(swiftPaint, identity: swiftIdentity)
+
+        #expect(!view.hasCurrentHighlight)
+        #expect(codeText(in: view).contains("let value"))
+    }
+
+    @Test func codeBlockDoesNotInstallStaleHighlightAfterThemeChangeWithSameCode() throws {
+        let view = NativeCodeBlockView()
+        let code = "let value = 1"
+        let darkIdentity = SyntaxHighlightIdentity(code: code, language: "swift", themeID: .dark)
+        let darkPaint = SyntaxHighlighter.highlight(code, language: .swift, themeID: .dark)
+
+        view.apply(language: "swift", code: code, palette: ThemePalettes.dark, isOpen: false, themeID: .dark)
+        view.applyHighlightedCode(darkPaint, identity: darkIdentity)
+        #expect(view.hasCurrentHighlight)
+
+        view.apply(language: "swift", code: code, palette: ThemePalettes.light, isOpen: false, themeID: .light)
+        #expect(!view.hasCurrentHighlight)
+
+        view.applyHighlightedCode(darkPaint, identity: darkIdentity)
+
+        #expect(!view.hasCurrentHighlight)
+        let displayed = try #require(codeAttributedText(in: view))
+        #expect(displayed.string.contains("let value"))
+        #expect(
+            foregroundColor(of: "let", in: displayed) != UIColor(ThemePalettes.light.syntaxKeyword)
+        )
     }
 
     // MARK: - Markdown applier identity
@@ -243,7 +297,7 @@ struct SyntaxHighlighterSourcePreservationTests {
         let lineCount = SyntaxHighlighter.maxLines + 40
         let lines = ["let first = 1"] + (2...lineCount).map { "plainTail\($0) = \($0)" }
         let code = lines.joined(separator: "\n")
-        let result = FullScreenCodeHighlighter.buildHighlightedText(code, language: .swift)
+        let result = SyntaxHighlighter.highlight(code, language: .swift)
         #expect(result.string == code)
 
         let tail = result.string as NSString

@@ -322,11 +322,6 @@ final class NativeLatexBlockView: UIView {
         )
     }
 
-    /// Apply syntax highlighting to the inner code block (when showing as code).
-    func applyHighlightedCode(_ attributed: NSAttributedString) {
-        codeBlockView.applyHighlightedCode(attributed)
-    }
-
     // MARK: - Private
 
     private func resolvedAvailableWidth(_ explicitWidth: CGFloat?) -> CGFloat {

@@ -36,7 +36,8 @@ struct SyntaxTokenRange: Sendable, Equatable {
 /// those ranges map to `UIColor`, `NSColor`, fonts, attributed strings, or SwiftUI
 /// views.
 enum SyntaxTokenScanner {
-    /// Maximum lines to scan for normal highlighted source previews.
+    /// Maximum lines of token work. Painters keep complete source; the tail stays
+    /// the explicit base color.
     static let maxLines = 10_000
 
     /// Scan source code with the deterministic fallback scanner.
@@ -59,6 +60,7 @@ enum SyntaxTokenScanner {
         language: SyntaxLanguage
     ) -> [SyntaxTokenRange] {
         guard language != .unknown else { return [] }
+        let text = truncatedCode(text)
 
         if language == .json || language == .xml || language == .html || language == .diff {
             return scanFallbackTokenRanges(text, language: language)
@@ -410,6 +412,8 @@ private static func scanNumberEndUTF8(_ bytes: [UInt8], from start: Int, end: In
     return i
 }
 
+/// First `maxLines` lines. This is the only token-work budget; painters must
+/// not truncate displayed source.
 static func truncatedCode(_ code: String) -> String {
     let lines = code.split(separator: "\n", omittingEmptySubsequences: false)
     if lines.count <= maxLines {

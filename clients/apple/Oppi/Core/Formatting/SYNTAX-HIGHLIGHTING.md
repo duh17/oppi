@@ -4,39 +4,48 @@ Architecture and status of syntax highlighting across all supported languages an
 
 ## Architecture
 
+Shared tokens live in OppiCore. Each Apple client paints those tokens itself.
+
 ```
-SyntaxHighlighter           Unified entry point for all highlighting
+OppiCore token provider
   |
-  +-- TreeSitterHighlighter   Query-based highlighting via tree-sitter AST
-  |     |
-  |     +-- GrammarRegistry   Singleton: caches Language + compiled highlights Query
-  |     +-- highlights.scm    Loaded from each grammar's SPM resource bundle
-  |     +-- captureKindMap    Shared @capture-name -> TokenKind table
+  +-- TreeSitterHighlighter     Query-based tokens (bash is registered)
+  |     +-- GrammarRegistry     Caches Language + compiled highlights Query
+  |     +-- highlights.scm      Loaded from each grammar's SPM resource bundle
+  |     +-- captureKindMap      Shared @capture-name -> TokenKind table
+  |     +-- resolvedTokenRanges / resolvedTokenRangesUTF8
   |
-  +-- scanFallbackTokenRanges Hand-written fallback scanner, normalized to UTF-16 offsets
-  |     +-- scanTokenRangesByCharacter Private line-by-line scanner
-  |     +-- scanLineRangesSlice       Generic keyword/comment/string scanner
-  |     +-- scanShellLineRangesSlice  Shell-specific heuristic scanner (legacy)
-  |     +-- scanLineRangesUTF8Slice   ASCII fast-path for generic fallback languages
-  |     +-- scanJSONRanges            Dedicated JSON scanner
-  |     +-- scanXMLRanges             Dedicated XML scanner
-  |     +-- scanDiffRanges            Dedicated diff scanner
+  +-- SyntaxTokenScanner        Hand-written fallback + UTF-8 ASCII path
+  |     +-- truncatedCode       Sole token-work budget (10,000 lines)
+  |     +-- scanTokenRangesByCharacter
+  |     +-- scanLineRangesSlice / scanLineRangesUTF8Slice
+  |     +-- scanJSONRanges / scanXMLRanges / scanDiffRanges
   |
-  +-- BashEmbeddedLanguageDetector  Detects heredocs / inline scripts in bash
-  +-- FullScreenCodeHighlighter     File viewer with gutter + syntax colors
+  +-- BashEmbeddedLanguageDetector  Heredocs / inline scripts in bash
+
+Platform painters
+  +-- iOS SyntaxHighlighter     Tokens -> NSAttributedString (UIColor, theme cache)
+  +-- Mac MacSyntaxHighlighter  Tokens -> NSAttributedString (NSColor, Mac fonts)
+  +-- iOS DiffAttributedStringBuilder  Per-hunk projections; cached painter colors
+  +-- iOS ToolRowTextRenderer   Guttered tool-row paint from the same tokens/colors
+
+Transport
+  +-- SendableNSAttributedString  Immutable NSAttributedString across Task.detached
 ```
 
 ## Entry Points
 
-All highlighting goes through `SyntaxHighlighter`. Three public methods share a single dispatch:
+Token ranges come from OppiCore. Painters and the diff builder consume those ranges;
+they do not re-scan or invent a second token→color table.
 
-| Method | Used by | Notes |
+| Method | Owner | Used by |
 |---|---|---|
-| `highlight(code, language)` | Tool row rendering, file viewer | Returns NSAttributedString |
-| `scanTokenRanges(code, language)` | Code block gutter builder | Returns [TokenRange] |
-| `scanTokenRangesUTF8(text, language)` | DiffAttributedStringBuilder | ASCII fast-path |
+| `TreeSitterHighlighter.resolvedTokenRanges` | OppiCore | iOS/Mac painters, tool-row gutters |
+| `TreeSitterHighlighter.resolvedTokenRangesUTF8` | OppiCore | Diff builder (tree-sitter or UTF-8 fallback) |
+| `SyntaxHighlighter.highlight` | iOS painter | Markdown fences, fullscreen, share/export, bash command |
+| `MacSyntaxHighlighter.attributedCode` | Mac painter | Mac timeline / document column |
 
-All three call `resolveTokenRanges()` which tries tree-sitter first, then falls back to the hand-written scanner. Public `TokenRange` offsets are always UTF-16 code units, matching `NSRange`, `NSString`, and tree-sitter captures.
+`resolvedTokenRanges` tries tree-sitter first, then `SyntaxTokenScanner`. Public `SyntaxTokenRange` offsets are always UTF-16 code units, matching `NSRange`, `NSString`, and tree-sitter captures. Displayed source is the full input; only token work is bounded.
 
 ## Token Kinds
 
@@ -203,21 +212,23 @@ All highlighting runs on `Task.detached` (off main thread). Targets:
 | Typical (50-200 chars) | <0.2ms | Most bash commands, code snippets |
 | Medium (500-2K chars) | <0.5ms | Scripts, file contents |
 | Large (5K+ chars) | <2ms | Full file highlighting |
-| Max highlighted | 10,000 lines | Truncated beyond this |
+| Token work budget | 10,000 lines | `SyntaxTokenScanner.truncatedCode`; display is not truncated |
 
 Measured on simulator (M-series Mac). iPhone is ~2-4x slower.
-All current tree-sitter grammars meet these targets.
+All current tree-sitter grammars meet these targets. Painters keep complete source; the tail past the budget stays the base (variable) color.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `TreeSitterHighlighter.swift` | Query-based tree-sitter highlighting + registry |
-| `SyntaxHighlighter.swift` | Unified dispatch + hand-written scanners |
-| `SyntaxKeywords.swift` | Keyword sets for hand-written scanners |
-| `BashEmbeddedLanguageDetector.swift` | Heredoc/inline script detection |
-| `FullScreenCodeHighlighter.swift` | File viewer highlighting |
+| `OppiCore/Formatting/TreeSitterHighlighter.swift` | Query-based tree-sitter highlighting + registry |
+| `OppiCore/Formatting/SyntaxTokenScanner.swift` | Hand-written fallback + UTF-8 scanners + token budget |
+| `Oppi/Core/Formatting/SyntaxHighlighter.swift` | iOS painter: theme colors + NSAttributedString |
+| `OppiMac/Formatting/MacSyntaxHighlighter.swift` | Mac painter: NSColor, Mac fonts, no baked gutters |
+| `OppiCore/Formatting/SyntaxKeywords.swift` | Keyword sets for hand-written scanners |
+| `OppiCore/Formatting/BashEmbeddedLanguageDetector.swift` | Heredoc/inline script detection |
+| `Oppi/Core/Formatting/FullScreenCodeHighlighter.swift` | `SendableNSAttributedString` transport |
 | `ANSIParser.swift` | ANSI escape code -> attributed string |
 | `TreeSitterBashHighlightTests.swift` | Bash conformance tests (49 tests) |
 | `TreeSitterPerfTests.swift` | Performance benchmarks |
-| `SyntaxHighlighterTests.swift` | Legacy integration tests |
+| `SyntaxHighlighterTests.swift` | iOS painter + scanner integration tests |

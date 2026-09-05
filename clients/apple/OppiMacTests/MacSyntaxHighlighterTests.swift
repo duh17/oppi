@@ -73,4 +73,83 @@ struct MacSyntaxHighlighterTests {
         )
         #expect(whenColor == MacSyntaxHighlighter.color(for: .string))
     }
+
+    @Test func attributedCodePreservesSourceBeyondMaxLines() {
+        let code = overBudgetSource(prefix: "let first = 1", tail: "let last = 10001")
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .swift)
+
+        #expect(code.split(separator: "\n", omittingEmptySubsequences: false).count == SyntaxTokenScanner.maxLines + 1)
+        #expect(attributed.string == code)
+        #expect(attributed.length == (code as NSString).length)
+        #expect(attributed.string.utf16.count == code.utf16.count)
+        #expect(attributed.length > (SyntaxTokenScanner.truncatedCode(code) as NSString).length)
+    }
+
+    @Test func remainderBeyondMaxLinesUsesNeutralBaseColor() throws {
+        let tail = "plainTail10001 = 10001"
+        let code = overBudgetSource(prefix: "let first = 1", tail: tail)
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .swift)
+        #expect(attributed.string == code)
+
+        let tailRange = (attributed.string as NSString).range(of: tail)
+        #expect(tailRange.location != NSNotFound)
+        let tailColor = try #require(
+            attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? NSColor
+        )
+        let plain = NSColor(ThemeRuntimeState.currentThemeID().appTheme.syntax.plain)
+        #expect(tailColor == plain)
+        #expect(tailColor != MacSyntaxHighlighter.color(for: .keyword))
+    }
+
+    @Test func unicodeRangesStayUTF16AcrossTokenBudget() throws {
+        let prefix = "let café = \"crème 🎉\""
+        let tail = "let naïve = \"fin\""
+        let code = overBudgetSource(prefix: prefix, tail: tail)
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .swift)
+
+        #expect(attributed.string == code)
+        #expect(attributed.length == (code as NSString).length)
+
+        let ns = attributed.string as NSString
+        let stringRange = ns.range(of: "\"crème 🎉\"")
+        #expect(stringRange.location != NSNotFound)
+        #expect(stringRange.length == ("\"crème 🎉\"" as NSString).length)
+        let stringColor = try #require(
+            attributed.attribute(.foregroundColor, at: stringRange.location, effectiveRange: nil) as? NSColor
+        )
+        #expect(stringColor == MacSyntaxHighlighter.color(for: .string))
+
+        let tailRange = ns.range(of: tail)
+        #expect(tailRange.location != NSNotFound)
+        let tailColor = try #require(
+            attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? NSColor
+        )
+        #expect(tailColor == NSColor(ThemeRuntimeState.currentThemeID().appTheme.syntax.plain))
+    }
+
+    @Test func treeSitterShellPreservesSourceBeyondMaxLines() throws {
+        let tail = "echo lastcommand"
+        let code = overBudgetSource(prefix: "echo first", tail: tail)
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .shell)
+        #expect(attributed.string == code)
+
+        let tailRange = (attributed.string as NSString).range(of: tail)
+        #expect(tailRange.location != NSNotFound)
+        let tailColor = try #require(
+            attributed.attribute(.foregroundColor, at: tailRange.location, effectiveRange: nil) as? NSColor
+        )
+        #expect(tailColor == NSColor(ThemeRuntimeState.currentThemeID().appTheme.syntax.plain))
+        #expect(tailColor != MacSyntaxHighlighter.color(for: .function))
+    }
+
+    private func overBudgetSource(prefix: String, tail: String) -> String {
+        var lines: [String] = [prefix]
+        let fillerCount = max(SyntaxTokenScanner.maxLines - 1, 0)
+        lines.reserveCapacity(SyntaxTokenScanner.maxLines + 1)
+        if fillerCount > 0 {
+            lines.append(contentsOf: (1...fillerCount).map { "plainFiller\($0)" })
+        }
+        lines.append(tail)
+        return lines.joined(separator: "\n")
+    }
 }
