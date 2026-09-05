@@ -183,6 +183,27 @@ class UIHarnessTestCase: XCTestCase {
         return nil
     }
 
+    func tapHarnessControl(
+        _ element: XCUIElement,
+        timeout: TimeInterval = 4,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(
+            element.waitForExistence(timeout: timeout),
+            "Harness control did not exist",
+            file: file,
+            line: line
+        )
+        if element.isHittable {
+            element.tap()
+            return
+        }
+        // Wrapping chrome can still report a slightly off AX hit target;
+        // coordinate tap reaches the same control without scrolling-to-visible.
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
     func waitForElementToDisappear(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
 

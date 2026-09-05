@@ -606,17 +606,20 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let diagTick = app.descendants(matching: .any)["harness.diag.tick"]
         let timeline = app.descendants(matching: .any)["harness.timeline"]
 
-        XCTAssertTrue(focusButton.waitForExistence(timeout: 4))
         XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
         XCTAssertTrue(timeline.waitForExistence(timeout: 4))
 
-        let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
-        let frameP95Before = pollDiagnostic("diag.frameP95", timeout: 4)
-
-        focusButton.tap()
+        tapHarnessControl(focusButton)
         XCTAssertEqual(waitForDiagnostic(expandedDiagnosticID, equals: 1, timeout: 4), 1)
 
-        diagTick.tap()
+        // Expand/layout frames must not pollute the scroll smoothness window.
+        let metricsReset = app.descendants(matching: .any)["harness.metrics.reset"]
+        tapHarnessControl(metricsReset)
+        _ = waitForDiagnosticAtLeast("diag.frameSamples", minimum: 30, timeout: 4)
+
+        tapHarnessControl(diagTick)
+        let perfGuardrailBefore = pollDiagnostic("diag.perfGuardrail", timeout: 4)
+        let frameP95Before = pollDiagnostic("diag.frameP95", timeout: 4)
         let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
 
         let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
@@ -656,7 +659,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         )
 
         Thread.sleep(forTimeInterval: 0.35)
-        diagTick.tap()
+        tapHarnessControl(diagTick)
 
         let settledOffset = pollDiagnostic("diag.offsetY", timeout: 4)
         XCTAssertLessThanOrEqual(
@@ -666,9 +669,16 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         )
 
         let frameP95After = pollDiagnostic("diag.frameP95", timeout: 4)
+        let frameP99After = pollDiagnostic("diag.frameP99", timeout: 2)
+        let frameMaxAfter = pollDiagnostic("diag.frameMax", timeout: 2)
+        let frameSamplesAfter = pollDiagnostic("diag.frameSamples", timeout: 2)
         let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 4)
 
-        XCTAssertLessThanOrEqual(frameP95After, max(55, frameP95Before + 18))
+        XCTAssertLessThanOrEqual(
+            frameP95After,
+            max(55, frameP95Before + 18),
+            "\(markdownLabel) scroll frameP95=\(frameP95After) p99=\(frameP99After) max=\(frameMaxAfter) samples=\(frameSamplesAfter) before=\(frameP95Before)"
+        )
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 0)
     }
 
@@ -736,8 +746,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertGreaterThanOrEqual(visualTools, 7)
 
         let metricsReset = app.descendants(matching: .any)["harness.metrics.reset"]
-        XCTAssertTrue(metricsReset.waitForExistence(timeout: 4))
-        metricsReset.tap()
+        tapHarnessControl(metricsReset)
 
         let timeline = app.descendants(matching: .any)["harness.timeline"]
         XCTAssertTrue(timeline.waitForExistence(timeout: 4))

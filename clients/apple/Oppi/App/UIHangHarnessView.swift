@@ -887,160 +887,121 @@ struct UIHangHarnessView: View {
     }
 
     private var controlsBar: some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ForEach(HarnessSession.allCases, id: \.self) { session in
-                    Button(session.title) {
+                    harnessControl(session.title, id: session.accessibilityID) {
                         selectedSession = session
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier(session.accessibilityID)
                 }
             }
 
-            HStack(spacing: 8) {
-                Button("Top") { scrollToTop(animated: !UIHangHarnessConfig.uiTestMode) }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.scroll.top")
-
-                Button("Bottom") { scrollToBottom(animated: !UIHangHarnessConfig.uiTestMode) }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.scroll.bottom")
-
-                Button("Expand") {
+            // Visual fixtures add extra chrome; keep every control at its
+            // intrinsic tappable size instead of crushing the trailing buttons
+            // (Reset Metrics was 24x254 and not AX-hittable).
+            HarnessControlFlowLayout(spacing: 8) {
+                harnessControl("Top", id: "harness.scroll.top") {
+                    scrollToTop(animated: !UIHangHarnessConfig.uiTestMode)
+                }
+                harnessControl("Bottom", id: "harness.scroll.bottom") {
+                    scrollToBottom(animated: !UIHangHarnessConfig.uiTestMode)
+                }
+                harnessControl("Expand", id: "harness.expand.all") {
                     renderWindow = currentItems.count
                     heartbeat &+= 1
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.expand.all")
-
-                Button("ToolSet") {
+                harnessControl("ToolSet", id: "harness.tools.render") {
                     expandVisualToolSet()
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.tools.render")
-
-                Button("Extension") {
+                harnessControl("Extension", id: "harness.extension.focus") {
                     focusExtensionMarkdownTool()
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.extension.focus")
-
-                Button("Extension Text") {
+                harnessControl("Extension Text", id: "harness.extensionText.focus") {
                     focusExtensionTextTool()
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.extensionText.focus")
-
-                Button("Write Markdown") {
+                harnessControl("Write Markdown", id: "harness.writeMarkdown.focus") {
                     focusWriteMarkdownTool()
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.writeMarkdown.focus")
-
-                Button("Read Markdown") {
+                harnessControl("Read Markdown", id: "harness.readMarkdown.focus") {
                     focusReadMarkdownTool()
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.readMarkdown.focus")
 
                 if UIHangHarnessConfig.assistantOverlapFixture {
-                    Button("Assistant Overlap") {
+                    harnessControl("Assistant Overlap", id: "harness.assistantOverlap.focus") {
                         focusAssistantOverlapFixture()
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.assistantOverlap.focus")
-
-                    Button("Advance Overlap") {
+                    harnessControl("Advance Overlap", id: "harness.assistantOverlap.advance") {
                         advanceAssistantOverlapFixture()
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.assistantOverlap.advance")
                 }
 
                 if UIHangHarnessConfig.includeVisualFixtures {
-                    Button("Table") {
+                    harnessControl("Table", id: "harness.visual.table.focus") {
                         focusVisualAssistantMarkdown()
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.visual.table.focus")
                 }
 
-                Button("Visual Image") {
+                harnessControl("Visual Image", id: "harness.visual.image") {
                     scrollToVisualUserImage(animated: false)
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.visual.image")
-
-                Button(streamEnabled ? "Pause Stream" : "Resume Stream") {
+                harnessControl(
+                    streamEnabled ? "Pause Stream" : "Resume Stream",
+                    id: "harness.stream.toggle"
+                ) {
                     streamEnabled.toggle()
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.stream.toggle")
-
-                Button("Pulse") { pulseStream(count: 6) }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.stream.pulse")
-
-                Button("Theme") { toggleTheme() }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.theme.toggle")
-
-                Button("Diag") {
+                harnessControl("Pulse", id: "harness.stream.pulse") {
+                    pulseStream(count: 6)
+                }
+                harnessControl("Theme", id: "harness.theme.toggle") {
+                    toggleTheme()
+                }
+                harnessControl("Diag", id: "harness.diag.tick") {
                     refreshDiagnostics()
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.diag.tick")
-
-                Button("Reset Metrics") {
+                harnessControl("Reset Metrics", id: "harness.metrics.reset") {
                     resetRuntimeMetrics()
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("harness.metrics.reset")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if UIHangHarnessConfig.queueHarnessEnabled {
-                VStack(spacing: 8) {
-                    HStack(spacing: 8) {
-                        Button("Queue Steer") {
-                            enqueueQueueItem(kind: .steer)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("harness.queue.enqueueSteer")
-
-                        Button("Queue Follow") {
-                            enqueueQueueItem(kind: .followUp)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("harness.queue.enqueueFollow")
-
-                        Button("Start Steer") {
-                            startQueueItem(kind: .steer)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("harness.queue.startSteer")
-
-                        Button("Start Follow") {
-                            startQueueItem(kind: .followUp)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("harness.queue.startFollow")
-
-                        Button("Clear Queue") {
-                            clearQueueItems()
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("harness.queue.clear")
+                HarnessControlFlowLayout(spacing: 8) {
+                    harnessControl("Queue Steer", id: "harness.queue.enqueueSteer") {
+                        enqueueQueueItem(kind: .steer)
                     }
-
-                    Button("Queue Attachments") {
+                    harnessControl("Queue Follow", id: "harness.queue.enqueueFollow") {
+                        enqueueQueueItem(kind: .followUp)
+                    }
+                    harnessControl("Start Steer", id: "harness.queue.startSteer") {
+                        startQueueItem(kind: .steer)
+                    }
+                    harnessControl("Start Follow", id: "harness.queue.startFollow") {
+                        startQueueItem(kind: .followUp)
+                    }
+                    harnessControl("Clear Queue", id: "harness.queue.clear") {
+                        clearQueueItems()
+                    }
+                    harnessControl("Queue Attachments", id: "harness.queue.enqueueAttachments") {
                         enqueueAttachmentQueueItems()
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("harness.queue.enqueueAttachments")
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private func harnessControl(
+        _ title: String,
+        id: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: true)
+            .accessibilityIdentifier(id)
     }
 
     private var diagnosticsBar: some View {
@@ -1774,6 +1735,67 @@ struct UIHangHarnessView: View {
     }
 }
 
+/// DEBUG chrome only: wrap harness buttons onto extra rows instead of
+/// compressing them below a tappable size when visual fixtures add controls.
+private struct HarnessControlFlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(proposal: proposal, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrange(
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height),
+            subviews: subviews
+        )
+        for index in subviews.indices {
+            subviews[index].place(
+                at: CGPoint(
+                    x: bounds.minX + result.origins[index].x,
+                    y: bounds.minY + result.origins[index].y
+                ),
+                proposal: ProposedViewSize(result.sizes[index])
+            )
+        }
+    }
+
+    private func arrange(
+        proposal: ProposedViewSize,
+        subviews: Subviews
+    ) -> (size: CGSize, origins: [CGPoint], sizes: [CGSize]) {
+        let maxWidth = proposal.width ?? .infinity
+        var origins: [CGPoint] = []
+        origins.reserveCapacity(subviews.count)
+        var sizes: [CGSize] = []
+        sizes.reserveCapacity(subviews.count)
+
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+
+            origins.append(CGPoint(x: x, y: y))
+            sizes.append(size)
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+            usedWidth = max(usedWidth, x - spacing)
+        }
+
+        let height = y + rowHeight
+        let width = maxWidth.isFinite ? maxWidth : usedWidth
+        return (CGSize(width: width, height: height), origins, sizes)
+    }
+}
+
 private enum QueueHarnessError: LocalizedError {
     case versionMismatch
 
@@ -1801,6 +1823,9 @@ struct HarnessFrameIntervalSnapshot: Sendable {
 final class HarnessFrameIntervalMonitor: NSObject {
     private let interval34Ms = 34
     private let interval50Ms = 50
+    // Consecutive-frame cutoff: XCTest AX snapshots and idle gaps after reset
+    // produce 100ms+ CADisplayLink jumps that are not dropped frames.
+    private let discontinuityMs = 120
     private let maxSamples = 1_200
 
     private var displayLink: CADisplayLink?
@@ -1871,6 +1896,7 @@ final class HarnessFrameIntervalMonitor: NSObject {
 
         let deltaMs = max(0, Int(((timestamp - previousTimestamp) * 1_000).rounded()))
         self.previousTimestamp = timestamp
+        guard deltaMs < discontinuityMs else { return }
         recordInterval(deltaMs)
     }
 
