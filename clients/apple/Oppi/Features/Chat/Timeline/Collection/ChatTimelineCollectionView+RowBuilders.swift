@@ -192,6 +192,7 @@ extension ChatTimelineCollectionHost.Controller {
                     fileSize: nil
                 )
                 .environment(\.apiClient, apiClient)
+                .environment(self.audioPlayer)
                 .environment(\.reviewCommentSelectionScope, interactionContext.reviewCommentSelectionRouter.map(ReviewCommentSelectionScope.activeSession))
 
                 let host = UIHostingController(rootView: view)

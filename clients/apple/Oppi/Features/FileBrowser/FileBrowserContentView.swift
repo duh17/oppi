@@ -140,7 +140,7 @@ struct FileBrowserContentView: View {
 #endif
 
     @Environment(\.apiClient) private var apiClient
-    @Environment(AudioPlayerService.self) private var audioPlayer
+    @Environment(AudioPlayerService.self) private var audioPlayer: AudioPlayerService?
     @Environment(\.dismiss) private var dismiss
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
@@ -407,10 +407,11 @@ struct FileBrowserContentView: View {
             sessionID: sessionId,
             worktreeID: worktreeId
         )
-        let playbackTimedText = (
-            audioPlayer.playingItemID == itemID || audioPlayer.loadingItemID == itemID
-        ) && !audioPlayer.nowPlayingTimedText.tracks.isEmpty
-            ? audioPlayer.nowPlayingTimedText
+        let nowPlayingTimedText = audioPlayer?.nowPlayingTimedText
+        let playbackTimedText =
+            (audioPlayer?.playingItemID == itemID || audioPlayer?.loadingItemID == itemID)
+            && !(nowPlayingTimedText?.tracks.isEmpty ?? true)
+            ? (nowPlayingTimedText ?? timedText)
             : timedText
         let playbackTimedTextLoader = timedTextLoadFinished
             ? nil
@@ -421,7 +422,7 @@ struct FileBrowserContentView: View {
             itemID: itemID,
             audioPlayer: audioPlayer,
             play: { selectedTimedText in
-                audioPlayer.toggleMediaPlayback(
+                audioPlayer?.toggleMediaPlayback(
                     source: source,
                     itemID: itemID,
                     timedText: selectedTimedText ?? playbackTimedText,
