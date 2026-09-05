@@ -28,6 +28,10 @@ struct TeXMathParserStressFixtureTests {
     \boxed{e^{i\pi} + 1 = 0}
     """#
 
+    private static let baselXrightarrow = #"""
+    \sum_{n=1}^{N} \frac{1}{n^2} \;\xrightarrow{N\to\infty}\; \frac{\pi^2}{6}
+    """#
+
     private static let argmin = #"""
     \operatorname*{arg\,min}_{\theta \in \mathbb{R}^{d}}\left[\frac{1}{n}\sum_{i=1}^{n}\left(f_{\theta}(x_i)-y_i\right)^2 + \lambda\lVert\theta\rVert_2^2\right]
     """#
@@ -38,6 +42,7 @@ struct TeXMathParserStressFixtureTests {
         conditionalProbability,
         boxedEuler,
         argmin,
+        baselXrightarrow,
     ])
     func fixtureDisplayMathIsRenderable(_ source: String) {
         let result = parser.parseValidated(source)
@@ -92,5 +97,38 @@ struct TeXMathParserStressFixtureTests {
                 return false
             }
         })
+    }
+
+    @Test func xrightarrowConsumesOverscriptInsteadOfRemainingUnknown() {
+        let result = parser.parse(#"\xrightarrow{N\to\infty}"#)
+        #expect(!result.contains(.variable(#"\xrightarrow"#)))
+        #expect(result.contains { node in
+            switch node {
+            case .bigOperator, .superscript, .subSuperscript, .accent, .operator(.rightarrow):
+                return true
+            default:
+                return false
+            }
+        })
+    }
+
+    @Test func xleftarrowConsumesOverscriptInsteadOfRemainingUnknown() {
+        let result = parser.parse(#"\xleftarrow{f}"#)
+        #expect(!result.contains(.variable(#"\xleftarrow"#)))
+        #expect(result.contains { node in
+            switch node {
+            case .bigOperator, .superscript, .subSuperscript, .accent, .operator(.leftarrow):
+                return true
+            default:
+                return false
+            }
+        })
+    }
+
+    @Test func xrightarrowOptionalUnderscriptIsRenderable() {
+        let result = parser.parseValidated(#"\xrightarrow[n=1]{N\to\infty}"#)
+        #expect(result.diagnostics.isEmpty, "Unexpected diagnostics: \(result.diagnostics)")
+        #expect(result.isRenderable)
+        #expect(!result.nodes.contains(.variable(#"\xrightarrow"#)))
     }
 }

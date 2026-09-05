@@ -391,6 +391,28 @@ struct MathLayoutTests {
         }
     }
 
+    // MARK: - Extensible arrows
+
+    @Test func xrightarrowOverscriptMakesTheBoxTallerThanABareArrow() {
+        let stacked = layoutFromTeX(#"\xrightarrow{N}"#)
+        let arrow = layoutFromTeX(#"\rightarrow"#)
+        assertNonZeroSize(stacked, "xrightarrow")
+        #expect(
+            stacked.size.height > arrow.size.height,
+            "xrightarrow overscript should stack above the arrow"
+        )
+    }
+
+    @Test func xleftarrowOverscriptMakesTheBoxTallerThanABareArrow() {
+        let stacked = layoutFromTeX(#"\xleftarrow{f}"#)
+        let arrow = layoutFromTeX(#"\leftarrow"#)
+        assertNonZeroSize(stacked, "xleftarrow")
+        #expect(
+            stacked.size.height > arrow.size.height,
+            "xleftarrow overscript should stack above the arrow"
+        )
+    }
+
     // MARK: - Accent
 
     @Test func accentAboveBase() {

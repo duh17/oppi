@@ -79,6 +79,20 @@ struct TeXMathParserErrorRecoveryTests {
 
     // MARK: - Validation diagnostics for graphical rendering
 
+    @Test func xrightarrowBaselSumIsRenderable() {
+        let result = parser.parseValidated(
+            #"\sum_{n=1}^{N} \frac{1}{n^2} \;\xrightarrow{N\to\infty}\; \frac{\pi^2}{6}"#
+        )
+        #expect(result.diagnostics.isEmpty, "Unexpected diagnostics: \(result.diagnostics)")
+        #expect(result.isRenderable)
+    }
+
+    @Test func xleftarrowOverscriptIsRenderable() {
+        let result = parser.parseValidated(#"A \xleftarrow{f} B"#)
+        #expect(result.diagnostics.isEmpty, "Unexpected diagnostics: \(result.diagnostics)")
+        #expect(result.isRenderable)
+    }
+
     @Test func validSupportedDisplaysHaveNoDiagnostics() {
         let valid = [
             "x",

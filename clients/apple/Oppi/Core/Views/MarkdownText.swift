@@ -1669,6 +1669,8 @@ enum FlatSegment: Sendable {
         case .cos: return "cos"
         case .tan: return "tan"
         case .exp: return "exp"
+        case .xrightarrow: return "⟶"
+        case .xleftarrow: return "⟵"
         }
     }
 

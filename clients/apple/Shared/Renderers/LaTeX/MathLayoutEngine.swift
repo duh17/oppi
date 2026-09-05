@@ -1268,13 +1268,15 @@ struct MathLayoutEngine: Sendable {
         case .cos: return "cos"
         case .tan: return "tan"
         case .exp: return "exp"
+        case .xrightarrow: return "\u{27F6}" // ⟶
+        case .xleftarrow: return "\u{27F5}" // ⟵
         }
     }
 
     static func isTextOperator(_ kind: BigOpKind) -> Bool {
         switch kind {
         case .lim, .sup, .inf, .min, .max, .det, .log, .ln,
-             .sin, .cos, .tan, .exp:
+             .sin, .cos, .tan, .exp, .xrightarrow, .xleftarrow:
             return true
         default:
             return false

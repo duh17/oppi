@@ -48,6 +48,12 @@ struct MarkdownStressFixtureDisplayMathTests {
     $$
     \operatorname*{arg\,min}_{\theta \in \mathbb{R}^{d}}\left[\frac{1}{n}\sum_{i=1}^{n}\left(f_{\theta}(x_i)-y_i\right)^2 + \lambda\lVert\theta\rVert_2^2\right]
     $$
+
+    A Basel-problem display:
+
+    $$
+    \sum_{n=1}^{N} \frac{1}{n^2} \;\xrightarrow{N\to\infty}\; \frac{\pi^2}{6}
+    $$
     """#
 
     @Test func parsePromotesFixtureDisplaysToLatexCodeBlocks() {
@@ -73,9 +79,11 @@ struct MarkdownStressFixtureDisplayMathTests {
         #expect(latexBlocks.contains { $0.contains(#"\mid"#) })
         #expect(latexBlocks.contains { $0.contains(#"\boxed"#) })
         #expect(latexBlocks.contains { $0.contains(#"\operatorname*"#) })
+        #expect(latexBlocks.contains { $0.contains(#"\xrightarrow"#) && $0.contains(#"\pi^2"#) })
         #expect(!paragraphText.contains("$$"))
         #expect(!paragraphText.contains(#"\begin{aligned}"#))
         #expect(!paragraphText.contains(#"\operatorname*"#))
+        #expect(!paragraphText.contains(#"\xrightarrow"#))
     }
 
     @Test func renderedSegmentsAreFormulasNotRawDollars() {
@@ -95,12 +103,15 @@ struct MarkdownStressFixtureDisplayMathTests {
         #expect(formulas.contains { $0.contains(#"P(A \mid B)"#) })
         #expect(formulas.contains { $0.contains(#"\boxed{e^{i\pi} + 1 = 0}"#) })
         #expect(formulas.contains { $0.contains(#"\operatorname*"#) })
+        #expect(formulas.contains { $0.contains(#"\xrightarrow"#) && $0.contains(#"\pi^2"#) })
         #expect(!prose.contains("$$"))
         #expect(!prose.contains(#"\begin{aligned}"#))
         #expect(!prose.contains(#"\mid"#))
         #expect(!prose.contains(#"\operatorname*"#))
+        #expect(!prose.contains(#"\xrightarrow"#))
         #expect(prose.contains("Inline identities"))
         #expect(prose.contains("A probability example"))
+        #expect(prose.contains("A Basel-problem display"))
     }
 
     @MainActor
@@ -109,6 +120,7 @@ struct MarkdownStressFixtureDisplayMathTests {
             #"P(A \mid B) = \frac{P(B \mid A)P(A)}{P(B)}"#,
             #"\boxed{e^{i\pi} + 1 = 0}"#,
             #"\operatorname*{arg\,min}_{\theta \in \mathbb{R}^{d}} x"#,
+            #"\sum_{n=1}^{N} \frac{1}{n^2} \;\xrightarrow{N\to\infty}\; \frac{\pi^2}{6}"#,
         ]
 
         for source in cases {

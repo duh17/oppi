@@ -260,6 +260,9 @@ enum BigOpKind: String, Equatable, Sendable {
     case cos = "\\cos"
     case tan = "\\tan"
     case exp = "\\exp"
+    /// amsmath extensible arrow; limits are the over/under scripts.
+    case xrightarrow = "\\xrightarrow"
+    case xleftarrow = "\\xleftarrow"
 }
 
 /// Limits for big operators.

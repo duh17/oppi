@@ -218,6 +218,27 @@ private enum TeXMathValidator {
                         after: commandEnd,
                         append: append
                     )
+                } else if command == "xrightarrow" || command == "xleftarrow" {
+                    var argumentStart = skipWhitespace(in: source, from: commandEnd)
+                    if argumentStart < source.endIndex, source[argumentStart] == "[" {
+                        if let close = matchingDelimiter(
+                            in: source,
+                            from: argumentStart,
+                            open: "[",
+                            close: "]"
+                        ) {
+                            argumentStart = source.index(after: close)
+                        } else {
+                            append(.unclosedGroup)
+                        }
+                    }
+                    validateArguments(
+                        command: command,
+                        count: 1,
+                        source: source,
+                        after: argumentStart,
+                        append: append
+                    )
                 } else if command == "operatorname" {
                     var argumentStart = skipWhitespace(in: source, from: commandEnd)
                     if argumentStart < source.endIndex, source[argumentStart] == "*" {
@@ -558,9 +579,11 @@ private enum TeXMathValidator {
 
     /// Commands used by the markdown stress fixture that the renderer can
     /// accept without adding a second math engine. `\mid` is a relation,
-    /// `\boxed` wraps one argument, and `\operatorname*` is an upright name.
+    /// `\boxed` wraps one argument, `\operatorname*` is an upright name,
+    /// and `\xrightarrow`/`\xleftarrow` reuse big-operator limit layout.
     private static func isSupportedExtraCommand(_ name: String) -> Bool {
         name == "mid" || name == "boxed" || name == "operatorname"
+            || name == "xrightarrow" || name == "xleftarrow"
     }
 }
 
@@ -890,9 +913,33 @@ private struct ParserState {
                 pos += 1
             }
             return .font(.roman, body: parseBraceArg())
+        case "xrightarrow":
+            return parseExtensibleArrow(.xrightarrow)
+        case "xleftarrow":
+            return parseExtensibleArrow(.xleftarrow)
         default:
             return nil
         }
+    }
+
+    /// `\xrightarrow[under]{over}` / `\xleftarrow[under]{over}`.
+    /// Optional brackets are already tokens; limits reuse big-operator layout.
+    mutating func parseExtensibleArrow(_ kind: BigOpKind) -> MathNode {
+        pos += 1
+        var under: [MathNode]?
+        if peek() == .openBracket {
+            pos += 1
+            under = parseNodeList { $0 == .closeBracket }
+            _ = expect(.closeBracket)
+        }
+        let over = parseBraceArg()
+        return .bigOperator(
+            kind,
+            limits: MathLimits(
+                lower: under,
+                upper: over.isEmpty ? nil : over
+            )
+        )
     }
 
     // MARK: - Group
