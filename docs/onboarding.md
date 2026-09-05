@@ -26,7 +26,7 @@ Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.
 
 From here, [Using Oppi](usage.md) covers the session list, prompting, steer vs follow-up, Quick Session, files, and voice.
 
-Oppi does not create starter workspaces. Manual connection requires host and token; an invalid manual port uses `7749`.
+Oppi does not create starter workspaces. Camera-free pairing opens the signed `oppi://connect` invite link. The manual sheet is still Host, Port, Token, and Name; it does not paste that invite.
 
 ## Reach the server
 

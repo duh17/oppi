@@ -71,11 +71,6 @@ enum LANEndpointSelection {
             return paired
         }
 
-        guard credentials.resolvedScheme == .https else {
-            logger.warning("LAN rejected: plaintext HTTP cannot prove the pinned TLS identity")
-            return paired
-        }
-
         let tlsServerName: String?
         if let pinnedTLSFingerprint = normalizeFingerprint(credentials.normalizedTLSCertFingerprint) {
             if let discoveredTLSPrefix = normalizeFingerprint(discoveredEndpoint.tlsCertFingerprintPrefix),

@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,11 @@ import type { DevicePublicKey } from "../src/types.js";
 
 let dataDir: string;
 let storage: Storage;
+
+function configFingerprint(configPath: string): string {
+  const stat = statSync(configPath);
+  return `${stat.ino}:${stat.mtimeNs}:${stat.size}`;
+}
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-device-auth-"));
@@ -111,30 +116,23 @@ describe("device-auth refresh", () => {
     expect(secondRefresh.ok).toBe(true);
   });
 
-  it("evicts the oldest unused challenge after the per-device cap", () => {
+  it("does not evict live unused challenges once the per-device cap is reached", () => {
     const key = makeDeviceKey();
     const enrolled = enroll(key);
-    const issued = [];
-    for (let index = 0; index < MAX_CHALLENGES_PER_DEVICE + 1; index += 1) {
+    const issued = [enrolled.refreshChallenge];
+    while (issued.length < MAX_CHALLENGES_PER_DEVICE) {
       const challenge = storage.issueChallenge(enrolled.deviceId);
       if (!challenge) throw new Error("no challenge");
       issued.push(challenge);
     }
+    expect(storage.issueChallenge(enrolled.deviceId)).toBeNull();
     const oldest = issued[0];
-    const newest = issued.at(-1);
-    if (!oldest || !newest) throw new Error("missing challenge");
+    if (!oldest) throw new Error("missing challenge");
     expect(
       storage.refresh({
         deviceId: enrolled.deviceId,
         nonce: oldest.nonce,
         signature: signChallenge(key, oldest.nonce),
-      }),
-    ).toEqual({ ok: false, code: "unknown_nonce" });
-    expect(
-      storage.refresh({
-        deviceId: enrolled.deviceId,
-        nonce: newest.nonce,
-        signature: signChallenge(key, newest.nonce),
       }).ok,
     ).toBe(true);
   });
@@ -401,11 +399,29 @@ describe("legacy dt_ migration", () => {
   });
 
   it("rejects migration with an unknown legacy token", () => {
+    const configPath = storage.getConfigPath();
+    const before = configFingerprint(configPath);
     const result = storage.migrateLegacyDevice("dt_not_a_real_token", {
       publicKey: makeDeviceKey().publicKeyJwk,
       name: "Unknown",
     });
     expect(result).toBeNull();
+    expect(configFingerprint(configPath)).toBe(before);
+  });
+
+  it("does not persist no-op legacy migration or revocation", () => {
+    const enrolled = enroll();
+    const configPath = storage.getConfigPath();
+    const before = configFingerprint(configPath);
+
+    expect(
+      storage.migrateLegacyDevice("not-a-credential", {
+        publicKey: {},
+        name: "Attacker",
+      }),
+    ).toBeNull();
+    expect(storage.commitLegacyRevocation(enrolled.deviceId)).toBe(false);
+    expect(configFingerprint(configPath)).toBe(before);
   });
 });
 

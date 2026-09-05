@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
 import { isLocalRequest } from "../request-trust.js";
+import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { isDictationStreamEnabled } from "../dictation-types.js";
 import type { RegisterDeviceTokenRequest } from "../types.js";
@@ -20,14 +21,46 @@ import {
 const PAIRING_MAX_FAILURES = 5;
 const PAIRING_WINDOW_MS = 60_000;
 const PAIRING_COOLDOWN_MS = 120_000;
+const AUTH_BOOTSTRAP_MAX_BYTES = 16 * 1024;
+const CHALLENGE_WINDOW_MS = 60_000;
+const CHALLENGE_MAX_PER_WINDOW = 8;
 
 const log = createLogger({ base: { component: "route_identity" } });
 
 export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
   const pairingFailuresBySource = new Map<string, number[]>();
   const pairingBlockedUntilBySource = new Map<string, number>();
+  const challengeLimiter = new SourceRateLimiter(CHALLENGE_WINDOW_MS, CHALLENGE_MAX_PER_WINDOW);
   function pairingSourceKey(req: IncomingMessage): string {
     return req.socket.remoteAddress || "unknown";
+  }
+
+  function prunePairingLimiters(now: number): void {
+    const staleBefore = now - PAIRING_WINDOW_MS - PAIRING_COOLDOWN_MS;
+    for (const [source, failures] of pairingFailuresBySource) {
+      const last = failures.at(-1) ?? 0;
+      const blockedUntil = pairingBlockedUntilBySource.get(source) ?? 0;
+      if (blockedUntil > now) continue;
+      if (last < staleBefore) {
+        pairingFailuresBySource.delete(source);
+        pairingBlockedUntilBySource.delete(source);
+      }
+    }
+  }
+
+  async function parseBootstrapBody<T>(
+    req: IncomingMessage,
+  ): Promise<{ ok: true; body: T } | { ok: false; status: number; error: string }> {
+    try {
+      const body = await helpers.parseBody<T>(req, { maxBytes: AUTH_BOOTSTRAP_MAX_BYTES });
+      return { ok: true, body };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid JSON";
+      if (message.includes("too large")) {
+        return { ok: false, status: 413, error: "Request body too large" };
+      }
+      return { ok: false, status: 400, error: "Invalid JSON" };
+    }
   }
 
   function isPairingRateLimited(source: string, now: number): boolean {
@@ -63,16 +96,22 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   async function handlePair(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const source = pairingSourceKey(req);
     const now = Date.now();
+    prunePairingLimiters(now);
     if (isPairingRateLimited(source, now)) {
       helpers.error(res, 429, "Too many invalid pairing attempts. Try again later.");
       return;
     }
 
-    const body = await helpers.parseBody<{
+    const parsed = await parseBootstrapBody<{
       pairingToken?: string;
       devicePublicKey?: unknown;
       deviceName?: string;
     }>(req);
+    if (!parsed.ok) {
+      helpers.error(res, parsed.status, parsed.error);
+      return;
+    }
+    const body = parsed.body;
     const pairingToken = typeof body.pairingToken === "string" ? body.pairingToken.trim() : "";
     if (!pairingToken) {
       helpers.error(res, 400, "pairingToken required");
@@ -263,7 +302,14 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
 
-    const body = await helpers.parseBody<{ devicePublicKey?: unknown; deviceName?: string }>(req);
+    const parsed = await parseBootstrapBody<{ devicePublicKey?: unknown; deviceName?: string }>(
+      req,
+    );
+    if (!parsed.ok) {
+      helpers.error(res, parsed.status, parsed.error);
+      return;
+    }
+    const body = parsed.body;
     if (!body.devicePublicKey) {
       helpers.error(res, 400, "devicePublicKey required");
       return;
@@ -288,10 +334,25 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   }
 
   async function handleAuthChallenge(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const body = await helpers.parseBody<{ deviceId?: string }>(req);
-    const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
+    const source = pairingSourceKey(req);
+    const now = Date.now();
+    prunePairingLimiters(now);
+    challengeLimiter.prune(now);
+    const parsed = await parseBootstrapBody<{ deviceId?: string }>(req);
+    if (!parsed.ok) {
+      helpers.error(res, parsed.status, parsed.error);
+      return;
+    }
+    const deviceId = typeof parsed.body.deviceId === "string" ? parsed.body.deviceId.trim() : "";
     if (!deviceId) {
       helpers.error(res, 400, "deviceId required");
+      return;
+    }
+    if (
+      challengeLimiter.tooMany(`ip:${source}`, now) ||
+      challengeLimiter.tooMany(`device:${deviceId}`, now)
+    ) {
+      helpers.error(res, 429, "Too many challenge requests");
       return;
     }
 
@@ -304,11 +365,16 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   }
 
   async function handleAuthRefresh(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const body = await helpers.parseBody<{
+    const parsed = await parseBootstrapBody<{
       deviceId?: string;
       nonce?: string;
       signature?: unknown;
     }>(req);
+    if (!parsed.ok) {
+      helpers.error(res, parsed.status, parsed.error);
+      return;
+    }
+    const body = parsed.body;
     const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
     const nonce = typeof body.nonce === "string" ? body.nonce.trim() : "";
     if (!deviceId || !nonce || typeof body.signature !== "string" || body.signature.length === 0) {
@@ -331,7 +397,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
 
-    log.info("auth.refresh_succeeded", { device: deviceId });
+    log.debug("auth.refresh_succeeded", { device: deviceId });
     const nextChallenge = ctx.storage.issueChallenge(deviceId);
     helpers.json(res, {
       accessToken: result.accessToken,
@@ -340,11 +406,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     });
   }
 
-  function handleListDevices(req: IncomingMessage, res: ServerResponse): void {
-    if (!isLocalRequest(req)) {
-      helpers.error(res, 403, "Local admin only");
-      return;
-    }
+  function handleListDevices(_req: IncomingMessage, res: ServerResponse): void {
     const devices = ctx.storage.listDevices().map((device) => ({
       id: device.id,
       name: device.name,
@@ -357,11 +419,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { devices });
   }
 
-  function handleRevokeDevice(req: IncomingMessage, res: ServerResponse, deviceId: string): void {
-    if (!isLocalRequest(req)) {
-      helpers.error(res, 403, "Local admin only");
-      return;
-    }
+  function handleRevokeDevice(_req: IncomingMessage, res: ServerResponse, deviceId: string): void {
     if (!ctx.storage.revokeDevice(deviceId)) {
       helpers.error(res, 404, "Unknown or already-revoked device");
       return;

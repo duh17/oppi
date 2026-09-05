@@ -102,6 +102,8 @@ describe("log-redact", () => {
     expect(isSensitiveLogKey("accessToken")).toBe(true);
     expect(isSensitiveLogKey("openaiApiKey")).toBe(true);
     expect(isSensitiveLogKey("authDeviceTokens")).toBe(true);
+    expect(isSensitiveLogKey("deviceId")).toBe(true);
+    expect(isSensitiveLogKey("device")).toBe(true);
     expect(isSensitiveLogKey("tokenCount")).toBe(false);
     expect(isSensitiveLogKey("authPresent")).toBe(false);
   });
@@ -125,5 +127,12 @@ describe("log-redact", () => {
 
     const redacted = redactLogString(input, 4_096);
     expect(redacted).toBe("[REDACTED] [REDACTED] [REDACTED]");
+  });
+
+  it("redacts encoded oppi://connect invites", () => {
+    const input = "invite oppi://connect?v=3&invite=abc.def.ghi host=mac-studio.ts.net";
+    const redacted = redactLogString(input, 4_096);
+    expect(redacted).toContain("oppi://connect?[REDACTED]");
+    expect(redacted).not.toContain("invite=abc.def.ghi");
   });
 });

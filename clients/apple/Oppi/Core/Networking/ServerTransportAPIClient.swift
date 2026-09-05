@@ -76,6 +76,7 @@ enum ServerTransportAPIClient {
             onRefresh: { result in
                 try? KeychainDeviceCredentialMerger.mergeRefresh(
                     serverId: server.id,
+                    expectedDeviceId: credential.deviceId,
                     accessToken: result.accessToken,
                     expiresAt: Int64(result.expiresAt),
                     refreshChallenge: result.refreshChallenge

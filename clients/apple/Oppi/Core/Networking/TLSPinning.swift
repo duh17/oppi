@@ -80,14 +80,16 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         let certData = SecCertificateCopyData(leafCertificate) as Data
         let fingerprint = Self.certFingerprint(for: certData)
 
-        if fingerprint == pinnedLeafFingerprint {
-            completionHandler(.useCredential, URLCredential(trust: trust))
-        } else if Self.allowsPublicCATrustFallback(
-            forHost: challenge.protectionSpace.host,
-            pinnedLeafFingerprint: pinnedLeafFingerprint
+        switch ServerTLSTrustPolicy.decision(
+            pinnedLeafFingerprint: pinnedLeafFingerprint,
+            presentedFingerprint: fingerprint,
+            host: challenge.protectionSpace.host
         ) {
+        case .pinMatch:
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        case .publicCAFallback:
             completionHandler(.performDefaultHandling, nil)
-        } else {
+        case .reject:
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }
@@ -105,18 +107,14 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         forHost host: String,
         pinnedLeafFingerprint: String? = nil
     ) -> Bool {
-        // A configured pin is authoritative. Public-CA trust is only the
-        // no-pin mode used by rotating Tailscale certificates.
-        guard normalizeFingerprint(pinnedLeafFingerprint) == nil else { return false }
-        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized.hasSuffix(".ts.net") || normalized.hasSuffix(".beta.tailscale.net")
+        ServerTLSTrustPolicy.allowsPublicCATrustFallback(
+            forHost: host,
+            pinnedLeafFingerprint: pinnedLeafFingerprint
+        )
     }
 
     private static func normalizeFingerprint(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return trimmed
+        ServerTLSTrustPolicy.normalizeFingerprint(value)
     }
 }
 

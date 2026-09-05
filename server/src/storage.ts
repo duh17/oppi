@@ -259,6 +259,10 @@ export class Storage {
     this.configStore.updateConfig(updates);
   }
 
+  mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig {
+    return this.configStore.mutate(mutator);
+  }
+
   // ─── Mobile Output Guide settings ───
 
   getMobileOutputGuideSettings(): MobileOutputGuideSettingsSnapshot {
@@ -296,10 +300,6 @@ export class Storage {
 
   issuePairingToken(ttlMs?: number): string {
     return this.authStore.issuePairingToken(ttlMs);
-  }
-
-  consumePairingToken(candidate: string): ReturnType<AuthStore["consumePairingToken"]> {
-    return this.authStore.consumePairingToken(candidate);
   }
 
   // ─── Device-key auth ───
@@ -352,10 +352,6 @@ export class Storage {
 
   setMigrationFinalized(finalized: boolean): void {
     this.deviceAuthStore.setMigrationFinalized(finalized);
-  }
-
-  hasAuthToken(candidate: string): boolean {
-    return this.authStore.hasAuthToken(candidate);
   }
 
   getOwnerName(): string {

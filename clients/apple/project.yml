@@ -296,6 +296,8 @@ targets:
         buildPhase: resources
       - path: Shared/Auth/Keychain
         type: group
+      - path: Shared/Auth/ServerTLSTrustPolicy.swift
+        type: file
       - path: Shared/Constants
         type: group
       - path: Shared/ShareQuickSession/Payload

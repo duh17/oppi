@@ -197,8 +197,7 @@ export function cmdConfig(
       }
 
       const coerced = coerceValue(value, meta.type);
-      const nextConfig = setConfigPath(storage.getConfig(), key, coerced);
-      storage.updateConfig(nextConfig);
+      storage.mutateConfig((current) => setConfigPath(current, key, coerced));
       const displayValue = redactCredentialValue(coerced, configPathLeaf(key));
 
       output(

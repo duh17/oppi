@@ -811,8 +811,8 @@ describe("workspace file browser", () => {
     expect(body.paths).toBeInstanceOf(Array);
     expect(typeof body.truncated).toBe("boolean");
     expect(body.paths).toContain("src/components/Button.tsx");
-    expect(body.paths).not.toContain(".env");
-    expect(body.paths).not.toContain("id_rsa");
+    expect(body.paths).toContain(".env");
+    expect(body.paths).toContain("id_rsa");
     expect(body.paths).not.toContain(".git/HEAD");
   });
 

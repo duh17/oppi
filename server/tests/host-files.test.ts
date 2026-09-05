@@ -56,6 +56,7 @@ class MockWritableResponse extends PassThrough {
 }
 
 interface HostFileLogLine {
+  level: "debug" | "info" | "warn" | "error";
   event: string;
   method?: string;
   realpath?: string;
@@ -64,24 +65,26 @@ interface HostFileLogLine {
 }
 
 function makeLogger(lines: HostFileLogLine[]): Logger {
-  const record = (event: string, context?: Record<string, unknown>) => {
-    lines.push({
-      event,
-      method: typeof context?.method === "string" ? context.method : undefined,
-      realpath: typeof context?.realpath === "string" ? context.realpath : undefined,
-      size:
-        typeof context?.size === "number" || context?.size === null
-          ? (context.size as number | null)
-          : undefined,
-      status: typeof context?.status === "number" ? context.status : undefined,
-    });
-  };
+  const record =
+    (level: HostFileLogLine["level"]) => (event: string, context?: Record<string, unknown>) => {
+      lines.push({
+        level,
+        event,
+        method: typeof context?.method === "string" ? context.method : undefined,
+        realpath: typeof context?.realpath === "string" ? context.realpath : undefined,
+        size:
+          typeof context?.size === "number" || context?.size === null
+            ? (context.size as number | null)
+            : undefined,
+        status: typeof context?.status === "number" ? context.status : undefined,
+      });
+    };
 
   return {
-    debug: record,
-    info: record,
-    warn: record,
-    error: record,
+    debug: record("debug"),
+    info: record("info"),
+    warn: record("warn"),
+    error: record("error"),
     child: () => makeLogger(lines),
     isEnabled: () => true,
   };
@@ -207,12 +210,16 @@ describe("GET/HEAD /files/raw", () => {
     expect(headRes.body.length).toBe(0);
 
     const resolvedFilePath = realpathSync(filePath);
-    expect(logs).toHaveLength(2);
-    expect(logs.every((line) => line.event === "hostfile.read")).toBe(true);
-    expect(logs.map((line) => line.method)).toEqual(["GET", "HEAD"]);
-    expect(logs.every((line) => line.realpath === resolvedFilePath)).toBe(true);
-    expect(logs.every((line) => line.size === Buffer.byteLength("host log\n"))).toBe(true);
-    expect(logs.every((line) => line.status === 200)).toBe(true);
+    const infoLogs = logs.filter((line) => line.level === "info");
+    const debugLogs = logs.filter((line) => line.level === "debug");
+    expect(infoLogs).toHaveLength(2);
+    expect(infoLogs.every((line) => line.event === "hostfile.read")).toBe(true);
+    expect(infoLogs.map((line) => line.method)).toEqual(["GET", "HEAD"]);
+    expect(infoLogs.every((line) => line.realpath === undefined)).toBe(true);
+    expect(infoLogs.every((line) => line.size === Buffer.byteLength("host log\n"))).toBe(true);
+    expect(infoLogs.every((line) => line.status === 200)).toBe(true);
+    expect(debugLogs.every((line) => line.realpath === resolvedFilePath)).toBe(true);
+    expect(JSON.stringify(infoLogs)).not.toContain(resolvedFilePath);
     expect(JSON.stringify(logs)).not.toContain("workspace");
   });
 
@@ -260,9 +267,7 @@ describe("GET/HEAD /files/raw", () => {
 
       const header = res.headers.get("x-oppi-resolved-path");
       expect(header).toBe(encodeHostResolvedPathHeader(resolvedFilePath));
-      expect(header, "header must stay ASCII-safe for Node writeHead").toMatch(
-        /^[\t\x20-\x7e]+$/,
-      );
+      expect(header, "header must stay ASCII-safe for Node writeHead").toMatch(/^[\t\x20-\x7e]+$/);
       expect(header).not.toBe(resolvedFilePath);
       expect(decodeHostResolvedPathHeader(header ?? "")).toBe(resolvedFilePath);
     } finally {
@@ -278,24 +283,30 @@ describe("GET/HEAD /files/raw", () => {
     writeFileSync(join(home, "notes", "readme.md"), "from home\n", "utf8");
     const logs: HostFileLogLine[] = [];
 
-    const res = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent("~/notes/readme.md")}`, {
-      logger: makeLogger(logs),
-      homeDir: home,
-    });
+    const res = await dispatchHost(
+      "GET",
+      `/files/raw?path=${encodeURIComponent("~/notes/readme.md")}`,
+      {
+        logger: makeLogger(logs),
+        homeDir: home,
+      },
+    );
 
     expect(res.statusCode).toBe(200);
     expect(res.body.toString("utf8")).toBe("from home\n");
     expect(res.headers["X-Oppi-Resolved-Path"]).toBe(
       realpathSync(join(home, "notes", "readme.md")),
     );
-    expect(logs).toEqual([
+    const infoLogs = logs.filter((line) => line.level === "info");
+    expect(infoLogs).toEqual([
       expect.objectContaining({
         event: "hostfile.read",
         method: "GET",
-        realpath: realpathSync(join(home, "notes", "readme.md")),
+        realpath: undefined,
         status: 200,
       }),
     ]);
+    expect(JSON.stringify(infoLogs)).not.toContain(realpathSync(join(home, "notes", "readme.md")));
   });
 
   it("returns 404 for missing, directory, unreadable, and non-file nodes", async () => {
@@ -310,13 +321,7 @@ describe("GET/HEAD /files/raw", () => {
     execFileSync("mkfifo", [fifo]);
 
     try {
-      const cases = [
-        missing,
-        directory,
-        unreadable,
-        fifo,
-        "/dev/null",
-      ];
+      const cases = [missing, directory, unreadable, fifo, "/dev/null"];
       for (const path of cases) {
         const res = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(path)}`);
         expect(res.statusCode, path).toBe(404);
@@ -364,10 +369,16 @@ describe("GET/HEAD /files/raw", () => {
     expect(rangeRes.headers["Content-Range"]).toBe("bytes 2-5/10");
     expect(rangeRes.body.toString("utf8")).toBe("2345");
 
-    const textTooLarge = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(hugePath)}`);
+    const textTooLarge = await dispatchHost(
+      "GET",
+      `/files/raw?path=${encodeURIComponent(hugePath)}`,
+    );
     expect(textTooLarge.statusCode).toBe(413);
 
-    const imageTooLarge = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(imagePath)}`);
+    const imageTooLarge = await dispatchHost(
+      "GET",
+      `/files/raw?path=${encodeURIComponent(imagePath)}`,
+    );
     expect(imageTooLarge.statusCode).toBe(413);
   });
 

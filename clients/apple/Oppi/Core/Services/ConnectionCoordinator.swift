@@ -407,10 +407,13 @@ final class ConnectionCoordinator {
         preservingPersistentStreams: Bool = false
     ) async -> Bool {
         let deviceCredentialObserver: ServerConnectionDeviceCredentialObserver = { [weak self] result in
-            guard let self, let serverId = credentials.normalizedServerFingerprint else { return }
+            guard let self,
+                  let serverId = credentials.normalizedServerFingerprint,
+                  let expectedDeviceId = credentials.deviceCredential?.deviceId else { return }
             do {
                 let merged = try self.serverStore.persistDeviceCredentialRefresh(
                     id: serverId,
+                    expectedDeviceId: expectedDeviceId,
                     result: result
                 )
                 self.connections[serverId]?.applyPersistedDeviceCredential(merged)

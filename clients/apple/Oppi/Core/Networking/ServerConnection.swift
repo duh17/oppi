@@ -848,7 +848,7 @@ final class ServerConnection {
             httpAuthSession = session
             client.attachAuthSession(session)
         } catch {
-            logger.error("Device-key setup failed; HTTPS auth will fail closed: \\(error.localizedDescription, privacy: .public)")
+            logger.error("Device-key setup failed; HTTPS auth will fail closed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -578,7 +578,7 @@ describe("getFileIndex", () => {
     expect(result.paths).toContain("src/.pi/notes/user-note.md");
   });
 
-  test("omits sensitive files from the search index", async () => {
+  test("includes owner-visible credential-like names in the search index", async () => {
     mkdirSync(join(tmpRoot, "config", "secrets"), { recursive: true });
     writeFileSync(join(tmpRoot, ".env"), "SECRET=value");
     writeFileSync(join(tmpRoot, "config", "secrets", "server.pem"), "private key");
@@ -586,9 +586,9 @@ describe("getFileIndex", () => {
 
     const result = await getFileIndex(tmpRoot);
 
-    expect(result.paths).not.toContain(".env");
-    expect(result.paths).not.toContain("config/secrets/server.pem");
-    expect(result.paths).not.toContain("config/secrets/.netrc");
+    expect(result.paths).toContain(".env");
+    expect(result.paths).toContain("config/secrets/server.pem");
+    expect(result.paths).toContain("config/secrets/.netrc");
   });
 
   test("omits generic ignored directories at any depth", async () => {
@@ -668,7 +668,7 @@ describe("workspace file routes", () => {
 });
 
 describe("workspace file symlink security", () => {
-  test("omits sensitive names and symlink aliases from the index but serves an in-workspace .env symlink", async () => {
+  test("includes owner-visible names and omits symlink aliases from the index but serves an in-workspace .env symlink", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-ws-symlink-security-"));
     try {
       mkdirSync(join(root, "notes"), { recursive: true });
@@ -679,7 +679,7 @@ describe("workspace file symlink security", () => {
 
       const index = await getFileIndex(root);
       expect(index.paths).toContain("notes/safe.md");
-      expect(index.paths).not.toContain(".env");
+      expect(index.paths).toContain(".env");
       expect(index.paths).not.toContain("notes/report.md");
       expect(index.paths).not.toContain("notes/safe-alias.md");
 
@@ -950,7 +950,7 @@ describe("listDirectoryEntries — security edge cases", () => {
     expect(result).not.toBeNull();
     const names = result!.entries.map((e) => e.name);
     // Sensitive files ARE listed — users should know they exist.
-    // Fuzzy /paths still omits them; workspace raw may serve them.
+    // Fuzzy /paths is not a secret-file ACL; workspace raw may serve them.
     expect(names).toContain(".env");
     expect(names).toContain("id_rsa");
     expect(names).toContain("cert.pem");

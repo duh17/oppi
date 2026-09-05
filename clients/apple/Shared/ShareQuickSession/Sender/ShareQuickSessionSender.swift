@@ -21,7 +21,7 @@ struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
         tlsCertFingerprint: String?,
         sortOrder: Int
     ) {
-        guard let baseURL else { return nil }
+        guard let baseURL, ServerTLSTrustPolicy.requiresHTTPS(scheme: baseURL.scheme) else { return nil }
         self.id = id
         self.name = name
         self.baseURL = baseURL
@@ -47,6 +47,13 @@ struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
         let host = try container.decode(String.self, forKey: .host)
         let port = try container.decode(Int.self, forKey: .port)
         let scheme = try container.decodeIfPresent(String.self, forKey: .scheme) ?? "https"
+        guard ServerTLSTrustPolicy.requiresHTTPS(scheme: scheme) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .scheme,
+                in: container,
+                debugDescription: "Share transport requires HTTPS"
+            )
+        }
         guard let url = URL(string: "\(scheme)://\(host):\(port)") else {
             throw DecodingError.dataCorruptedError(
                 forKey: .host,
@@ -189,6 +196,7 @@ enum ShareQuickSessionCredentialStore {
         do {
             try KeychainDeviceCredentialMerger.mergeRefresh(
                 serverId: server.id,
+                expectedDeviceId: deviceCredential.deviceId,
                 accessToken: deviceCredential.accessToken,
                 expiresAt: deviceCredential.expiresAt,
                 refreshChallenge: deviceCredential.refreshChallenge
@@ -728,12 +736,16 @@ private final class ShareQuickSessionTrustDelegate: NSObject, URLSessionDelegate
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
         let fingerprint = "sha256:\(encodedDigest)"
-        let host = challenge.protectionSpace.host.lowercased()
-        if fingerprint == pinnedLeafFingerprint {
+        switch ServerTLSTrustPolicy.decision(
+            pinnedLeafFingerprint: pinnedLeafFingerprint,
+            presentedFingerprint: fingerprint,
+            host: challenge.protectionSpace.host
+        ) {
+        case .pinMatch:
             completionHandler(.useCredential, URLCredential(trust: trust))
-        } else if host.hasSuffix(".ts.net") || host.hasSuffix(".beta.tailscale.net") {
+        case .publicCAFallback:
             completionHandler(.performDefaultHandling, nil)
-        } else {
+        case .reject:
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }

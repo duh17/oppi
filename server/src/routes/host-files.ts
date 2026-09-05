@@ -189,6 +189,11 @@ async function handleHostRawFile(
   } finally {
     log.info("hostfile.read", {
       method,
+      size,
+      status,
+    });
+    log.debug("hostfile.read.path", {
+      method,
       realpath: resolvedPath,
       size,
       status,

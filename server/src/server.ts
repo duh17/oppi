@@ -87,7 +87,12 @@ import {
   localApiSocketPath,
   type LocalApiSocketBinding,
 } from "./local-api-socket.js";
-import { isLocalRequest, isSecureNetworkRequest, markLocalRequest } from "./request-trust.js";
+import {
+  isLocalRequest,
+  isSecureNetworkRequest,
+  markLocalRequest,
+  parseHttpRequestTarget,
+} from "./request-trust.js";
 import {
   getPackageInfo,
   removeRetiredRuntimeStatusFile,
@@ -1314,10 +1319,14 @@ export class Server {
   private async handleHttp(
     req: IncomingMessage,
     res: ServerResponse,
-    scheme: "http" | "https",
+    _scheme: "http" | "https",
   ): Promise<void> {
     const startTime = Date.now();
-    const url = new URL(req.url || "/", `${scheme}://${req.headers.host ?? "localhost"}`);
+    const url = parseHttpRequestTarget(req.url);
+    if (!url) {
+      this.error(res, 400, "Bad request");
+      return;
+    }
     const path = url.pathname;
     const method = req.method || "GET";
 
@@ -1424,7 +1433,14 @@ export class Server {
 
   private handleLocalUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
     markLocalRequest(req);
-    const url = new URL(req.url || "/", "http://localhost");
+    const url = parseHttpRequestTarget(req.url);
+    if (!url) {
+      writeUpgradeErrorResponse(socket, "HTTP/1.1 400 Bad Request", {
+        Connection: "close",
+        "Content-Length": "0",
+      });
+      return;
+    }
     if (url.pathname === "/mirror/v1/bridge") {
       this.localWss.handleUpgrade(req, socket, head, (ws) => {
         this.trackConnection(ws);
@@ -1437,7 +1453,14 @@ export class Server {
   }
 
   private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
-    const url = new URL(req.url || "/", `${this.transportScheme}://${req.headers.host}`);
+    const url = parseHttpRequestTarget(req.url);
+    if (!url) {
+      writeUpgradeErrorResponse(socket, "HTTP/1.1 400 Bad Request", {
+        Connection: "close",
+        "Content-Length": "0",
+      });
+      return;
+    }
     if (url.pathname === "/mirror/v1/bridge") {
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",

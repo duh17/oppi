@@ -4,6 +4,8 @@ import Security
 enum KeychainCredentialMergeError: LocalizedError, Equatable {
     case itemNotFound
     case corruptRecord
+    case staleRefresh
+    case enrollmentMismatch
     case readFailed(OSStatus)
     case writeFailed(OSStatus)
 
@@ -13,6 +15,10 @@ enum KeychainCredentialMergeError: LocalizedError, Equatable {
             "Paired server record not found in Keychain"
         case .corruptRecord:
             "Paired server record could not be decoded"
+        case .staleRefresh:
+            "Refusing an older device-credential refresh"
+        case .enrollmentMismatch:
+            "Refusing a refresh for a different device enrollment"
         case .readFailed(let status):
             "Keychain read failed: \(status)"
         case .writeFailed(let status):
@@ -27,6 +33,7 @@ enum KeychainCredentialMergeError: LocalizedError, Equatable {
 enum KeychainDeviceCredentialMerger {
     static func mergeRefresh(
         serverId: String,
+        expectedDeviceId: String,
         accessToken: String,
         expiresAt: Int64,
         refreshChallenge: DeviceAuthChallenge?
@@ -43,8 +50,10 @@ enum KeychainDeviceCredentialMerger {
                 throw KeychainCredentialMergeError.corruptRecord
             }
 
-            let updated = current.updatingAccessToken(
-                accessToken,
+            let updated = try acceptedRefresh(
+                stored: current,
+                expectedDeviceId: expectedDeviceId,
+                accessToken: accessToken,
                 expiresAt: expiresAt,
                 refreshChallenge: refreshChallenge
             )
@@ -55,6 +64,29 @@ enum KeychainDeviceCredentialMerger {
             try writeObject(object, serverId: serverId)
             return updated
         }
+    }
+
+    static func acceptedRefresh(
+        stored: DeviceCredential,
+        expectedDeviceId: String,
+        accessToken: String,
+        expiresAt: Int64,
+        refreshChallenge: DeviceAuthChallenge?
+    ) throws -> DeviceCredential {
+        guard stored.deviceId == expectedDeviceId else {
+            throw KeychainCredentialMergeError.enrollmentMismatch
+        }
+        let incoming = DeviceCredential(
+            deviceId: expectedDeviceId,
+            accessToken: accessToken,
+            expiresAt: expiresAt,
+            refreshChallenge: refreshChallenge
+        )
+        let merged = incoming.freshestMerge(with: stored)
+        guard merged.accessToken == incoming.accessToken else {
+            throw KeychainCredentialMergeError.staleRefresh
+        }
+        return incoming
     }
 
     private static func baseQuery(serverId: String) -> [String: Any] {

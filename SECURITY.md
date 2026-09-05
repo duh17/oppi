@@ -8,13 +8,21 @@ Oppi supports Pi's standard extension UI API on mobile, including input and conf
 
 ## Authentication
 
-Pairing enrolls a per-device P-256 public key and returns a short-lived HTTPS/WSS access token. All HTTP and WebSocket connections require a valid token. The owner `sk_` credential is accepted only through the owner-local Unix socket. The server generates an Ed25519 identity key pair on first run; the fingerprint is embedded in the pairing invite so the iOS app can verify it's connecting to the right server.
+A paired phone, or any other authenticated device principal, is the owner. It can read host files, run tools, and drive sessions. Workspace `realpath` confinement keeps paths inside the selected workspace; it is not a secret-file ACL.
 
-Rotate the token with `oppi token rotate`.
+Pairing enrolls a per-device P-256 public key and returns a short-lived HTTPS/WSS access token (`at_`, about ten minutes, stored hashed). Ordinary network HTTP and WebSocket calls send that bearer. `/health` is unauthenticated. Pair, migrate, challenge, and refresh are TLS bootstrap routes and do not use a live `at_`.
+
+The owner `sk_` credential is accepted only on the owner-local Unix socket. The network listener rejects it.
+
+The server generates an Ed25519 identity key pair on first run. The fingerprint is embedded in the pairing invite so the app can verify it is connecting to the right server.
+
+Authenticated devices can list and revoke devices. Emergency owner rotation (`oppi token rotate`) stays on the Unix socket and revokes every device.
+
+Leftover `dt_` tokens migrate over HTTPS (`POST /auth/migrate`). Ordinary HTTP/WS reject them.
 
 ## Transport
 
-Configure TLS for network HTTP/WebSocket transport as self-signed (with certificate pinning in the iOS app), Tailscale (Let's Encrypt via `tailscale cert`), Cloudflare, manual cert, or disabled. Self-signed mode auto-generates certificate material and embeds the CA fingerprint in the pairing payload.
+Configure TLS for network HTTP/WebSocket transport as self-signed (with leaf-certificate pinning in the iOS app and Share extension), Tailscale (Let's Encrypt via `tailscale cert`), manual cert, or disabled. `auto` and `cloudflare` modes are rejected. Self-signed mode auto-generates certificate material and embeds the **leaf** certificate fingerprint in the pairing payload. A configured pin is authoritative. Tailscale hosts without a pin use the system CA.
 
 Remote Apple/server routing uses authenticated HTTPS/WSS, including HTTPS through Tailscale.
 
@@ -22,7 +30,7 @@ A plain network HTTP listener can be used for health-only development, but pairi
 
 ## Privacy
 
-Oppi has no hosted account service or external analytics. Session data stays on the paired server and in its configured workspaces, except for content sent to model, speech, voice, or network services that the server operator configures. Network metadata is visible to the network provider and any directly used infrastructure; tokens and private keys are not included in telemetry or logs.
+Oppi has no hosted account service or external analytics. Session data stays on the paired server and in its configured workspaces, except for content sent to model, speech, voice, or network services that the server operator configures. Network metadata is visible to the network provider and any directly used infrastructure. Tokens, pairing invites, and private keys are redacted from telemetry and ordinary logs; treat captured server logs and first-run pair output as sensitive while an invite is valid.
 
 Diagnostics upload only to the paired Oppi server. Public builds require **Settings → Privacy & Security → Send Diagnostics to Server** before they upload MetricKit, resource, or client-log diagnostics. Internal/debug builds upload diagnostics to the configured server automatically.
 

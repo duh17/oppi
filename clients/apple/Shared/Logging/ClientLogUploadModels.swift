@@ -54,6 +54,8 @@ enum ClientLogRedactor {
     private static let valuePatterns: [(pattern: String, replacement: String, caseInsensitive: Bool)] = [
         (#"Bearer\s+[A-Za-z0-9\-._~+/]+=*"#, "Bearer [REDACTED]", true),
         (#"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"#, "[REDACTED_PRIVATE_KEY]", false),
+        (#"\b(?:sk|pt|dt|at)_[A-Za-z0-9_-]{8,}\b"#, redacted, false),
+        (#"\boppi://connect\?[^\s\"'<>\\]+"#, "oppi://connect?[REDACTED]", true),
         (#"\bsk_(?:live|test|proj)-[A-Za-z0-9]{8,}\b"#, redacted, false),
         (#"\bgh[opusr]_[A-Za-z0-9]{20,}\b"#, redacted, false),
         (#"\bgithub_pat_[A-Za-z0-9_]{20,}\b"#, redacted, false),
@@ -76,6 +78,8 @@ enum ClientLogRedactor {
         "clientsecret",
         "accesstoken",
         "authtoken",
+        "nonce",
+        "signature",
     ]
 
     static func redactedText(_ value: String, maxLength: Int = 2_048) -> String {
@@ -108,7 +112,7 @@ enum ClientLogRedactor {
             .lowercased()
         guard !normalized.isEmpty else { return false }
 
-        if normalized == "auth" || normalized == "token" {
+        if normalized == "auth" || normalized == "token" || normalized == "device" || normalized == "deviceid" {
             return true
         }
         if normalized.hasSuffix("token") && normalized != "tokens" {

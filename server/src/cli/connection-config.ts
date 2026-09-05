@@ -32,6 +32,8 @@ export interface CliConfigCommandStorage extends CliConfigStorage {
   getDefaultConfig(): ServerConfig;
   /** Validate a config file at an explicit path, defaulting to the storage config path. */
   validateConfigFile(target?: string): ConfigValidationResult;
+  /** Locked read/merge/write against the latest disk snapshot. */
+  mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig;
 }
 
 export class FileCliConnectionConfig implements CliConnectionConfig {
@@ -107,6 +109,10 @@ export class FileCliConfigStorage implements CliConfigCommandStorage {
 
   updateConfig(updates: Partial<ServerConfig>): void {
     this.configStore.updateConfig(updates);
+  }
+
+  mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig {
+    return this.configStore.mutate(mutator);
   }
 
   isPaired(): boolean {

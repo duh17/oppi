@@ -271,7 +271,7 @@ Use workspace/session file routes for current project files, PDFs, reports, and 
 - a file addressed relative to the session workspace or worktree
 - an exact external path recorded in that session's changed-file metadata or tool arguments
 
-Session raw-file routes do not apply the workspace browser's sensitive-name filter. They require owner authentication and session ownership, and external paths must be capabilities already present in that session's trace or changed-file metadata. They do not accept arbitrary unreported host paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}` with single-range byte responses.
+Session raw-file routes require owner authentication and session ownership, and external paths must be capabilities already present in that session's trace or changed-file metadata. They do not accept arbitrary unreported host paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}` with single-range byte responses.
 
 Use stored tool attachments for media associated with a message or tool result:
 
@@ -331,7 +331,7 @@ Clients render attachments from metadata and authenticated byte sources.
 - Route remote URLs through the existing tap-to-load remote image policy.
 - Keep attachment endpoints authenticated and session-scoped.
 - Build timeline attachment and session-file providers even when API-client or workspace metadata is still loading; resolve that context when the fetch starts so cached rows can recover.
-- Keep workspace browsing's sensitive-path policy separate from authenticated session-reported file previews.
+- Keep workspace `realpath` confinement separate from authenticated session-reported file previews. Fuzzy `/paths` is not a secret-file ACL.
 - Avoid logging full file paths or attachment text when it can contain private data.
 - Treat stored attachments as durable session history until the session or attachment is deleted.
 

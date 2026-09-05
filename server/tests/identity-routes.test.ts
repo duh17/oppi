@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { Storage } from "../src/storage.js";
+import { makeRawRequest, makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 describe("identity module", () => {
   it("handles GET /me in isolation", async () => {
@@ -173,6 +178,137 @@ describe("identity module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "devicePublicKey required" });
   });
 
+  it("issues a challenge without a live access token", async () => {
+    const issueChallenge = vi.fn(() => ({
+      nonce: "n1",
+      audience: "oppi:refresh:v1",
+      expiresAt: 123,
+    }));
+    const ctx = { storage: { issueChallenge } } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "POST",
+      path: "/auth/challenge",
+      url: new URL("https://paired.example/auth/challenge"),
+      req: makeRequest({ deviceId: "dev_known" }) as never,
+      res: res as never,
+    });
+    expect(handled).toBe(true);
+    expect(issueChallenge).toHaveBeenCalledWith("dev_known");
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      nonce: "n1",
+      audience: "oppi:refresh:v1",
+      expiresAt: 123,
+    });
+  });
+
+  it("returns 429 when a source bursts unauthenticated challenges", async () => {
+    const issueChallenge = vi.fn(() => ({
+      nonce: "n",
+      audience: "oppi:refresh:v1",
+      expiresAt: 1,
+    }));
+    const ctx = { storage: { issueChallenge } } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    let last = makeResponse();
+    for (let i = 0; i < 9; i += 1) {
+      last = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/auth/challenge",
+        url: new URL("https://paired.example/auth/challenge"),
+        req: makeRequest({ deviceId: "dev_known" }) as never,
+        res: last as never,
+      });
+    }
+    expect(last.statusCode).toBe(429);
+    expect(issueChallenge.mock.calls.length).toBeLessThan(9);
+  });
+
+  it("rejects oversized bootstrap bodies before challenge issuance", async () => {
+    const issueChallenge = vi.fn();
+    const ctx = { storage: { issueChallenge } } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "POST",
+      path: "/auth/challenge",
+      url: new URL("https://paired.example/auth/challenge"),
+      req: makeRawRequest(
+        JSON.stringify({ deviceId: "dev_known", padding: "x".repeat(20_000) }),
+      ) as never,
+      res: res as never,
+    });
+    expect(handled).toBe(true);
+    expect(issueChallenge).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(413);
+  });
+
+  it("allows authenticated devices to list and revoke devices", async () => {
+    const listDevices = vi.fn(() => [
+      {
+        id: "dev_a",
+        name: "Phone",
+        scope: "device",
+        createdAt: 1,
+        lastUsedAt: 2,
+        publicKey: { kty: "EC" },
+      },
+    ]);
+    const revokeDevice = vi.fn(() => true);
+    const ctx = {
+      storage: { listDevices, revokeDevice },
+    } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+
+    const listRes = makeResponse();
+    await dispatch({
+      method: "GET",
+      path: "/auth/devices",
+      url: new URL("https://paired.example/auth/devices"),
+      req: makeRequest() as never,
+      res: listRes as never,
+    });
+    expect(listRes.statusCode).toBe(200);
+    expect(JSON.parse(listRes.body).devices[0].id).toBe("dev_a");
+
+    const revokeRes = makeResponse();
+    await dispatch({
+      method: "DELETE",
+      path: "/auth/devices/dev_a",
+      url: new URL("https://paired.example/auth/devices/dev_a"),
+      req: makeRequest() as never,
+      res: revokeRes as never,
+    });
+    expect(revokeDevice).toHaveBeenCalledWith("dev_a");
+    expect(revokeRes.statusCode).toBe(200);
+  });
+
+  it("keeps rotate, finalize, and compat on the local socket", async () => {
+    const rotateToken = vi.fn();
+    const setMigrationFinalized = vi.fn();
+    const ctx = {
+      storage: { rotateToken, setMigrationFinalized },
+    } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+
+    for (const path of ["/auth/rotate", "/auth/finalize", "/auth/compat"]) {
+      const res = makeResponse();
+      await dispatch({
+        method: "POST",
+        path,
+        url: new URL(`https://paired.example${path}`),
+        req: makeRequest() as never,
+        res: res as never,
+      });
+      expect(res.statusCode).toBe(403);
+    }
+    expect(rotateToken).not.toHaveBeenCalled();
+    expect(setMigrationFinalized).not.toHaveBeenCalled();
+  });
+
   it("includes uploadProtocol in GET /server/info", async () => {
     const ctx = {
       storage: {
@@ -334,5 +470,40 @@ describe("identity module", () => {
     });
 
     expect(handled).toBe(false);
+  });
+});
+
+describe("identity migrate persistence", () => {
+  let dataDir: string;
+  let storage: Storage;
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("does not write config for invalid POST /auth/migrate", async () => {
+    dataDir = mkdtempSync(join(tmpdir(), "oppi-identity-migrate-"));
+    storage = new Storage(dataDir);
+    storage.ensurePaired();
+    const configPath = storage.getConfigPath();
+    const before = statSync(configPath);
+    const fingerprint = `${before.ino}:${before.mtimeNs}:${before.size}`;
+
+    const dispatch = createIdentityRoutes({ storage } as unknown as RouteContext, createRouteHelpers());
+    const req = makeRequest({ devicePublicKey: {} });
+    req.headers = { authorization: "Bearer not-a-credential" };
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "POST",
+      path: "/auth/migrate",
+      url: new URL("https://paired.example/auth/migrate"),
+      req: req as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(401);
+    const after = statSync(configPath);
+    expect(`${after.ino}:${after.mtimeNs}:${after.size}`).toBe(fingerprint);
   });
 });

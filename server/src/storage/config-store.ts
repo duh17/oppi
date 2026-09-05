@@ -1,12 +1,16 @@
 import {
   closeSync,
+  constants,
   existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   rmSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -760,6 +764,68 @@ function normalizeConfig(
   return { valid: errors.length === 0, errors, warnings, config, changed };
 }
 
+function isLivePid(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function configLockPidPath(lockDir: string): string {
+  return join(lockDir, "pid");
+}
+
+function configLockHeldByLiveProcess(lockDir: string): boolean {
+  try {
+    if (!existsSync(lockDir)) return false;
+    const pidPath = configLockPidPath(lockDir);
+    if (!existsSync(pidPath)) {
+      // mkdir succeeded but pid is not written yet. Do not rmdir a fresh empty dir.
+      return Date.now() - statSync(lockDir).mtimeMs <= 1_000;
+    }
+    const parsed = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
+    if (Number.isInteger(parsed) && parsed > 0) return isLivePid(parsed);
+    return Date.now() - statSync(lockDir).mtimeMs <= 1_000;
+  } catch {
+    return false;
+  }
+}
+
+function staleConfigLockError(lockDir: string, pid: number): Error {
+  return new Error(
+    `Stale config lock: ${lockDir} (pid ${pid} is dead). Remove that directory and retry.`,
+  );
+}
+
+/** Recover only an empty lock dir. Never unlink a pid file we did not write. */
+function tryRecoverEmptyConfigLock(lockDir: string): void {
+  if (existsSync(configLockPidPath(lockDir))) return;
+  try {
+    rmdirSync(lockDir);
+  } catch {
+    // ENOTEMPTY if a replacement holder already wrote a pid file.
+  }
+}
+
+function releaseConfigLock(lockDir: string, ownerPid: number): void {
+  const pidPath = configLockPidPath(lockDir);
+  try {
+    const parsed = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
+    if (parsed !== ownerPid) return;
+    unlinkSync(pidPath);
+  } catch {
+    return;
+  }
+  try {
+    rmdirSync(lockDir);
+  } catch {
+    // Another process is in the directory.
+  }
+}
+
 export class ConfigStore {
   private readonly dataDir: string;
   private readonly configPath: string;
@@ -835,33 +901,11 @@ export class ConfigStore {
   }
 
   private loadConfig(): ServerConfig {
-    const defaults = ConfigStore.getDefaultConfig(this.dataDir);
-
     if (existsSync(this.configPath)) {
+      let normalized: ReturnType<typeof normalizeConfig>;
       try {
         const loadedRaw = JSON.parse(readFileSync(this.configPath, "utf-8")) as unknown;
-        const normalized = normalizeConfig(loadedRaw, this.dataDir, false);
-
-        for (const err of normalized.errors) {
-          log.warn("config_store.field.invalid", {
-            issue: err,
-            action: "using_default_for_invalid_field",
-          });
-        }
-        for (const warning of normalized.warnings) {
-          log.warn("config_store.validation.warning", {
-            warning,
-          });
-        }
-
-        // Safe rewrite only when the normalized config is fully valid.
-        // This backfills new defaults (v2 security schema) without
-        // accidentally masking invalid user-provided values.
-        if (normalized.changed && normalized.errors.length === 0) {
-          this.saveConfig(normalized.config);
-        }
-
-        return normalized.config;
+        normalized = normalizeConfig(loadedRaw, this.dataDir, false);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         log.warn("config_store.config_parse.failed", {
@@ -870,10 +914,71 @@ export class ConfigStore {
         });
         throw new Error(`${this.configPath}: invalid JSON (${message})`, { cause: err });
       }
+
+      for (const err of normalized.errors) {
+        log.warn("config_store.field.invalid", {
+          issue: err,
+          action: "using_default_for_invalid_field",
+        });
+      }
+      for (const warning of normalized.warnings) {
+        log.warn("config_store.validation.warning", {
+          warning,
+        });
+      }
+
+      // Safe rewrite only when the normalized config is fully valid.
+      // This backfills new defaults (v2 security schema) without
+      // accidentally masking invalid user-provided values.
+      if (normalized.changed && normalized.errors.length === 0) {
+        return this.rewriteLoadedConfig(normalized.config);
+      }
+
+      return normalized.config;
     }
 
-    this.saveConfig(defaults);
-    return defaults;
+    return this.persistAuthoritativeConfig({ createIfMissing: true });
+  }
+
+  /**
+   * Persist a constructor snapshot that needs a disk rewrite. Tests wrap this
+   * to interleave a live rotation after the first read and before the locked
+   * re-read; the passed snapshot is never written.
+   */
+  private rewriteLoadedConfig(_stale: ServerConfig): ServerConfig {
+    return this.persistAuthoritativeConfig({ createIfMissing: false });
+  }
+
+  private persistAuthoritativeConfig(options: { createIfMissing: boolean }): ServerConfig {
+    return this.withLock(() => {
+      if (existsSync(this.configPath)) {
+        const normalized = this.readAuthoritativeConfig();
+        if (normalized.changed && normalized.errors.length === 0) {
+          this.saveConfig(normalized.config);
+        }
+        this.config = normalized.config;
+        return this.config;
+      }
+      if (!options.createIfMissing) {
+        throw new Error(`${this.configPath}: missing during locked rewrite`);
+      }
+      const defaults = ConfigStore.getDefaultConfig(this.dataDir);
+      this.saveConfig(defaults);
+      this.config = defaults;
+      return defaults;
+    });
+  }
+
+  private readAuthoritativeConfig(): ReturnType<typeof normalizeConfig> {
+    try {
+      const loadedRaw = JSON.parse(readFileSync(this.configPath, "utf-8")) as unknown;
+      return normalizeConfig(loadedRaw, this.dataDir, false);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`${this.configPath}: failed to read authoritative config (${message})`, {
+        cause: err,
+      });
+    }
   }
 
   private saveConfig(config: ServerConfig): void {
@@ -916,7 +1021,32 @@ export class ConfigStore {
     return this.workspacesDir;
   }
 
+  /**
+   * Locked read/merge/write against the latest disk snapshot. Callers that
+   * compute arrays from current auth state must use `mutate` so they do not
+   * write a stale in-memory copy over a concurrent rotation.
+   */
+  mutate(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig {
+    return this.withLock(() => {
+      this.reloadFromDisk();
+      const updates = mutator(this.config);
+      if (Object.keys(updates).length === 0) {
+        return this.config;
+      }
+      return this.commitUpdates(updates);
+    });
+  }
+
   updateConfig(updates: Partial<ServerConfig>): void {
+    this.mutate(() => updates);
+  }
+
+  private reloadFromDisk(): void {
+    if (!existsSync(this.configPath)) return;
+    this.config = this.readAuthoritativeConfig().config;
+  }
+
+  private commitUpdates(updates: Partial<ServerConfig>): ServerConfig {
     const merged: ServerConfig = {
       ...this.config,
       ...updates,
@@ -928,5 +1058,66 @@ export class ConfigStore {
     }
     this.saveConfig(normalized.config);
     this.config = normalized.config;
+    return this.config;
+  }
+
+  private withLock<T>(fn: () => T): T {
+    const lockDir = `${this.configPath}.lock`;
+    const pidPath = configLockPidPath(lockDir);
+    const deadline = Date.now() + 5_000;
+    let fileDescriptor: number | undefined;
+    for (;;) {
+      try {
+        mkdirSync(lockDir);
+        fileDescriptor = openSync(
+          pidPath,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+          0o600,
+        );
+        writeFileSync(fileDescriptor, `${process.pid}\n`);
+        break;
+      } catch (error) {
+        if (fileDescriptor !== undefined) {
+          try {
+            closeSync(fileDescriptor);
+          } catch {
+            // already closed
+          }
+          fileDescriptor = undefined;
+        }
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EEXIST") {
+          if (configLockHeldByLiveProcess(lockDir)) {
+            if (Date.now() > deadline) {
+              throw new Error(`Timed out waiting for config lock: ${lockDir}`, { cause: error });
+            }
+          } else {
+            if (existsSync(pidPath)) {
+              const parsed = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
+              throw staleConfigLockError(lockDir, parsed);
+            }
+            tryRecoverEmptyConfigLock(lockDir);
+          }
+        } else {
+          throw error;
+        }
+        if (Date.now() > deadline + 2_000) {
+          throw new Error(`Timed out waiting for config lock: ${lockDir}`, { cause: error });
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+    }
+    try {
+      return fn();
+    } finally {
+      if (fileDescriptor !== undefined) {
+        try {
+          closeSync(fileDescriptor);
+        } catch {
+          // already closed
+        }
+      }
+      releaseConfigLock(lockDir, process.pid);
+    }
   }
 }

@@ -110,6 +110,7 @@ final class ServerStore {
     @discardableResult
     func persistDeviceCredentialRefresh(
         id: String,
+        expectedDeviceId: String,
         result: DeviceAuthRefreshResult
     ) throws -> DeviceCredential {
         guard servers.contains(where: { $0.id == id }) else {
@@ -117,6 +118,7 @@ final class ServerStore {
         }
         let merged = try KeychainDeviceCredentialMerger.mergeRefresh(
             serverId: id,
+            expectedDeviceId: expectedDeviceId,
             accessToken: result.accessToken,
             expiresAt: Int64(result.expiresAt),
             refreshChallenge: result.refreshChallenge

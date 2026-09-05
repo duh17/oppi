@@ -15,6 +15,7 @@ const SENSITIVE_KEY =
 
 const SENSITIVE_EXACT_NORMALIZED_KEYS = new Set([
   "authdevicetokens",
+  "device",
   "deviceid",
   "pushdevicetokens",
 ]);
@@ -101,6 +102,10 @@ const SECRET_VALUE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   {
     pattern: /([?&](?:token|api[_-]?key|access[_-]?token|auth)=)[^&\s]+/gi,
     replacement: `$1${REDACTED}`,
+  },
+  {
+    pattern: /\boppi:\/\/connect\?[^\s"'<>\\]+/gi,
+    replacement: "oppi://connect?[REDACTED]",
   },
 ];
 

@@ -7,7 +7,6 @@ import {
   decodeWorkspaceRoutePath,
   getContentType,
   isBrowseMediaContentType,
-  isSensitivePath,
   isStreamingMediaContentType,
   MAX_BROWSE_IMAGE_FILE_SIZE,
   MAX_BROWSE_TEXT_FILE_SIZE,
@@ -294,7 +293,6 @@ async function walkDirectoryForSearch(root: string): Promise<SearchWalkResult> {
 
       if (dirent.name === ".DS_Store") continue;
       const path = relative(root, join(dir, dirent.name)).replaceAll("\\", "/");
-      if (isSensitivePath(path)) continue;
 
       if (paths.length >= MAX_INDEX_PATHS) {
         pathLimitExceeded = true;
