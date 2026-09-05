@@ -473,6 +473,67 @@ struct ToolTimelineRowViewportPolicyTests {
         #expect(heightAfterSmall == ToolTimelineRowContentView.streamingViewportHeight)
     }
 
+    @Test func remountedCompletedMarkdownSkipsStreamingFirstFit() throws {
+        let cases: [(prefix: String, maxHeight: CGFloat)] = [
+            ("read", ToolTimelineRowContentView.maxOutputViewportHeight),
+            ("x_read", ToolRowViewportPolicy.maxExtensionMarkdownViewportHeight),
+        ]
+        for item in cases {
+            let cell = UICollectionViewCell(
+                frame: CGRect(x: 0, y: 0, width: 360, height: 651)
+            )
+            let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+                expandedContent: .markdown(text: "# Notes\n\nBody"),
+                toolNamePrefix: item.prefix,
+                isExpanded: true,
+                isDone: true
+            ))
+            cell.contentView.addSubview(view)
+            view.layoutSubviews()
+            let viewportConstraint = try #require(
+                privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+            )
+            #expect(
+                viewportConstraint.constant != ToolTimelineRowContentView.streamingViewportHeight,
+                "Remounted \(item.prefix) must not first-fit at the streaming viewport; got \(viewportConstraint.constant)"
+            )
+            #expect(
+                viewportConstraint.constant > ToolTimelineRowContentView.streamingViewportHeight,
+                "Remounted \(item.prefix) in a tall cell should jump toward settled height; got \(viewportConstraint.constant)"
+            )
+            #expect(
+                viewportConstraint.constant <= item.maxHeight,
+                "Remounted \(item.prefix) must stay within max height \(item.maxHeight); got \(viewportConstraint.constant)"
+            )
+        }
+    }
+
+    @Test func expandingCompletedMarkdownFirstFitsUntilWidthSettles() throws {
+        let collapsed = makeTimelineToolConfiguration(
+            expandedContent: nil,
+            toolNamePrefix: "read",
+            isExpanded: false,
+            isDone: true
+        )
+        let expanded = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: "# Notes\n\nBody"),
+            toolNamePrefix: "read",
+            isExpanded: true,
+            isDone: true
+        )
+
+        let view = ToolTimelineRowContentView(configuration: collapsed)
+        view.configuration = expanded
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        #expect(
+            viewportConstraint.constant == ToolTimelineRowContentView.streamingViewportHeight,
+            "Tap expand should first-fit at the streaming viewport before width settles; got \(viewportConstraint.constant)"
+        )
+    }
+
     private func syntheticSwiftSource(lineCount: Int) -> String {
         (0..<lineCount)
             .map { "func example\($0)() { print(\"line \($0)\") }" }

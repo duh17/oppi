@@ -501,8 +501,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                     geometry: geometry
                 )
                 let hasSettledWidth = bounds.width > 10 && expandedContainer.bounds.width > 10
-                let targetHeight = hasSettledWidth ? maxHeight : Self.streamingViewportHeight
-                setHeight(min(availableHeight, max(mode.minHeight, targetHeight)))
+                // Tap expand first-fits at 200pt while width is unset. Scroll-back
+                // remounts land in a cell that already has the expanded height, so
+                // skip that first-fit or the 200→max grow animates again.
+                let cellIsAlreadyExpanded = enclosingCollectionCellHeight()
+                    > Self.streamingViewportHeight + 80
+                let targetHeight = hasSettledWidth || cellIsAlreadyExpanded
+                    ? maxHeight
+                    : Self.streamingViewportHeight
+                let resolved = min(availableHeight, max(mode.minHeight, targetHeight))
+                if cellIsAlreadyExpanded {
+                    UIView.performWithoutAnimation { setHeight(resolved) }
+                } else {
+                    setHeight(resolved)
+                }
             }
 
         case .naturalReadMedia(let minHeight, let maxHeight):
@@ -701,6 +713,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             safeAreaInsets: safeInsets,
             cellWidth: cellWidth
         )
+    }
+
+    private func enclosingCollectionCellHeight() -> CGFloat {
+        var view: UIView? = superview
+        while let current = view {
+            if current is UICollectionViewCell {
+                return current.bounds.height
+            }
+            view = current.superview
+        }
+        return 0
     }
 
     private static func sanitizedFittingSize(_ size: CGSize, fallbackWidth: CGFloat) -> CGSize {
