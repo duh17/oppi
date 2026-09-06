@@ -1209,6 +1209,43 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(addedChanged.cgColor.alpha > addedUnchanged.cgColor.alpha + 0.1)
     }
 
+    @Test func diffBodyHeaderOmitsRedundantChangeCounts() async throws {
+        let lines = [
+            DiffLine(kind: .removed, text: "old one", oldLineNumber: 1, newLineNumber: nil),
+            DiffLine(kind: .removed, text: "old two", oldLineNumber: 2, newLineNumber: nil),
+        ]
+        let body = NativeFullScreenDiffBody(
+            document: ToolDiffDocument(
+                lines: lines,
+                filePath: "/tmp/worktrees/foo/OppiMacApp.swift",
+                copyText: DiffEngine.formatUnified(lines)
+            ),
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let host = attachToHost(body)
+        defer { host.removeFromSuperview() }
+        let textView = try #require(timelineAllTextViews(in: body).first)
+
+        let richDiffReady = await waitForMainActorCondition {
+            let text = textView.attributedText?.string ?? ""
+            return text.contains("-2") && text.contains("lines")
+        }
+        #expect(richDiffReady)
+
+        let rendered = try #require(textView.attributedText?.string)
+        #expect(rendered.contains("-2"))
+        #expect(rendered.contains("lines"))
+
+        let labels = timelineAllViews(in: body).compactMap { $0 as? UILabel }
+        #expect(labels.contains { $0.text == "OppiMacApp.swift" })
+        #expect(labels.allSatisfy { label in
+            guard let text = label.text else { return true }
+            return !isFullScreenDiffHeaderChangeCount(text)
+        })
+    }
+
     @Test func diffBodyUsesSourceLineAttributesForAddedAndRemovedRows() async throws {
         var captured: [ReviewCommentSelectionRequest] = []
         let lines = [
@@ -2059,6 +2096,20 @@ struct FullScreenReviewCommentSelectionTests {
             )
         ))
         return view
+    }
+
+    private func isFullScreenDiffHeaderChangeCount(_ text: String) -> Bool {
+        let parts = text.split(whereSeparator: \.isWhitespace)
+        guard parts.count == 2 else { return false }
+        return isFullScreenDiffAddedCount(parts[0]) && isFullScreenDiffRemovedCount(parts[1])
+    }
+
+    private func isFullScreenDiffAddedCount(_ token: Substring) -> Bool {
+        token == "0" || (token.first == "+" && token.count > 1 && token.dropFirst().allSatisfy(\.isNumber))
+    }
+
+    private func isFullScreenDiffRemovedCount(_ token: Substring) -> Bool {
+        token == "0" || (token.first == "-" && token.count > 1 && token.dropFirst().allSatisfy(\.isNumber))
     }
 
     private func attachToHost(_ body: UIView) -> UIView {

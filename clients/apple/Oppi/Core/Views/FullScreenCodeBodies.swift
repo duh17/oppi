@@ -674,7 +674,6 @@ final class NativeFullScreenDiffBody: UIView {
     private let headerView = UIView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
-    private let statsLabel = UILabel()
     private let scrollView = UIScrollView()
     private let diffTextView = FullScreenReviewCommentTextView()
     private let progressView = UIActivityIndicatorView(style: .medium)
@@ -689,8 +688,6 @@ final class NativeFullScreenDiffBody: UIView {
     private struct BuiltDiff: @unchecked Sendable {
         let text: NSAttributedString
         let width: CGFloat
-        let added: Int
-        let removed: Int
     }
 
     init(
@@ -731,24 +728,12 @@ final class NativeFullScreenDiffBody: UIView {
         subtitleLabel.text = relativePath ?? String(localized: "Review changes")
         subtitleLabel.numberOfLines = 1
 
-        statsLabel.translatesAutoresizingMaskIntoConstraints = false
-        statsLabel.font = AppFont.systemFeedback
-        statsLabel.textColor = UIColor(palette.fgDim)
-        statsLabel.textAlignment = .right
-        statsLabel.text = String(localized: "Loading…")
-
         let textStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
         textStack.translatesAutoresizingMaskIntoConstraints = false
         textStack.axis = .vertical
         textStack.spacing = 2
         textStack.alignment = .fill
-
-        let headerStack = UIStackView(arrangedSubviews: [textStack, statsLabel])
-        headerStack.translatesAutoresizingMaskIntoConstraints = false
-        headerStack.axis = .horizontal
-        headerStack.alignment = .center
-        headerStack.spacing = 12
-        headerView.addSubview(headerStack)
+        headerView.addSubview(textStack)
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
@@ -788,10 +773,10 @@ final class NativeFullScreenDiffBody: UIView {
             headerView.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerView.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor),
 
-            headerStack.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
-            headerStack.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
-            headerStack.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 8),
-            headerStack.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -10),
+            textStack.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            textStack.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            textStack.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 8),
+            textStack.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -10),
 
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -847,17 +832,9 @@ final class NativeFullScreenDiffBody: UIView {
             options: [.usesLineFragmentOrigin],
             context: nil
         )
-        let addedCount = lines.reduce(into: 0) { total, line in
-            if line.kind == .added { total += 1 }
-        }
-        let removedCount = lines.reduce(into: 0) { total, line in
-            if line.kind == .removed { total += 1 }
-        }
         return BuiltDiff(
             text: build.attributedText,
-            width: ceil(measured.width) + 24,
-            added: addedCount,
-            removed: removedCount
+            width: ceil(measured.width) + 24
         )
     }
 
@@ -867,7 +844,6 @@ final class NativeFullScreenDiffBody: UIView {
         diffTextView.setAttributedTextPreservingSelection(styledText)
         unwrappedContentWidth = max(result.width, measuredWidth(of: styledText))
         applyWrapMode()
-        statsLabel.text = "\(result.added > 0 ? "+\(result.added)" : "0")  \(result.removed > 0 ? "-\(result.removed)" : "0")"
         progressView.stopAnimating()
         progressView.removeFromSuperview()
         setNeedsLayout()
