@@ -44,13 +44,37 @@ struct SessionInboxComposeChromeTests {
         )
     }
 
-    @Test func inboxWiresDictationShortcutNextToCompose() throws {
+    @Test func allSessionsUsesCompactBarAndWorkspaceKeepsPencil() {
+        #expect(
+            SessionInboxComposeChrome.usesCompactQuickSessionBar(
+                hasSelectedWorkspace: false
+            )
+        )
+        #expect(
+            !SessionInboxComposeChrome.usesCompactQuickSessionBar(
+                hasSelectedWorkspace: true
+            )
+        )
+    }
+
+    @Test func inboxWiresCompactBarInsteadOfComposeButton() throws {
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
+        let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
         let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
-        #expect(inbox.contains("workspace.quickSession.dictate"))
+        #expect(inbox.contains("compactQuickSessionBar"))
+        #expect(inbox.contains("SessionInboxCompactComposeBar"))
         #expect(inbox.contains("pendingQuickSessionStartDictation = true"))
-        #expect(inbox.contains("dictationQuickSessionButton"))
-        #expect(inbox.contains("Dictate Quick Session"))
+        #expect(inbox.contains("usesCompactQuickSessionBar"))
+        #expect(chrome.contains("workspace.quickSession.dictate"))
+        #expect(chrome.contains("workspace.quickSession.start"))
+        #expect(chrome.contains("Dictate Quick Session"))
+        #expect(chrome.contains("Start Quick Session"))
+        #expect(chrome.contains(SessionInboxComposeChrome.compactBarPlaceholder))
+        #expect(!chrome.contains("glassEffect"))
+        #expect(!inbox.contains("sharedBackgroundVisibility"))
+        #expect(!inbox.contains("dictationQuickSessionButton"))
+        #expect(inbox.contains("square.and.pencil"))
+        #expect(inbox.contains("workspace.newSession"))
         #expect(sheet.contains("composerDictationRequestID += 1"))
         #expect(sheet.contains("externalDictationRequestID: composerDictationRequestID"))
         #expect(sheet.contains("afterComposerReady"))
@@ -63,12 +87,18 @@ struct SessionInboxComposeChromeTests {
             .map { inbox[$0.lowerBound...] }
             .map(String.init) ?? ""
         #expect(!pencil.contains("pendingQuickSessionStartDictation"))
+        #expect(pencil.contains("workspace.newSession"))
+        #expect(!pencil.contains("workspace.quickSession.start"))
         let dismiss = try appleSource("Oppi/App/ContentView.swift")
         #expect(dismiss.contains("pendingQuickSessionStartDictation = false"))
         let bar = try appleSource("Oppi/Features/Chat/Composer/ChatInputBar.swift")
         #expect(bar.contains(".task(id: externalDictationRequestID)"))
         #expect(bar.contains("startExternalDictationIfRequested"))
         #expect(bar.contains("VoiceInputOwner.inboxComposer") || bar.contains("owner: .inboxComposer"))
+        let preview = try appleSource("Oppi/App/ScreenshotPreviewView.swift")
+        #expect(preview.contains("SessionInboxCompactComposeBar"))
+        #expect(!preview.contains("sharedBackgroundVisibility"))
+        #expect(!preview.contains("square.and.pencil"))
     }
 }
 

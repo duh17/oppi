@@ -577,19 +577,14 @@ struct SessionInboxView: View {
             ToolbarSpacer(.flexible, placement: .bottomBar)
         }
 
-        if SessionInboxComposeChrome.showsDictationShortcut(
-            voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
-            hasSelectedWorkspace: selectedWorkspace != nil,
-            hasActivePlayback: sessionListHasActivePlayback
-        ) {
-            ToolbarItem(placement: .bottomBar) {
-                dictationQuickSessionButton
-            }
-            ToolbarSpacer(.fixed, placement: .bottomBar)
-        }
-
         ToolbarItem(placement: .bottomBar) {
-            newSessionButton
+            if SessionInboxComposeChrome.usesCompactQuickSessionBar(
+                hasSelectedWorkspace: selectedWorkspace != nil
+            ) {
+                compactQuickSessionBar
+            } else {
+                newSessionButton
+            }
         }
     }
 
@@ -1041,31 +1036,33 @@ struct SessionInboxView: View {
         )
     }
 
-    private var dictationQuickSessionButton: some View {
-        Button {
-            navigation.pendingQuickSessionStartDictation = true
-            navigation.showQuickSession = true
-        } label: {
-            Image(systemName: "mic")
-        }
-        .foregroundStyle(.themeFg)
-        .accessibilityLabel("Dictate Quick Session")
-        .accessibilityIdentifier("workspace.quickSession.dictate")
+    private var compactQuickSessionBar: some View {
+        SessionInboxCompactComposeBar(
+            showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
+                voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
+                hasSelectedWorkspace: selectedWorkspace != nil,
+                hasActivePlayback: sessionListHasActivePlayback
+            ),
+            onStart: {
+                navigation.showQuickSession = true
+            },
+            onDictate: {
+                navigation.pendingQuickSessionStartDictation = true
+                navigation.showQuickSession = true
+            }
+        )
     }
 
     private var newSessionButton: some View {
         Button {
-            if let selectedWorkspace {
-                Task { await createSession(in: selectedWorkspace) }
-            } else {
-                navigation.showQuickSession = true
-            }
+            guard let selectedWorkspace else { return }
+            Task { await createSession(in: selectedWorkspace) }
         } label: {
             Image(systemName: "square.and.pencil")
         }
         .foregroundStyle(.themeFg)
-        .accessibilityLabel(selectedWorkspace == nil ? "Start Quick Session" : "New Session")
-        .accessibilityIdentifier(selectedWorkspace == nil ? "workspace.quickSession.start" : "workspace.newSession")
+        .accessibilityLabel("New Session")
+        .accessibilityIdentifier("workspace.newSession")
         .disabled(isCreating)
         .opacity(isCreating ? 0.55 : 1)
     }

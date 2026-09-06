@@ -3984,21 +3984,11 @@ private struct InboxProviderSetupPreview: View {
                 DefaultToolbarItem(kind: .search, placement: .bottomBar)
                 ToolbarSpacer(.flexible, placement: .bottomBar)
                 ToolbarItem(placement: .bottomBar) {
-                    Button {}
-                    label: {
-                        Image(systemName: "mic")
-                    }
-                    .accessibilityLabel("Dictate Quick Session")
-                    .accessibilityIdentifier("workspace.quickSession.dictate")
-                }
-                ToolbarSpacer(.fixed, placement: .bottomBar)
-                ToolbarItem(placement: .bottomBar) {
-                    Button {}
-                    label: {
-                        Image(systemName: "square.and.pencil")
-                    }
-                    .accessibilityLabel("Start Quick Session")
-                    .accessibilityIdentifier("workspace.quickSession.start")
+                    SessionInboxCompactComposeBar(
+                        showsDictation: true,
+                        onStart: {},
+                        onDictate: {}
+                    )
                 }
             }
         }
