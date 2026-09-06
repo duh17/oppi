@@ -1,3 +1,4 @@
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -2017,6 +2018,154 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(!textView.shouldPresentFallbackEditMenuForTesting())
     }
 
+    @Test func reviewCommentStashButtonStaysHiddenWhenCountIsZero() throws {
+        let fixture = try makeStashFixture(stagedCount: 0)
+        #expect(fixture.controller.floatingStashButtonForTesting == nil)
+        #expect(
+            !hasVisibleView(
+                identifier: "fullscreen-code.review-comments.stash",
+                in: fixture.controller.view
+            )
+        )
+    }
+
+    @Test func reviewCommentStashButtonAppearsAtBottomLeadingWithCount() throws {
+        let fixture = try makeStashFixture(stagedCount: 1)
+        let button = try #require(fixture.controller.floatingStashButtonForTesting)
+        let buttonFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
+
+        #expect(button.accessibilityIdentifier == "fullscreen-code.review-comments.stash")
+        #expect(button.accessibilityLabel == "Staged Comments")
+        #expect(button.accessibilityValue == "1 staged comment")
+        #expect(buttonFrame.midX < fixture.controller.view.bounds.midX)
+        #expect(abs(buttonFrame.width - FullScreenFloatingControlChrome.controlSize) <= 0.5)
+        #expect(abs(buttonFrame.height - FullScreenFloatingControlChrome.controlSize) <= 0.5)
+        #expect(
+            abs(
+                fixture.controller.view.bounds.maxY
+                    - buttonFrame.maxY
+                    - FullScreenFloatingControlChrome.bottomPadding
+            ) <= 0.5
+        )
+        #expect(
+            abs(
+                buttonFrame.minX
+                    - fixture.controller.view.safeAreaLayoutGuide.layoutFrame.minX
+                    - FullScreenFloatingControlChrome.leadingPadding
+            ) <= 0.5
+            || abs(buttonFrame.minX - FullScreenFloatingControlChrome.leadingPadding) <= 0.5
+        )
+    }
+
+    @Test func reviewCommentStashButtonKeepsViewingOptionsAtBottomTrailing() throws {
+        let fixture = try makeStashFixture(stagedCount: 2)
+        let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
+        let viewingOptionsFrame = try #require(fixture.controller.floatingViewingOptionsButtonFrameForTesting)
+        let button = try #require(fixture.controller.floatingStashButtonForTesting)
+
+        #expect(button.accessibilityValue == "2 staged comments")
+        #expect(stashFrame.midX < fixture.controller.view.bounds.midX)
+        #expect(viewingOptionsFrame.midX > fixture.controller.view.bounds.midX)
+        #expect(stashFrame.maxX < viewingOptionsFrame.minX)
+        #expect(abs(stashFrame.midY - viewingOptionsFrame.midY) <= 1)
+    }
+
+    @Test func reviewCommentStashButtonStacksAboveAnnotateAndLeavesAnnotateInPlace() throws {
+        let fixture = try makeStashFixture(
+            content: .html(content: "<p>hello</p>", filePath: "note.html"),
+            stagedCount: 1
+        )
+        let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
+        let annotateFrame = try #require(fixture.controller.floatingAnnotateButtonFrameForTesting)
+
+        #expect(stashFrame.maxY < annotateFrame.minY)
+        #expect(abs(stashFrame.minX - annotateFrame.minX) <= 0.5)
+        #expect(
+            abs(
+                fixture.controller.view.bounds.maxY
+                    - annotateFrame.maxY
+                    - FullScreenFloatingControlChrome.bottomPadding
+            ) <= 0.5
+        )
+    }
+
+    @Test func reviewCommentStashButtonRevealsAfterInlineSaveAndHidesAfterLastDelete() async throws {
+        let fixture = try makeStashFixture(stagedCount: 0)
+        #expect(fixture.controller.floatingStashButtonForTesting == nil)
+
+        #expect(fixture.saveComment(body: "Please tighten this.") == nil)
+        let appeared = await waitForMainActorCondition {
+            fixture.controller.view.layoutIfNeeded()
+            return fixture.controller.floatingStashButtonForTesting != nil
+        }
+        #expect(appeared)
+        #expect(fixture.controller.floatingStashButtonForTesting?.accessibilityValue == "1 staged comment")
+
+        #expect(fixture.saveComment(body: "And rename this.") == nil)
+        let incremented = await waitForMainActorCondition {
+            fixture.controller.floatingStashButtonForTesting?.accessibilityValue == "2 staged comments"
+        }
+        #expect(incremented)
+
+        let first = try #require(fixture.comments.stagedComments.first)
+        fixture.comments.delete(first)
+        let second = try #require(fixture.comments.stagedComments.first)
+        fixture.comments.delete(second)
+        let hidden = await waitForMainActorCondition {
+            fixture.controller.view.layoutIfNeeded()
+            return fixture.controller.floatingStashButtonForTesting == nil
+        }
+        #expect(hidden)
+    }
+
+    @Test func reviewCommentStashButtonPresentsExistingStashSheet() async throws {
+        let fixture = try makeStashFixture(stagedCount: 1)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = fixture.controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        fixture.controller.view.layoutIfNeeded()
+
+        let button = try #require(fixture.controller.floatingStashButtonForTesting)
+        button.sendActions(for: .touchUpInside)
+
+        let presented = await waitForMainActorCondition {
+            fixture.controller.presentedViewController != nil
+        }
+        #expect(presented)
+        let host = try #require(
+            fixture.controller.presentedViewController as? UIHostingController<ReviewCommentStashSheet>
+        )
+        #expect(host.rootView.comments.count == 1)
+    }
+
+    @Test func reviewCommentStashButtonSkipsPopWhenReduceMotionIsEnabled() throws {
+        FullScreenReviewCommentStashControl.reduceMotionOverrideForTesting = true
+        defer { FullScreenReviewCommentStashControl.reduceMotionOverrideForTesting = nil }
+
+        let fixture = try makeStashFixture(stagedCount: 1)
+        let button = try #require(fixture.controller.floatingStashButtonForTesting)
+        #expect(button.transform == .identity)
+    }
+
+    @Test func retargetingDispatchPreservesReviewCommentStashHandle() throws {
+        let comments = try makeIsolatedReviewComments()
+        let router = ReviewCommentSelectionRouter(
+            dispatch: { _ in },
+            stash: comments
+        )
+        let retargeted = router.retargetingDispatch { _ in }
+        #expect(retargeted.stash === comments)
+    }
+
+    @Test func fullScreenViewerDoesNotInstallTopBarStashActionWhenFloatingStashIsUsed() throws {
+        let fixture = try makeStashFixture(stagedCount: 1)
+        let navigationController = try #require(fixture.controller.children.first as? UINavigationController)
+        let items = navigationController.topViewController?.navigationItem.rightBarButtonItems ?? []
+        #expect(items.contains { $0.accessibilityLabel == "Staged Comments" } == false)
+        #expect(fixture.controller.floatingStashButtonForTesting != nil)
+    }
+
     private func makeDistinguishingToolDiffDocument(
         filePath: String = "Value.swift"
     ) -> ToolDiffDocument {
@@ -2038,6 +2187,101 @@ struct FullScreenReviewCommentSelectionTests {
         defer { FullScreenCopyDestination.testWriteOverride = nil }
         try body()
         return copied
+    }
+
+    @MainActor
+    private struct StashFixture {
+        let controller: FullScreenCodeViewController
+        let comments: ChatReviewCommentsController
+        let localScopeId: String
+        let sessionId: String
+
+        func saveComment(body: String, selectedText: String = "let answer") -> String? {
+            comments.save(
+                body: body,
+                request: ReviewCommentSelectionRequest(
+                    selectedText: selectedText,
+                    source: ReviewCommentSourceContext(
+                        sessionId: sessionId,
+                        surface: .fullScreenCode,
+                        filePath: "Answer.swift"
+                    )
+                ),
+                localScopeId: localScopeId,
+                sessionId: sessionId
+            )
+        }
+    }
+
+    private func makeIsolatedReviewComments() throws -> ChatReviewCommentsController {
+        let suiteName = "FullScreenReviewCommentStashTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: suiteName)
+        )
+        comments.load(localScopeId: "workspace-1", sessionId: "session-1")
+        return comments
+    }
+
+    private func makeStashFixture(
+        content: FullScreenCodeContent = .code(
+            content: "let answer = 42",
+            language: "swift",
+            filePath: "Answer.swift",
+            startLine: 1
+        ),
+        stagedCount: Int
+    ) throws -> StashFixture {
+        FullScreenReviewCommentStashControl.reduceMotionOverrideForTesting = true
+        let comments = try makeIsolatedReviewComments()
+        for index in 0..<stagedCount {
+            #expect(comments.save(
+                body: "Comment \(index + 1).",
+                request: ReviewCommentSelectionRequest(
+                    selectedText: "let answer",
+                    source: ReviewCommentSourceContext(
+                        sessionId: "session-1",
+                        surface: .fullScreenCode,
+                        filePath: "Answer.swift"
+                    )
+                ),
+                localScopeId: "workspace-1",
+                sessionId: "session-1"
+            ) == nil)
+        }
+        let router = ReviewCommentSelectionRouter(
+            dispatch: { _ in },
+            inlineSave: { body, request in
+                comments.save(
+                    body: body,
+                    request: request,
+                    localScopeId: "workspace-1",
+                    sessionId: "session-1"
+                ) == nil
+            },
+            stash: comments
+        )
+        let controller = FullScreenCodeViewController(
+            content: content,
+            reviewCommentSelectionContext: ReviewCommentSelectionContext(
+                dispatcher: router,
+                sessionId: "session-1",
+                sourceLabel: "Full Screen",
+                filePath: "Answer.swift",
+                languageHint: "swift"
+            )
+        )
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        return StashFixture(
+            controller: controller,
+            comments: comments,
+            localScopeId: "workspace-1",
+            sessionId: "session-1"
+        )
     }
 
     private func makeController(

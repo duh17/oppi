@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 @MainActor @Observable
-final class ChatReviewCommentsController {
+final class ChatReviewCommentsController: ReviewCommentStashHandling {
     private let store: ReviewCommentStore
 
     init(store: ReviewCommentStore = ReviewCommentStore()) {

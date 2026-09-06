@@ -89,6 +89,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     private let diagnosticsStack = UIStackView()
     private let readyLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "harness.ready")
     private let inlineComposerLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.reviewComment.inlineComposer")
+    private let stagedCountLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.reviewComment.stagedCount")
     private let diffWrapReadyLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.ready")
     private let diffWrapEnabledLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.wrapEnabled")
     private let diffWrapFragmentCountLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.diffWrap.fragmentCount")
@@ -98,6 +99,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     private let embeddedBackLabel = FullScreenReviewCommentHarnessViewController.makeDiagnosticLabel(id: "diag.embedded.backCount")
     private let selectButton = UIButton(type: .system)
     private var embeddedBackCount = 0
+    private var reviewComments: ChatReviewCommentsController?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -116,15 +118,34 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     func updateDiagnostics() {
         setDiagnostic(readyLabel, value: 1)
         setDiagnostic(inlineComposerLabel, value: hasVisibleView(identifier: "review-comment.inline-composer") ? 1 : 0)
+        setDiagnostic(stagedCountLabel, value: reviewComments?.stagedCount ?? 0)
         setDiagnostic(embeddedBackLabel, value: embeddedBackCount)
         updateDiffWrappingDiagnostics()
     }
 
     private func installCodeController() {
+        let suiteName = "fullscreen-review-comment-harness"
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
+        defaults.removePersistentDomain(forName: suiteName)
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: suiteName)
+        )
+        comments.load(localScopeId: "harness", sessionId: "session-1")
+        reviewComments = comments
         let router = ReviewCommentSelectionRouter(
             dispatchWithPresentation: { _, _ in },
-            inlineSave: { _, _ in true },
-            inlineQuickComments: [.fix]
+            inlineSave: { [weak self] body, request in
+                let didSave = comments.save(
+                    body: body,
+                    request: request,
+                    localScopeId: "harness",
+                    sessionId: "session-1"
+                ) == nil
+                self?.updateDiagnostics()
+                return didSave
+            },
+            inlineQuickComments: [.fix],
+            stash: comments
         )
         let content: FullScreenCodeContent
         let context: ReviewCommentSelectionContext
@@ -181,13 +202,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
                     accessibilityLabel: "Edit in Oppi Session",
                     handler: {}
                 ),
-                FullScreenViewerNavigationAction(
-                    id: "staged-comments",
-                    systemImage: "text.bubble",
-                    accessibilityLabel: "Staged Comments",
-                    accessibilityValue: "0 staged comments",
-                    handler: {}
-                ),
             ]
         )
         addChild(controller)
@@ -216,6 +230,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         selectButton.isHidden = Self.diffWrappingModeEnabled
         selectButton.addAction(UIAction { [weak self] _ in
             self?.selectFixtureRange()
+            self?.selectButton.isHidden = true
         }, for: .touchUpInside)
         view.addSubview(selectButton)
 
@@ -227,6 +242,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         [
             readyLabel,
             inlineComposerLabel,
+            stagedCountLabel,
             diffWrapReadyLabel,
             diffWrapEnabledLabel,
             diffWrapFragmentCountLabel,

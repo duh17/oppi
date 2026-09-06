@@ -1256,7 +1256,8 @@ struct ChatView: View {
                 saveReviewComment(body: body, request: request)
             },
             inlineQuickComments: QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates),
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
+            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+            stash: reviewComments
         )
     }
 

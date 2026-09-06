@@ -24,9 +24,9 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 5),
             "The full-screen reader did not expose its session edit action"
         )
-        XCTAssertTrue(
-            app.buttons["Staged Comments"].waitForExistence(timeout: 2),
-            "The full-screen reader did not expose the staged comment stash"
+        XCTAssertFalse(
+            app.buttons["fullscreen-code.review-comments.stash"].exists,
+            "Empty full-screen reader should not show staged-comment stash chrome"
         )
 
         selectHarnessCodeRange()
@@ -56,12 +56,82 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         saveScreenshot(name: "fullscreen-review-comment-inline-composer")
     }
 
+    func testSavingInlineCommentRevealsStashAndOpensSheet() throws {
+        launchReviewCommentHarness()
+
+        XCTAssertFalse(app.buttons["fullscreen-code.review-comments.stash"].exists)
+
+        selectHarnessCodeRange()
+        let commentAction = try XCTUnwrap(
+            waitForActionBarElement(named: "Comment", timeout: 5),
+            "Native selection action bar did not expose Comment"
+        )
+        tapElement(commentAction)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["review-comment.inline-composer"].waitForExistence(timeout: 5),
+            "Native Comment action did not open the inline comment composer"
+        )
+
+        let input = app.textViews["review-comment.inline-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 3), "Inline composer did not expose the comment input")
+        let fixChip = app.buttons["Fix"]
+        if fixChip.waitForExistence(timeout: 2) {
+            tapElement(fixChip)
+        } else {
+            tapElement(input)
+            input.typeText("Looks good")
+        }
+
+        let saveButton = app.buttons["Save comment"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Inline composer did not expose Save comment")
+        if !saveButton.isEnabled {
+            tapElement(input)
+            input.typeText("Looks good")
+        }
+        XCTAssertTrue(saveButton.isEnabled, "Save comment stayed disabled after entering a comment")
+        tapElement(saveButton)
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["review-comment.inline-composer"].waitForNonExistence(timeout: 5),
+            "Inline composer should dismiss after a successful save"
+        )
+        XCTAssertEqual(
+            waitForDiagnostic("diag.reviewComment.stagedCount", timeout: 5, matching: { $0 == 1 }),
+            1,
+            "Inline save did not stage a review comment"
+        )
+
+        let stashButton = stashButtonElement()
+        XCTAssertTrue(
+            stashButton.waitForExistence(timeout: 5),
+            "Saving an inline comment did not reveal the staged-comment stash"
+        )
+        XCTAssertEqual(stashButton.label, "Staged Comments")
+        XCTAssertEqual(stashButton.value as? String, "1 staged comment")
+
+        tapElement(stashButton)
+        let stashNavigation = app.navigationBars["Staged Comments"]
+        XCTAssertTrue(
+            stashNavigation.waitForExistence(timeout: 5),
+            "Stash button did not present the staged comments sheet"
+        )
+        let doneButton = stashNavigation.buttons["Done"]
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 2))
+
+        tapElement(doneButton)
+        XCTAssertTrue(
+            app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 5),
+            "Closing the stash sheet should return to the document"
+        )
+        XCTAssertTrue(stashButton.waitForExistence(timeout: 2))
+    }
+
     func testEmbeddedReviewReaderExposesBackAndSessionActions() throws {
         launchReviewCommentHarness(embedded: true)
 
         XCTAssertTrue(app.buttons["fullscreen-code.back"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.buttons["Staged Comments"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.buttons["fullscreen-code.review-comments.stash"].exists)
 
         app.buttons["fullscreen-code.back"].tap()
         XCTAssertEqual(
@@ -140,6 +210,10 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         let selectButton = app.buttons["harness.reviewComment.select"]
         XCTAssertTrue(selectButton.waitForExistence(timeout: 5), "Select-code harness control did not appear")
         selectButton.tap()
+    }
+
+    private func stashButtonElement() -> XCUIElement {
+        app.buttons["fullscreen-code.review-comments.stash"].firstMatch
     }
 
     private func waitForDiagnostic(

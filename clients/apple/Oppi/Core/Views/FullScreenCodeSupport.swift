@@ -14,9 +14,12 @@ import UIKit
 /// 2. Top trailing: Share (when present), Save (when present), Copy, Source,
 ///    and extra document actions. Share stays in this bar on every viewer.
 /// 3. Bottom leading: Annotate as a floating glass control when the viewer
-///    can annotate. Do not put Annotate in the top bar.
+///    can annotate. Do not put Annotate in the top bar. Staged review comments
+///    use the same corner when `stagedCount > 0`. If both are present, stack
+///    stash above Annotate. Annotate stays in the original slot when stash is
+///    hidden. Do not add a second stash control in the top bar.
 /// 4. Bottom trailing: Viewing Options / Reader as a floating glass control.
-///    Do not cover it with Annotate or a bottom toolbar.
+///    Do not cover it with Annotate, stash, or a bottom toolbar.
 ///
 /// Layout rules:
 /// 1. Do NOT set a custom `UINavigationBarAppearance` on the content VC.
@@ -43,6 +46,7 @@ enum FullScreenFloatingControlChrome {
     static let leadingPadding: CGFloat = 16
     static let trailingPadding: CGFloat = 16
     static let controlSize: CGFloat = 56
+    static let stackSpacing: CGFloat = 12
     static let symbolPointSize: CGFloat = 20
     static let standaloneContentPadding: CGFloat = (controlSize - symbolPointSize) / 2
 
@@ -118,6 +122,31 @@ enum FullScreenFloatingControlChrome {
             button.widthAnchor.constraint(equalToConstant: controlSize),
             button.heightAnchor.constraint(equalToConstant: controlSize),
         ])
+    }
+}
+
+@MainActor
+enum FullScreenReviewCommentStashControl {
+    static let accessibilityIdentifier = "fullscreen-code.review-comments.stash"
+    static let accessibilityLabel = "Staged Comments"
+    static let systemImage = "text.bubble.fill"
+    static let appearanceDuration: TimeInterval = 0.2
+
+    static func accessibilityValue(for count: Int) -> String {
+        count == 1 ? "1 staged comment" : "\(count) staged comments"
+    }
+
+    #if DEBUG
+    static var reduceMotionOverrideForTesting: Bool?
+    #endif
+
+    static var prefersReducedMotion: Bool {
+        #if DEBUG
+        if let override = reduceMotionOverrideForTesting {
+            return override
+        }
+        #endif
+        return UIAccessibility.isReduceMotionEnabled
     }
 }
 

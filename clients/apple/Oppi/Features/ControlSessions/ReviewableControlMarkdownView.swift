@@ -274,7 +274,6 @@ struct ReviewableControlMarkdownView: View {
     }
 
     @State private var comments = ChatReviewCommentsController()
-    @State private var showCommentStash = false
     @State private var showGuidedRevision = false
     @State private var guidedSessionHandoff = ControlRevisionSheetHandoff()
     @State private var isCreatingSession = false
@@ -310,7 +309,8 @@ struct ReviewableControlMarkdownView: View {
             },
             inlineQuickComments: QuickCommentTemplate.quickCommentTemplates(
                 quickCommentTemplateStore.templates
-            )
+            ),
+            stash: comments
         )
     }
 
@@ -330,21 +330,7 @@ struct ReviewableControlMarkdownView: View {
                     }
                 }
             ),
-            FullScreenViewerNavigationAction(
-                id: "staged-comments",
-                systemImage: comments.stagedCount == 0 ? "text.bubble" : "text.bubble.fill",
-                accessibilityLabel: "Staged Comments",
-                accessibilityValue: stagedCommentCountLabel,
-                handler: {
-                    showCommentStash = true
-                }
-            ),
         ]
-    }
-
-    private var stagedCommentCountLabel: String {
-        let count = comments.stagedCount
-        return count == 1 ? "1 staged comment" : "\(count) staged comments"
     }
 
     private var starterPrompt: String {
@@ -364,21 +350,6 @@ struct ReviewableControlMarkdownView: View {
             comments.load(
                 localScopeId: ReviewCommentLocalScope.controlDraft,
                 sessionId: draftSessionId
-            )
-        }
-        .sheet(isPresented: $showCommentStash) {
-            ReviewCommentStashSheet(
-                comments: comments.stagedComments,
-                focusedCommentId: nil,
-                onEdit: { comment, body in
-                    if let updateError = comments.update(comment, body: body) {
-                        error = updateError
-                        return false
-                    }
-                    return true
-                },
-                onDelete: { comments.delete($0) },
-                onClose: { showCommentStash = false }
             )
         }
         .sheet(isPresented: $showGuidedRevision, onDismiss: completeGuidedSessionHandoff) {

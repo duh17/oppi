@@ -3,6 +3,14 @@ import SwiftUI
 import UIKit
 
 @MainActor
+protocol ReviewCommentStashHandling: AnyObject {
+    var stagedComments: [ReviewComment] { get }
+    var stagedCount: Int { get }
+    func update(_ comment: ReviewComment, body: String) -> String?
+    func delete(_ comment: ReviewComment)
+}
+
+@MainActor
 final class ReviewCommentSelectionRouter {
     typealias InlineSaveHandler = (String, ReviewCommentSelectionRequest) async -> Bool
 
@@ -10,6 +18,7 @@ final class ReviewCommentSelectionRouter {
     private let inlineSaveClosure: InlineSaveHandler?
     let inlineQuickComments: [QuickCommentTemplate]
     let voiceInputManager: VoiceInputManager?
+    private(set) weak var stash: (any ReviewCommentStashHandling)?
 
     var supportsInlineCommentComposer: Bool {
         inlineSaveClosure != nil
@@ -19,24 +28,28 @@ final class ReviewCommentSelectionRouter {
         dispatch: @escaping (ReviewCommentSelectionRequest) -> Void,
         inlineSave: InlineSaveHandler? = nil,
         inlineQuickComments: [QuickCommentTemplate] = [],
-        voiceInputManager: VoiceInputManager? = nil
+        voiceInputManager: VoiceInputManager? = nil,
+        stash: (any ReviewCommentStashHandling)? = nil
     ) {
         dispatchClosure = { request, _ in dispatch(request) }
         inlineSaveClosure = inlineSave
         self.inlineQuickComments = inlineQuickComments
         self.voiceInputManager = voiceInputManager
+        self.stash = stash
     }
 
     init(
         dispatchWithPresentation: @escaping (ReviewCommentSelectionRequest, UIViewController?) -> Void,
         inlineSave: InlineSaveHandler? = nil,
         inlineQuickComments: [QuickCommentTemplate] = [],
-        voiceInputManager: VoiceInputManager? = nil
+        voiceInputManager: VoiceInputManager? = nil,
+        stash: (any ReviewCommentStashHandling)? = nil
     ) {
         dispatchClosure = dispatchWithPresentation
         inlineSaveClosure = inlineSave
         self.inlineQuickComments = inlineQuickComments
         self.voiceInputManager = voiceInputManager
+        self.stash = stash
     }
 
     func dispatch(_ request: ReviewCommentSelectionRequest) {
@@ -60,7 +73,8 @@ final class ReviewCommentSelectionRouter {
             dispatch: dispatch,
             inlineSave: inlineSave,
             inlineQuickComments: inlineQuickComments,
-            voiceInputManager: voiceInputManager
+            voiceInputManager: voiceInputManager,
+            stash: stash
         )
     }
 }
