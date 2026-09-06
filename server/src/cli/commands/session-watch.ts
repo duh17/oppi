@@ -105,6 +105,8 @@ interface WatchOptions {
  */
 export const WAIT_DEFAULT_POLL = "2s";
 export const WAIT_DEFAULT_SUMMARY_EVERY = "60s";
+/** Just under Anthropic's 5m prompt-cache TTL so a timeout can be a parent model turn. */
+export const WAIT_DEFAULT_TIMEOUT = "4m";
 
 export function parseWatchCondition(
   raw: string | undefined,

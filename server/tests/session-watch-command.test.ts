@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  WAIT_DEFAULT_TIMEOUT,
   formatWaitLiveSnapshot,
   parseWatchCondition,
   runSessionWatch,
@@ -15,6 +16,10 @@ describe("session wait poller contract", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("defaults timeout just under the 5m prompt-cache TTL", () => {
+    expect(WAIT_DEFAULT_TIMEOUT).toBe("4m");
   });
 
   it.each([

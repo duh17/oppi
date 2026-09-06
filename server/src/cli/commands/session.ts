@@ -55,6 +55,7 @@ import {
   runSessionWatch,
   WAIT_DEFAULT_POLL,
   WAIT_DEFAULT_SUMMARY_EVERY,
+  WAIT_DEFAULT_TIMEOUT,
   type WaitProgressSnapshot,
 } from "./session-watch.js";
 
@@ -209,7 +210,7 @@ export async function cmdSession(
           condition,
           requireAll,
           intervalMs: parseDurationMs(flags.poll ?? WAIT_DEFAULT_POLL),
-          timeoutMs: parseDurationMs(flags.timeout ?? "10m"),
+          timeoutMs: parseDurationMs(flags.timeout ?? WAIT_DEFAULT_TIMEOUT),
           summaryEveryMs,
           onSummary: (snapshot) => {
             if (progress.length < 50) progress.push(snapshot);
