@@ -113,11 +113,15 @@ final class NativeCodeBlockView: UIView {
     private var currentLanguage: String?
     private var highlightedText: NSAttributedString?
     private var currentPalette: ThemePalette?
+    private var currentThemeID: ThemeID = ThemeRuntimeState.currentThemeID()
     private var desiredHighlightIdentity: SyntaxHighlightIdentity?
     private var installedHighlightIdentity: SyntaxHighlightIdentity?
     private var highlightTask: Task<Void, Never>?
     private var isLineWrappingEnabled = false
     private var measuredUnwrappedCodeWidth: CGFloat = 0
+    /// Pretty-printed JSON shown while wrap is on. `currentCode` stays original.
+    private var displayedPrettyJSON: String?
+    private var prettyHighlightTask: Task<Void, Never>?
     #if DEBUG
     nonisolated(unsafe) static var highlightDelayForTesting: Duration?
     private(set) var debugHighlightWorkCountForTesting = 0
@@ -145,6 +149,7 @@ final class NativeCodeBlockView: UIView {
 
     deinit {
         highlightTask?.cancel()
+        prettyHighlightTask?.cancel()
     }
 
     private func setupViews() {
@@ -262,6 +267,7 @@ final class NativeCodeBlockView: UIView {
         highlightScheduling: HighlightScheduling = .none
     ) {
         currentPalette = palette
+        currentThemeID = themeID
         backgroundColor = UIColor(palette.bgDark)
         headerBackground.backgroundColor = UIColor(palette.bgHighlight)
         layer.borderColor = UIColor(palette.mdCodeBlockBorder).withAlphaComponent(0.5).cgColor
@@ -270,6 +276,13 @@ final class NativeCodeBlockView: UIView {
         languageLabel.textColor = UIColor(palette.comment)
         copyButton.tintColor = UIColor(palette.fgDim)
         updateWrapButton()
+
+        let prettyJSONBeforeApply = displayedPrettyJSON
+        defer {
+            if prettyJSONBeforeApply != displayedPrettyJSON {
+                invalidateTimelineLayout()
+            }
+        }
 
         let identity = SyntaxHighlightIdentity(code: code, language: language, themeID: themeID)
         if desiredHighlightIdentity != identity {
@@ -282,7 +295,11 @@ final class NativeCodeBlockView: UIView {
         if identity == installedHighlightIdentity, let highlighted = highlightedText {
             currentCode = code
             currentLanguage = language
-            codeLabel.attributedText = highlighted
+            if isPrettyJSONDisplayActive {
+                _ = presentPrettyJSONIfEligible(recolor: false)
+            } else {
+                codeLabel.attributedText = highlighted
+            }
             applyCurrentLineWrapping(resetHorizontalOffset: false)
             return
         }
@@ -294,12 +311,17 @@ final class NativeCodeBlockView: UIView {
         if contentChanged || highlightedText == nil {
             highlightedText = nil
             installedHighlightIdentity = nil
-            codeLabel.font = font
-            codeLabel.textColor = UIColor(palette.fg)
-            codeLabel.attributedText = nil
-            codeLabel.text = code
+            if !presentPrettyJSONIfEligible(recolor: false) {
+                codeLabel.font = font
+                codeLabel.textColor = UIColor(palette.fg)
+                codeLabel.attributedText = nil
+                codeLabel.text = code
+            }
             updateMeasuredCodeWidth(NSAttributedString(string: code, attributes: [.font: font]))
         } else {
+            if isLineWrappingEnabled {
+                _ = presentPrettyJSONIfEligible(recolor: true)
+            }
             applyCurrentLineWrapping(resetHorizontalOffset: false)
         }
 
@@ -320,10 +342,24 @@ final class NativeCodeBlockView: UIView {
         let font = AppFont.monoMedium
         let fullRange = NSRange(location: 0, length: mutable.length)
         mutable.addAttribute(.font, value: font, range: fullRange)
-        codeLabel.attributedText = mutable
         highlightedText = mutable
         installedHighlightIdentity = identity
 
+        if isPrettyJSONDisplayActive {
+            let maxSize = CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+            let boundingRect = mutable.boundingRect(
+                with: maxSize,
+                options: [.usesLineFragmentOrigin],
+                context: nil
+            )
+            measuredUnwrappedCodeWidth = max(1, ceil(boundingRect.width))
+            return
+        }
+
+        codeLabel.attributedText = mutable
         updateMeasuredCodeWidth(mutable)
     }
 
@@ -374,6 +410,11 @@ final class NativeCodeBlockView: UIView {
     @objc private func wrapTapped() {
         isLineWrappingEnabled.toggle()
         updateWrapButton()
+        if isLineWrappingEnabled {
+            _ = presentPrettyJSONIfEligible(recolor: false)
+        } else {
+            restoreOriginalCodeIfPrettyWasShowing()
+        }
         applyCurrentLineWrapping(resetHorizontalOffset: true)
         invalidateTimelineLayout()
     }
@@ -386,6 +427,86 @@ final class NativeCodeBlockView: UIView {
         guard gesture.state == .began else { return }
         copyCodeAndShowFeedback()
         showCopiedFlash()
+    }
+
+    private var isPrettyJSONDisplayActive: Bool {
+        displayedPrettyJSON != nil && isLineWrappingEnabled
+    }
+
+    private func isJSONFenceLanguage(_ language: String?) -> Bool {
+        language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "json"
+    }
+
+    private func prettyJSONForCurrentSource() -> String? {
+        guard isLineWrappingEnabled, isJSONFenceLanguage(currentLanguage) else { return nil }
+        return JSONPrettyPrinter.prettyPrinted(currentCode)
+    }
+
+    @discardableResult
+    private func presentPrettyJSONIfEligible(recolor: Bool) -> Bool {
+        guard let pretty = prettyJSONForCurrentSource() else {
+            restoreOriginalCodeIfPrettyWasShowing()
+            return false
+        }
+        let alreadyShowing = displayedPrettyJSON == pretty
+            && (codeLabel.attributedText?.string == pretty || codeLabel.text == pretty)
+        displayedPrettyJSON = pretty
+        if !alreadyShowing || recolor {
+            presentPrettyJSON(pretty)
+        }
+        return true
+    }
+
+    private func presentPrettyJSON(_ pretty: String) {
+        prettyHighlightTask?.cancel()
+        let font = AppFont.monoMedium
+        let palette = currentPalette ?? ThemeRuntimeState.currentPalette()
+        codeLabel.font = font
+        codeLabel.textColor = UIColor(palette.fg)
+        codeLabel.attributedText = nil
+        codeLabel.text = pretty
+
+        let themeID = currentThemeID
+        prettyHighlightTask = Task { @MainActor [weak self] in
+            let wrapper = await Task.detached(priority: .userInitiated) {
+                SendableNSAttributedString(
+                    SyntaxHighlighter.highlight(pretty, language: .json, themeID: themeID)
+                )
+            }.value
+            guard !Task.isCancelled else { return }
+            self?.installPrettyJSONHighlight(wrapper.value, pretty: pretty)
+        }
+    }
+
+    private func installPrettyJSONHighlight(_ highlighted: NSAttributedString, pretty: String) {
+        guard isLineWrappingEnabled, displayedPrettyJSON == pretty else { return }
+        let mutable = NSMutableAttributedString(attributedString: highlighted)
+        let font = AppFont.monoMedium
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        mutable.addAttribute(.font, value: font, range: fullRange)
+        codeLabel.attributedText = mutable
+        applyCurrentLineWrapping(resetHorizontalOffset: false)
+    }
+
+    private func restoreOriginalCodeIfPrettyWasShowing() {
+        guard displayedPrettyJSON != nil else { return }
+        prettyHighlightTask?.cancel()
+        prettyHighlightTask = nil
+        displayedPrettyJSON = nil
+
+        let font = AppFont.monoMedium
+        if let highlighted = highlightedText,
+           installedHighlightIdentity == desiredHighlightIdentity {
+            codeLabel.attributedText = highlighted
+        } else if let palette = currentPalette {
+            codeLabel.font = font
+            codeLabel.textColor = UIColor(palette.fg)
+            codeLabel.attributedText = nil
+            codeLabel.text = currentCode
+        } else {
+            codeLabel.attributedText = nil
+            codeLabel.text = currentCode
+        }
     }
 
     private func copyCodeAndShowFeedback() {
