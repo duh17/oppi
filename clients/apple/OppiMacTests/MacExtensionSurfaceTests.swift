@@ -72,6 +72,8 @@ struct MacExtensionSurfaceComposerSourceTests {
         #expect(source.contains("placement: .aboveEditor"))
         #expect(source.contains("placement: .belowEditor"))
         #expect(source.contains("currentAskRequest == nil"))
+        #expect(source.contains("Label(\"Message Queue\", systemImage: \"text.append\")"))
+        #expect(!source.contains("text.line.first.and.arrowtriangle.forward"))
         #expect(!source.contains("NSEvent.addLocalMonitor"))
     }
 

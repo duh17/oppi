@@ -1340,7 +1340,7 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
     var leadingSystemImage: String? {
         switch self {
         case .messageQueue:
-            return "list.bullet"
+            return "text.append"
         case .title, .status, .native, .widget:
             return nil
         }

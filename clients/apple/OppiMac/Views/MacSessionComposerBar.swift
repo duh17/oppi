@@ -1525,7 +1525,7 @@ private struct MacMessageQueueCard: View {
                 isExpanded.toggle()
             } label: {
                 HStack(spacing: 8) {
-                    Label("Message Queue", systemImage: "text.line.first.and.arrowtriangle.forward")
+                    Label("Message Queue", systemImage: "text.append")
                         .font(.headline)
                     Text("\(editorState.displayedQueue.steering.count) steering · \(editorState.displayedQueue.followUp.count) follow-up")
                         .font(.caption)
