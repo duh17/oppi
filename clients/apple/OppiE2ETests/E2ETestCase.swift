@@ -154,8 +154,8 @@ class E2ETestCase: XCTestCase {
 
         if e2eStartsInAutoCreatedChat {
             // The debug launch fixture can lose its first-simulator-boot race.
-            // setUp follows this with ensureAtChatSession(), which uses the
-            // stable new-session control when the automatic route is absent.
+            // setUp follows this with ensureAtChatSession(), which opens an
+            // existing row or creates one through the lab API.
             _ = waitForChatSessionSurface(in: application, timeout: 10)
             return
         }
@@ -373,13 +373,8 @@ class E2ETestCase: XCTestCase {
             return
         }
 
-        let newSessionButton = app.buttons["workspace.newSession"]
-        if waitForElementToExist(newSessionButton, timeout: 3) {
-            tap(newSessionButton, named: "new session button")
-            XCTAssertTrue(
-                waitForChatSessionSurface(in: app, timeout: 30),
-                "Chat session did not appear after creating session"
-            )
+        if waitForWorkspaceDetailSurface(in: app, timeout: 3) {
+            enterLatestSession()
             return
         }
 
@@ -392,7 +387,8 @@ class E2ETestCase: XCTestCase {
     }
 
     private func workspaceDetailSurfaceExists(in application: XCUIApplication) -> Bool {
-        application.buttons["workspace.newSession"].exists
+        application.buttons["workspace.edit.open"].exists
+            && application.collectionViews["workspace.sessionList"].exists
     }
 
     private func waitForWorkspaceDetailSurface(in application: XCUIApplication, timeout: TimeInterval) -> Bool {
@@ -571,17 +567,14 @@ class E2ETestCase: XCTestCase {
             return
         }
 
-        let newSessionButton = app.buttons["workspace.newSession"]
-        XCTAssertTrue(
-            waitForElementToExist(newSessionButton, timeout: 10),
-            "New session button not found"
-        )
-        tap(newSessionButton, named: "new session button")
-
-        XCTAssertTrue(
-            waitForChatSessionSurface(in: app, timeout: 30),
-            "Chat session did not appear after creating session"
-        )
+        do {
+            let workspaceId = try e2eWorkspaceId()
+            let ids = try createLabSessions(count: 1, workspaceId: workspaceId, stopAfterCreate: false)
+            let sessionId = try XCTUnwrap(ids.first, "Lab session create returned no id")
+            enterSession(id: sessionId)
+        } catch {
+            XCTFail("Could not create a session after compose stopped creating immediately: \(error)")
+        }
     }
 
     /// Taps the most recent session (first row after the section header) and waits for chat input.

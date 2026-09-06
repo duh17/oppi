@@ -524,7 +524,7 @@ struct WorkspaceDetailView: View {
                         ContentUnavailableView(
                             "No Sessions",
                             systemImage: "terminal",
-                            description: Text("Tap the compose button to start a new session in this worktree. Long press for incognito.")
+                            description: Text("Tap Message to compose a Quick Session in this worktree. Long press for incognito.")
                         )
                         .themedListRowBackground()
                     }
@@ -587,7 +587,7 @@ struct WorkspaceDetailView: View {
         .onChange(of: sessionSearchText) { _, newValue in
             searchStore.search(
                 query: newValue,
-                workspaceId: workspace.id,
+                workspaceId: SessionInboxSearchScope.workspaceId(scopedTo: workspace.id),
                 apiClient: apiClient
             )
         }
@@ -613,7 +613,6 @@ struct WorkspaceDetailView: View {
                 ToolbarItem(placement: .bottomBar) {
                     workspaceFilesToolbarItem
                 }
-                ToolbarSpacer(.fixed, placement: .bottomBar)
                 if sessionListToolbar.keepsSystemSearchToolbarItem {
                     DefaultToolbarItem(kind: .search, placement: .bottomBar)
                 }
@@ -635,7 +634,7 @@ struct WorkspaceDetailView: View {
                     ToolbarSpacer(.flexible, placement: .bottomBar)
                 }
                 ToolbarItem(placement: .bottomBar) {
-                    newSessionToolbarItem
+                    compactQuickSessionBar
                 }
             }
         }
@@ -822,62 +821,37 @@ struct WorkspaceDetailView: View {
         )
     }
 
-    @ViewBuilder
     private var workspaceFilesToolbarItem: some View {
-        if let currentServerId {
-            let target = FileBrowserNavTarget(
-                serverId: currentServerId,
-                workspaceId: workspace.id,
-                worktreeId: selectedWorktreeId,
-                path: ""
-            )
-
-            switch navigation.workspaceNavigationPresentation {
-            case .stack:
-                Button {
-                    ClientLog.info("FileBrowser", "Workspace files toolbar tapped", metadata: [
-                        "workspaceId": workspace.id,
-                        "serverId": currentServerId,
-                        "presentation": "stack",
-                        "workspacePathCount": String(navigation.workspacePath.count),
-                    ])
-                    navigation.openWorkspaceFileBrowser(target)
-                } label: {
-                    workspaceFilesToolbarLabel
-                }
-                .accessibilityIdentifier("workspace.files.open")
-                .accessibilityLabel("Open workspace files")
-            case .split:
-                Button {
-                    ClientLog.info("FileBrowser", "Workspace files toolbar tapped", metadata: [
-                        "workspaceId": workspace.id,
-                        "serverId": currentServerId,
-                        "presentation": "split",
-                        "workspacePathCount": String(navigation.workspacePath.count),
-                    ])
-                    navigation.openWorkspaceFileBrowser(
-                        target,
-                        workspace: WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
-                    )
-                } label: {
-                    workspaceFilesToolbarLabel
-                }
-                .accessibilityIdentifier("workspace.files.open")
-                .accessibilityLabel("Open workspace files")
-            }
-        } else {
-            Button {} label: {
-                workspaceFilesToolbarLabel
-            }
-            .disabled(true)
-            .accessibilityIdentifier("workspace.files.open")
-            .accessibilityLabel("Open workspace files")
-        }
+        SessionInboxFolderToolbarButton(
+            isEnabled: SessionInboxComposeChrome.canOpenFiles(hasServer: currentServerId != nil),
+            accessibilityLabel: "Open workspace files",
+            onOpen: openWorkspaceFiles
+        )
     }
 
-    private var workspaceFilesToolbarLabel: some View {
-        Image(systemName: "folder")
-            .foregroundStyle(.themeFg)
+    private func openWorkspaceFiles() {
+        guard let currentServerId else { return }
+        let target = FileBrowserNavTarget(
+            serverId: currentServerId,
+            workspaceId: workspace.id,
+            worktreeId: selectedWorktreeId,
+            path: ""
+        )
+        ClientLog.info("FileBrowser", "Workspace files toolbar tapped", metadata: [
+            "workspaceId": workspace.id,
+            "serverId": currentServerId,
+            "presentation": navigation.workspaceNavigationPresentation == .stack ? "stack" : "split",
+            "workspacePathCount": String(navigation.workspacePath.count),
+        ])
+        switch navigation.workspaceNavigationPresentation {
+        case .stack:
+            navigation.openWorkspaceFileBrowser(target)
+        case .split:
+            navigation.openWorkspaceFileBrowser(
+                target,
+                workspace: WorkspaceNavTarget(serverId: currentServerId, workspace: currentWorkspace)
+            )
+        }
     }
 
     @ViewBuilder
@@ -895,29 +869,37 @@ struct WorkspaceDetailView: View {
         }
     }
 
-    private var newSessionToolbarItem: some View {
-        Button {
-            Task { await createSession() }
-        } label: {
-            Image(systemName: "square.and.pencil")
-        }
-        .foregroundStyle(.themeFg)
-        .contextMenu {
-            Button {
-                Task { await createSession() }
-            } label: {
-                Label("New Session", systemImage: "square.and.pencil")
-            }
-
-            Button {
+    private var compactQuickSessionBar: some View {
+        SessionInboxCompactComposeBar(
+            showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
+                voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
+                hasActivePlayback: connection.audioPlayer.hasActivePlayback
+            ),
+            onIncognito: {
                 Task { await createSession(ephemeral: true) }
-            } label: {
-                Label("Incognito Session", systemImage: "eye.slash")
+            },
+            onStart: {
+                startQuickSession(dictate: false)
+            },
+            onDictate: {
+                startQuickSession(dictate: true)
             }
-        }
-        .accessibilityLabel("New Session")
-        .accessibilityIdentifier("workspace.newSession")
+        )
         .disabled(isCreating)
+        .opacity(isCreating ? 0.55 : 1)
+    }
+
+    private func startQuickSession(dictate: Bool) {
+        guard let currentServerId else { return }
+        if dictate {
+            navigation.pendingQuickSessionStartDictation = true
+        }
+        navigation.pendingQuickSessionLaunchContext = QuickSessionLaunchContext(
+            serverId: currentServerId,
+            workspaceId: workspace.id,
+            worktreeId: selectedWorktreeId
+        )
+        navigation.showQuickSession = true
     }
 
     private var workspaceConfigurationButton: some View {

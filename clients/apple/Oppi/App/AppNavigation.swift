@@ -1398,7 +1398,25 @@ final class AppNavigation {
 
 struct QuickSessionLaunchContext: Equatable, Sendable {
     let serverId: String
-    let agentId: String
+    let agentId: String?
+    let workspaceId: String?
+    let worktreeId: String?
+
+    /// Agent management launch. Workspace still follows last-used / default.
+    init(serverId: String, agentId: String) {
+        self.serverId = serverId
+        self.agentId = agentId
+        self.workspaceId = nil
+        self.worktreeId = nil
+    }
+
+    /// Session-list launch. Pre-focuses Quick Session to this workspace and checkout.
+    init(serverId: String, workspaceId: String, worktreeId: String?) {
+        self.serverId = serverId
+        self.agentId = nil
+        self.workspaceId = workspaceId
+        self.worktreeId = worktreeId
+    }
 }
 
 /// Atomic navigation intent for quick session deep-link.

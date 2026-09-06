@@ -4,6 +4,7 @@ import {
   chmodSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -521,11 +522,124 @@ describe("host-file path helpers stay fail-closed", () => {
   });
 });
 
+describe("GET /host/contents", () => {
+  const roots: string[] = [];
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function tempHome(prefix: string): string {
+    const root = mkdtempSync(join(tmpdir(), prefix));
+    roots.push(root);
+    return realpathSync(root);
+  }
+
+  it("lists the injected home directory", async () => {
+    const home = tempHome("oppi-host-contents-root-");
+    mkdirSync(join(home, "Documents"));
+    writeFileSync(join(home, "README.md"), "hello\n", "utf8");
+
+    const res = await dispatchHost("GET", "/host/contents", { homeDir: home });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body.toString("utf8")) as {
+      path: string;
+      entries: Array<{ name: string; type: string }>;
+      truncated: boolean;
+    };
+    expect(body.path).toBe("/");
+    expect(body.truncated).toBe(false);
+    expect(body.entries.map((entry) => entry.name).sort()).toEqual(["Documents", "README.md"]);
+    expect(body.entries.find((entry) => entry.name === "Documents")?.type).toBe("directory");
+    expect(body.entries.find((entry) => entry.name === "README.md")?.type).toBe("file");
+  });
+
+  it("lists a home-relative subdirectory with trailing-slash convention", async () => {
+    const home = tempHome("oppi-host-contents-sub-");
+    mkdirSync(join(home, "Documents", "notes"), { recursive: true });
+    writeFileSync(join(home, "Documents", "todo.md"), "todo\n", "utf8");
+
+    const res = await dispatchHost("GET", "/host/contents/Documents/", { homeDir: home });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body.toString("utf8")) as {
+      path: string;
+      entries: Array<{ name: string; type: string }>;
+    };
+    expect(body.path).toBe("Documents/");
+    expect(body.entries.map((entry) => entry.name).sort()).toEqual(["notes", "todo.md"]);
+  });
+
+  it("returns 404 for parent traversal", async () => {
+    const home = tempHome("oppi-host-contents-dotdot-");
+    writeFileSync(join(home, "inside.txt"), "in\n", "utf8");
+
+    const res = await dispatchHost("GET", "/host/contents/..%2F", { homeDir: home });
+    expect(res.statusCode).toBe(404);
+    expect(res.body.toString("utf8")).not.toContain("inside.txt");
+  });
+
+  it("returns 404 for a symlink that escapes home", async () => {
+    const home = tempHome("oppi-host-contents-link-");
+    const outside = tempHome("oppi-host-contents-outside-");
+    writeFileSync(join(outside, "secret.txt"), "secret\n", "utf8");
+    symlinkSync(outside, join(home, "escape"));
+
+    const listed = await dispatchHost("GET", "/host/contents/escape", { homeDir: home });
+    expect(listed.statusCode).toBe(404);
+    expect(listed.body.toString("utf8")).not.toContain("secret.txt");
+  });
+
+  it("returns 404 for a missing directory and does not list filesystem root", async () => {
+    const home = tempHome("oppi-host-contents-missing-");
+    const missing = await dispatchHost("GET", "/host/contents/nope", { homeDir: home });
+    expect(missing.statusCode).toBe(404);
+
+    const absolute = await dispatchHost("GET", "/host/contents/%2Fetc", { homeDir: home });
+    expect(absolute.statusCode).toBe(404);
+    const body = JSON.parse(absolute.body.toString("utf8")) as { error?: string };
+    expect(body.error).toBe("Directory not found");
+  });
+
+  it("lists injected home for encoded slash and does not list filesystem root", async () => {
+    const home = tempHome("oppi-host-contents-encoded-slash-");
+    mkdirSync(join(home, "Documents"));
+    writeFileSync(join(home, "README.md"), "hello\n", "utf8");
+
+    const res = await dispatchHost("GET", "/host/contents/%2F", { homeDir: home });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body.toString("utf8")) as {
+      path: string;
+      entries: Array<{ name: string; type: string }>;
+      truncated: boolean;
+    };
+    expect(body.path).toBe("/");
+    expect(body.truncated).toBe(false);
+    const listed = body.entries.map((entry) => entry.name).sort();
+    expect(listed).toEqual(["Documents", "README.md"]);
+    expect(listed).not.toEqual(readdirSync("/").sort());
+  });
+});
+
 describe("auth contract", () => {
   it("registers /files/raw as an owner-authenticated session route", async () => {
     const { apiRouteSpecs } = await import("../src/routes/registry.js");
     const routes = apiRouteSpecs.filter((route) => route.path === "/files/raw");
     expect(routes.map((route) => route.method).sort()).toEqual(["GET", "HEAD"]);
+    expect(routes.every((route) => route.auth === "owner")).toBe(true);
+    expect(routes.every((route) => route.nativeClientUses?.includes("session"))).toBe(true);
+  });
+
+  it("registers /host/contents as owner-authenticated session routes", async () => {
+    const { apiRouteSpecs } = await import("../src/routes/registry.js");
+    const routes = apiRouteSpecs.filter(
+      (route) => route.path === "/host/contents" || route.path === "/host/contents/{path+}",
+    );
+    expect(routes.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "GET /host/contents",
+      "GET /host/contents/{path+}",
+    ]);
     expect(routes.every((route) => route.auth === "owner")).toBe(true);
     expect(routes.every((route) => route.nativeClientUses?.includes("session"))).toBe(true);
   });

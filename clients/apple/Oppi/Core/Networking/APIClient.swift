@@ -1688,6 +1688,15 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
     }
 
+    /// List entries in the connected server's home directory.
+    ///
+    /// Pass an empty string or "/" for `~`. Subdirectory paths are
+    /// home-relative and should include a trailing slash (e.g. "Documents/").
+    func listHostDirectory(path: String = "") async throws -> DirectoryListingResponse {
+        let data = try await get(url: makeHostContentsURL(path: path, directory: true))
+        return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
+    }
+
     /// Fetch the complete file index for client-side fuzzy search.
     ///
     /// Returns all workspace-relative file paths in a single response.
@@ -2223,6 +2232,16 @@ actor APIClient: ClientLogUploading {
             pathSegments: ["workspaces", workspaceId, "contents"],
             appendedPath: normalizedPath,
             queryItems: queryItems,
+            trailingSlash: trailingSlash
+        )
+    }
+
+    private func makeHostContentsURL(path: String, directory: Bool = false) throws -> URL {
+        let normalizedPath = path == "/" ? "" : path
+        let trailingSlash = directory || normalizedPath.hasSuffix("/")
+        return try makeURL(
+            pathSegments: ["host", "contents"],
+            appendedPath: normalizedPath,
             trailingSlash: trailingSlash
         )
     }

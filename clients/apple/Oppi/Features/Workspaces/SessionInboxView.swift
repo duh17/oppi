@@ -353,7 +353,9 @@ struct SessionInboxView: View {
         .onChange(of: searchText) { _, newValue in
             searchStore.search(
                 query: newValue,
-                workspaceId: selectedWorkspace?.workspace.id,
+                workspaceId: SessionInboxSearchScope.workspaceId(
+                    scopedTo: selectedWorkspace?.workspace.id
+                ),
                 apiClient: activeConnection?.apiClient
             )
         }
@@ -547,13 +549,9 @@ struct SessionInboxView: View {
             }
         }
 
-        if let selectedWorkspace {
-            ToolbarItem(placement: .bottomBar) {
-                workspaceFilesButton(selectedWorkspace)
-            }
-            ToolbarSpacer(.fixed, placement: .bottomBar)
+        ToolbarItem(placement: .bottomBar) {
+            inboxFolderButton
         }
-
         if sessionListToolbar.keepsSystemSearchToolbarItem {
             DefaultToolbarItem(kind: .search, placement: .bottomBar)
         }
@@ -578,13 +576,7 @@ struct SessionInboxView: View {
         }
 
         ToolbarItem(placement: .bottomBar) {
-            if SessionInboxComposeChrome.usesCompactQuickSessionBar(
-                hasSelectedWorkspace: selectedWorkspace != nil
-            ) {
-                compactQuickSessionBar
-            } else {
-                newSessionButton
-            }
+            compactQuickSessionBar
         }
     }
 
@@ -1040,31 +1032,40 @@ struct SessionInboxView: View {
         SessionInboxCompactComposeBar(
             showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
                 voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
-                hasSelectedWorkspace: selectedWorkspace != nil,
                 hasActivePlayback: sessionListHasActivePlayback
             ),
+            onIncognito: inboxIncognitoAction,
             onStart: {
-                navigation.showQuickSession = true
+                startQuickSession(dictate: false)
             },
             onDictate: {
-                navigation.pendingQuickSessionStartDictation = true
-                navigation.showQuickSession = true
+                startQuickSession(dictate: true)
             }
         )
-    }
-
-    private var newSessionButton: some View {
-        Button {
-            guard let selectedWorkspace else { return }
-            Task { await createSession(in: selectedWorkspace) }
-        } label: {
-            Image(systemName: "square.and.pencil")
-        }
-        .foregroundStyle(.themeFg)
-        .accessibilityLabel("New Session")
-        .accessibilityIdentifier("workspace.newSession")
         .disabled(isCreating)
         .opacity(isCreating ? 0.55 : 1)
+    }
+
+    private var inboxIncognitoAction: (() -> Void)? {
+        guard selectedWorkspace != nil else { return nil }
+        return {
+            guard let selectedWorkspace else { return }
+            Task { await createSession(in: selectedWorkspace, ephemeral: true) }
+        }
+    }
+
+    private func startQuickSession(dictate: Bool) {
+        if dictate {
+            navigation.pendingQuickSessionStartDictation = true
+        }
+        if let selectedWorkspace {
+            navigation.pendingQuickSessionLaunchContext = QuickSessionLaunchContext(
+                serverId: selectedWorkspace.serverId,
+                workspaceId: selectedWorkspace.workspace.id,
+                worktreeId: nil
+            )
+        }
+        navigation.showQuickSession = true
     }
 
     private func applyE2ELaunchHintsIfNeeded() async {
@@ -1111,7 +1112,7 @@ struct SessionInboxView: View {
         await createSession(in: selectedWorkspace)
     }
 
-    private func createSession(in workspaceTarget: WorkspaceNavTarget) async {
+    private func createSession(in workspaceTarget: WorkspaceNavTarget, ephemeral: Bool = false) async {
         guard let connection = coordinator.connection(for: workspaceTarget.serverId),
               let api = connection.apiClient else {
             error = "Server is offline — reconnecting in background"
@@ -1121,7 +1122,10 @@ struct SessionInboxView: View {
         isCreating = true
         error = nil
         do {
-            let response = try await api.createWorkspaceSession(workspaceId: workspaceTarget.workspace.id)
+            let response = try await api.createWorkspaceSession(
+                workspaceId: workspaceTarget.workspace.id,
+                ephemeral: ephemeral ? true : nil
+            )
             connection.sessionStore.upsert(response.session)
             isCreating = false
             navigation.openWorkspaceSession(
@@ -1138,21 +1142,29 @@ struct SessionInboxView: View {
         }
     }
 
-    private func workspaceFilesButton(_ workspaceTarget: WorkspaceNavTarget) -> some View {
-        let target = FileBrowserNavTarget(
-            serverId: workspaceTarget.serverId,
-            workspaceId: workspaceTarget.workspace.id,
-            path: ""
+    private var inboxFolderButton: some View {
+        let workspaceTarget = selectedWorkspace
+        return SessionInboxFolderToolbarButton(
+            isEnabled: SessionInboxComposeChrome.canOpenFiles(hasServer: activeServerId != nil),
+            accessibilityLabel: workspaceTarget == nil
+                ? "Open server files"
+                : "Open workspace files",
+            onOpen: openInboxFiles
         )
+    }
 
-        return Button {
+    private func openInboxFiles() {
+        if let workspaceTarget = selectedWorkspace {
+            let target = FileBrowserNavTarget(
+                serverId: workspaceTarget.serverId,
+                workspaceId: workspaceTarget.workspace.id,
+                path: ""
+            )
             navigation.openWorkspaceFileBrowser(target, workspace: workspaceTarget)
-        } label: {
-            Image(systemName: "folder")
+            return
         }
-        .foregroundStyle(.themeFg)
-        .accessibilityIdentifier("workspace.files.open")
-        .accessibilityLabel("Open workspace files")
+        guard let activeServerId else { return }
+        navigation.openWorkspaceFileBrowser(FileBrowserNavTarget.hostHome(serverId: activeServerId))
     }
 
     private func workspaceConfigurationButton(_ workspaceTarget: WorkspaceNavTarget) -> some View {

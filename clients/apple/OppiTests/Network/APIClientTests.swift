@@ -1389,6 +1389,34 @@ struct APIClientTests {
         #expect(step == 3)
     }
 
+    @Test func listHostDirectoryEncodesHomeRelativePath() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        var step = 0
+        let directoryPath = "folder one/日本語 #?/"
+        let expectedDirectoryPath = "/host/contents/folder%20one/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F/"
+
+        MockURLProtocol.handler = { request in
+            step += 1
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            switch step {
+            case 1:
+                #expect(components?.percentEncodedPath == "/host/contents/")
+                #expect(components?.queryItems?.isEmpty ?? true)
+            case 2:
+                #expect(components?.percentEncodedPath == expectedDirectoryPath)
+                #expect(components?.queryItems?.isEmpty ?? true)
+            default:
+                Issue.record("Unexpected request count: \(step)")
+            }
+            return self.mockResponse(json: "{\"path\":\"/\",\"entries\":[],\"truncated\":false}")
+        }
+
+        _ = try await client.listHostDirectory(path: "")
+        _ = try await client.listHostDirectory(path: directoryPath)
+        #expect(step == 2)
+    }
+
     @Test func workspaceFileEndpointsAppendWorktreeQueryWhenProvided() async throws {
         let client = makeClient()
         defer { cleanup() }

@@ -75,10 +75,18 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
         tap(linkedWorktreeButton, named: "linked worktree menu item")
         try saveLabScreenshot(name: "workspace-worktrees-compact-title-feature-e2e")
 
-        tap(app.buttons["workspace.newSession"], named: "new session button")
+        tap(app.buttons["workspace.quickSession.start"], named: "quick session compose capsule")
+        let input = app.textViews["chat.input"]
         XCTAssertTrue(
-            app.textViews["chat.input"].waitForExistence(timeout: 30),
-            "Chat input did not appear after creating a session in the linked worktree"
+            input.waitForExistence(timeout: 30),
+            "Quick Session input did not appear from the workspace list"
+        )
+        tap(input, named: "quick session input", timeout: 5)
+        input.typeText("E2E_WORKTREE_QUICK_SESSION")
+        tap(app.buttons["chat.send"], named: "quick session send button", timeout: 5)
+        XCTAssertTrue(
+            app.buttons["chat.toolbar.files"].waitForExistence(timeout: 30),
+            "Chat session did not open after sending from the worktree-preselected Quick Session"
         )
         let sessionId = try waitForSessionInWorktree(
             workspaceId: workspaceId,

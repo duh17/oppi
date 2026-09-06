@@ -149,7 +149,7 @@ The server's supported remote boundary is HTTPS/WSS with per-device P-256 keys a
 - `routes/server-resources.ts` — server-global Skill/extension catalogs, server-authored capabilities, contained Skill file reads, enable/disable, and Mobile Output Guide configuration.
 - `routes/uploads.ts` — chat attachment upload records and content.
 - `routes/workspace-files.ts` — workspace path, directory, and raw-file routes.
-- `routes/host-files.ts` — authenticated exact-path host-file GET/HEAD.
+- `routes/host-files.ts` — authenticated exact-path host-file GET/HEAD and home-directory listings.
 - `routes/themes.ts`, `routes/skills.ts`, `routes/provider-auth.ts`, `routes/telemetry.ts`, and E2E harness routes.
 
 WebSocket upgrade paths are explicit:

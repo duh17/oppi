@@ -318,6 +318,71 @@ struct QuickSessionLaunchRoutingTests {
     }
 }
 
+@Suite("Quick Session inbox workspace preselection")
+struct QuickSessionLaunchSelectionTests {
+    @Test func inboxWorkspaceAndWorktreeBeatLastUsed() {
+        let pick = QuickSessionLaunchSelection.initialWorkspace(
+            launchContext: QuickSessionLaunchContext(
+                serverId: "s1",
+                workspaceId: "ws-2",
+                worktreeId: "wt_feature"
+            ),
+            workspaces: [
+                .init(serverId: "s1", workspaceId: "ws-1", name: "One"),
+                .init(serverId: "s1", workspaceId: "ws-2", name: "Two"),
+            ],
+            preferred: .init(id: "ws-1", source: "last_used")
+        )
+
+        #expect(pick?.serverId == "s1")
+        #expect(pick?.workspaceId == "ws-2")
+        #expect(pick?.worktreeId == "wt_feature")
+        #expect(pick?.source == "inbox_workspace")
+    }
+
+    @Test func agentLaunchStillFiltersByServerAndUsesPreferred() {
+        let pick = QuickSessionLaunchSelection.initialWorkspace(
+            launchContext: QuickSessionLaunchContext(
+                serverId: "s2",
+                agentId: "agent-1"
+            ),
+            workspaces: [
+                .init(serverId: "s1", workspaceId: "ws-1", name: "One"),
+                .init(serverId: "s2", workspaceId: "ws-2", name: "Two"),
+                .init(serverId: "s2", workspaceId: "ws-3", name: "Three"),
+            ],
+            preferred: .init(id: "ws-3", source: "last_used")
+        )
+
+        #expect(pick?.serverId == "s2")
+        #expect(pick?.workspaceId == "ws-3")
+        #expect(pick?.worktreeId == nil)
+        #expect(pick?.source == "last_used")
+    }
+
+    @Test func allSessionsWithoutContextUsesPreferred() {
+        let pick = QuickSessionLaunchSelection.initialWorkspace(
+            launchContext: nil,
+            workspaces: [
+                .init(serverId: "s1", workspaceId: "ws-1", name: "One"),
+                .init(serverId: "s1", workspaceId: "ws-2", name: "Two"),
+            ],
+            preferred: .init(id: "ws-2", source: "default")
+        )
+
+        #expect(pick?.workspaceId == "ws-2")
+        #expect(pick?.source == "default")
+        #expect(pick?.worktreeId == nil)
+    }
+
+    @Test func agentContextDoesNotInventAWorkspaceId() {
+        let context = QuickSessionLaunchContext(serverId: "s1", agentId: "agent-1")
+        #expect(context.agentId == "agent-1")
+        #expect(context.workspaceId == nil)
+        #expect(context.worktreeId == nil)
+    }
+}
+
 @Suite("Quick Session worktree picker policy")
 struct QuickSessionWorktreePickerPolicyTests {
     @Test(arguments: [
@@ -378,13 +443,41 @@ struct QuickSessionWorktreePickerPolicyTests {
         )
     }
 
-    @Test func usesImplicitMainWhenTheWorkspaceHasNoWorktrees() {
+    @Test func sendKeepsLaunchedWorktreeWhileWorktreesAreEmpty() throws {
         #expect(
             QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
                 selectedId: "wt_feature",
                 worktrees: []
+            ) == "wt_feature"
+        )
+        #expect(
+            QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
+                selectedId: nil,
+                worktrees: []
             ) == WorkspaceWorktree.mainId
         )
+
+        let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
+        let send = try sourceSlice(
+            sheet,
+            start: "private func handleSend() {",
+            end: "let plan: QuickSessionLaunchPlan"
+        )
+        #expect(send.contains("QuickSessionWorktreePickerPolicy.resolvedWorktreeId("))
+        #expect(send.contains("selectedId: selectedWorktreeId"))
+        #expect(send.contains("worktrees: worktrees"))
+        #expect(!send.contains("worktreeId: WorkspaceWorktree.mainId"))
+
+        let load = try sourceSlice(
+            sheet,
+            start: "private func loadWorktrees(for workspace: Workspace?) async {",
+            end: "// MARK: - Actions"
+        )
+        let afterWorkspaceGuardStart = try #require(
+            load.range(of: "isLoadingWorktrees = worktrees.isEmpty")
+        )
+        let afterWorkspaceGuard = String(load[afterWorkspaceGuardStart.lowerBound...])
+        #expect(!afterWorkspaceGuard.contains("selectedWorktreeId = WorkspaceWorktree.mainId"))
     }
 
     @Test(arguments: [
@@ -507,4 +600,29 @@ struct NewSessionModelPresentationTests {
         #expect(shortModelName(presentation.pillText) == "opus-4-0")
         #expect(presentation.pillProvider == "anthropic")
     }
+}
+
+private func appleSource(_ relativePath: String) throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: relativePath)
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func sourceSlice(_ source: String, start: String, end: String) throws -> String {
+    guard let startRange = source.range(of: start) else {
+        Issue.record("Missing source start \(start)")
+        throw SourceSliceError.missingMarker(start)
+    }
+    guard let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex) else {
+        Issue.record("Missing source end \(end)")
+        throw SourceSliceError.missingMarker(end)
+    }
+    return String(source[startRange.lowerBound..<endRange.lowerBound])
+}
+
+private enum SourceSliceError: Error {
+    case missingMarker(String)
 }

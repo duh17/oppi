@@ -536,6 +536,10 @@ struct QuickSessionSheet: View {
     private func requireExplicitCompatibleWorkspaceIfNeeded() {
         guard let constraints = effectiveLaunchConstraints else { return }
         if let selectedWorkspace, constraints.allows(selectedWorkspace) { return }
+        if selectedWorkspaceSelectionSource == "inbox_workspace" {
+            selectedAgentId = nil
+            return
+        }
         selectedWorkspace = nil
         selectedWorkspaceSelectionSource = "agent_constraint_required"
         resetWorktreeSelection()
@@ -650,7 +654,6 @@ struct QuickSessionSheet: View {
         guard let api = selectedServerConnection()?.apiClient else {
             if generation == worktreeLoadGeneration {
                 worktrees = []
-                selectedWorktreeId = WorkspaceWorktree.mainId
             }
             return
         }
@@ -667,7 +670,6 @@ struct QuickSessionSheet: View {
             guard generation == worktreeLoadGeneration else { return }
             logger.warning("Failed to load worktrees for quick session: \(error.localizedDescription, privacy: .public)")
             worktrees = []
-            selectedWorktreeId = WorkspaceWorktree.mainId
         }
     }
 
@@ -695,24 +697,30 @@ struct QuickSessionSheet: View {
 
         let launchContext = navigation.pendingQuickSessionLaunchContext
         navigation.pendingQuickSessionLaunchContext = nil
-        shouldRememberAgentSelection = launchContext == nil
+        shouldRememberAgentSelection = launchContext?.agentId == nil
 
-        // Select workspace: requested Agent server, then last used > explicit default > first available.
-        // Prefer constraint-filtered lists when an Agent is already known.
-        let baseWorkspaces = launchContext.map { context in
-            rawServerWorkspaces.filter { $0.serverId == context.serverId }
-        } ?? rawServerWorkspaces
-        let all = baseWorkspaces
-        if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
-            in: all.map { (id: $0.workspace.id, name: $0.workspace.name) }
-        ), let match = all.first(where: { $0.workspace.id == preferred.id }) {
-            selectedWorkspace = match.workspace
-            selectedWorkspaceSelectionSource = preferred.source
-            selectedServerId = match.serverId
-        } else if let first = all.first {
-            selectedWorkspace = first.workspace
-            selectedWorkspaceSelectionSource = "first_available"
-            selectedServerId = first.serverId
+        // Inbox workspace+worktree beats last-used. Agent launch still filters
+        // to that server, then last used > explicit default > first available.
+        let candidates = rawServerWorkspaces.map {
+            QuickSessionLaunchSelection.Candidate(
+                serverId: $0.serverId,
+                workspaceId: $0.workspace.id,
+                name: $0.workspace.name
+            )
+        }
+        if let pick = QuickSessionLaunchSelection.initialWorkspace(
+            launchContext: launchContext,
+            workspaces: candidates,
+            preferred: nil
+        ) {
+            if let worktreeId = pick.worktreeId {
+                selectedWorktreeId = QuickSessionWorktreePickerPolicy.normalizedLaunchWorktreeId(worktreeId)
+            }
+            selectedWorkspace = rawServerWorkspaces.first(where: {
+                $0.serverId == pick.serverId && $0.workspace.id == pick.workspaceId
+            })?.workspace
+            selectedWorkspaceSelectionSource = pick.source
+            selectedServerId = pick.serverId
         } else if let launchContext {
             selectedServerId = launchContext.serverId
         } else {

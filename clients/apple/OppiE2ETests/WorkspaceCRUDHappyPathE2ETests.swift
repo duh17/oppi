@@ -132,7 +132,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         tap(saveButton, named: "workspace save button")
 
         XCTAssertTrue(
-            app.buttons["workspace.newSession"].waitForExistence(timeout: 15),
+            app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
             "Workspace detail did not return after save"
         )
         XCTAssertTrue(
@@ -246,7 +246,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         tap(openWorkspaceButton, named: "workspace \(workspaceName) open button")
 
         XCTAssertTrue(
-            app.buttons["workspace.newSession"].waitForExistence(timeout: 15),
+            app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
             "Workspace detail did not open for \(workspaceName)"
         )
     }

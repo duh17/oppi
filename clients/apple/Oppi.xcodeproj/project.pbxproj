@@ -332,6 +332,7 @@
 		341F77A4CCCB88304A033B59 /* SessionListPromptSwipePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C03CEF0F8C52EB23241342F /* SessionListPromptSwipePolicy.swift */; };
 		3420EE0776CF31C558F50609 /* ExtensionNativeMarkdownSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38079C013A567DD846E84749 /* ExtensionNativeMarkdownSupport.swift */; };
 		342432E3CD8BB32538386DB2 /* ToolRowPlanContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D9184A5D6C0C1646FAC5E0 /* ToolRowPlanContractTests.swift */; };
+		3425EB826354F400DD8FA024 /* FileBrowserHostHomeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AD3AD655356B7266A3581D3 /* FileBrowserHostHomeTests.swift */; };
 		342BD7E153CFAEB961E28238 /* RendererTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84593342FB37590E8520B111 /* RendererTestSupport.swift */; };
 		3437171FF42F7CC4A9E06A98 /* FileIndexStore+Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = C36272C428E9D190E7C187E1 /* FileIndexStore+Environment.swift */; };
 		3471798EBC51B3B0B99318EA /* ProviderColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9E3106B53C20450F229CB7 /* ProviderColor.swift */; };
@@ -1768,6 +1769,7 @@
 		0A88485BEE07970790BAF044 /* MacToolTimelineChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacToolTimelineChromeTests.swift; sourceTree = "<group>"; };
 		0A945DE4AFC039BD24A141CC /* SessionStatusPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStatusPill.swift; sourceTree = "<group>"; };
 		0A9E443B9369A8BC1D64A280 /* ProcessRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessRunner.swift; sourceTree = "<group>"; };
+		0AD3AD655356B7266A3581D3 /* FileBrowserHostHomeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserHostHomeTests.swift; sourceTree = "<group>"; };
 		0AF15FEA62F07EC2775F47F0 /* TimelineReducerLoadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerLoadTests.swift; sourceTree = "<group>"; };
 		0B57FD5B198557963DCF2FCF /* TimelineCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineCacheTests.swift; sourceTree = "<group>"; };
 		0B7A03D104E935131D98FF59 /* AskCardShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskCardShared.swift; sourceTree = "<group>"; };
@@ -4134,6 +4136,7 @@
 				6A28657447754F24ADFA0279 /* AdjacentFileNavigatorLayoutTests.swift */,
 				786983930627F07708352C26 /* ChatFileBrowserPanelTests.swift */,
 				721975A3FAB721B639C8C0B4 /* FileBrowserContentViewAudioEnvironmentTests.swift */,
+				0AD3AD655356B7266A3581D3 /* FileBrowserHostHomeTests.swift */,
 				9DB3DA547F5A170F783887D0 /* FileBrowserReviewCommentSelectionTests.swift */,
 				ECE2055F60C328D0AAE4ED47 /* SessionTouchedFileRoutingTests.swift */,
 			);
@@ -6603,6 +6606,7 @@
 				605CF1C783C02DA08BA0FE62 /* FeatureEducationTipPresentationCoordinatorTests.swift in Sources */,
 				4F5A4FB4AC3E81762AEC7A86 /* FeatureEducationToolRowTipTests.swift in Sources */,
 				B4809CE395BE50E73F6AC4FF /* FileBrowserContentViewAudioEnvironmentTests.swift in Sources */,
+				3425EB826354F400DD8FA024 /* FileBrowserHostHomeTests.swift in Sources */,
 				3DDAE9B112AE7FF725648021 /* FileBrowserReviewCommentSelectionTests.swift in Sources */,
 				D02B084149F7A1FEC59F0221 /* FileIconTests.swift in Sources */,
 				BB6BF1D67D2D368370532654 /* FileIndexStoreTests.swift in Sources */,

@@ -3981,6 +3981,13 @@ private struct InboxProviderSetupPreview: View {
             .searchable(text: $searchText, prompt: "Search sessions")
             .searchToolbarBehavior(.minimize)
             .toolbar {
+                ToolbarItem(placement: .bottomBar) {
+                    SessionInboxFolderToolbarButton(
+                        isEnabled: false,
+                        accessibilityLabel: "Open server files",
+                        onOpen: {}
+                    )
+                }
                 DefaultToolbarItem(kind: .search, placement: .bottomBar)
                 ToolbarSpacer(.flexible, placement: .bottomBar)
                 ToolbarItem(placement: .bottomBar) {

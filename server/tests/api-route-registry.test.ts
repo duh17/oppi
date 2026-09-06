@@ -45,6 +45,8 @@ const sessionOperationIds = [
   "getWorkspaceRaw",
   "getHostRaw",
   "headHostRaw",
+  "getHostContentsRoot",
+  "getHostContents",
   "createSessionAttachment",
   "putSessionAttachmentContent",
   "createWorkspaceSession",
@@ -178,6 +180,11 @@ describe("api route registry", () => {
       "/workspaces/:workspaceId/raw/:path",
     );
     expect(normalizeRegisteredPathPattern("/files/raw")).toBe("/files/raw");
+    expect(normalizeRegisteredPathPattern("/host/contents")).toBe("/host/contents");
+    expect(normalizeRegisteredPathPattern("/host/contents/")).toBe("/host/contents");
+    expect(normalizeRegisteredPathPattern("/host/contents/Documents/notes")).toBe(
+      "/host/contents/:path",
+    );
 
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/raw/src/App.swift")).toBe(
       "/workspaces/:workspaceId/sessions/:sessionId/raw/:path",

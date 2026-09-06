@@ -1,9 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createReadStream, constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { extname } from "node:path";
+import { homedir } from "node:os";
+import { extname, isAbsolute } from "node:path";
 
+import { listDirectoryEntries } from "../directory-listing.js";
 import {
+  decodeWorkspaceRoutePath,
   getContentType,
   isBrowseMediaContentType,
   isStreamingMediaContentType,
@@ -13,6 +16,7 @@ import {
 import { encodeHostResolvedPathHeader, expandExactHostPath } from "../host-file-path.js";
 import { logRejectedByteRange, parseByteRangeHeader } from "../http-range.js";
 import { createLogger, type Logger } from "../logger.js";
+import type { DirectoryListingResponse } from "../types.js";
 import type { RouteDispatcher, RouteHelpers } from "./types.js";
 
 export interface HostFileRouteOptions {
@@ -51,16 +55,68 @@ export function createHostFileRoutes(
   const homeDir = options.homeDir;
 
   return async ({ method, path, url, req, res }) => {
-    if (path !== "/files/raw") return false;
-
     const normalizedMethod = method.toUpperCase();
-    if (normalizedMethod !== "GET" && normalizedMethod !== "HEAD") {
-      return false;
+
+    if (path === "/files/raw") {
+      if (normalizedMethod !== "GET" && normalizedMethod !== "HEAD") {
+        return false;
+      }
+      await handleHostRawFile(normalizedMethod, url, req, res, helpers, log, homeDir);
+      return true;
     }
 
-    await handleHostRawFile(normalizedMethod, url, req, res, helpers, log, homeDir);
+    if (normalizedMethod !== "GET") return false;
+
+    if (path === "/host/contents" || path === "/host/contents/") {
+      await handleListHostDirectory("", res, helpers, homeDir);
+      return true;
+    }
+
+    const contentsMatch = path.match(/^\/host\/contents\/(.*)$/);
+    if (!contentsMatch) return false;
+
+    const requestedPath = decodeWorkspaceRoutePath(contentsMatch[1]);
+    if (requestedPath === null) {
+      helpers.error(res, 400, "Invalid file path encoding");
+      return true;
+    }
+
+    await handleListHostDirectory(requestedPath, res, helpers, homeDir);
     return true;
   };
+}
+
+async function handleListHostDirectory(
+  requestedPath: string,
+  res: ServerResponse,
+  helpers: RouteHelpers,
+  homeDir: string | undefined,
+): Promise<void> {
+  let home: string;
+  try {
+    home = homeDir ?? homedir();
+  } catch {
+    helpers.error(res, 404, "Directory not found");
+    return;
+  }
+  if (!home || !isAbsolute(home)) {
+    helpers.error(res, 404, "Directory not found");
+    return;
+  }
+
+  const dirPath = requestedPath.endsWith("/") ? requestedPath.slice(0, -1) : requestedPath;
+  const result = await listDirectoryEntries(home, dirPath || ".");
+  if (!result) {
+    helpers.error(res, 404, "Directory not found");
+    return;
+  }
+
+  const response: DirectoryListingResponse = {
+    path: requestedPath || "/",
+    entries: result.entries,
+    truncated: result.truncated,
+  };
+  helpers.json(res, response);
 }
 
 async function handleHostRawFile(

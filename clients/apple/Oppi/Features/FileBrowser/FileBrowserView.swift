@@ -2,6 +2,44 @@ import SwiftUI
 
 // MARK: - Navigation Target
 
+/// Workspace file browser or the connected server's home directory.
+enum FileBrowserScope: Hashable, Sendable {
+    case workspace(workspaceId: String, worktreeId: String?)
+    case hostHome
+
+    var breadcrumbRootLabel: String {
+        switch self {
+        case .workspace:
+            return "Files"
+        case .hostHome:
+            return "Home"
+        }
+    }
+}
+
+enum FileBrowserDirectoryRequest: Equatable, Sendable {
+    case workspace(workspaceId: String, path: String, worktreeId: String?)
+    case hostHome(path: String)
+
+    static func make(scope: FileBrowserScope, path: String) -> FileBrowserDirectoryRequest {
+        switch scope {
+        case .workspace(let workspaceId, let worktreeId):
+            return .workspace(workspaceId: workspaceId, path: path, worktreeId: worktreeId)
+        case .hostHome:
+            return .hostHome(path: path)
+        }
+    }
+}
+
+enum FileBrowserHostHomePath {
+    static func rawPath(relativePath: String) -> String {
+        let trimmed = relativePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if trimmed.isEmpty || trimmed == "~" { return "~" }
+        if trimmed.hasPrefix("~/") { return trimmed }
+        return "~/\(trimmed)"
+    }
+}
+
 /// Value-based navigation target for the file browser.
 ///
 /// Pushed onto the workspace's `NavigationPath` so each directory level
@@ -10,15 +48,35 @@ import SwiftUI
 /// to any ancestor without intermediate pop animations.
 struct FileBrowserNavTarget: Hashable {
     let serverId: String
-    let workspaceId: String
-    let worktreeId: String?
+    let scope: FileBrowserScope
     let path: String
 
-    init(serverId: String, workspaceId: String, worktreeId: String? = nil, path: String) {
+    init(serverId: String, scope: FileBrowserScope, path: String) {
         self.serverId = serverId
-        self.workspaceId = workspaceId
-        self.worktreeId = worktreeId
+        self.scope = scope
         self.path = path
+    }
+
+    init(serverId: String, workspaceId: String, worktreeId: String? = nil, path: String) {
+        self.init(
+            serverId: serverId,
+            scope: .workspace(workspaceId: workspaceId, worktreeId: worktreeId),
+            path: path
+        )
+    }
+
+    static func hostHome(serverId: String, path: String = "") -> FileBrowserNavTarget {
+        FileBrowserNavTarget(serverId: serverId, scope: .hostHome, path: path)
+    }
+
+    var workspaceId: String? {
+        if case .workspace(let workspaceId, _) = scope { return workspaceId }
+        return nil
+    }
+
+    var worktreeId: String? {
+        if case .workspace(_, let worktreeId) = scope { return worktreeId }
+        return nil
     }
 
     /// Number of directory levels deep from the file browser root.
@@ -32,7 +90,7 @@ struct FileBrowserNavTarget: Hashable {
     /// Path segments for breadcrumb display.
     /// Returns [(label, depth)] pairs where depth 0 = root.
     var breadcrumbSegments: [(label: String, depth: Int)] {
-        var segments: [(String, Int)] = [("Files", 0)]
+        var segments: [(String, Int)] = [(scope.breadcrumbRootLabel, 0)]
         let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
         let parts = trimmed.split(separator: "/")
         for (i, part) in parts.enumerated() {
@@ -158,11 +216,24 @@ private enum FileBrowserAdaptiveLayout: Equatable {
 /// All filtering happens locally on-device for instant feedback.
 struct FileBrowserView: View {
     let serverId: String?
-    let workspaceId: String
-    let worktreeId: String?
+    let scope: FileBrowserScope
     let initialPath: String
     let layoutMode: FileBrowserLayoutMode
     let contentChromeMode: FileBrowserContentChromeMode
+
+    init(
+        serverId: String? = nil,
+        scope: FileBrowserScope,
+        initialPath: String,
+        layoutMode: FileBrowserLayoutMode = .adaptive,
+        contentChromeMode: FileBrowserContentChromeMode = .pushed
+    ) {
+        self.serverId = serverId
+        self.scope = scope
+        self.initialPath = initialPath
+        self.layoutMode = layoutMode
+        self.contentChromeMode = contentChromeMode
+    }
 
     init(
         serverId: String? = nil,
@@ -172,12 +243,52 @@ struct FileBrowserView: View {
         layoutMode: FileBrowserLayoutMode = .adaptive,
         contentChromeMode: FileBrowserContentChromeMode = .pushed
     ) {
-        self.serverId = serverId
-        self.workspaceId = workspaceId
-        self.worktreeId = worktreeId
-        self.initialPath = initialPath
-        self.layoutMode = layoutMode
-        self.contentChromeMode = contentChromeMode
+        self.init(
+            serverId: serverId,
+            scope: .workspace(workspaceId: workspaceId, worktreeId: worktreeId),
+            initialPath: initialPath,
+            layoutMode: layoutMode,
+            contentChromeMode: contentChromeMode
+        )
+    }
+
+    private var workspaceId: String {
+        switch scope {
+        case .workspace(let workspaceId, _):
+            return workspaceId
+        case .hostHome:
+            return ""
+        }
+    }
+
+    private var worktreeId: String? {
+        switch scope {
+        case .workspace(_, let worktreeId):
+            return worktreeId
+        case .hostHome:
+            return nil
+        }
+    }
+
+    private var isHostHome: Bool {
+        if case .hostHome = scope { return true }
+        return false
+    }
+
+    private var contentSource: FileBrowserContentSource {
+        isHostHome ? .hostFile : .workspaceFile
+    }
+
+    private var breadcrumbRootLabel: String {
+        scope.breadcrumbRootLabel
+    }
+
+    private func navTarget(path: String) -> FileBrowserNavTarget {
+        FileBrowserNavTarget(serverId: serverId ?? "", scope: scope, path: path)
+    }
+
+    private func contentFilePath(_ relativePath: String) -> String {
+        isHostHome ? FileBrowserHostHomePath.rawPath(relativePath: relativePath) : relativePath
     }
 
     @Environment(\.apiClient) private var apiClient
@@ -200,6 +311,24 @@ struct FileBrowserView: View {
 
     private var isRoot: Bool {
         currentDirectoryPath.isEmpty || currentDirectoryPath == "/"
+    }
+
+    private var rootSubtitle: String {
+        switch scope {
+        case .hostHome:
+            return "~"
+        case .workspace:
+            return "Workspace root"
+        }
+    }
+
+    private var directoryLoadTaskID: String {
+        switch scope {
+        case .workspace(let workspaceId, let worktreeId):
+            return "workspace:\(workspaceId):\(worktreeId ?? ""):\(currentDirectoryPath)"
+        case .hostHome:
+            return "hostHome:\(currentDirectoryPath)"
+        }
     }
 
     private var usesInlineCompactDirectoryNavigation: Bool {
@@ -234,12 +363,12 @@ struct FileBrowserView: View {
 
     /// Current depth for breadcrumb pop calculations.
     private var currentDepth: Int {
-        FileBrowserNavTarget(serverId: serverId ?? "", workspaceId: workspaceId, worktreeId: worktreeId, path: currentDirectoryPath).depth
+        navTarget(path: currentDirectoryPath).depth
     }
 
     /// Breadcrumb segments for the current path.
     private var breadcrumbSegments: [(label: String, depth: Int)] {
-        FileBrowserNavTarget(serverId: serverId ?? "", workspaceId: workspaceId, worktreeId: worktreeId, path: currentDirectoryPath).breadcrumbSegments
+        navTarget(path: currentDirectoryPath).breadcrumbSegments
     }
 
     var body: some View {
@@ -262,8 +391,8 @@ struct FileBrowserView: View {
                     }
                 }
         }
-        .fileBrowserSearchable(isEnabled: activeLayout == .compact, text: $searchText)
-        .navigationTitle(isRoot ? "Files" : lastPathComponent)
+        .fileBrowserSearchable(isEnabled: activeLayout == .compact && !isHostHome, text: $searchText)
+        .navigationTitle(isRoot ? breadcrumbRootLabel : lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if shouldShowInlineDirectoryBackButton {
@@ -294,12 +423,12 @@ struct FileBrowserView: View {
         }
         .refreshable {
             await loadDirectory(path: currentDirectoryPath)
-            if let api = apiClient {
+            if !isHostHome, let api = apiClient {
                 fileIndexStore.invalidate()
                 fileIndexStore.ensureLoaded(workspaceId: workspaceId, worktreeId: worktreeId, apiClient: api)
             }
         }
-        .task(id: "\(worktreeId ?? ""):\(currentDirectoryPath)") { await loadDirectory(path: currentDirectoryPath) }
+        .task(id: directoryLoadTaskID) { await loadDirectory(path: currentDirectoryPath) }
         .task { ensureFileIndex() }
     }
 
@@ -415,7 +544,9 @@ struct FileBrowserView: View {
     private func fileTreeRail(showCloseButton: Bool) -> some View {
         VStack(spacing: 12) {
             fileTreeHeader(showCloseButton: showCloseButton)
-            fileTreeSearchField
+            if !isHostHome {
+                fileTreeSearchField
+            }
             fileTreeBody
         }
         .padding(14)
@@ -433,10 +564,10 @@ struct FileBrowserView: View {
                 .glassEffect(.regular.interactive(), in: Circle())
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Files")
+                Text(breadcrumbRootLabel)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.themeFg)
-                Text(isRoot ? "Workspace root" : currentDirectoryPath)
+                Text(isRoot ? rootSubtitle : currentDirectoryPath)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.themeComment)
                     .lineLimit(1)
@@ -853,14 +984,14 @@ struct FileBrowserView: View {
                 }
                 .buttonStyle(.plain)
             } else if let serverId {
-                NavigationLink(value: FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, worktreeId: worktreeId, path: dirPath)) {
+                NavigationLink(value: navTarget(path: dirPath)) {
                     compactListRowContent { label }
                 }
             } else {
                 NavigationLink {
                     FileBrowserView(
-                        workspaceId: workspaceId,
-                        worktreeId: worktreeId,
+                        serverId: serverId,
+                        scope: scope,
                         initialPath: dirPath,
                         layoutMode: layoutMode,
                         contentChromeMode: contentChromeMode
@@ -942,14 +1073,19 @@ struct FileBrowserView: View {
             usesInlineCompactNavigation: usesInlineCompactDirectoryNavigation,
             serverId: serverId
         ), let serverId else { return nil }
-        return .workspaceFile(
-            serverId: serverId,
-            workspaceId: workspaceId,
-            worktreeId: worktreeId,
-            path: path,
-            fileName: name,
-            navigationContext: navigationContext
-        )
+        switch scope {
+        case .hostHome:
+            return nil
+        case .workspace(let workspaceId, let worktreeId):
+            return .workspaceFile(
+                serverId: serverId,
+                workspaceId: workspaceId,
+                worktreeId: worktreeId,
+                path: path,
+                fileName: name,
+                navigationContext: navigationContext
+            )
+        }
     }
 
     // MARK: - Helpers
@@ -964,6 +1100,7 @@ struct FileBrowserView: View {
             serverId: serverId,
             filePath: selection.path,
             fileName: selection.name,
+            source: contentSource,
             fileSize: selection.size,
             chromeMode: .treePane,
             navigationContext: currentFileNavigationContext,
@@ -989,6 +1126,7 @@ struct FileBrowserView: View {
             serverId: serverId,
             filePath: path,
             fileName: name,
+            source: contentSource,
             fileSize: size,
             chromeMode: contentChromeMode,
             navigationContext: navigationContext,
@@ -1047,7 +1185,7 @@ struct FileBrowserView: View {
             listing = nil
             return
         }
-        let target = FileBrowserNavTarget(serverId: serverId, workspaceId: workspaceId, worktreeId: worktreeId, path: path)
+        let target = navTarget(path: path)
         switch navigation.workspaceNavigationPresentation {
         case .stack:
             navigation.pushWorkspaceFileBrowser(target)
@@ -1064,7 +1202,8 @@ struct FileBrowserView: View {
     }
 
     private func filePath(for entry: FileEntry, relativeTo parentPath: String) -> String {
-        entry.path ?? (parentPath.isEmpty ? entry.name : "\(parentPath)\(entry.name)")
+        let relative = entry.path ?? (parentPath.isEmpty ? entry.name : "\(parentPath)\(entry.name)")
+        return contentFilePath(relative)
     }
 
     private func fileNavigationContext(for entries: [FileEntry], relativeTo parentPath: String) -> FileBrowserNavigationContext {
@@ -1114,7 +1253,7 @@ struct FileBrowserView: View {
 
     private var lastPathComponent: String {
         let trimmed = currentDirectoryPath.hasSuffix("/") ? String(currentDirectoryPath.dropLast()) : currentDirectoryPath
-        return trimmed.split(separator: "/").last.map(String.init) ?? "Files"
+        return trimmed.split(separator: "/").last.map(String.init) ?? breadcrumbRootLabel
     }
 
     private func loadDirectory(path: String) async {
@@ -1130,7 +1269,17 @@ struct FileBrowserView: View {
             return
         }
         do {
-            let response = try await api.listWorkspaceDirectory(workspaceId: workspaceId, path: path, worktreeId: worktreeId)
+            let response: DirectoryListingResponse
+            switch FileBrowserDirectoryRequest.make(scope: scope, path: path) {
+            case .workspace(let workspaceId, let listingPath, let worktreeId):
+                response = try await api.listWorkspaceDirectory(
+                    workspaceId: workspaceId,
+                    path: listingPath,
+                    worktreeId: worktreeId
+                )
+            case .hostHome(let listingPath):
+                response = try await api.listHostDirectory(path: listingPath)
+            }
             guard path == currentDirectoryPath else { return }
             listing = response
             error = nil
@@ -1156,7 +1305,7 @@ struct FileBrowserView: View {
     }
 
     private func ensureFileIndex() {
-        guard let api = apiClient else { return }
+        guard !isHostHome, let api = apiClient else { return }
         fileIndexStore.ensureLoaded(workspaceId: workspaceId, worktreeId: worktreeId, apiClient: api)
     }
 

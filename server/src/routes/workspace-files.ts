@@ -1,8 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Dirent, Stats } from "node:fs";
 import { createReadStream } from "node:fs";
-import { opendir, stat, realpath, readdir } from "node:fs/promises";
-import { join, extname, relative, isAbsolute } from "node:path";
+import { opendir, stat } from "node:fs/promises";
+import { join, extname, relative } from "node:path";
+import {
+  listDirectoryEntries,
+  resolveContainedPath as resolveWorkspaceFilePath,
+} from "../directory-listing.js";
 import {
   decodeWorkspaceRoutePath,
   getContentType,
@@ -15,12 +19,7 @@ import {
 } from "../file-serving-policy.js";
 import { logRejectedByteRange, parseByteRangeHeader } from "../http-range.js";
 import { resolveSdkSessionCwd } from "../sdk-backend.js";
-import type {
-  DirectoryListingResponse,
-  FileEntry,
-  FileIndexResponse,
-  Workspace,
-} from "../types.js";
+import type { DirectoryListingResponse, FileIndexResponse, Workspace } from "../types.js";
 import { resolveWorkspaceUserPath } from "../workspace-user-path.js";
 import { resolveWorkspaceWorktree } from "../worktrees.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
@@ -37,10 +36,13 @@ export {
   SENSITIVE_FILE_PATTERNS,
   TEXT_EXTENSIONS,
 } from "../file-serving-policy.js";
+export {
+  listDirectoryEntries,
+  resolveContainedPath as resolveWorkspaceFilePath,
+} from "../directory-listing.js";
 
 const MAX_IMAGE_FILE_SIZE = MAX_BROWSE_IMAGE_FILE_SIZE;
 const MAX_TEXT_FILE_SIZE = MAX_BROWSE_TEXT_FILE_SIZE;
-const MAX_DIR_ENTRIES = 1000;
 const WALK_MAX_DEPTH = 12;
 const MAX_INDEX_PATHS = 50_000;
 const MAX_WALK_DIRECTORIES = 10_000;
@@ -65,107 +67,6 @@ function pipeFileStream(
     res.destroy(error);
   });
   stream.pipe(res as NodeJS.WritableStream);
-}
-
-/**
- * Resolve and validate a workspace-relative file path.
- *
- * Returns the canonical absolute path if it is valid and accessible, or
- * `null` if the path does not exist or escapes the workspace root via symlinks
- * or `..` traversal.
- */
-async function resolveWorkspaceRootPath(workspaceRoot: string): Promise<string> {
-  try {
-    return await realpath(workspaceRoot);
-  } catch {
-    return workspaceRoot;
-  }
-}
-
-export async function resolveWorkspaceFilePath(
-  workspaceRoot: string,
-  requestedPath: string,
-): Promise<string | null> {
-  // Absolute paths must not be joined onto the root. Node path.join may either
-  // discard the root or append the absolute segment; both break sandbox guest
-  // paths mapped onto the host mount.
-  const joined =
-    !requestedPath || requestedPath === "."
-      ? workspaceRoot
-      : isAbsolute(requestedPath)
-        ? requestedPath
-        : join(workspaceRoot, requestedPath);
-
-  let realFile: string;
-  try {
-    realFile = await realpath(joined);
-  } catch {
-    return null;
-  }
-
-  const realRoot = await resolveWorkspaceRootPath(workspaceRoot);
-  const normalizedRoot = realRoot.endsWith("/") ? realRoot : realRoot + "/";
-  if (realFile !== realRoot && !realFile.startsWith(normalizedRoot)) {
-    return null;
-  }
-
-  return realFile;
-}
-
-/** List entries in a workspace directory. Returns null if path is invalid or not a directory. */
-export async function listDirectoryEntries(
-  workspaceRoot: string,
-  dirRelPath: string,
-): Promise<{ entries: FileEntry[]; truncated: boolean } | null> {
-  const resolvedDir = await resolveWorkspaceFilePath(workspaceRoot, dirRelPath || ".");
-  if (!resolvedDir) return null;
-
-  let dirStat: Stats;
-  try {
-    dirStat = await stat(resolvedDir);
-  } catch {
-    return null;
-  }
-  if (!dirStat.isDirectory()) return null;
-
-  let dirents: Dirent[];
-  try {
-    dirents = await readdir(resolvedDir, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-
-  const entries: FileEntry[] = [];
-  let truncated = false;
-
-  for (const dirent of dirents) {
-    if (entries.length >= MAX_DIR_ENTRIES) {
-      truncated = true;
-      break;
-    }
-
-    const entryPath = join(resolvedDir, dirent.name);
-    try {
-      const entryStat = await stat(entryPath);
-      const isDir = entryStat.isDirectory();
-
-      entries.push({
-        name: dirent.name,
-        type: isDir ? "directory" : "file",
-        size: entryStat.size,
-        modifiedAt: Math.floor(entryStat.mtimeMs),
-      });
-    } catch {
-      continue;
-    }
-  }
-
-  entries.sort((a, b) => {
-    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-
-  return { entries, truncated };
 }
 
 interface SearchWalkResult {

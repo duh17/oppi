@@ -297,8 +297,7 @@ struct WorkspaceFileBrowserDestinationView: View {
             if let connection = resolvedConnection {
                 FileBrowserView(
                     serverId: targetServerId,
-                    workspaceId: target.workspaceId,
-                    worktreeId: target.worktreeId,
+                    scope: target.scope,
                     initialPath: target.path
                 )
                 .withServerScopedEnvironment(connection)

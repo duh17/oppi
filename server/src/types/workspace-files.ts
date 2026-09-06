@@ -10,7 +10,7 @@ export interface FileEntry {
   path?: string;
 }
 
-/** Directory listing response shape (GET /workspaces/:id/contents/<dir>). */
+/** Directory listing response shape (GET /workspaces/:id/contents/<dir> and GET /host/contents/<dir>). */
 export interface DirectoryListingResponse {
   path: string;
   entries: FileEntry[];

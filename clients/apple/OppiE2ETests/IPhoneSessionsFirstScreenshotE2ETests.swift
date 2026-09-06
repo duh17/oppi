@@ -664,7 +664,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "Workspace-scoped sessions inbox did not appear")
         XCTAssertTrue(app.buttons["All Sessions"].waitForExistence(timeout: 10), "Native All Sessions back button missing")
         XCTAssertTrue(app.buttons["workspace.files.open"].waitForExistence(timeout: 10), "Workspace files button missing")
-        XCTAssertTrue(app.buttons["workspace.newSession"].waitForExistence(timeout: 10), "New session button missing")
+        XCTAssertTrue(app.buttons["workspace.quickSession.start"].waitForExistence(timeout: 10), "Quick Session compose capsule missing")
 
         try saveLabScreenshot(name: "iphone-workspace-scoped-separated-controls-e2e")
 
@@ -676,7 +676,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCUIDevice.shared.orientation = .portrait
         openAnchorWorkspace()
         XCTAssertTrue(
-            app.buttons["workspace.newSession"].waitForExistence(timeout: 10),
+            app.buttons["workspace.edit.open"].waitForExistence(timeout: 10),
             "Workspace-scoped session list did not appear before editing"
         )
 
@@ -696,12 +696,12 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         tap(saveButton, named: "workspace save button")
 
         XCTAssertTrue(
-            app.buttons["workspace.newSession"].waitForExistence(timeout: 15),
+            app.buttons["workspace.edit.open"].waitForExistence(timeout: 15),
             "Save did not return to the workspace-scoped session list"
         )
-        XCTAssertFalse(
-            app.buttons["workspace.quickSession.start"].exists,
-            "Save returned to All Sessions instead of the workspace-scoped session list"
+        XCTAssertTrue(
+            app.buttons["workspace.quickSession.start"].waitForExistence(timeout: 5),
+            "Workspace-scoped list lost its Quick Session compose capsule"
         )
         XCTAssertTrue(
             app.buttons["All Sessions"].waitForExistence(timeout: 5),

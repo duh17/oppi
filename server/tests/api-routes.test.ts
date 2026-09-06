@@ -25,6 +25,7 @@ const ROUTES = {
   wsSessionDetail: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
   wsContents: /^\/workspaces\/([^/]+)\/contents(?:\/(.*))?$/,
+  hostContents: /^\/host\/contents(?:\/(.*))?$/,
   wsRaw: /^\/workspaces\/([^/]+)\/raw\/(.+)$/,
   wsPaths: /^\/workspaces\/([^/]+)\/paths$/,
   wsGitStatus: /^\/workspaces\/([^/]+)\/git\/status$/,
@@ -160,6 +161,16 @@ describe("Workspace-scoped API routes", () => {
     const paths = "/workspaces/ws-1/paths".match(ROUTES.wsPaths);
     expect(paths).toBeTruthy();
     expect(paths![1]).toBe("ws-1");
+  });
+
+  it("matches host home contents routes", () => {
+    const root = "/host/contents".match(ROUTES.hostContents);
+    expect(root).toBeTruthy();
+    expect(root![1]).toBeUndefined();
+
+    const nested = "/host/contents/Documents/notes".match(ROUTES.hostContents);
+    expect(nested).toBeTruthy();
+    expect(nested![1]).toBe("Documents/notes");
   });
 
   it("matches resource-shaped workspace git routes", () => {
