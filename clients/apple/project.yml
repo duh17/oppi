@@ -15,6 +15,44 @@ packages:
   tree-sitter-bash:
     url: https://github.com/tree-sitter/tree-sitter-bash
     from: "0.25.0"
+  # 0.25.x Package.swift only includes scanner.c when FileManager sees src/scanner.c
+  # at evaluation cwd. Xcode SPM omits it and fails to link. 0.23.x hardcodes scanner.c.
+  tree-sitter-javascript:
+    url: https://github.com/tree-sitter/tree-sitter-javascript
+    exactVersion: "0.23.1"
+  tree-sitter-python:
+    url: https://github.com/tree-sitter/tree-sitter-python
+    exactVersion: "0.23.6"
+  tree-sitter-typescript:
+    url: https://github.com/tree-sitter/tree-sitter-typescript
+    exactVersion: "0.23.2"
+  # Go has no scanner.c; pin exact so a later 0.25.x scanner.c + FileManager cannot omit it.
+  tree-sitter-go:
+    url: https://github.com/tree-sitter/tree-sitter-go
+    exactVersion: "0.25.0"
+  # 0.25 Package.swift skips scanner.c when FileManager misses src/scanner.c at eval cwd.
+  tree-sitter-css:
+    url: https://github.com/tree-sitter/tree-sitter-css
+    exactVersion: "0.23.2"
+  # These pins hardcode src/parser.c (and scanner.c when present) in Package.swift.
+  tree-sitter-rust:
+    url: https://github.com/tree-sitter/tree-sitter-rust
+    exactVersion: "0.24.2"
+  tree-sitter-c:
+    url: https://github.com/tree-sitter/tree-sitter-c
+    exactVersion: "0.24.2"
+  tree-sitter-cpp:
+    url: https://github.com/tree-sitter/tree-sitter-cpp
+    exactVersion: "0.23.4"
+  tree-sitter-html:
+    url: https://github.com/tree-sitter/tree-sitter-html
+    exactVersion: "0.23.2"
+  tree-sitter-ruby:
+    url: https://github.com/tree-sitter/tree-sitter-ruby
+    exactVersion: "0.23.1"
+  tree-sitter-java:
+    url: https://github.com/tree-sitter/tree-sitter-java
+    exactVersion: "0.23.5"
 
 options:
   bundleIdPrefix: dev.chenda
@@ -237,6 +275,28 @@ targets:
         product: SwiftTreeSitter
       - package: tree-sitter-bash
         product: TreeSitterBash
+      - package: tree-sitter-javascript
+        product: TreeSitterJavaScript
+      - package: tree-sitter-python
+        product: TreeSitterPython
+      - package: tree-sitter-typescript
+        product: TreeSitterTypeScript
+      - package: tree-sitter-go
+        product: TreeSitterGo
+      - package: tree-sitter-rust
+        product: TreeSitterRust
+      - package: tree-sitter-c
+        product: TreeSitterC
+      - package: tree-sitter-cpp
+        product: TreeSitterCPP
+      - package: tree-sitter-html
+        product: TreeSitterHTML
+      - package: tree-sitter-css
+        product: TreeSitterCSS
+      - package: tree-sitter-ruby
+        product: TreeSitterRuby
+      - package: tree-sitter-java
+        product: TreeSitterJava
       - target: OppiActivityExtension
         embed: true
       - target: OppiControlWidget
@@ -517,6 +577,28 @@ targets:
         product: SwiftTreeSitter
       - package: tree-sitter-bash
         product: TreeSitterBash
+      - package: tree-sitter-javascript
+        product: TreeSitterJavaScript
+      - package: tree-sitter-python
+        product: TreeSitterPython
+      - package: tree-sitter-typescript
+        product: TreeSitterTypeScript
+      - package: tree-sitter-go
+        product: TreeSitterGo
+      - package: tree-sitter-rust
+        product: TreeSitterRust
+      - package: tree-sitter-c
+        product: TreeSitterC
+      - package: tree-sitter-cpp
+        product: TreeSitterCPP
+      - package: tree-sitter-html
+        product: TreeSitterHTML
+      - package: tree-sitter-css
+        product: TreeSitterCSS
+      - package: tree-sitter-ruby
+        product: TreeSitterRuby
+      - package: tree-sitter-java
+        product: TreeSitterJava
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMac

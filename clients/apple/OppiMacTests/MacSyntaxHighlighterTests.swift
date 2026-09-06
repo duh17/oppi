@@ -30,6 +30,64 @@ struct MacSyntaxHighlighterTests {
         #expect(stringColor == MacSyntaxHighlighter.color(for: .string))
     }
 
+    @Test func paintsPythonTokensFromSharedTreeSitterProvider() throws {
+        let code = "def foo():\n    return 1\n"
+        #expect(TreeSitterHighlighter.supports(.python))
+        #expect(TreeSitterHighlighter.GrammarRegistry.shared.highlightsQuery(for: .python) != nil)
+        #expect(TreeSitterHighlighter.scanTokenRanges(code, language: .python) != nil)
+        let ranges = TreeSitterHighlighter.resolvedTokenRanges(code, language: .python)
+        #expect(ranges.contains { $0.kind == .function })
+        #expect(ranges != SyntaxTokenScanner.scanTokenRanges(code, language: .python))
+
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .python)
+        #expect(attributed.string == code)
+        let fooRange = (attributed.string as NSString).range(of: "foo")
+        let fooColor = try #require(
+            attributed.attribute(.foregroundColor, at: fooRange.location, effectiveRange: nil) as? NSColor
+        )
+        #expect(fooColor == MacSyntaxHighlighter.color(for: .function))
+    }
+
+    @Test func tsxIsNotSilentTypeScriptAlias() throws {
+        #expect(SyntaxLanguage.detect("tsx") == .tsx)
+        #expect(SyntaxLanguage.detect("tsx") != .typescript)
+        #expect(TreeSitterHighlighter.supports(.tsx))
+        #expect(TreeSitterHighlighter.supports(.typescript))
+        #expect(TreeSitterHighlighter.GrammarRegistry.shared.highlightsQuery(for: .tsx) != nil)
+
+        let code = "const el = <div className=\"x\" />"
+        let tsxRanges = TreeSitterHighlighter.resolvedTokenRanges(code, language: .tsx)
+        let tsRanges = TreeSitterHighlighter.resolvedTokenRanges(code, language: .typescript)
+        #expect(!tsxRanges.isEmpty)
+        #expect(tsxRanges != tsRanges)
+
+        let attributed = MacSyntaxHighlighter.attributedCode(code, language: .tsx)
+        #expect(attributed.string == code)
+        let divRange = (attributed.string as NSString).range(of: "div")
+        let divColor = try #require(
+            attributed.attribute(.foregroundColor, at: divRange.location, effectiveRange: nil) as? NSColor
+        )
+        #expect(divColor == MacSyntaxHighlighter.color(for: .keyword))
+    }
+
+    @Test(arguments: MacEasyGrammarPaintCase.all)
+    func paintsEasyGrammarFromSharedTreeSitterProvider(sample: MacEasyGrammarPaintCase) throws {
+        #expect(TreeSitterHighlighter.supports(sample.language))
+        #expect(TreeSitterHighlighter.GrammarRegistry.shared.highlightsQuery(for: sample.language) != nil)
+        #expect(TreeSitterHighlighter.scanTokenRanges(sample.code, language: sample.language) != nil)
+        let ranges = TreeSitterHighlighter.resolvedTokenRanges(sample.code, language: sample.language)
+        #expect(ranges != SyntaxTokenScanner.scanTokenRanges(sample.code, language: sample.language))
+
+        let attributed = MacSyntaxHighlighter.attributedCode(sample.code, language: sample.language)
+        #expect(attributed.string == sample.code)
+        let tokenRange = (attributed.string as NSString).range(of: sample.tokenNeedle)
+        #expect(tokenRange.location != NSNotFound)
+        let tokenColor = try #require(
+            attributed.attribute(.foregroundColor, at: tokenRange.location, effectiveRange: nil) as? NSColor
+        )
+        #expect(tokenColor == MacSyntaxHighlighter.color(for: sample.tokenKind))
+    }
+
     @Test func paintsShellTokensFromSharedTreeSitterProvider() throws {
         let code = "echo hello"
         #expect(TreeSitterHighlighter.supports(.shell))
@@ -152,4 +210,64 @@ struct MacSyntaxHighlighterTests {
         lines.append(tail)
         return lines.joined(separator: "\n")
     }
+}
+
+struct MacEasyGrammarPaintCase: Sendable, CustomTestStringConvertible {
+    let language: SyntaxLanguage
+    let code: String
+    let tokenNeedle: String
+    let tokenKind: SyntaxTokenKind
+
+    var testDescription: String { language.displayName }
+
+    static let all: [MacEasyGrammarPaintCase] = [
+        MacEasyGrammarPaintCase(
+            language: .go,
+            code: "func Hello() {\n    s := `hello\nworld`\n}\n",
+            tokenNeedle: "Hello",
+            tokenKind: .function
+        ),
+        MacEasyGrammarPaintCase(
+            language: .rust,
+            code: "fn hello() {\n    let s = \"hello\nworld\";\n}\n",
+            tokenNeedle: "hello",
+            tokenKind: .function
+        ),
+        MacEasyGrammarPaintCase(
+            language: .c,
+            code: "int main(void) { return 0; }\n",
+            tokenNeedle: "main",
+            tokenKind: .function
+        ),
+        MacEasyGrammarPaintCase(
+            language: .cpp,
+            code: "const char* s = R\"(hello\nrawline)\";\n",
+            tokenNeedle: "rawline",
+            tokenKind: .string
+        ),
+        MacEasyGrammarPaintCase(
+            language: .html,
+            code: "<div class=\"x\"></div>\n",
+            tokenNeedle: "div",
+            tokenKind: .keyword
+        ),
+        MacEasyGrammarPaintCase(
+            language: .css,
+            code: ".foo { content: \"x\"; }\n",
+            tokenNeedle: "foo",
+            tokenKind: .type
+        ),
+        MacEasyGrammarPaintCase(
+            language: .ruby,
+            code: "def foo\nend\n",
+            tokenNeedle: "foo",
+            tokenKind: .function
+        ),
+        MacEasyGrammarPaintCase(
+            language: .java,
+            code: "class Foo { void bar() {} }\n",
+            tokenNeedle: "bar",
+            tokenKind: .function
+        ),
+    ]
 }

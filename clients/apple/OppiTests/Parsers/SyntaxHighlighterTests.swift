@@ -12,14 +12,25 @@ struct SyntaxLanguageTests {
 
     @Test func detectTypeScript() {
         #expect(SyntaxLanguage.detect("ts") == .typescript)
-        #expect(SyntaxLanguage.detect("tsx") == .typescript)
+        #expect(SyntaxLanguage.detect("mts") == .typescript)
         #expect(SyntaxLanguage.detect("typescript") == .typescript)
+    }
+
+    @Test func detectTSXIsNotTypeScriptAlias() {
+        #expect(SyntaxLanguage.detect("tsx") == .tsx)
+        #expect(SyntaxLanguage.detect("tsx") != .typescript)
+        #expect(SyntaxLanguage.tsx.displayName == "TSX")
     }
 
     @Test func detectJavaScript() {
         #expect(SyntaxLanguage.detect("js") == .javascript)
-        #expect(SyntaxLanguage.detect("jsx") == .javascript)
         #expect(SyntaxLanguage.detect("mjs") == .javascript)
+    }
+
+    @Test func detectJSXIsNotJavaScriptAlias() {
+        #expect(SyntaxLanguage.detect("jsx") == .jsx)
+        #expect(SyntaxLanguage.detect("jsx") != .javascript)
+        #expect(SyntaxLanguage.jsx.displayName == "JSX")
     }
 
     @Test func detectPython() {
@@ -544,7 +555,7 @@ struct XMLHighlightingTests {
 
 @Suite("HTML Highlighting")
 struct HTMLHighlightingTests {
-    @Test func htmlCommentsAndTagsUseXMLScanner() {
+    @Test func htmlCommentsAndTagsAreHighlighted() {
         let html = "<!-- note --><div class=\"x\">"
         let ranges = SyntaxHighlighter.scanTokenRanges(html, language: .html)
         #expect(ranges.contains { $0.kind == .comment }, "HTML comments should use the XML comment scanner")
@@ -774,7 +785,9 @@ struct SyntaxHighlighterUTF8ScannerTests {
         let s = "escaped \"string\""
         """
 
-        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8(code, language: .c)
+        // Swift still uses the hand-written UTF-8 scanner. `.c` is tree-sitter now
+        // and does not treat `_` as a hex digit separator.
+        let ranges = TreeSitterHighlighter.resolvedTokenRangesUTF8(code, language: .swift)
         #expect(ranges.contains { $0.kind == .keyword })
         #expect(ranges.contains { $0.kind == .type })
         #expect(ranges.contains { $0.kind == .number })

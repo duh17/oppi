@@ -2,6 +2,18 @@ import Foundation
 import OSLog
 import SwiftTreeSitter
 import TreeSitterBash
+import TreeSitterC
+import TreeSitterCPP
+import TreeSitterCSS
+import TreeSitterGo
+import TreeSitterHTML
+import TreeSitterJava
+import TreeSitterJavaScript
+import TreeSitterPython
+import TreeSitterRuby
+import TreeSitterRust
+import TreeSitterTSX
+import TreeSitterTypeScript
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "TreeSitter")
 
@@ -134,6 +146,11 @@ enum TreeSitterHighlighter {
             let highlightsQuery: Query?
         }
 
+        private struct QueryResource {
+            let bundleName: String
+            let fileName: String
+        }
+
         /// Map from SyntaxLanguage to cached grammar entry.
         private var entries: [SyntaxLanguage: Entry] = [:]
 
@@ -143,48 +160,136 @@ enum TreeSitterHighlighter {
 
         /// Register all available grammars.
         /// Add new grammars here as SPM dependencies are added.
+        /// JS/Python stay on 0.23.x: 0.25 Package.swift skips scanner.c under Xcode SPM.
         private func registerAll() {
+            let bash = Self.bundleName("TreeSitterBash")
+            let c = Self.bundleName("TreeSitterC")
+            let cpp = Self.bundleName("TreeSitterCPP")
+            let css = Self.bundleName("TreeSitterCSS")
+            let go = Self.bundleName("TreeSitterGo")
+            let html = Self.bundleName("TreeSitterHTML")
+            let java = Self.bundleName("TreeSitterJava")
+            let javascript = Self.bundleName("TreeSitterJavaScript")
+            let python = Self.bundleName("TreeSitterPython")
+            let ruby = Self.bundleName("TreeSitterRuby")
+            let rust = Self.bundleName("TreeSitterRust")
+            let typescript = Self.bundleName("TreeSitterTypeScript")
+
             register(
                 .shell,
                 tsLanguage: tree_sitter_bash(),
-                name: "Bash",
+                queryResources: [QueryResource(bundleName: bash, fileName: "highlights.scm")],
                 supplement: """
                 
                 ;; Oppi supplements — operators missing from upstream bash highlights.scm
                 ["||" "|&" "<<<" ">|" "&>" "&>>" ";;" ";&" ";;&"] @operator
                 """
             )
-            // Swift grammar: no official tree-sitter package exists.
-            // The hand-written scanner handles Swift well enough for
-            // the short snippets agents produce. Revisit when official
-            // grammars are available for TS, Python, Go, etc.
-            // TODO: Register more grammars as SPM deps are added:
-            // register(.typescript, tsLanguage: tree_sitter_typescript(), name: "TypeScript")
-            // register(.javascript, tsLanguage: tree_sitter_javascript(), name: "JavaScript")
-            // register(.python, tsLanguage: tree_sitter_python(), name: "Python")
-            // register(.go, tsLanguage: tree_sitter_go(), name: "Go")
-            // register(.rust, tsLanguage: tree_sitter_rust(), name: "Rust")
-            // register(.ruby, tsLanguage: tree_sitter_ruby(), name: "Ruby")
-            // register(.html, tsLanguage: tree_sitter_html(), name: "HTML")
-            // register(.css, tsLanguage: tree_sitter_css(), name: "CSS")
-            // register(.json, tsLanguage: tree_sitter_json(), name: "JSON")
-            // register(.c, tsLanguage: tree_sitter_c(), name: "C")
-            // register(.cpp, tsLanguage: tree_sitter_cpp(), name: "Cpp")
-            // register(.java, tsLanguage: tree_sitter_java(), name: "Java")
+            register(
+                .javascript,
+                tsLanguage: tree_sitter_javascript(),
+                queryResources: [QueryResource(bundleName: javascript, fileName: "highlights.scm")]
+            )
+            register(
+                .jsx,
+                tsLanguage: tree_sitter_javascript(),
+                queryResources: [
+                    QueryResource(bundleName: javascript, fileName: "highlights.scm"),
+                    QueryResource(bundleName: javascript, fileName: "highlights-jsx.scm"),
+                ]
+            )
+            register(
+                .python,
+                tsLanguage: tree_sitter_python(),
+                queryResources: [QueryResource(bundleName: python, fileName: "highlights.scm")]
+            )
+            register(
+                .typescript,
+                tsLanguage: tree_sitter_typescript(),
+                queryResources: [
+                    QueryResource(bundleName: javascript, fileName: "highlights.scm"),
+                    QueryResource(bundleName: typescript, fileName: "highlights.scm"),
+                ]
+            )
+            register(
+                .tsx,
+                tsLanguage: tree_sitter_tsx(),
+                queryResources: [
+                    QueryResource(bundleName: javascript, fileName: "highlights.scm"),
+                    QueryResource(bundleName: javascript, fileName: "highlights-jsx.scm"),
+                    QueryResource(bundleName: typescript, fileName: "highlights.scm"),
+                ]
+            )
+            register(
+                .go,
+                tsLanguage: tree_sitter_go(),
+                queryResources: [QueryResource(bundleName: go, fileName: "highlights.scm")]
+            )
+            register(
+                .rust,
+                tsLanguage: tree_sitter_rust(),
+                queryResources: [QueryResource(bundleName: rust, fileName: "highlights.scm")]
+            )
+            register(
+                .c,
+                tsLanguage: tree_sitter_c(),
+                queryResources: [QueryResource(bundleName: c, fileName: "highlights.scm")]
+            )
+            // SwiftTreeSitter Query() does not honor `; inherits:`. C++ highlights
+            // are C++-only, so concatenate the C query the same way TS concatenates JS.
+            register(
+                .cpp,
+                tsLanguage: tree_sitter_cpp(),
+                queryResources: [
+                    QueryResource(bundleName: c, fileName: "highlights.scm"),
+                    QueryResource(bundleName: cpp, fileName: "highlights.scm"),
+                ]
+            )
+            register(
+                .html,
+                tsLanguage: tree_sitter_html(),
+                queryResources: [QueryResource(bundleName: html, fileName: "highlights.scm")]
+            )
+            register(
+                .css,
+                tsLanguage: tree_sitter_css(),
+                queryResources: [QueryResource(bundleName: css, fileName: "highlights.scm")]
+            )
+            register(
+                .ruby,
+                tsLanguage: tree_sitter_ruby(),
+                queryResources: [QueryResource(bundleName: ruby, fileName: "highlights.scm")]
+            )
+            register(
+                .java,
+                tsLanguage: tree_sitter_java(),
+                queryResources: [QueryResource(bundleName: java, fileName: "highlights.scm")]
+            )
+            // Swift: no official tree-sitter-swift SPM package. Keep the scanner.
+            // JSON, XML, and diff stay on dedicated scanners. Do not register JSON.
+            // HTML tree-sitter is SyntaxLanguage.html only; XML stays on scanXMLRanges.
         }
 
-        /// Register a grammar by loading its highlights.scm from the SPM bundle.
+        private static func bundleName(_ module: String) -> String {
+            "\(module)_\(module)"
+        }
+
+        /// Register a grammar by loading its highlights queries from SPM bundles.
+        ///
+        /// The language is always registered so a missing query resource paints
+        /// plain text instead of silently falling back to the line scanner.
         private func register(
             _ syntaxLanguage: SyntaxLanguage,
             tsLanguage: OpaquePointer,
-            name: String,
+            queryResources: [QueryResource],
             supplement: String? = nil
         ) {
             let language = Language(language: tsLanguage)
             let highlightsQuery = Self.loadHighlightsQuery(
                 language: language,
-                bundleName: "TreeSitter\(name)_TreeSitter\(name)",
-                supplement: supplement
+                queryResources: queryResources,
+                supplement: supplement,
+                syntaxLanguage: syntaxLanguage
             )
 
             entries[syntaxLanguage] = Entry(
@@ -193,66 +298,86 @@ enum TreeSitterHighlighter {
             )
         }
 
-        /// Load highlights.scm from the grammar's SPM resource bundle.
+        /// Load and concatenate query files from grammar SPM resource bundles.
         ///
         /// SPM embeds resource bundles at the top level of the app bundle.
-        /// The naming convention is `TreeSitter<Name>_TreeSitter<Name>.bundle/queries/highlights.scm`.
+        /// The naming convention is `TreeSitter<Name>_TreeSitter<Name>.bundle/queries/<file>`.
+        /// Any missing file or compile failure returns nil so the language paints as plain text.
         private static func loadHighlightsQuery(
             language: Language,
-            bundleName: String,
-            supplement: String? = nil
+            queryResources: [QueryResource],
+            supplement: String?,
+            syntaxLanguage: SyntaxLanguage
         ) -> Query? {
-            // Find the resource bundle embedded in the app.
-            guard let bundleURL = Bundle.main.url(
-                forResource: bundleName,
-                withExtension: "bundle"
-            ) else {
-                return nil
+            var queryData = Data()
+            for resource in queryResources {
+                guard let bundleURL = Bundle.main.url(
+                    forResource: resource.bundleName,
+                    withExtension: "bundle"
+                ) else {
+                    logger.warning(
+                        "tree-sitter bundle \(resource.bundleName, privacy: .public) missing; \(syntaxLanguage.displayName, privacy: .public) paints as plain text"
+                    )
+                    return nil
+                }
+
+                guard let fileURL = queryFileURL(bundleURL: bundleURL, fileName: resource.fileName) else {
+                    logger.warning(
+                        "tree-sitter query \(resource.bundleName, privacy: .public)/queries/\(resource.fileName, privacy: .public) missing; \(syntaxLanguage.displayName, privacy: .public) paints as plain text"
+                    )
+                    return nil
+                }
+
+                do {
+                    queryData.append(try Data(contentsOf: fileURL))
+                    queryData.append(contentsOf: [0x0A])
+                } catch {
+                    logger.warning(
+                        "tree-sitter query \(resource.fileName, privacy: .public) unreadable: \(error.localizedDescription, privacy: .public); \(syntaxLanguage.displayName, privacy: .public) paints as plain text"
+                    )
+                    return nil
+                }
             }
 
-            // Locate highlights.scm inside the grammar resource bundle.
-            // iOS SPM bundles are flat (`bundle/queries/highlights.scm`).
-            // macOS copies the same resources as a real bundle
-            // (`bundle/Contents/Resources/queries/highlights.scm`).
-            guard let highlightsURL = Self.highlightsQueryFileURL(bundleURL: bundleURL) else {
-                logger.warning("highlights.scm missing in \(bundleName, privacy: .public)")
-                return nil
+            if let supplement, let supplementData = supplement.data(using: .utf8) {
+                queryData.append(supplementData)
             }
 
             do {
-                // Load upstream highlights.scm
-                var queryData = try Data(contentsOf: highlightsURL)
-
-                // Append per-language supplementary patterns if provided.
-                if let supplement, let supplementData = supplement.data(using: .utf8) {
-                    queryData.append(supplementData)
-                }
-
                 return try Query(language: language, data: queryData)
             } catch {
-                // Log query compilation errors to help debug grammar issues.
-                // Common cause: highlights.scm uses syntax not supported by
-                // the installed tree-sitter version.
                 if case QueryError.nodeType(let offset) = error {
-                    logger.warning("Query nodeType error at offset \(offset, privacy: .public) in \(bundleName, privacy: .public)")
+                    logger.warning(
+                        "Query nodeType error at offset \(offset, privacy: .public) for \(syntaxLanguage.displayName, privacy: .public)"
+                    )
                 } else {
-                    logger.warning("Query compilation failed for \(bundleName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    logger.warning(
+                        "Query compilation failed for \(syntaxLanguage.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                    )
                 }
                 return nil
             }
         }
 
-        private static func highlightsQueryFileURL(bundleURL: URL) -> URL? {
+        /// Locate a query file inside an SPM grammar resource bundle.
+        ///
+        /// iOS SPM bundles are flat (`bundle/queries/<file>`).
+        /// macOS copies the same resources as a real bundle
+        /// (`bundle/Contents/Resources/queries/<file>`).
+        static func queryFileURL(bundleURL: URL, fileName: String) -> URL? {
             let candidates = [
-                bundleURL.appendingPathComponent("queries/highlights.scm"),
-                bundleURL.appendingPathComponent("Contents/Resources/queries/highlights.scm"),
+                bundleURL.appendingPathComponent("queries/\(fileName)"),
+                bundleURL.appendingPathComponent("Contents/Resources/queries/\(fileName)"),
             ]
             if let url = candidates.first(where: { FileManager.default.isReadableFile(atPath: $0.path) }) {
                 return url
             }
+            let resource = URL(fileURLWithPath: fileName)
+            let ext = resource.pathExtension
+            let name = resource.deletingPathExtension().lastPathComponent
             return Bundle(url: bundleURL)?.url(
-                forResource: "highlights",
-                withExtension: "scm",
+                forResource: name,
+                withExtension: ext.isEmpty ? nil : ext,
                 subdirectory: "queries"
             )
         }
@@ -282,16 +407,17 @@ enum TreeSitterHighlighter {
 
     /// Shared token provider for iOS and Mac painters.
     ///
-    /// Uses tree-sitter when a grammar is registered; otherwise falls back
-    /// to the hand-written `SyntaxTokenScanner`. Token locations are UTF-16
-    /// code unit offsets (matching `NSRange`). Token work is bounded by
+    /// Uses tree-sitter when a grammar is registered. A registered language
+    /// with a missing query paints as plain text rather than the line scanner.
+    /// Unregistered languages use `SyntaxTokenScanner`. Token locations are
+    /// UTF-16 code unit offsets (matching `NSRange`). Token work is bounded by
     /// `SyntaxTokenScanner.maxLines`.
     static func resolvedTokenRanges(
         _ code: String,
         language: SyntaxLanguage
     ) -> [SyntaxTokenRange] {
-        if let ranges = scanTokenRanges(code, language: language) {
-            return ranges
+        if supports(language) {
+            return scanTokenRanges(code, language: language) ?? []
         }
         return SyntaxTokenScanner.scanTokenRanges(code, language: language)
     }
@@ -330,8 +456,10 @@ enum TreeSitterHighlighter {
         guard let tsLanguage = registry.language(for: language) else {
             return nil
         }
+        guard let query = registry.highlightsQuery(for: language) else {
+            return nil
+        }
 
-        // Parse the source code.
         let parser = Parser()
         do {
             try parser.setLanguage(tsLanguage)
@@ -343,14 +471,7 @@ enum TreeSitterHighlighter {
             return nil
         }
 
-        // If we have a highlights query, use it (preferred path).
-        if let query = registry.highlightsQuery(for: language) {
-            return scanWithQuery(query: query, tree: mutableTree, source: source)
-        }
-
-        // Fallback: no highlights query. Walk AST manually.
-        // This shouldn't happen for properly packaged grammars.
-        return nil
+        return scanWithQuery(query: query, tree: mutableTree, source: source)
     }
 
     // MARK: - Query-Based Scanning

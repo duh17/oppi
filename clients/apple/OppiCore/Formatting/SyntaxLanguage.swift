@@ -8,7 +8,9 @@ import Foundation
 enum SyntaxLanguage: Sendable, Hashable {
     case swift
     case typescript
+    case tsx
     case javascript
+    case jsx
     case python
     case go
     case rust
@@ -39,8 +41,10 @@ enum SyntaxLanguage: Sendable, Hashable {
     static func detect(_ identifier: String) -> Self {
         switch identifier.lowercased() {
         case "swift": return .swift
-        case "ts", "tsx", "mts", "cts", "typescript": return .typescript
-        case "js", "jsx", "mjs", "cjs", "javascript": return .javascript
+        case "ts", "mts", "cts", "typescript": return .typescript
+        case "tsx": return .tsx
+        case "js", "mjs", "cjs", "javascript": return .javascript
+        case "jsx": return .jsx
         case "py", "pyi", "pyw", "python": return .python
         case "go", "golang": return .go
         case "rs", "rust": return .rust
@@ -74,7 +78,9 @@ enum SyntaxLanguage: Sendable, Hashable {
         switch self {
         case .swift: return "Swift"
         case .typescript: return "TypeScript"
+        case .tsx: return "TSX"
         case .javascript: return "JavaScript"
+        case .jsx: return "JSX"
         case .python: return "Python"
         case .go: return "Go"
         case .rust: return "Rust"
@@ -105,7 +111,7 @@ enum SyntaxLanguage: Sendable, Hashable {
 
     var lineCommentPrefix: [Character]? {
         switch self {
-        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css,
+        case .swift, .typescript, .tsx, .javascript, .jsx, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css,
              .protobuf, .graphql:
             return ["/", "/"]
         case .python, .ruby, .shell, .yaml, .toml:
@@ -127,7 +133,7 @@ enum SyntaxLanguage: Sendable, Hashable {
 
     var hasBlockComments: Bool {
         switch self {
-        case .swift, .typescript, .javascript, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css,
+        case .swift, .typescript, .tsx, .javascript, .jsx, .go, .rust, .c, .cpp, .java, .kotlin, .zig, .css,
              .protobuf, .graphql, .dot:
             return true
         case .xml:
@@ -141,7 +147,7 @@ enum SyntaxLanguage: Sendable, Hashable {
         switch self {
         case .swift:
             return swiftKeywords
-        case .typescript, .javascript:
+        case .typescript, .tsx, .javascript, .jsx:
             return tsKeywords
         case .python:
             return pythonKeywords

@@ -555,7 +555,6 @@ struct TreeSitterIntegrationTests {
     @Test func treeSitterSupportsShell() {
         #expect(TreeSitterHighlighter.supports(.shell))
         #expect(!TreeSitterHighlighter.supports(.swift))
-        #expect(!TreeSitterHighlighter.supports(.python))
         #expect(!TreeSitterHighlighter.supports(.unknown))
     }
 

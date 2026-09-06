@@ -9,7 +9,7 @@ Shared tokens live in OppiCore. Each Apple client paints those tokens itself.
 ```
 OppiCore token provider
   |
-  +-- TreeSitterHighlighter     Query-based tokens (bash is registered)
+  +-- TreeSitterHighlighter     Query-based tokens (bash, JS/JSX, TS/TSX, Python, Go, Rust, C, C++, HTML, CSS, Ruby, Java)
   |     +-- GrammarRegistry     Caches Language + compiled highlights Query
   |     +-- highlights.scm      Loaded from each grammar's SPM resource bundle
   |     +-- captureKindMap      Shared @capture-name -> TokenKind table
@@ -45,7 +45,7 @@ they do not re-scan or invent a second token→color table.
 | `SyntaxHighlighter.highlight` | iOS painter | Markdown fences, fullscreen, share/export, bash command |
 | `MacSyntaxHighlighter.attributedCode` | Mac painter | Mac timeline / document column |
 
-`resolvedTokenRanges` tries tree-sitter first, then `SyntaxTokenScanner`. Public `SyntaxTokenRange` offsets are always UTF-16 code units, matching `NSRange`, `NSString`, and tree-sitter captures. Displayed source is the full input; only token work is bounded.
+`resolvedTokenRanges` uses tree-sitter for registered languages (plain text if the query is missing) and `SyntaxTokenScanner` otherwise. Public `SyntaxTokenRange` offsets are always UTF-16 code units, matching `NSRange`, `NSString`, and tree-sitter captures. Displayed source is the full input; only token work is bounded.
 
 ## Token Kinds
 
@@ -70,27 +70,30 @@ Nine token types map to theme colors. Every character gets one of these:
 | Language | SyntaxLanguage | SPM Package | Perf (100 calls, sim) | Tests | Status |
 |---|---|---|---|---|---|
 | Bash/Shell | `.shell` | tree-sitter-bash 0.25.0 | 0.07ms/call typical, 0.98ms/5K | 49 | Shipped |
+| JavaScript | `.javascript` | tree-sitter-javascript 0.23.1 | — | substitution | Shipped |
+| JSX | `.jsx` | tree-sitter-javascript 0.23.1 + highlights-jsx.scm | — | not a JS alias | Shipped |
+| TypeScript | `.typescript` | tree-sitter-typescript 0.23.2 + JS queries | — | substitution | Shipped |
+| TSX | `.tsx` | tree-sitter-typescript 0.23.2 (TSX lang) + JS/JSX queries | — | not a TS alias | Shipped |
+| Python | `.python` | tree-sitter-python 0.23.6 | — | substitution | Shipped |
+| Go | `.go` | tree-sitter-go 0.25.0 | — | substitution | Shipped |
+| Rust | `.rust` | tree-sitter-rust 0.24.2 | — | substitution | Shipped |
+| C | `.c` | tree-sitter-c 0.24.2 | — | substitution | Shipped |
+| C++ | `.cpp` | tree-sitter-cpp 0.23.4 + C queries | — | substitution | Shipped |
+| HTML | `.html` | tree-sitter-html 0.23.2 | — | substitution; XML stays on scanXMLRanges | Shipped |
+| CSS | `.css` | tree-sitter-css 0.23.2 | — | substitution | Shipped |
+| Ruby | `.ruby` | tree-sitter-ruby 0.23.1 | — | substitution | Shipped |
+| Java | `.java` | tree-sitter-java 0.23.5 | — | substitution | Shipped |
 
 ### Hand-written scanner (line-by-line keyword/comment/string detection)
 
 | Language | SyntaxLanguage | Approach | Notes |
 |---|---|---|---|
-| Swift | `.swift` | keywords + comment + string | |
-| TypeScript | `.typescript` | keywords + comment + string | Shared with JS |
-| JavaScript | `.javascript` | keywords + comment + string | Shared with TS |
-| Python | `.python` | keywords + # comment + string | |
-| Go | `.go` | keywords + comment + string | |
-| Rust | `.rust` | keywords + comment + string | |
-| Ruby | `.ruby` | keywords + # comment + string | |
-| C/C++ | `.c`, `.cpp` | keywords + comment + preprocessor | |
-| Java | `.java` | keywords + comment + string | |
+| Swift | `.swift` | keywords + comment + string | No official tree-sitter-swift SPM package |
 | Kotlin | `.kotlin` | keywords + comment + string | |
 | Zig | `.zig` | keywords + comment + string | |
 | SQL | `.sql` | keywords + -- comment | Case-insensitive |
 | Protobuf | `.protobuf` | keywords + comment | |
 | GraphQL | `.graphql` | keywords + comment | |
-| HTML | `.html` | (via XML scanner) | |
-| CSS | `.css` | keywords + comment | |
 | YAML | `.yaml` | # comment only | |
 | TOML | `.toml` | # comment only | |
 
@@ -98,8 +101,8 @@ Nine token types map to theme colors. Every character gets one of these:
 
 | Language | SyntaxLanguage | Scanner | Notes |
 |---|---|---|---|
-| JSON | `.json` | `scanJSONRanges` | Keys as .type, values as .string |
-| XML | `.xml` | `scanXMLRanges` | Tags, attributes, entities, CDATA |
+| JSON | `.json` | `scanJSONRanges` | Do not register a tree-sitter JSON grammar |
+| XML | `.xml` | `scanXMLRanges` | HTML uses tree-sitter; XML stays here |
 | Diff | `.diff` | `scanDiffRanges` | +/- lines, @@ headers |
 
 ### Document renderers (separate rendering pipeline, not token-based)
@@ -119,7 +122,7 @@ Nine token types map to theme colors. Every character gets one of these:
 # project.yml packages:
 tree-sitter-python:
   url: https://github.com/tree-sitter/tree-sitter-python
-  from: "0.23.0"
+  exactVersion: "0.23.6"
 ```
 
 ```yaml
@@ -134,7 +137,11 @@ tree-sitter-python:
 // TreeSitterHighlighter.swift — GrammarRegistry.registerAll()
 import TreeSitterPython
 // ...
-register(.python, tsLanguage: tree_sitter_python(), name: "Python")
+register(
+    .python,
+    tsLanguage: tree_sitter_python(),
+    queryResources: [QueryResource(bundleName: python, fileName: "highlights.scm")]
+)
 ```
 
 ### 3. Add conformance tests
