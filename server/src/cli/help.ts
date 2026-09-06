@@ -1059,7 +1059,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "Without --workspace, this uses the same recent cross-workspace projection as the app home view.",
       "With --workspace, this uses the workspace session-list projection and includes importable local Pi TUI sessions.",
-      "Time bounds accept epoch milliseconds, ISO timestamps, or local-calendar YYYY-MM-DD dates; --until YYYY-MM-DD includes the whole day.",
+      "Time bounds accept epoch milliseconds, ISO timestamps, local-calendar YYYY-MM-DD dates, or relative ages such as 20m, 36h, and 2d (now minus that duration); --until YYYY-MM-DD includes the whole day.",
       "An explicit --since or --until replaces the default three-day stopped-session window.",
     ],
     examples: [{ command: "oppi session list --workspace ws_123 --json" }],
@@ -1249,9 +1249,10 @@ const HELP_TOPICS: HelpTopic[] = [
       "Without --workspace or --all, the CLI infers the workspace from the current directory.",
       "With a query, results sort by weighted full-text relevance with a small recency boost.",
       "With --since/--until and no query, results sort by updated_at descending.",
+      "Time bounds accept epoch milliseconds, ISO timestamps, local-calendar YYYY-MM-DD dates, or relative ages such as 20m, 36h, and 2d (now minus that duration).",
     ],
     examples: [
-      { command: "oppi session search tests --workspace ws_123 --since 2026-07-01 --json" },
+      { command: "oppi session search tests --workspace ws_123 --since 2d --json" },
     ],
   },
   {

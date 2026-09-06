@@ -6,7 +6,9 @@ export interface SessionTimeRange {
 
 export type SessionTimeRangeParseResult = SessionTimeRange & { error?: string };
 
-/** Parse the epoch, ISO, and local-calendar bounds shared by session search and list. */
+const RELATIVE_AGE_RE = /^(\d+)(ms|s|m|h|d)$/;
+
+/** Parse the epoch, ISO, local-calendar, and relative-age bounds shared by session search and list. */
 export function parseSessionTimeRange(
   sinceRaw: string | undefined,
   untilRaw: string | undefined,
@@ -43,6 +45,11 @@ function parseSessionTimeBound(
     return { value: numeric };
   }
 
+  const relative = parseRelativeAgeMs(trimmed);
+  if (relative !== undefined) {
+    return { value: Date.now() - relative };
+  }
+
   const dateOnly = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (dateOnly) {
     const year = Number.parseInt(dateOnly[1] ?? "", 10);
@@ -67,4 +74,26 @@ function parseSessionTimeBound(
     return { error: `invalid ${subject} timestamp: ${trimmed}` };
   }
   return { value: ms };
+}
+
+/** Suffixed ages only, so bare digits stay epoch milliseconds. */
+function parseRelativeAgeMs(value: string): number | undefined {
+  const match = value.match(RELATIVE_AGE_RE);
+  if (!match) return undefined;
+  const amount = Number.parseInt(match[1] ?? "", 10);
+  const unit = match[2];
+  if (!Number.isSafeInteger(amount) || !unit) return undefined;
+  const multiplier =
+    unit === "ms"
+      ? 1
+      : unit === "s"
+        ? 1_000
+        : unit === "m"
+          ? 60_000
+          : unit === "h"
+            ? 3_600_000
+            : 86_400_000;
+  const durationMs = amount * multiplier;
+  if (!Number.isSafeInteger(durationMs)) return undefined;
+  return durationMs;
 }

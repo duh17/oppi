@@ -210,6 +210,7 @@ describe("centralized nested-help dispatch", () => {
     );
     expect(list?.notes?.join(" ")).toContain("epoch milliseconds");
     expect(list?.notes?.join(" ")).toContain("YYYY-MM-DD");
+    expect(list?.notes?.join(" ")).toContain("20m, 36h, and 2d");
   });
 
   it("handles unknown help topics deterministically without dispatch", async () => {
