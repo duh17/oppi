@@ -3950,6 +3950,7 @@ private struct InboxProviderSetupPreview: View {
     @Environment(\.theme) private var theme
 
     let showsSessions: Bool
+    @State private var searchText = ""
 
     var body: some View {
         NavigationStack {
@@ -3977,6 +3978,29 @@ private struct InboxProviderSetupPreview: View {
             .themedListSurface()
             .navigationTitle("All Sessions")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $searchText, prompt: "Search sessions")
+            .searchToolbarBehavior(.minimize)
+            .toolbar {
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+                ToolbarItem(placement: .bottomBar) {
+                    Button {}
+                    label: {
+                        Image(systemName: "mic")
+                    }
+                    .accessibilityLabel("Dictate Quick Session")
+                    .accessibilityIdentifier("workspace.quickSession.dictate")
+                }
+                ToolbarSpacer(.fixed, placement: .bottomBar)
+                ToolbarItem(placement: .bottomBar) {
+                    Button {}
+                    label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .accessibilityLabel("Start Quick Session")
+                    .accessibilityIdentifier("workspace.quickSession.start")
+                }
+            }
         }
         .accessibilityIdentifier(
             ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"

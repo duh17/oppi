@@ -576,7 +576,8 @@ struct WorkspaceDetailView: View {
             handleWorkspaceIdentityChanged()
         }
         .searchable(text: $sessionSearchText, isPresented: $isSearchPresented, prompt: "Search sessions")
-        .searchToolbarBehavior(sessionListToolbar.usesMinimizedSearch ? .minimize : .automatic)
+        // Occasional search stays a leading toolbar button so compose remains primary.
+        .searchToolbarBehavior(.minimize)
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )

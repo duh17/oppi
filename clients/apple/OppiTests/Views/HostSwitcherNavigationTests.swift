@@ -162,6 +162,15 @@ struct SessionInboxHostChangeTests {
         #expect(!taskSlice.contains("showAllWorkspaceSessions"))
     }
 
+    @Test func sessionListsAlwaysMinimizeSearch() throws {
+        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
+        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
+        #expect(inbox.contains(".searchToolbarBehavior(.minimize)"))
+        #expect(workspace.contains(".searchToolbarBehavior(.minimize)"))
+        #expect(!inbox.contains("usesMinimizedSearch ? .minimize : .automatic"))
+        #expect(!workspace.contains("usesMinimizedSearch ? .minimize : .automatic"))
+    }
+
     @Test func inboxOnSwitchStillPopsToAllSessions() throws {
         let source = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let slice = try sourceSlice(

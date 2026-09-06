@@ -339,7 +339,8 @@ struct SessionInboxView: View {
         .navigationTitle(inboxNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, isPresented: $isSearchPresented, prompt: "Search sessions")
-        .searchToolbarBehavior(sessionListToolbar.usesMinimizedSearch ? .minimize : .automatic)
+        // Occasional search stays a leading toolbar button so compose remains primary.
+        .searchToolbarBehavior(.minimize)
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )
@@ -573,6 +574,17 @@ struct SessionInboxView: View {
             )
         } else {
             ToolbarSpacer(.flexible, placement: .bottomBar)
+        }
+
+        if SessionInboxComposeChrome.showsDictationShortcut(
+            voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
+            hasSelectedWorkspace: selectedWorkspace != nil,
+            hasActivePlayback: sessionListHasActivePlayback
+        ) {
+            ToolbarItem(placement: .bottomBar) {
+                dictationQuickSessionButton
+            }
+            ToolbarSpacer(.fixed, placement: .bottomBar)
         }
 
         ToolbarItem(placement: .bottomBar) {
@@ -1026,6 +1038,18 @@ struct SessionInboxView: View {
             workspaceID: pending.routeScope.composerDraftScopeID,
             sessionID: pending.session.id
         )
+    }
+
+    private var dictationQuickSessionButton: some View {
+        Button {
+            navigation.pendingQuickSessionStartDictation = true
+            navigation.showQuickSession = true
+        } label: {
+            Image(systemName: "mic")
+        }
+        .foregroundStyle(.themeFg)
+        .accessibilityLabel("Dictate Quick Session")
+        .accessibilityIdentifier("workspace.quickSession.dictate")
     }
 
     private var newSessionButton: some View {

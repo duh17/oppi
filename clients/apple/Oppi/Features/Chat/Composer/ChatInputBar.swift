@@ -81,6 +81,8 @@ struct ChatInputBar<ActionRow: View>: View {
     let onForceStop: () -> Void
     let onExpand: () -> Void
     let externalFocusRequestID: Int
+    /// All Sessions mic: start inbox dictation once the bar is on screen.
+    var externalDictationRequestID: Int = 0
     let appliesOuterPadding: Bool
     var alwaysShowActionRow: Bool = false
     var allowsExpansion: Bool = true
@@ -368,6 +370,9 @@ struct ChatInputBar<ActionRow: View>: View {
         .onChange(of: externalFocusRequestID) { _, _ in
             suppressKeyboard = false
             focusRequestID += 1
+        }
+        .task(id: externalDictationRequestID) {
+            await startExternalDictationIfRequested()
         }
         .onChange(of: voiceInputManager?.state) { _, _ in
             if ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(
@@ -923,6 +928,27 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private func handleInputFocusChange(_ isFocused: Bool) {
         isInputFocused = isFocused
+    }
+
+    private func startExternalDictationIfRequested() async {
+        guard externalDictationRequestID > 0 else { return }
+        guard let manager = voiceInputManager else { return }
+        guard ComposerShared.canControlVoiceInput(manager, owner: .inboxComposer) else { return }
+        guard manager.state == .idle else { return }
+        do {
+            try await ComposerShared.startVoiceInput(
+                manager: manager,
+                keyboardLanguage: keyboardLanguage,
+                owner: .inboxComposer,
+                baseText: text,
+                textBeforeRecording: $textBeforeRecording,
+                suppressKeyboard: $suppressKeyboard,
+                focusRequestID: $focusRequestID,
+                prepare: {
+                    try await onPrepareVoiceInput?(manager)
+                }
+            )
+        } catch {}
     }
 
     private func dismissKeyboard() {

@@ -337,6 +337,23 @@ struct ChatInputBarTests {
         #expect(!presentation.isBlockedByOtherOwner)
     }
 
+    @Test("Inbox dictation remains owned by the message composer")
+    func inboxDictationRemainsOwnedByInlineComposer() {
+        let manager = VoiceInputManager()
+        manager._testState = .recording
+        manager._testActiveRecordingSource = ComposerShared.VoiceInputOwner.inboxComposer.rawValue
+
+        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
+
+        #expect(ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer))
+        #expect(ComposerShared.ownsVoiceInput(manager, owner: .inboxComposer))
+        #expect(ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer))
+        #expect(ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(manager, owner: .inlineComposer))
+        #expect(presentation.isRecording)
+        #expect(presentation.isEnabled)
+        #expect(!presentation.isBlockedByOtherOwner)
+    }
+
     @Test("Review comment dictation remains isolated from message composers")
     func reviewCommentDictationStillBlocksMessageComposers() {
         let manager = VoiceInputManager()

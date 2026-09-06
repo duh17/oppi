@@ -172,6 +172,7 @@ struct ContentView: View {
         quickSessionLaunchAccessibilityElement = nil
         composerDraftStore?.saveQuickSessionLifecycleFallback()
         navigation.pendingQuickSessionLaunchContext = nil
+        navigation.pendingQuickSessionStartDictation = false
         navigation.showQuickSession = false
         QuickSessionTrigger.shared.isPresented = false
         Task { @MainActor in

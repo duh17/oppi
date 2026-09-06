@@ -213,6 +213,9 @@ final class AppNavigation {
     /// When set, the Quick Session sheet is presented over the current view.
     var showQuickSession: Bool = false
 
+    /// Consume-once: All Sessions mic asked Quick Session to start dictation.
+    var pendingQuickSessionStartDictation = false
+
     /// True while native AVKit fullscreen is covering the workspace shell.
     private(set) var isMediaOverlayActive = false
     private var mediaOverlayDepth = 0

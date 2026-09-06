@@ -131,6 +131,7 @@ struct QuickSessionSheet: View {
     @State private var voiceInputManager: VoiceInputManager?
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
+    @State private var composerDictationRequestID = 0
     @State private var showWorkspacePicker = false
     @State private var showWorktreePicker = false
     @State private var showAgentPicker = false
@@ -416,6 +417,7 @@ struct QuickSessionSheet: View {
                 onForceStop: {},
                 onExpand: { showExpandedComposer = true },
                 externalFocusRequestID: composerFocusRequestID,
+                externalDictationRequestID: composerDictationRequestID,
                 appliesOuterPadding: true,
                 alwaysShowActionRow: true,
                 actionRow: {
@@ -672,8 +674,13 @@ struct QuickSessionSheet: View {
     // MARK: - Actions
 
     private func setupInitialState() async {
+        // Snapshot before any await so a draft load cannot lose the All Sessions mic.
+        let pendingDictation = navigation.pendingQuickSessionStartDictation
+        navigation.pendingQuickSessionStartDictation = false
+
         if let composerDraftStore {
             await composerDraftStore.load()
+            if Task.isCancelled { return }
             let payload = composerDraftStore.quickSessionDraftPayload
             text = payload.text
             pendingRepoPointers = payload.repoPointers.map(PendingFileReference.init(composerDraftPointer:))
@@ -712,31 +719,39 @@ struct QuickSessionSheet: View {
             selectedServerId = coordinator.activeServerId
         }
 
-        // Initialize voice input
         if ReleaseFeatures.voiceInputEnabled {
             let manager = VoiceInputManager()
             voiceInputManager = manager
             configureVoiceInputForSelectedServer(manager)
         }
 
-        await loadAgentsForSelectedServer(requestedAgentId: launchContext?.agentId)
-
         if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
             applyInitialPayload(pendingPayload)
         }
         isInitialized = true
+        await drainPendingDictationCleanupQueue()
+        if Task.isCancelled { return }
 
-        // Auto-focus the text input for typing, then move assistive focus to
-        // that same composer instead of the overlay's dismiss control.
-        composerFocusRequestID += 1
-        await moveAccessibilityFocusToComposer()
+        let readyAction = QuickSessionDictationLaunch.afterComposerReady(
+            pendingStart: pendingDictation,
+            voiceInputEnabled: ReleaseFeatures.voiceInputEnabled
+        )
+        // ChatInputBar owns startVoiceInput (suppress keyboard, then record).
+        // Starting from the sheet raced the bar and left the keyboard up.
+        if readyAction == .startDictation {
+            composerDictationRequestID += 1
+        }
 
-        // Ensure model cache is fresh for the selected server.
+        await loadAgentsForSelectedServer(requestedAgentId: launchContext?.agentId)
+
+        if readyAction == .focusForTyping {
+            composerFocusRequestID += 1
+            await moveAccessibilityFocusToComposer()
+        }
+
         if let api = selectedServerConnection()?.apiClient {
             await chatState.refreshModelCache(api: api)
         }
-
-        await drainPendingDictationCleanupQueue()
     }
 
     private func moveAccessibilityFocusToComposer() async {

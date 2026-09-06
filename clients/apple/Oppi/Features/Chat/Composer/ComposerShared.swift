@@ -23,11 +23,12 @@ enum ComposerShared {
     enum VoiceInputOwner: String, Sendable {
         case inlineComposer = "inline_mic_tap"
         case expandedComposer = "expanded_mic_tap"
+        case inboxComposer = "inbox_mic_tap"
         case askCard = "ask_card_mic_tap"
         case reviewCommentInline = "review_comment_inline_mic_tap"
 
         var isMessageComposer: Bool {
-            self == .inlineComposer || self == .expandedComposer
+            self == .inlineComposer || self == .expandedComposer || self == .inboxComposer
         }
     }
 

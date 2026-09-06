@@ -214,3 +214,32 @@ enum QuickSessionWorktreePickerPolicy {
         return trimmed
     }
 }
+
+/// Consume-once All Sessions mic: open Quick Session, then start voice after
+/// the composer is on screen. Pencil compose does not set this.
+enum QuickSessionDictationLaunch {
+    enum AfterReadyAction: Equatable {
+        case startDictation
+        case focusForTyping
+    }
+
+    static func shouldAutoStartDictation(
+        pendingStart: Bool,
+        voiceInputEnabled: Bool,
+        isComposerReady: Bool
+    ) -> Bool {
+        pendingStart && voiceInputEnabled && isComposerReady
+    }
+
+    /// Mic skips keyboard focus so recording can start as soon as the bar is up.
+    static func afterComposerReady(
+        pendingStart: Bool,
+        voiceInputEnabled: Bool
+    ) -> AfterReadyAction {
+        shouldAutoStartDictation(
+            pendingStart: pendingStart,
+            voiceInputEnabled: voiceInputEnabled,
+            isComposerReady: true
+        ) ? .startDictation : .focusForTyping
+    }
+}
