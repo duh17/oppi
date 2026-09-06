@@ -12,10 +12,16 @@ private final class CodeBlockHeaderButton: UIButton {
 
 /// Code block container with language badge, copy button, and syntax highlighting.
 ///
-/// Renders a code block with language badge, copy button, and
-/// optional syntax highlighting. Supports in-place content updates
-/// for streaming.
+/// Owns highlight scheduling so parking this view off
+/// `AssistantMarkdownSegmentApplier` (full-screen markdown reader) cannot
+/// cancel color work. The applier only passes a scheduling policy.
 final class NativeCodeBlockView: UIView {
+    enum HighlightScheduling: Equatable, Sendable {
+        case none
+        case asynchronous
+        case synchronous
+    }
+
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
 
@@ -109,8 +115,13 @@ final class NativeCodeBlockView: UIView {
     private var currentPalette: ThemePalette?
     private var desiredHighlightIdentity: SyntaxHighlightIdentity?
     private var installedHighlightIdentity: SyntaxHighlightIdentity?
+    private var highlightTask: Task<Void, Never>?
     private var isLineWrappingEnabled = false
     private var measuredUnwrappedCodeWidth: CGFloat = 0
+    #if DEBUG
+    nonisolated(unsafe) static var highlightDelayForTesting: Duration?
+    private(set) var debugHighlightWorkCountForTesting = 0
+    #endif
 
     /// Horizontal padding around the text view inside `codeScrollView`.
     private static let codeHorizontalPadding: CGFloat = 24
@@ -131,6 +142,10 @@ final class NativeCodeBlockView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        highlightTask?.cancel()
+    }
 
     private func setupViews() {
         accessibilityIdentifier = "markdown.codeBlock"
@@ -243,7 +258,8 @@ final class NativeCodeBlockView: UIView {
         code: String,
         palette: ThemePalette,
         isOpen: Bool,
-        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
+        highlightScheduling: HighlightScheduling = .none
     ) {
         currentPalette = palette
         backgroundColor = UIColor(palette.bgDark)
@@ -256,6 +272,10 @@ final class NativeCodeBlockView: UIView {
         updateWrapButton()
 
         let identity = SyntaxHighlightIdentity(code: code, language: language, themeID: themeID)
+        if desiredHighlightIdentity != identity {
+            highlightTask?.cancel()
+            highlightTask = nil
+        }
         desiredHighlightIdentity = identity
         let font = AppFont.monoMedium
 
@@ -279,10 +299,11 @@ final class NativeCodeBlockView: UIView {
             codeLabel.attributedText = nil
             codeLabel.text = code
             updateMeasuredCodeWidth(NSAttributedString(string: code, attributes: [.font: font]))
-            return
+        } else {
+            applyCurrentLineWrapping(resetHorizontalOffset: false)
         }
 
-        applyCurrentLineWrapping(resetHorizontalOffset: false)
+        scheduleHighlightIfNeeded(scheduling: highlightScheduling)
     }
 
     var hasCurrentHighlight: Bool {
@@ -304,6 +325,50 @@ final class NativeCodeBlockView: UIView {
         installedHighlightIdentity = identity
 
         updateMeasuredCodeWidth(mutable)
+    }
+
+    private func scheduleHighlightIfNeeded(scheduling: HighlightScheduling) {
+        guard scheduling != .none else { return }
+        guard let language = currentLanguage else { return }
+        let syntaxLang = SyntaxLanguage.detect(language)
+        guard syntaxLang != .unknown else { return }
+        guard let identity = desiredHighlightIdentity else { return }
+        guard !hasCurrentHighlight else { return }
+        if let highlightTask, !highlightTask.isCancelled {
+            return
+        }
+
+        let code = currentCode
+        let themeID = identity.themeID
+        #if DEBUG
+        debugHighlightWorkCountForTesting += 1
+        #endif
+
+        if scheduling == .synchronous {
+            applyHighlightedCode(
+                SyntaxHighlighter.highlight(code, language: syntaxLang, themeID: themeID),
+                identity: identity
+            )
+            return
+        }
+
+        highlightTask = Task { [weak self] in
+            #if DEBUG
+            if let delay = NativeCodeBlockView.highlightDelayForTesting {
+                try? await Task.sleep(for: delay)
+            }
+            #endif
+            guard !Task.isCancelled else { return }
+            let wrapper = await Task.detached(priority: .userInitiated) {
+                SendableNSAttributedString(
+                    SyntaxHighlighter.highlight(code, language: syntaxLang, themeID: themeID)
+                )
+            }.value
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.applyHighlightedCode(wrapper.value, identity: identity)
+            }
+        }
     }
 
     @objc private func wrapTapped() {
@@ -421,6 +486,11 @@ struct NativeCodeBlockLayoutDiagnostics {
 
 extension NativeCodeBlockView {
     var debugHasHighlightedTextForTesting: Bool { highlightedText != nil }
+
+    func debugCancelHighlightTaskForTesting() {
+        highlightTask?.cancel()
+        highlightTask = nil
+    }
 
     var debugWrapButtonAccessibilityLabelForTesting: String? {
         wrapButton.accessibilityLabel

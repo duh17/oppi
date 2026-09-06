@@ -25,6 +25,8 @@ OppiCore token provider
 
 Platform painters
   +-- iOS SyntaxHighlighter     Tokens -> NSAttributedString (UIColor, theme cache)
+  +-- iOS NativeCodeBlockView   Owns fence highlight scheduling (assistant + fullscreen markdown)
+  +-- iOS NativeFullScreenCodeBody  Owns full-file highlight scheduling
   +-- Mac MacSyntaxHighlighter  Tokens -> NSAttributedString (NSColor, Mac fonts)
   +-- iOS DiffAttributedStringBuilder  Per-hunk projections; cached painter colors
   +-- iOS ToolRowTextRenderer   Guttered tool-row paint from the same tokens/colors
@@ -42,7 +44,7 @@ they do not re-scan or invent a second token→color table.
 |---|---|---|
 | `TreeSitterHighlighter.resolvedTokenRanges` | OppiCore | iOS/Mac painters, tool-row gutters |
 | `TreeSitterHighlighter.resolvedTokenRangesUTF8` | OppiCore | Diff builder (tree-sitter or UTF-8 fallback) |
-| `SyntaxHighlighter.highlight` | iOS painter | Markdown fences, fullscreen, share/export, bash command |
+| `SyntaxHighlighter.highlight` | iOS painter | Called by `NativeCodeBlockView` (fences), `NativeFullScreenCodeBody` (files), share/export, bash |
 | `MacSyntaxHighlighter.attributedCode` | Mac painter | Mac timeline / document column |
 
 `resolvedTokenRanges` uses tree-sitter for registered languages (plain text if the query is missing) and `SyntaxTokenScanner` otherwise. Public `SyntaxTokenRange` offsets are always UTF-16 code units, matching `NSRange`, `NSString`, and tree-sitter captures. Displayed source is the full input; only token work is bounded.
@@ -212,7 +214,7 @@ our supplement becomes a no-op (duplicate patterns are harmless in tree-sitter).
 
 ## Performance Budget
 
-All highlighting runs on `Task.detached` (off main thread). Targets:
+Live and full-screen reader highlighting runs on `Task.detached` (off main thread). Export paints synchronously on the caller. Targets:
 
 | Input size | Target per-call | Notes |
 |---|---|---|
@@ -231,6 +233,8 @@ All current tree-sitter grammars meet these targets. Painters keep complete sour
 | `OppiCore/Formatting/TreeSitterHighlighter.swift` | Query-based tree-sitter highlighting + registry |
 | `OppiCore/Formatting/SyntaxTokenScanner.swift` | Hand-written fallback + UTF-8 scanners + token budget |
 | `Oppi/Core/Formatting/SyntaxHighlighter.swift` | iOS painter: theme colors + NSAttributedString |
+| `Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownBlockViews.swift` | `NativeCodeBlockView` owns markdown fence highlight scheduling |
+| `Oppi/Core/Views/FullScreenCodeBodies.swift` | `NativeFullScreenCodeBody` owns full-file highlight scheduling |
 | `OppiMac/Formatting/MacSyntaxHighlighter.swift` | Mac painter: NSColor, Mac fonts, no baked gutters |
 | `OppiCore/Formatting/SyntaxKeywords.swift` | Keyword sets for hand-written scanners |
 | `OppiCore/Formatting/BashEmbeddedLanguageDetector.swift` | Heredoc/inline script detection |

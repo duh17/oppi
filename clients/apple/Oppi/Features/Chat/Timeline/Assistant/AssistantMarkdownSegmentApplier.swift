@@ -271,12 +271,6 @@ final class AssistantMarkdownSegmentApplier {
     private var mermaidViews: [Int: NativeMermaidBlockView] = [:]
     /// References to LaTeX block views for in-place updates.
     private var latexViews: [Int: NativeLatexBlockView] = [:]
-    private var highlightTasks: [Int: Task<Void, Never>] = [:]
-    private var highlightIdentities: [Int: SyntaxHighlightIdentity] = [:]
-    #if DEBUG
-    nonisolated(unsafe) static var highlightDelayForTesting: Duration?
-    private(set) var debugHighlightWorkCountForTesting = 0
-    #endif
     private var sourceLineRanges: [ClosedRange<Int>?] = []
 
     /// Plain-text UTF-16 mirror of the streaming tail for prefix validation
@@ -401,12 +395,6 @@ final class AssistantMarkdownSegmentApplier {
         chunkSettleAnimator.cancelAndSnap()
         cachedStreamingTailPlain = nil
         cachedStreamingSourceContent = nil
-
-        for task in highlightTasks.values {
-            task.cancel()
-        }
-        highlightTasks.removeAll()
-        highlightIdentities.removeAll()
 
         for view in imageViews.values {
             view.cancelPreparationDemand()
@@ -669,21 +657,11 @@ final class AssistantMarkdownSegmentApplier {
                 code: code,
                 palette: palette,
                 isOpen: isOpen,
-                themeID: config.themeID
+                themeID: config.themeID,
+                highlightScheduling: highlightScheduling(isOpen: isOpen, config: config)
             )
             stackView.addArrangedSubview(codeView)
             codeBlockViews[index] = codeView
-            if !isOpen,
-               !codeView.hasCurrentHighlight,
-               config.decorativeDecision(for: .syntaxHighlight) == .allow {
-                applyHighlight(
-                    index: index,
-                    language: language,
-                    code: code,
-                    mode: config.renderingMode,
-                    themeID: config.themeID
-                )
-            }
 
         case .table(let headers, let rows):
             let tableView = NativeTableBlockView()
@@ -881,9 +859,6 @@ final class AssistantMarkdownSegmentApplier {
             audioViews.removeValue(forKey: index)
             mermaidViews.removeValue(forKey: index)
             latexViews.removeValue(forKey: index)
-            highlightTasks[index]?.cancel()
-            highlightTasks.removeValue(forKey: index)
-            highlightIdentities.removeValue(forKey: index)
         }
 
         // Build and append new tail views.
@@ -984,21 +959,11 @@ final class AssistantMarkdownSegmentApplier {
                             code: code,
                             palette: palette,
                             isOpen: isOpen,
-                            themeID: config.themeID
+                            themeID: config.themeID,
+                            highlightScheduling: highlightScheduling(isOpen: isOpen, config: config)
                         )
                         if isOpen {
                             ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: codeView)
-                        }
-                        if !isOpen,
-                           !codeView.hasCurrentHighlight,
-                           config.decorativeDecision(for: .syntaxHighlight) == .allow {
-                            applyHighlight(
-                                index: index,
-                                language: language,
-                                code: code,
-                                mode: config.renderingMode,
-                                themeID: config.themeID
-                            )
                         }
                     }
                 }
@@ -1466,59 +1431,14 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
-    private func applyHighlight(
-        index: Int,
-        language: String?,
-        code: String,
-        mode: ContentRenderingMode,
-        themeID: ThemeID
-    ) {
-        guard let langStr = language,
-              SyntaxLanguage.detect(langStr) != .unknown else { return }
-
-        let lang = SyntaxLanguage.detect(langStr)
-        let identity = SyntaxHighlightIdentity(code: code, language: language, themeID: themeID)
-        if highlightIdentities[index] == identity,
-           let task = highlightTasks[index],
-           !task.isCancelled {
-            return
+    private func highlightScheduling(
+        isOpen: Bool,
+        config: AssistantMarkdownContentView.Configuration
+    ) -> NativeCodeBlockView.HighlightScheduling {
+        guard !isOpen, config.decorativeDecision(for: .syntaxHighlight) == .allow else {
+            return .none
         }
-
-        highlightTasks[index]?.cancel()
-        highlightIdentities[index] = identity
-
-        switch mode {
-        case .export:
-            // Synchronous — highlight on the current thread so the snapshot
-            // captures colored syntax, not plain text.
-            #if DEBUG
-            debugHighlightWorkCountForTesting += 1
-            #endif
-            let highlighted = SyntaxHighlighter.highlight(code, language: lang, themeID: themeID)
-            codeBlockViews[index]?.applyHighlightedCode(highlighted, identity: identity)
-
-        case .live, .staticReader:
-            // Async — dispatch to background thread to avoid scroll jank.
-            #if DEBUG
-            debugHighlightWorkCountForTesting += 1
-            #endif
-            highlightTasks[index] = Task { [weak self] in
-                #if DEBUG
-                if let delay = Self.highlightDelayForTesting {
-                    try? await Task.sleep(for: delay)
-                }
-                #endif
-                guard !Task.isCancelled else { return }
-                let capturedThemeID = themeID
-                let wrapper = await Task.detached(priority: .userInitiated) {
-                    SendableNSAttributedString(
-                        SyntaxHighlighter.highlight(code, language: lang, themeID: capturedThemeID)
-                    )
-                }.value
-                guard !Task.isCancelled else { return }
-                self?.codeBlockViews[index]?.applyHighlightedCode(wrapper.value, identity: identity)
-            }
-        }
+        return config.renderingMode == .export ? .synchronous : .asynchronous
     }
 }
 
@@ -1545,12 +1465,19 @@ extension AssistantMarkdownSegmentApplier {
         return ObjectIdentifier(storage)
     }
 
+    static var highlightDelayForTesting: Duration? {
+        get { NativeCodeBlockView.highlightDelayForTesting }
+        set { NativeCodeBlockView.highlightDelayForTesting = newValue }
+    }
+
+    var debugHighlightWorkCountForTesting: Int {
+        codeBlockViews.values.reduce(0) { $0 + $1.debugHighlightWorkCountForTesting }
+    }
+
     func debugClearHighlightTasksForTesting() {
-        for task in highlightTasks.values {
-            task.cancel()
+        for view in codeBlockViews.values {
+            view.debugCancelHighlightTaskForTesting()
         }
-        highlightTasks.removeAll()
-        highlightIdentities.removeAll()
     }
 }
 #endif

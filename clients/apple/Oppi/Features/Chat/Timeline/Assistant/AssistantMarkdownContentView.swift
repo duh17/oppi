@@ -39,7 +39,7 @@ enum ContentRenderingMode: Equatable, Sendable {
 /// `AssistantMarkdownContentView` is now a thin coordinator over three layers:
 /// - `AssistantMarkdownSegmentSource` builds `FlatSegment` arrays from markdown.
 /// - `AssistantMarkdownSegmentApplier` maps those segments onto reusable UIKit views.
-/// - `NativeCodeBlockView` / `NativeTableBlockView` render block-level surfaces.
+/// - `NativeCodeBlockView` owns fence highlight scheduling; `NativeTableBlockView` renders tables.
 final class AssistantMarkdownContentView: UIView {
     struct Configuration: Equatable {
         let content: String

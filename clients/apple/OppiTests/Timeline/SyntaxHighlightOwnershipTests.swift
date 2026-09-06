@@ -202,6 +202,63 @@ struct SyntaxHighlightOwnershipTests {
         #expect(uniqueForegroundColorCount(attributed) >= 2)
     }
 
+    // MARK: - Fullscreen markdown reader
+
+    /// The reader parks segment views off the applier after first-paint
+    /// settlement. Highlight work must survive that yield, or fenced code stays
+    /// plain while the same fence in an assistant message colors.
+    @Test func fullScreenMarkdownReaderHighlightsParkedFencedCode() async throws {
+        let content = """
+        # TypeScript
+
+        ```typescript
+        type Result<T> = { ok: true; value: T }
+        export function parseUser(raw: unknown): Result<string> {
+          if (typeof raw !== "object" || raw == null) {
+            return { ok: false, error: "not an object" }
+          }
+          return { ok: true, value: "ok" }
+        }
+        ```
+        """
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        body.layoutIfNeeded()
+        await body.debugWaitForDocumentPreparationForTesting()
+        body.layoutIfNeeded()
+
+        try await waitUntil(timeout: .seconds(2)) {
+            guard let code = timelineFirstView(ofType: NativeCodeBlockView.self, in: body) else {
+                return false
+            }
+            return uniqueForegroundColorCount(
+                codeAttributedText(in: code) ?? NSAttributedString()
+            ) >= 2
+        }
+
+        let code = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: body))
+        let attributed = try #require(codeAttributedText(in: code))
+        #expect(uniqueForegroundColorCount(attributed) >= 2)
+        #expect(
+            foregroundColor(of: "function", in: attributed)
+                == UIColor(ThemePalettes.dark.syntaxKeyword)
+                || foregroundColor(of: "export", in: attributed)
+                    == UIColor(ThemePalettes.dark.syntaxKeyword)
+                || foregroundColor(of: "type", in: attributed)
+                    == UIColor(ThemePalettes.dark.syntaxKeyword)
+        )
+    }
+
     // MARK: - Fullscreen
 
     @Test func fullscreenPaletteRefreshDoesNotFlattenHighlightColors() async throws {
