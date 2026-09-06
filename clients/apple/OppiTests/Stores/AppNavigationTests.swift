@@ -589,7 +589,7 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 0)
         #expect(navigation.selectedWorkspaceFilter == target)
         #expect(navigation.splitSelectedWorkspace == target)
-        #expect(navigation.splitSelectedSession == nil)
+        #expect(navigation.splitDetailTarget == nil)
         #expect(navigation.splitColumnVisibility == .all)
     }
 
@@ -773,7 +773,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceSession(target)
 
         #expect(navigation.workspacePath.count == 0)
-        #expect(navigation.splitSelectedSession == target)
+        #expect(navigation.splitDetailTarget == .session(target))
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
@@ -822,7 +822,13 @@ struct AppNavigationShellRoutingTests {
 
         navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
 
-        #expect(navigation.splitSelectedSession?.workspaceId == "workspace-1")
+        #expect(navigation.splitDetailTarget == .session(
+            WorkspaceSessionNavTarget(
+                serverId: "server-1",
+                sessionId: "session-1",
+                workspaceId: "workspace-1"
+            )
+        ))
     }
 
     @Test func workspaceSelectionRestoresSessionLayerVisibility() {
@@ -835,7 +841,7 @@ struct AppNavigationShellRoutingTests {
 
         #expect(navigation.splitColumnVisibility == .all)
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
-        #expect(navigation.splitSelectedSession == nil)
+        #expect(navigation.splitDetailTarget == nil)
     }
 
     @Test func sessionSelectionPreservesSplitColumnVisibility() {
@@ -847,7 +853,7 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceSession(sessionTarget)
 
         #expect(navigation.splitColumnVisibility == .detailOnly)
-        #expect(navigation.splitSelectedSession == sessionTarget)
+        #expect(navigation.splitDetailTarget == .session(sessionTarget))
     }
 
     @Test func fileBrowserUsesSplitDetailSelectionInSplitPresentation() {
@@ -1420,7 +1426,7 @@ struct AppNavigationShellRoutingTests {
         navigation.showWorkspaceListInSplitSidebar()
 
         #expect(navigation.splitSelectedWorkspace == nil)
-        #expect(navigation.splitSelectedSession == sessionTarget)
+        #expect(navigation.splitDetailTarget == .session(sessionTarget))
         #expect(navigation.splitColumnVisibility == .all)
     }
 

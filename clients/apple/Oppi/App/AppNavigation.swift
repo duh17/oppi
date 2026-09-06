@@ -172,23 +172,6 @@ final class AppNavigation {
     }
     private var splitDetailPathElements: [WorkspaceSplitDetailPathElement] = []
 
-    /// Backward-compatible session selection facade for existing tests and call sites.
-    var splitSelectedSession: WorkspaceSessionNavTarget? {
-        get {
-            guard case .session(let target) = splitDetailTarget else { return nil }
-            return target
-        }
-        set {
-            if let newValue {
-                splitDetailTarget = .session(newValue)
-                resetSplitDetailPath()
-            } else if case .session = splitDetailTarget {
-                splitDetailTarget = nil
-                resetSplitDetailPath()
-            }
-        }
-    }
-
     /// Column visibility backing the regular-width split shell. The system
     /// sidebar affordance and edge gestures update this binding, so iPad users
     /// can reveal or hide workspace/session columns without custom chrome.

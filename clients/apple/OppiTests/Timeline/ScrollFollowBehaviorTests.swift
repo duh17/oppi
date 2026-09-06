@@ -123,7 +123,7 @@ struct ScrollFollowBehaviorTests {
         #expect(!harness.scrollController.isCurrentlyNearBottom)
     }
 
-    @Test func smallUpwardScrollDetachSticksUntilDragEnds() async {
+    @Test func smallUpwardScrollDetachSticksUntilDragEnds() {
         // User scrolls up just a little (50pt from bottom). The detach must
         // still stick — any user-owned upward movement leaves the true tail.
         // Re-attach should only happen when the user scrolls back *down*
@@ -147,23 +147,6 @@ struct ScrollFollowBehaviorTests {
         // Must stay detached — the user is actively scrolling up.
         #expect(!harness.scrollController.isCurrentlyNearBottom,
                 "detach should stick after any user-owned upward scroll")
-
-        // Auto-scroll must not fire while detached.
-        var scrollCount = 0
-        harness.scrollController.handleContentChange(
-            isBusy: true,
-            streamingAssistantID: "stream-1",
-            bottomItemID: "bottom-1"
-        ) { _ in scrollCount += 1 }
-
-        let stayedDetached = await waitForMainActorConditionToStayTrue(
-            for: .milliseconds(160),
-            poll: .milliseconds(10)
-        ) {
-            scrollCount == 0
-        }
-        #expect(stayedDetached,
-                "auto-scroll must not fire while user is scrolled up")
     }
 
     @Test func busyToIdleTransitionDoesNotReattachDetachedUser() {

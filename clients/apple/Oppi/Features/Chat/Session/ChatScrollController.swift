@@ -170,14 +170,6 @@ final class ChatScrollController: NSObject {
     /// Non-reactive anchor — mutations are invisible to SwiftUI observation.
     private let anchor = ScrollAnchorState()
 
-    /// Throttle task for idle explicit scroll-to-bottom requests.
-    /// Busy streaming/tool output is followed by the collection view's
-    /// layout-time tail governor, not by timer-driven SwiftUI scroll commands.
-    private var scrollTask: Task<Void, Never>?
-
-    /// Last completed idle auto-scroll timestamp.
-    private var lastAutoScrollAt: ContinuousClock.Instant?
-
     private enum NavigationRestoration {
         case liveTail
         case viewport(TimelineViewportSnapshot)
@@ -195,18 +187,6 @@ final class ChatScrollController: NSObject {
     /// that intent while the chat cannot receive touches.
     private var imagePreviewGeneration: UInt = 0
     private var activeImagePreviewPreservation: (token: UInt, wasAttachedToTail: Bool)?
-
-    // MARK: - Tuning Constants
-
-    /// Timelines with more items than this use conservative scroll timing.
-    private let heavyTimelineThreshold = 120
-
-    /// Non-streaming delay: less aggressive to reduce needless churn.
-    private var nonStreamingDelay: Duration = .milliseconds(60)
-
-    /// Keyboard animation settle time — suppress auto-scroll until layout settles.
-    private var keyboardSettleDuration: Duration = .milliseconds(500)
-    private var keyboardTransitionUntil: ContinuousClock.Instant?
 
     /// Set by outline view to scroll to a specific item.
     var scrollTargetID: String?
@@ -260,7 +240,7 @@ final class ChatScrollController: NSObject {
         anchor.isUserInteracting
     }
 
-    /// Item count for heavy-timeline gating. Set before each scroll decision.
+    /// Item count used to detect newly appended timeline items.
     var itemCount: Int = 0 {
         didSet {
             if itemCount > oldValue, oldValue > 0 {
@@ -279,61 +259,6 @@ final class ChatScrollController: NSObject {
         defer { hasNewItems = false }
         return hasNewItems
     }
-
-    override init() {
-        super.init()
-        startKeyboardObservers()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    // MARK: - Keyboard Tracking
-
-    private func startKeyboardObservers() {
-        let center = NotificationCenter.default
-        let names: [NSNotification.Name] = [
-            UIResponder.keyboardWillShowNotification,
-            UIResponder.keyboardWillHideNotification,
-            UIResponder.keyboardWillChangeFrameNotification,
-        ]
-
-        for name in names {
-            center.addObserver(
-                self,
-                selector: #selector(handleKeyboardTransitionNotification(_:)),
-                name: name,
-                object: nil
-            )
-        }
-    }
-
-    @objc private func handleKeyboardTransitionNotification(_: Notification) {
-        keyboardTransitionUntil = ContinuousClock.now.advanced(by: keyboardSettleDuration)
-    }
-
-    private var isKeyboardSettling: Bool {
-        guard let keyboardTransitionUntil else { return false }
-        if ContinuousClock.now < keyboardTransitionUntil {
-            return true
-        }
-        self.keyboardTransitionUntil = nil
-        return false
-    }
-
-    #if DEBUG
-        // periphery:ignore - used by ChatScrollControllerTests via @testable import
-        func useFastTimingForTesting() {
-            nonStreamingDelay = .milliseconds(1)
-            keyboardSettleDuration = .milliseconds(1)
-        }
-
-        // periphery:ignore - used by ChatScrollControllerTests via @testable import
-        func expireKeyboardTransitionForTesting() {
-            keyboardTransitionUntil = nil
-        }
-    #endif
 
     // MARK: - CollectionView Callbacks
 
@@ -361,8 +286,6 @@ final class ChatScrollController: NSObject {
             // even if UIKit repeats the callback while interaction is active.
             navigationRestoration = nil
             activeImagePreviewPreservation = nil
-            scrollTask?.cancel()
-            scrollTask = nil
         }
 
         guard anchor.isUserInteracting != isInteracting else { return }
@@ -376,8 +299,6 @@ final class ChatScrollController: NSObject {
         anchor.isFollowLocked = false
         navigationRestoration = nil
         activeImagePreviewPreservation = nil
-        scrollTask?.cancel()
-        scrollTask = nil
     }
 
     /// CollectionView backend updates visibility for the detached streaming hint.
@@ -443,10 +364,6 @@ final class ChatScrollController: NSObject {
     /// transient scroll work. A later permanent session change still calls
     /// `cancel()` and discards this snapshot.
     func suspendForNavigation() {
-        scrollTask?.cancel()
-        scrollTask = nil
-        lastAutoScrollAt = nil
-        keyboardTransitionUntil = nil
         anchor.isUserInteracting = false
         anchor.isFollowLocked = false
         isDetachedStreamingHintVisible = false
@@ -517,68 +434,6 @@ final class ChatScrollController: NSObject {
         anchor.contentOffsetY = value
     }
 
-    // MARK: - Auto-Scroll on Content Change
-
-    /// Called when idle content changes and a caller wants an explicit
-    /// scroll-to-bottom command. Busy streaming/tool output is intentionally
-    /// excluded: live updates are handled by the collection view's tail
-    /// visibility governor after layout settles, not by timer-driven
-    /// `scrollToItem` commands from SwiftUI.
-    ///
-    /// - Parameters:
-    ///   - isBusy: Whether the agent session is active (streaming, thinking, tools).
-    ///   - streamingAssistantID: Ignored while busy; retained for call-site compatibility.
-    ///   - bottomItemID: ID of the last item to scroll to when idle.
-    ///   - performScrollToBottom: Callback to execute the explicit scroll command.
-    func handleContentChange(
-        isBusy: Bool,
-        streamingAssistantID _: String?,
-        bottomItemID: String?,
-        performScrollToBottom: @escaping (String) -> Void
-    ) {
-        guard !isBusy else { return }
-        guard anchor.isNearBottom else { return }
-        guard !anchor.isUserInteracting else { return }
-        guard !isKeyboardSettling else { return }
-
-        let isHeavy = itemCount >= heavyTimelineThreshold
-        if isHeavy {
-            return
-        }
-
-        // First-wins throttle: if a scroll is already scheduled, skip.
-        guard scrollTask == nil else { return }
-        guard let targetID = bottomItemID else { return }
-
-        scrollTask = Task { @MainActor in
-            try? await Task.sleep(for: nonStreamingDelay)
-            scrollTask = nil
-            guard !Task.isCancelled else { return }
-            guard anchor.isNearBottom else { return }
-            guard !anchor.isUserInteracting else { return }
-            guard !isKeyboardSettling else { return }
-
-            performScrollToBottom(targetID)
-            lastAutoScrollAt = ContinuousClock.now
-        }
-    }
-
-    /// Called when `needsInitialScroll` becomes true. Issues a scroll
-    /// command synchronously — the actual scroll executes inside
-    /// `Coordinator.apply()` after `dataSource.apply` + `layoutIfNeeded`.
-    func handleInitialScroll(bottomItemID: String?, performScrollToBottom: @escaping (String) -> Void) {
-        guard needsInitialScroll else { return }
-        needsInitialScroll = false
-
-        // A detached same-session re-entry is restored through
-        // `initialPlacement(availableFullTimelineItemIDs:bottomItemID:)`; this
-        // compatibility helper must never silently convert detached reading state
-        // to tail follow.
-        guard case .none = navigationRestoration else { return }
-        guard case .bottom(let itemID) = prepareBottomPlacement(bottomItemID: bottomItemID) else { return }
-        performScrollToBottom(itemID)
-    }
-
     /// Called when `scrollTargetID` changes. Issues a scroll command
     /// synchronously — the actual scroll executes inside
     /// `Coordinator.apply()` after `dataSource.apply` + `layoutIfNeeded`.
@@ -632,10 +487,6 @@ final class ChatScrollController: NSObject {
     // MARK: - Cleanup
 
     func cancel() {
-        scrollTask?.cancel()
-        scrollTask = nil
-        lastAutoScrollAt = nil
-        keyboardTransitionUntil = nil
         anchor.isNearBottom = true
         anchor.isUserInteracting = false
         anchor.isFollowLocked = false
