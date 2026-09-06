@@ -8,6 +8,8 @@ enum ComposerAutocompleteContext: Equatable {
 }
 
 enum ComposerAutocomplete {
+    /// Cap for file-mention suggestions. Slash-command lists stay untruncated so
+    /// the composer can scroll the full `get_commands` catalog.
     static let maxSuggestions = 8
 
     /// Resolve autocomplete context for the composer while a session may be busy.
@@ -63,7 +65,7 @@ enum ComposerAutocomplete {
     static func slashSuggestions(
         query: String,
         commands: [SlashCommand],
-        limit: Int = maxSuggestions
+        limit: Int? = nil
     ) -> [SlashCommand] {
         guard !commands.isEmpty else { return [] }
 
@@ -75,26 +77,28 @@ enum ComposerAutocomplete {
             }
         }
 
-        guard !query.isEmpty else {
-            let sorted = deduped.values.sorted { $0.name.lowercased() < $1.name.lowercased() }
-            return Array(sorted.prefix(max(0, limit)))
-        }
-
-        var scored: [(command: SlashCommand, score: Int)] = []
-        for command in deduped.values {
-            if let result = FuzzyMatch.match(query: query, candidate: command.name) {
-                scored.append((command, result.score))
+        let ranked: [SlashCommand]
+        if query.isEmpty {
+            ranked = deduped.values.sorted { $0.name.lowercased() < $1.name.lowercased() }
+        } else {
+            var scored: [(command: SlashCommand, score: Int)] = []
+            for command in deduped.values {
+                if let result = FuzzyMatch.match(query: query, candidate: command.name) {
+                    scored.append((command, result.score))
+                }
             }
-        }
 
-        scored.sort { lhs, rhs in
-            if lhs.score != rhs.score {
-                return lhs.score > rhs.score
+            scored.sort { lhs, rhs in
+                if lhs.score != rhs.score {
+                    return lhs.score > rhs.score
+                }
+                return lhs.command.name.lowercased() < rhs.command.name.lowercased()
             }
-            return lhs.command.name.lowercased() < rhs.command.name.lowercased()
+            ranked = scored.map(\.command)
         }
 
-        return Array(scored.prefix(max(0, limit)).map(\.command))
+        guard let limit else { return ranked }
+        return Array(ranked.prefix(max(0, limit)))
     }
 
     static func streamingBehavior(

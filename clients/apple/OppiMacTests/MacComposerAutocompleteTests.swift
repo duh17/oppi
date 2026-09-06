@@ -30,6 +30,17 @@ struct MacComposerAutocompleteTests {
         #expect(ComposerAutocomplete.insertSlashCommand(named: "compact", into: "hello /co") == "hello /co")
     }
 
+    @Test func emptySlashQueryKeepsTheFullCatalog() {
+        let names = [
+            "ask", "build", "clarity", "commit", "compact",
+            "copy", "explain", "fr", "goal", "share",
+        ]
+        let commands = makeSlashCommands(names.map { ($0, $0, "prompt") })
+        let suggestions = ComposerAutocomplete.slashSuggestions(query: "", commands: commands)
+        #expect(names.count > ComposerAutocomplete.maxSuggestions)
+        #expect(suggestions.map(\.name) == names)
+    }
+
     @Test func emptyServerCommandsStillOfferLocalCompact() {
         let commands = ComposerAutocomplete.availableCommands(from: [])
         #expect(commands.map(\.name) == ["compact"])

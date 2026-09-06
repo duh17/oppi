@@ -103,6 +103,30 @@ struct ComposerAutocompleteTests {
         #expect(suggestions.map(\.name) == ["ask", "build", "copy"])
     }
 
+    @Test func emptyQueryReturnsEveryCommandBeyondTheFileMentionCap() {
+        let names = [
+            "ask", "build", "clarity", "commit", "compact",
+            "copy", "explain", "fr", "goal", "share",
+        ]
+        let commands = makeSlashCommands(names.map { ($0, $0, "prompt") })
+        let suggestions = ComposerAutocomplete.slashSuggestions(query: "", commands: commands)
+        #expect(names.count > ComposerAutocomplete.maxSuggestions)
+        #expect(suggestions.map(\.name) == names)
+    }
+
+    @Test func typedQueryReturnsEveryFuzzyMatchBeyondTheFileMentionCap() {
+        let matching = [
+            "changelog", "check", "clarity", "clone", "commit",
+            "compact", "copy", "create", "cycle",
+        ]
+        let names = matching + ["explain", "fr", "goal"]
+        let commands = makeSlashCommands(names.map { ($0, $0, "prompt") })
+        let suggestions = ComposerAutocomplete.slashSuggestions(query: "c", commands: commands)
+        #expect(matching.count > ComposerAutocomplete.maxSuggestions)
+        #expect(Set(suggestions.map(\.name)) == Set(matching))
+        #expect(suggestions.count == matching.count)
+    }
+
     @Test func noMatchReturnsEmpty() {
         let commands = makeSlashCommands([
             ("compact", "Compact context", "prompt"),
