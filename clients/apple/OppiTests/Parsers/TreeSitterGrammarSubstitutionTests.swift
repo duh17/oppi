@@ -7,7 +7,7 @@ struct TreeSitterGrammarSubstitutionTests {
     @Test func leftoverScannerDropsTreeSitterLanguageTables() {
         let languages: [SyntaxLanguage] = [
             .shell, .javascript, .jsx, .typescript, .tsx, .python, .go,
-            .rust, .c, .cpp, .html, .css, .ruby, .java,
+            .rust, .c, .cpp, .html, .css, .ruby, .java, .yaml, .toml,
         ]
         for language in languages {
             #expect(language.keywords.isEmpty, "\(language.displayName) should not keep a scanner keyword table")
@@ -24,8 +24,8 @@ struct TreeSitterGrammarSubstitutionTests {
         #expect(TreeSitterHighlighter.supports(.jsx))
         #expect(TreeSitterHighlighter.supports(.tsx))
         #expect(!TreeSitterHighlighter.supports(.swift))
-        #expect(!TreeSitterHighlighter.supports(.yaml))
-        #expect(!TreeSitterHighlighter.supports(.toml))
+        #expect(TreeSitterHighlighter.supports(.yaml))
+        #expect(TreeSitterHighlighter.supports(.toml))
 
         #expect(TreeSitterHighlighter.GrammarRegistry.shared.highlightsQuery(for: .python) != nil)
         #expect(TreeSitterHighlighter.GrammarRegistry.shared.highlightsQuery(for: .javascript) != nil)
@@ -304,6 +304,29 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             multilineKind: .comment,
             tokenNeedle: "bar",
             tokenKind: .function
+        ),
+        EasyGrammarFixture(
+            language: .yaml,
+            code: """
+            foo: |
+              hello
+              world
+            """,
+            multilineNeedle: "world",
+            multilineKind: .string,
+            tokenNeedle: "foo",
+            tokenKind: .type
+        ),
+        EasyGrammarFixture(
+            language: .toml,
+            code: #"""
+            foo = """hello
+            world"""
+            """#,
+            multilineNeedle: "world",
+            multilineKind: .string,
+            tokenNeedle: "foo",
+            tokenKind: .type
         ),
     ]
 }

@@ -12,8 +12,10 @@ import TreeSitterJavaScript
 import TreeSitterPython
 import TreeSitterRuby
 import TreeSitterRust
+import TreeSitterTOML
 import TreeSitterTSX
 import TreeSitterTypeScript
+import TreeSitterYAML
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "TreeSitter")
 
@@ -173,7 +175,9 @@ enum TreeSitterHighlighter {
             let python = Self.bundleName("TreeSitterPython")
             let ruby = Self.bundleName("TreeSitterRuby")
             let rust = Self.bundleName("TreeSitterRust")
+            let toml = Self.bundleName("TreeSitterTOML")
             let typescript = Self.bundleName("TreeSitterTypeScript")
+            let yaml = Self.bundleName("TreeSitterYAML")
 
             register(
                 .shell,
@@ -264,6 +268,16 @@ enum TreeSitterHighlighter {
                 .java,
                 tsLanguage: tree_sitter_java(),
                 queryResources: [QueryResource(bundleName: java, fileName: "highlights.scm")]
+            )
+            register(
+                .yaml,
+                tsLanguage: tree_sitter_yaml(),
+                queryResources: [QueryResource(bundleName: yaml, fileName: "highlights.scm")]
+            )
+            register(
+                .toml,
+                tsLanguage: tree_sitter_toml(),
+                queryResources: [QueryResource(bundleName: toml, fileName: "highlights.scm")]
             )
             // Swift: no official tree-sitter-swift SPM package. Keep the scanner.
             // JSON, XML, and diff stay on dedicated scanners. Do not register JSON.

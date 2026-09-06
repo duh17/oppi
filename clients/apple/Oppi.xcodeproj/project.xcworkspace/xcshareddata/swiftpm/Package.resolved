@@ -1,5 +1,5 @@
 {
-  "originHash" : "a734f5b1aea8105630d6fc5f31a9a452cc46627b302e3ce60081ff629837c0f8",
+  "originHash" : "e8a975d3ee0477e655dffcf557c750ab638be0dd43aee80062885549d9008ab8",
   "pins" : [
     {
       "identity" : "sparkle",
@@ -137,12 +137,29 @@
       }
     },
     {
+      "identity" : "tree-sitter-toml",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tree-sitter-grammars/tree-sitter-toml",
+      "state" : {
+        "revision" : "64b56832c2cffe41758f28e05c756a3a98d16f41",
+        "version" : "0.7.0"
+      }
+    },
+    {
       "identity" : "tree-sitter-typescript",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tree-sitter/tree-sitter-typescript",
       "state" : {
         "revision" : "f975a621f4e7f532fe322e13c4f79495e0a7b2e7",
         "version" : "0.23.2"
+      }
+    },
+    {
+      "identity" : "tree-sitter-yaml",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/zed-industries/tree-sitter-yaml",
+      "state" : {
+        "revision" : "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
       }
     }
   ],

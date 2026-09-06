@@ -269,5 +269,17 @@ struct MacEasyGrammarPaintCase: Sendable, CustomTestStringConvertible {
             tokenNeedle: "bar",
             tokenKind: .function
         ),
+        MacEasyGrammarPaintCase(
+            language: .yaml,
+            code: "foo: |\n  hello\n  world\n",
+            tokenNeedle: "foo",
+            tokenKind: .type
+        ),
+        MacEasyGrammarPaintCase(
+            language: .toml,
+            code: "foo = \"\"\"hello\nworld\"\"\"\n",
+            tokenNeedle: "foo",
+            tokenKind: .type
+        ),
     ]
 }

@@ -53,6 +53,15 @@ packages:
   tree-sitter-java:
     url: https://github.com/tree-sitter/tree-sitter-java
     exactVersion: "0.23.5"
+  # MIT (Ika / tree-sitter-grammars). Zed's ikatyang fork; same commit Zed ships.
+  # No tags; scanner.c is hardcoded (safe for Xcode SPM).
+  tree-sitter-yaml:
+    url: https://github.com/zed-industries/tree-sitter-yaml
+    revision: baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a
+  # MIT (Ika). nvim-treesitter + Helix. 0.7.0 hardcodes scanner.c.
+  tree-sitter-toml:
+    url: https://github.com/tree-sitter-grammars/tree-sitter-toml
+    exactVersion: "0.7.0"
 
 options:
   bundleIdPrefix: dev.chenda
@@ -297,6 +306,10 @@ targets:
         product: TreeSitterRuby
       - package: tree-sitter-java
         product: TreeSitterJava
+      - package: tree-sitter-yaml
+        product: TreeSitterYAML
+      - package: tree-sitter-toml
+        product: TreeSitterTOML
       - target: OppiActivityExtension
         embed: true
       - target: OppiControlWidget
@@ -599,6 +612,10 @@ targets:
         product: TreeSitterRuby
       - package: tree-sitter-java
         product: TreeSitterJava
+      - package: tree-sitter-yaml
+        product: TreeSitterYAML
+      - package: tree-sitter-toml
+        product: TreeSitterTOML
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiMac

@@ -9,7 +9,7 @@ Shared tokens live in OppiCore. Each Apple client paints those tokens itself.
 ```
 OppiCore token provider
   |
-  +-- TreeSitterHighlighter     Query-based tokens (bash, JS/JSX, TS/TSX, Python, Go, Rust, C, C++, HTML, CSS, Ruby, Java)
+  +-- TreeSitterHighlighter     Query-based tokens (bash, JS/JSX, TS/TSX, Python, Go, Rust, C, C++, HTML, CSS, Ruby, Java, YAML, TOML)
   |     +-- GrammarRegistry     Caches Language + compiled highlights Query
   |     +-- highlights.scm      Loaded from each grammar's SPM resource bundle
   |     +-- captureKindMap      Shared @capture-name -> TokenKind table
@@ -83,6 +83,8 @@ Nine token types map to theme colors. Every character gets one of these:
 | CSS | `.css` | tree-sitter-css 0.23.2 | — | substitution | Shipped |
 | Ruby | `.ruby` | tree-sitter-ruby 0.23.1 | — | substitution | Shipped |
 | Java | `.java` | tree-sitter-java 0.23.5 | — | substitution | Shipped |
+| YAML | `.yaml` | zed-industries/tree-sitter-yaml (MIT) | — | substitution; Zed's ikatyang fork | Shipped |
+| TOML | `.toml` | tree-sitter-toml 0.7.0 (MIT) | — | substitution; nvim/Helix grammar | Shipped |
 
 ### Hand-written scanner (line-by-line keyword/comment/string detection)
 
@@ -94,8 +96,6 @@ Nine token types map to theme colors. Every character gets one of these:
 | SQL | `.sql` | keywords + -- comment | Case-insensitive |
 | Protobuf | `.protobuf` | keywords + comment | |
 | GraphQL | `.graphql` | keywords + comment | |
-| YAML | `.yaml` | # comment only | |
-| TOML | `.toml` | # comment only | |
 
 ### Dedicated scanners
 
