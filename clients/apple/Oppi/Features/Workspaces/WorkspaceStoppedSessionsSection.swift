@@ -44,7 +44,7 @@ struct WorkspaceStoppedSessionsSection: View {
         var id: String {
             switch self {
             case .session(let session):
-                return session.id
+                return SessionListPresentation.stoppedRowID(session.id)
             case .local(let local):
                 return "local-\(local.id)"
             }

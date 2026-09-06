@@ -7,6 +7,7 @@ private struct SessionInboxItem: Identifiable {
     let workspace: Workspace?
 
     var id: String { "\(serverId):\(session.id)" }
+    var stoppedListID: String { SessionListPresentation.stoppedRowID(id) }
 }
 
 private typealias SessionInboxStoppedGroup = SessionInboxStoppedDayGroup<SessionInboxItem>
@@ -717,7 +718,7 @@ struct SessionInboxView: View {
     private func stoppedSessionSection(_ group: SessionInboxStoppedGroup) -> some View {
         Section {
             if isStoppedGroupExpanded(group) {
-                ForEach(group.items) { item in
+                ForEach(group.items, id: \.stoppedListID) { item in
                     sessionRow(item)
                 }
             }

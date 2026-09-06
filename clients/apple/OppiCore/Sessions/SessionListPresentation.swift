@@ -127,6 +127,12 @@ enum SessionListPresentation {
         return lhs.id < rhs.id
     }
 
+    /// List matches `ForEach` ids across sections. Stopped rows must not reuse the
+    /// live row id, or Stop flies the same cell from Your Turn / Working.
+    static func stoppedRowID(_ rowID: String) -> String {
+        "stopped:\(rowID)"
+    }
+
     static func sortWorking(_ sessions: [Session]) -> [Session] {
         sessions.sorted(by: compareWorking)
     }

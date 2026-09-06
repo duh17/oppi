@@ -241,6 +241,11 @@ struct SharedSessionListActiveSectionTests {
         #expect(SessionListPresentation.activeSectionKind(for: session) == .working)
     }
 
+    @Test func stoppedRowIdentityDoesNotMatchLiveIdentity() {
+        let liveID = "server:session"
+        #expect(SessionListPresentation.stoppedRowID(liveID) != liveID)
+    }
+
     @Test func attentionMergerKeepsSummaryCountsWhenLivePayloadsAreMissing() {
         #expect(
             SessionListAttentionMerger.askCount(
