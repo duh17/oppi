@@ -79,8 +79,12 @@ enum SessionListPresentation {
         switch session.status {
         case .ready, .error:
             return .yourTurn
-        case .busy, .starting, .stopping:
+        case .busy, .starting:
             return .working
+        case .stopping:
+            // Terminate broadcasts `stopping` for idle/ready sessions too.
+            // Keep those in Your Turn so the row does not fly through Working.
+            return session.currentTurnStartedAt == nil ? .yourTurn : .working
         case .stopped:
             return nil
         }

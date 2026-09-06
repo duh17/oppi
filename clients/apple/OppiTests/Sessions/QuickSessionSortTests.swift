@@ -230,6 +230,17 @@ struct SharedSessionListActiveSectionTests {
         #expect(section == nil)
     }
 
+    @Test func idleStoppingStaysInYourTurn() {
+        let session = makeSession(id: "idle-stop", status: .stopping)
+        #expect(SessionListPresentation.activeSectionKind(for: session) == .yourTurn)
+    }
+
+    @Test func busyStoppingStaysInWorking() {
+        var session = makeSession(id: "busy-stop", status: .stopping)
+        session.currentTurnStartedAt = Date(timeIntervalSince1970: 1_700_000_010)
+        #expect(SessionListPresentation.activeSectionKind(for: session) == .working)
+    }
+
     @Test func attentionMergerKeepsSummaryCountsWhenLivePayloadsAreMissing() {
         #expect(
             SessionListAttentionMerger.askCount(
