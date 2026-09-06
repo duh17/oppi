@@ -61,6 +61,12 @@ export type WatchOutcome =
       kind: "all";
       condition: SessionWatchCondition;
       sessions: Array<{ sessionId: string; status?: string; pendingDialogs?: number }>;
+    }
+  | {
+      kind: "timeout";
+      condition: SessionWatchCondition;
+      pending: string[];
+      sessions: WaitProgressSession[];
     };
 
 export type WaitProgressSession = {
@@ -99,17 +105,6 @@ interface WatchOptions {
  */
 export const WAIT_DEFAULT_POLL = "2s";
 export const WAIT_DEFAULT_SUMMARY_EVERY = "60s";
-
-class SessionWatchTimeout extends Error {
-  constructor(
-    readonly condition: SessionWatchCondition,
-    readonly pending: string[],
-  ) {
-    const target = pending.length === 1 ? `session ${pending[0]}` : `${pending.length} sessions`;
-    super(`Timed out waiting for ${target} to reach ${condition}`);
-    this.name = "SessionWatchTimeout";
-  }
-}
 
 export function parseWatchCondition(
   raw: string | undefined,
@@ -462,10 +457,14 @@ export async function runSessionWatch(
 
     if (Date.now() >= deadline) {
       throwIfAborted(options.signal);
-      throw new SessionWatchTimeout(
-        options.condition,
-        ids.filter((id) => !states.get(id)?.met),
-      );
+      const timeoutProgress = waitProgressSnapshot(ids, states, startedAt);
+      if (summaryEveryMs > 0) options.onSummary?.(timeoutProgress);
+      return {
+        kind: "timeout",
+        condition: options.condition,
+        pending: ids.filter((id) => !states.get(id)?.met),
+        sessions: timeoutProgress.sessions,
+      };
     }
     const progress = waitProgressSnapshot(ids, states, startedAt);
     options.onLiveSnapshot?.(formatWaitLiveSnapshot(options.condition, progress));

@@ -297,13 +297,17 @@ describe("session wait poller contract", () => {
       vi.fn(),
     );
 
-    const rejection = expect(promise).rejects.toMatchObject({
-      name: "SessionWatchTimeout",
+    const settled = promise.then((outcome) => outcome);
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(settled).resolves.toMatchObject({
+      kind: "timeout",
       condition: "idle",
       pending: ["two"],
+      sessions: [
+        { sessionId: "one", status: "ready" },
+        { sessionId: "two", status: "busy" },
+      ],
     });
-    await vi.advanceTimersByTimeAsync(20);
-    await rejection;
   });
 
   it.each([
@@ -362,9 +366,11 @@ describe("session wait poller contract", () => {
     await vi.advanceTimersByTimeAsync(30);
     await vi.advanceTimersByTimeAsync(20);
     const result = await settled;
-    expect(result.status).toBe("rejected");
-    expect(result.status === "rejected" && result.error).toMatchObject({
-      message: expect.stringContaining("Timed out"),
+    expect(result.status).toBe("resolved");
+    expect(result.status === "resolved" && result.value).toMatchObject({
+      kind: "timeout",
+      condition: "idle",
+      pending: ["a", "b"],
     });
     expect(summaries.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(summaries.mock.calls.length).toBeLessThan(6);
@@ -397,7 +403,8 @@ describe("session wait poller contract", () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(30);
     const result = await settled;
-    expect(result.status).toBe("rejected");
+    expect(result.status).toBe("resolved");
+    expect(result.status === "resolved" && result.value).toMatchObject({ kind: "timeout" });
     expect(summaries).not.toHaveBeenCalled();
   });
 
@@ -515,7 +522,8 @@ describe("session wait poller contract", () => {
 
     await vi.advanceTimersByTimeAsync(2_500);
     const result = await settled;
-    expect(result.status).toBe("rejected");
+    expect(result.status).toBe("resolved");
+    expect(result.status === "resolved" && result.value).toMatchObject({ kind: "timeout" });
     expect(live.mock.calls.length).toBeGreaterThan(1);
     expect(live.mock.calls.some((call) => String(call[0]).includes("· 1s"))).toBe(true);
   });
@@ -569,7 +577,8 @@ describe("session wait poller contract", () => {
 
     await vi.advanceTimersByTimeAsync(2_500);
     const result = await settled;
-    expect(result.status).toBe("rejected");
+    expect(result.status).toBe("resolved");
+    expect(result.status === "resolved" && result.value).toMatchObject({ kind: "timeout" });
     expect(summaries.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(live.mock.calls.length).toBeGreaterThan(summaries.mock.calls.length);
     const liveTexts = live.mock.calls.map((call) => String(call[0]));
@@ -607,7 +616,8 @@ describe("session wait poller contract", () => {
 
     await vi.advanceTimersByTimeAsync(2_500);
     const result = await settled;
-    expect(result.status).toBe("rejected");
+    expect(result.status).toBe("resolved");
+    expect(result.status === "resolved" && result.value).toMatchObject({ kind: "timeout" });
     expect(live.mock.calls.length).toBeGreaterThan(1);
     expect(summaries).not.toHaveBeenCalled();
     const liveTexts = live.mock.calls.map((call) => String(call[0]));

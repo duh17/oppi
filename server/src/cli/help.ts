@@ -1153,6 +1153,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "One id keeps the single-session JSON envelope. Several ids resolve on the first match unless --all is set.",
       "Wait never streams transitions. It polls quietly and may print a compact still-waiting summary. JSON stays one envelope and includes progress[] when heartbeats fired.",
+      "If --timeout fires first, JSON stays ok with timed_out: true and the last snapshot. That means still working, not a failed wait.",
       "Defaults come from 14-day server telemetry: poll 2s ≈ half of turn TTFT p50 (4.3s); heartbeat 60s ≈ a quarter of turn duration p50 (236s). Override per call. See .internal/reports/session-wait-poll-defaults-2026-08-19.md.",
     ],
     examples: [

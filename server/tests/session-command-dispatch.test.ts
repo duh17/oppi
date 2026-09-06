@@ -253,6 +253,37 @@ describe("session command dispatch and output boundaries", () => {
     });
   });
 
+  it("returns a still-ongoing snapshot when wait times out", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path === "/sessions") return { sessions: [{ id: "sess-1" }] };
+      if (path.startsWith("/sessions/sess-1/events")) {
+        return { session: { status: "busy", name: "child" }, events: [], currentSeq: 1 };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSession(storage, "wait", ["sess-1"], {
+        for: "idle",
+        json: "true",
+        timeout: "80ms",
+        poll: "20ms",
+        "summary-every": "0",
+      }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        timed_out: true,
+        condition: "idle",
+        pending: ["sess-1"],
+        sessions: [{ session_id: "sess-1", status: "busy" }],
+      },
+    });
+  });
+
   it("rejects removed session watch before making a local API request", async () => {
     const { stdout, exitCode } = await captureCliOutput(() =>
       cmdSession(storage, "watch", ["sess-1"], { json: "true" }),

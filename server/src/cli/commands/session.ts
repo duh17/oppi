@@ -224,6 +224,40 @@ export async function cmdSession(
       throwIfAborted(callerContext.signal);
       const progressJson =
         progress.length > 0 ? { progress: progress.map(progressJsonSnapshot) } : {};
+      if (outcome.kind === "timeout") {
+        output(
+          {
+            timed_out: true,
+            condition: outcome.condition,
+            pending: outcome.pending,
+            sessions: outcome.sessions.map((session) => ({
+              session_id: session.sessionId,
+              status: session.status ?? null,
+              tools_this_turn: session.toolsThisTurn,
+              ...(session.pendingDialogs !== undefined
+                ? { pending_dialogs: session.pendingDialogs }
+                : {}),
+              ...(session.last !== undefined ? { last: session.last } : {}),
+            })),
+            ...progressJson,
+          },
+          () => {
+            printDetails("Wait timed out — still ongoing", [
+              ["Condition", outcome.condition],
+              ["Pending", outcome.pending.join(", ")],
+            ]);
+            printList(
+              "Sessions",
+              outcome.sessions.map((session) => ({
+                id: session.sessionId,
+                status: session.status ?? "unknown",
+                title: session.name ?? session.sessionId,
+              })),
+            );
+          },
+        );
+        return;
+      }
       if (outcome.kind === "all") {
         output(
           {
