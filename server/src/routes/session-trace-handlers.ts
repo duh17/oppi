@@ -8,6 +8,14 @@ import { pendingDialogSnapshots } from "../session-attention.js";
 import { createSessionFileHandlers } from "./session-files.js";
 import type { RouteContext, RouteHelpers } from "./types.js";
 
+function decodeToolCallId(toolCallId: string): string {
+  try {
+    return decodeURIComponent(toolCallId);
+  } catch {
+    return toolCallId;
+  }
+}
+
 type RequireWorkspaceSession = (
   workspaceId: string,
   sessionId: string,
@@ -145,7 +153,7 @@ export function createSessionTraceRouteHandlers(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const output = await traceService.getFullToolOutput(session.id, toolCallId);
+    const output = await traceService.getFullToolOutput(session.id, decodeToolCallId(toolCallId));
     if (!output) {
       helpers.error(res, 404, "Full tool output not found");
       return;
@@ -199,7 +207,7 @@ export function createSessionTraceRouteHandlers(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const output = await traceService.getToolOutput(session, toolCallId);
+    const output = await traceService.getToolOutput(session, decodeToolCallId(toolCallId));
     if (!output) {
       helpers.error(res, 404, "Tool output not found");
       return;

@@ -602,6 +602,69 @@ describe("sessions module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "Session not found" });
   });
 
+  it("decodes percent-encoded pipe tool call ids for JSONL lookup", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-pipe-"));
+    try {
+      const toolCallId =
+        "call-55e527bc-7a20-4730-8c6f-2e3dfb2569f9-28|fc_b1782a2b-bc1b-9484-87b1-3d687d82b521_0";
+      const jsonlPath = join(dataDir, "session.jsonl");
+      writeFileSync(
+        jsonlPath,
+        `${JSON.stringify({
+          type: "message",
+          id: "result-1",
+          message: {
+            role: "toolResult",
+            toolCallId,
+            content: [{ type: "text", text: "read file body" }],
+          },
+        })}\n`,
+        "utf8",
+      );
+
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getSession: vi.fn(() => ({
+            id: "s1",
+            workspaceId: "ws-1",
+            piSessionFile: jsonlPath,
+          })),
+          getDataDir: vi.fn(() => dataDir),
+        },
+        sessionRuntimes: {
+          getToolFullOutputPath: vi.fn(() => null),
+        },
+        ensureSessionContextWindow: vi.fn((session: unknown) => session),
+      } as unknown as RouteContext;
+
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      const url = new URL(
+        `http://localhost/workspaces/ws-1/sessions/s1/tool-output/${encodeURIComponent(toolCallId)}`,
+      );
+
+      const handled = await dispatch({
+        method: "GET",
+        path: url.pathname,
+        url,
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(url.pathname).toContain("%7C");
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({
+        toolCallId,
+        output: "read file body",
+        isError: false,
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns full tool output from disk", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-full-"));
     try {

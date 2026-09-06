@@ -91,11 +91,10 @@ final class ExpandedToolOutputLoader {
             } catch {
                 await MainActor.run {
                     guard let self else { return }
-                    defer {
-                        self.loadState.finish(itemID: request.itemID)
-                    }
+                    self.loadState.finish(itemID: request.itemID)
 
                     // Clear stale "Loading …" UI for terminal fetch failures.
+                    // Finish first so the row paints without isLoadingOutput.
                     // Canceled tasks are handled by explicit cancel paths.
                     if !Task.isCancelled,
                        request.activeSessionID == request.currentSessionID(),
@@ -108,9 +107,6 @@ final class ExpandedToolOutputLoader {
 
             await MainActor.run {
                 guard let self else { return }
-                defer {
-                    self.loadState.finish(itemID: request.itemID)
-                }
 
                 let disposition = Self.completionDisposition(
                     output: output,
@@ -132,9 +128,12 @@ final class ExpandedToolOutputLoader {
 
                     if disposition == .emptyOutput {
                         let didScheduleRetry = self.scheduleRetryIfNeeded(for: request)
+                        self.loadState.finish(itemID: request.itemID)
                         if !didScheduleRetry {
                             request.reconfigureItem()
                         }
+                    } else {
+                        self.loadState.finish(itemID: request.itemID)
                     }
 
                     return
@@ -145,6 +144,7 @@ final class ExpandedToolOutputLoader {
                 #if DEBUG
                     self.appliedCountForTesting += 1
                 #endif
+                self.loadState.finish(itemID: request.itemID)
                 request.reconfigureItem()
             }
         }

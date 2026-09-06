@@ -192,6 +192,7 @@ struct ExpandedToolOutputLoaderTests {
     @Test func readToolTerminalEmptyOutputReconfiguresToClearLoadingState() async {
         let loader = ExpandedToolOutputLoader()
         var reconfigureCount = 0
+        var loadingDuringReconfigure: Bool?
 
         // attempt == 6 is terminal for current retry policy.
         let request = makeRequest(
@@ -200,6 +201,7 @@ struct ExpandedToolOutputLoaderTests {
             fetchToolOutput: { _, _ in "" },
             reconfigureItem: {
                 reconfigureCount += 1
+                loadingDuringReconfigure = loader.isLoading("tool-1")
             }
         )
 
@@ -213,6 +215,7 @@ struct ExpandedToolOutputLoaderTests {
         })
 
         #expect(reconfigureCount == 1)
+        #expect(loadingDuringReconfigure == false)
         #expect(loader.appliedCountForTesting == 0)
         #expect(loader.staleDiscardCountForTesting == 1)
     }
@@ -220,6 +223,7 @@ struct ExpandedToolOutputLoaderTests {
     @Test func fetchFailureReconfiguresToClearLoadingState() async {
         let loader = ExpandedToolOutputLoader()
         var reconfigureCount = 0
+        var loadingDuringReconfigure: Bool?
 
         let request = makeRequest(
             tool: "read",
@@ -228,6 +232,7 @@ struct ExpandedToolOutputLoaderTests {
             },
             reconfigureItem: {
                 reconfigureCount += 1
+                loadingDuringReconfigure = loader.isLoading("tool-1")
             }
         )
 
@@ -240,6 +245,7 @@ struct ExpandedToolOutputLoaderTests {
                     && reconfigureCount == 1
             }
         })
+        #expect(loadingDuringReconfigure == false)
         #expect(loader.appliedCountForTesting == 0)
     }
 
