@@ -1,7 +1,7 @@
 // MARK: - Syntax Keyword Sets
 
-/// Keyword sets for each supported language. Referenced by `SyntaxLanguage.keywords`
-/// and the shared scanner in `SyntaxTokenScanner`.
+/// Keyword sets for languages that still use `SyntaxTokenScanner`.
+/// Tree-sitter languages keep empty `SyntaxLanguage.keywords`.
 
 let swiftKeywords: Set<String> = [
     "import", "func", "let", "var", "if", "else", "guard", "return",
@@ -11,59 +11,6 @@ let swiftKeywords: Set<String> = [
     "in", "throws", "async", "await", "some", "any", "typealias",
     "init", "deinit", "override", "mutating", "weak", "try",
     "catch", "throw", "do", "break", "continue", "where",
-]
-
-let tsKeywords: Set<String> = [
-    "function", "const", "let", "var", "if", "else", "return",
-    "import", "export", "from", "class", "interface", "type",
-    "enum", "private", "public", "static", "readonly", "this",
-    "null", "undefined", "true", "false", "switch", "case",
-    "default", "for", "while", "of", "in", "async", "await",
-    "throw", "try", "catch", "finally", "new", "typeof",
-    "extends", "implements", "super", "as", "declare",
-]
-
-let pythonKeywords: Set<String> = [
-    "def", "class", "if", "elif", "else", "return", "import",
-    "from", "as", "self", "None", "True", "False", "for",
-    "while", "in", "with", "try", "except", "finally", "raise",
-    "pass", "lambda", "yield", "async", "await", "not", "and",
-    "or", "is", "del", "global", "assert", "break", "continue",
-]
-
-let goKeywords: Set<String> = [
-    "func", "var", "const", "if", "else", "return", "import",
-    "package", "struct", "interface", "type", "for", "range",
-    "switch", "case", "default", "go", "chan", "defer", "nil",
-    "true", "false", "map", "make", "select", "break",
-    "continue", "fallthrough",
-]
-
-let rustKeywords: Set<String> = [
-    "fn", "let", "mut", "if", "else", "return", "use", "mod",
-    "struct", "enum", "impl", "trait", "pub", "self", "Self",
-    "match", "for", "while", "in", "loop", "async", "await",
-    "true", "false", "where", "type", "const", "static",
-    "ref", "move", "unsafe", "crate", "super", "as", "dyn",
-]
-
-let rubyKeywords: Set<String> = [
-    "def", "class", "module", "if", "elsif", "else", "unless",
-    "return", "require", "include", "end", "do", "begin",
-    "rescue", "ensure", "raise", "yield", "self", "nil",
-    "true", "false", "and", "or", "not", "while", "until",
-    "for", "in", "case", "when",
-]
-
-let shellKeywords: Set<String> = [
-    "if", "then", "else", "elif", "fi", "for", "do", "done",
-    "while", "until", "case", "esac", "function", "return",
-    "exit", "export", "local", "source", "echo", "set",
-    "unset", "true", "false",
-]
-
-let shellCommandStarterKeywords: Set<String> = [
-    "if", "then", "elif", "else", "do", "while", "until", "case",
 ]
 
 let sqlKeywords: Set<String> = [
@@ -78,28 +25,6 @@ let sqlKeywords: Set<String> = [
     "drop", "join", "on", "and", "or", "not", "null", "is",
     "in", "order", "by", "group", "having", "limit", "as",
     "distinct", "case", "when", "then", "else", "end",
-]
-
-let cKeywords: Set<String> = [
-    "if", "else", "for", "while", "do", "switch", "case",
-    "default", "return", "break", "continue", "struct",
-    "enum", "union", "typedef", "const", "static", "extern",
-    "void", "int", "char", "float", "double", "long", "short",
-    "unsigned", "sizeof", "NULL", "true", "false", "include",
-    "define", "ifdef", "ifndef", "endif",
-    "class", "public", "private", "protected", "virtual",
-    "override", "namespace", "using", "template", "auto",
-    "nullptr", "new", "delete", "this", "throw", "try", "catch",
-]
-
-let javaKeywords: Set<String> = [
-    "class", "interface", "enum", "abstract", "extends",
-    "implements", "public", "private", "protected", "static",
-    "final", "void", "int", "long", "double", "float",
-    "boolean", "String", "if", "else", "for", "while",
-    "switch", "case", "default", "return", "break", "new",
-    "this", "super", "null", "true", "false", "try", "catch",
-    "finally", "throw", "import", "package", "instanceof",
 ]
 
 let kotlinKeywords: Set<String> = [

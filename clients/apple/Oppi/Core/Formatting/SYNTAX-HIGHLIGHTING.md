@@ -15,7 +15,7 @@ OppiCore token provider
   |     +-- captureKindMap      Shared @capture-name -> TokenKind table
   |     +-- resolvedTokenRanges / resolvedTokenRangesUTF8
   |
-  +-- SyntaxTokenScanner        Hand-written fallback + UTF-8 ASCII path
+  +-- SyntaxTokenScanner        Fallback for languages without a grammar
   |     +-- truncatedCode       Sole token-work budget (10,000 lines)
   |     +-- scanTokenRangesByCharacter
   |     +-- scanLineRangesSlice / scanLineRangesUTF8Slice

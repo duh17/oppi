@@ -101,8 +101,9 @@ struct SyntaxLanguageTests {
 
     @Test func keywordSetsNonEmpty() {
         #expect(!SyntaxLanguage.swift.keywords.isEmpty)
-        #expect(!SyntaxLanguage.python.keywords.isEmpty)
-        #expect(!SyntaxLanguage.go.keywords.isEmpty)
+        #expect(!SyntaxLanguage.kotlin.keywords.isEmpty)
+        #expect(SyntaxLanguage.python.keywords.isEmpty)
+        #expect(SyntaxLanguage.go.keywords.isEmpty)
         #expect(SyntaxLanguage.json.keywords.isEmpty)
         #expect(SyntaxLanguage.unknown.keywords.isEmpty)
     }

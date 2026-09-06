@@ -147,24 +147,8 @@ enum SyntaxLanguage: Sendable, Hashable {
         switch self {
         case .swift:
             return swiftKeywords
-        case .typescript, .tsx, .javascript, .jsx:
-            return tsKeywords
-        case .python:
-            return pythonKeywords
-        case .go:
-            return goKeywords
-        case .rust:
-            return rustKeywords
-        case .ruby:
-            return rubyKeywords
-        case .shell:
-            return shellKeywords
         case .sql:
             return sqlKeywords
-        case .c, .cpp:
-            return cKeywords
-        case .java:
-            return javaKeywords
         case .kotlin:
             return kotlinKeywords
         case .zig:
@@ -181,7 +165,8 @@ enum SyntaxLanguage: Sendable, Hashable {
             return mermaidKeywords
         case .dot:
             return dotKeywords
-        case .html, .css, .json, .yaml, .toml, .xml, .diff, .unknown:
+        case .typescript, .tsx, .javascript, .jsx, .python, .go, .rust, .ruby, .shell,
+             .c, .cpp, .java, .html, .css, .json, .yaml, .toml, .xml, .diff, .unknown:
             return []
         }
     }

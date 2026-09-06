@@ -62,7 +62,7 @@ enum SyntaxTokenScanner {
         guard language != .unknown else { return [] }
         let text = truncatedCode(text)
 
-        if language == .json || language == .xml || language == .html || language == .diff {
+        if language == .json || language == .xml || language == .diff {
             return scanFallbackTokenRanges(text, language: language)
         }
 
@@ -131,9 +131,7 @@ private static func scanTokenRangesByCharacter(
         return tokenRanges
     }
 
-    if language == .xml || language == .html {
-        // HTML uses the XML scanner as a bounded fallback. Embedded JS/CSS
-        // are not parsed as those languages.
+    if language == .xml {
         scanXMLRanges(allChars, ranges: &tokenRanges)
         return tokenRanges
     }
@@ -156,21 +154,14 @@ private static func scanTokenRangesByCharacter(
         }
 
         if lineEnd > pos {
-            if language == .shell {
-                scanShellLineRangesSlice(
-                    allChars, start: pos, end: lineEnd,
-                    ranges: &tokenRanges
-                )
-            } else {
-                scanLineRangesSlice(
-                    allChars, start: pos, end: lineEnd,
-                    language: language,
-                    keywords: keywords,
-                    commentPrefix: commentPrefix,
-                    inBlockComment: &inBlockComment,
-                    ranges: &tokenRanges
-                )
-            }
+            scanLineRangesSlice(
+                allChars, start: pos, end: lineEnd,
+                language: language,
+                keywords: keywords,
+                commentPrefix: commentPrefix,
+                inBlockComment: &inBlockComment,
+                ranges: &tokenRanges
+            )
         }
 
         pos = lineEnd + 1
@@ -532,285 +523,6 @@ private static func scanLineRangesSlice(
 
         i += 1
     }
-}
-
-/// Scan a shell line within allChars[start..<end] for token ranges.
-private static func scanShellLineRangesSlice(
-    _ allChars: [Character],
-    start: Int,
-    end: Int,
-    ranges: inout [SyntaxTokenRange]
-) {
-    var i = start
-    var expectCommand = true
-
-    while i < end {
-        let ch = allChars[i]
-
-        if ch.isWhitespace {
-            i += 1
-            continue
-        }
-
-        if ch == "#", isShellCommentStart(allChars, at: i) {
-            ranges.append(SyntaxTokenRange(location: i, length: end - i, kind: .comment))
-            return
-        }
-
-        if ch == "\"" || ch == "'" || ch == "`" {
-            let tokenEnd = scanStringEndPos(allChars, from: i, end: end, quote: ch)
-            ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .string))
-            i = tokenEnd
-            expectCommand = false
-            continue
-        }
-
-        if ch == "$" {
-            let (_, tokenEnd) = scanShellVariable(allChars, from: i, end: end)
-            ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .type))
-            i = tokenEnd
-            expectCommand = false
-            continue
-        }
-
-        if let (_, tokenEnd, resetsCommand) = scanShellOperator(allChars, from: i) {
-            ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .operator))
-            i = tokenEnd
-            if resetsCommand { expectCommand = true }
-            continue
-        }
-
-        if ch == "-", isShellOptionStart(allChars, at: i) {
-            let (_, tokenEnd) = scanShellToken(allChars, from: i, end: end)
-            i = tokenEnd
-            expectCommand = false
-            continue
-        }
-
-        let (token, tokenEnd) = scanShellToken(allChars, from: i, end: end)
-        if token.isEmpty {
-            i += 1
-            continue
-        }
-
-        if expectCommand, isShellAssignment(token) {
-            ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .type))
-            i = tokenEnd
-            continue
-        }
-
-        if shellKeywords.contains(token) {
-            ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .keyword))
-            expectCommand = shellCommandStarterKeywords.contains(token)
-            i = tokenEnd
-            continue
-        }
-
-        if expectCommand {
-            ranges.append(SyntaxTokenRange(location: i, length: tokenEnd - i, kind: .function))
-            expectCommand = false
-        }
-        i = tokenEnd
-    }
-}
-
-// MARK: - Shell Scanner
-
-private static func isShellCommentStart(_ chars: [Character], at index: Int) -> Bool {
-    guard chars[index] == "#" else { return false }
-    guard index > 0 else { return true }
-    let prev = chars[index - 1]
-    return prev.isWhitespace || prev == ";" || prev == "|" || prev == "&" || prev == "(" || prev == ")"
-}
-
-private static func isShellOptionStart(_ chars: [Character], at index: Int) -> Bool {
-    guard chars[index] == "-", index + 1 < chars.count else { return false }
-    let next = chars[index + 1]
-    guard !next.isWhitespace,
-          next != "|", next != "&", next != ";", next != "<", next != ">", next != ")" else {
-        return false
-    }
-    guard index > 0 else { return true }
-    let prev = chars[index - 1]
-    return prev.isWhitespace || prev == "|" || prev == "&" || prev == ";" || prev == "("
-}
-
-private static func scanShellToken(_ chars: [Character], from start: Int, end: Int) -> (String, Int) {
-    var i = start
-    while i < end {
-        let c = chars[i]
-        if c.isWhitespace || isShellDelimiter(c) {
-            break
-        }
-        i += 1
-    }
-    return (String(chars[start..<i]), i)
-}
-
-private static func isShellDelimiter(_ c: Character) -> Bool {
-    c == "|" || c == "&" || c == ";" || c == "<" || c == ">" || c == "(" || c == ")"
-}
-
-private static func scanShellOperator(
-    _ chars: [Character],
-    from start: Int
-) -> (String, Int, Bool)? {
-    guard start < chars.count else { return nil }
-    let ch = chars[start]
-
-    // File descriptor redirection, e.g. 2>&1, 1>out.log
-    if ch.isNumber {
-        var i = start
-        while i < chars.count, chars[i].isNumber { i += 1 }
-        if i < chars.count, chars[i] == ">" || chars[i] == "<" {
-            let end = scanShellRedirection(chars, from: i)
-            return (String(chars[start..<end]), end, false)
-        }
-    }
-
-    switch ch {
-    case "|":
-        if start + 1 < chars.count, chars[start + 1] == "|" {
-            return ("||", start + 2, true)
-        }
-        if start + 1 < chars.count, chars[start + 1] == "&" {
-            return ("|&", start + 2, true)
-        }
-        return ("|", start + 1, true)
-
-    case "&":
-        if start + 1 < chars.count, chars[start + 1] == "&" {
-            return ("&&", start + 2, true)
-        }
-        if start + 1 < chars.count, chars[start + 1] == ">" {
-            let end = scanShellRedirection(chars, from: start + 1)
-            return (String(chars[start..<end]), end, false)
-        }
-        return ("&", start + 1, true)
-
-    case ";":
-        if start + 1 < chars.count, chars[start + 1] == ";" {
-            return (";;", start + 2, true)
-        }
-        return (";", start + 1, true)
-
-    case "(", ")":
-        return (String(ch), start + 1, true)
-
-    case "<", ">":
-        let end = scanShellRedirection(chars, from: start)
-        return (String(chars[start..<end]), end, false)
-
-    default:
-        return nil
-    }
-}
-
-private static func scanShellRedirection(_ chars: [Character], from start: Int) -> Int {
-    var i = start
-    guard i < chars.count else { return i }
-
-    let op = chars[i]
-    i += 1
-
-    if i < chars.count, chars[i] == op {
-        // >> or <<
-        i += 1
-    } else if op == ">", i < chars.count, chars[i] == "|" {
-        // >|
-        i += 1
-    }
-
-    if i < chars.count, chars[i] == "&" {
-        i += 1
-        if i < chars.count, chars[i] == "-" {
-            i += 1
-        } else {
-            while i < chars.count, chars[i].isNumber { i += 1 }
-        }
-    }
-
-    return i
-}
-
-private static func scanShellVariable(_ chars: [Character], from start: Int, end: Int) -> (String, Int) {
-    guard start < end, chars[start] == "$" else { return ("", start) }
-
-    var i = start + 1
-    guard i < end else { return ("$", i) }
-    let next = chars[i]
-
-    if next == "{" {
-        i += 1
-        var depth = 1
-        while i < end, depth > 0 {
-            let c = chars[i]
-            if c == "{" {
-                depth += 1
-            } else if c == "}" {
-                depth -= 1
-            } else if c == "\"" || c == "'" || c == "`" {
-                i = scanStringEndPos(chars, from: i, end: end, quote: c)
-                continue
-            } else if c == "\\" {
-                i = min(i + 2, end)
-                continue
-            }
-            i += 1
-        }
-        return (String(chars[start..<i]), i)
-    }
-
-    if next == "(" {
-        i += 1
-        var depth = 1
-        while i < end, depth > 0 {
-            let c = chars[i]
-            if c == "(" {
-                depth += 1
-            } else if c == ")" {
-                depth -= 1
-                i += 1
-                continue
-            } else if c == "\"" || c == "'" || c == "`" {
-                i = scanStringEndPos(chars, from: i, end: end, quote: c)
-                continue
-            } else if c == "\\" {
-                i = min(i + 2, end)
-                continue
-            }
-            i += 1
-        }
-        return (String(chars[start..<i]), i)
-    }
-
-    if next == "*" || next == "@" || next == "#" || next == "?" ||
-        next == "-" || next == "$" || next == "!" || next == "_" {
-        return (String(chars[start...i]), i + 1)
-    }
-
-    if next.isNumber {
-        i += 1
-        while i < end, chars[i].isNumber { i += 1 }
-        return (String(chars[start..<i]), i)
-    }
-
-    if next.isLetter || next == "_" {
-        i += 1
-        while i < end, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
-            i += 1
-        }
-        return (String(chars[start..<i]), i)
-    }
-
-    return ("$", start + 1)
-}
-
-private static func isShellAssignment(_ token: String) -> Bool {
-    guard let eq = token.firstIndex(of: "="), eq != token.startIndex else { return false }
-    let name = token[token.startIndex..<eq]
-    guard let first = name.first, first.isLetter || first == "_" else { return false }
-    return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
 }
 
 // MARK: - Fast ASCII Classification

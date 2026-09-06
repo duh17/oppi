@@ -4,6 +4,19 @@ import Testing
 
 @Suite("TreeSitter — grammar substitution")
 struct TreeSitterGrammarSubstitutionTests {
+    @Test func leftoverScannerDropsTreeSitterLanguageTables() {
+        let languages: [SyntaxLanguage] = [
+            .shell, .javascript, .jsx, .typescript, .tsx, .python, .go,
+            .rust, .c, .cpp, .html, .css, .ruby, .java,
+        ]
+        for language in languages {
+            #expect(language.keywords.isEmpty, "\(language.displayName) should not keep a scanner keyword table")
+        }
+
+        let shellRanges = SyntaxTokenScanner.scanTokenRanges("echo hello", language: .shell)
+        #expect(!shellRanges.contains { $0.kind == .function })
+    }
+
     @Test func pythonJavaScriptAndTypeScriptReplaceScanner() {
         #expect(TreeSitterHighlighter.supports(.python))
         #expect(TreeSitterHighlighter.supports(.javascript))
