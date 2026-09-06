@@ -316,17 +316,14 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
             return .speech(
                 SpeechTranscriber(
                     locale: locale,
-                    preset: .progressiveTranscription
+                    preset: AppleOnDeviceSpeechSettings.speechPreset
                 )
             )
         case .classicDictation:
             return .dictation(
                 DictationTranscriber(
                     locale: locale,
-                    contentHints: [.shortForm],
-                    transcriptionOptions: [.punctuation],
-                    reportingOptions: [.volatileResults],
-                    attributeOptions: []
+                    preset: AppleOnDeviceSpeechSettings.dictationPreset
                 )
             )
         case .serverDictation:
@@ -348,6 +345,18 @@ extension AppleOnDeviceVoiceProvider {
     }
 }
 #endif
+
+/// On-device SpeechAnalyzer knobs. iOS 27 uses `AnalyzerInputConverter` in
+/// `AudioEngineHelper`; remaining capture APIs are listed in
+/// `.internal/reports/ios27-on-device-dictation-improvements-2026-09-06.md`.
+enum AppleOnDeviceSpeechSettings {
+    static let speechPreset = SpeechTranscriber.Preset.progressiveTranscription
+    static let dictationPreset = DictationTranscriber.Preset.progressiveLongDictation
+    static let analyzerOptions = SpeechAnalyzer.Options(
+        priority: .userInitiated,
+        modelRetention: .lingering
+    )
+}
 
 private enum TranscriberModule {
     case speech(SpeechTranscriber)
@@ -375,7 +384,7 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
 
     private var analyzer: SpeechAnalyzer?
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
-    private var audioEngine: AVAudioEngine?
+    private var audioCapture: AudioEngineHelper.RunningCapture?
     private var resultsTask: Task<Void, Never>?
     private var audioLevelTask: Task<Void, Never>?
 
@@ -409,7 +418,10 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
 
     func start() async throws -> VoiceSessionStartTimings {
         let analyzerStart = ContinuousClock.now
-        let newAnalyzer = SpeechAnalyzer(modules: [transcriber.speechModule])
+        let newAnalyzer = SpeechAnalyzer(
+            modules: [transcriber.speechModule],
+            options: AppleOnDeviceSpeechSettings.analyzerOptions
+        )
         analyzer = newAnalyzer
 
         let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
@@ -423,12 +435,12 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         guard let inputBuilder else {
             throw VoiceInputError.internalError("Input builder not initialized")
         }
-        let (engine, levelStream) = try AudioEngineHelper.startEngine(
+        let capture = try AudioEngineHelper.startEngine(
             inputBuilder: inputBuilder,
             targetFormat: preferredAudioFormat
         )
-        audioEngine = engine
-        startAudioLevelBridge(levelStream)
+        audioCapture = capture
+        startAudioLevelBridge(capture.audioLevels)
         let audioStartMs = audioStart.elapsedMs()
 
         return VoiceSessionStartTimings(
@@ -438,10 +450,8 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     }
 
     func stop() async {
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine = nil
-        inputBuilder?.finish()
+        audioCapture?.stopAndFinishInput(flush: true)
+        audioCapture = nil
 
         do {
             try await analyzer?.finalizeAndFinishThroughEndOfInput()
@@ -454,10 +464,8 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     }
 
     func cancel() async {
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine = nil
-        inputBuilder?.finish()
+        audioCapture?.stopAndFinishInput(flush: false)
+        audioCapture = nil
 
         resultsTask?.cancel()
         resultsTask = nil
@@ -526,6 +534,4 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         audioLevelTask = nil
         audioLevelContinuation.finish()
     }
-
-
 }
