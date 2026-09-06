@@ -250,6 +250,9 @@ struct ReadMarkdownExpandOverlapTests {
         #expect(fixture.wh.reducer.expandedItemIDs.contains(fixture.readID))
     }
 
+    /// Many installed compact followers must not break neighbor geometry or
+    /// reload following rows. Anchored expand does not full-invalidate, so
+    /// prefetch cells below the fold keep stale frames until they appear.
     @Test func expandedReadMarkdownDoesNotOverlapMoreThanEightInstalledFollowingRows() async throws {
         let fixture = try Self.makeSkillReadSkillFixture(followingSkillCount: 12)
         defer { Self.tearDownSkillReadSkillFixture(fixture) }
@@ -267,7 +270,6 @@ struct ReadMarkdownExpandOverlapTests {
         let ninthBefore = try #require(followingBefore.dropFirst(8).first)
 
         var remeasuredIDs: [String] = []
-        var ninthDuringRemeasure: InstalledFollowerGeometry?
         var followingDuringRemeasure: [InstalledFollowingIdentity] = []
         ToolTimelineRowPresentationHelpers.anchoredRemeasureHookForTesting = { view, itemID in
             guard view === collectionView else { return }
@@ -277,16 +279,6 @@ struct ReadMarkdownExpandOverlapTests {
                 after: fixture.readIP.item,
                 ids: fixture.wh.coordinator.currentIDs
             )
-            if let ninth = followingDuringRemeasure.first(where: { $0.itemID == ninthBefore.itemID }),
-               let attrs = view.layoutAttributesForItem(
-                at: IndexPath(item: ninth.index, section: 0)
-               )?.frame {
-                ninthDuringRemeasure = InstalledFollowerGeometry(
-                    identity: ninth,
-                    cellFrame: ninth.cell.frame,
-                    attributesFrame: attrs
-                )
-            }
         }
         defer { ToolTimelineRowPresentationHelpers.anchoredRemeasureHookForTesting = nil }
 
@@ -319,33 +311,22 @@ struct ReadMarkdownExpandOverlapTests {
         )
 
         let ninth = try #require(
-            ninthDuringRemeasure,
+            followingDuringRemeasure.first(where: { $0.itemID == ninthBefore.itemID }),
             "Ninth following cell must still be installed during remeasure"
         )
         #expect(
-            ninth.identity.cell === ninthBefore.cell,
+            ninth.cell === ninthBefore.cell,
             "Ninth following cell instance must survive expand settlement"
         )
         #expect(
-            ninth.identity.content === ninthBefore.content,
+            ninth.content === ninthBefore.content,
             "Ninth following configured UIContentView must survive expand settlement"
         )
-        #expect(
-            abs(ninth.cellFrame.minY - ninth.attributesFrame.minY) <= 0.5
-                && abs(ninth.cellFrame.height - ninth.attributesFrame.height) <= 0.5,
-            "Ninth following cell stayed at the pre-growth frame. cell=\(ninth.cellFrame) attrs=\(ninth.attributesFrame)"
+        try Self.assertVisibleFollowingFramesMatchAttributes(
+            in: collectionView,
+            after: fixture.readIP.item,
+            phase: "after anchored remeasure with 12 following rows"
         )
-
-        for row in followingDuringRemeasure {
-            let attrs = try #require(
-                collectionView.layoutAttributesForItem(at: IndexPath(item: row.index, section: 0))?.frame
-            )
-            #expect(
-                abs(row.cell.frame.minY - attrs.minY) <= 0.5
-                    && abs(row.cell.frame.height - attrs.height) <= 0.5,
-                "Installed following cell \(row.itemID) drifted from attributes. cell=\(row.cell.frame) attrs=\(attrs)"
-            )
-        }
 
         let newReconfigured = Array(
             fixture.wh.coordinator.debugReconfiguredItemIDs.dropFirst(reconfiguredBefore.count)
@@ -370,6 +351,11 @@ struct ReadMarkdownExpandOverlapTests {
             phase: "after extra layout cycle with 12 following rows",
             requireExpandedReadBody: true,
             requireSettledCompletedViewport: true
+        )
+        try Self.assertVisibleFollowingFramesMatchAttributes(
+            in: collectionView,
+            after: fixture.readIP.item,
+            phase: "after extra layout cycle with 12 following rows"
         )
     }
 
@@ -815,6 +801,46 @@ struct ReadMarkdownExpandOverlapTests {
         }
     }
 
+    /// Layout attributes in the visible rect, not prefetch subviews whose
+    /// frames have not been applied yet.
+    private static func assertVisibleFollowingFramesMatchAttributes(
+        in collectionView: UICollectionView,
+        after itemIndex: Int,
+        phase: String
+    ) throws {
+        let visibleRect = CGRect(
+            origin: collectionView.contentOffset,
+            size: collectionView.bounds.size
+        )
+        let visibleAttributes =
+            collectionView.collectionViewLayout.layoutAttributesForElements(in: visibleRect) ?? []
+        var following: [UICollectionViewLayoutAttributes] = []
+        for attrs in visibleAttributes {
+            guard attrs.representedElementCategory == .cell,
+                  attrs.indexPath.section == 0,
+                  attrs.indexPath.item > itemIndex else {
+                continue
+            }
+            following.append(attrs)
+        }
+        #expect(!following.isEmpty, "Expected at least one layout-visible following row at \(phase)")
+        for attrs in following {
+            let indexPath = attrs.indexPath
+            let expectedFrame = attrs.frame
+            let cell = try #require(
+                collectionView.cellForItem(at: indexPath),
+                "Missing cell for layout-visible following item \(indexPath.item) at \(phase)"
+            )
+            let cellFrame = cell.frame
+            let aligned = abs(cellFrame.minY - expectedFrame.minY) <= 0.5
+                && abs(cellFrame.height - expectedFrame.height) <= 0.5
+            #expect(
+                aligned,
+                "Layout-visible following cell \(indexPath.item) drifted from attributes at \(phase). cell=\(cellFrame) attrs=\(expectedFrame)"
+            )
+        }
+    }
+
     // MARK: - Geometry
 
     private struct RowFrame {
@@ -843,12 +869,6 @@ struct ReadMarkdownExpandOverlapTests {
         let index: Int
         let cell: UICollectionViewCell
         let content: UIView
-    }
-
-    private struct InstalledFollowerGeometry {
-        let identity: InstalledFollowingIdentity
-        let cellFrame: CGRect
-        let attributesFrame: CGRect
     }
 
     private static func installedFollowingIdentities(
