@@ -603,6 +603,10 @@ struct ChatView: View {
     }
 
     private var chatContent: some View {
+        chatLifecycleContent
+    }
+
+    private var chatPresentationContent: some View {
         configuredChatContent
             .chatAuxiliaryPresentation(
                 isPresented: $showOutline,
@@ -627,6 +631,10 @@ struct ChatView: View {
             ) { reviewCommentStashSheet }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
+    }
+
+    private var chatSessionTaskContent: some View {
+        chatPresentationContent
             .task(id: composerDraftAttachmentKey) {
                 attachComposerDraftIfPossible()
             }
@@ -695,6 +703,10 @@ struct ChatView: View {
                 // Auto-send through the normal WebSocket flow
                 sendPrompt()
             }
+    }
+
+    private var chatLifecycleContent: some View {
+        chatSessionTaskContent
             .onReceive(NotificationCenter.default.publisher(for: AppPreferences.ChatDisplay.didChangeNotification)) { _ in
                 chatDisplayRefresh += 1
             }
