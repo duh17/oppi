@@ -465,7 +465,8 @@ struct MacToolDocumentDescriptorView: View {
                     itemID: itemID,
                     workspaceID: workspaceID,
                     sessionID: sessionID,
-                    worktreeId: worktreeId
+                    worktreeId: worktreeId,
+                    filePath: markdown.filePath
                 )
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

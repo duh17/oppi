@@ -340,7 +340,7 @@ enum ToolPresentationBuilder {
         /// Code viewer with line numbers, syntax highlighting, horizontal scroll
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
         /// Rendered markdown (read .md)
-        case markdown(text: String)
+        case markdown(text: String, filePath: String? = nil)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment])
         /// Audio message card with server-owned session attachment replay.
@@ -412,7 +412,7 @@ enum ToolPresentationBuilder {
                 filePath: code.filePath
             )
         case .markdown(let markdown):
-            return .markdown(text: markdown.text)
+            return .markdown(text: markdown.text, filePath: markdown.filePath)
         case .file(let file):
             return expandedFileContent(
                 text: file.text,
@@ -490,9 +490,9 @@ enum ToolPresentationBuilder {
     ) -> ToolExpandedContent {
         switch metadata.fileType {
         case .markdown:
-            return .markdown(text: text)
+            return .markdown(text: text, filePath: metadata.filePath)
         case .orgMode:
-            return .markdown(text: orgToMarkdown(text))
+            return .markdown(text: orgToMarkdown(text), filePath: metadata.filePath)
         case .image, .audio, .video:
             return .readMedia(
                 output: text,

@@ -498,11 +498,35 @@ struct ToolPresentationBuilderTests {
 
         #expect(config.title == "~/.pi/agent/skills/oppi-dev/SKILL.md:1-220")
         #expect(config.languageBadge == "Markdown")
-        guard case .markdown(let text) = config.expandedContent else {
+        guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected .markdown content")
             return
         }
         #expect(text == "# Oppi Dev")
+    }
+
+    @Test("read expanded report markdown keeps workspace file path")
+    func readExpandedReportMarkdownKeepsFilePath() {
+        let path = ".internal/reports/design-fixes-2026-09-07/motion/REPORT.md"
+        let body = "[[.internal/reports/design-fixes-2026-09-07/motion/env-off-beta.png|env-off-beta]]"
+        let config = ToolPresentationBuilder.build(
+            itemID: "t-report", tool: "read",
+            argsSummary: "path: \(path)",
+            outputPreview: body,
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string(path)],
+                expanded: ["t-report"],
+                fullOutput: body
+            )
+        )
+
+        guard case .markdown(let text, let filePath) = config.expandedContent else {
+            Issue.record("Expected .markdown content with file path, got \(String(describing: config.expandedContent))")
+            return
+        }
+        #expect(text == body)
+        #expect(filePath == path)
     }
 
     @Test("read ignores segment title override so path truncation stays informative")
@@ -791,7 +815,7 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .markdown(let text) = streamed.expandedContent else {
+        guard case .markdown(let text, _) = streamed.expandedContent else {
             Issue.record("Expected streamed snapshot as markdown, got \(String(describing: streamed.expandedContent))")
             return
         }
@@ -844,7 +868,7 @@ struct ToolPresentationBuilderTests {
 
         // Streaming markdown files use the incremental markdown pipeline
         // (tail-only CommonMark parse) instead of plain text downgrade.
-        guard case .markdown(let text) = config.expandedContent else {
+        guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected .markdown content during streaming, got \(String(describing: config.expandedContent))")
             return
         }
@@ -904,7 +928,7 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .markdown(let text) = config.expandedContent else {
+        guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected .markdown content")
             return
         }
@@ -1242,7 +1266,7 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .markdown(let text) = config.expandedContent else {
+        guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected .markdown content for extension markdown tool")
             return
         }
@@ -1271,7 +1295,7 @@ struct ToolPresentationBuilderTests {
 
         // Streaming extension tools with markdown output use the incremental
         // markdown pipeline instead of downgrading to plain text.
-        guard case .markdown(let text) = config.expandedContent else {
+        guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected .markdown content for streaming extension with markdown output, got \(String(describing: config.expandedContent))")
             return
         }
@@ -1299,7 +1323,7 @@ struct ToolPresentationBuilderTests {
         )
 
         // When done, the same content should render as markdown.
-        guard case .markdown(let text) = config.expandedContent else {
+        guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected .markdown content for done extension with markdown output")
             return
         }
@@ -1541,7 +1565,7 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .markdown(let markdownText) = markdownHint.expandedContent else {
+        guard case .markdown(let markdownText, _) = markdownHint.expandedContent else {
             Issue.record("Expected .markdown for explicit markdown format")
             return
         }
@@ -1585,7 +1609,7 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .markdown(let markdownText) = markdown.expandedContent else {
+        guard case .markdown(let markdownText, _) = markdown.expandedContent else {
             Issue.record("Expected oversized markdown to stay markdown")
             return
         }
@@ -1740,7 +1764,7 @@ struct ToolPresentationBuilderTests {
             )
         )
 
-        guard case .markdown(let md) = config.expandedContent else {
+        guard case .markdown(let md, _) = config.expandedContent else {
             Issue.record("Expected .markdown content from details.expandedText")
             return
         }

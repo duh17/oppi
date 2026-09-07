@@ -157,6 +157,37 @@ struct ToolTimelineRowFullScreenActivationTests {
         #expect(!snapshot.isDone)
     }
 
+    @Test("done markdown full screen content keeps tool file path")
+    func doneMarkdownFullScreenContentKeepsToolFilePath() throws {
+        let path = ".internal/reports/design-fixes-2026-09-07/motion/REPORT.md"
+        let body = "[[.internal/reports/design-fixes-2026-09-07/motion/env-off-beta.png|env-off-beta]]"
+        var configuration = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: body, filePath: path),
+            copyOutputText: body,
+            toolNamePrefix: "read",
+            isExpanded: true,
+            isDone: true
+        )
+        configuration.workspaceID = "workspace-1"
+        configuration.serverBaseURL = URL(string: "https://example.test")
+        configuration.fetchWorkspaceFile = { _, _ in Data() }
+
+        let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
+            configuration: configuration,
+            outputCopyText: body,
+            terminalStream: nil
+        )
+
+        guard case .markdown(let text, let filePath, let workspaceContext) = content else {
+            Issue.record("Expected done markdown full-screen content, got \(String(describing: content))")
+            return
+        }
+        #expect(text == body)
+        #expect(filePath == path)
+        #expect(workspaceContext?.workspaceID == "workspace-1")
+        #expect(workspaceContext?.serverBaseURL.absoluteString == "https://example.test")
+    }
+
     @Test("streaming HTML full screen content carries HTML render hint")
     func streamingHTMLFullScreenContentCarriesHTMLRenderHint() throws {
         let html = "<h1>Streaming</h1>"

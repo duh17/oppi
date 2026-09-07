@@ -199,6 +199,49 @@ struct MacMarkdownPaintDispatchTests {
         )
     }
 
+    @Test func toolMarkdownFilePathDerivesSourceDirectoryForRelativeLinks() throws {
+        let reportPath = ".internal/reports/design-fixes-2026-09-07/motion/REPORT.md"
+        let presentation = ToolContentDescriptorBuilder.build(
+            tool: "extensions.notes",
+            argsSummary: "",
+            outputPreview: "",
+            isError: false,
+            isDone: true,
+            context: .init(
+                details: .object([
+                    "presentationFormat": .string("markdown"),
+                    "filePath": .string(reportPath),
+                ]),
+                fullOutput: "See [img](env-off-beta.png) and [[./env-off-beta.png]]"
+            )
+        )
+        guard case .markdown(let markdown) = presentation.content else {
+            Issue.record("Expected tool markdown descriptor, got \(String(describing: presentation.content))")
+            return
+        }
+        #expect(markdown.filePath == reportPath)
+
+        let directory = MacMarkdownPaintDispatch.resolvedSourceDirectory(
+            nil,
+            filePath: markdown.filePath
+        )
+        #expect(directory == ".internal/reports/design-fixes-2026-09-07/motion")
+
+        let blocks = MacMarkdownPaintDispatch.parsedBlocks(
+            from: markdown.text,
+            workspaceID: "ws-1",
+            sessionID: "sess-1",
+            sourceDirectory: directory
+        )
+        let paths = linkDestinations(in: blocks).compactMap { destination in
+            URL(string: destination).flatMap(ResourceReferenceURL.parse)?.fileCandidatePath
+        }
+        #expect(paths == [
+            "\(directory ?? "")/env-off-beta.png",
+            "\(directory ?? "")/env-off-beta.png",
+        ])
+    }
+
     @Test func nestedMarkdownRelativeFileLinkJoinsDerivedSourceDirectory() throws {
         let directory = MacMarkdownPaintDispatch.resolvedSourceDirectory(
             nil,

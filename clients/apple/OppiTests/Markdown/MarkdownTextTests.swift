@@ -895,6 +895,36 @@ struct WorkspaceWikiLinkRenderingTests {
         #expect(parsed.fileCandidatePath == "notes/daily/2026-06-06.md")
     }
 
+    @Test func givenReportMarkdownWorkspaceScopeThenRootWikiKeepsCandidatePath() throws {
+        let directory = ".internal/reports/design-fixes-2026-09-07/motion"
+        let pngPath = "\(directory)/env-off-beta.png"
+        let blocks = parseCommonMark("Open [[\(pngPath)]]")
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sourceDirectory: directory
+        )
+        let attributed = try textSegment(from: segments)
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.fileCandidatePath == pngPath)
+        #expect(parsed.fileCandidatePath != "\(directory)/\(pngPath)")
+    }
+
+    @Test func givenReportMarkdownRelativeWikiThenItJoinsMotionDirectory() throws {
+        let directory = ".internal/reports/design-fixes-2026-09-07/motion"
+        let blocks = parseCommonMark("See [[./env-off-beta.png]]")
+        let segments = FlatSegment.build(
+            from: blocks,
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sourceDirectory: directory
+        )
+        let attributed = try textSegment(from: segments)
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.fileCandidatePath == "\(directory)/env-off-beta.png")
+    }
+
     @Test func givenExplicitRelativeWikiLinkThenItResolvesAgainstSourceDirectory() throws {
         let blocks = parseCommonMark("See [[./topic|topic note]]")
         let segments = FlatSegment.build(
@@ -1532,6 +1562,18 @@ struct StandardMarkdownFileLinkTests {
         let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
         #expect(parsed.kind == .workspaceFile)
         #expect(parsed.fileCandidatePath == expectedPath)
+    }
+
+    @Test func givenReportMarkdownRelativeFileLinkThenItJoinsMotionDirectory() throws {
+        let directory = ".internal/reports/design-fixes-2026-09-07/motion"
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: parseCommonMark("See [img](env-off-beta.png)"),
+            themeID: .dark,
+            workspaceID: "workspace-1",
+            sourceDirectory: directory
+        ))
+        let parsed = try #require(ResourceReferenceURL.parse(try firstLink(in: attributed)))
+        #expect(parsed.fileCandidatePath == "\(directory)/env-off-beta.png")
     }
 
     @Test func givenRelativeMarkdownFileLinkThenItJoinsSourceDirectory() throws {

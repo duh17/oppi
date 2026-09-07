@@ -278,6 +278,28 @@ struct ToolContentDescriptorTests {
             return
         }
         #expect(markdown.text == body)
+        #expect(markdown.filePath == nil)
+    }
+
+    @Test("extension markdown format keeps file path hint")
+    func extensionMarkdownFormatKeepsFilePath() {
+        let path = ".internal/reports/design-fixes-2026-09-07/motion/REPORT.md"
+        let body = "See [img](env-off-beta.png)"
+        let presentation = build(
+            tool: "extensions.notes",
+            details: .object([
+                "presentationFormat": .string("markdown"),
+                "filePath": .string(path),
+            ]),
+            fullOutput: body
+        )
+
+        guard case .markdown(let markdown) = presentation.content else {
+            Issue.record("Expected .markdown, got \(String(describing: presentation.content))")
+            return
+        }
+        #expect(markdown.text == body)
+        #expect(markdown.filePath == path)
     }
 
     // MARK: - Media metadata

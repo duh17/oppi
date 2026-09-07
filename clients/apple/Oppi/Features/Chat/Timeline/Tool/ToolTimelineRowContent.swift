@@ -48,6 +48,14 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
     var reviewCommentSessionId: String? = nil
     var resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
+    var serverID: String? = nil
+    var workspaceID: String? = nil
+    var sessionID: String? = nil
+    var worktreeId: String? = nil
+    var serverBaseURL: URL? = nil
+    var sourceFilePath: String? = nil
+    var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
+    var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -790,10 +798,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             : nil
         expandedMarkdownUsesIncrementalViewport = isStreaming
 
+        let sourceFilePath = markdownRewriteSourceFilePath
         if isStreaming {
             clearExpandedReadMediaView()
             expandedMarkdownViewportThemeID = themeID
             expandedMarkdownView.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).markdownViewport"
+            expandedMarkdownView.fetchWorkspaceFile = currentConfiguration.fetchWorkspaceFile
+            expandedMarkdownView.fetchHostFile = currentConfiguration.fetchHostFile
+            expandedMarkdownView.audioPlayer = currentConfiguration.audioPlayer
             expandedMarkdownView.apply(configuration: .make(
                 content: text,
                 isStreaming: true,
@@ -801,6 +813,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 textSelectionEnabled: textSelectionEnabled,
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 reviewCommentSourceContext: reviewCommentSourceContext,
+                serverID: currentConfiguration.serverID,
+                workspaceID: currentConfiguration.workspaceID,
+                worktreeId: currentConfiguration.worktreeId,
+                sessionID: currentConfiguration.sessionID,
+                serverBaseURL: currentConfiguration.serverBaseURL,
+                sourceFilePath: sourceFilePath,
                 perfSurface: .toolExpanded,
                 renderingMode: .live,
                 resourcePressure: currentConfiguration.resourcePressure
@@ -824,10 +842,19 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSourceContext: reviewCommentSourceContext,
             textSelectionEnabled: textSelectionEnabled,
+            serverID: currentConfiguration.serverID,
+            workspaceID: currentConfiguration.workspaceID,
+            worktreeId: currentConfiguration.worktreeId,
+            sessionID: currentConfiguration.sessionID,
+            serverBaseURL: currentConfiguration.serverBaseURL,
+            sourceFilePath: sourceFilePath,
             readerPreferences: FullScreenReaderContentFamily.markdown.defaultPreferences,
             perfSurface: .toolExpanded,
             allowsVerticalBounce: false,
-            allowsVerticalScrolling: false
+            allowsVerticalScrolling: false,
+            fetchWorkspaceFile: currentConfiguration.fetchWorkspaceFile,
+            fetchHostFile: currentConfiguration.fetchHostFile,
+            audioPlayer: currentConfiguration.audioPlayer
         )
         expandedMarkdownViewportThemeID = themeID
         native.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).markdownViewport"
@@ -844,6 +871,17 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         }
         native.setNeedsLayout()
         setNeedsLayout()
+    }
+
+    private var markdownRewriteSourceFilePath: String? {
+        if case .markdown(_, let filePath) = currentConfiguration.expandedContent {
+            let trimmed = filePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmed, !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        let fallback = currentConfiguration.sourceFilePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback?.isEmpty == false ? fallback : nil
     }
 
     private func installExpandedReadMediaView(
@@ -1766,7 +1804,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 resourcePressure: configuration.resourcePressure
             )
 
-        case .markdown(let text):
+        case .markdown(let text, _):
             let markdownSelectionEnabled = renderPlan.interactionSpec.markdownSelectionEnabled
             let reviewCommentSourceContext = reviewCommentSessionId.flatMap { sessionId in
                 ToolTimelineRowReviewCommentSelectionSupport.sourceContext(

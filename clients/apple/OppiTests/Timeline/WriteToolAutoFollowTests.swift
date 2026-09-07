@@ -536,7 +536,7 @@ struct WritePresentationBuilderStreamingTests {
             )
         )
 
-        guard case .markdown(let text) = config.expandedContent else {
+        guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected .markdown expanded content for streaming markdown write, got \(String(describing: config.expandedContent))")
             return
         }

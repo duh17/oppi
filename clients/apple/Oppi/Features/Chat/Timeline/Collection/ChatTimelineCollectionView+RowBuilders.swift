@@ -422,6 +422,49 @@ extension ChatTimelineCollectionHost.Controller {
                 )
             }
         }
+        let sourceSession = connection?.sessionStore.session(id: sessionId)
+        let sourceWorkspaceRuntime: WorkspaceRuntime? = {
+            guard let connection, let workspaceId else { return nil }
+            if let serverId {
+                return connection.workspaceStore.workspacesByServer[serverId]?
+                    .first(where: { $0.id == workspaceId })?.runtime
+            }
+            return connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId })?.runtime
+        }()
+        let sourceSessionResolved = sourceSession?.workspaceId == workspaceId
+        let firstCheckout = WorkspaceWikiLinkFileLookupPolicy.firstCheckout(
+            sourceSessionResolved: sourceSessionResolved,
+            sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil
+        )
+        let fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = connection?.apiClient.map { client in
+            return { [sourceSession] workspaceID, path in
+                let sourceSessionResolved = sourceSession?.workspaceId == workspaceID
+                return try await WorkspaceMarkdownImageFileLookup.fetch(
+                    workspaceID: workspaceID,
+                    path: path,
+                    sourceSessionResolved: sourceSessionResolved,
+                    sourceSessionWorktreeID: sourceSessionResolved ? sourceSession?.worktreeId : nil,
+                    fetchWorkspaceFile: { @Sendable workspaceID, path, worktreeId in
+                        try await client.fetchWorkspaceFile(
+                            workspaceID: workspaceID,
+                            path: path,
+                            worktreeId: worktreeId
+                        )
+                    }
+                )
+            }
+        }
+        let fetchHostFile: ((_ path: String) async throws -> Data)? = connection.map { connection in
+            return { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] path in
+                try await connection.fetchHostFileWhenReady(
+                    path: path,
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    worktreeId: firstCheckout,
+                    workspaceRuntime: sourceWorkspaceRuntime
+                )
+            }
+        }
         var configuration = ToolPresentationBuilder.build(
             itemID: itemID,
             tool: tool,
@@ -437,6 +480,19 @@ extension ChatTimelineCollectionHost.Controller {
             fallback: configuration.expandedContent
         )
         configuration.resourcePressure = resourcePressure
+        configuration.serverID = serverId
+        configuration.workspaceID = workspaceId
+        configuration.sessionID = sessionId
+        configuration.worktreeId = firstCheckout
+        configuration.serverBaseURL = connection?.apiClient?.baseURL
+        if case .markdown(_, let filePath) = configuration.expandedContent {
+            let trimmed = filePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmed, !trimmed.isEmpty {
+                configuration.sourceFilePath = trimmed
+            }
+        }
+        configuration.fetchWorkspaceFile = fetchWorkspaceFile
+        configuration.fetchHostFile = fetchHostFile
         return configuration
             .withReviewCommentSelection(router: interactionCtx.reviewCommentSelectionRouter, sessionId: interactionCtx.sessionId)
             .withAudioPlayer(audioPlayer)

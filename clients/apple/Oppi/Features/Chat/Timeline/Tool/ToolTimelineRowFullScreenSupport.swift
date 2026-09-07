@@ -85,10 +85,14 @@ enum ToolTimelineRowFullScreenSupport {
                 )
             )
 
-        case .markdown(let text):
+        case .markdown(let text, let filePath):
             guard !text.isEmpty else { return nil }
-            // Markdown payload currently has no path metadata.
-            return .markdown(content: text, filePath: nil)
+            let path = resolvedMarkdownFilePath(filePath, configuration: configuration)
+            return .markdown(
+                content: text,
+                filePath: path,
+                workspaceContext: markdownWorkspaceContext(configuration: configuration)
+            )
 
         case .code(let text, let language, let startLine, let filePath):
             let copyText = outputCopyText ?? text
@@ -176,13 +180,19 @@ enum ToolTimelineRowFullScreenSupport {
                 finalContent: nil
             )
 
-        case .markdown(let text):
+        case .markdown(let text, let filePath):
             guard !text.isEmpty else { return nil }
+            let path = resolvedMarkdownFilePath(filePath, configuration: configuration)
+            let workspaceContext = markdownWorkspaceContext(configuration: configuration)
             return SourceTraceStream.Snapshot(
                 text: text,
-                filePath: nil,
+                filePath: path,
                 isDone: configuration.isDone,
-                finalContent: .markdown(content: text, filePath: nil)
+                finalContent: .markdown(
+                    content: text,
+                    filePath: path,
+                    workspaceContext: workspaceContext
+                )
             )
 
         case .text(let text, _):
@@ -199,5 +209,39 @@ enum ToolTimelineRowFullScreenSupport {
         case .bash, .readMedia, .audioMessage, .status:
             return nil
         }
+    }
+
+    private static func resolvedMarkdownFilePath(
+        _ filePath: String?,
+        configuration: ToolTimelineRowConfiguration
+    ) -> String? {
+        for candidate in [filePath, configuration.sourceFilePath] {
+            let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmed, !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return nil
+    }
+
+    private static func markdownWorkspaceContext(
+        configuration: ToolTimelineRowConfiguration
+    ) -> FullScreenCodeContent.WorkspaceContext? {
+        let workspaceID = configuration.workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let workspaceID, !workspaceID.isEmpty,
+              let serverBaseURL = configuration.serverBaseURL,
+              let fetchWorkspaceFile = configuration.fetchWorkspaceFile else {
+            return nil
+        }
+        return .init(
+            workspaceID: workspaceID,
+            serverID: configuration.serverID,
+            worktreeId: configuration.worktreeId,
+            serverBaseURL: serverBaseURL,
+            fetchWorkspaceFile: fetchWorkspaceFile,
+            sessionID: configuration.sessionID,
+            fetchHostFile: configuration.fetchHostFile,
+            audioPlayer: configuration.audioPlayer
+        )
     }
 }

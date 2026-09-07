@@ -642,7 +642,7 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        guard case .markdown(let text) = config.expandedContent else { Issue.record("Expected .markdown for write file content"); return }
+        guard case .markdown(let text, _) = config.expandedContent else { Issue.record("Expected .markdown for write file content"); return }
         #expect(text == "# Title\n\nBody")
         #expect(config.languageBadge == "Markdown")
     }
@@ -666,7 +666,7 @@ struct ToolPresentationConfigTests {
         )
 
         let config = try #require(timelineToolRowConfiguration(from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)))
-        guard case .markdown(let text) = config.expandedContent else {
+        guard case .markdown(let text, _) = config.expandedContent else {
             Issue.record("Expected streaming markdown write to use .markdown (incremental pipeline), got \(String(describing: config.expandedContent))")
             return
         }

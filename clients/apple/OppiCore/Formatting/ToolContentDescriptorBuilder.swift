@@ -448,7 +448,7 @@ enum ToolContentDescriptorBuilder {
         }
 
         if format == "markdown" {
-            return (.markdown(ToolContentDescriptor.Markdown(text: textOutput)), textOutput)
+            return (.markdown(markdownDescriptor(text: textOutput, filePath: filePathHint)), textOutput)
         }
 
         if format == "code" {
@@ -479,7 +479,7 @@ enum ToolContentDescriptorBuilder {
         }
 
         if looksLikeMarkdownContent(textOutput) {
-            return (.markdown(ToolContentDescriptor.Markdown(text: textOutput)), textOutput)
+            return (.markdown(markdownDescriptor(text: textOutput, filePath: filePathHint)), textOutput)
         }
 
         if let languageHint {
@@ -526,6 +526,14 @@ enum ToolContentDescriptorBuilder {
                 startLine: startLine,
                 attachments: attachments
             )
+        )
+    }
+
+    private static func markdownDescriptor(text: String, filePath: String?) -> ToolContentDescriptor.Markdown {
+        let trimmed = filePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ToolContentDescriptor.Markdown(
+            text: text,
+            filePath: trimmed?.isEmpty == false ? trimmed : nil
         )
     }
 

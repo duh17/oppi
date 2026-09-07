@@ -1230,7 +1230,8 @@ private struct ToolTimelineBubble: View {
                 itemID: itemID,
                 workspaceID: workspaceID,
                 sessionID: sessionID,
-                worktreeId: worktreeId
+                worktreeId: worktreeId,
+                filePath: markdown.filePath
             )
             .textSelection(.enabled)
             .lineLimit(isExpanded ? nil : 12)

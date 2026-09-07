@@ -130,6 +130,18 @@ struct MacToolDocumentColumnTests {
         #expect(MacToolDocumentDiffMetrics.rowMinimumHeight >= 20)
     }
 
+    @Test func markdownDocumentViewReceivesToolMarkdownFilePath() throws {
+        let column = try source(named: "OppiMac/Views/MacToolDocumentColumn.swift")
+        let markdownCase = try #require(column.range(of: "case .markdown(let markdown):"))
+        let fileCase = try #require(column.range(
+            of: "case .file(let file):",
+            range: markdownCase.upperBound..<column.endIndex
+        ))
+        let markdownView = String(column[markdownCase.lowerBound..<fileCase.lowerBound])
+        #expect(markdownView.contains("MacMarkdownDocumentView("))
+        #expect(markdownView.contains("filePath: markdown.filePath"))
+    }
+
     @Test func pathLeadsTheDocumentTitleInsteadOfTheToolName() {
         let model = MacToolDocumentColumnModel(
             toolRowID: "edit-1",
