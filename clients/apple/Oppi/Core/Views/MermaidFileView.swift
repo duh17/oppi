@@ -56,12 +56,7 @@ struct MermaidFileView: View {
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
             text: content,
-            config: RenderConfiguration(
-                fontSize: 14,
-                maxWidth: 600,
-                theme: palette.renderTheme,
-                displayMode: .document
-            )
+            config: DocumentRenderPipeline.mermaidConfiguration(theme: palette.renderTheme)
         )
     }
 }

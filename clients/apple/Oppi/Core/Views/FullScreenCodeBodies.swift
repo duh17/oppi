@@ -4517,9 +4517,12 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
         switch content {
         case .mermaid(let text):
             // ZoomableGraphicalView has its own scroll + zoom — embed directly
-            let zoomable = makeZoomableGraphicalView(
-                parser: MermaidParser(), renderer: MermaidRenderer(),
-                text: text, fontSize: 14 * readerPreferences.textScale
+            let layout = DocumentRenderPipeline.layoutGraphical(
+                parser: MermaidParser(), renderer: MermaidRenderer(), text: text,
+                config: DocumentRenderPipeline.mermaidConfiguration(theme: palette.renderTheme)
+            )
+            let zoomable = ZoomableGraphicalView(
+                size: layout.size, readingScale: readerPreferences.textScale, draw: layout.draw
             )
             zoomable.translatesAutoresizingMaskIntoConstraints = false
             addSubview(zoomable)
@@ -4678,20 +4681,6 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
         return LatexView(view: stack, isGraphical: true)
     }
 
-    private func makeZoomableGraphicalView<P: DocumentParser, R: GraphicalDocumentRenderer>(
-        parser: P, renderer: R, text: String, fontSize: CGFloat
-    ) -> UIView where P.Document == R.Document {
-        let config = RenderConfiguration(
-            fontSize: fontSize,
-            maxWidth: 800,
-            theme: themeID.palette.renderTheme,
-            displayMode: .document
-        )
-        let layout = DocumentRenderPipeline.layoutGraphical(
-            parser: parser, renderer: renderer, text: text, config: config
-        )
-        return ZoomableGraphicalView(size: layout.size, draw: layout.draw)
-    }
 }
 
 #if DEBUG

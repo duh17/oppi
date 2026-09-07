@@ -34,6 +34,33 @@ struct DocumentRenderCacheTests {
         A[Start] --> B[Done]
     """
 
+    @MainActor @Test func mermaidExpansionAndViewportChangesPreserveGeometry() throws {
+        let source = """
+        graph TD
+          subgraph Clients[Apple clients]
+            A[iOS and Mac apps]
+            B[UIKit and AppKit timelines]
+            C[Voice input and playback]
+            D[Sessions inbox and workspace detail]
+          end
+          A --> S[Server]
+          B --> S
+          C --> S
+          S --> D
+        """
+        let palette = ThemeID.dark.palette
+        let narrow = try #require(NativeMermaidBlockView.Rasterizer.live.renderSync(source, 320, palette.renderTheme))
+        let wide = try #require(NativeMermaidBlockView.Rasterizer.live.renderSync(source, 700, palette.renderTheme))
+        let body = NativeFullScreenRenderedDocumentBody(
+            content: .mermaid(source), themeID: .dark, palette: palette,
+            reviewCommentSelectionRouter: nil, reviewCommentSourceContext: nil
+        )
+        let canvas = try #require(timelineFirstView(ofType: GraphicalRendererUIView.self, in: body))
+        #expect(narrow.size == wide.size, "viewport width must only scale, never rearrange the graph")
+        #expect(narrow.size == canvas.intrinsicContentSize, "expansion must preserve the inline geometry")
+        #expect(narrow.image === wide.image, "viewport changes should reuse the canonical raster")
+    }
+
     @Test func identicalLaTeXRendersReuseTheSameRaster() throws {
         DocumentRenderPipeline.debugRemoveAllCachedRendersForTesting()
         let first = try #require(DocumentRenderPipeline.renderLatexGraphicalImage(

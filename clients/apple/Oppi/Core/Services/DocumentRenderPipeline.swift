@@ -65,6 +65,12 @@ enum DocumentRenderPipeline {
         maxBytes: 64 * 1_024 * 1_024
     )
 
+    /// Diagram geometry is independent of the viewport. Inline previews, file
+    /// viewers, and expansion must scale the same canvas, not shelf-pack it again.
+    static func mermaidConfiguration(theme: RenderTheme) -> RenderConfiguration {
+        RenderConfiguration(fontSize: 14, maxWidth: 800, theme: theme, displayMode: .document)
+    }
+
     // MARK: - Render Cache
 
     /// Three-layer cache: parse (source only) → CPU layout (no scale) → raster.

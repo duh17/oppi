@@ -23,31 +23,21 @@ final class NativeMermaidBlockView: UIView {
         let renderAsync: @Sendable (String, CGFloat, RenderTheme) async -> RasterResult?
 
         static let live = Rasterizer(
-            renderSync: { code, availableWidth, theme in
+            renderSync: { code, _, theme in
                 DocumentRenderPipeline.renderInlineGraphicalImage(
                     parser: MermaidParser(),
                     renderer: MermaidRenderer(),
                     text: code,
-                    config: RenderConfiguration(
-                        fontSize: 13,
-                        maxWidth: availableWidth,
-                        theme: theme,
-                        displayMode: .inline
-                    )
+                    config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
                 ).map { RasterResult(image: $0.image, size: $0.size) }
             },
-            renderAsync: { code, availableWidth, theme in
+            renderAsync: { code, _, theme in
                 await Task.detached(priority: .userInitiated) {
                     DocumentRenderPipeline.renderInlineGraphicalImage(
                         parser: MermaidParser(),
                         renderer: MermaidRenderer(),
                         text: code,
-                        config: RenderConfiguration(
-                            fontSize: 13,
-                            maxWidth: availableWidth,
-                            theme: theme,
-                            displayMode: .inline
-                        )
+                        config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
                     ).map { RasterResult(image: $0.image, size: $0.size) }
                 }.value
             }
@@ -419,12 +409,7 @@ final class NativeMermaidBlockView: UIView {
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
             text: code,
-            config: RenderConfiguration(
-                fontSize: 13,
-                maxWidth: availableWidth,
-                theme: theme,
-                displayMode: .inline
-            )
+            config: DocumentRenderPipeline.mermaidConfiguration(theme: theme)
         )
         guard layout.size.width > 0, layout.size.height > 0,
               DocumentRenderPipeline.naturalRasterBudget.permits(

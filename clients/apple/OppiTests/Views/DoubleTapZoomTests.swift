@@ -55,6 +55,44 @@ struct DoubleTapZoomTests {
 
     // MARK: - Diagram viewer
 
+    @Test func readableControlZoomsWithoutChangingGeometryAndFitRestoresOverview() throws {
+        let diagram = ZoomableGraphicalView(size: CGSize(width: 1_200, height: 900), readingScale: 1.25) { _, _ in }
+        diagram.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        diagram.layoutIfNeeded()
+        let canvas = try #require(timelineFirstView(ofType: GraphicalRendererUIView.self, in: diagram))
+        let control = try #require(timelineFirstView(ofType: UISegmentedControl.self, in: diagram))
+        let geometry = canvas.intrinsicContentSize
+        UIView.performWithoutAnimation {
+            control.selectedSegmentIndex = 1
+            control.sendActions(for: .valueChanged)
+        }
+        #expect(abs(diagram.debugZoomScaleForTesting - 1.25) < 0.02)
+        #expect(canvas.intrinsicContentSize == geometry)
+        diagram.setNeedsLayout()
+        diagram.layoutIfNeeded()
+        #expect(abs(diagram.debugZoomScaleForTesting - 1.25) < 0.02)
+        UIView.performWithoutAnimation {
+            control.selectedSegmentIndex = 0
+            control.sendActions(for: .valueChanged)
+        }
+        #expect(abs(diagram.debugZoomScaleForTesting - diagram.debugFitScaleForTesting) < 0.02)
+    }
+
+    @Test func diagramFitKeepsEntireCanvasInsideTheChromeFreeViewport() throws {
+        let diagram = ZoomableGraphicalView(size: CGSize(width: 980, height: 1_500), readingScale: 1) { _, _ in }
+        // Match expansion: created at zero size, then laid out by the reader.
+        diagram.layoutIfNeeded()
+        diagram.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        diagram.setNeedsLayout()
+        diagram.layoutIfNeeded()
+        let scroll = try #require(timelineFirstView(ofType: UIScrollView.self, in: diagram))
+        let canvas = try #require(timelineFirstView(ofType: GraphicalRendererUIView.self, in: diagram))
+        let visibleCanvas = canvas.convert(canvas.bounds, to: scroll)
+        #expect(scroll.bounds.insetBy(dx: -1, dy: -1).contains(visibleCanvas))
+        #expect(scroll.frame.minY >= 72)
+        #expect(scroll.frame.maxY <= diagram.bounds.height - 88)
+    }
+
     @Test func diagramStartsAtFitScale() {
         let hosted = makeDiagram()
 

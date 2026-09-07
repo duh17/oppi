@@ -4906,10 +4906,8 @@ struct NativeMermaidBlockViewTests {
         return colors.count
     }
 
-    /// A pie first rasterized in a skinny estimated width must re-raster
-    /// when the bubble settles at ~360. Otherwise the stacked bitmap is
-    /// aspect-fit into the wide cell and stays a thin column after scroll.
-    @Test func pieRerasterWhenBoundsWidenAfterNarrowApply() async throws {
+    /// A viewport change scales the canonical pie without repacking its legend.
+    @Test func piePreservesGeometryWhenBoundsWidenAfterNarrowApply() throws {
         let pieSource = """
             pie title Pets adopted by volunteers
                 "Dogs" : 386
@@ -4932,35 +4930,16 @@ struct NativeMermaidBlockViewTests {
         container.layoutIfNeeded()
 
         let narrowImage = try #require(firstTappableImageView(in: view)?.image)
-        #expect(
-            narrowImage.size.width < 160,
-            "Narrow apply should raster a stacked pie, got width \(narrowImage.size.width)"
-        )
+        let narrowHeight = view.bounds.height
+        #expect(narrowImage.size.width > 200, "Even a narrow preview uses canonical geometry")
 
         container.frame.size.width = 360
         container.setNeedsLayout()
         container.layoutIfNeeded()
 
-        var wideImage: UIImage?
-        for _ in 0..<500 {
-            container.layoutIfNeeded()
-            if let image = firstTappableImageView(in: view)?.image,
-               image.size.width > 200 {
-                wideImage = image
-                break
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-
-        let image = try #require(wideImage, "Pie must re-raster after the bubble widens")
-        #expect(
-            image.size.width > 200,
-            "Re-rastered pie must leave the stacked skinny column, got \(image.size.width)"
-        )
-        #expect(
-            image.size.width > narrowImage.size.width + 40,
-            "Image width should grow with the bubble (narrow=\(narrowImage.size.width), wide=\(image.size.width))"
-        )
+        let image = try #require(firstTappableImageView(in: view)?.image)
+        #expect(image === narrowImage, "Resizing must preserve the canonical bitmap")
+        #expect(view.bounds.height > narrowHeight, "The display grows, not the graph geometry")
         #expect(
             image.size.height / max(image.size.width, 1) < 1.4,
             "Wide pie should keep a side-legend ratio, not a stacked column (\(image.size))"
@@ -4975,12 +4954,7 @@ struct NativeMermaidBlockViewTests {
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
             text: code,
-            config: RenderConfiguration(
-                fontSize: 13,
-                maxWidth: availableWidth,
-                theme: palette.renderTheme,
-                displayMode: .inline
-            )
+            config: DocumentRenderPipeline.mermaidConfiguration(theme: palette.renderTheme)
         )
         #expect(layout.size.width > 0 && layout.size.height > 0)
         let scale = min(1.0, availableWidth / layout.size.width)

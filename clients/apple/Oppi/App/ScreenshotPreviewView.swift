@@ -96,6 +96,10 @@ struct ScreenshotPreviewView: View {
             SyntaxLanguagesPreview(page: .systemsAndMarkup, engine: .scanner)
         case "mermaid-rendering":
             MermaidRenderingPreview()
+        case "mermaid-consistency-inline":
+            MermaidConsistencyPreview(expanded: false)
+        case "mermaid-consistency-expanded":
+            MermaidConsistencyPreview(expanded: true)
         case "mermaid-fullscreen":
             MermaidFullscreenPreview()
         case "mermaid-responsive-routing":
@@ -827,6 +831,83 @@ private struct MermaidRenderingPreview: View {
         .preferredColorScheme(themeID == .light ? .light : .dark)
         .accessibilityIdentifier("screenshot.ready")
     }
+}
+
+// The architecture graph that exposed inline/expanded shelf-packing drift.
+private struct MermaidConsistencyPreview: View {
+    let expanded: Bool
+    private let themeID: ThemeID
+
+    init(expanded: Bool) {
+        self.expanded = expanded
+        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
+    var body: some View {
+        FullScreenCodeView(content: expanded
+            ? .mermaid(content: Self.source, filePath: nil)
+            : .markdown(content: Self.markdown, filePath: nil))
+            .preferredColorScheme(themeID == .light ? .light : .dark)
+            .accessibilityIdentifier("screenshot.ready")
+    }
+
+    static let markdown = "## Oppi architecture\n\nTap the diagram to explore its connections.\n\n```mermaid\n" + source + "\n```"
+    static let source = """
+    graph TD
+      subgraph Apple[Apple clients]
+        App[iOS and Mac apps]
+        WorkspaceUI[Sessions inbox, workspace sidebar,<br/>and workspace detail]
+        Timeline[iOS UIKit and Mac AppKit/SwiftUI timelines]
+        Voice[Voice input and playback]
+      end
+      CLI[Local oppi CLI]
+      subgraph Server[Oppi server]
+        LocalHTTP[HTTP over owner-only Unix socket]
+        HTTP[Network REST API]
+        Streams[Focused session, app event,<br/>and audio streams]
+        Router[Session runtime router]
+        Sessions[Managed SessionManager]
+        Mirror[Pi TUI mirror runtime]
+        Bridge[Mirror bridge WebSocket]
+        ExtensionUI[Pi extension UI relay]
+        Automations[Saved Agents and schedule runner]
+        Storage[SQLite session store and local-session catalog]
+        Project[Shared Pi session projection]
+        Pi[Pi SDK AgentSession]
+      end
+      subgraph Workspace[Workspace runtime]
+        Files[Workspace files]
+        Tools[Tools and extensions]
+        Sandbox[Optional sandbox runtime]
+      end
+      CLI --> LocalHTTP
+      LocalHTTP --> Router
+      LocalHTTP --> Automations
+      LocalHTTP --> Storage
+      App --> HTTP
+      App --> Streams
+      HTTP --> Router
+      HTTP --> Automations
+      HTTP --> Storage
+      Streams --> Router
+      Router --> Sessions
+      Router --> Mirror
+      Bridge --> Mirror
+      Automations --> Sessions
+      Sessions --> ExtensionUI
+      Sessions --> Pi
+      Sessions --> Project
+      Mirror --> Project
+      Pi --> Tools
+      Tools --> Files
+      Project --> Storage
+      Tools --> Sandbox
+      HTTP --> WorkspaceUI
+      Streams --> WorkspaceUI
+      Streams --> Timeline
+      Voice --> Streams
+    """
 }
 
 // MARK: - Mermaid Fullscreen Preview

@@ -36,6 +36,27 @@ final class UIValidateTests: XCTestCase {
         )
         _ = app.images.firstMatch.waitForExistence(timeout: 8)
 
+        // Optional user-path drive for a named preview; keep one generic dump
+        // harness rather than adding a screenshot-only test for every surface.
+        let taps = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_TAPS"]?
+            .split(separator: ",").map(String.init) ?? []
+        if !taps.isEmpty {
+            try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            try app.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-0.png"))
+        }
+        for (index, identifier) in taps.enumerated() {
+            let point = identifier.split(separator: ":").compactMap { Double($0) }
+            if point.count == 2 {
+                app.coordinate(withNormalizedOffset: CGVector(dx: point[0], dy: point[1])).tap()
+            } else {
+                let target = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+                XCTAssertTrue(target.waitForExistence(timeout: 8), "Missing action: \(identifier)")
+                target.tap()
+            }
+            _ = try app.snapshot() // Wait for the resulting UI state to settle.
+            try app.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-\(index + 1).png"))
+        }
+
         let snapshot = try app.snapshot()
         let tree = UIValidateDump.renderTree(snapshot)
         let audit = UIValidateDump.renderAudit(UIValidateDump.collectAuditIssues(from: app))
