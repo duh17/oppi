@@ -184,6 +184,88 @@ struct ChatInputBarTests {
         #expect(manager.currentTranscript.isEmpty)
     }
 
+    @Test("Send can commit dictation without restoring a suppressed keyboard")
+    func finishOwnedVoiceInputBeforeSubmitCanKeepKeyboardSuppressed() async throws {
+        AppPreferences.Voice.setEngineMode(.onDevice)
+        defer { AppPreferences.Voice.setEngineMode(.remote) }
+
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .inlineComposer)
+        session.yieldEvent(.replaceFinalTranscript("rough draft"))
+        #expect(await waitForMainActorCondition { manager.finalizedTranscript.contains("rough") })
+
+        session.stopHandler = { @MainActor [weak session] in
+            session?.yieldEvent(.replaceFinalTranscript("final draft"))
+            session?.finishEvents()
+        }
+
+        var text = "typed rough draft"
+        var textBeforeRecording: String? = "typed "
+        var suppressKeyboard = true
+        let voiceStateBeforeFinish = manager.state
+
+        let didFinish = await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+            manager: manager,
+            owner: .inlineComposer,
+            text: Binding(get: { text }, set: { text = $0 }),
+            textBeforeRecording: Binding(get: { textBeforeRecording }, set: { textBeforeRecording = $0 }),
+            suppressKeyboard: Binding(get: { suppressKeyboard }, set: { suppressKeyboard = $0 }),
+            restoreKeyboard: false
+        )
+
+        #expect(didFinish)
+        #expect(text == "typed final draft")
+        #expect(textBeforeRecording == nil)
+        #expect(suppressKeyboard)
+        #expect(ChatInputBar<EmptyView>.suppressKeyboardAfterSend(
+            voiceState: voiceStateBeforeFinish,
+            wasSuppressed: true
+        ))
+        #expect(manager.currentTranscript.isEmpty)
+    }
+
+    @Test("Inline send finishes dictation without restoring the keyboard")
+    func inlineSendFinishesDictationWithoutRestoringKeyboard() throws {
+        let source = try chatInputBarSource()
+        let slice = try chatInputBarSourceSlice(
+            named: "private func handleSend() {",
+            until: "private func submitCurrentComposerAction()",
+            in: source
+        )
+
+        #expect(slice.contains("restoreKeyboard: false"))
+        #expect(slice.contains("suppressKeyboardAfterSend("))
+        #expect(!slice.contains("restoreKeyboard: true"))
+    }
+
+    @Test("Stashing a review comment plays the same success haptic as full-screen save")
+    func reviewCommentSavePlaysSuccessHaptic() throws {
+        let chatViewURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Oppi/Features/Chat/ChatView.swift")
+        let chatView = try String(contentsOf: chatViewURL, encoding: .utf8)
+        let saveSlice = try chatInputBarSourceSlice(
+            named: "private func saveReviewComment(body: String, request: ReviewCommentSelectionRequest) -> Bool {",
+            until: "private func deleteReviewComment(_ comment: ReviewComment) {",
+            in: chatView
+        )
+        let presenterURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Oppi/Features/Chat/ReviewComments/ReviewCommentInlineDraftPresenter.swift")
+        let presenter = try String(contentsOf: presenterURL, encoding: .utf8)
+        let presenterSave = try chatInputBarSourceSlice(
+            named: "private func saveCurrentBody() {",
+            until: "private func updateSaveButton() {",
+            in: presenter
+        )
+
+        #expect(saveSlice.contains("AppHaptics.success()"))
+        #expect(!presenterSave.contains("AppHaptics.success()"))
+    }
+
     @Test("ComposerShared cancels owned dictation without committing transcript")
     func cancelOwnedVoiceInputClearsRecordingStateWithoutCommittingTranscript() async throws {
         AppPreferences.Voice.setEngineMode(.onDevice)

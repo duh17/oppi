@@ -1431,6 +1431,7 @@ struct ChatView: View {
             connection.extensionToast = error
             return false
         }
+        AppHaptics.success()
         return true
     }
 

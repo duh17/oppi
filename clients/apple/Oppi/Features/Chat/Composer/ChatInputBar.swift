@@ -1231,13 +1231,20 @@ struct ChatInputBar<ActionRow: View>: View {
            ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer),
            manager.isRecording || manager.isPreparing {
             isFinishingVoiceBeforeSend = true
+            let wasSuppressed = suppressKeyboard
+            let voiceState = manager.state
             Task { @MainActor in
                 await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
                     manager: manager,
                     owner: .inlineComposer,
                     text: $text,
                     textBeforeRecording: $textBeforeRecording,
-                    suppressKeyboard: $suppressKeyboard
+                    suppressKeyboard: $suppressKeyboard,
+                    restoreKeyboard: false
+                )
+                suppressKeyboard = Self.suppressKeyboardAfterSend(
+                    voiceState: voiceState,
+                    wasSuppressed: wasSuppressed
                 )
                 isFinishingVoiceBeforeSend = false
                 submitCurrentComposerAction()

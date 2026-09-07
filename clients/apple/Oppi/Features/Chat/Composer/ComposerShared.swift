@@ -622,7 +622,8 @@ enum ComposerShared {
         owner: VoiceInputOwner,
         text: Binding<String>,
         textBeforeRecording: Binding<String?>,
-        suppressKeyboard: Binding<Bool>? = nil
+        suppressKeyboard: Binding<Bool>? = nil,
+        restoreKeyboard: Bool = true
     ) async -> Bool {
         guard let manager,
               ownsVoiceInput(manager, owner: owner),
@@ -638,7 +639,9 @@ enum ComposerShared {
             await manager.cancelRecording()
             textBeforeRecording.wrappedValue = nil
         }
-        suppressKeyboard?.wrappedValue = false
+        if restoreKeyboard {
+            suppressKeyboard?.wrappedValue = false
+        }
         return true
     }
 

@@ -865,10 +865,9 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                     owner: .reviewCommentInline,
                     text: textBinding(),
                     textBeforeRecording: recordingPrefixBinding(),
-                    suppressKeyboard: suppressKeyboardBinding()
+                    suppressKeyboard: suppressKeyboardBinding(),
+                    restoreKeyboard: false
                 )
-                suppressKeyboard = false
-                inputTextView.setKeyboardSuppressed(false)
                 saveCurrentBody()
             }
             return
@@ -891,11 +890,12 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             guard let self else { return }
             let didSave = await router.saveInlineComment(body: body, request: request)
             if didSave {
-                AppHaptics.success()
                 dismiss()
             } else {
                 isSaving = false
                 updateSaveButton()
+                suppressKeyboard = false
+                inputTextView.setKeyboardSuppressed(false)
                 inputTextView.becomeFirstResponder()
             }
         }
