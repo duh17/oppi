@@ -503,6 +503,7 @@
 		4F1CBF591D031E8076F94CF3 /* ProviderIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D67B6C830392272FD0316C8 /* ProviderIcon.swift */; };
 		4F438AB5F67B1EF17A34953B /* DailyCostChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6987CB77C4BE671312351D /* DailyCostChart.swift */; };
 		4F5A4FB4AC3E81762AEC7A86 /* FeatureEducationToolRowTipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55104D1077BCF5EECF90BF92 /* FeatureEducationToolRowTipTests.swift */; };
+		4F84EAD93E4FDF4253F26643 /* ReviewCommentStashLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9738787FCE7065A28EBD4FB6 /* ReviewCommentStashLocation.swift */; };
 		4FB3DD17EE404B125D8B75FF /* IPhoneSessionsFirstScreenshotE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F69390322324DBB0B5A5DD9 /* IPhoneSessionsFirstScreenshotE2ETests.swift */; };
 		4FF7F111C5C9547DD9E3856D /* MacScreenAwakeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 562CB7139A941B08ABAD4FA1 /* MacScreenAwakeController.swift */; };
 		501CF20DA3B4F3F8F1B0ED96 /* ReviewCommentStripScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE24252D15EA958FE8A8016F /* ReviewCommentStripScreenshotPreview.swift */; };
@@ -1465,6 +1466,7 @@
 		E6C9A8AF7EC66F20B383EF54 /* DiffGutterAttributeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E1D2BE22C3BAAFF3AFDFCB /* DiffGutterAttributeTests.swift */; };
 		E6D98C700D95B3C890D55EFB /* UIHarnessTestCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9496F488480CA2B43FFA9DB6 /* UIHarnessTestCase.swift */; };
 		E6F0729C2BA80C06885CA2D3 /* ServerConnection+StoreUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = A09B87529615B3D5677B49D9 /* ServerConnection+StoreUpdates.swift */; };
+		E6FD45E54A3581F939406F97 /* ReviewCommentStashLocationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE29C61AB20E35EA874E33A0 /* ReviewCommentStashLocationTests.swift */; };
 		E70B7FB116E302391ECBA93D /* WorkspaceBreakdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2077B26F617ED2EEEA43BD /* WorkspaceBreakdownView.swift */; };
 		E71721A0952C481FC42091A5 /* BrowserAutomationVideoToolRowE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E27D2C996219D5349FABB85B /* BrowserAutomationVideoToolRowE2ETests.swift */; };
 		E7B6AFEC19B922D59B5AC35C /* MacLatexFormulaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76F524753678A8987A370C17 /* MacLatexFormulaView.swift */; };
@@ -2476,6 +2478,7 @@
 		9658A770C8B4A5A7BEE7DDDF /* RenderableDocumentWrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderableDocumentWrapper.swift; sourceTree = "<group>"; };
 		967C873423D8E84465B18A71 /* SourceCodePro-Semibold.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceCodePro-Semibold.otf"; sourceTree = "<group>"; };
 		96EF956A0402EDFEBACB73DE /* LICENSES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = LICENSES.md; sourceTree = "<group>"; };
+		9738787FCE7065A28EBD4FB6 /* ReviewCommentStashLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentStashLocation.swift; sourceTree = "<group>"; };
 		9789C72103D1061221093F6B /* MermaidQuadrantConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidQuadrantConformanceTests.swift; sourceTree = "<group>"; };
 		9793CFAA3EC6E2B7C8F8A113 /* MermaidPerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidPerfBench.swift; sourceTree = "<group>"; };
 		979FDD56F528B3731944F74D /* DeviceCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceCredential.swift; sourceTree = "<group>"; };
@@ -2927,6 +2930,7 @@
 		EDACED1D13984141866B1AAF /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = Oppi/Resources/Fonts; sourceTree = SOURCE_ROOT; };
 		EDB1A19208522C50E08970C8 /* MacToolDocumentColumn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacToolDocumentColumn.swift; sourceTree = "<group>"; };
 		EE24252D15EA958FE8A8016F /* ReviewCommentStripScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentStripScreenshotPreview.swift; sourceTree = "<group>"; };
+		EE29C61AB20E35EA874E33A0 /* ReviewCommentStashLocationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentStashLocationTests.swift; sourceTree = "<group>"; };
 		EE6BDFFC692F19819841AD94 /* OrgModePerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgModePerfBench.swift; sourceTree = "<group>"; };
 		EEB5FF0D877AADE6BD04C7FA /* MacComposerVisualGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacComposerVisualGateTests.swift; sourceTree = "<group>"; };
 		EEB96CF6CBB8BF893CC50391 /* MacAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAPIClient.swift; sourceTree = "<group>"; };
@@ -3533,6 +3537,7 @@
 				932CD94DCD1768533CE9B602 /* QuickCommentTemplateTests.swift */,
 				E7335136063FDF4FC9DA6A08 /* ReadySessionScrollToBottomTests.swift */,
 				70303C5850323FE73CE1F035 /* ReviewCommentSelectionTextFormatterTests.swift */,
+				EE29C61AB20E35EA874E33A0 /* ReviewCommentStashLocationTests.swift */,
 				08F4B05637A6AE225D7FD8AE /* ReviewCommentStripChromeTests.swift */,
 				867031F20ADC209533B3952F /* SessionTreeDisplayLayoutChatTests.swift */,
 				FCA671A4F764C978DC50374D /* ToolOutputFetchTests.swift */,
@@ -3632,6 +3637,7 @@
 			children = (
 				7747D21079361CEEF3827D17 /* ChatReviewCommentsController.swift */,
 				9F37B0DEA8B8331AA8E7A45A /* ReviewCommentInlineDraftPresenter.swift */,
+				9738787FCE7065A28EBD4FB6 /* ReviewCommentStashLocation.swift */,
 				8A58AE248F006E257A9BE030 /* ReviewCommentStashSheet.swift */,
 				A8519D62FED84C62E7F7D868 /* ReviewCommentStripChrome.swift */,
 			);
@@ -6762,6 +6768,7 @@
 				491241F56DDA7AB0D03892D9 /* RestorationStateTests.swift in Sources */,
 				A0D9B74966824F37C3701966 /* ReviewCommentFormattingTests.swift in Sources */,
 				B99ACCADCEA7145F7581A205 /* ReviewCommentSelectionTextFormatterTests.swift in Sources */,
+				E6FD45E54A3581F939406F97 /* ReviewCommentStashLocationTests.swift in Sources */,
 				B8F15C8E01E87724E0921295 /* ReviewCommentStoreTests.swift in Sources */,
 				4447C50362CE3416C34D1403 /* ReviewCommentStripChromeTests.swift in Sources */,
 				DC7BAC525A2B5793095D5531 /* ReviewableControlMarkdownTests.swift in Sources */,
@@ -7322,6 +7329,7 @@
 				EA90D33A5A209A78982A96A5 /* ReviewCommentInlineDraftPresenter.swift in Sources */,
 				AEF1691754003E7327466CEA /* ReviewCommentSelection.swift in Sources */,
 				A749F17A079999319CF18540 /* ReviewCommentStashHarnessView.swift in Sources */,
+				4F84EAD93E4FDF4253F26643 /* ReviewCommentStashLocation.swift in Sources */,
 				9C9E2FEE276BA3807BAE4AEC /* ReviewCommentStashSheet.swift in Sources */,
 				D71893B3778728A5F5EDD911 /* ReviewCommentStore.swift in Sources */,
 				0D3A55CEE2480CAF46850E81 /* ReviewCommentStripChrome.swift in Sources */,

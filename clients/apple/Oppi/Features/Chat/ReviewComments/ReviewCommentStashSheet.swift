@@ -84,6 +84,7 @@ struct ReviewCommentStashContent: View {
             ForEach(sortedComments) { comment in
                 ReviewCommentStashRow(
                     comment: comment,
+                    comments: comments,
                     isFocused: comment.id == focusedCommentId,
                     onEdit: { editingComment = comment },
                     onDelete: { onDelete(comment) }
@@ -156,6 +157,7 @@ private struct ReviewCommentStashSheetChromeModifier: ViewModifier {
 
 private struct ReviewCommentStashRow: View {
     let comment: ReviewComment
+    let comments: [ReviewComment]
     let isFocused: Bool
     let onEdit: () -> Void
     let onDelete: () -> Void
@@ -167,12 +169,13 @@ private struct ReviewCommentStashRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.themeCyan)
 
-                Text(comment.stashLocationText)
+                Text(ReviewCommentStashLocation.compactText(for: comment, among: comments))
                     .font(.caption.monospaced())
                     .foregroundStyle(.themeComment)
-                    .lineLimit(1)
-
-                Spacer(minLength: 8)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel(ReviewCommentStashLocation.completeText(for: comment))
 
                 if isFocused {
                     Image(systemName: "scope")
@@ -257,7 +260,7 @@ private struct ReviewCommentEditorView: View {
     var body: some View {
         Form {
             Section("Location") {
-                Text(comment.stashLocationText)
+                Text(ReviewCommentStashLocation.completeText(for: comment))
                     .font(.caption.monospaced())
                     .foregroundStyle(.themeComment)
             }
@@ -326,34 +329,5 @@ private extension ReviewComment {
         guard let text = reference.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else { return nil }
         return text
-    }
-
-    var stashLocationText: String {
-        if let path = reference.displayPath, !path.isEmpty {
-            var text = path
-            if let startLine = reference.startLine {
-                text += ":\(startLine)"
-                if let endLine = reference.endLine, endLine != startLine {
-                    text += "-\(endLine)"
-                }
-            }
-            return text
-        }
-        if let label = reference.label, !label.isEmpty {
-            return label
-        }
-        return stashSourceText
-    }
-
-    var stashSourceText: String {
-        switch reference.source {
-        case .gitDiff: return "Diff"
-        case .file: return "File"
-        case .timelineText: return "Timeline"
-        case .toolOutput: return "Tool output"
-        case .terminalOutput: return "Terminal"
-        case .image: return "Image"
-        case .unknown: return "Review comment"
-        }
     }
 }
