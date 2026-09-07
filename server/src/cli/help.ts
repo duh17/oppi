@@ -1252,9 +1252,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "With --since/--until and no query, results sort by updated_at descending.",
       "Time bounds accept epoch milliseconds, ISO timestamps, local-calendar YYYY-MM-DD dates, or relative ages such as 20m, 36h, and 2d (now minus that duration).",
     ],
-    examples: [
-      { command: "oppi session search tests --workspace ws_123 --since 2d --json" },
-    ],
+    examples: [{ command: "oppi session search tests --workspace ws_123 --since 2d --json" }],
   },
   {
     path: ["session", "inspect"],
