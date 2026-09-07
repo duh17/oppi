@@ -33,6 +33,8 @@ struct ScreenshotPreviewView: View {
             ServerResourcesScreenshotPreview(screen: .extensions)
         case "server-resources-cached-offline":
             ServerResourcesScreenshotPreview(screen: .cachedOffline)
+        case "server-provider-navigation-regression":
+            ServerProviderNavigationRegressionPreview()
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
         case "inbox-provider-setup-empty":

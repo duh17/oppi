@@ -31,6 +31,73 @@ enum ServerDetailMobileOutputGuideState: Equatable {
     }
 }
 
+/// Opens Model Providers for the same visible host `ServerDetailView` shows.
+///
+/// Active host wins (`ServerSelection.resolveVisible`); frozen id is fallback.
+@MainActor
+enum ServerDetailModelProvidersNavigation {
+    static func visibleServer(
+        activeServerId: String?,
+        frozenServer: PairedServer,
+        servers: [PairedServer]
+    ) -> PairedServer {
+        ServerSelection.resolveVisible(
+            activeId: activeServerId,
+            frozenId: frozenServer.id,
+            from: servers
+        ) ?? servers.first { $0.id == frozenServer.id } ?? frozenServer
+    }
+
+    static func open(
+        navigation: AppNavigation,
+        activeServerId: String?,
+        frozenServer: PairedServer,
+        servers: [PairedServer]
+    ) {
+        let visible = visibleServer(
+            activeServerId: activeServerId,
+            frozenServer: frozenServer,
+            servers: servers
+        )
+        navigation.openModelProviders(ModelProvidersNavTarget(serverId: visible.id))
+    }
+}
+
+/// Settings drill-in for this server's model providers.
+///
+/// Keeps setup/status words and color, and uses a standard disclosure
+/// indicator on the whole row so it does not read as a passive Status value.
+struct ServerModelProvidersNavigationRow: View {
+    let summary: String
+    let summaryStyle: ThemeShapeStyle
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(HostSwitcherDestination.modelProviders.menuTitle)
+                    .foregroundStyle(.themeFg)
+                    .layoutPriority(1)
+                Spacer(minLength: 8)
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(summaryStyle)
+                    .lineLimit(1)
+                    .layoutPriority(0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("server.modelProviders.open")
+        .accessibilityLabel(HostSwitcherDestination.modelProviders.menuTitle)
+        .accessibilityValue(summary)
+    }
+}
+
 struct ServerDetailView: View {
     let server: PairedServer
     var presentation: ServerDetailPresentation = .details
@@ -68,11 +135,11 @@ struct ServerDetailView: View {
     @State private var showAddServer = false
 
     private var pairedServer: PairedServer {
-        ServerSelection.resolveVisible(
-            activeId: coordinator.activeServerId,
-            frozenId: server.id,
-            from: serverStore.servers
-        ) ?? serverStore.server(for: server.id) ?? server
+        ServerDetailModelProvidersNavigation.visibleServer(
+            activeServerId: coordinator.activeServerId,
+            frozenServer: server,
+            servers: serverStore.servers
+        )
     }
 
     private var hostSwitcherDestination: HostSwitcherDestination {
@@ -236,18 +303,17 @@ struct ServerDetailView: View {
         }
 
         Section {
-            Button {
-                navigation.openModelProviders(ModelProvidersNavTarget(serverId: pairedServer.id))
-            } label: {
-                HStack {
-                    Text(HostSwitcherDestination.modelProviders.menuTitle)
-                    Spacer()
-                    Text(providerConfigurationSummary)
-                        .font(.caption)
-                        .foregroundStyle(providerConfigurationSummaryStyle)
-                }
+            ServerModelProvidersNavigationRow(
+                summary: providerConfigurationSummary,
+                summaryStyle: providerConfigurationSummaryStyle
+            ) {
+                ServerDetailModelProvidersNavigation.open(
+                    navigation: navigation,
+                    activeServerId: coordinator.activeServerId,
+                    frozenServer: server,
+                    servers: serverStore.servers
+                )
             }
-            .accessibilityIdentifier("server.modelProviders.open")
         }
 
         Section {
@@ -1410,7 +1476,130 @@ struct ModelProvidersQuotaPreview: View {
     }
 }
 
+/// Isolated 320pt Server Settings row that uses the production providers row
+/// and `ServerDetailModelProvidersNavigation` / `AppNavigation` owner.
+///
+/// Does not mount `ServerDetailView`: `ServerStore.init()` always loads the
+/// Keychain index, so a real settings view would resolve against whatever the
+/// pool simulator already has instead of the fixture hosts.
+struct ServerProviderNavigationRegressionPreview: View {
+    static let proofWidth: CGFloat = 320
+    static let sourceServerID = "sha256:source-server"
+    static let otherServerID = "sha256:other-server"
+
+    @State private var navigation: AppNavigation
+
+    private let sourceServer: PairedServer
+    private let otherServer: PairedServer
+    private let servers: [PairedServer]
+    private let themeID: ThemeID = .light
+
+    init() {
+        ThemeRuntimeState.setThemeID(.light)
+        let other = Self.makeServer(id: Self.otherServerID, name: "Other Host", host: "other.local")
+        let source = Self.makeServer(id: Self.sourceServerID, name: "Source Host", host: "source.local")
+        otherServer = other
+        sourceServer = source
+        servers = [other, source]
+        let navigation = AppNavigation()
+        navigation.launchPhase = .ready
+        navigation.showOnboarding = false
+        _navigation = State(initialValue: navigation)
+    }
+
+    var body: some View {
+        @Bindable var navigation = navigation
+        NavigationStack(path: $navigation.workspacePath) {
+            settingsList
+                .navigationTitle(HostSwitcherDestination.serverSettings.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationDestination(for: ModelProvidersNavTarget.self) { target in
+                    openedProviders(target)
+                }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ServerSwitcherPill(
+                            server: sourceServer,
+                            connectionState: .connected
+                        )
+                        .accessibilityLabel("Current server: \(sourceServer.name)")
+                    }
+                }
+        }
+        .preferredColorScheme(.light)
+        .environment(\.theme, themeID.appTheme)
+        .environment(\.themeID, themeID)
+        .accessibilityIdentifier(
+            ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
+        )
+    }
+
+    private var settingsList: some View {
+        List {
+            Section {
+                LabeledContent("Connection", value: "Connected via paired HTTPS")
+                LabeledContent("Uptime", value: "2d 4h")
+            } header: {
+                Text("Status")
+            } footer: {
+                Text("Also paired: \(otherServer.name)")
+                    .accessibilityIdentifier("server.modelProviders.otherServer")
+            }
+
+            Section {
+                ServerModelProvidersNavigationRow(
+                    summary: "Needs setup",
+                    summaryStyle: .themeOrange
+                ) {
+                    ServerDetailModelProvidersNavigation.open(
+                        navigation: navigation,
+                        activeServerId: sourceServer.id,
+                        frozenServer: sourceServer,
+                        servers: servers
+                    )
+                }
+            }
+        }
+        .frame(width: Self.proofWidth)
+        .accessibilityIdentifier("server.details.list")
+    }
+
+    @ViewBuilder
+    private func openedProviders(_ target: ModelProvidersNavTarget) -> some View {
+        List {
+            LabeledContent("Opened server", value: target.serverId)
+                .accessibilityIdentifier("server.modelProviders.openedServerId")
+        }
+        .navigationTitle(HostSwitcherDestination.modelProviders.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("server.modelProviders.list")
+    }
+
+    private static func makeServer(id: String, name: String, host: String) -> PairedServer {
+        let credentials = ServerCredentials(
+            host: host,
+            port: 7749,
+            token: "sk_preview",
+            name: name,
+            serverFingerprint: id
+        )
+        guard let server = PairedServer(from: credentials, sortOrder: 0) else {
+            preconditionFailure("ServerProviderNavigationRegressionPreview requires a server fingerprint")
+        }
+        return server
+    }
+}
+
 struct ServerSettingsChromePreview: View {
+    private let themeID: ThemeID
+
+    init() {
+        themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "dark"
+            ? .dark
+            : .light
+        ThemeRuntimeState.setThemeID(themeID)
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -1427,14 +1616,11 @@ struct ServerSettingsChromePreview: View {
                 }
 
                 Section {
-                    HStack {
-                        Text(HostSwitcherDestination.modelProviders.menuTitle)
-                        Spacer()
-                        Text("Needs setup")
-                            .font(.caption)
-                            .foregroundStyle(.themeOrange)
-                    }
-                    .accessibilityIdentifier("server.modelProviders.open")
+                    ServerModelProvidersNavigationRow(
+                        summary: "Needs setup",
+                        summaryStyle: .themeOrange,
+                        action: {}
+                    )
                 }
 
                 Section {
@@ -1466,6 +1652,9 @@ struct ServerSettingsChromePreview: View {
                 }
             }
         }
+        .preferredColorScheme(themeID == .light ? .light : .dark)
+        .environment(\.theme, themeID.appTheme)
+        .environment(\.themeID, themeID)
         .accessibilityIdentifier(
             ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
         )
