@@ -163,7 +163,8 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
                 engine: engine,
                 locale: preparation.transcriptionLocale ?? context.locale
             ),
-            preferredAudioFormat: preparation.audioFormat
+            preferredAudioFormat: preparation.audioFormat,
+            contextualStrings: context.contextualStrings
         )
     }
 
@@ -349,6 +350,17 @@ extension AppleOnDeviceVoiceProvider {
 /// On-device SpeechAnalyzer knobs. iOS 27 uses `AnalyzerInputConverter` in
 /// `AudioEngineHelper`; remaining capture APIs are listed in
 /// `.internal/reports/ios27-on-device-dictation-improvements-2026-09-06.md`.
+enum OnDeviceDictationAnalysisContext {
+    static func make(phrases: [String]) -> AnalysisContext {
+        let context = AnalysisContext()
+        let capped = DictationHintExtractor.merge(primary: phrases, extra: [])
+        if !capped.isEmpty {
+            context.contextualStrings = [.general: capped]
+        }
+        return context
+    }
+}
+
 enum AppleOnDeviceSpeechSettings {
     static let speechPreset = SpeechTranscriber.Preset.progressiveTranscription
     static let dictationPreset = DictationTranscriber.Preset.progressiveLongDictation
@@ -382,6 +394,7 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
 
     private let transcriber: TranscriberModule
     private let preferredAudioFormat: AVAudioFormat?
+    private let contextualStrings: [String]
     private let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     private let audioLevelContinuation: AsyncStream<Float>.Continuation
 
@@ -393,10 +406,12 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
 
     init(
         transcriber: TranscriberModule,
-        preferredAudioFormat: AVAudioFormat?
+        preferredAudioFormat: AVAudioFormat?,
+        contextualStrings: [String]
     ) {
         self.transcriber = transcriber
         self.preferredAudioFormat = preferredAudioFormat
+        self.contextualStrings = contextualStrings
 
         let eventPair: (
             AsyncThrowingStream<VoiceSessionEvent, Error>,
@@ -426,6 +441,17 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
             options: AppleOnDeviceSpeechSettings.analyzerOptions
         )
         analyzer = newAnalyzer
+        if !contextualStrings.isEmpty {
+            do {
+                try await newAnalyzer.setContext(
+                    OnDeviceDictationAnalysisContext.make(phrases: contextualStrings)
+                )
+            } catch {
+                appleVoiceProviderLogger.error(
+                    "Failed to set dictation hint context: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
 
         let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
         inputBuilder = builder

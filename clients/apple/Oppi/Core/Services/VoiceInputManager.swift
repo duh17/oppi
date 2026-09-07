@@ -566,6 +566,15 @@ final class VoiceInputManager {
     /// User-selected engine routing mode.
     private(set) var engineMode: EngineMode = .auto
 
+    /// Precomputed on-device dictation vocabulary from the latest assistant reply.
+    private var conversationHintPhrases: [String] = []
+    private var conversationHintSource: String?
+    private var conversationHintGeneration = 0
+    private var foundationModelHintTask: Task<Void, Never>?
+    #if DEBUG
+    var _testFoundationModelExtract: ((String) async -> [String])?
+    #endif
+
     // MARK: - Init
 
     /// Process-wide capture owner. Apple allows few simultaneous `SpeechAnalyzer`
@@ -624,6 +633,64 @@ final class VoiceInputManager {
         activeEngine = nil
         invalidateModelCache()
         logger.info("Engine mode: \(mode.logName)")
+    }
+
+    /// Precompute dictation hints when an assistant message lands. Never call from startRecording.
+    func updateConversationHints(fromAssistantMessage text: String?) {
+        let source = text ?? ""
+        if source == conversationHintSource { return }
+        conversationHintSource = source
+        conversationHintGeneration += 1
+        let generation = conversationHintGeneration
+
+        cancelFoundationModelHints()
+        conversationHintPhrases = DictationHintExtractor.extract(from: source)
+        scheduleFoundationModelHints(generation: generation)
+    }
+
+    /// Drop vocabulary when this session still owns the shared capture manager.
+    func clearConversationHints(ifOwnedBy sessionId: String) {
+        guard activeSessionId == sessionId else { return }
+        updateConversationHints(fromAssistantMessage: nil)
+    }
+
+    private func cancelFoundationModelHints() {
+        foundationModelHintTask?.cancel()
+        foundationModelHintTask = nil
+    }
+
+    private func scheduleFoundationModelHints(generation: Int) {
+        guard AppPreferences.Voice.isFoundationModelDictationHintsEnabled else { return }
+        let truncated = DictationHintExtractor.truncatedSource(from: conversationHintSource ?? "")
+        guard !truncated.isEmpty else { return }
+
+        // One cancellable task owns the extract. Do not nest Task.detached — cancel
+        // must stop this generation before a newer message or mic start.
+        foundationModelHintTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let extra = await self.foundationModelHints(from: truncated)
+            guard !Task.isCancelled else { return }
+            self.applyFoundationModelHints(extra, generation: generation)
+        }
+    }
+
+    private func foundationModelHints(from truncated: String) async -> [String] {
+        #if DEBUG
+        if let hook = _testFoundationModelExtract {
+            return await hook(truncated)
+        }
+        #endif
+        try? await Task.sleep(for: .milliseconds(400))
+        guard !Task.isCancelled else { return [] }
+        return await DictationHintFoundationModel.extract(from: truncated)
+    }
+
+    private func applyFoundationModelHints(_ extra: [String], generation: Int) {
+        guard generation == conversationHintGeneration else { return }
+        conversationHintPhrases = DictationHintExtractor.merge(
+            primary: conversationHintPhrases,
+            extra: extra
+        )
     }
 
     // MARK: - Locale Resolution
@@ -804,6 +871,7 @@ final class VoiceInputManager {
         resultUpdateCount = 0
         replaceTranscriptState.reset()
         activeRecordingSource = source
+        cancelFoundationModelHints()
 
         state = .preparingModel
         let startTime = ContinuousClock.now
@@ -841,7 +909,8 @@ final class VoiceInputManager {
             source: source,
             serverCredentials: serverCredentials,
             serverConnection: serverConnection,
-            serverDictationTarget: serverDictationTarget
+            serverDictationTarget: serverDictationTarget,
+            contextualStrings: conversationHintPhrases
         )
         let provider = try provider(for: engine)
         var modelPathTag = "warm_cache"
@@ -1629,6 +1698,10 @@ extension VoiceInputManager {
     var _testActiveRecordingSource: String? {
         get { activeRecordingSource }
         set { activeRecordingSource = newValue }
+    }
+
+    var _testConversationHints: [String] {
+        conversationHintPhrases
     }
 
     // periphery:ignore - used by VoiceInputManagerTests via @testable import

@@ -20,19 +20,22 @@ struct VoiceProviderContext {
     let serverCredentials: ServerCredentials?
     let serverConnection: ServerConnection?
     let serverDictationTarget: ServerDictationTarget?
+    let contextualStrings: [String]
 
     init(
         locale: Locale,
         source: String,
         serverCredentials: ServerCredentials? = nil,
         serverConnection: ServerConnection? = nil,
-        serverDictationTarget: ServerDictationTarget? = nil
+        serverDictationTarget: ServerDictationTarget? = nil,
+        contextualStrings: [String] = []
     ) {
         self.locale = locale
         self.source = source
         self.serverCredentials = serverCredentials
         self.serverConnection = serverConnection
         self.serverDictationTarget = serverDictationTarget
+        self.contextualStrings = contextualStrings
     }
 }
 
