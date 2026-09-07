@@ -191,6 +191,19 @@ struct AskCardTests {
         #expect(AskCard.pageCount(for: request) == 1)
     }
 
+    @Test("Page clamp keeps a same-id shorter replacement in bounds")
+    func pageClampKeepsSameIdShorterReplacementInBounds() {
+        let short = Self.singleSelectRequest()
+        #expect(AskCard.clampedPage(0, for: short) == 0)
+        #expect(AskCard.clampedPage(2, for: short) == 0)
+        #expect(AskCard.clampedPage(-1, for: short) == 0)
+
+        let multi = Self.multiQuestionRequest()
+        #expect(AskCard.clampedPage(0, for: multi) == 0)
+        #expect(AskCard.clampedPage(1, for: multi) == 1)
+        #expect(AskCard.clampedPage(4, for: multi) == 1)
+    }
+
     // MARK: - Telemetry Tags
 
     @Test("Ask response telemetry tags are bounded and content-free")
@@ -217,4 +230,292 @@ struct AskCardTests {
         #expect(tags.values.contains("jest") == false)
     }
 
+    // MARK: - Delayed auto-advance
+
+    @Test("Delayed follow-through advances exactly once from the scheduled page")
+    func delayedFollowThroughAdvancesOnce() async {
+        let delay = AskInlineAutoAdvanceManualWait(mode: .ignoreCancellation)
+        let controller = AskInlineAutoAdvanceController(wait: { try await delay.wait($0) })
+        var page = 0
+
+        controller.noteIdentity(requestID: "ask-multi", page: 0, questionIDs: ["q1", "q2"])
+        let ticket = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-multi",
+            page: 0
+        ) {
+            page += 1
+        }
+
+        #expect(page == 0)
+        await completeWait(delay, ticket: ticket)
+        let advanced = await waitForMainActorCondition(timeout: .milliseconds(300)) { page == 1 }
+        #expect(advanced)
+        #expect(page == 1)
+
+        await completeWait(delay, ticket: ticket)
+        let stayed = await waitForMainActorConditionToStayTrue(for: .milliseconds(50)) { page == 1 }
+        #expect(stayed)
+    }
+
+    @Test("Canceled auto-advance wait does not still execute after try?")
+    func canceledWaitDoesNotAdvanceAfterTryQuestion() async {
+        let delay = AskInlineAutoAdvanceManualWait(mode: .throwOnCancellation)
+        let controller = AskInlineAutoAdvanceController(wait: { try await delay.wait($0) })
+        var page = 0
+
+        controller.noteIdentity(requestID: "ask-multi", page: 0, questionIDs: ["q1", "q2"])
+        let ticket = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-multi",
+            page: 0
+        ) {
+            page += 1
+        }
+        controller.invalidate()
+
+        let settled = await waitForMainActorCondition(timeout: .milliseconds(300)) {
+            !delay.isPending(ticket)
+        }
+        #expect(settled)
+        #expect(page == 0)
+
+        await completeWait(delay, ticket: ticket)
+        let stayed = await waitForMainActorConditionToStayTrue(for: .milliseconds(50)) { page == 0 }
+        #expect(stayed)
+    }
+
+    @Test("Duplicate selections cannot skip a later question")
+    func duplicateSelectionsCannotSkip() async {
+        let delay = AskInlineAutoAdvanceManualWait(mode: .ignoreCancellation)
+        let controller = AskInlineAutoAdvanceController(wait: { try await delay.wait($0) })
+        var page = 0
+
+        controller.noteIdentity(requestID: "ask-multi", page: 0, questionIDs: ["q1", "q2", "q3"])
+        let first = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-multi",
+            page: 0
+        ) {
+            if page < 2 { page += 1 }
+        }
+        let second = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-multi",
+            page: 0
+        ) {
+            if page < 2 { page += 1 }
+        }
+        #expect(first != second)
+
+        await completeWait(delay, ticket: first)
+        await completeWait(delay, ticket: second)
+        let advancedOnce = await waitForMainActorCondition(timeout: .milliseconds(300)) { page == 1 }
+        #expect(advancedOnce)
+        let stayed = await waitForMainActorConditionToStayTrue(for: .milliseconds(50)) { page == 1 }
+        #expect(stayed)
+    }
+
+    @Test("Newer Ignore page change is not overwritten by a pending auto-advance")
+    func newerIgnoreWinsOverPendingAdvance() async {
+        let delay = AskInlineAutoAdvanceManualWait(mode: .ignoreCancellation)
+        let controller = AskInlineAutoAdvanceController(wait: { try await delay.wait($0) })
+        var page = 0
+
+        controller.noteIdentity(requestID: "ask-multi", page: 0, questionIDs: ["q1", "q2", "q3"])
+        let ticket = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-multi",
+            page: 0
+        ) {
+            page += 1
+        }
+
+        page = 1
+        controller.noteIdentity(requestID: "ask-multi", page: 1, questionIDs: ["q1", "q2", "q3"])
+        controller.invalidate()
+
+        await completeWait(delay, ticket: ticket)
+        let stayed = await waitForMainActorConditionToStayTrue(for: .milliseconds(50)) { page == 1 }
+        #expect(stayed)
+    }
+
+    @Test("Newer explicit page navigation is not overwritten by a pending auto-advance")
+    func newerPageNavigationWinsOverPendingAdvance() async {
+        let delay = AskInlineAutoAdvanceManualWait(mode: .ignoreCancellation)
+        let controller = AskInlineAutoAdvanceController(wait: { try await delay.wait($0) })
+        var page = 0
+
+        controller.noteIdentity(requestID: "ask-multi", page: 0, questionIDs: ["q1", "q2", "q3"])
+        let ticket = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-multi",
+            page: 0
+        ) {
+            page += 1
+        }
+
+        page = 2
+        controller.noteIdentity(requestID: "ask-multi", page: 2, questionIDs: ["q1", "q2", "q3"])
+        controller.invalidate()
+
+        await completeWait(delay, ticket: ticket)
+        let stayed = await waitForMainActorConditionToStayTrue(for: .milliseconds(50)) { page == 2 }
+        #expect(stayed)
+    }
+
+    @Test("Request replacement cannot advance the new card")
+    func requestReplacementCannotAdvanceNewCard() async {
+        let delay = AskInlineAutoAdvanceManualWait(mode: .ignoreCancellation)
+        let controller = AskInlineAutoAdvanceController(wait: { try await delay.wait($0) })
+        var page = 0
+
+        controller.noteIdentity(requestID: "ask-1", page: 0, questionIDs: ["q1", "q2"])
+        let ticket = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-1",
+            page: 0
+        ) {
+            page += 1
+        }
+
+        page = 0
+        controller.noteIdentity(requestID: "ask-2", page: 0, questionIDs: ["n1"])
+        controller.invalidate()
+
+        await completeWait(delay, ticket: ticket)
+        let stayed = await waitForMainActorConditionToStayTrue(for: .milliseconds(50)) { page == 0 }
+        #expect(stayed)
+    }
+
+    @Test("Stale follow-through is ignored even if cancellation is swallowed")
+    func staleFollowThroughIgnoredWhenCancellationIsSwallowed() async {
+        let delay = AskInlineAutoAdvanceManualWait(mode: .ignoreCancellation)
+        let controller = AskInlineAutoAdvanceController(wait: { try await delay.wait($0) })
+        var page = 0
+
+        controller.noteIdentity(requestID: "ask-1", page: 0, questionIDs: ["q1", "q2"])
+        let ticket = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-1",
+            page: 0
+        ) {
+            page += 1
+        }
+
+        controller.noteIdentity(requestID: "ask-2", page: 0, questionIDs: ["n1"])
+        await completeWait(delay, ticket: ticket)
+        let stayed = await waitForMainActorConditionToStayTrue(for: .milliseconds(50)) { page == 0 }
+        #expect(stayed)
+    }
+
+    @Test("Same-id question list change blocks a pending auto-advance")
+    func sameIdQuestionListChangeBlocksPendingAdvance() async {
+        let delay = AskInlineAutoAdvanceManualWait(mode: .ignoreCancellation)
+        let controller = AskInlineAutoAdvanceController(wait: { try await delay.wait($0) })
+        var page = 2
+
+        controller.noteIdentity(requestID: "ask-1", page: 2, questionIDs: ["q1", "q2", "q3"])
+        let ticket = await scheduleWhenWaitIsReady(
+            controller,
+            delay: delay,
+            requestID: "ask-1",
+            page: 2
+        ) {
+            page += 1
+        }
+
+        controller.noteIdentity(requestID: "ask-1", page: 0, questionIDs: ["only"])
+        await completeWait(delay, ticket: ticket)
+        let stayed = await waitForMainActorConditionToStayTrue(for: .milliseconds(50)) { page == 2 }
+        #expect(stayed)
+        #expect(AskCard.clampedPage(page, for: Self.singleSelectRequest()) == 0)
+    }
+}
+
+@MainActor
+final class AskInlineAutoAdvanceManualWait {
+    struct Ticket: Equatable {
+        let id: UInt64
+    }
+
+    enum Mode {
+        case ignoreCancellation
+        case throwOnCancellation
+    }
+
+    let mode: Mode
+    private var nextID: UInt64 = 0
+    private var continuations: [UInt64: CheckedContinuation<Void, Error>] = [:]
+    private(set) var lastRegistered: Ticket?
+
+    init(mode: Mode) {
+        self.mode = mode
+    }
+
+    func isPending(_ ticket: Ticket) -> Bool {
+        continuations[ticket.id] != nil
+    }
+
+    func wait(_ duration: Duration) async throws {
+        _ = duration
+        let ticket = Ticket(id: nextID)
+        nextID += 1
+        lastRegistered = ticket
+        let throwOnCancel = mode == .throwOnCancellation
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                continuations[ticket.id] = continuation
+            }
+        } onCancel: {
+            guard throwOnCancel else { return }
+            Task { @MainActor in
+                self.fail(ticket)
+            }
+        }
+    }
+
+    func complete(_ ticket: Ticket) {
+        guard let continuation = continuations.removeValue(forKey: ticket.id) else { return }
+        continuation.resume(returning: ())
+    }
+
+    func fail(_ ticket: Ticket) {
+        guard let continuation = continuations.removeValue(forKey: ticket.id) else { return }
+        continuation.resume(throwing: CancellationError())
+    }
+}
+
+@MainActor
+private func scheduleWhenWaitIsReady(
+    _ controller: AskInlineAutoAdvanceController,
+    delay: AskInlineAutoAdvanceManualWait,
+    requestID: String,
+    page: Int,
+    advance: @escaping @MainActor () -> Void
+) async -> AskInlineAutoAdvanceManualWait.Ticket {
+    let previous = delay.lastRegistered
+    controller.schedule(requestID: requestID, page: page, advance: advance)
+    let started = await waitForMainActorCondition(timeout: .milliseconds(300)) {
+        guard let latest = delay.lastRegistered, latest != previous else { return false }
+        return delay.isPending(latest)
+    }
+    #expect(started, "Expected a new injected auto-advance wait to register")
+    return delay.lastRegistered ?? AskInlineAutoAdvanceManualWait.Ticket(id: .max)
+}
+
+@MainActor
+private func completeWait(
+    _ delay: AskInlineAutoAdvanceManualWait,
+    ticket: AskInlineAutoAdvanceManualWait.Ticket
+) async {
+    delay.complete(ticket)
 }

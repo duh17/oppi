@@ -122,6 +122,8 @@ struct ScreenshotPreviewView: View {
             AskCardExpandedSheetPreview()
         case "ask-card-expanded-custom":
             AskCardExpandedCustomPreview()
+        case "ask-card-intent-regression":
+            AskCardIntentRegressionPreview()
         case "oppi-command-approval-inline":
             OppiCommandApprovalInlinePreview()
         case "context-bar-overlap":

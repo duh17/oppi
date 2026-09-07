@@ -71,6 +71,7 @@ struct ChatInputBar<ActionRow: View>: View {
     var askRequest: AskRequest?
     var onAskSubmit: (([String: AskAnswer]) -> Void)?
     var onAskIgnoreAll: (() -> Void)?
+    var autoAdvanceController: AskInlineAutoAdvanceController? = nil
 
     let slashCommands: [SlashCommand]
     let fileSuggestions: [FileSuggestion]
@@ -200,6 +201,10 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var isSendInFlight: Bool {
         isSending || isFinishingVoiceBeforeSend
+    }
+
+    private var isCurrentAskSubmitted: Bool {
+        askClearing.submittedRequestID != nil && askClearing.submittedRequestID == askRequest?.id
     }
 
     private var sendActionStrokeColor: Color {
@@ -600,7 +605,9 @@ struct ChatInputBar<ActionRow: View>: View {
                 markAskRequestSubmitted()
                 onAskIgnoreAll?()
             },
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil
+            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+            submittedRequestID: askClearing.submittedRequestID,
+            autoAdvanceController: autoAdvanceController
         )
     }
 
@@ -748,6 +755,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var ignoreAskActionButton: some View {
         Button(action: {
+            guard !isCurrentAskSubmitted else { return }
             markAskRequestSubmitted()
             onAskIgnoreAll?()
             FeatureEducationTips.markPromptAnswered()
@@ -763,7 +771,7 @@ struct ChatInputBar<ActionRow: View>: View {
             .frame(width: actionVisualDiameter, height: actionVisualDiameter)
         }
         .buttonStyle(.plain)
-        .disabled(onAskIgnoreAll == nil)
+        .disabled(onAskIgnoreAll == nil || isCurrentAskSubmitted)
         .accessibilityIdentifier("chat.askIgnore")
         .accessibilityLabel("Ignore request")
         .accessibilityHint("Responds to the current extension request as ignored")
@@ -1210,6 +1218,7 @@ struct ChatInputBar<ActionRow: View>: View {
             return
         }
         if askRequest != nil {
+            guard !isCurrentAskSubmitted else { return }
             markAskRequestSubmitted()
             onAskIgnoreAll?()
             FeatureEducationTips.markPromptAnswered()
@@ -1222,6 +1231,7 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private func handleAskComposerSendIfNeeded() -> Bool {
+        guard !isCurrentAskSubmitted else { return true }
         guard let transition = Self.askComposerSendTransition(
             request: askRequest,
             currentPage: askClearing.currentPage,

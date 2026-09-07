@@ -17,6 +17,8 @@ struct AskCard: View {
     let onSubmit: ([String: AskAnswer]) -> Void
     let onIgnoreAll: () -> Void
     var voiceInputManager: VoiceInputManager? = nil
+    var submittedRequestID: String? = nil
+    var autoAdvanceController: AskInlineAutoAdvanceController? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -26,9 +28,13 @@ struct AskCard: View {
     @State private var expandedSheetDetent: PresentationDetent = .large
     @State private var presentedAtNs: UInt64 = 0
     @State private var didRecordResponseMetric = false
+    @State private var ownedAutoAdvanceController = AskInlineAutoAdvanceController()
 
     private let cardCornerRadius: CGFloat = 14
-    private let autoAdvanceDelay: Duration = .milliseconds(200)
+
+    private var pageAdvance: AskInlineAutoAdvanceController {
+        autoAdvanceController ?? ownedAutoAdvanceController
+    }
 
     /// True when this is a single-question, single-select ask.
     /// Tap sends immediately — no pager, no submit page.
@@ -48,6 +54,10 @@ struct AskCard: View {
 
     private var isLastQuestionPage: Bool {
         !isSingleQuestionSingleSelect && currentPage == request.questions.count - 1
+    }
+
+    private var isAskSubmitted: Bool {
+        submittedRequestID == request.id
     }
 
     var body: some View {
@@ -73,6 +83,10 @@ struct AskCard: View {
             if presentedAtNs == 0 {
                 presentedAtNs = Self.timestampNs()
             }
+            applyRequestIdentity(request, page: currentPage, invalidatePending: isAskSubmitted)
+        }
+        .onDisappear {
+            pageAdvance.invalidate()
         }
         .padding(.vertical, 10)
         .background(theme.bg.secondary, in: RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
@@ -85,13 +99,31 @@ struct AskCard: View {
         // stop_confirmed). Server-side cleanup in agent_end cancels deferred SDK
         // promises so the agent never gets stuck waiting.
         // Announce page changes for VoiceOver
+        .onChange(of: request) { _, newRequest in
+            let clamped = Self.clampedPage(currentPage, for: newRequest)
+            if clamped != currentPage {
+                currentPage = clamped
+            }
+            applyRequestIdentity(newRequest, page: clamped, invalidatePending: true)
+        }
+        .onChange(of: submittedRequestID) { _, newID in
+            if newID == request.id {
+                pageAdvance.invalidate()
+            }
+        }
         .onChange(of: currentPage) {
+            applyRequestIdentity(request, page: currentPage, invalidatePending: true)
             let text = Self.pageAnnouncementText(
                 page: currentPage,
                 questions: request.questions,
                 isSingleQuestionSingleSelect: isSingleQuestionSingleSelect
             )
             UIAccessibility.post(notification: .announcement, argument: text)
+        }
+        .onChange(of: isExpanded) {
+            if isExpanded {
+                pageAdvance.invalidate()
+            }
         }
         .sheet(isPresented: $isExpanded) {
             AskCardExpanded(
@@ -186,6 +218,7 @@ struct AskCard: View {
 
     private var expandButton: some View {
         Button {
+            pageAdvance.invalidate()
             AppHaptics.toolbarExpansion()
             isExpanded = true
         } label: {
@@ -248,10 +281,11 @@ struct AskCard: View {
         return Button {
             AskCardShared.handleOptionTap(option, question: question, answers: $answers) {
                 if isSingleQuestionSingleSelect {
+                    pageAdvance.invalidate()
                     submitAnswers(answers, surface: "inline")
                 } else if !isLastQuestionPage {
-                    Task {
-                        try? await Task.sleep(for: autoAdvanceDelay)
+                    applyRequestIdentity(request, page: currentPage, invalidatePending: false)
+                    pageAdvance.schedule(requestID: request.id, page: currentPage) {
                         withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
                             advanceToNextPage()
                         }
@@ -267,6 +301,7 @@ struct AskCard: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(isAskSubmitted)
         .accessibilityIdentifier("ask.option.\(option.value)")
     }
 
@@ -279,8 +314,16 @@ struct AskCard: View {
             } label: {
                 Text("\(Text(isLastQuestionPage ? "Ignore & Send" : "Ignore").foregroundStyle(.themeComment))\(Text(" \u{2192}").foregroundStyle(.themeComment.opacity(0.6)))")
                     .font(.caption)
+                    .frame(
+                        minWidth: Self.quietControlMinimumHitSize,
+                        minHeight: Self.quietControlMinimumHitSize,
+                        alignment: .trailing
+                    )
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(isAskSubmitted)
+            .accessibilityIdentifier(Self.ignoreAccessibilityIdentifier)
 
             if isLastQuestionPage {
                 Button {
@@ -310,16 +353,25 @@ struct AskCard: View {
     private var pageIndicator: some View {
         Group {
             if totalPages <= 4 {
-                HStack(spacing: 5) {
+                HStack(spacing: 8) {
                     ForEach(0..<totalPages, id: \.self) { index in
-                        Circle()
-                            .fill(index == currentPage ? theme.accent.blue : theme.text.tertiary.opacity(0.3))
-                            .frame(width: 6, height: 6)
-                            .onTapGesture {
-                                withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
-                                    currentPage = index
-                                }
-                            }
+                        Button {
+                            selectPage(index)
+                        } label: {
+                            Circle()
+                                .fill(index == currentPage ? theme.accent.blue : theme.text.tertiary.opacity(0.3))
+                                .frame(width: 6, height: 6)
+                                .frame(
+                                    width: Self.quietControlMinimumHitSize,
+                                    height: Self.quietControlMinimumHitSize
+                                )
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isAskSubmitted)
+                        .accessibilityLabel("Question \(index + 1) of \(totalPages)")
+                        .accessibilityIdentifier(Self.pageAccessibilityIdentifier(index))
+                        .accessibilityAddTraits(index == currentPage ? [.isSelected] : [])
                     }
                 }
             } else {
@@ -335,6 +387,7 @@ struct AskCard: View {
 
     private func confirmMultiSelect(for question: AskQuestion) {
         AppHaptics.impact(style: .light)
+        pageAdvance.invalidate()
         withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
             advanceToNextPage()
         }
@@ -342,6 +395,7 @@ struct AskCard: View {
 
     private func handleIgnore(question: AskQuestion) {
         AppHaptics.impact(style: .soft)
+        pageAdvance.invalidate()
         // Remove any existing answer — ignored = omitted from map
         answers[question.id] = nil
 
@@ -358,6 +412,25 @@ struct AskCard: View {
         }
     }
 
+    private func selectPage(_ index: Int) {
+        pageAdvance.invalidate()
+        guard index != currentPage else { return }
+        withAnimation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion)) {
+            currentPage = index
+        }
+    }
+
+    private func applyRequestIdentity(
+        _ request: AskRequest,
+        page: Int,
+        invalidatePending: Bool
+    ) {
+        pageAdvance.noteIdentity(request: request, page: page)
+        if invalidatePending {
+            pageAdvance.invalidate()
+        }
+    }
+
     private func advanceToNextPage() {
         if currentPage < totalPages - 1 {
             currentPage += 1
@@ -365,12 +438,14 @@ struct AskCard: View {
     }
 
     private func submitAnswers(_ submittedAnswers: [String: AskAnswer], surface: String) {
+        pageAdvance.invalidate()
         recordResponseMetric(outcome: submittedAnswers.isEmpty ? "empty" : "answered", surface: surface, submittedAnswers: submittedAnswers)
         onSubmit(submittedAnswers)
         FeatureEducationTips.markPromptAnswered()
     }
 
     private func ignoreAll(surface: String) {
+        pageAdvance.invalidate()
         recordResponseMetric(outcome: "ignored", surface: surface, submittedAnswers: [:])
         onIgnoreAll()
         FeatureEducationTips.markPromptAnswered()
@@ -407,13 +482,103 @@ struct AskCard: View {
     }
 }
 
+// MARK: - Inline auto-advance
+
+/// Owns the delayed single-select page advance on the inline ask card.
+///
+/// A newer selection, Ignore, explicit page change, submit, expansion, or
+/// request replacement must cancel and invalidate any pending follow-through.
+@MainActor
+final class AskInlineAutoAdvanceController {
+    struct Identity: Equatable {
+        var requestID: String
+        var page: Int
+        var questionIDs: [String]
+    }
+
+    static let defaultDelay: Duration = .milliseconds(200)
+
+    typealias Wait = @MainActor (Duration) async throws -> Void
+
+    private var pending: Task<Void, Never>?
+    private(set) var generation: UInt64 = 0
+    private(set) var current: Identity?
+    private let delay: Duration
+    private let wait: Wait
+
+    init(
+        delay: Duration = defaultDelay,
+        wait: @escaping Wait = { try await Task.sleep(for: $0) }
+    ) {
+        self.delay = delay
+        self.wait = wait
+    }
+
+    func noteIdentity(request: AskRequest, page: Int) {
+        noteIdentity(
+            requestID: request.id,
+            page: page,
+            questionIDs: request.questions.map(\.id)
+        )
+    }
+
+    func noteIdentity(requestID: String, page: Int, questionIDs: [String]) {
+        current = Identity(requestID: requestID, page: page, questionIDs: questionIDs)
+    }
+
+    func invalidate() {
+        pending?.cancel()
+        pending = nil
+        generation &+= 1
+    }
+
+    func schedule(
+        requestID: String,
+        page: Int,
+        advance: @escaping @MainActor () -> Void
+    ) {
+        invalidate()
+        let scheduledGeneration = generation
+        let scheduled = Identity(
+            requestID: requestID,
+            page: page,
+            questionIDs: current?.questionIDs ?? []
+        )
+        let wait = self.wait
+        let delay = self.delay
+        pending = Task {
+            do {
+                try await wait(delay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            guard scheduledGeneration == self.generation else { return }
+            guard self.current == scheduled else { return }
+            advance()
+        }
+    }
+}
+
 // MARK: - Page Count Helper (testable)
 
 extension AskCard {
+    static let quietControlMinimumHitSize: CGFloat = ComposerInputMetrics.controlDiameter
+    static let ignoreAccessibilityIdentifier = "ask.ignore"
+
+    static func pageAccessibilityIdentifier(_ page: Int) -> String {
+        "ask.page.\(page)"
+    }
+
     /// Compute total page count for a given request.
     /// Ask cards now use one page per question (no extra review page).
     static func pageCount(for request: AskRequest) -> Int {
         max(1, request.questions.count)
+    }
+
+    static func clampedPage(_ page: Int, for request: AskRequest) -> Int {
+        let maxPage = max(0, pageCount(for: request) - 1)
+        return min(max(page, 0), maxPage)
     }
 
     static func timestampNs() -> UInt64 {
