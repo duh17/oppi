@@ -38,17 +38,6 @@ export function openDatabase(path: string): SqliteDatabase {
   return openNodeSqliteDatabase(path);
 }
 
-/**
- * Open an existing SQLite database without write capability. Callers that
- * inspect copied data must use this rather than the normal writable opener.
- */
-export function openReadOnlyDatabase(path: string): SqliteDatabase {
-  if (isBun) {
-    return openBunDatabase(path, { readonly: true });
-  }
-  return openNodeSqliteDatabase(path, { readOnly: true });
-}
-
 // ---------------------------------------------------------------------------
 // Bun runtime
 // ---------------------------------------------------------------------------
