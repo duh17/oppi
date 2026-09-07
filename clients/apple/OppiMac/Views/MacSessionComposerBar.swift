@@ -166,6 +166,9 @@ struct MacSessionComposerBar: View {
                 onClose: { showReviewCommentStash = false }
             )
         }
+        .focusedSceneValue(\.macSessionSendCommand, sendCommandItem)
+        .focusedSceneValue(\.macSessionStopTurnCommand, stopTurnCommandItem)
+        .focusedSceneValue(\.macSessionResumeCommand, resumeCommandItem)
     }
 
     private var composerSurface: MacSessionComposerSurface {
@@ -173,6 +176,88 @@ struct MacSessionComposerBar: View {
             for: store.session?.status,
             isLoading: store.isLoading
         )
+    }
+
+    private var sessionCommandAvailability: MacSessionCommandAvailability {
+        MacSessionCommandAvailability.evaluate(
+            MacSessionCommandAvailability.Input(
+                isSessionVisible: store.selectedTarget?.sessionId != nil,
+                status: store.session?.status,
+                isLoading: store.isLoading,
+                hasDraft: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                hasAttachments: !pendingAttachments.isEmpty,
+                hasStagedReviewComments: store.hasStagedReviewComments,
+                canSendMessage: store.canSendMessage,
+                isSending: isSendInFlight,
+                isStoppingTurn: store.isStoppingTurn,
+                isResuming: store.isResumingSession,
+                hasAskRequest: hasAskRequest
+            )
+        )
+    }
+
+    private var sendCommandItem: MacSessionCommandItem? {
+        commandItem(enabled: sessionCommandAvailability.send, action: sendDraft)
+    }
+
+    private var stopTurnCommandItem: MacSessionCommandItem? {
+        commandItem(enabled: sessionCommandAvailability.stopTurn, action: stopTurn)
+    }
+
+    private var resumeCommandItem: MacSessionCommandItem? {
+        commandItem(enabled: sessionCommandAvailability.resume, action: resumeSession)
+    }
+
+    private func commandItem(
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> MacSessionCommandItem? {
+        guard store.selectedTarget?.sessionId != nil else { return nil }
+        return MacSessionCommandItem(enabled: enabled, action: action)
+    }
+
+    private func sendDraft() {
+        guard let submissionID = submissionGate.begin() else { return }
+        let originatingSessionID = store.selectedTarget?.sessionId
+        Task {
+            defer { submissionGate.finish(submissionID) }
+            composerLocalError = nil
+            if dictation.isLive {
+                await dictation.stop()
+                guard MacSessionWindowChrome.shouldApplyComposerCompletion(
+                    originatingSessionID: originatingSessionID,
+                    currentSessionID: store.selectedTarget?.sessionId
+                ) else { return }
+                draft = dictation.composedDraft
+            }
+            guard MacSessionWindowChrome.shouldApplyComposerCompletion(
+                originatingSessionID: originatingSessionID,
+                currentSessionID: store.selectedTarget?.sessionId
+            ) else { return }
+            let message = draft
+            let attachments = pendingAttachments
+            let didSend = await store.sendPromptFromLocalConfig(message, attachments: attachments)
+            if didSend, MacSessionWindowChrome.shouldApplyComposerCompletion(
+                originatingSessionID: originatingSessionID,
+                currentSessionID: store.selectedTarget?.sessionId
+            ) {
+                // Upload and send can take long enough for the user to
+                // keep editing. Clear only the snapshot that was sent.
+                if draft == message {
+                    draft = ""
+                }
+                let sentAttachmentIDs = Set(attachments.map(\.id))
+                pendingAttachments.removeAll { sentAttachmentIDs.contains($0.id) }
+            }
+        }
+    }
+
+    private func stopTurn() {
+        Task { await store.stopTurnFromLocalConfig() }
+    }
+
+    private func resumeSession() {
+        Task { await store.resumeSessionFromLocalConfig() }
     }
 
     private var visibleEditorError: String? {
@@ -307,9 +392,7 @@ struct MacSessionComposerBar: View {
                     detailIsError: store.resumeError != nil
                 )
                 Spacer(minLength: 12)
-                Button {
-                    Task { await store.resumeSessionFromLocalConfig() }
-                } label: {
+                Button(action: resumeSession) {
                     if store.isResumingSession {
                         HStack(spacing: 6) {
                             ProgressView()
@@ -659,41 +742,7 @@ struct MacSessionComposerBar: View {
     }
 
     private var sendActionButton: some View {
-        Button {
-            guard let submissionID = submissionGate.begin() else { return }
-            let originatingSessionID = store.selectedTarget?.sessionId
-            Task {
-                defer { submissionGate.finish(submissionID) }
-                composerLocalError = nil
-                if dictation.isLive {
-                    await dictation.stop()
-                    guard MacSessionWindowChrome.shouldApplyComposerCompletion(
-                        originatingSessionID: originatingSessionID,
-                        currentSessionID: store.selectedTarget?.sessionId
-                    ) else { return }
-                    draft = dictation.composedDraft
-                }
-                guard MacSessionWindowChrome.shouldApplyComposerCompletion(
-                    originatingSessionID: originatingSessionID,
-                    currentSessionID: store.selectedTarget?.sessionId
-                ) else { return }
-                let message = draft
-                let attachments = pendingAttachments
-                let didSend = await store.sendPromptFromLocalConfig(message, attachments: attachments)
-                if didSend, MacSessionWindowChrome.shouldApplyComposerCompletion(
-                    originatingSessionID: originatingSessionID,
-                    currentSessionID: store.selectedTarget?.sessionId
-                ) {
-                    // Upload and send can take long enough for the user to
-                    // keep editing. Clear only the snapshot that was sent.
-                    if draft == message {
-                        draft = ""
-                    }
-                    let sentAttachmentIDs = Set(attachments.map(\.id))
-                    pendingAttachments.removeAll { sentAttachmentIDs.contains($0.id) }
-                }
-            }
-        } label: {
+        Button(action: sendDraft) {
             ZStack {
                 Circle().fill(sendActionFillColor)
                 Circle().stroke(sendActionStrokeColor, lineWidth: 1)
@@ -722,9 +771,7 @@ struct MacSessionComposerBar: View {
     /// Sends `ClientMessage.stop` (abort turn). Session-process kill stays
     /// on the session list.
     private var stopActionButton: some View {
-        Button {
-            Task { await store.stopTurnFromLocalConfig() }
-        } label: {
+        Button(action: stopTurn) {
             ZStack {
                 Circle().fill(stopActionFillColor)
                 Circle().stroke(stopActionStrokeColor, lineWidth: 1)

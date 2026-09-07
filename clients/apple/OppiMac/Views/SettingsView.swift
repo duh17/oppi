@@ -71,12 +71,11 @@ struct SettingsView: View {
     let permissionState: TCCPermissionState
     let sessionMonitor: MacSessionMonitor
     let remoteServerStore: MacRemoteServerStore
-    let checkForUpdates: @MainActor () -> Void
 
     var body: some View {
         switch pane {
         case .app:
-            AppSettingsView(checkForUpdates: checkForUpdates)
+            MacAppSettingsNativePreferencesPane()
         case .pairing:
             PairView()
         case .permissions:
@@ -104,6 +103,23 @@ struct SettingsView: View {
         case .doctor:
             DoctorView()
         }
+    }
+}
+
+/// Sidebar General row opens native Settings instead of a second preferences form.
+struct MacAppSettingsNativePreferencesPane: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("App preferences are in Settings.")
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            SettingsLink {
+                Text("Open Settings…")
+            }
+            .accessibilityIdentifier("mac.settings.openNativeSettings")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(MacSettingsPane.app.title)
     }
 }
 
@@ -184,7 +200,7 @@ enum MacAssistantAvatarKind: String, CaseIterable, Identifiable {
 /// Keep-screen-awake uses `MacScreenAwakeController` (`ProcessInfo`), not UIKit.
 /// Clear Local Cache deletes leftover pasted-attachment temps. TimelineCache is
 /// not linked on Mac, so that iOS cache is not invented here.
-private struct AppSettingsView: View {
+struct AppSettingsView: View {
     let checkForUpdates: @MainActor () -> Void
 
     @Environment(ThemeStore.self) private var themeStore

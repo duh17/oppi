@@ -54,23 +54,13 @@ struct OppiMacApp: App {
                 healthMonitor: healthMonitor,
                 permissionState: permissionState,
                 sessionMonitor: sessionMonitor,
-                pendingSessionDeepLinkURL: $pendingSessionDeepLinkURL,
-                checkForUpdates: { [updaterController] in
-                    updaterController.checkForUpdates(nil)
-                }
+                pendingSessionDeepLinkURL: $pendingSessionDeepLinkURL
             )
             .onOpenURL { url in
                 guard MacSessionDeepLink.sessionId(from: url) != nil else { return }
                 pendingSessionDeepLinkURL = url
             }
-            .environment(themeStore)
-            .environment(\.theme, themeStore.appTheme)
-            .environment(\.themeID, themeStore.activeThemeID)
-            .tint(.themeBlue)
-            .background {
-                MacThemeColorSchemeSyncView(themeStore: themeStore)
-            }
-            .preferredColorScheme(themeStore.preferredColorScheme)
+            .macSharedTheme(themeStore)
             .background(MainWindowActivationView())
             .task {
                 await permissionState.refresh()
@@ -94,6 +84,20 @@ struct OppiMacApp: App {
             }
         }
         .defaultLaunchBehavior(.presented)
+        .commands {
+            MacSessionCommands()
+        }
+
+        Settings {
+            AppSettingsView(
+                checkForUpdates: { [updaterController] in
+                    updaterController.checkForUpdates(nil)
+                }
+            )
+            .macSharedTheme(themeStore)
+            .frame(minWidth: 520, idealWidth: 560, minHeight: 420)
+        }
+        .defaultSize(width: 560, height: 640)
 
         MenuBarExtra {
             MenuBarPopover(
@@ -281,6 +285,20 @@ enum MacSessionDeepLinkNavigation {
             guard isCurrentRequest() else { return .ignore }
             return .showWorkspaces
         }
+    }
+}
+
+private extension View {
+    func macSharedTheme(_ themeStore: ThemeStore) -> some View {
+        self
+            .environment(themeStore)
+            .environment(\.theme, themeStore.appTheme)
+            .environment(\.themeID, themeStore.activeThemeID)
+            .tint(.themeBlue)
+            .background {
+                MacThemeColorSchemeSyncView(themeStore: themeStore)
+            }
+            .preferredColorScheme(themeStore.preferredColorScheme)
     }
 }
 

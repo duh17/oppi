@@ -23,7 +23,6 @@ struct MainWindowView: View {
     let healthMonitor: ServerHealthMonitor
     let permissionState: TCCPermissionState
     let sessionMonitor: MacSessionMonitor
-    let checkForUpdates: @MainActor () -> Void
     @Binding var pendingSessionDeepLinkURL: URL?
 
     @State private var selectedSection = MacSidebarSection.defaultSection
@@ -46,14 +45,12 @@ struct MainWindowView: View {
         healthMonitor: ServerHealthMonitor,
         permissionState: TCCPermissionState,
         sessionMonitor: MacSessionMonitor,
-        pendingSessionDeepLinkURL: Binding<URL?>,
-        checkForUpdates: @escaping @MainActor () -> Void
+        pendingSessionDeepLinkURL: Binding<URL?>
     ) {
         self.processManager = processManager
         self.healthMonitor = healthMonitor
         self.permissionState = permissionState
         self.sessionMonitor = sessionMonitor
-        self.checkForUpdates = checkForUpdates
         _pendingSessionDeepLinkURL = pendingSessionDeepLinkURL
     }
 
@@ -427,8 +424,7 @@ struct MainWindowView: View {
                 healthMonitor: healthMonitor,
                 permissionState: permissionState,
                 sessionMonitor: sessionMonitor,
-                remoteServerStore: remoteServerStore,
-                checkForUpdates: checkForUpdates
+                remoteServerStore: remoteServerStore
             )
         }
     }

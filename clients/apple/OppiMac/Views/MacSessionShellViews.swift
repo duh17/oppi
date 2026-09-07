@@ -256,6 +256,9 @@ struct SessionTraceShellDetail: View {
             )) { _ in
                 fontPreferenceRevision &+= 1
             }
+            .focusedSceneValue(\.macSessionFilesCommand, filesCommandItem)
+            .focusedSceneValue(\.macSessionOutlineCommand, outlineCommandItem)
+            .focusedSceneValue(\.macSessionContextCommand, contextCommandItem)
     }
 
     private var hasOpenDocument: Bool {
@@ -280,6 +283,35 @@ struct SessionTraceShellDetail: View {
                 )
             }
         )
+    }
+
+    private var filesCommandItem: MacSessionCommandItem? {
+        panelCommandItem(action: toggleFiles)
+    }
+
+    private var outlineCommandItem: MacSessionCommandItem? {
+        panelCommandItem(action: toggleOutline)
+    }
+
+    private var contextCommandItem: MacSessionCommandItem? {
+        panelCommandItem(action: toggleContext)
+    }
+
+    private func panelCommandItem(action: @escaping () -> Void) -> MacSessionCommandItem? {
+        guard store.selectedTarget?.sessionId != nil else { return nil }
+        return MacSessionCommandItem(enabled: true, action: action)
+    }
+
+    private func toggleFiles() {
+        isInspectorPresented.toggle()
+    }
+
+    private func toggleOutline() {
+        isOutlinePresented.toggle()
+    }
+
+    private func toggleContext() {
+        isContextPresented.toggle()
     }
 
     @ViewBuilder
@@ -434,9 +466,7 @@ struct SessionTraceShellDetail: View {
         }
 
         ToolbarItem(placement: .primaryAction) {
-            Button {
-                isInspectorPresented.toggle()
-            } label: {
+            Button(action: toggleFiles) {
                 Label(
                     isInspectorPresented ? "Close Files" : "Files",
                     systemImage: isInspectorPresented ? "folder.fill" : "folder"
@@ -449,9 +479,7 @@ struct SessionTraceShellDetail: View {
         }
 
         ToolbarItem(placement: .primaryAction) {
-            Button {
-                isOutlinePresented.toggle()
-            } label: {
+            Button(action: toggleOutline) {
                 Label("Session Outline", systemImage: "list.bullet")
                     .labelStyle(.iconOnly)
             }
@@ -476,9 +504,7 @@ struct SessionTraceShellDetail: View {
     @ViewBuilder
     private var contextToolbarItem: some View {
         let usage = SessionContextUsagePresentation.snapshot(for: store.session)
-        Button {
-            isContextPresented.toggle()
-        } label: {
+        Button(action: toggleContext) {
             MacSessionContextToolbarLabel(usage: usage)
         }
         .help(SessionContextUsagePresentation.toolbarTitle(usage))
