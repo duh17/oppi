@@ -4,6 +4,7 @@ import UIKit
 
 struct ReviewCommentStripScreenshotPreview: View {
     var isExpanded: Bool
+    var comments: [ReviewComment] = fixtureComments
 
     @State private var text = ""
     @State private var textBeforeRecording: String?
@@ -35,7 +36,7 @@ struct ReviewCommentStripScreenshotPreview: View {
                     showsLeadingStripContent: true,
                     leadingStripContent: {
                         ReviewCommentStripPill(
-                            count: Self.fixtureComments.count,
+                            count: comments.count,
                             isExpanded: isExpanded,
                             onToggle: {}
                         )
@@ -44,7 +45,7 @@ struct ReviewCommentStripScreenshotPreview: View {
 
                 if isExpanded {
                     ReviewCommentStashDrawer(
-                        comments: Self.fixtureComments,
+                        comments: comments,
                         focusedCommentId: nil,
                         onEdit: { _, _ in true },
                         onDelete: { _ in }
@@ -59,7 +60,7 @@ struct ReviewCommentStripScreenshotPreview: View {
                     isBusy: false,
                     busyStreamingBehavior: $busyBehavior,
                     isSending: false,
-                    pendingReviewCommentCount: Self.fixtureComments.count,
+                    pendingReviewCommentCount: comments.count,
                     sendProgressText: nil,
                     isStopping: false,
                     showForceStop: false,
@@ -87,7 +88,7 @@ struct ReviewCommentStripScreenshotPreview: View {
         .accessibilityIdentifier("screenshot.ready")
     }
 
-    private static let fixtureComments = [
+    static let fixtureComments = [
         ReviewComment(
             id: "review-comment-preview-1",
             workspaceId: "workspace-1",

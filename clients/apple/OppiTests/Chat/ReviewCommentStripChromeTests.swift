@@ -117,10 +117,37 @@ struct ReviewCommentStripChromeTests {
         let chromeSource = try reviewCommentStripChromeSource()
         #expect(chromeSource.contains("struct ReviewCommentStashDrawer: View"))
         #expect(chromeSource.contains("ReviewCommentStashContent("))
+        #expect(chromeSource.contains("chrome: .drawer"))
 
         let fullScreen = try reviewCommentsFullScreenSource()
         #expect(fullScreen.contains("makeStashSheet() -> ReviewCommentStashSheet?"))
         #expect(fullScreen.contains("return ReviewCommentStashSheet("))
+    }
+
+    @Test("Drawer hugs comment content instead of filling a tall empty panel")
+    func drawerHugsCommentContentInsteadOfFillingTallPanel() throws {
+        let chromeSource = try reviewCommentStripChromeSource()
+        let drawer = try reviewCommentsSourceSlice(
+            named: "struct ReviewCommentStashDrawer: View {",
+            until: "accessibilityIdentifier(ReviewCommentStripChrome.drawerAccessibilityIdentifier)",
+            in: chromeSource
+        )
+        #expect(drawer.contains("chrome: .drawer"))
+        #expect(drawer.contains("alignment: .top"))
+        #expect(!drawer.contains("fixedSize("))
+        #expect(!drawer.contains("frame(height:"))
+        #expect(!drawer.contains("maxWidth: .infinity, maxHeight:"))
+
+        let stashSource = try reviewCommentStashSheetSource()
+        #expect(stashSource.contains("case drawer"))
+        let drawerList = try reviewCommentsSourceSlice(
+            named: "case .drawer:",
+            until: "private struct ReviewCommentStashSheetChromeModifier",
+            in: stashSource
+        )
+        #expect(drawerList.contains("commentsStack"))
+        #expect(!drawerList.contains("ScrollView"))
+        #expect(!drawerList.contains("theme.bg.primary"))
     }
 
     @Test("Chat footer wires the comments pill into the above-editor strip")

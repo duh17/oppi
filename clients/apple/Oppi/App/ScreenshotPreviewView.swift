@@ -65,6 +65,11 @@ struct ScreenshotPreviewView: View {
             ReviewCommentStripScreenshotPreview(isExpanded: false)
         case "review-comment-strip-expanded":
             ReviewCommentStripScreenshotPreview(isExpanded: true)
+        case "review-comment-strip-expanded-one":
+            ReviewCommentStripScreenshotPreview(
+                isExpanded: true,
+                comments: Array(ReviewCommentStripScreenshotPreview.fixtureComments.prefix(1))
+            )
         case "quick-session-dictation-composer":
             QuickSessionDictationComposerPreview()
         case "ask-card-long-composer":

@@ -103,26 +103,22 @@ struct ReviewCommentStashDrawer: View {
     let onDelete: (ReviewComment) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(ReviewCommentStripChrome.stashTitle(count: comments.count))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.themeComment)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             ReviewCommentStashContent(
                 comments: comments,
                 focusedCommentId: focusedCommentId,
                 onEdit: onEdit,
-                onDelete: onDelete
+                onDelete: onDelete,
+                chrome: .drawer
             )
         }
-        .padding(.bottom, 10)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxHeight: 420)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .top)
         .extensionGlassPanel(cornerRadius: 18)
         .accessibilityIdentifier(ReviewCommentStripChrome.drawerAccessibilityIdentifier)
     }

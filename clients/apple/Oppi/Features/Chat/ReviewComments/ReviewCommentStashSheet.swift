@@ -20,15 +20,19 @@ struct ReviewCommentStashSheet: View {
     }
 }
 
+enum ReviewCommentStashChrome {
+    case sheet
+    case drawer
+}
+
 struct ReviewCommentStashContent: View {
     let comments: [ReviewComment]
     let focusedCommentId: String?
     let onEdit: (ReviewComment, String) -> Bool
     let onDelete: (ReviewComment) -> Void
     var onClose: (() -> Void)? = nil
+    var chrome: ReviewCommentStashChrome = .sheet
 
-    @Environment(\.theme) private var theme
-    @Environment(\.themeID) private var themeID
     @State private var editingComment: ReviewComment?
 
     private var sortedComments: [ReviewComment] {
@@ -60,52 +64,92 @@ struct ReviewCommentStashContent: View {
                     description: Text("Comments you add from selected text will appear here before you send them.")
                 )
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(sortedComments) { comment in
-                            ReviewCommentStashRow(
-                                comment: comment,
-                                isFocused: comment.id == focusedCommentId,
-                                onEdit: { editingComment = comment },
-                                onDelete: { onDelete(comment) }
-                            )
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 4)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                comment.id == focusedCommentId
-                                    ? Color.themeCyan.opacity(0.12)
-                                    : Color.clear
-                            )
-                            if comment.id != sortedComments.last?.id {
-                                Divider()
-                                    .padding(.leading, 16)
-                            }
-                        }
-                    }
-                    .padding(.bottom, 12)
-                }
-                .scrollBounceBehavior(.basedOnSize)
+                commentsList
             }
         }
-        .navigationTitle(
-            editingComment == nil
+        .modifier(ReviewCommentStashSheetChromeModifier(
+            chrome: chrome,
+            title: editingComment == nil
                 ? ReviewCommentStripChrome.stashTitle(count: comments.count)
-                : "Edit Comment"
-        )
-        .navigationBarTitleDisplayMode(.inline)
-        .background(theme.bg.primary)
-        .toolbarBackground(theme.bg.primary, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(themeID.preferredColorScheme, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                if editingComment != nil {
-                    Button("Cancel") { editingComment = nil }
-                } else if let onClose {
-                    Button("Done", action: onClose)
+                : "Edit Comment",
+            showsEditorCancel: editingComment != nil,
+            onCancelEditor: { editingComment = nil },
+            onClose: onClose
+        ))
+    }
+
+    @ViewBuilder
+    private var commentsStack: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(sortedComments) { comment in
+                ReviewCommentStashRow(
+                    comment: comment,
+                    isFocused: comment.id == focusedCommentId,
+                    onEdit: { editingComment = comment },
+                    onDelete: { onDelete(comment) }
+                )
+                .padding(.horizontal, chrome == .drawer ? 0 : 16)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    comment.id == focusedCommentId
+                        ? Color.themeCyan.opacity(0.12)
+                        : Color.clear
+                )
+                if comment.id != sortedComments.last?.id {
+                    Divider()
+                        .padding(.leading, chrome == .drawer ? 0 : 16)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var commentsList: some View {
+        switch chrome {
+        case .sheet:
+            ScrollView {
+                commentsStack
+                    .padding(.bottom, 12)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        case .drawer:
+            commentsStack
+        }
+    }
+}
+
+private struct ReviewCommentStashSheetChromeModifier: ViewModifier {
+    let chrome: ReviewCommentStashChrome
+    let title: String
+    let showsEditorCancel: Bool
+    let onCancelEditor: () -> Void
+    let onClose: (() -> Void)?
+
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
+
+    func body(content: Content) -> some View {
+        switch chrome {
+        case .drawer:
+            content
+        case .sheet:
+            content
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .background(theme.bg.primary)
+                .toolbarBackground(theme.bg.primary, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbarColorScheme(themeID.preferredColorScheme, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        if showsEditorCancel {
+                            Button("Cancel", action: onCancelEditor)
+                        } else if let onClose {
+                            Button("Done", action: onClose)
+                        }
+                    }
+                }
         }
     }
 }
