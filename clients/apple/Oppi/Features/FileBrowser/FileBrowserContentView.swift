@@ -142,6 +142,7 @@ struct FileBrowserContentView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(AudioPlayerService.self) private var audioPlayer: AudioPlayerService?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
@@ -213,8 +214,35 @@ struct FileBrowserContentView: View {
         }
     }
 
+#if DEBUG
+    @ViewBuilder
+    private var fileMotionDebugMarker: some View {
+        if ProcessInfo.processInfo.environment["OPPI_FILE_MOTION_MARKER"] == "1" {
+            Text(currentFilePath)
+                .font(.system(.title2, design: .monospaced).weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(fileMotionDebugMarkerColor)
+                .accessibilityIdentifier("file.motion.page")
+                .accessibilityValue(currentFilePath)
+        }
+    }
+
+    private var fileMotionDebugMarkerColor: Color {
+        if currentFilePath.contains("alpha") { return .red }
+        if currentFilePath.contains("gamma") { return .green }
+        return .blue
+    }
+#endif
+
     var body: some View {
         fileContent
+            .overlay(alignment: .top) {
+#if DEBUG
+                fileMotionDebugMarker
+#endif
+            }
             .filePushTransition(id: currentFilePath, direction: fileTransitionDirection)
             .background(.themeBg)
             .horizontalBackSwipeGesture(
@@ -837,7 +865,7 @@ struct FileBrowserContentView: View {
     private func navigateToAdjacentFile(_ direction: FileBrowserNavigationDirection) {
         guard let nextSelection = adjacentSelection(direction) else { return }
         fileTransitionDirection = direction
-        withAnimation(.easeInOut(duration: 0.22)) {
+        withAnimation(FileBrowserPushTransitionPolicy.animation(reduceMotion: reduceMotion)) {
             activeSelection = nextSelection
             content = .loading
             onNavigationSelectionChange?(nextSelection)
@@ -870,22 +898,55 @@ struct FileBrowserContentView: View {
 
 // MARK: - File Navigation Transition
 
+/// Shared previous/next file transition. Directional travel and the 220 ms
+/// ease-in-out are the same policy for the modifier `.animation(value:)` and
+/// each caller `withAnimation`. Reduce Motion must win at both owners.
+enum FileBrowserPushTransitionPolicy {
+    static let duration: Double = 0.22
+
+    static func directionalSpec(
+        for direction: FileBrowserNavigationDirection,
+        reduceMotion: Bool
+    ) -> FileBrowserPushTransitionSpec? {
+        reduceMotion ? nil : FileBrowserPushTransitionSpec.spec(for: direction)
+    }
+
+    static func animation(reduceMotion: Bool) -> Animation? {
+        ThemeMotion.easeInOut(duration: duration, reduceMotion: reduceMotion)
+    }
+
+    static func transition(
+        for direction: FileBrowserNavigationDirection,
+        reduceMotion: Bool
+    ) -> AnyTransition {
+        guard let spec = directionalSpec(for: direction, reduceMotion: reduceMotion) else {
+            return .opacity
+        }
+        return .asymmetric(
+            insertion: ThemeMotion.move(edge: spec.insertion.edge, reduceMotion: false),
+            removal: ThemeMotion.move(edge: spec.removal.edge, reduceMotion: false)
+        )
+    }
+}
+
 private struct FilePushTransitionModifier<ID: Hashable>: ViewModifier {
     let id: ID
     let direction: FileBrowserNavigationDirection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        let spec = FileBrowserPushTransitionSpec.spec(for: direction)
         ZStack {
             content
                 .id(id)
-                .transition(.asymmetric(
-                    insertion: .move(edge: spec.insertion.edge).combined(with: .opacity),
-                    removal: .move(edge: spec.removal.edge).combined(with: .opacity)
-                ))
+                .transition(
+                    FileBrowserPushTransitionPolicy.transition(
+                        for: direction,
+                        reduceMotion: reduceMotion
+                    )
+                )
         }
         .clipped()
-        .animation(.easeInOut(duration: 0.22), value: id)
+        .animation(FileBrowserPushTransitionPolicy.animation(reduceMotion: reduceMotion), value: id)
     }
 }
 

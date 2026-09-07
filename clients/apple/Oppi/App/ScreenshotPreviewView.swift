@@ -59,6 +59,10 @@ struct ScreenshotPreviewView: View {
             QuietWorkStripPreview()
         case "chat-file-panel":
             ChatFileBrowserPanelPreview()
+        case "file-browser-motion":
+            FileBrowserMotionPreview()
+        case "review-file-motion":
+            ReviewFileMotionPreview()
         case "extension-widget":
             ExtensionSurfacePreview()
         case "chat-input-attachment-containment":

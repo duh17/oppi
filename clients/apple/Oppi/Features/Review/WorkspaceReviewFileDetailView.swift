@@ -15,6 +15,33 @@ enum WorkspaceReviewFileRenderingPolicy {
     }
 }
 
+enum WorkspaceReviewFileNavigationPolicy {
+    static func navigationFiles(_ files: [WorkspaceReviewFile]) -> [WorkspaceReviewFile] {
+        var seen: Set<String> = []
+        return files.filter { file in
+            seen.insert(file.path).inserted
+        }
+    }
+
+    static func adjacentFile(
+        in files: [WorkspaceReviewFile],
+        currentPath: String,
+        direction: FileBrowserNavigationDirection
+    ) -> WorkspaceReviewFile? {
+        let files = navigationFiles(files)
+        guard let currentIndex = files.firstIndex(where: { $0.path == currentPath }) else { return nil }
+        let targetIndex: Int
+        switch direction {
+        case .previous:
+            targetIndex = currentIndex - 1
+        case .next:
+            targetIndex = currentIndex + 1
+        }
+        guard files.indices.contains(targetIndex) else { return nil }
+        return files[targetIndex]
+    }
+}
+
 enum WorkspaceReviewFileDetailPhase: Equatable {
     case loading
     case unavailable(String)
@@ -66,6 +93,7 @@ struct WorkspaceReviewFileDetailView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(SessionStore.self) private var sessionStore
 
     @State private var activeFile: WorkspaceReviewFile?
@@ -83,6 +111,28 @@ struct WorkspaceReviewFileDetailView: View {
     private var currentFile: WorkspaceReviewFile {
         activeFile ?? file
     }
+
+#if DEBUG
+    @ViewBuilder
+    private var reviewMotionDebugMarker: some View {
+        if ProcessInfo.processInfo.environment["OPPI_FILE_MOTION_MARKER"] == "1" {
+            Text(currentFile.path)
+                .font(.system(.title2, design: .monospaced).weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(reviewMotionDebugMarkerColor)
+                .accessibilityIdentifier("file.motion.page")
+                .accessibilityValue(currentFile.path)
+        }
+    }
+
+    private var reviewMotionDebugMarkerColor: Color {
+        if currentFile.path.contains("alpha") { return .red }
+        if currentFile.path.contains("gamma") { return .green }
+        return .blue
+    }
+#endif
 
     private var effectiveReviewCommentSelectionScope: ReviewCommentSelectionScope? {
         reviewCommentSelectionScopeOverride ?? reviewCommentSelectionScope
@@ -149,6 +199,11 @@ struct WorkspaceReviewFileDetailView: View {
                     content(diff: diff)
                 }
             }
+        }
+        .overlay(alignment: .top) {
+#if DEBUG
+            reviewMotionDebugMarker
+#endif
         }
         .environment(\.horizontalBackSwipeAction, horizontalBackSwipeAction)
         .filePushTransition(id: currentFile.path, direction: fileTransitionDirection)
@@ -488,31 +543,18 @@ struct WorkspaceReviewFileDetailView: View {
 
     // MARK: - File Navigation
 
-    private var reviewNavigationFiles: [WorkspaceReviewFile] {
-        var seen: Set<String> = []
-        return navigationFiles.filter { file in
-            seen.insert(file.path).inserted
-        }
-    }
-
     private func adjacentReviewFile(_ direction: FileBrowserNavigationDirection) -> WorkspaceReviewFile? {
-        let files = reviewNavigationFiles
-        guard let currentIndex = files.firstIndex(where: { $0.path == currentFile.path }) else { return nil }
-        let targetIndex: Int
-        switch direction {
-        case .previous:
-            targetIndex = currentIndex - 1
-        case .next:
-            targetIndex = currentIndex + 1
-        }
-        guard files.indices.contains(targetIndex) else { return nil }
-        return files[targetIndex]
+        WorkspaceReviewFileNavigationPolicy.adjacentFile(
+            in: navigationFiles,
+            currentPath: currentFile.path,
+            direction: direction
+        )
     }
 
     private func navigateToAdjacentReviewFile(_ direction: FileBrowserNavigationDirection) {
         guard let nextFile = adjacentReviewFile(direction) else { return }
         fileTransitionDirection = direction
-        withAnimation(.easeInOut(duration: 0.22)) {
+        withAnimation(FileBrowserPushTransitionPolicy.animation(reduceMotion: reduceMotion)) {
             activeFile = nextFile
             diff = nil
             error = nil
