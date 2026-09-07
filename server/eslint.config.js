@@ -103,7 +103,7 @@ const localPlugin = {
         schema: [],
         messages: {
           useStructuredLogs:
-            "Use structured logging. See docs/golden-principles.md#server-conventions",
+            "Use structured logging. See AGENTS.md (TypeScript).",
         },
       },
       create(context) {
