@@ -7,6 +7,28 @@ struct ReviewCommentStashSheet: View {
     let onDelete: (ReviewComment) -> Void
     let onClose: () -> Void
 
+    var body: some View {
+        NavigationStack {
+            ReviewCommentStashContent(
+                comments: comments,
+                focusedCommentId: focusedCommentId,
+                onEdit: onEdit,
+                onDelete: onDelete,
+                onClose: onClose
+            )
+        }
+    }
+}
+
+struct ReviewCommentStashContent: View {
+    let comments: [ReviewComment]
+    let focusedCommentId: String?
+    let onEdit: (ReviewComment, String) -> Bool
+    let onDelete: (ReviewComment) -> Void
+    var onClose: (() -> Void)? = nil
+
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
     @State private var editingComment: ReviewComment?
 
     private var sortedComments: [ReviewComment] {
@@ -20,68 +42,71 @@ struct ReviewCommentStashSheet: View {
     var body: some View {
         let editingCommentBinding = $editingComment
 
-        NavigationStack {
-            Group {
-                if let editingComment {
-                    ReviewCommentEditorView(
-                        comment: editingComment,
-                        onSave: { body in
-                            guard onEdit(editingComment, body) else { return false }
-                            editingCommentBinding.wrappedValue = nil
-                            return true
-                        },
-                        onCancel: { editingCommentBinding.wrappedValue = nil }
-                    )
-                } else if sortedComments.isEmpty {
-                    ContentUnavailableView(
-                        "No Staged Review Comments",
-                        systemImage: "text.bubble",
-                        description: Text("Comments you add from selected text will appear here before you send them.")
-                    )
-                } else {
-                    List(sortedComments) { comment in
-                        ReviewCommentStashRow(
-                            comment: comment,
-                            isFocused: comment.id == focusedCommentId,
-                            onEdit: { editingComment = comment },
-                            onDelete: { onDelete(comment) }
-                        )
-                        .listRowBackground(rowBackground(isFocused: comment.id == focusedCommentId))
-                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                            Button {
-                                editingComment = comment
-                            } label: {
-                                Label("Edit", systemImage: "pencil")
-                            }
-                            .tint(.themeBlue)
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                onDelete(comment)
-                            } label: {
-                                Label("Remove", systemImage: "trash")
+        Group {
+            if let editingComment {
+                ReviewCommentEditorView(
+                    comment: editingComment,
+                    onSave: { body in
+                        guard onEdit(editingComment, body) else { return false }
+                        editingCommentBinding.wrappedValue = nil
+                        return true
+                    },
+                    onCancel: { editingCommentBinding.wrappedValue = nil }
+                )
+            } else if sortedComments.isEmpty {
+                ContentUnavailableView(
+                    "No Staged Review Comments",
+                    systemImage: "text.bubble",
+                    description: Text("Comments you add from selected text will appear here before you send them.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(sortedComments) { comment in
+                            ReviewCommentStashRow(
+                                comment: comment,
+                                isFocused: comment.id == focusedCommentId,
+                                onEdit: { editingComment = comment },
+                                onDelete: { onDelete(comment) }
+                            )
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                comment.id == focusedCommentId
+                                    ? Color.themeCyan.opacity(0.12)
+                                    : Color.clear
+                            )
+                            if comment.id != sortedComments.last?.id {
+                                Divider()
+                                    .padding(.leading, 16)
                             }
                         }
                     }
-                    .listStyle(.plain)
+                    .padding(.bottom, 12)
                 }
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .navigationTitle(editingComment == nil ? "Staged Comments" : "Edit Comment")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    if editingComment == nil {
-                        Button("Done", action: onClose)
-                    } else {
-                        Button("Cancel") { editingComment = nil }
-                    }
+        }
+        .navigationTitle(
+            editingComment == nil
+                ? ReviewCommentStripChrome.stashTitle(count: comments.count)
+                : "Edit Comment"
+        )
+        .navigationBarTitleDisplayMode(.inline)
+        .background(theme.bg.primary)
+        .toolbarBackground(theme.bg.primary, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(themeID.preferredColorScheme, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                if editingComment != nil {
+                    Button("Cancel") { editingComment = nil }
+                } else if let onClose {
+                    Button("Done", action: onClose)
                 }
             }
         }
-    }
-
-    private func rowBackground(isFocused: Bool) -> Color {
-        isFocused ? Color.themeCyan.opacity(0.12) : Color.clear
     }
 }
 
@@ -114,7 +139,8 @@ private struct ReviewCommentStashRow: View {
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
                         .font(.caption.weight(.semibold))
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.themeBlue)
@@ -123,7 +149,8 @@ private struct ReviewCommentStashRow: View {
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")
                         .font(.caption.weight(.semibold))
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.themeRed)
@@ -212,6 +239,12 @@ private struct ReviewCommentEditorView: View {
                         .font(.caption)
                         .foregroundStyle(.themeRed)
                 }
+            }
+
+            Section {
+                Button("Save", action: save)
+                    .disabled(saveDisabled)
+                Button("Cancel", role: .cancel, action: onCancel)
             }
         }
         .navigationTitle("Edit Comment")

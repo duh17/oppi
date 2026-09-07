@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @MainActor
 enum GuidedControlSessionInitialPrompt {
@@ -154,17 +155,21 @@ enum GuidedControlSessionLaunchCoordinator {
 enum GuidedControlSessionComposerReviewComments {
     struct Presentation: Equatable {
         let pendingCount: Int
-        let showsStash: Bool
+        let showsPill: Bool
         let title: String?
+        let pillCountText: String?
     }
 
     static func presentation(stagedCount: Int) -> Presentation {
-        Presentation(
+        let showsPill = ReviewCommentStripChrome.shouldShowPill(
+            stagedCount: stagedCount,
+            isDraftingComment: false
+        )
+        return Presentation(
             pendingCount: stagedCount,
-            showsStash: stagedCount > 0,
-            title: stagedCount > 0
-                ? ChatInputBar<EmptyView>.reviewCommentStashTitle(count: stagedCount)
-                : nil
+            showsPill: showsPill,
+            title: showsPill ? ReviewCommentStripChrome.stashTitle(count: stagedCount) : nil,
+            pillCountText: showsPill ? ReviewCommentStripChrome.pillCountText(count: stagedCount) : nil
         )
     }
 }
@@ -207,7 +212,7 @@ struct GuidedControlSessionComposer: View {
     @State private var isInitialized = false
     @State private var isCreating = false
     @State private var revisionLaunchState = ControlRevisionSessionRetryState()
-    @State private var showReviewCommentStash = false
+    @State private var reviewCommentDrawerExpanded = false
     @State private var error: String?
 
     private var reviewCommentPresentation: GuidedControlSessionComposerReviewComments.Presentation {
@@ -246,6 +251,31 @@ struct GuidedControlSessionComposer: View {
                     .accessibilityIdentifier("\(identifierPrefix).error")
             }
 
+            if reviewCommentPresentation.showsPill {
+                VStack(alignment: .leading, spacing: 8) {
+                    ReviewCommentStripPill(
+                        count: reviewCommentPresentation.pendingCount,
+                        isExpanded: reviewCommentDrawerExpanded,
+                        onToggle: toggleReviewCommentDrawer
+                    )
+                    if reviewCommentDrawerExpanded, let stagedComments {
+                        ReviewCommentStashDrawer(
+                            comments: stagedComments.stagedComments,
+                            focusedCommentId: nil,
+                            onEdit: { comment, body in
+                                if let updateError = stagedComments.update(comment, body: body) {
+                                    error = updateError
+                                    return false
+                                }
+                                return true
+                            },
+                            onDelete: { stagedComments.delete($0) }
+                        )
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+
             ChatInputBar(
                 text: $request,
                 textBeforeRecording: $textBeforeRecording,
@@ -255,7 +285,6 @@ struct GuidedControlSessionComposer: View {
                 busyStreamingBehavior: $streamingBehavior,
                 isSending: isCreating,
                 pendingReviewCommentCount: reviewCommentPresentation.pendingCount,
-                onReviewCommentsTap: { showReviewCommentStash = true },
                 placeholderOverride: resolvedPlaceholder,
                 allowsEmptySubmit: allowsEmptyRequest,
                 sendProgressText: nil,
@@ -301,24 +330,24 @@ struct GuidedControlSessionComposer: View {
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(currentModel: effectiveModelId, onSelect: selectModel)
         }
-        .sheet(isPresented: $showReviewCommentStash) {
-            if let stagedComments {
-                ReviewCommentStashSheet(
-                    comments: stagedComments.stagedComments,
-                    focusedCommentId: nil,
-                    onEdit: { comment, body in
-                        if let updateError = stagedComments.update(comment, body: body) {
-                            error = updateError
-                            return false
-                        }
-                        return true
-                    },
-                    onDelete: { stagedComments.delete($0) },
-                    onClose: { showReviewCommentStash = false }
-                )
+        .onChange(of: reviewCommentPresentation.showsPill) { _, visible in
+            if !visible {
+                reviewCommentDrawerExpanded = false
             }
         }
         .task { await initialize() }
+    }
+
+    private func toggleReviewCommentDrawer() {
+        reviewCommentDrawerExpanded.toggle()
+        if reviewCommentDrawerExpanded {
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil,
+                from: nil,
+                for: nil
+            )
+        }
     }
 
     @ViewBuilder

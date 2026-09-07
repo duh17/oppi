@@ -649,15 +649,18 @@ struct ReviewableControlMarkdownTests {
         let singular = GuidedControlSessionComposerReviewComments.presentation(stagedCount: 1)
         let plural = GuidedControlSessionComposerReviewComments.presentation(stagedCount: 2)
 
-        #expect(hidden.showsStash == false)
+        #expect(hidden.showsPill == false)
         #expect(hidden.pendingCount == 0)
         #expect(hidden.title == nil)
-        #expect(singular.showsStash)
+        #expect(hidden.pillCountText == nil)
+        #expect(singular.showsPill)
         #expect(singular.pendingCount == 1)
-        #expect(singular.title == ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 1))
-        #expect(plural.showsStash)
+        #expect(singular.title == ReviewCommentStripChrome.stashTitle(count: 1))
+        #expect(singular.pillCountText == "1 comment")
+        #expect(plural.showsPill)
         #expect(plural.pendingCount == 2)
-        #expect(plural.title == ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 2))
+        #expect(plural.title == ReviewCommentStripChrome.stashTitle(count: 2))
+        #expect(plural.pillCountText == "2 comments")
     }
 
     @Test func successfulAtomicLaunchDisposesExactlySentCommentsAndBuildsNavigation() async throws {

@@ -60,7 +60,6 @@ struct ChatInputBar<ActionRow: View>: View {
     @Binding var busyStreamingBehavior: StreamingBehavior
     let isSending: Bool
     var pendingReviewCommentCount: Int = 0
-    var onReviewCommentsTap: (() -> Void)? = nil
     var placeholderOverride: String? = nil
     var allowsEmptySubmit = false
     let sendProgressText: String?
@@ -459,17 +458,10 @@ struct ChatInputBar<ActionRow: View>: View {
                 .transition(ThemeMotion.move(edge: .top, reduceMotion: reduceMotion))
             }
 
-            if pendingReviewCommentCount > 0 {
-                reviewCommentStashBar
-                    .padding(.horizontal, composerHorizontalPadding)
-                    .padding(.top, 8)
-                    .padding(.bottom, pendingAttachments.isEmpty && pendingRepoPointers.isEmpty ? 4 : 2)
-            }
-
             if !pendingAttachments.isEmpty {
                 attachmentStrip
                     .padding(.horizontal, composerHorizontalPadding)
-                    .padding(.top, pendingReviewCommentCount > 0 ? 2 : 8)
+                    .padding(.top, 8)
                     .padding(.bottom, 4)
             }
 
@@ -700,44 +692,6 @@ struct ChatInputBar<ActionRow: View>: View {
                 showCanvas = true
             }
         )
-    }
-
-    private var reviewCommentStashBar: some View {
-        Button {
-            onReviewCommentsTap?()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "text.bubble.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeCyan)
-
-                Text(Self.reviewCommentStashTitle(count: pendingReviewCommentCount))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-
-                Spacer(minLength: 8)
-
-                Text("Review")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-
-                Image(systemName: "chevron.up")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.themeComment)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.themeBgHighlight.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.themeCyan.opacity(0.24), lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("chat.reviewComments.stash")
-        .accessibilityLabel(Self.reviewCommentStashTitle(count: pendingReviewCommentCount))
-        .accessibilityHint("Shows the review comments staged for the next message")
     }
 
     private var filePillStrip: some View {
@@ -1050,10 +1004,6 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         guard isBusy else { return "Message…" }
         return busyStreamingBehavior == .steer ? "Steer agent…" : "Queue follow-up…"
-    }
-
-    static func reviewCommentStashTitle(count: Int) -> String {
-        "\(count) review \(count == 1 ? "comment" : "comments") staged"
     }
 
     static func primaryActionKind(

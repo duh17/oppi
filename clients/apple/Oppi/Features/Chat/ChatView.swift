@@ -118,12 +118,12 @@ struct ChatView: View {
     @State private var visibleAudioStripItemIDs: Set<String> = []
     @State private var presentsNowPlayingPlayer = false
     @State private var nowPlayingDrawerExpanded = false
+    @State private var reviewCommentDrawerExpanded = false
     @State private var composerExternalFocusRequestID = 0
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var reviewComments = ChatReviewCommentsController()
     @State private var activeReviewCommentRequest: ReviewCommentSelectionRequest?
-    @State private var showReviewCommentStash = false
     @State private var focusedReviewCommentId: String?
     @State private var chatDisplayRefresh = 0
 
@@ -533,9 +533,37 @@ struct ChatView: View {
         )
     }
 
+    private var showsReviewCommentPill: Bool {
+        ReviewCommentStripChrome.shouldShowPill(
+            stagedCount: reviewComments.stagedCount,
+            isDraftingComment: activeReviewCommentRequest != nil
+        )
+    }
+
     private func toggleNowPlayingDrawer() {
-        nowPlayingDrawerExpanded.toggle()
+        let next = ReviewCommentStripChrome.toggleNowPlaying(
+            .init(
+                commentsExpanded: reviewCommentDrawerExpanded,
+                nowPlayingExpanded: nowPlayingDrawerExpanded
+            )
+        )
+        reviewCommentDrawerExpanded = next.commentsExpanded
+        nowPlayingDrawerExpanded = next.nowPlayingExpanded
         if nowPlayingDrawerExpanded {
+            dismissKeyboard()
+        }
+    }
+
+    private func toggleReviewCommentDrawer() {
+        let next = ReviewCommentStripChrome.toggleComments(
+            .init(
+                commentsExpanded: reviewCommentDrawerExpanded,
+                nowPlayingExpanded: nowPlayingDrawerExpanded
+            )
+        )
+        reviewCommentDrawerExpanded = next.commentsExpanded
+        nowPlayingDrawerExpanded = next.nowPlayingExpanded
+        if reviewCommentDrawerExpanded {
             dismissKeyboard()
         }
     }
@@ -600,6 +628,11 @@ struct ChatView: View {
                     nowPlayingDrawerExpanded = false
                 }
             }
+            .onChange(of: showsReviewCommentPill) { _, visible in
+                if !visible {
+                    reviewCommentDrawerExpanded = false
+                }
+            }
     }
 
     private var chatContent: some View {
@@ -625,10 +658,6 @@ struct ChatView: View {
                 isPresented: $showShareRedactionSheet,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { shareRedactionSheet }
-            .chatAuxiliaryPresentation(
-                isPresented: $showReviewCommentStash,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
-            ) { reviewCommentStashSheet }
             .fullScreenCover(isPresented: $showComposer) { composerSheet }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
     }
@@ -785,6 +814,7 @@ struct ChatView: View {
                 visibleAudioStripItemIDs = []
                 presentsNowPlayingPlayer = false
                 nowPlayingDrawerExpanded = false
+                reviewCommentDrawerExpanded = false
                 if connection.isFocusedSession(oldId) {
                     connection.disconnectSession()
                 }
@@ -806,7 +836,6 @@ struct ChatView: View {
                 scrollController = ChatScrollController()
                 reviewComments = ChatReviewCommentsController()
                 activeReviewCommentRequest = nil
-                showReviewCommentStash = false
                 focusedReviewCommentId = nil
                 pendingAttachments = []
                 contextBarExpanded = false
@@ -903,10 +932,13 @@ struct ChatView: View {
             VStack(spacing: 8) {
                 if !hasBlockingExtensionInput {
                     let surface = extensionSurfaceState ?? ExtensionSurfaceState()
-                    if showsNowPlayingPill
-                        || surface.hasVisibleContent(in: .aboveEditor)
-                        || showsMessageQueue
-                        || hasMessageQueueDraft {
+                    if ReviewCommentStripChrome.shouldShowAboveEditorStrip(
+                        showsReviewCommentPill: showsReviewCommentPill,
+                        showsNowPlayingPill: showsNowPlayingPill,
+                        hasAboveEditorSurface: surface.hasVisibleContent(in: .aboveEditor),
+                        showsMessageQueue: showsMessageQueue,
+                        hasMessageQueueDraft: hasMessageQueueDraft
+                    ) {
                         ExtensionSurfacePanel(
                             surface: surface,
                             placement: .aboveEditor,
@@ -914,20 +946,39 @@ struct ChatView: View {
                             linkContext: extensionSurfaceLinkContext,
                             onOpenURL: openExtensionSurfaceURL,
                             onExpandedEntryChange: { expanded in
-                                if expanded { dismissKeyboard() }
+                                if expanded {
+                                    reviewCommentDrawerExpanded = false
+                                    dismissKeyboard()
+                                }
                             },
-                            showsLeadingStripContent: showsNowPlayingPill,
+                            showsLeadingStripContent: showsReviewCommentPill || showsNowPlayingPill,
                             leadingStripContent: {
-                                InAppNowPlayingPill(
-                                    audioPlayer: audioPlayer,
-                                    accessibilityPrefix: "chat.nowPlaying",
-                                    isExpanded: nowPlayingDrawerExpanded,
-                                    onExpand: toggleNowPlayingDrawer,
-                                    onOpen: { presentsNowPlayingPlayer = true }
-                                )
+                                HStack(spacing: 8) {
+                                    if showsReviewCommentPill {
+                                        ReviewCommentStripPill(
+                                            count: reviewComments.stagedCount,
+                                            isExpanded: reviewCommentDrawerExpanded,
+                                            onToggle: toggleReviewCommentDrawer
+                                        )
+                                    }
+                                    if showsNowPlayingPill {
+                                        InAppNowPlayingPill(
+                                            audioPlayer: audioPlayer,
+                                            accessibilityPrefix: "chat.nowPlaying",
+                                            isExpanded: nowPlayingDrawerExpanded,
+                                            onExpand: toggleNowPlayingDrawer,
+                                            onOpen: { presentsNowPlayingPlayer = true }
+                                        )
+                                    }
+                                }
                             }
                         )
                         .padding(.horizontal, 16)
+
+                        if showsReviewCommentPill, reviewCommentDrawerExpanded {
+                            reviewCommentStashDrawer
+                                .padding(.horizontal, 16)
+                        }
 
                         if showsNowPlayingPill, nowPlayingDrawerExpanded {
                             InAppNowPlayingDrawer(
@@ -977,7 +1028,6 @@ struct ChatView: View {
                     busyStreamingBehavior: $busyStreamingBehavior,
                     isSending: composerIsSending,
                     pendingReviewCommentCount: activeReviewCommentRequest == nil ? reviewComments.stagedCount : 0,
-                    onReviewCommentsTap: { showReviewCommentStash = true },
                     placeholderOverride: activeReviewCommentRequest == nil ? nil : "Comment…",
                     sendProgressText: attachmentPreparationText ?? actionHandler.sendProgressText,
                     isStopping: isStopping,
@@ -2278,11 +2328,11 @@ struct ChatView: View {
         }
     }
 
-    private var reviewCommentStashSheet: some View {
+    private var reviewCommentStashDrawer: some View {
         let commentsController = reviewComments
         let connection = connection
 
-        return ReviewCommentStashSheet(
+        return ReviewCommentStashDrawer(
             comments: commentsController.stagedComments,
             focusedCommentId: focusedReviewCommentId,
             // Keep the save callback scoped to the state it needs. The device test
@@ -2296,15 +2346,8 @@ struct ChatView: View {
             },
             onDelete: { comment in
                 deleteReviewComment(comment)
-            },
-            onClose: {
-                showReviewCommentStash = false
-                focusedReviewCommentId = nil
             }
         )
-        .onDisappear {
-            focusedReviewCommentId = nil
-        }
     }
 
     private var shareRedactionSheet: some View {

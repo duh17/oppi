@@ -764,10 +764,32 @@ struct ChatInputBarTests {
         #expect(plural == "Send 3 review comments…")
     }
 
-    @Test("Review comment stash title includes staged count")
-    func reviewCommentStashTitleIncludesStagedCount() {
-        #expect(ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 1) == "1 review comment staged")
-        #expect(ChatInputBar<EmptyView>.reviewCommentStashTitle(count: 2) == "2 review comments staged")
+    @Test("Staged review comments enable send with an empty composer")
+    func stagedReviewCommentsEnableSendWithEmptyComposer() {
+        #expect(ChatInputBar<EmptyView>.canSubmitMessage(
+            allowsEmptySubmit: false,
+            text: "   ",
+            hasImages: false,
+            hasFiles: false,
+            hasReviewComments: true
+        ))
+    }
+
+    @Test("Composer capsule no longer hosts the staged review comment bar")
+    func composerCapsuleNoLongerHostsStagedReviewCommentBar() throws {
+        let source = try chatInputBarSource()
+        let capsule = try chatInputBarSourceSlice(
+            named: "private var composerCapsule: some View {",
+            until: "private func askCard(request: AskRequest) -> some View {",
+            in: source
+        )
+
+        #expect(!capsule.contains("reviewCommentStashBar"))
+        #expect(!capsule.contains("Text(\"Review\")"))
+        #expect(!source.contains("private var reviewCommentStashBar"))
+        #expect(!source.contains("onReviewCommentsTap"))
+        #expect(!source.contains("static func reviewCommentStashTitle"))
+        #expect(source.contains("pendingReviewCommentCount"))
     }
 
     @Test("Busy ask with no custom answer uses ignore instead of stop")

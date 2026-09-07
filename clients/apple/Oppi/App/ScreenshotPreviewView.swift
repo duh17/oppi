@@ -61,6 +61,10 @@ struct ScreenshotPreviewView: View {
             ExtensionSurfacePreview()
         case "chat-input-attachment-containment":
             ChatInputAttachmentContainmentPreview()
+        case "review-comment-strip-collapsed":
+            ReviewCommentStripScreenshotPreview(isExpanded: false)
+        case "review-comment-strip-expanded":
+            ReviewCommentStripScreenshotPreview(isExpanded: true)
         case "quick-session-dictation-composer":
             QuickSessionDictationComposerPreview()
         case "ask-card-long-composer":
