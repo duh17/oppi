@@ -23,10 +23,10 @@ struct AppleOnDeviceSpeechSettingsTests {
         #expect(!preset.reportingOptions.contains(.frequentFinalization))
     }
 
-    @Test func analyzerKeepsModelsLingeringBetweenTakes() {
+    @Test func analyzerKeepsModelsForTheProcessLifetime() {
         let options = AppleOnDeviceSpeechSettings.analyzerOptions
 
-        #expect(options.modelRetention == .lingering)
+        #expect(options.modelRetention == .processLifetime)
         #expect(options.priority == .userInitiated)
     }
 

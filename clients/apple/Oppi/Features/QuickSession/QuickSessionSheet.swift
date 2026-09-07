@@ -332,6 +332,16 @@ struct QuickSessionSheet: View {
         .task {
             await setupInitialState()
         }
+        .onDisappear {
+            // Overlay dismiss drops this view without a presentation controller.
+            // Keep the manager alive until cancel finishes so the SpeechAnalyzer
+            // and mic tap cannot outlive the sheet and fail the next start.
+            let manager = voiceInputManager
+            composerTextBeforeRecording = nil
+            Task {
+                await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
+            }
+        }
         .task(id: slashCommandLoadKey) {
             await loadSlashCommands(for: slashCommandLoadKey)
         }
@@ -728,8 +738,9 @@ struct QuickSessionSheet: View {
         }
 
         if ReleaseFeatures.voiceInputEnabled {
-            let manager = VoiceInputManager()
+            let manager = VoiceInputManager.shared
             voiceInputManager = manager
+            await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
             configureVoiceInputForSelectedServer(manager)
         }
 

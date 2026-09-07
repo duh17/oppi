@@ -421,7 +421,8 @@ struct GuidedControlSessionComposer: View {
         }
 
         if ReleaseFeatures.voiceInputEnabled {
-            let manager = VoiceInputManager()
+            let manager = VoiceInputManager.shared
+            await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
             configureVoiceInput(manager)
             voiceInputManager = manager
         }

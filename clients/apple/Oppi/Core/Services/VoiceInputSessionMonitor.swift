@@ -72,11 +72,16 @@ final class VoiceInputSessionMonitor {
     }
 
     func teardown() {
+        let session = activeSession
         activeSession = nil
         resultsTask?.cancel()
         resultsTask = nil
         audioLevelTask?.cancel()
         audioLevelTask = nil
+        guard let session else { return }
+        Task {
+            await session.cancel()
+        }
     }
 
     nonisolated private static func firstTranscriptResultType(for event: VoiceSessionEvent) -> String? {

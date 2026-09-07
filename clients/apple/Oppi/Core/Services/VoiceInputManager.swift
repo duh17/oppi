@@ -568,6 +568,12 @@ final class VoiceInputManager {
 
     // MARK: - Init
 
+    /// Process-wide capture owner. Apple allows few simultaneous `SpeechAnalyzer`
+    /// sessions; Chat and Quick Session never dictate at once, so they share this
+    /// manager. Each take still builds a fresh analyzer — a transcriber is invalid
+    /// after finalize.
+    static let shared = VoiceInputManager()
+
     init(
         providerRegistry: VoiceProviderRegistry = .makeDefault(),
         routeResolver: VoiceInputRouteResolver = VoiceInputRouteResolver(),

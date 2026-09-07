@@ -818,20 +818,20 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             updateMicButton()
             return
         }
-        switch manager.state {
-        case .recording:
+        switch ComposerShared.micTapAction(for: manager.state) {
+        case .stop:
             await ComposerShared.stopVoiceInput(
                 manager: manager,
                 text: textBinding(),
                 textBeforeRecording: recordingPrefixBinding()
             )
-        case .preparingModel:
+        case .cancelPreparing:
             await ComposerShared.cancelVoiceInput(
                 manager: manager,
                 textBeforeRecording: recordingPrefixBinding(),
                 suppressKeyboard: suppressKeyboardBinding()
             )
-        case .idle:
+        case .start:
             do {
                 try await ComposerShared.startVoiceInput(
                     manager: manager,
@@ -844,7 +844,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                 )
             } catch {
             }
-        case .processing, .error:
+        case .ignore:
             break
         }
         updateMicButton()

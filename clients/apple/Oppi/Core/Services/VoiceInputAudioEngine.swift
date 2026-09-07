@@ -4,7 +4,7 @@ import Foundation
 import Speech
 
 private protocol AnalyzerInputFeeding: AnyObject {
-    func feed(_ buffer: AVAudioPCMBuffer)
+    func feed(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime?)
     func flush()
 }
 
@@ -40,6 +40,10 @@ enum AudioEngineHelper {
             }
             inputBuilder.finish()
         }
+
+        deinit {
+            stopAndFinishInput(flush: false)
+        }
     }
 
     static func startEngine(
@@ -59,7 +63,7 @@ enum AudioEngineHelper {
 
         let (levelStream, levelContinuation) = AsyncStream.makeStream(of: Float.self)
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, time in
             if let channelData = buffer.floatChannelData?[0] {
                 let frameLength = UInt(buffer.frameLength)
                 var rms: Float = 0
@@ -68,7 +72,7 @@ enum AudioEngineHelper {
                 levelContinuation.yield(level)
             }
 
-            feed.feed(buffer)
+            feed.feed(buffer, at: time)
         }
 
         engine.prepare()
@@ -179,7 +183,7 @@ enum AudioEngineHelper {
             self.inputBuilder = inputBuilder
         }
 
-        func feed(_ buffer: AVAudioPCMBuffer) {
+        func feed(_ buffer: AVAudioPCMBuffer, at _: AVAudioTime?) {
             inputBuilder.yield(AnalyzerInput(buffer: buffer))
         }
 
@@ -204,7 +208,7 @@ enum AudioEngineHelper {
             self.inputBuilder = inputBuilder
         }
 
-        func feed(_ buffer: AVAudioPCMBuffer) {
+        func feed(_ buffer: AVAudioPCMBuffer, at _: AVAudioTime?) {
             let frameCapacity = AVAudioFrameCount(
                 Double(buffer.frameLength) * targetFormat.sampleRate / inputFormat.sampleRate
             )
@@ -245,9 +249,9 @@ enum AudioEngineHelper {
             self.inputBuilder = inputBuilder
         }
 
-        func feed(_ buffer: AVAudioPCMBuffer) {
+        func feed(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime?) {
             do {
-                for input in try converter.convert(buffer, at: nil) {
+                for input in try converter.convert(buffer, at: time) {
                     inputBuilder.yield(input)
                 }
             } catch {

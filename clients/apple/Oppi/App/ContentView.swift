@@ -336,7 +336,7 @@ private struct ExtensionDialogSheet: View {
     @State private var editorTextBeforeRecording: String?
     @State private var editorPendingAttachments: [PendingAttachment] = []
     @State private var editorPendingRepoPointers: [PendingFileReference] = []
-    @State private var editorVoiceInputManager = VoiceInputManager()
+    @State private var editorVoiceInputManager = VoiceInputManager.shared
 
     var body: some View {
         Group {

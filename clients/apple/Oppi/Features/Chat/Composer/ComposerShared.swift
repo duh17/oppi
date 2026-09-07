@@ -51,6 +51,14 @@ enum ComposerShared {
         }
     }
 
+    /// Mic tap after a failed start must retry, not sit disabled in `.error`.
+    enum VoiceMicTapAction: Equatable {
+        case start
+        case stop
+        case cancelPreparing
+        case ignore
+    }
+
     // MARK: - Voice UI Helpers
 
     static func micEngineBadge(for manager: VoiceInputManager) -> MicButtonLabel.EngineBadge {
@@ -81,8 +89,21 @@ enum ComposerShared {
         return owner.isMessageComposer && VoiceInputOwner(rawValue: activeSource)?.isMessageComposer == true
     }
 
+    static func micTapAction(for state: VoiceInputManager.State) -> VoiceMicTapAction {
+        switch state {
+        case .idle, .error:
+            return .start
+        case .recording:
+            return .stop
+        case .preparingModel:
+            return .cancelPreparing
+        case .processing:
+            return .ignore
+        }
+    }
+
     static func canControlVoiceInput(_ manager: VoiceInputManager, owner: VoiceInputOwner) -> Bool {
-        ownsVoiceInput(manager, owner: owner) || manager.state == .idle
+        ownsVoiceInput(manager, owner: owner) || micTapAction(for: manager.state) == .start
     }
 
     static func micButtonPresentation(
@@ -93,7 +114,7 @@ enum ComposerShared {
         let isRecording = manager.isRecording && ownsInput
         let isPreparing = manager.isPreparing && ownsInput
         let isProcessing = manager.isProcessing && ownsInput
-        let isBlocked = manager.state != .idle && !ownsInput
+        let isBlocked = micTapAction(for: manager.state) != .start && !ownsInput
         return MicButtonPresentation(
             isRecording: isRecording,
             isPreparing: isPreparing,
@@ -111,7 +132,7 @@ enum ComposerShared {
             isRecording: false,
             isPreparing: false,
             isProcessing: false,
-            isBlockedByOtherOwner: manager.state != .idle,
+            isBlockedByOtherOwner: micTapAction(for: manager.state) != .start,
             audioLevel: 0,
             languageLabel: nil,
             engineBadge: micEngineBadge(for: manager),
@@ -585,6 +606,14 @@ enum ComposerShared {
         await manager.cancelRecording()
         textBeforeRecording.wrappedValue = nil
         suppressKeyboard.wrappedValue = false
+    }
+
+    /// Drop in-flight capture when the owning UI disappears.
+    /// Dismiss must not leave SpeechAnalyzer / the mic tap running, or the next
+    /// start fails with NSError during setup.
+    static func cancelVoiceInputOnDismiss(manager: VoiceInputManager?) async {
+        guard let manager, manager.isRecording || manager.isPreparing else { return }
+        await manager.cancelRecording()
     }
 
     @discardableResult

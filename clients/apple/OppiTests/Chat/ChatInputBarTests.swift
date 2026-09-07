@@ -366,6 +366,20 @@ struct ChatInputBarTests {
         #expect(!ComposerShared.canControlVoiceInput(manager, owner: .expandedComposer))
     }
 
+    @Test("Failed dictation start stays tappable so the mic can retry")
+    func failedDictationStartStaysTappable() {
+        let manager = VoiceInputManager()
+        manager._testState = .error("NSError")
+        manager._testActiveRecordingSource = nil
+
+        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
+
+        #expect(ComposerShared.micTapAction(for: manager.state) == .start)
+        #expect(ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer))
+        #expect(presentation.isEnabled)
+        #expect(!presentation.isBlockedByOtherOwner)
+    }
+
     @Test("Expanded composer mirrors live and settled inline transcript presentation")
     func expandedComposerMirrorsInlineTranscriptPresentation() async throws {
         AppPreferences.Voice.setEngineMode(.onDevice)

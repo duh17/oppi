@@ -217,6 +217,35 @@ struct VoiceInputSessionMonitorTests {
 
         #expect(receivedEvents.isEmpty)
     }
+
+    @Test func teardownCancelsAStillBoundSession() async {
+        let session = TestVoiceSession()
+        let monitor = VoiceInputSessionMonitor()
+
+        monitor.bind(
+            session: session,
+            recordingStartTime: .now,
+            onAudioLevel: { _ in },
+            onEvent: { _ in },
+            onFirstTranscript: { _, _ in },
+            onError: { error in
+                Issue.record("Unexpected monitor error: \(error)")
+            }
+        )
+
+        monitor.teardown()
+
+        var cancelled = false
+        for _ in 0..<50 {
+            if await session.cancelCallCount == 1 {
+                cancelled = true
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(cancelled)
+        #expect(await session.stopCallCount == 0)
+    }
 }
 
 private enum TestError: Error {

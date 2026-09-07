@@ -653,16 +653,13 @@ struct AskCardExpanded: View {
 
     private func handleDictationTap(for question: AskQuestion, manager: VoiceInputManager) async {
         guard ComposerShared.canControlVoiceInput(manager, owner: .askCard) else { return }
-        switch manager.state {
-        case .recording:
+        switch ComposerShared.micTapAction(for: manager.state) {
+        case .stop, .cancelPreparing:
             guard dictationQuestionId == question.id else { return }
             await finalizeDictationIfNeeded()
-        case .preparingModel:
-            guard dictationQuestionId == question.id else { return }
-            await finalizeDictationIfNeeded()
-        case .idle:
+        case .start:
             await startDictation(for: question, manager: manager)
-        case .processing, .error:
+        case .ignore:
             break
         }
     }

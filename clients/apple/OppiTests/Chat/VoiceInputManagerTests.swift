@@ -14,6 +14,11 @@ struct VoiceInputManagerTests {
 
     // MARK: - Initial State
 
+    @Test func productionSurfacesShareOneCaptureOwner() {
+        #expect(VoiceInputManager.shared === VoiceInputManager.shared)
+        #expect(VoiceInputManager() !== VoiceInputManager.shared)
+    }
+
     @Test func initialState() {
         let manager = VoiceInputManager()
         #expect(manager.state == .idle)

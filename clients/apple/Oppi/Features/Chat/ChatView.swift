@@ -81,7 +81,7 @@ struct ChatView: View {
     @State private var sessionManager: ChatSessionManager
     @State private var scrollController = ChatScrollController()
     @State private var actionHandler = ChatActionHandler()
-    @State private var voiceInputManager = VoiceInputManager()
+    @State private var voiceInputManager = VoiceInputManager.shared
     @State private var audioLifecycleCoordinator = AudioLifecycleCoordinator()
     @State private var composerDraftController: ChatComposerDraftController
 

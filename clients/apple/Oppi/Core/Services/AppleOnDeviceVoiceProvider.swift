@@ -352,9 +352,12 @@ extension AppleOnDeviceVoiceProvider {
 enum AppleOnDeviceSpeechSettings {
     static let speechPreset = SpeechTranscriber.Preset.progressiveTranscription
     static let dictationPreset = DictationTranscriber.Preset.progressiveLongDictation
+    /// One live analysis session at a time (`VoiceInputManager.shared`).
+    /// Models stay loaded for the process so consecutive takes do not reload.
+    /// The `SpeechAnalyzer` actor still cannot be reused after finish.
     static let analyzerOptions = SpeechAnalyzer.Options(
         priority: .userInitiated,
-        modelRetention: .lingering
+        modelRetention: .processLifetime
     )
 }
 

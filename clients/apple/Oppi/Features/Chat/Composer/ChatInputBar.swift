@@ -824,8 +824,8 @@ struct ChatInputBar<ActionRow: View>: View {
         return Button {
             Task {
                 guard ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer) else { return }
-                switch manager.state {
-                case .recording:
+                switch ComposerShared.micTapAction(for: manager.state) {
+                case .stop:
                     await ComposerShared.stopVoiceInput(
                         manager: manager,
                         text: $text,
@@ -833,13 +833,13 @@ struct ChatInputBar<ActionRow: View>: View {
                     )
                     // Keep keyboard suppressed — user tapping the text field
                     // will restore it via handleKeyboardRestore()
-                case .preparingModel:
+                case .cancelPreparing:
                     await ComposerShared.cancelVoiceInput(
                         manager: manager,
                         textBeforeRecording: $textBeforeRecording,
                         suppressKeyboard: $suppressKeyboard
                     )
-                case .idle:
+                case .start:
                     do {
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
@@ -855,7 +855,7 @@ struct ChatInputBar<ActionRow: View>: View {
                         )
                     } catch {
                     }
-                case .processing, .error:
+                case .ignore:
                     break
                 }
             }

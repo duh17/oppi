@@ -455,20 +455,20 @@ struct ExpandedComposerView: View {
         return Button {
             Task {
                 guard ComposerShared.canControlVoiceInput(manager, owner: .expandedComposer) else { return }
-                switch manager.state {
-                case .recording:
+                switch ComposerShared.micTapAction(for: manager.state) {
+                case .stop:
                     await ComposerShared.stopVoiceInput(
                         manager: manager,
                         text: $text,
                         textBeforeRecording: $textBeforeRecording
                     )
-                case .preparingModel:
+                case .cancelPreparing:
                     await ComposerShared.cancelVoiceInput(
                         manager: manager,
                         textBeforeRecording: $textBeforeRecording,
                         suppressKeyboard: $suppressKeyboard
                     )
-                case .idle:
+                case .start:
                     do {
                         try await ComposerShared.startVoiceInput(
                             manager: manager,
@@ -484,7 +484,7 @@ struct ExpandedComposerView: View {
                         )
                     } catch {
                     }
-                case .processing, .error:
+                case .ignore:
                     break
                 }
             }
