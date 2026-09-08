@@ -10,8 +10,15 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket, type RawData } from "ws";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  unlinkSync,
+} from "node:fs";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { hostname } from "node:os";
 
 import { createMirrorCanonicalFlush } from "./canonical-message-flush.ts";
@@ -319,11 +326,81 @@ function oppiDataDir(): string {
   return resolve(join(process.env.HOME || "", ".config/oppi"));
 }
 
-function mirrorLogPath(): string {
+const MIRROR_LOG_RETENTION_DAYS = 14;
+
+/** Format epoch-ms as "YYYY-MM-DD" in UTC. */
+function dateString(ts: number): string {
+  const d = new Date(ts);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Remove daily log files older than `retentionDays`.
+ * Matches `${prefix}YYYY-MM-DD${suffix}` in `dir`. Best-effort.
+ */
+function pruneOldMirrorLogFiles(
+  dir: string,
+  prefix: string,
+  suffix: string,
+  retentionDays: number,
+): void {
+  const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
+  const cutoffMs = Date.now() - retentionMs;
+
+  if (!existsSync(dir)) return;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix) || !entry.endsWith(suffix)) continue;
+    const datePart =
+      suffix.length === 0
+        ? entry.slice(prefix.length)
+        : entry.slice(prefix.length, -suffix.length);
+    const fileDate = Date.parse(`${datePart}T00:00:00.000Z`);
+    if (Number.isNaN(fileDate) || fileDate >= cutoffMs) continue;
+    try {
+      unlinkSync(join(dir, entry));
+    } catch {
+      // Best effort
+    }
+  }
+}
+
+function mirrorLogBasePath(): string {
   const configured = process.env.OPPI_MIRROR_LOG_PATH?.trim();
   return resolve(
     expandHomePath(configured || join(oppiDataDir(), "oppi-mirror.log")),
   );
+}
+
+function mirrorLogTarget(ts: number): {
+  dir: string;
+  filePath: string;
+  prefix: string;
+  suffix: string;
+} {
+  const basePath = mirrorLogBasePath();
+  const dir = dirname(basePath);
+  const fileName = basename(basePath);
+  const extension = extname(fileName);
+  const suffix = extension || ".log";
+  const stem = extension ? fileName.slice(0, -extension.length) : fileName;
+  const prefix = `${stem}-`;
+  return {
+    dir,
+    filePath: join(dir, `${prefix}${dateString(ts)}${suffix}`),
+    prefix,
+    suffix,
+  };
 }
 
 function redactLogText(text: string): string {
@@ -392,24 +469,26 @@ function errorLogValue(
   ) as Record<string, unknown>;
 }
 
-function writeMirrorLog(
+export function writeMirrorLog(
   level: MirrorLogLevel,
   event: string,
   details: Record<string, unknown> = {},
 ) {
   try {
-    const path = mirrorLogPath();
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const now = Date.now();
+    const { dir, filePath, prefix, suffix } = mirrorLogTarget(now);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
     appendFileSync(
-      path,
+      filePath,
       `${JSON.stringify({
-        ts: new Date().toISOString(),
+        ts: new Date(now).toISOString(),
         level,
         event,
         ...(sanitizedLogValue(details) as Record<string, unknown>),
       })}\n`,
       { encoding: "utf8", mode: 0o600 },
     );
+    pruneOldMirrorLogFiles(dir, prefix, suffix, MIRROR_LOG_RETENTION_DAYS);
   } catch {
     // Logging must never leak into the TUI or affect the Pi session.
   }

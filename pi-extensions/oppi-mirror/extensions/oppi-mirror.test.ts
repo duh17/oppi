@@ -1,10 +1,21 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import oppiPiMirror, { type MessageQueueState } from "./oppi-mirror.js";
+import oppiPiMirror, {
+  type MessageQueueState,
+  writeMirrorLog,
+} from "./oppi-mirror.js";
 import { OPPI_MIRROR_INPUT_PREFLIGHT_CAPABILITY } from "./oppi-mirror-contract.ts";
 
 const OPPI_CALLER_SESSION_ID_ENV = "OPPI_CALLER_SESSION_ID";
@@ -412,6 +423,15 @@ function withInteractiveTerminal(run: () => Promise<void>): Promise<void> {
     }
   });
 }
+
+const defaultTestLogDir = mkdtempSync(join(tmpdir(), "oppi-mirror-log-"));
+
+beforeEach(() => {
+  vi.stubEnv(
+    "OPPI_MIRROR_LOG_PATH",
+    join(defaultTestLogDir, "oppi-mirror.log"),
+  );
+});
 
 afterEach(() => {
   wsMock.instances.length = 0;
@@ -1822,5 +1842,109 @@ describe("oppi mirror canonical flush wiring", () => {
       expect(events.filter((type) => type === "message_end")).toHaveLength(1);
       expect(events.indexOf("message_end")).toBeLessThan(events.indexOf("turn_end"));
     });
+  });
+});
+
+describe("oppi mirror log rotation", () => {
+  const now = Date.parse("2026-03-25T15:00:00.000Z");
+
+  function makeLogDir(): string {
+    return mkdtempSync(join(tmpdir(), "oppi-mirror-rotate-"));
+  }
+
+  it("writes a dated file and leaves the legacy undated log untouched", () => {
+    const logDir = makeLogDir();
+    const legacyPath = join(logDir, "oppi-mirror.log");
+    writeFileSync(legacyPath, "legacy\n");
+    vi.stubEnv("OPPI_MIRROR_LOG_PATH", legacyPath);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      writeMirrorLog("info", "unit_test_dated", { ok: true });
+      const datedPath = join(logDir, "oppi-mirror-2026-03-25.log");
+      expect(existsSync(datedPath)).toBe(true);
+      expect(readFileSync(legacyPath, "utf8")).toBe("legacy\n");
+      const line = readFileSync(datedPath, "utf8").trim();
+      expect(JSON.parse(line)).toMatchObject({
+        level: "info",
+        event: "unit_test_dated",
+        ok: true,
+      });
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes dated files older than 14 days", () => {
+    const logDir = makeLogDir();
+    const basePath = join(logDir, "oppi-mirror.log");
+    writeFileSync(join(logDir, "oppi-mirror-2026-03-10.log"), "too-old\n");
+    writeFileSync(join(logDir, "oppi-mirror-2026-03-11.log"), "cutoff\n");
+    writeFileSync(join(logDir, "oppi-mirror-2026-03-12.log"), "keep\n");
+    writeFileSync(basePath, "legacy\n");
+    vi.stubEnv("OPPI_MIRROR_LOG_PATH", basePath);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      writeMirrorLog("info", "unit_test_prune", {});
+      expect(existsSync(join(logDir, "oppi-mirror-2026-03-10.log"))).toBe(
+        false,
+      );
+      expect(existsSync(join(logDir, "oppi-mirror-2026-03-11.log"))).toBe(
+        false,
+      );
+      expect(existsSync(join(logDir, "oppi-mirror-2026-03-12.log"))).toBe(
+        true,
+      );
+      expect(existsSync(join(logDir, "oppi-mirror-2026-03-25.log"))).toBe(
+        true,
+      );
+      expect(readFileSync(basePath, "utf8")).toBe("legacy\n");
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("date-stamps OPPI_MIRROR_LOG_PATH as a base file path", () => {
+    const logDir = makeLogDir();
+    const overridePath = join(logDir, "custom.log");
+    vi.stubEnv("OPPI_MIRROR_LOG_PATH", overridePath);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      writeMirrorLog("warn", "unit_test_override", { reason: "path" });
+      expect(existsSync(join(logDir, "custom-2026-03-25.log"))).toBe(true);
+      expect(existsSync(overridePath)).toBe(false);
+      expect(existsSync(join(logDir, "oppi-mirror-2026-03-25.log"))).toBe(
+        false,
+      );
+      expect(readdirSync(logDir)).toEqual(["custom-2026-03-25.log"]);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses OPPI_DATA_DIR when OPPI_MIRROR_LOG_PATH is unset", () => {
+    const dataDir = makeLogDir();
+    writeFileSync(join(dataDir, "oppi-mirror.log"), "legacy\n");
+    vi.stubEnv("OPPI_MIRROR_LOG_PATH", "");
+    vi.stubEnv("OPPI_DATA_DIR", dataDir);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      writeMirrorLog("info", "unit_test_datadir", {});
+      expect(existsSync(join(dataDir, "oppi-mirror-2026-03-25.log"))).toBe(
+        true,
+      );
+      expect(readFileSync(join(dataDir, "oppi-mirror.log"), "utf8")).toBe(
+        "legacy\n",
+      );
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });

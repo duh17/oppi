@@ -177,7 +177,9 @@ Still terminal-only:
 Mirror diagnostics are structured JSON lines.
 
 - Server mirror logs: `~/.config/oppi/server.log`
-- Terminal extension logs: `~/.config/oppi/oppi-mirror.log`
+- Terminal extension logs: `~/.config/oppi/oppi-mirror-YYYY-MM-DD.log` (UTC daily files, kept for 14 days)
+
+A leftover `oppi-mirror.log` is not the live append target. Set `OPPI_MIRROR_LOG_PATH` to a base file path to relocate the dated files (`/tmp/custom.log` writes `/tmp/custom-YYYY-MM-DD.log`).
 
 Useful fields: `sessionId`, `workspaceId`, `bridgeId`, `commandId`, `requestId`, `clientTurnId`, `command`, `outcome`, `durationMs`, `queueVersion`, `steeringCount`, and `followUpCount`.
 
