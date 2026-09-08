@@ -161,20 +161,61 @@ describe("Storage config validation", () => {
     expect(result.config?.asr?.sttEndpoint).toBe("http://localhost:9847");
   });
 
-  it("rejects legacy asr config fields in strict mode", () => {
+  it("rejects retired asr preserveAudio in strict mode", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
       asr: {
         sttEndpoint: "http://localhost:9847",
-        sttModel: "Qwen3-ASR-1.7B-bf16",
         preserveAudio: false,
       },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain("config.asr.sttModel: unknown key");
     expect(result.errors).toContain("config.asr.preserveAudio: unknown key");
+  });
+
+  it("preserves asr.provider and asr.sttModel", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      asr: {
+        provider: "openai-codex",
+        sttModel: "gpt-4o-mini-transcribe",
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.asr).toEqual({
+      provider: "openai-codex",
+      sttModel: "gpt-4o-mini-transcribe",
+    });
+  });
+
+  it("canonicalizes asr.provider openai to openai-codex", () => {
+    const result = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        asr: { provider: "openai" },
+      },
+      dir,
+      true,
+    );
+    expect(result.valid).toBe(true);
+    expect(result.config?.asr).toEqual({ provider: "openai-codex" });
+  });
+
+  it("rejects an invalid asr.provider", () => {
+    const result = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        asr: { provider: "whisper" },
+      },
+      dir,
+      true,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("config.asr.provider: expected http, openai-codex, or xai");
   });
 
   it("omits asr when not present in config", () => {

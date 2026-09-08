@@ -77,7 +77,7 @@ export interface StreamingSttOptions {
   model: string;
 }
 
-export type SttSessionCreateErrorCategory = "http_error" | "invalid_response" | "network";
+export type SttSessionCreateErrorCategory = "http_error" | "invalid_response" | "network" | "auth";
 
 /** Bounded create failure. Never includes upstream bodies, parser text, or hints. */
 export class SttSessionCreateError extends Error {

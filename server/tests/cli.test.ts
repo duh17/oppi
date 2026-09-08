@@ -828,6 +828,10 @@ describe("oppi config", () => {
     );
     run(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]);
     expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
+    run(["config", "set", "asr.provider", "openai-codex"]);
+    expect(run(["config", "get", "asr.provider"]).stdout.trim()).toBe("openai-codex");
+    run(["config", "set", "asr.sttModel", "gpt-4o-mini-transcribe"]);
+    expect(run(["config", "get", "asr.sttModel"]).stdout.trim()).toBe("gpt-4o-mini-transcribe");
     const setExtension = run(["config", "set", "asr.extension", "@earendil-works/pi-transcribe"]);
     expect(setExtension.exitCode).toBe(1);
     expect(`${setExtension.stdout}${setExtension.stderr}`).toContain("Unknown config key");

@@ -100,8 +100,15 @@ import {
 } from "./version.js";
 import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
-import { DEFAULT_DICTATION_CONFIG, type DictationConfig } from "./dictation-types.js";
-import { StreamingSttProvider } from "./stt-provider.js";
+import {
+  DEFAULT_DICTATION_CONFIG,
+  isDictationStreamEnabled,
+  resolveAsrProvider,
+  type DictationConfig,
+} from "./dictation-types.js";
+import { createSttProvider } from "./create-stt-provider.js";
+import { DEFAULT_OPENAI_STT_MODEL } from "./openai-stt-provider.js";
+import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { fetchProviderQuotas } from "./provider-quota.js";
 import {
@@ -543,16 +550,23 @@ export class Server {
     });
 
     // Dictation pipeline. Dictation streams create one DictationManager per WebSocket.
-    // Server dictation is HTTP/Yuwp only: a non-empty asr.sttEndpoint enables it.
-    // Do not inherit DEFAULT_DICTATION_CONFIG.sttEndpoint (that would enable HTTP
+    // Enable when asr.provider is openai-codex/xai, or when asr.sttEndpoint is non-empty.
+    // Do not inherit DEFAULT_DICTATION_CONFIG.sttEndpoint (that would enable Yuwp
     // when the operator left asr unset).
     const asr = config.asr;
-    const httpEnabled = typeof asr?.sttEndpoint === "string" && asr.sttEndpoint.length > 0;
-    if (httpEnabled) {
+    if (isDictationStreamEnabled(asr)) {
+      const provider = resolveAsrProvider(asr);
       this.dictationConfig = {
         backend: "http",
+        provider,
         sttEndpoint: asr?.sttEndpoint,
-        sttModel: DEFAULT_DICTATION_CONFIG.sttModel,
+        sttModel:
+          asr?.sttModel?.trim() ||
+          (provider === "openai-codex"
+            ? DEFAULT_OPENAI_STT_MODEL
+            : provider === "xai"
+              ? DEFAULT_XAI_STT_MODEL
+              : DEFAULT_DICTATION_CONFIG.sttModel),
       };
       this.dictationManager = this.createDictationManager();
     }
@@ -1147,15 +1161,24 @@ export class Server {
   // ─── Dictation ───
 
   private createDictationManager(): DictationManager | undefined {
-    if (!this.dictationConfig?.sttEndpoint) return undefined;
-    const sttProvider = new StreamingSttProvider(
-      {
-        endpoint: this.dictationConfig.sttEndpoint,
-        model: this.dictationConfig.sttModel,
-      },
-      globalThis.fetch,
+    if (!this.dictationConfig || !isDictationStreamEnabled(this.dictationConfig)) {
+      return undefined;
+    }
+    return new DictationManager(
+      createSttProvider(this.dictationConfig, {
+        getAuth: async (providerId) => {
+          const runtime = this.modelRuntime;
+          if (!runtime) return undefined;
+          const primary = await runtime.getAuth(providerId);
+          if (primary?.auth.apiKey?.trim()) return primary;
+          if (providerId === "openai-codex") {
+            return runtime.getAuth("openai");
+          }
+          return primary;
+        },
+      }),
+      this.opsMetrics,
     );
-    return new DictationManager(sttProvider, this.opsMetrics);
   }
 
   private trackConnection(ws: WebSocket): void {

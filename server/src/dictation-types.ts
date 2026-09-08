@@ -7,9 +7,13 @@
 
 // ─── Config ───
 
+export type AsrProviderId = "http" | "openai-codex" | "xai";
+
 export interface DictationConfig {
   /** Explicit backend. Omitted with a non-empty sttEndpoint means "http". */
   backend?: "http";
+  /** STT vendor. Omitted means infer from sttEndpoint, else Yuwp/http. */
+  provider?: AsrProviderId;
   /** STT backend endpoint for the HTTP backend. */
   sttEndpoint?: string;
 
@@ -17,16 +21,46 @@ export interface DictationConfig {
   sttModel: string;
 }
 
-/** True when HTTP/Yuwp dictation has a non-empty STT endpoint. */
+/** Resolve the STT vendor from explicit asr.provider or well-known API hosts. */
+export function resolveAsrProvider(
+  asr:
+    | {
+        provider?: string;
+        sttEndpoint?: string;
+      }
+    | undefined,
+): AsrProviderId {
+  if (asr?.provider === "openai-codex" || asr?.provider === "openai") {
+    return "openai-codex";
+  }
+  if (asr?.provider === "xai" || asr?.provider === "http") {
+    return asr.provider;
+  }
+  const endpoint = asr?.sttEndpoint?.trim();
+  if (!endpoint) return "http";
+  try {
+    const host = new URL(endpoint).hostname.toLowerCase();
+    if (host === "api.openai.com") return "openai-codex";
+    if (host === "api.x.ai") return "xai";
+  } catch {
+    return "http";
+  }
+  return "http";
+}
+
+/** True when server dictation has a configured STT backend. */
 export function isDictationStreamEnabled(
   asr:
     | {
         backend?: string;
         extension?: string;
+        provider?: string;
         sttEndpoint?: string;
       }
     | undefined,
 ): boolean {
+  const provider = resolveAsrProvider(asr);
+  if (provider === "openai-codex" || provider === "xai") return true;
   return typeof asr?.sttEndpoint === "string" && asr.sttEndpoint.trim().length > 0;
 }
 

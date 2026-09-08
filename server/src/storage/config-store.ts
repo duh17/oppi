@@ -547,7 +547,7 @@ function normalizeConfig(
   // ASR / dictation pipeline config
   if ("asr" in obj && isRecord(obj.asr)) {
     const asr = obj.asr;
-    const allowedAsrKeys = new Set(["sttEndpoint", "backend"]);
+    const allowedAsrKeys = new Set(["sttEndpoint", "backend", "provider", "sttModel"]);
     const retiredAsrKeys = new Set(["extension"]);
 
     if ("extension" in asr) {
@@ -585,6 +585,22 @@ function normalizeConfig(
 
     if (typeof asr.sttEndpoint === "string" && asr.sttEndpoint.trim().length > 0) {
       asrConfig.sttEndpoint = asr.sttEndpoint.trim();
+    }
+    if ("provider" in asr) {
+      if (asr.provider === "openai" || asr.provider === "openai-codex") {
+        asrConfig.provider = "openai-codex";
+      } else if (asr.provider === "http" || asr.provider === "xai") {
+        asrConfig.provider = asr.provider;
+      } else {
+        errors.push("config.asr.provider: expected http, openai-codex, or xai");
+        changed = true;
+      }
+    }
+    if (typeof asr.sttModel === "string" && asr.sttModel.trim().length > 0) {
+      asrConfig.sttModel = asr.sttModel.trim();
+    } else if ("sttModel" in asr && asr.sttModel !== undefined && asr.sttModel !== "") {
+      errors.push("config.asr.sttModel: expected string");
+      changed = true;
     }
     if (Object.keys(asrConfig).length > 0) {
       config.asr = asrConfig;

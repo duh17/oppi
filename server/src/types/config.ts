@@ -124,7 +124,11 @@ export interface ServerConfig {
   asr?: {
     /** Explicit backend. Omitted with a non-empty sttEndpoint means "http". */
     backend?: "http";
+    /** STT vendor. Omitted means infer from sttEndpoint, else Yuwp/http. */
+    provider?: "http" | "openai-codex" | "xai";
     sttEndpoint?: string;
+    /** Model id for vendors that require one (OpenAI). */
+    sttModel?: string;
   };
 
   /** Image attachment preprocessing performed by clients before upload. */
