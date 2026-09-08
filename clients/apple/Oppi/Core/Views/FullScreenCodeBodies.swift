@@ -4522,7 +4522,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
                 config: DocumentRenderPipeline.mermaidConfiguration(theme: palette.renderTheme)
             )
             let zoomable = ZoomableGraphicalView(
-                size: layout.size, readingScale: readerPreferences.textScale, draw: layout.draw
+                size: layout.size, draw: layout.draw
             )
             zoomable.translatesAutoresizingMaskIntoConstraints = false
             addSubview(zoomable)

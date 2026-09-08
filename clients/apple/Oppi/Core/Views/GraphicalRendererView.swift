@@ -46,54 +46,10 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     private let contentView = GraphicalRendererUIView()
     private var naturalSize: CGSize = .zero
     private var hasUserAdjustedZoom = false
-    private let readingScale: CGFloat?
-    private var needsInitialReadingScale: Bool
-    private let zoomControl = UISegmentedControl(items: ["Fit", "Readable"])
 
-    /// Reading scale is a viewport preference, never a second graph layout.
-    /// Omit it for other graphical documents that do not need diagram controls.
-    init(size: CGSize, readingScale: CGFloat? = nil, draw: @escaping (CGContext, CGPoint) -> Void) {
-        self.readingScale = readingScale
-        needsInitialReadingScale = readingScale.map { abs($0 - 1) > 0.01 } ?? false
+    init(size: CGSize, draw: @escaping (CGContext, CGPoint) -> Void) {
         super.init(frame: .zero)
         setup(size: size, draw: draw)
-        if readingScale != nil {
-            zoomControl.accessibilityIdentifier = "diagram.zoom"
-            zoomControl.selectedSegmentIndex = 0
-            zoomControl.backgroundColor = .secondarySystemBackground
-            zoomControl.addTarget(self, action: #selector(selectZoom), for: .valueChanged)
-            zoomControl.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(zoomControl)
-            NSLayoutConstraint.activate([
-                zoomControl.centerXAnchor.constraint(equalTo: centerXAnchor),
-                zoomControl.bottomAnchor.constraint(
-                    equalTo: safeAreaLayoutGuide.bottomAnchor,
-                    constant: -(FullScreenFloatingControlChrome.bottomPadding
-                        + (FullScreenFloatingControlChrome.controlSize - 44) / 2)
-                ),
-                zoomControl.widthAnchor.constraint(lessThanOrEqualToConstant: 184),
-                zoomControl.widthAnchor.constraint(
-                    lessThanOrEqualTo: widthAnchor,
-                    constant: -2 * (FullScreenFloatingControlChrome.controlSize
-                        + FullScreenFloatingControlChrome.leadingPadding + 8)
-                ),
-                zoomControl.heightAnchor.constraint(equalToConstant: 44),
-            ])
-        }
-    }
-
-    @objc private func selectZoom() {
-        let fit = currentFitScale()
-        let target = zoomControl.selectedSegmentIndex == 0
-            ? fit : min(scrollView.maximumZoomScale, max(fit, readingScale ?? 1))
-        hasUserAdjustedZoom = target > fit + DoubleTapZoom.scaleSlop
-        let center = contentView.convert(
-            CGPoint(x: scrollView.bounds.midX, y: scrollView.bounds.midY), from: scrollView
-        )
-        scrollView.zoom(to: DoubleTapZoom.zoomInRect(
-            tapInContent: center, viewport: scrollView.bounds.size, targetScale: target
-        ), animated: UIView.areAnimationsEnabled
-            && DoubleTapZoom.shouldAnimate(reduceMotion: UIAccessibility.isReduceMotionEnabled))
     }
 
     @available(*, unavailable)
@@ -103,7 +59,6 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         backgroundColor = .clear
 
         scrollView.delegate = self
-        if readingScale != nil { scrollView.contentInsetAdjustmentBehavior = .never }
         scrollView.minimumZoomScale = 0.25
         scrollView.maximumZoomScale = 4.0
         scrollView.showsVerticalScrollIndicator = true
@@ -126,19 +81,8 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            // Keep the fit overview clear of the reader's floating chrome.
-            // Other graphical viewers retain their existing edge-to-edge viewport.
-            scrollView.topAnchor.constraint(
-                equalTo: readingScale == nil ? topAnchor : safeAreaLayoutGuide.topAnchor,
-                constant: readingScale == nil ? 0
-                    : FullScreenFloatingControlChrome.controlSize + FullScreenFloatingControlChrome.leadingPadding
-            ),
-            scrollView.bottomAnchor.constraint(
-                equalTo: readingScale == nil ? bottomAnchor : safeAreaLayoutGuide.bottomAnchor,
-                constant: readingScale == nil ? 0
-                    : -(FullScreenFloatingControlChrome.bottomPadding + FullScreenFloatingControlChrome.controlSize + 10)
-            ),
-
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
@@ -194,11 +138,6 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         let fitScale = currentFitScale()
         guard fitScale > 0 else { return }
         scrollView.minimumZoomScale = fitScale
-        if needsInitialReadingScale, scrollView.bounds.width > 0, scrollView.bounds.height > 0 {
-            needsInitialReadingScale = false
-            scrollView.zoomScale = min(scrollView.maximumZoomScale, max(fitScale, readingScale ?? 1))
-            hasUserAdjustedZoom = scrollView.zoomScale > fitScale + DoubleTapZoom.scaleSlop
-        }
         if hasUserAdjustedZoom {
             if scrollView.zoomScale < fitScale {
                 scrollView.zoomScale = fitScale
@@ -211,13 +150,10 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     }
 
     private func currentFitScale() -> CGFloat {
-        let widthFit = DoubleTapZoom.fitScale(
+        DoubleTapZoom.fitScale(
             boundsWidth: scrollView.bounds.width,
             contentWidth: naturalSize.width
         )
-        guard readingScale != nil, scrollView.bounds.height > 0,
-              naturalSize.height > 0 else { return widthFit }
-        return min(widthFit, scrollView.bounds.height / naturalSize.height)
     }
 
     func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
@@ -230,14 +166,6 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerContent()
-        let fit = currentFitScale()
-        if abs(scrollView.zoomScale - fit) < DoubleTapZoom.scaleSlop {
-            zoomControl.selectedSegmentIndex = 0
-        } else if abs(scrollView.zoomScale - max(fit, readingScale ?? 1)) < DoubleTapZoom.scaleSlop {
-            zoomControl.selectedSegmentIndex = 1
-        } else {
-            zoomControl.selectedSegmentIndex = UISegmentedControl.noSegment
-        }
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -249,12 +177,6 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
         let offsetX = max((scrollView.bounds.width - scrollView.contentSize.width) / 2, 0)
         let offsetY = max((scrollView.bounds.height - scrollView.contentSize.height) / 2, 0)
         scrollView.contentInset = UIEdgeInsets(top: offsetY, left: offsetX, bottom: offsetY, right: offsetX)
-        // Anchor the overview after viewport changes instead of preserving a
-        // stale offset from the previous zoom or sheet size.
-        if readingScale != nil, !hasUserAdjustedZoom,
-           abs(scrollView.zoomScale - currentFitScale()) < DoubleTapZoom.scaleSlop {
-            scrollView.contentOffset = CGPoint(x: -offsetX, y: -offsetY)
-        }
     }
 
 #if DEBUG
