@@ -143,6 +143,7 @@ Full-screen document viewers show a **Viewing Options** button near the bottom-r
 | Terminal output | Text Size slider, Wrap Text, Reset View |
 | HTML | Text Size slider, Reset View |
 | Org, LaTeX, and Mermaid rendered documents | Text Size slider, Spacing where text-based, Reset View |
+| CSV and TSV tables | Text Size slider, Reset View. Source mode keeps the original file bytes. |
 
 Options affect only the current viewer family. Changing terminal wrapping does not change markdown spacing, and changing markdown text size does not change code text size.
 

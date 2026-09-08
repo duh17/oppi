@@ -20,6 +20,8 @@ enum FileType: Equatable {
     case orgMode
     case mermaid
     case graphviz
+    case csv
+    case tsv
 
     /// Detect from file path extension (or well-known filenames), with
     /// optional shebang fallback for extensionless scripts.
@@ -83,6 +85,10 @@ enum FileType: Equatable {
             return .markdown
         case "html", "htm":
             return .html
+        case "csv":
+            return .csv
+        case "tsv":
+            return .tsv
         case "jpg", "jpeg", "png", "gif", "webp", "ico", "bmp", "tif", "tiff":
             return .image
         case "svg":
@@ -166,6 +172,8 @@ enum FileType: Equatable {
         case .orgMode: return "Org"
         case .mermaid: return "Mermaid"
         case .graphviz: return "Graphviz"
+        case .csv: return "CSV"
+        case .tsv: return "TSV"
         }
     }
 
@@ -189,7 +197,7 @@ enum FileType: Equatable {
             return .mermaid
         case .graphviz:
             return .dot
-        case .markdown, .image, .audio, .video, .pdf, .binary, .plain:
+        case .markdown, .image, .audio, .video, .pdf, .binary, .plain, .csv, .tsv:
             return nil
         }
     }
@@ -218,7 +226,7 @@ extension FileType {
         case .pdf:
             return .pdf
         case .markdown, .html, .code, .json, .plain,
-             .latex, .orgMode, .mermaid, .graphviz:
+             .latex, .orgMode, .mermaid, .graphviz, .csv, .tsv:
             return .text
         case .binary:
             return .binary

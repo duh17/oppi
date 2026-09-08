@@ -50,6 +50,19 @@ enum MacToolDocumentColumnPaint {
         MacMarkupPreviewKind.from(file: file) != nil
     }
 
+    static func fileUsesTablePreview(_ file: ToolContentDescriptor.File) -> Bool {
+        let path = file.filePath ?? ""
+        if DelimitedTableViewerPlan.opening(path: path, text: file.text) != nil {
+            return true
+        }
+        switch file.fileType {
+        case .csv, .tsv:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func fileUsesPDFPreview(_ file: ToolContentDescriptor.File) -> Bool {
         if file.fileType == .pdf {
             return true
@@ -656,6 +669,17 @@ private struct MacToolDocumentFileView: View {
                 sessionID: sessionID,
                 worktreeId: worktreeId
             )
+        } else if let plan = DelimitedTableViewerPlan.opening(
+            fileType: file.fileType ?? .plain,
+            path: file.filePath,
+            text: file.text
+        ) {
+            MacDelimitedTablePreviewView(
+                plan: plan,
+                fillsColumn: true,
+                filePath: file.filePath
+            )
+            .padding(12)
         } else if let kind = MacMarkupPreviewKind.from(file: file) {
             MacMarkupSourcePreviewView(
                 source: file.text,

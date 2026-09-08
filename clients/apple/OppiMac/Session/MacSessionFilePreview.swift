@@ -72,7 +72,7 @@ struct MacSessionFilePreview: Sendable, Equatable {
             return SyntaxLanguage.mermaid.displayName
         case .graphviz:
             return SyntaxLanguage.dot.displayName
-        case .plain, .image, .audio, .video, .pdf, .binary:
+        case .plain, .image, .audio, .video, .pdf, .binary, .csv, .tsv:
             return nil
         }
     }

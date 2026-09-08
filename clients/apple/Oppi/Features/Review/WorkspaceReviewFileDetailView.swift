@@ -351,7 +351,7 @@ struct WorkspaceReviewFileDetailView: View {
         case .code, .json, .plain, .graphviz:
             return true
         case .markdown, .html, .image, .audio, .video, .pdf, .binary,
-             .latex, .orgMode, .mermaid:
+             .latex, .orgMode, .mermaid, .csv, .tsv:
             return false
         }
     }

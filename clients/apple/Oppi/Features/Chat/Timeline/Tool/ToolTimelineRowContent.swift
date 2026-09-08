@@ -2382,6 +2382,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 surface: .fullScreenCode,
                 filePath: filePath
             )
+
+        case .delimitedTable(_, let filePath):
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
+                surface: .fullScreenSource,
+                filePath: filePath
+            )
         }
     }
 

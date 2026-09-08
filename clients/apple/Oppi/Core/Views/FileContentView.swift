@@ -109,6 +109,8 @@ struct FileContentView: View {
             BinaryFileView(filePath: filePath, contentLength: content.count)
         case .plain:
             PlainTextView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
+        case .csv, .tsv:
+            DelimitedTableFileView(content: content, filePath: filePath, presentation: presentation)
 
         // Document renderers — source view until native renderers land
         case .latex:

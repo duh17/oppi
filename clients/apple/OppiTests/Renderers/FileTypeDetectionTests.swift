@@ -49,6 +49,19 @@ struct FileTypeDetectionTests {
         #expect(FileType.detect(from: "tree.gv") == .graphviz)
     }
 
+    // MARK: - CSV / TSV
+
+    @Test func detectCsvExtension() {
+        #expect(FileType.detect(from: "export.csv") == .csv)
+        #expect(FileType.detect(from: "EXPORT.CSV") == .csv)
+        #expect(FileType.detect(from: "metrics/rides.csv") == .csv)
+    }
+
+    @Test func detectTsvExtension() {
+        #expect(FileType.detect(from: "export.tsv") == .tsv)
+        #expect(FileType.detect(from: "notes.TSV") == .tsv)
+    }
+
     // MARK: - Display Labels
 
     @Test func displayLabels() {
@@ -56,6 +69,8 @@ struct FileTypeDetectionTests {
         #expect(FileType.orgMode.displayLabel == "Org")
         #expect(FileType.mermaid.displayLabel == "Mermaid")
         #expect(FileType.graphviz.displayLabel == "Graphviz")
+        #expect(FileType.csv.displayLabel == "CSV")
+        #expect(FileType.tsv.displayLabel == "TSV")
     }
 
     // MARK: - SyntaxLanguage Detection
@@ -113,5 +128,7 @@ struct FileTypeDetectionTests {
         #expect(FileType.detect(from: "data.json") == .json)
         #expect(FileType.detect(from: "photo.png") == .image)
         #expect(FileType.detect(from: "readme.txt") == .plain)
+        #expect(FileType.detect(from: "export.csv") != .plain)
+        #expect(FileType.detect(from: "export.tsv") != .plain)
     }
 }

@@ -1387,6 +1387,18 @@ private struct ToolTimelineBubble: View {
             Label(file.filePath ?? "PDF", systemImage: "doc.richtext")
                 .font(.caption)
                 .foregroundStyle(.themeFg)
+        } else if let plan = DelimitedTableViewerPlan.opening(
+            fileType: file.fileType ?? .plain,
+            path: file.filePath,
+            text: file.text
+        ) {
+            MacDelimitedTablePreviewView(
+                plan: plan,
+                fillsColumn: false,
+                filePath: file.filePath
+            )
+            .frame(maxHeight: isExpanded ? 360 : 180)
+            .clipped()
         } else if let kind = MacMarkupPreviewKind.from(file: file) {
             MacMarkupSourcePreviewView(source: file.text, kind: kind, fillsColumn: false)
                 .frame(maxHeight: isExpanded ? 360 : 180)

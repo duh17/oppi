@@ -256,6 +256,10 @@ struct FileIcon: Equatable, Sendable {
         case "json", "jsonl", "geojson", "jsonc":
             return Self(symbolName: "curlybraces", tint: .yellow)
 
+        // Tables
+        case "csv", "tsv":
+            return Self(symbolName: "tablecells", tint: .green)
+
         // YAML
         case "yaml", "yml":
             return Self(symbolName: "list.bullet.rectangle", tint: .red)

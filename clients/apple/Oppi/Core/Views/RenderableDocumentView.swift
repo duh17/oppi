@@ -3,7 +3,7 @@ import UIKit
 
 // MARK: - RenderableDocumentView
 
-/// All-UIKit chrome for renderable document types (markdown, LaTeX, mermaid, org, HTML).
+/// All-UIKit chrome for renderable document types (markdown, LaTeX, mermaid, org, HTML, CSV/TSV).
 ///
 /// Owns the header bar, source/rendered toggle, expand button, copy button,
 /// context menu, code block chrome, and floating capsule. The rendered content
@@ -76,6 +76,17 @@ final class RenderableDocumentView: UIView {
             sourceToggleIcon: "globe",
             sourceLanguage: "html"
         )
+
+        static func delimitedTable(kind: DelimitedTableViewerPlan.Kind) -> Config {
+            Config(
+                iconName: "tablecells",
+                iconColor: { UIColor($0.green) },
+                label: kind.fileType.displayLabel,
+                sourceToggleLabels: (rendered: "Table", source: "Source"),
+                sourceToggleIcon: "tablecells",
+                sourceLanguage: nil
+            )
+        }
     }
 
     // MARK: - Properties

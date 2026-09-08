@@ -151,6 +151,8 @@ struct FileTypeTests {
         #expect(FileType.image.displayLabel == "Image")
         #expect(FileType.audio.displayLabel == "Audio")
         #expect(FileType.plain.displayLabel == "Text")
+        #expect(FileType.csv.displayLabel == "CSV")
+        #expect(FileType.tsv.displayLabel == "TSV")
         #expect(FileType.code(language: .swift).displayLabel == "Swift")
     }
 
@@ -320,6 +322,8 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "graph.dot").syntaxLanguage == .dot)
         #expect(FileType.detect(from: "README.md").syntaxLanguage == nil)
         #expect(FileType.detect(from: "notes.org").syntaxLanguage == .orgMode)
+        #expect(FileType.detect(from: "export.csv").syntaxLanguage == nil)
+        #expect(FileType.detect(from: "export.tsv").syntaxLanguage == nil)
         #expect(FileType.latex.syntaxLanguage == .latex)
         #expect(FileType.mermaid.syntaxLanguage == .mermaid)
         #expect(FileType.html.syntaxLanguage == .html)
@@ -334,6 +338,8 @@ struct FilePreviewCategoryTests {
         #expect(FileType.detect(from: "index.html").previewCategory == .text)
         #expect(FileType.detect(from: "data.json").previewCategory == .text)
         #expect(FileType.detect(from: "diagram.mmd").previewCategory == .text)
+        #expect(FileType.detect(from: "export.csv").previewCategory == .text)
+        #expect(FileType.detect(from: "export.tsv").previewCategory == .text)
     }
 
     @Test func mediaAndBinaryFilesKeepTheirCategories() {

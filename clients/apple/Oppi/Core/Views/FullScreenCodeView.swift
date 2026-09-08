@@ -231,6 +231,8 @@ final class SourceTraceStream {
             return "mermaid"
         case .graphviz:
             return "graphviz"
+        case .delimitedTable:
+            return "delimitedTable"
         case nil:
             return nil
         }
@@ -276,6 +278,7 @@ indirect enum FullScreenCodeContent {
     case orgMode(content: String, filePath: String?)
     case mermaid(content: String, filePath: String?)
     case graphviz(content: String, filePath: String?)
+    case delimitedTable(content: String, filePath: String?)
 
     /// Workspace/session context for resolving image paths in markdown files.
     struct WorkspaceContext: @unchecked Sendable {
@@ -331,6 +334,7 @@ indirect enum FullScreenCodeContent {
         case .orgMode: return .orgMode(content: text, filePath: filePath)
         case .mermaid: return .mermaid(content: text, filePath: filePath)
         case .graphviz: return .graphviz(content: text, filePath: filePath)
+        case .csv, .tsv: return .delimitedTable(content: text, filePath: filePath)
         case .json:
             return .code(content: text, language: "json", filePath: filePath, startLine: 1)
         case .code(let lang):

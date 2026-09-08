@@ -501,7 +501,7 @@ enum ToolPresentationBuilder {
                 attachments: attachments
             )
         case .html, .plain, .code, .json, .pdf, .binary,
-             .latex, .mermaid, .graphviz, .none:
+             .latex, .mermaid, .graphviz, .csv, .tsv, .none:
             return .code(
                 text: text,
                 language: metadata.language,
