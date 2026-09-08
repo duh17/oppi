@@ -1,11 +1,134 @@
 import Foundation
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
 
-@Suite("Session timeline navigation")
+@Suite("Session timeline navigation", .serialized)
 @MainActor
 struct SessionTimelineNavigationTests {
+    enum OutlineScenario: CaseIterable {
+        case firstUser, assistant, tool, quietTool, pagedFirstUser
+
+        var targetID: String {
+            switch self {
+            case .firstUser, .pagedFirstUser: "entry-0"
+            case .assistant: "entry-19"
+            case .tool, .quietTool: "entry-21"
+            }
+        }
+    }
+
+    @Test(arguments: OutlineScenario.allCases)
+    func outlineSelectionFromAttachedWindowedTimelineLandsAndHighlights(scenario: OutlineScenario) async throws {
+        let targetID = scenario.targetID
+        let manager = ChatSessionManager(sessionId: "outline-hosted")
+        let reducer = manager.reducer
+        let events = (0..<301).map { index in
+            TraceEvent(
+                id: "entry-\(index)",
+                type: index == 21 ? .toolCall : (index.isMultiple(of: 2) ? .user : .assistant),
+                timestamp: "2026-09-07T10:00:00Z",
+                text: "Message \(index). " + String(repeating: "Timeline navigation context. ", count: 4),
+                tool: index == 21 ? "bash" : nil, args: nil, output: nil, toolCallId: nil,
+                toolName: nil, isError: nil, thinking: nil
+            )
+        }
+        reducer.loadSession(scenario == .pagedFirstUser ? Array(events.suffix(100)) : events)
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let scrollController = ChatScrollController()
+        manager.needsInitialScroll = true
+        let timeline = ChatTimelineView(
+            sessionId: manager.sessionId, serverId: nil, workspaceId: nil,
+            isBusy: false, extensionWorkingState: nil, extensionHiddenThinkingLabel: nil,
+            currentModel: nil, connection: connection, scrollController: scrollController,
+            sessionManager: manager, audioLifecycleCoordinator: nil,
+            quietModeEnabled: scenario == .quietTool,
+            onFork: { _ in }, onBackSwipe: {}, reviewCommentSelectionRouter: nil,
+            topOverlap: 160, bottomOverlap: 0
+        )
+        let host = UIHostingController(rootView:
+            NavigationStack { timeline.navigationTitle("Chat") }
+                .environment(reducer)
+                .environment(audioPlayer)
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let ready = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                return scrollController.currentTopVisibleItemId != nil && !manager.needsInitialScroll
+            }
+        }
+        #expect(ready)
+        let cv = try #require(timelineFirstView(ofType: UICollectionView.self, in: host.view))
+        let coordinator = try #require(cv.delegate as? ChatTimelineCollectionHost.Controller)
+        #expect(!coordinator.currentIDs.contains(targetID), "Setup must retain the real 80-row render window")
+        #expect(scrollController.isCurrentlyNearBottom)
+
+        // Invoke the actual ChatView onSelect/load/scrollTargetID path while
+        // an outline sheet covers the mounted, windowed SwiftUI timeline.
+        // No pre-expansion, manual detach, scroll command, or highlight injection.
+        var didLoadTarget = false
+        let outline = SessionOutlineView(
+            items: reducer.items, sessionId: manager.sessionId, workspaceId: nil,
+            onSelect: { selectedID in
+                ChatView.selectOutlineTimelineEntry(
+                    selectedID, items: reducer.items, scrollController: scrollController
+                ) {
+                    didLoadTarget = true
+                    await Task.yield()
+                    #expect(reducer.prependTracePage(Array(events.prefix(201))))
+                }
+            }
+        )
+        let sheet = UIHostingController(rootView: outline.environment(reducer.toolArgsStore))
+        sheet.modalPresentationStyle = .pageSheet
+        host.present(sheet, animated: false)
+        #expect(host.presentedViewController === sheet)
+        outline.onSelect(targetID)
+        if scenario != .pagedFirstUser {
+            #expect(scrollController.scrollTargetID == targetID)
+        }
+        host.dismiss(animated: false)
+        let landedAndHighlighted = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                cv.layoutIfNeeded()
+                guard host.presentedViewController == nil,
+                      let index = coordinator.currentIDs.firstIndex(of: targetID),
+                      let cell = cv.cellForItem(at: IndexPath(item: index, section: 0)) as? SafeSizingCell,
+                      let attributes = cv.layoutAttributesForItem(at: IndexPath(item: index, section: 0)) else {
+                    return false
+                }
+                let relativeY = attributes.frame.minY - cv.contentOffset.y
+                return abs(relativeY - cv.adjustedContentInset.top) < 8
+                    && cell.isShowingNavigationHighlightForTesting
+            }
+        }
+        #expect(landedAndHighlighted, "Expected outline selection to expand, land and highlight; top=\(scrollController.currentTopVisibleItemId ?? "nil"), attached=\(scrollController.isCurrentlyNearBottom), target=\(scrollController.scrollTargetID ?? "nil")")
+        #expect(didLoadTarget == (scenario == .pagedFirstUser))
+        #expect(!scrollController.isCurrentlyNearBottom, "Outline navigation must release tail-follow intent")
+        // A later timeline publication must not erase a successful jump.
+        let newTailID = reducer.appendUserMessage("A new live message")
+        let retainedLanding = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                cv.layoutIfNeeded()
+                guard coordinator.currentIDs.contains(newTailID),
+                      let index = coordinator.currentIDs.firstIndex(of: targetID),
+                      let attrs = cv.layoutAttributesForItem(at: IndexPath(item: index, section: 0)) else { return false }
+                return abs(attrs.frame.minY - cv.contentOffset.y - cv.adjustedContentInset.top) < 8
+            }
+        }
+        let targetIndex = coordinator.currentIDs.firstIndex(of: targetID)
+        let targetY = targetIndex.flatMap { cv.layoutAttributesForItem(at: IndexPath(item: $0, section: 0))?.frame.minY }
+        #expect(retainedLanding, "New publication must preserve the outline landing; count=\(coordinator.currentIDs.count), first=\(coordinator.currentIDs.first ?? "nil"), targetY=\(targetY ?? -999), offset=\(cv.contentOffset.y), inset=\(cv.adjustedContentInset.top), top=\(scrollController.currentTopVisibleItemId ?? "nil"), attached=\(scrollController.isCurrentlyNearBottom)")
+    }
+
     @Test func detachedNavigationExpandsHistoryAndLandsOnSelectedAssistantMessage() async throws {
         let result = await navigateFromDetachedTail(to: "msg-20")
         #expect(

@@ -2294,18 +2294,16 @@ struct ChatView: View {
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
             onSelect: { targetID in
-                if reducer.items.contains(where: { $0.id == targetID }) {
-                    scrollController.scrollTargetID = targetID
-                    return
-                }
-
-                Task { @MainActor in
+                Self.selectOutlineTimelineEntry(
+                    targetID,
+                    items: reducer.items,
+                    scrollController: scrollController
+                ) {
                     _ = await sessionManager.loadTracePageAround(
                         entryId: targetID,
                         connection: connection,
                         sessionStore: sessionStore
                     )
-                    scrollController.scrollTargetID = targetID
                 }
             },
             onFork: forkFromMessage,
@@ -2325,6 +2323,24 @@ struct ChatView: View {
                 )
             }
         )
+    }
+
+    /// Shared by the outline callback and mounted navigation regression tests.
+    /// Loading stays in ChatView; the timeline receives only the selected ID.
+    static func selectOutlineTimelineEntry(
+        _ targetID: String,
+        items: [ChatItem],
+        scrollController: ChatScrollController,
+        loadTarget: @escaping @MainActor () async -> Void
+    ) {
+        if items.contains(where: { $0.id == targetID }) {
+            scrollController.scrollTargetID = targetID
+            return
+        }
+        Task { @MainActor in
+            await loadTarget()
+            scrollController.scrollTargetID = targetID
+        }
     }
 
     private var filePanelSheet: some View {

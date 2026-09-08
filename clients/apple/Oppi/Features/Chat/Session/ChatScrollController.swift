@@ -440,7 +440,11 @@ final class ChatScrollController: NSObject {
     func handleScrollTarget(performScrollToTop: @escaping (String) -> Void) {
         guard let target = scrollTargetID else { return }
         scrollTargetID = nil
-        navigationRestoration = nil
+        // An outline jump is explicit reading intent, just like scrolling up.
+        // Release the initial/send follow lock before the window expands:
+        // otherwise passive layout keeps us attached and the next publication
+        // pulls the landed (and highlighted) row back to the live tail.
+        detachFromBottomForUserScroll()
         requestNavigationHighlight(for: target)
         performScrollToTop(target)
     }

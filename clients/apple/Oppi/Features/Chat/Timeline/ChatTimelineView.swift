@@ -109,7 +109,15 @@ struct ChatTimelineView: View {
     }
 
     private var renderedItems: ArraySlice<ChatItem> {
-        reducer.items.suffix(renderWindow)
+        var window = renderWindow
+        // Keep the selected row in the suffix as new events arrive. This must
+        // happen while building the snapshot, not in onChange(items.count):
+        // that callback is too late to prevent one apply from evicting the row.
+        if let command = pendingScrollCommand, command.anchor == .top,
+           let index = reducer.items.firstIndex(where: { $0.id == command.id }) {
+            window = max(window, reducer.items.count - index)
+        }
+        return reducer.items.suffix(window)
     }
 
     private var renderedItemIDs: Set<String> {
