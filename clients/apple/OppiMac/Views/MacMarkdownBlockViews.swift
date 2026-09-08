@@ -488,7 +488,7 @@ struct MacMarkdownInlineContent: View {
 
     var body: some View {
         let runs = MacMarkdownPaintDispatch.inlineRuns(
-            from: inlines,
+            from: expandingAudioContainers(inlines),
             workspaceID: workspaceID,
             sessionID: sessionID
         )
@@ -523,8 +523,7 @@ struct MacMarkdownInlineContent: View {
                     case .video(let embed):
                         MacMarkdownVideoView(embed: embed, worktreeId: worktreeId)
                     case .audio(let embed):
-                        Text(embed.displayLabel)
-                            .foregroundStyle(.secondary)
+                        MacMarkdownAudioView(embed: embed, worktreeId: worktreeId)
                     case .latexFormula(let code):
                         MacLatexFormulaView(code: code, isInline: true)
                     }
@@ -532,6 +531,34 @@ struct MacMarkdownInlineContent: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+/// Promote audio nested in text styling without losing styling on either side.
+/// The shared AST and existing image/video promotion remain unchanged.
+private func expandingAudioContainers(_ inlines: [MarkdownInline]) -> [MarkdownInline] {
+    inlines.flatMap { inline -> [MarkdownInline] in
+        let children: [MarkdownInline]
+        let wrap: ([MarkdownInline]) -> MarkdownInline
+        switch inline {
+        case .emphasis(let value): children = value; wrap = MarkdownInline.emphasis
+        case .strong(let value): children = value; wrap = MarkdownInline.strong
+        case .strikethrough(let value): children = value; wrap = MarkdownInline.strikethrough
+        default: return [inline]
+        }
+        let expanded = expandingAudioContainers(children)
+        var result: [MarkdownInline] = []
+        var text: [MarkdownInline] = []
+        for child in expanded {
+            if case .audioEmbed = child {
+                if !text.isEmpty { result.append(wrap(text)); text = [] }
+                result.append(child)
+            } else {
+                text.append(child)
+            }
+        }
+        if !text.isEmpty { result.append(wrap(text)) }
+        return result
     }
 }
 
