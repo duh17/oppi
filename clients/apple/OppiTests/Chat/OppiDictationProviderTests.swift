@@ -585,7 +585,55 @@ struct OppiDictationProviderLifecycleTests {
         provider.invalidateCache()
     }
 
-    @Test func prepareSessionSendsPreparedContextualStrings() async throws {
+    @Test func prepareSessionOmitsContextualStringsWhenServerVocabularyOptInIsOff() async throws {
+        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
+        let original = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+
+        let connection = ServerConnection()
+        let credentials = Self.makeCredentials()
+        _ = connection.configure(credentials: credentials)
+        let context = VoiceProviderContext(
+            locale: Locale(identifier: "en-US"),
+            source: "test",
+            serverCredentials: credentials,
+            serverConnection: connection,
+            contextualStrings: ["Foo Bar", "Yuwp"]
+        )
+        let provider = OppiDictationProvider()
+        let transport = installTestDictationTransport(on: provider)
+        _ = try await provider.prepareSession(context: context)
+
+        #expect(await waitForMainActorCondition {
+            transport.sentMessages.contains { message in
+                if case .dictationStart(let phrases) = message {
+                    return phrases.isEmpty
+                }
+                return false
+            }
+        })
+        provider.invalidateCache()
+    }
+
+    @Test func prepareSessionSendsPreparedContextualStringsWhenServerVocabularyOptInIsOn() async throws {
+        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
+        let original = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        AppPreferences.Voice.setServerDictationVocabularyEnabled(true)
+
         let connection = ServerConnection()
         let credentials = Self.makeCredentials()
         _ = connection.configure(credentials: credentials)

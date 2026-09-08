@@ -147,6 +147,14 @@ enum AppPreferences {
             AppPreferenceStore.Voice.setFoundationModelDictationHintsEnabled(enabled)
         }
 
+        static var isServerDictationVocabularyEnabled: Bool {
+            AppPreferenceStore.Voice.isServerDictationVocabularyEnabled
+        }
+
+        static func setServerDictationVocabularyEnabled(_ enabled: Bool) {
+            AppPreferenceStore.Voice.setServerDictationVocabularyEnabled(enabled)
+        }
+
         static func setReplyMode(_ mode: ReplyMode) {
             AppPreferenceStore.Voice.setReplyMode(mode)
         }

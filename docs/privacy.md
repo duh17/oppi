@@ -11,7 +11,7 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - Pairing credentials and connection preferences stay on your Apple device. Server credentials are stored in the iOS Keychain.
 - Prompts, session history, workspace metadata, tool results, and attachments can be stored by the paired server and by Pi in the server's configured data and workspace locations.
 - A selected photo or file is read by the app and uploaded to the paired server with the session turn. The app does not collect photos or files in the background.
-- Dictation can use Apple's on-device speech APIs or audio sent through the paired server to its configured speech-to-text backend. Server dictation also sends selected on-device vocabulary phrases for that take.
+- Dictation can use Apple's on-device speech APIs or audio sent through the paired server to its configured speech-to-text backend. Selected vocabulary phrases stay on this device unless you turn on **Settings → Voice → Send dictation vocabulary to Server**.
 - Model, speech, and voice providers can receive the content needed for the operation you choose. Their privacy policies and retention rules apply.
 - Public builds upload diagnostics only after you enable **Settings → Privacy & Security → Send Diagnostics to Server**. Diagnostics go to your paired server, not to a hosted Oppi service.
 - Remote connections use authenticated HTTPS/WSS, including LAN and Tailscale HTTPS. The network path can see ordinary connection metadata such as IP addresses, hostnames, timing, and traffic volume.
@@ -114,7 +114,7 @@ Apple can manage installation of the speech assets used by its APIs. Apple's own
 
 Server dictation streams 16 kHz, 16-bit mono PCM audio from the iPhone to the paired server. The server forwards audio to the speech-to-text endpoint configured in `asr.sttEndpoint` and sends incremental and final transcript results back to the app. The Oppi server does not persist dictation audio locally. The configured speech-to-text backend can receive the audio and transcript and controls its own retention.
 
-Vocabulary extraction from the latest assistant reply stays on the Apple device. When Server dictation is selected, Oppi sends the selected phrases for that take to the paired server and its configured speech-to-text provider. Those phrases are vocabulary hints, not the full conversation and not a client-supplied instruction. On-device Foundation Model enrichment, when enabled, also stays on the device; only the selected phrases leave the phone on the Server path.
+Vocabulary extraction from the latest assistant reply stays on the Apple device. On-device dictation can use those phrases locally. Server dictation sends them to the paired server and its speech-to-text provider only when you enable **Settings → Voice → Send dictation vocabulary to Server**. That setting is off by default. Those phrases are vocabulary hints, not the full conversation and not a client-supplied instruction. On-device Foundation Model enrichment, when enabled, also stays on the device.
 
 The endpoint can be local to the server host or remote. For a remote endpoint, the server operator is responsible for its transport security, credentials, processing, and retention.
 

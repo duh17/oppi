@@ -92,7 +92,7 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
         let readinessTask: Task<DictationProviderInfo?, Error> = Task {
             try await transport.sendDictation(
                 .dictationStart(
-                    contextualStrings: DictationContextualStrings.prepared(context.contextualStrings)
+                    contextualStrings: Self.serverVocabulary(from: context.contextualStrings)
                 )
             )
 
@@ -237,5 +237,11 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
             readinessTask: readinessTask,
             messages: recordingMessages
         )
+    }
+
+    /// Server vocabulary is opt-in. On-device hints stay local even when this is off.
+    private static func serverVocabulary(from phrases: [String]) -> [String] {
+        guard AppPreferences.Voice.isServerDictationVocabularyEnabled else { return [] }
+        return DictationContextualStrings.prepared(phrases)
     }
 }

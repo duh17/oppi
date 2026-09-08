@@ -366,6 +366,22 @@ struct VoiceEnginePreferenceStoreTests {
         #expect(!AppPreferenceStore.Voice.isFoundationModelDictationHintsEnabled)
     }
 
+    @Test func usesTheSameServerDictationVocabularyKeyAsIOS() {
+        #expect(
+            AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
+                == "\(AppIdentifiers.subsystem).voice.sendServerDictationVocabulary"
+        )
+    }
+
+    @Test func defaultsServerDictationVocabularyToOff() {
+        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
+        let original = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { restoreObject(original, forKey: key) }
+
+        #expect(!AppPreferenceStore.Voice.isServerDictationVocabularyEnabled)
+    }
+
     @Test func usesTheSameReplyModeKeysAsIOS() {
         #expect(
             AppPreferenceStore.Voice.replyModeKey

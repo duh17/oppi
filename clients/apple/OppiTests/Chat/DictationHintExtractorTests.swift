@@ -144,9 +144,40 @@ struct DictationHintPreferenceTests {
         let settings = try appleSource("Oppi/Features/Settings/SettingsView.swift")
         #expect(settings.contains("Improve dictation with Foundation Model"))
         #expect(settings.contains("The Foundation Model runs on this iPhone"))
-        #expect(settings.contains("Server dictation sends selected vocabulary"))
+        #expect(settings.contains("only improves local vocabulary"))
         #expect(settings.contains("isFoundationModelDictationHintsEnabled"))
         #expect(!settings.contains("never leaves this iPhone"))
+    }
+
+    @Test func serverDictationVocabularyDefaultOff() {
+        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
+        let original = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { restorePreference(original, forKey: key) }
+
+        #expect(!AppPreferences.Voice.isServerDictationVocabularyEnabled)
+        #expect(!AppPreferenceStore.Voice.isServerDictationVocabularyEnabled)
+    }
+
+    @Test func persistsServerDictationVocabularyChoice() {
+        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
+        let original = UserDefaults.standard.object(forKey: key)
+        defer { restorePreference(original, forKey: key) }
+
+        AppPreferences.Voice.setServerDictationVocabularyEnabled(true)
+        #expect(AppPreferences.Voice.isServerDictationVocabularyEnabled)
+
+        AppPreferences.Voice.setServerDictationVocabularyEnabled(false)
+        #expect(!AppPreferences.Voice.isServerDictationVocabularyEnabled)
+    }
+
+    @Test func settingsExplainServerDictationVocabularyOptIn() throws {
+        let settings = try appleSource("Oppi/Features/Settings/SettingsView.swift")
+        #expect(settings.contains("Send dictation vocabulary to Server"))
+        #expect(settings.contains("Off by default"))
+        #expect(settings.contains("paired server and its speech-to-text provider"))
+        #expect(settings.contains("isServerDictationVocabularyEnabled"))
+        #expect(!settings.contains("Server dictation sends selected vocabulary"))
     }
 
     @Test func chatPrecomputesHintsWhenAssistantMessageLands() throws {
@@ -188,6 +219,12 @@ struct DictationHintPreferenceTests {
         #expect(!body.contains("updateConversationHints"))
         #expect(body.contains("freezeAuthorizedTake()"))
         #expect(body.contains("frozenTake.phrases"))
+    }
+
+    @Test func serverProviderGatesVocabularyOnOptIn() throws {
+        let source = try appleSource("Oppi/Core/Services/OppiDictationProvider.swift")
+        #expect(source.contains("isServerDictationVocabularyEnabled"))
+        #expect(source.contains("dictationStart"))
     }
 
     @Test func onDeviceSessionSetsContextBeforeStart() throws {
@@ -1293,6 +1330,7 @@ private func testDictationServer(host: String) -> (credentials: ServerCredential
 private func resetHintPreferences() {
     AppPreferences.Voice.setEngineMode(.onDevice)
     AppPreferences.Voice.setFoundationModelDictationHintsEnabled(false)
+    AppPreferences.Voice.setServerDictationVocabularyEnabled(false)
 }
 
 private func restorePreference(_ value: Any?, forKey key: String) {

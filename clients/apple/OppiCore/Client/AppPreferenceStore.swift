@@ -101,6 +101,8 @@ enum AppPreferenceStore {
         static let sessionReplyModeOverridesKey = "\(AppIdentifiers.subsystem).voice.sessionReplyModeOverrides"
         static let foundationModelDictationHintsEnabledKey =
             "\(AppIdentifiers.subsystem).voice.improveDictationWithFoundationModel"
+        static let serverDictationVocabularyEnabledKey =
+            "\(AppIdentifiers.subsystem).voice.sendServerDictationVocabulary"
 
         static var engineMode: EngineMode {
             guard let raw = UserDefaults.standard.string(forKey: engineModeKey),
@@ -123,6 +125,15 @@ enum AppPreferenceStore {
 
         static func setFoundationModelDictationHintsEnabled(_ enabled: Bool) {
             UserDefaults.standard.set(enabled, forKey: foundationModelDictationHintsEnabledKey)
+        }
+
+        /// Off by default. Server dictation sends selected vocabulary only when enabled.
+        static var isServerDictationVocabularyEnabled: Bool {
+            UserDefaults.standard.object(forKey: serverDictationVocabularyEnabledKey) as? Bool ?? false
+        }
+
+        static func setServerDictationVocabularyEnabled(_ enabled: Bool) {
+            UserDefaults.standard.set(enabled, forKey: serverDictationVocabularyEnabledKey)
         }
 
         static var replyMode: ReplyMode {
