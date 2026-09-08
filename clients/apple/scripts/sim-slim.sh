@@ -24,7 +24,10 @@ sim_is_slim() {
   local udid="$1"
   local disabled
   disabled=$(xcrun simctl spawn "$udid" launchctl print-disabled system 2>/dev/null || true)
-  grep -Eq '"com.apple.PosterBoard" => (disabled|true)' <<<"$disabled"
+  # PosterBoard is the original marker. routined was added later; require
+  # both so already-slim pool sims pick up the Watch/MDM label pass.
+  grep -Eq '"com.apple.PosterBoard" => (disabled|true)' <<<"$disabled" \
+    && grep -Eq '"com.apple.routined" => (disabled|true)' <<<"$disabled"
 }
 
 slim_disable_labels() {

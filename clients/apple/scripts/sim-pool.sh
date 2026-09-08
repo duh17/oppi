@@ -18,7 +18,7 @@
 #   builds UI/E2E/perf bundles, which looks like a hung unit-test run.
 #
 # Environment:
-#   OPPI_SIM_POOL_COUNT              Number of pool slots to consider (default: 8)
+#   OPPI_SIM_POOL_COUNT              Number of pool slots to consider (default: 6)
 #   OPPI_SIM_POOL_SLOT_START         First pool slot index to consider (default: 0; OPPI_SIM_POOL_SLOT_OFFSET alias)
 #   OPPI_SIM_DEVICE_TYPE             com.apple.CoreSimulator.SimDeviceType identifier (default: iPhone-16-Pro)
 #   OPPI_SIM_RUNTIME                 com.apple.CoreSimulator.SimRuntime identifier (auto-detected)
@@ -63,7 +63,7 @@ else
 fi
 APPLE_DIR="$OPPI_ROOT/clients/apple"
 
-POOL_COUNT="${OPPI_SIM_POOL_COUNT:-8}"
+POOL_COUNT="${OPPI_SIM_POOL_COUNT:-6}"
 POOL_SLOT_START="${OPPI_SIM_POOL_SLOT_START:-${OPPI_SIM_POOL_SLOT_OFFSET:-0}}"
 DEVICE_TYPE="${OPPI_SIM_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro}"
 LOCK_DIR="${OPPI_SIM_POOL_LOCK_DIR:-/tmp/oppi-sim-pool}"
@@ -422,7 +422,8 @@ EOF
     com.apple.assetsd \
     com.apple.apsd \
     com.apple.swcd \
-    com.apple.mobileassetd; do
+    com.apple.mobileassetd \
+    com.apple.diagnosticd; do
     if grep -qx "$keep_label" "$SCRIPT_DIR/sim-pool-slim-labels.txt"; then
       die "self-test: slim label list disables kept daemon $keep_label"
     fi
@@ -443,7 +444,7 @@ EOF
     xcrun() {
       case "$*" in
         "simctl spawn self-test-udid launchctl print-disabled system")
-          printf '%s\n' '"com.apple.PosterBoard" => disabled'
+          printf '%s\n' '"com.apple.PosterBoard" => disabled' '"com.apple.routined" => disabled'
           ;;
         *"launchctl disable "*)
           disable_calls=$((disable_calls + 1))
