@@ -16,6 +16,56 @@ struct SessionTimelineNavigationTests {
         #expect(result.highlightOverlayFrontmost, "Expected assistant highlight overlay to render above row content")
     }
 
+    @Test func detachedNavigationExpandsHistoryAndLandsOnFirstTimelineRow() async throws {
+        let result = await navigateFromDetachedTail(to: "msg-0", topOverlap: 160)
+        #expect(
+            result.reachedTarget,
+            "Expected timeline navigation to land on msg-0; top=\(result.topVisible), visible=\(result.visibleIDs)"
+        )
+        #expect(
+            result.landedBelowTopChrome,
+            "Expected first row to sit below top chrome, not under the navigation bar"
+        )
+        #expect(result.didHighlightTarget, "Expected first-row target to flash after navigation")
+    }
+
+    @Test func streamingNoOpApplyStillHonorsOutlineScrollCommand() async throws {
+        let harness = makeWindowedTimelineHarness(
+            sessionId: "session-outline-streaming-noop",
+            useAnchoredCollectionView: true
+        )
+        let items = makeMixedTimelineItems(count: 12)
+        applyTimelineItems(
+            items,
+            hiddenCount: 0,
+            nonce: 1,
+            streamingAssistantID: "msg-10",
+            to: harness
+        )
+        harness.scrollController.detachFromBottomForUserScroll()
+        if let anchoredCV = harness.collectionView as? AnchoredCollectionView {
+            anchoredCV.isDetachedFromBottom = true
+        }
+
+        applyTimelineItems(
+            items,
+            hiddenCount: 0,
+            nonce: 2,
+            scrollTargetID: "msg-0",
+            streamingAssistantID: "msg-10",
+            topOverlap: 160,
+            to: harness
+        )
+
+        let landed = await waitForTimelineCondition(timeoutMs: 500) {
+            await MainActor.run {
+                settleTimelineLayout(harness.collectionView, passes: 3)
+                return firstItemIsBelowTopChrome("msg-0", in: harness)
+            }
+        }
+        #expect(landed, "Expected outline jump to survive a structurally unchanged streaming apply")
+    }
+
     @Test func detachedNavigationExpandsHistoryAndLandsOnSelectedToolRow() async throws {
         let result = await navigateFromDetachedTail(to: "tool-21")
         #expect(
@@ -199,12 +249,16 @@ private struct NavigationResult {
     let reachedTarget: Bool
     let didHighlightTarget: Bool
     let highlightOverlayFrontmost: Bool
+    let landedBelowTopChrome: Bool
     let topVisible: String
     let visibleIDs: [String]
 }
 
 @MainActor
-private func navigateFromDetachedTail(to targetID: String) async -> NavigationResult {
+private func navigateFromDetachedTail(
+    to targetID: String,
+    topOverlap: CGFloat = 0
+) async -> NavigationResult {
     let harness = makeWindowedTimelineHarness(
         sessionId: "session-outline-navigation-\(targetID)",
         useAnchoredCollectionView: true
@@ -216,6 +270,7 @@ private func navigateFromDetachedTail(to targetID: String) async -> NavigationRe
         visibleTail,
         hiddenCount: allItems.count - visibleTail.count,
         nonce: nil,
+        topOverlap: topOverlap,
         to: harness
     )
 
@@ -230,6 +285,7 @@ private func navigateFromDetachedTail(to targetID: String) async -> NavigationRe
         hiddenCount: 0,
         nonce: 2,
         scrollTargetID: targetID,
+        topOverlap: topOverlap,
         to: harness
     )
 
@@ -252,10 +308,15 @@ private func navigateFromDetachedTail(to targetID: String) async -> NavigationRe
         timelineCell(for: targetID, in: harness)?.isNavigationHighlightOverlayFrontmostForTesting ?? false
     }
 
+    let landedBelowTopChrome = await MainActor.run {
+        firstItemIsBelowTopChrome(targetID, in: harness)
+    }
+
     return NavigationResult(
         reachedTarget: reachedTarget,
         didHighlightTarget: didHighlightTarget,
         highlightOverlayFrontmost: highlightOverlayFrontmost,
+        landedBelowTopChrome: landedBelowTopChrome,
         topVisible: harness.scrollController.currentTopVisibleItemId ?? "nil",
         visibleIDs: visibleTimelineIDs(in: harness)
     )
@@ -267,6 +328,8 @@ private func applyTimelineItems(
     hiddenCount: Int,
     nonce: Int?,
     scrollTargetID: String? = nil,
+    streamingAssistantID: String? = nil,
+    topOverlap: CGFloat = 0,
     to harness: WindowedTimelineHarness
 ) {
     let scrollCommand: ChatTimelineScrollCommand? = if let nonce, let scrollTargetID {
@@ -283,7 +346,8 @@ private func applyTimelineItems(
     let config = makeTimelineConfiguration(
         items: items,
         hiddenCount: hiddenCount,
-        isBusy: false,
+        isBusy: streamingAssistantID != nil,
+        streamingAssistantID: streamingAssistantID,
         scrollCommand: scrollCommand,
         sessionId: harness.sessionId,
         reducer: harness.reducer,
@@ -292,10 +356,24 @@ private func applyTimelineItems(
         toolSegmentStore: harness.toolSegmentStore,
         connection: harness.connection,
         scrollController: harness.scrollController,
-        audioPlayer: harness.audioPlayer
+        audioPlayer: harness.audioPlayer,
+        topOverlap: topOverlap
     )
     harness.coordinator.apply(configuration: config, to: harness.collectionView)
     settleTimelineLayout(harness.collectionView, passes: 2)
+}
+
+@MainActor
+private func firstItemIsBelowTopChrome(_ itemID: String, in harness: WindowedTimelineHarness) -> Bool {
+    guard let index = harness.coordinator.currentIDs.firstIndex(of: itemID),
+          let attributes = harness.collectionView.layoutAttributesForItem(
+            at: IndexPath(item: index, section: 0)
+          ) else {
+        return false
+    }
+    let insets = harness.collectionView.adjustedContentInset
+    let relativeY = attributes.frame.minY - harness.collectionView.contentOffset.y
+    return abs(relativeY - insets.top) < 8
 }
 
 private func makeMixedTimelineItems(count: Int) -> [ChatItem] {

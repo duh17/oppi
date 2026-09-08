@@ -36,6 +36,20 @@ enum TimelineRenderWindowPolicy {
     }
 }
 
+/// The chat collection view ignores the top safe area so rows can scroll
+/// under Liquid Glass. Measure both frames in the timeline's own coordinate
+/// space (origin at the collection view's top, including under the nav bar).
+/// Inset is the header's bottom edge — not the bar's own height, which
+/// leaves the first rows under the navigation bar. An empty header still
+/// contributes the nav-gap when its origin sits at the safe-area top.
+enum ChatTimelineChromeOverlap {
+    static let coordinateSpaceName = "chatTimelineChrome"
+
+    static func topInset(timelineFrame: CGRect, headerFrame: CGRect) -> CGFloat {
+        max(0, headerFrame.maxY - timelineFrame.minY)
+    }
+}
+
 /// Extracted from ChatView so that @State inputText changes (every keystroke)
 /// do NOT trigger a full ForEach re-diff of 200+ items.
 ///
@@ -125,6 +139,7 @@ struct ChatTimelineView: View {
     }
 
     private func consumeInitialScrollIfNeeded() {
+        guard scrollController.scrollTargetID == nil else { return }
         if sessionManager.needsInitialScroll {
             sessionManager.needsInitialScroll = false
             scrollController.needsInitialScroll = true
@@ -245,7 +260,13 @@ struct ChatTimelineView: View {
             syncRenderWindow()
             Task { @MainActor in
                 await Task.yield()
-                consumeInitialScrollIfNeeded()
+                // Outline jumps own the first layout. Consuming the target
+                // before yield let initial-scroll replace the pending .top.
+                if scrollController.scrollTargetID != nil {
+                    consumeScrollTargetIfNeeded()
+                } else {
+                    consumeInitialScrollIfNeeded()
+                }
             }
         }
         .onChange(of: reducer.items.count) { _, _ in
@@ -283,25 +304,29 @@ struct ChatTimelineView: View {
             guard needs else { return }
             consumeInitialScrollIfNeeded()
         }
-        .onChange(of: scrollController.scrollTargetID) { _, targetID in
-            guard targetID != nil else { return }
-            if let targetID, !visibleRows.contains(where: { $0.id == targetID }) {
-                if let workLine = projection.rows.compactMap({ row -> QuietTimelineWorkLine? in
-                    guard case .quietWork(let workLine) = row,
-                          workLine.sourceItemIDs.contains(targetID) else { return nil }
-                    return workLine
-                }).first {
-                    expandedQuietTurnIDs.insert(workLine.turnID)
-                }
-                renderWindow = reducer.items.count
-            }
-            scrollController.handleScrollTarget { target in
-                issueScrollCommand(id: target, anchor: .top, animated: false)
-            }
+        .onChange(of: scrollController.scrollTargetID) { _, _ in
+            consumeScrollTargetIfNeeded()
         }
         .onChange(of: scrollController.scrollToBottomNonce) { _, _ in
             guard let bottomItemID else { return }
             issueScrollCommand(id: bottomItemID, anchor: .bottom, animated: true)
+        }
+    }
+
+    private func consumeScrollTargetIfNeeded() {
+        guard let targetID = scrollController.scrollTargetID else { return }
+        if !visibleRows.contains(where: { $0.id == targetID }) {
+            if let workLine = projection.rows.compactMap({ row -> QuietTimelineWorkLine? in
+                guard case .quietWork(let workLine) = row,
+                      workLine.sourceItemIDs.contains(targetID) else { return nil }
+                return workLine
+            }).first {
+                expandedQuietTurnIDs.insert(workLine.turnID)
+            }
+            renderWindow = reducer.items.count
+        }
+        scrollController.handleScrollTarget { target in
+            issueScrollCommand(id: target, anchor: .top, animated: false)
         }
     }
 

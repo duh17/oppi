@@ -114,7 +114,8 @@ struct ChatView: View {
     @State private var showContextInspector = false
     @State private var isKeyboardVisible = false
     @State private var footerHeight: CGFloat = 0
-    @State private var headerHeight: CGFloat = 0
+    @State private var timelineChromeFrame: CGRect = .zero
+    @State private var headerChromeFrame: CGRect = .zero
     @State private var visibleAudioStripItemIDs: Set<String> = []
     @State private var presentsNowPlayingPlayer = false
     @State private var nowPlayingDrawerExpanded = false
@@ -514,7 +515,7 @@ struct ChatView: View {
             onFork: forkFromMessage,
             onBackSwipe: navigateBackFromChat,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
-            topOverlap: headerHeight,
+            topOverlap: timelineTopOverlap,
             bottomOverlap: footerHeight,
             onVisibleAudioStripItemIDsChange: { ids in
                 visibleAudioStripItemIDs = ids
@@ -568,9 +569,22 @@ struct ChatView: View {
         }
     }
 
+    private var timelineTopOverlap: CGFloat {
+        ChatTimelineChromeOverlap.topInset(
+            timelineFrame: timelineChromeFrame,
+            headerFrame: headerChromeFrame
+        )
+    }
+
     private var chatTimelineScaffold: some View {
         chatTimeline
             .ignoresSafeArea(.container, edges: .top)
+            .coordinateSpace(name: ChatTimelineChromeOverlap.coordinateSpaceName)
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .named(ChatTimelineChromeOverlap.coordinateSpaceName))
+            } action: {
+                timelineChromeFrame = $0
+            }
             .overlay {
                 // Dismiss scrim: dims the timeline so content doesn't
                 // bleed through the context bar's glass effect, and
@@ -598,7 +612,12 @@ struct ChatView: View {
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: handleContextBarExpandedChanged
                 )
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
+                .frame(maxWidth: .infinity, alignment: .top)
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .named(ChatTimelineChromeOverlap.coordinateSpaceName))
+                } action: {
+                    headerChromeFrame = $0
+                }
             }
             .overlay(alignment: .bottom) {
                 footerArea

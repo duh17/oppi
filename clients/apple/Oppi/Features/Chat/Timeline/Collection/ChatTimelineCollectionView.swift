@@ -163,6 +163,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         context.coordinator.installBackSwipeGesture(on: collectionView)
 
         collectionView.accessibilityIdentifier = "chat.timeline"
+        // ChatView already folds nav + context-bar chrome into `topOverlap`.
+        // Automatic adjustment would add the window safe area again and park
+        // the first row below the branch chip.
+        collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.contentInset.top = configuration.topOverlap
         collectionView.contentInset.bottom = configuration.bottomOverlap
         context.coordinator.attachHardwareKeybindingResponder(to: collectionView)
@@ -998,14 +1002,26 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     )
                     previousStreamingAssistantID = configuration.streamingAssistantID
                     previousHiddenCount = configuration.hiddenCount
-                previousHasOlderServerPage = configuration.hasOlderServerPage
+                    previousHasOlderServerPage = configuration.hasOlderServerPage
                     previousItemCount = configuration.items.count
                     previousThemeID = currentThemeID
                     previousShowsWorkingIndicator = configuration.showsWorkingIndicator
                     previousExtensionWorkingState = configuration.extensionWorkingState
                     previousHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
                     isTimelineBusy = configuration.isBusy
-                    ChatTimelinePerf.endTimelineApplyCycle(didScroll: false)
+                    let hadPendingScrollCommand = isPendingScrollCommand(configuration.scrollCommand)
+                    let didScroll = performPendingScrollCommandIfNeeded(
+                        configuration.scrollCommand,
+                        in: collectionView
+                    )
+                    reconcileScrollAfterTimelineApply(
+                        didScroll: didScroll,
+                        hadPendingScrollCommand: hadPendingScrollCommand,
+                        configuration: configuration,
+                        collectionView: collectionView,
+                        itemCount: currentIDs.count
+                    )
+                    ChatTimelinePerf.endTimelineApplyCycle(didScroll: didScroll)
                     updateDetachedStreamingHintVisibility()
                     return
                 }
