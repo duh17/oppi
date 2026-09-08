@@ -341,6 +341,8 @@ enum ToolPresentationBuilder {
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
         /// Rendered markdown (read .md)
         case markdown(text: String, filePath: String? = nil)
+        /// Rendered CSV/TSV table in the expanded tool row (full-screen keeps Table/Source).
+        case delimitedTable(text: String, filePath: String?)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment])
         /// Audio message card with server-owned session attachment replay.
@@ -500,8 +502,10 @@ enum ToolPresentationBuilder {
                 startLine: startLine,
                 attachments: attachments
             )
+        case .csv, .tsv:
+            return .delimitedTable(text: text, filePath: metadata.filePath)
         case .html, .plain, .code, .json, .pdf, .binary,
-             .latex, .mermaid, .graphviz, .csv, .tsv, .none:
+             .latex, .mermaid, .graphviz, .none:
             return .code(
                 text: text,
                 language: metadata.language,

@@ -3,6 +3,7 @@ import UIKit
 /// Read-only CSV/TSV grid. Cells are clipped to the parser bounds; source bytes stay elsewhere.
 final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, FullScreenReaderConfigurable {
     private let plan: DelimitedTableViewerPlan
+    private let themeID: ThemeID
     private let summaryLabel = UILabel()
     private let layout = DelimitedTableGridLayout()
     private let collectionView: UICollectionView
@@ -12,6 +13,7 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, FullSc
 
     init(plan: DelimitedTableViewerPlan, palette: ThemePalette? = nil) {
         self.plan = plan
+        self.themeID = ThemeRuntimeState.currentThemeID()
         self.palette = palette ?? ThemeRuntimeState.currentPalette()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
         super.init(frame: .zero)
@@ -24,6 +26,10 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, FullSc
         fatalError("init(coder:) has not been implemented")
     }
 
+    func displays(_ other: DelimitedTableViewerPlan) -> Bool {
+        plan == other && themeID == ThemeRuntimeState.currentThemeID()
+    }
+
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         let nextScale = CGFloat(preferences.textScale)
         guard abs(nextScale - textScale) > 0.001 else { return }
@@ -32,12 +38,39 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, FullSc
         collectionView.reloadData()
     }
 
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        let width = targetSize.width > 0 ? targetSize.width : bounds.width
+        return CGSize(width: max(1, width), height: fittedContentHeight(forWidth: width))
+    }
+
+    private func fittedContentHeight(forWidth width: CGFloat) -> CGFloat {
+        var height: CGFloat = 0
+        if plan.truncationSummary != nil {
+            let summaryWidth = max(1, width - 24)
+            height += 8
+            height += ceil(summaryLabel.sizeThatFits(
+                CGSize(width: summaryWidth, height: .greatestFiniteMagnitude)
+            ).height)
+            height += 4
+        }
+        if plan.table.displayedRowCount == 0 {
+            height += 48
+        } else {
+            height += layout.headerHeight + CGFloat(plan.table.displayedRowCount - 1) * layout.rowHeight
+        }
+        return max(1, ceil(height))
+    }
+
     private func configure() {
         backgroundColor = UIColor(palette.bgDark)
         collectionView.backgroundColor = .clear
         collectionView.dataSource = self
         collectionView.register(DelimitedTableCell.self, forCellWithReuseIdentifier: DelimitedTableCell.reuseID)
-        collectionView.alwaysBounceVertical = true
+        collectionView.alwaysBounceVertical = false
         collectionView.alwaysBounceHorizontal = true
         collectionView.accessibilityIdentifier = "delimited-table.grid"
         collectionView.translatesAutoresizingMaskIntoConstraints = false

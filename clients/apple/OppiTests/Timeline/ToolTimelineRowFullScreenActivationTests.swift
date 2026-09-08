@@ -230,6 +230,58 @@ struct ToolTimelineRowFullScreenActivationTests {
         #expect(!snapshot.isDone)
     }
 
+    @Test("done delimited table full screen content uses the table viewer")
+    func doneDelimitedTableFullScreenContentUsesTableViewer() throws {
+        let csv = "date,route\n2026-09-01,Lake"
+        let configuration = makeTimelineToolConfiguration(
+            expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
+            copyOutputText: csv,
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: true
+        )
+
+        let content = ToolTimelineRowFullScreenSupport.staticFullScreenContent(
+            configuration: configuration,
+            outputCopyText: csv,
+            terminalStream: nil
+        )
+
+        guard case .delimitedTable(let text, let filePath) = content else {
+            Issue.record("Expected delimited-table full-screen content, got \(String(describing: content))")
+            return
+        }
+        #expect(text == csv)
+        #expect(filePath == "rides.csv")
+    }
+
+    @Test("expanded delimited table activation opens full screen")
+    func expandedDelimitedTableActivationOpensFullScreen() throws {
+        let csv = "date,route\n2026-09-01,Lake"
+        let harness = makeHostHarness()
+        let host = harness.host
+        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
+            copyOutputText: csv,
+            toolNamePrefix: "write",
+            isExpanded: true
+        ))
+
+        host.view.addSubview(view)
+        view.frame = host.view.bounds
+        host.view.layoutIfNeeded()
+
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
+
+        view.performExpandedActivation()
+
+        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
+        #expect(presented.modalPresentationStyle == .pageSheet)
+
+        host.dismiss(animated: false)
+        harness.window.isHidden = true
+    }
+
     @Test("expanded text activation opens full screen")
     func expandedTextActivationOpensFullScreen() throws {
         let harness = makeHostHarness()

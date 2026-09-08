@@ -39,7 +39,7 @@ enum ToolTimelineRowFullScreenSupport {
                     stream: terminalStream
                 )
 
-            case .code, .diff, .markdown:
+            case .code, .diff, .markdown, .delimitedTable:
                 guard let snapshot = liveSourceSnapshot(
                     configuration: configuration,
                     outputCopyText: outputCopyText
@@ -93,6 +93,10 @@ enum ToolTimelineRowFullScreenSupport {
                 filePath: path,
                 workspaceContext: markdownWorkspaceContext(configuration: configuration)
             )
+
+        case .delimitedTable(let text, let filePath):
+            guard !text.isEmpty else { return nil }
+            return .delimitedTable(content: text, filePath: filePath)
 
         case .code(let text, let language, let startLine, let filePath):
             let copyText = outputCopyText ?? text
@@ -193,6 +197,15 @@ enum ToolTimelineRowFullScreenSupport {
                     filePath: path,
                     workspaceContext: workspaceContext
                 )
+            )
+
+        case .delimitedTable(let text, let filePath):
+            guard !text.isEmpty else { return nil }
+            return SourceTraceStream.Snapshot(
+                text: text,
+                filePath: filePath,
+                isDone: configuration.isDone,
+                finalContent: .delimitedTable(content: text, filePath: filePath)
             )
 
         case .text(let text, _):

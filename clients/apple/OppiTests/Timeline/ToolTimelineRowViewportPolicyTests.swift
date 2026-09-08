@@ -132,6 +132,18 @@ struct ToolTimelineRowViewportPolicyTests {
                 expectedHeightBehavior: .cachedMeasured(mode: .expandedText),
                 expectedPriority: .required
             ),
+            PolicyCase(
+                name: "delimited table",
+                content: .delimitedTable(text: "date,route\n2026-09-01,Lake", filePath: "rides.csv"),
+                toolNamePrefix: "write",
+                expectedSurface: .hostedView,
+                expectedMode: .text,
+                expectedHeightBehavior: .compactMeasured(
+                    minHeight: 1,
+                    maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
+                ),
+                expectedPriority: .required
+            ),
         ]
 
         for testCase in cases {
@@ -493,6 +505,65 @@ struct ToolTimelineRowViewportPolicyTests {
                 "Unparented \(item.prefix) must publish the capped viewport, not streaming first-fit; got \(viewportConstraint.constant)"
             )
         }
+    }
+
+    @Test func expandedDelimitedTableFitsContentWithoutDocumentChrome() throws {
+        let csv = "date,route\n2026-09-01,Lake\n2026-09-02,Ship"
+        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
+            copyOutputText: csv,
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: true
+        ))
+        let size = fittedTimelineSize(for: view, width: 360)
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        #expect(viewportConstraint.isActive)
+        #expect(viewportConstraint.priority == .required)
+        #expect(
+            viewportConstraint.constant < 180,
+            "Small CSV should hug the table, not a max-height card; got \(viewportConstraint.constant)"
+        )
+        #expect(size.height < 280, "Fitted CSV tool row should stay compact; got \(size.height)")
+        #expect(timelineFirstView(ofType: DelimitedTableRenderView.self, in: view) != nil)
+        #expect(
+            timelineFirstView(ofType: RenderableDocumentView.self, in: view) == nil,
+            "Timeline row must not wrap the table in file-browser document chrome"
+        )
+        #expect(privateView(named: "expandFloatingButton", in: view) == nil)
+    }
+
+    @Test func largeDelimitedTableViewportIsCappedLikeOtherExpandedContent() throws {
+        let header = "split\tpace"
+        let rows = (0..<80).map { "Warmup \($0)\t8:4\($0 % 10)" }.joined(separator: "\n")
+        let tsv = header + "\n" + rows
+        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .delimitedTable(text: tsv, filePath: "splits.tsv"),
+            copyOutputText: tsv,
+            toolNamePrefix: "write",
+            isExpanded: true,
+            isDone: true
+        ))
+        _ = fittedTimelineSize(for: view, width: 360)
+
+        let viewportConstraint = try #require(
+            privateConstraint(named: "expandedViewportHeightConstraint", in: view)
+        )
+        #expect(viewportConstraint.isActive)
+        #expect(
+            viewportConstraint.constant == ToolTimelineRowContentView.maxOutputViewportHeight,
+            "Large CSV/TSV should cap at the shared expanded viewport max; got \(viewportConstraint.constant)"
+        )
+        let table = try #require(timelineFirstView(ofType: DelimitedTableRenderView.self, in: view))
+        #expect(
+            table.bounds.height <= ToolTimelineRowContentView.maxOutputViewportHeight + 1,
+            "Capped table bounds must follow the viewport, not the full grid; got \(table.bounds.height)"
+        )
+        #expect(table.bounds.height > 200, "Capped table should still paint in the viewport; got \(table.bounds.height)")
+        #expect(timelineFirstView(ofType: RenderableDocumentView.self, in: view) == nil)
     }
 
     @Test func completedMarkdownFittingDoesNotPublishStreamingFirstFit() throws {

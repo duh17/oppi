@@ -1957,6 +1957,7 @@ private func route(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Ro
     case .markdown:               return .markdown
     case .readMedia, .audioMessage: return .readMedia
     case .status, .text:          return .text
+    case .delimitedTable:         return .readMedia
     }
 }
 

@@ -49,5 +49,6 @@ struct ExpandedRenderOutput {
             reviewCommentSourceContext: ReviewCommentSourceContext?,
             textSelectionEnabled: Bool
         )
+        case delimitedTable(text: String, filePath: String?)
     }
 }

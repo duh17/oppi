@@ -1127,6 +1127,96 @@ struct ToolPresentationBuilderTests {
         #expect(added.newLineNumber == 316)
     }
 
+    @Test("read/write CSV and TSV expand as table, not code")
+    func delimitedTableToolRowsUseTableViewer() {
+        let csv = "date,route\n2026-09-01,Lake"
+        let tsv = "split\tpace\nWarmup\t8:40"
+
+        let readCSV = ToolPresentationBuilder.build(
+            itemID: "read-csv", tool: "read",
+            argsSummary: "path: rides.csv",
+            outputPreview: csv,
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("rides.csv")],
+                expanded: ["read-csv"],
+                fullOutput: csv
+            )
+        )
+        let writeCSV = ToolPresentationBuilder.build(
+            itemID: "write-csv", tool: "write",
+            argsSummary: "path: rides.csv",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("rides.csv"),
+                    "content": .string(csv),
+                ],
+                expanded: ["write-csv"],
+                fullOutput: "ok"
+            )
+        )
+        let readTSV = ToolPresentationBuilder.build(
+            itemID: "read-tsv", tool: "read",
+            argsSummary: "path: splits.tsv",
+            outputPreview: tsv,
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("splits.tsv")],
+                expanded: ["read-tsv"],
+                fullOutput: tsv
+            )
+        )
+        let writeTSV = ToolPresentationBuilder.build(
+            itemID: "write-tsv", tool: "write",
+            argsSummary: "path: splits.tsv",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("splits.tsv"),
+                    "content": .string(tsv),
+                ],
+                expanded: ["write-tsv"],
+                fullOutput: "ok"
+            )
+        )
+
+        #expect(modeName(readCSV.expandedContent) == "delimitedTable")
+        #expect(modeName(writeCSV.expandedContent) == "delimitedTable")
+        #expect(modeName(readTSV.expandedContent) == "delimitedTable")
+        #expect(modeName(writeTSV.expandedContent) == "delimitedTable")
+
+        guard case .delimitedTable(let readTSVText, let readTSVPath) = readTSV.expandedContent else {
+            Issue.record("Expected read TSV table")
+            return
+        }
+        #expect(readTSVText == tsv)
+        #expect(readTSVPath == "splits.tsv")
+
+        guard case .delimitedTable(let readText, let readPath) = readCSV.expandedContent else {
+            Issue.record("Expected read CSV table")
+            return
+        }
+        #expect(readText == csv)
+        #expect(readPath == "rides.csv")
+
+        guard case .delimitedTable(let writeText, let writePath) = writeCSV.expandedContent else {
+            Issue.record("Expected write CSV table")
+            return
+        }
+        #expect(writeText == csv)
+        #expect(writePath == "rides.csv")
+
+        guard case .delimitedTable(let writeTSVText, let writeTSVPath) = writeTSV.expandedContent else {
+            Issue.record("Expected write TSV table")
+            return
+        }
+        #expect(writeTSVText == tsv)
+        #expect(writeTSVPath == "splits.tsv")
+    }
+
     // MARK: - Extension tools
 
     @Test("extension collapsed uses segments when available")
@@ -2372,6 +2462,8 @@ private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -
         return "status"
     case .text:
         return "text"
+    case .delimitedTable:
+        return "delimitedTable"
     case nil:
         return "nil"
     }

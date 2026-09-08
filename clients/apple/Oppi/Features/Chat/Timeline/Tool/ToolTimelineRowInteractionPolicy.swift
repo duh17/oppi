@@ -10,6 +10,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case audioMessage
         case status
         case text
+        case delimitedTable
     }
 
     let mode: ExpandedMode
@@ -44,7 +45,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 allowsHorizontalScroll: isDone
             )
 
-        case .markdown:
+        case .markdown, .delimitedTable:
             return Self(
                 mode: mode,
                 enablesTapCopyGesture: true,
@@ -75,7 +76,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
 
     private static func supportsFullScreenPreview(mode: ExpandedMode) -> Bool {
         switch mode {
-        case .diff, .code, .markdown, .bash, .text:
+        case .diff, .code, .markdown, .bash, .text, .delimitedTable:
             return true
         case .readMedia, .audioMessage, .status:
             return false
@@ -102,6 +103,8 @@ private extension ToolTimelineRowInteractionPolicy.ExpandedMode {
             self = .status
         case .text:
             self = .text
+        case .delimitedTable:
+            self = .delimitedTable
         }
     }
 }

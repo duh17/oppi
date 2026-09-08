@@ -20,6 +20,7 @@ struct ToolRowViewportPolicy {
         case audioMessage(hasTranscript: Bool)
         case status
         case text
+        case delimitedTable
     }
 
     enum HeightBehavior: Equatable {
@@ -201,8 +202,21 @@ struct ToolRowViewportPolicy {
             return .status
         case .text:
             return .text
+        case .delimitedTable:
+            return .delimitedTable
         }
     }
+
+    static let delimitedTable = ToolRowViewportPolicy(
+        contentKind: .delimitedTable,
+        surface: .hostedView,
+        viewportMode: .text,
+        heightBehavior: .compactMeasured(
+            minHeight: 1,
+            maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
+        ),
+        constraintPriority: .required
+    )
 
     static func readMediaFacts(
         output: String,

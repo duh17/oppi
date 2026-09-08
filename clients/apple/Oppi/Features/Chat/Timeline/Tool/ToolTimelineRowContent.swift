@@ -916,6 +916,28 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
+    private func installExpandedDelimitedTableView(text: String, filePath: String?) {
+        let plan = DelimitedTableViewerPlan.resolved(path: filePath, text: text)
+        if let existing = expandedReadMediaContentView as? DelimitedTableRenderView,
+           existing.displays(plan) {
+            return
+        }
+
+        clearExpandedReadMediaView()
+        let view = DelimitedTableRenderView(plan: plan)
+        view.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).delimitedTable"
+        installExpandedEmbeddedView(view)
+        // Same frame pin as completed markdown: the table's bounds follow the
+        // capped viewport, not systemLayoutSizeFitting's full grid height.
+        expandedReadMediaViewportHeightConstraint?.isActive = false
+        let heightConstraint = expandedReadMediaContainer.heightAnchor.constraint(
+            equalTo: expandedScrollView.frameLayoutGuide.heightAnchor
+        )
+        heightConstraint.priority = .required
+        heightConstraint.isActive = true
+        expandedReadMediaViewportHeightConstraint = heightConstraint
+    }
+
     private func installExpandedEmbeddedView(
         _ view: UIView,
         invalidatesOuterLayout: Bool = true
@@ -1622,7 +1644,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         switch content {
         case .audioMessage(let text, let attachmentId, _, _, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentId.isEmpty
-        case .bash, .diff, .code, .markdown, .readMedia, .status, .text:
+        case .bash, .diff, .code, .markdown, .delimitedTable, .readMedia, .status, .text:
             return true
         }
     }
@@ -1916,6 +1938,25 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 sessionId: perfSessionId,
                 viewportPolicy: viewportPolicy
             )
+
+        case .delimitedTable(let text, let filePath):
+            var hasher = Hasher()
+            hasher.combine(text)
+            hasher.combine(filePath ?? "")
+            hasher.combine(ThemeRuntimeState.currentThemeID())
+            return ExpandedRenderOutput(
+                renderSignature: hasher.finalize(),
+                renderedText: text,
+                shouldAutoFollow: false,
+                viewportPolicy: viewportPolicy,
+                verticalLock: false,
+                scrollBehavior: .preserve,
+                lineBreakMode: .byWordWrapping,
+                horizontalScroll: false,
+                deferredHighlight: nil,
+                invalidateLayout: true,
+                installAction: .delimitedTable(text: text, filePath: filePath)
+            )
         }
     }
 
@@ -1954,6 +1995,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 reviewCommentSourceContext: reviewCommentSourceContext,
                 textSelectionEnabled: textSelectionEnabled
             )
+        case .delimitedTable(let text, let filePath):
+            installExpandedDelimitedTableView(text: text, filePath: filePath)
         }
 
         switch output.surface {
@@ -2022,6 +2065,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
         if policy.surface == .markdownViewport {
             expandedScrollView.isScrollEnabled = expandedMarkdownUsesIncrementalViewport
+            expandedScrollView.alwaysBounceVertical = false
+            expandedScrollView.bounces = false
+            setExpandedContainerGestureInterceptionEnabled(true)
+        } else if policy.contentKind == .delimitedTable {
+            expandedScrollView.isScrollEnabled = false
             expandedScrollView.alwaysBounceVertical = false
             expandedScrollView.bounces = false
             setExpandedContainerGestureInterceptionEnabled(true)
