@@ -254,6 +254,61 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    @Test("expanded edit diff shows highlighted lines in the full-screen body")
+    func expandedEditDiffShowsVisibleFullScreenBody() async throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
+
+        let lines = [
+            DiffLine(kind: .removed, text: "let value = 1", oldLineNumber: 1, newLineNumber: nil),
+            DiffLine(kind: .added, text: "let value = 2", oldLineNumber: nil, newLineNumber: 1),
+            DiffLine(kind: .added, text: "let extra = 3", oldLineNumber: nil, newLineNumber: 2),
+        ]
+        let harness = makeHostHarness()
+        let host = harness.host
+        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
+            expandedContent: .diff(
+                lines: lines,
+                path: "/Users/chenda/workspace/oppi/clients/apple/scripts/sim-slim.sh"
+            ),
+            copyOutputText: DiffEngine.formatUnified(lines),
+            toolNamePrefix: "edit",
+            editAdded: 2,
+            editRemoved: 1,
+            isExpanded: true,
+            isDone: true
+        ))
+
+        host.view.addSubview(view)
+        view.frame = host.view.bounds
+        host.view.layoutIfNeeded()
+        view.performExpandedActivation()
+
+        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
+        #expect(presented.modalPresentationStyle == .pageSheet)
+        let body = try #require(presented.installedBodyViewForTesting as? NativeFullScreenDiffBody)
+        let textView = try #require(timelineAllTextViews(in: body).first)
+
+        let visible = await waitForMainActorCondition(timeout: .seconds(2)) {
+            presented.view.layoutIfNeeded()
+            body.layoutIfNeeded()
+            textView.layoutIfNeeded()
+            let rendered = timelineRenderedText(of: textView)
+            let visibleFrame = textView.convert(textView.bounds, to: presented.view)
+                .intersection(presented.view.bounds)
+            return rendered.contains("let value = 2")
+                && (rendered.contains("let value = 1") || rendered.contains("- let value = 1"))
+                && textView.bounds.width > 100
+                && textView.bounds.height > 40
+                && visibleFrame.width > 100
+                && visibleFrame.height > 40
+        }
+        #expect(visible)
+
+        host.dismiss(animated: false)
+        harness.window.isHidden = true
+    }
+
     @Test("ANSI text keeps display styling in full screen while copy stays plain")
     func ansiTextFullScreenPreservesDisplayPayload() throws {
         let formatted = "\u{001B}[1m$\u{001B}[0m oppi status\n\u{001B}[32mPaired\u{001B}[0m"
