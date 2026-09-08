@@ -690,9 +690,7 @@ struct ChatView: View {
             }
             .task(id: connectionTaskKey) {
                 audioPlayer.setSessionContext(session)
-                voiceInputManager.activeSessionId = sessionId
-                voiceInputManager.setServerCredentials(connection.credentials)
-                voiceInputManager.setServerConnection(connection)
+                activateChatVoiceComposer(voiceInputManager)
                 audioLifecycleCoordinator.setPlaybackInterrupter(audioPlayer)
                 // Dictation must use the concrete player as the hardware source of truth.
                 // The lifecycle coordinator owns presentation state and can be stale across
@@ -1062,6 +1060,7 @@ struct ChatView: View {
                     sendProgressText: attachmentPreparationText ?? actionHandler.sendProgressText,
                     isStopping: isStopping,
                     voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+                    onPrepareVoiceInput: prepareChatVoiceInput,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     askRequest: composerAskRequest,
@@ -1651,9 +1650,43 @@ struct ChatView: View {
 
     private func refreshDictationHints() {
         guard ReleaseFeatures.voiceInputEnabled else { return }
+        guard let serverId = chatDictationServerId else { return }
         voiceInputManager.updateConversationHints(
-            fromAssistantMessage: DictationHintExtractor.lastAssistantMessageText(in: reducer.items)
+            fromAssistantMessage: DictationHintExtractor.lastAssistantMessageText(in: reducer.items),
+            serverId: serverId,
+            sessionId: sessionId
         )
+    }
+
+    private var chatDictationServerId: String? {
+        if let id = connection.currentServerId, !id.isEmpty { return id }
+        if let credentials = connection.credentials {
+            return "\(credentials.host):\(credentials.port)"
+        }
+        return nil
+    }
+
+    private func prepareChatVoiceInput(_ manager: VoiceInputManager) async throws {
+        ComposerShared.prepareConversationVoiceInput(
+            manager: manager,
+            serverId: chatDictationServerId,
+            sessionId: sessionId,
+            credentials: connection.credentials,
+            connection: connection,
+            assistantMessage: DictationHintExtractor.lastAssistantMessageText(in: reducer.items),
+            playbackInterrupter: audioPlayer
+        )
+    }
+
+    private func activateChatVoiceComposer(_ manager: VoiceInputManager) {
+        guard let serverId = chatDictationServerId else { return }
+        _ = manager.activateConversationComposer(
+            serverId: serverId,
+            sessionId: sessionId,
+            credentials: connection.credentials,
+            connection: connection
+        )
+        manager.setPlaybackInterrupter(audioPlayer)
     }
 
     static func shouldPauseTimelinePresentation(for phase: ScenePhase) -> Bool {
@@ -2560,6 +2593,7 @@ struct ChatView: View {
             session: session,
             thinkingLevel: chatState.thinkingLevel,
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+            onPrepareVoiceInput: prepareChatVoiceInput,
             onSend: { sendComposerAction(draftClearance: .afterSuccess) },
             onModelTap: { showModelPicker = true },
             onThinkingSelect: { level in

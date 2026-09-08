@@ -337,6 +337,7 @@ private struct ExtensionDialogSheet: View {
     @State private var editorPendingAttachments: [PendingAttachment] = []
     @State private var editorPendingRepoPointers: [PendingFileReference] = []
     @State private var editorVoiceInputManager = VoiceInputManager.shared
+    @State private var editorVoiceComposerGeneration: Int?
 
     var body: some View {
         Group {
@@ -365,9 +366,43 @@ private struct ExtensionDialogSheet: View {
             editorTextBeforeRecording = nil
             editorPendingAttachments = []
             editorPendingRepoPointers = []
-            configureEditorVoiceInput()
             if ReleaseFeatures.voiceInputEnabled {
-                await editorVoiceInputManager.prewarm(source: "extension_editor_task")
+                let manager = editorVoiceInputManager
+                await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
+                if Task.isCancelled { return }
+                configureEditorVoiceInput(manager)
+                if Task.isCancelled {
+                    if let generation = editorVoiceComposerGeneration {
+                        manager.endComposer(generation: generation)
+                        editorVoiceComposerGeneration = nil
+                    }
+                    return
+                }
+                await manager.prewarm(source: "extension_editor_task")
+                if Task.isCancelled {
+                    if let generation = editorVoiceComposerGeneration {
+                        manager.endComposer(generation: generation)
+                        editorVoiceComposerGeneration = nil
+                    }
+                    return
+                }
+            }
+        }
+        .onDisappear {
+            let manager = editorVoiceInputManager
+            let takeIdentity = ComposerShared.takeIdentityForDismissedComposer(
+                manager: manager,
+                generation: editorVoiceComposerGeneration
+            )
+            if let generation = editorVoiceComposerGeneration {
+                manager.endComposer(generation: generation)
+                editorVoiceComposerGeneration = nil
+            }
+            Task {
+                await ComposerShared.cancelVoiceInputOnDismiss(
+                    manager: manager,
+                    matching: takeIdentity
+                )
             }
         }
     }
@@ -447,17 +482,26 @@ private struct ExtensionDialogSheet: View {
         return trimmedTitle
     }
 
+    private var editorVoiceServerId: String {
+        connection.currentServerId
+            ?? connection.credentials.map { "\($0.host):\($0.port)" }
+            ?? ""
+    }
+
     private func configureEditorVoiceInput(_ manager: VoiceInputManager? = nil) {
         let manager = manager ?? editorVoiceInputManager
-        manager.activeSessionId = request.sessionId
-        manager.setServerCredentials(connection.credentials)
-        manager.setServerConnection(connection)
-        manager.setPlaybackInterrupter(connection.audioPlayer)
+        editorVoiceComposerGeneration = ComposerShared.prepareStandaloneVoiceInput(
+            manager: manager,
+            serverId: editorVoiceServerId,
+            credentials: connection.credentials,
+            connection: connection,
+            playbackInterrupter: connection.audioPlayer,
+            ownedGeneration: editorVoiceComposerGeneration
+        )
     }
 
     private func prepareEditorVoiceInput(_ manager: VoiceInputManager) async throws {
         configureEditorVoiceInput(manager)
-        manager.setServerDictationTarget(nil)
     }
 
     private var timeoutSummary: String? {

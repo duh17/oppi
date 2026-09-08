@@ -11,7 +11,11 @@
  * Audio preservation belongs in the upstream STT backend, not Oppi server.
  */
 
-import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
+import {
+  parseDictationContextualStrings,
+  type DictationClientMessage,
+  type DictationServerMessage,
+} from "./dictation-types.js";
 import type { SttProvider } from "./stt-provider.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import { createLogger } from "./logger.js";
@@ -43,6 +47,8 @@ interface DictationSession {
   resultUpdateCount: number;
   /** Set to true once dictation_stop is received. */
   stopping: boolean;
+  /** Immutable vocabulary for this take. */
+  contextualStrings?: string[];
 }
 
 // ─── DictationManager ───
@@ -85,11 +91,20 @@ export class DictationManager {
     this.sendFn = send;
 
     switch (msg.type) {
-      case "dictation_start":
+      case "dictation_start": {
         if (this.session) {
           this.send({
             type: "dictation_error",
             error: "Dictation already active",
+            fatal: false,
+          });
+          return;
+        }
+        const parsed = parseDictationContextualStrings(msg.contextualStrings);
+        if (!parsed.ok) {
+          this.send({
+            type: "dictation_error",
+            error: parsed.error,
             fatal: false,
           });
           return;
@@ -99,9 +114,11 @@ export class DictationManager {
           startHrMs: performance.now(),
           resultUpdateCount: 0,
           stopping: false,
+          ...(parsed.contextualStrings ? { contextualStrings: parsed.contextualStrings } : {}),
         };
         this.startSession();
         break;
+      }
 
       case "dictation_stop": {
         const session = this.session;
@@ -191,8 +208,13 @@ export class DictationManager {
     const session = this.session;
     // Superseded before start() — do not touch the provider; the owner will.
     if (!session || this.startGeneration !== generation || session.stopping) return;
+    let startResult: { contextApplied: boolean };
     try {
-      await this.sttProvider.start();
+      startResult = await this.sttProvider.start(
+        session.contextualStrings && session.contextualStrings.length > 0
+          ? { contextualStrings: session.contextualStrings }
+          : undefined,
+      );
     } catch (err) {
       if (this.startGeneration !== generation || this.session !== session || session.stopping) {
         return;
@@ -222,6 +244,7 @@ export class DictationManager {
       type: "dictation_ready",
       sttProvider: this.sttProvider.name,
       sttModel: this.sttProvider.model,
+      contextApplied: startResult.contextApplied === true,
     });
 
     // Forward transcript updates to the client.

@@ -616,6 +616,84 @@ enum ComposerShared {
         await manager.cancelRecording()
     }
 
+    /// Deferred disappearance cleanup. `takeIdentity` is captured before the
+    /// Task is queued; a nil or stale identity must not cancel a newer take.
+    static func cancelVoiceInputOnDismiss(
+        manager: VoiceInputManager?,
+        matching takeIdentity: VoiceCaptureTakeIdentity?
+    ) async {
+        guard let manager else { return }
+        await manager.cancelRecording(matching: takeIdentity)
+    }
+
+    /// Snapshot the retiring composer's take. A delayed disappear after another
+    /// composer claimed must not bind the newer take.
+    static func takeIdentityForDismissedComposer(
+        manager: VoiceInputManager?,
+        generation: Int?
+    ) -> VoiceCaptureTakeIdentity? {
+        guard let generation else { return nil }
+        guard let identity = manager?.currentCaptureTakeIdentity(),
+              identity.composerGeneration == generation else {
+            return nil
+        }
+        return identity
+    }
+
+    /// Conversation-free composer: no inherited conversation vocabulary.
+    /// If `ownedGeneration` still matches an in-flight take, keep that generation
+    /// for dismiss matching instead of replacing it with a newer configuration claim.
+    @discardableResult
+    static func prepareStandaloneVoiceInput(
+        manager: VoiceInputManager,
+        serverId: String,
+        credentials: ServerCredentials?,
+        connection: ServerConnection?,
+        playbackInterrupter: (any VoicePlaybackCaptureCoordinating)?,
+        ownedGeneration: Int? = nil
+    ) -> Int {
+        if let ownedGeneration,
+           let identity = manager.currentCaptureTakeIdentity(),
+           identity.composerGeneration == ownedGeneration {
+            manager.setPlaybackInterrupter(playbackInterrupter)
+            return ownedGeneration
+        }
+        let generation = manager.beginStandaloneComposer(
+            serverId: serverId,
+            credentials: credentials,
+            connection: connection
+        )
+        manager.setPlaybackInterrupter(playbackInterrupter)
+        manager.setServerDictationTarget(nil)
+        return generation
+    }
+
+    /// Reclaim the conversation composer and refresh hints from current text.
+    /// Does not await Foundation Model enrichment.
+    static func prepareConversationVoiceInput(
+        manager: VoiceInputManager,
+        serverId: String?,
+        sessionId: String,
+        credentials: ServerCredentials?,
+        connection: ServerConnection?,
+        assistantMessage: String?,
+        playbackInterrupter: (any VoicePlaybackCaptureCoordinating)?
+    ) {
+        guard let serverId else { return }
+        _ = manager.activateConversationComposer(
+            serverId: serverId,
+            sessionId: sessionId,
+            credentials: credentials,
+            connection: connection
+        )
+        manager.setPlaybackInterrupter(playbackInterrupter)
+        manager.updateConversationHints(
+            fromAssistantMessage: assistantMessage,
+            serverId: serverId,
+            sessionId: sessionId
+        )
+    }
+
     @discardableResult
     static func finishOwnedVoiceInputBeforeSubmit(
         manager: VoiceInputManager?,

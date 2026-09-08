@@ -49,25 +49,37 @@ final class VoiceInputSessionMonitor {
     }
 
     func stop() async {
-        guard let activeSession else { return }
-        await activeSession.stop()
-        self.activeSession = nil
-        await resultsTask?.value
-        resultsTask = nil
-        audioLevelTask?.cancel()
-        audioLevelTask = nil
+        let retiringSession = activeSession
+        let retiringResultsTask = resultsTask
+        let retiringAudioLevelTask = audioLevelTask
+        guard let retiringSession else { return }
+
+        await retiringSession.stop()
+        await retiringResultsTask?.value
+        retiringAudioLevelTask?.cancel()
+        clearIfCurrent(session: retiringSession)
     }
 
     func cancel() async {
-        resultsTask?.cancel()
-        resultsTask = nil
+        let retiringSession = activeSession
+        let retiringResultsTask = resultsTask
+        let retiringAudioLevelTask = audioLevelTask
 
-        if let activeSession {
-            await activeSession.cancel()
-            self.activeSession = nil
+        retiringResultsTask?.cancel()
+        if let retiringSession {
+            await retiringSession.cancel()
         }
+        retiringAudioLevelTask?.cancel()
+        clearIfCurrent(session: retiringSession)
+    }
 
-        audioLevelTask?.cancel()
+    /// Drop only the bind we captured. A newer `bind()` during `stop()`/`cancel()`
+    /// always assigns `activeSession` first, so identity is the generation check
+    /// for the session and both forwarding tasks.
+    private func clearIfCurrent(session: (any VoiceTranscriptionSession)?) {
+        guard activeSession === session else { return }
+        activeSession = nil
+        resultsTask = nil
         audioLevelTask = nil
     }
 

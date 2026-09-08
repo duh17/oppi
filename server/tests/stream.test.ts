@@ -860,17 +860,45 @@ describe("DictationStreamMux", () => {
     mux.handleServerWebSocket(ws as unknown as WebSocket);
     expect(ctx.trackConnection).toHaveBeenCalledWith(ws);
 
-    ws.receive({ type: "dictation_start" } as ClientMessage);
+    ws.receive({ type: "dictation_start", contextualStrings: ["Foo Bar"] } as ClientMessage);
     ws.receiveBinary(Buffer.from([1, 2, 3]));
     ws.close(1000);
 
     expect(manager.handleControlMessage).toHaveBeenCalledWith(
-      { type: "dictation_start" },
+      { type: "dictation_start", contextualStrings: ["Foo Bar"] },
       expect.any(Function),
     );
     expect(manager.handleAudioData).toHaveBeenCalledWith(Buffer.from([1, 2, 3]));
     expect(manager.handleDisconnect).toHaveBeenCalled();
     expect(ws.sentOfType("dictation_ready")).toHaveLength(1);
+  });
+
+  it("rejects malformed contextualStrings without starting STT", () => {
+    const { ctx } = createMockContext([]);
+    const manager = {
+      handleControlMessage: vi.fn(),
+      handleAudioData: vi.fn(),
+      handleDisconnect: vi.fn(),
+    };
+    ctx.createDictationManager = () =>
+      manager as unknown as ReturnType<NonNullable<StreamContext["createDictationManager"]>>;
+
+    const mux = new DictationStreamMux(ctx);
+    const ws = new FakeWebSocket();
+    mux.handleServerWebSocket(ws as unknown as WebSocket);
+
+    ws.receive({
+      type: "dictation_start",
+      contextualStrings: ["bad\nphrase"],
+    } as ClientMessage);
+
+    const errors = ws.sentOfType("dictation_error");
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as { error?: string }).error).toBe(
+      "dictation contextualStrings cannot include control characters",
+    );
+    expect((errors[0] as { error?: string }).error).not.toContain("bad");
+    expect(manager.handleControlMessage).not.toHaveBeenCalled();
   });
 
   it("rejects unsupported chat messages on the dictation stream", () => {

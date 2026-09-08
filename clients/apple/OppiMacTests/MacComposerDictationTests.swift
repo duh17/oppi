@@ -65,7 +65,7 @@ struct MacDictationStreamClientTests {
             transport: socket
         )
         try await client.connect()
-        try await client.sendControl(.dictationStart)
+        try await client.sendControl(.dictationStart())
         try await client.sendAudio(Data([0x01, 0x02]))
 
         #expect(socket.connectCount == 1)
@@ -76,11 +76,38 @@ struct MacDictationStreamClientTests {
         }
         #expect(text.contains("\"type\":\"dictation_start\""))
         #expect(!text.contains("sk_"))
+        #expect(!text.contains("contextualStrings"))
         guard case .data(let audio) = socket.sent[1] else {
             Issue.record("Expected binary audio frame")
             return
         }
         #expect(audio == Data([0x01, 0x02]))
+    }
+
+    @Test func sharedProtocolDecodesReadyWithAndWithoutContextApplied() throws {
+        let older = try JSONDecoder().decode(
+            ServerMessage.self,
+            from: Data(#"{"type":"dictation_ready","sttProvider":"streaming-localhost","sttModel":"qwen"}"#.utf8)
+        )
+        #expect(older == .dictationReady(
+            provider: DictationProviderInfo(sttProvider: "streaming-localhost", sttModel: "qwen"),
+            contextApplied: nil
+        ))
+
+        let acknowledged = try JSONDecoder().decode(
+            ServerMessage.self,
+            from: Data(#"{"type":"dictation_ready","sttProvider":"streaming-localhost","sttModel":"qwen","contextApplied":true}"#.utf8)
+        )
+        #expect(acknowledged == .dictationReady(
+            provider: DictationProviderInfo(sttProvider: "streaming-localhost", sttModel: "qwen"),
+            contextApplied: true
+        ))
+
+        let start = try JSONEncoder().encode(ClientMessage.dictationStart(contextualStrings: ["Foo Bar"]))
+        let startText = try #require(String(data: start, encoding: .utf8))
+        #expect(startText.contains("\"type\":\"dictation_start\""))
+        #expect(startText.contains("Foo Bar"))
+        #expect(!startText.contains("sk_secret"))
     }
 }
 

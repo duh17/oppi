@@ -446,6 +446,7 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "dictation_ready",
     sttProvider: "openai-compatible",
     sttModel: "gpt-4o-transcribe",
+    contextApplied: true,
   },
   dictation_result: {
     type: "dictation_result",

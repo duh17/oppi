@@ -129,6 +129,7 @@ struct QuickSessionSheet: View {
     @State private var error: String?
     @State private var launchFailure: AgentLaunchFailureResponse?
     @State private var voiceInputManager: VoiceInputManager?
+    @State private var voiceComposerGeneration: Int?
     @State private var busyStreamingBehavior: StreamingBehavior = .followUp
     @State private var composerFocusRequestID = 0
     @State private var composerDictationRequestID = 0
@@ -338,8 +339,19 @@ struct QuickSessionSheet: View {
             // and mic tap cannot outlive the sheet and fail the next start.
             let manager = voiceInputManager
             composerTextBeforeRecording = nil
+            let takeIdentity = ComposerShared.takeIdentityForDismissedComposer(
+                manager: manager,
+                generation: voiceComposerGeneration
+            )
+            if let generation = voiceComposerGeneration {
+                manager?.endComposer(generation: generation)
+                voiceComposerGeneration = nil
+            }
             Task {
-                await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
+                await ComposerShared.cancelVoiceInputOnDismiss(
+                    manager: manager,
+                    matching: takeIdentity
+                )
             }
         }
         .task(id: slashCommandLoadKey) {
@@ -741,6 +753,7 @@ struct QuickSessionSheet: View {
             let manager = VoiceInputManager.shared
             voiceInputManager = manager
             await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
+            if Task.isCancelled { return }
             configureVoiceInputForSelectedServer(manager)
         }
 
@@ -838,9 +851,18 @@ struct QuickSessionSheet: View {
     private func configureVoiceInputForSelectedServer(_ manager: VoiceInputManager? = nil) {
         guard let manager = manager ?? voiceInputManager else { return }
         guard let targetConnection = selectedServerConnection() else { return }
-        manager.setServerCredentials(targetConnection.credentials)
-        manager.setServerConnection(targetConnection)
-        manager.setPlaybackInterrupter(targetConnection.audioPlayer)
+        let serverId = targetConnection.currentServerId
+            ?? selectedServerId
+            ?? targetConnection.credentials.map { "\($0.host):\($0.port)" }
+            ?? ""
+        voiceComposerGeneration = ComposerShared.prepareStandaloneVoiceInput(
+            manager: manager,
+            serverId: serverId,
+            credentials: targetConnection.credentials,
+            connection: targetConnection,
+            playbackInterrupter: targetConnection.audioPlayer,
+            ownedGeneration: voiceComposerGeneration
+        )
     }
 
     private func prepareVoiceInputForSelectedServer(_ manager: VoiceInputManager) async throws {

@@ -1436,6 +1436,223 @@ struct VoiceInputManagerTests {
         await manager.cancelRecording()
     }
 
+    @Test func retiredPreparingStartDoesNotEraseNewerStartOwnership() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let gateA = AsyncGate()
+        let gateB = AsyncGate()
+        let sessionB = MockVoiceSession()
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.prepareSessionHandler = { _ in
+            if classicProvider.prepareSessionCallCount == 1 {
+                await gateA.wait()
+            } else {
+                await gateB.wait()
+            }
+            return VoiceProviderPreparation(
+                audioFormat: nil,
+                pathTag: "mock",
+                setupMetricTags: [:]
+            )
+        }
+        classicProvider.makeSessionHandler = { _, _ in sessionB }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        manager.setEngineMode(.onDevice)
+
+        let startA = Task { @MainActor in
+            try? await manager.startRecording(source: "take-a")
+        }
+        #expect(await waitForMainActorCondition {
+            manager.state == .preparingModel && classicProvider.prepareSessionCallCount == 1
+        })
+        let identityA = manager.currentCaptureTakeIdentity()
+        #expect(identityA != nil)
+
+        await manager.cancelRecording()
+        #expect(manager.state == .idle)
+        #expect(manager.currentCaptureTakeIdentity() == nil)
+        #expect(!manager._testOperationInFlight)
+
+        let startB = Task { @MainActor in
+            try await manager.startRecording(source: "take-b")
+        }
+        #expect(await waitForMainActorCondition {
+            manager.state == .preparingModel && classicProvider.prepareSessionCallCount == 2
+        })
+        let identityB = manager.currentCaptureTakeIdentity()
+        #expect(identityB != nil)
+        #expect(identityB != identityA)
+        #expect(manager._testOperationInFlight)
+
+        await gateA.open()
+        await startA.value
+
+        #expect(manager.state == .preparingModel)
+        #expect(manager.currentCaptureTakeIdentity() == identityB)
+        #expect(manager._testOperationInFlight)
+        #expect(sessionB.cancelCallCount == 0)
+        #expect(classicProvider.lastContext?.source == "take-b")
+
+        await gateB.open()
+        try await startB.value
+        #expect(manager.state == .recording)
+        #expect(manager.currentCaptureTakeIdentity() == identityB)
+        #expect(sessionB.startCallCount == 1)
+        #expect(sessionB.cancelCallCount == 0)
+        await manager.cancelRecording()
+    }
+
+    @Test func failedStartCleanupAwaitDoesNotEraseNewerStartOwnership() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let cancelEntered = AsyncGate()
+        let cancelHold = AsyncGate()
+        let gateB = AsyncGate()
+        let sessionA = MockVoiceSession()
+        sessionA.cancelHandler = {
+            await cancelEntered.open()
+            await cancelHold.wait()
+        }
+        let sessionB = MockVoiceSession()
+        let systemAccess = MockVoiceInputSystemAccess()
+        systemAccess.activateAudioSessionError = TestVoiceError("audio session failed")
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.prepareSessionHandler = { _ in
+            if classicProvider.prepareSessionCallCount > 1 {
+                await gateB.wait()
+            }
+            return VoiceProviderPreparation(
+                audioFormat: nil,
+                pathTag: "mock",
+                setupMetricTags: [:]
+            )
+        }
+        classicProvider.makeSessionHandler = { _, _ in
+            classicProvider.makeSessionCallCount == 1 ? sessionA : sessionB
+        }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.onDevice)
+
+        let startA = Task { @MainActor in
+            try? await manager.startRecording(source: "take-a")
+        }
+        await cancelEntered.wait()
+        let identityA = manager.currentCaptureTakeIdentity()
+        #expect(identityA != nil)
+        #expect(manager.state == .preparingModel)
+        #expect(sessionA.cancelCallCount == 1)
+
+        await manager.cancelRecording(matching: identityA)
+        #expect(manager.state == .idle)
+        #expect(manager.currentCaptureTakeIdentity() == nil)
+        #expect(!manager._testOperationInFlight)
+
+        systemAccess.activateAudioSessionError = nil
+        let startB = Task { @MainActor in
+            try await manager.startRecording(source: "take-b")
+        }
+        #expect(await waitForMainActorCondition {
+            manager.state == .preparingModel && classicProvider.prepareSessionCallCount == 2
+        })
+        let identityB = manager.currentCaptureTakeIdentity()
+        #expect(identityB != nil)
+        #expect(identityB != identityA)
+        #expect(manager._testOperationInFlight)
+
+        await cancelHold.open()
+        await startA.value
+
+        #expect(manager.state == .preparingModel)
+        #expect(manager.currentCaptureTakeIdentity() == identityB)
+        #expect(manager._testOperationInFlight)
+        #expect(sessionB.cancelCallCount == 0)
+        #expect(classicProvider.lastContext?.source == "take-b")
+
+        await gateB.open()
+        try await startB.value
+        #expect(manager.state == .recording)
+        #expect(manager.currentCaptureTakeIdentity() == identityB)
+        #expect(sessionB.startCallCount == 1)
+        #expect(sessionB.cancelCallCount == 0)
+        await manager.cancelRecording()
+    }
+
+    @Test func failedStartCleanupAwaitDoesNotWipeNewerBoundSession() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let cancelEntered = AsyncGate()
+        let cancelHold = AsyncGate()
+        let sessionA = MockVoiceSession()
+        sessionA.cancelHandler = {
+            await cancelEntered.open()
+            await cancelHold.wait()
+        }
+        let sessionB = MockVoiceSession()
+        let systemAccess = MockVoiceInputSystemAccess()
+        systemAccess.activateAudioSessionError = TestVoiceError("audio session failed")
+        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        classicProvider.makeSessionHandler = { _, _ in
+            classicProvider.makeSessionCallCount == 1 ? sessionA : sessionB
+        }
+
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.onDevice)
+
+        let startA = Task { @MainActor in
+            try? await manager.startRecording(source: "take-a")
+        }
+        await cancelEntered.wait()
+        let identityA = manager.currentCaptureTakeIdentity()
+        #expect(identityA != nil)
+        #expect(manager.state == .preparingModel)
+        #expect(sessionA.cancelCallCount == 1)
+
+        await manager.cancelRecording(matching: identityA)
+        #expect(manager.state == .idle)
+        #expect(manager.currentCaptureTakeIdentity() == nil)
+        #expect(!manager._testOperationInFlight)
+
+        systemAccess.activateAudioSessionError = nil
+        try await manager.startRecording(source: "take-b")
+        #expect(manager.state == .recording)
+        #expect(sessionB.startCallCount == 1)
+        #expect(sessionB.cancelCallCount == 0)
+        let identityB = manager.currentCaptureTakeIdentity()
+        #expect(identityB != nil)
+        #expect(identityB != identityA)
+
+        await cancelHold.open()
+        await startA.value
+
+        #expect(manager.state == .recording)
+        #expect(manager.currentCaptureTakeIdentity() == identityB)
+        #expect(sessionB.cancelCallCount == 0)
+        #expect(sessionB.startCallCount == 1)
+
+        sessionB.yieldAudioLevel(0.5)
+        #expect(await waitForMainActorCondition { manager.audioLevel == 0.5 })
+        sessionB.yieldEvent(.partialTranscript("keep-b"))
+        #expect(await waitForMainActorCondition { manager.volatileTranscript == "keep-b" })
+
+        await manager.cancelRecording()
+        #expect(sessionB.cancelCallCount == 1)
+        #expect(manager.state == .idle)
+    }
+
     private func resetVoicePreferences() {
         AppPreferences.Voice.setEngineMode(.onDevice)
     }

@@ -34,6 +34,17 @@ export interface SttFinalTranscript {
   activeText?: string;
 }
 
+/** Immutable per-take vocabulary forwarded to the STT backend. */
+export interface SttStartOptions {
+  readonly contextualStrings?: readonly string[];
+}
+
+/** Result of creating the upstream streaming session for this take. */
+export interface SttStartResult {
+  /** True only when the backend acknowledged consuming this take's hints. */
+  contextApplied: boolean;
+}
+
 /**
  * Streaming STT provider. Audio is piped incrementally and transcript
  * updates arrive via callback as they're produced.
@@ -46,7 +57,7 @@ export interface SttProvider {
   /** Model identifier. */
   readonly model: string;
   /** Spawn the STT process / prepare for audio input. Throws if the backend is unreachable. */
-  start(): Promise<void>;
+  start(options?: SttStartOptions): Promise<SttStartResult>;
   /** Write raw PCM audio (s16le, 16kHz, mono). */
   feedAudio(pcm: Buffer): void;
   /** Register callback for transcript updates (full replacement text each time). */
@@ -55,8 +66,6 @@ export interface SttProvider {
   stop(): Promise<SttFinalTranscript>;
   /** Clean up provider resources (e.g. remote sessions). Call on shutdown. */
   dispose?(): Promise<void>;
-  /** Update the ASR system prompt (e.g. domain term sheet). */
-  setSystemPrompt?(prompt: string | undefined): void;
 }
 
 // ─── Streaming Session Provider ───
@@ -66,8 +75,22 @@ export interface StreamingSttOptions {
   endpoint: string;
   /** Model identifier sent to the backend. */
   model: string;
-  /** ASR system prompt (domain term sheet). */
-  systemPrompt?: string;
+}
+
+export type SttSessionCreateErrorCategory = "http_error" | "invalid_response" | "network";
+
+/** Bounded create failure. Never includes upstream bodies, parser text, or hints. */
+export class SttSessionCreateError extends Error {
+  readonly status: number | undefined;
+  readonly category: SttSessionCreateErrorCategory;
+
+  constructor(opts: { category: SttSessionCreateErrorCategory; status?: number }) {
+    const statusPart = opts.status !== undefined ? ` HTTP ${opts.status}` : "";
+    super(`STT session create failed:${statusPart} (${opts.category})`);
+    this.name = "SttSessionCreateError";
+    this.category = opts.category;
+    this.status = opts.status;
+  }
 }
 
 /**
@@ -83,6 +106,26 @@ export interface StreamingSttOptions {
  */
 const log = createLogger({ base: { component: "stt_provider" } });
 
+function parseSttCreateEnvelope(
+  data: unknown,
+  sentHints: boolean,
+): { sessionId: string; contextApplied: boolean } {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new SttSessionCreateError({ category: "invalid_response" });
+  }
+  const record = data as Record<string, unknown>;
+  if (typeof record.session_id !== "string" || record.session_id.length === 0) {
+    throw new SttSessionCreateError({ category: "invalid_response" });
+  }
+  if (record.context_applied !== undefined && typeof record.context_applied !== "boolean") {
+    throw new SttSessionCreateError({ category: "invalid_response" });
+  }
+  return {
+    sessionId: record.session_id,
+    contextApplied: sentHints && record.context_applied === true,
+  };
+}
+
 // Keep the server proxy behaviorally close to direct Yuwp usage.
 // Large batching here adds noticeable pause-to-commit lag even on localhost.
 const DEFAULT_FEED_INTERVAL_MS = 200;
@@ -93,7 +136,6 @@ export class StreamingSttProvider implements SttProvider {
   readonly endpoint: string;
   private fetchFn: typeof globalThis.fetch;
   private sessionId: string | null = null;
-  private warmSessionId: string | null = null;
   private tokenCb: ((update: SttTranscriptUpdate) => void) | null = null;
   private lastText = "";
   /**
@@ -109,8 +151,9 @@ export class StreamingSttProvider implements SttProvider {
   private inFlightFlush: Promise<void> | null = null;
   /** Max time audio may sit in the proxy queue before forwarding upstream. */
   private feedIntervalMs: number;
-  /** ASR system prompt (domain term sheet). Injected into every session. */
-  private systemPrompt: string | undefined;
+  /** Frozen vocabulary for the current take. Never reused across different hints. */
+  private takeContextualStrings: readonly string[] | undefined;
+  private contextApplied = false;
 
   constructor(
     opts: StreamingSttOptions,
@@ -119,7 +162,6 @@ export class StreamingSttProvider implements SttProvider {
   ) {
     this.endpoint = opts.endpoint;
     this.model = opts.model;
-    this.systemPrompt = opts.systemPrompt;
     this.fetchFn = fetchFn;
     this.feedIntervalMs = feedIntervalMs;
     // Derive name from endpoint hostname for metrics disambiguation
@@ -129,16 +171,9 @@ export class StreamingSttProvider implements SttProvider {
     } catch {
       this.name = "streaming";
     }
-    // Pre-warm a session at construction time
-    void this.warmUpSession();
   }
 
-  /** Update the system prompt (e.g., after term sheet rebuild). */
-  setSystemPrompt(prompt: string | undefined): void {
-    this.systemPrompt = prompt;
-  }
-
-  async start(): Promise<void> {
+  async start(options?: SttStartOptions): Promise<SttStartResult> {
     // Cleanup existing active session if start() called again without stop()
     if (this.sessionId) {
       void this.deleteSession(this.sessionId);
@@ -155,31 +190,20 @@ export class StreamingSttProvider implements SttProvider {
     this.feeding = false;
     this.inFlightFlush = null;
     this.stopped = false;
+    this.contextApplied = false;
+    this.takeContextualStrings =
+      options?.contextualStrings && options.contextualStrings.length > 0
+        ? Object.freeze([...options.contextualStrings])
+        : undefined;
 
-    // Use warm session if available, otherwise create fresh.
-    // Both paths validate the session is reachable before returning.
-    if (this.warmSessionId) {
-      // Verify the warm session is still valid with a no-op health check.
-      // If it's stale (sidecar restarted), create a fresh one instead.
-      const valid = await this.verifySession(this.warmSessionId);
-      if (valid) {
-        this.sessionId = this.warmSessionId;
-        this.warmSessionId = null;
-      } else {
-        // Warm session is stale — delete it and create fresh
-        void this.deleteSession(this.warmSessionId);
-        this.warmSessionId = null;
-        await this.createSession();
-      }
-    } else {
-      await this.createSession();
-    }
+    await this.createSession();
 
     if (!this.sessionId) {
-      throw new Error("STT backend unreachable");
+      throw new SttSessionCreateError({ category: "invalid_response" });
     }
 
     this.feedTimer = setInterval(() => void this.flushAudio(), this.feedIntervalMs);
+    return { contextApplied: this.contextApplied };
   }
 
   feedAudio(pcm: Buffer): void {
@@ -228,7 +252,8 @@ export class StreamingSttProvider implements SttProvider {
           if (data.committed_text !== undefined) result.committedText = data.committed_text;
           if (data.active_text !== undefined) result.activeText = data.active_text;
           this.sessionId = null;
-          void this.warmUpSession();
+          this.takeContextualStrings = undefined;
+          this.contextApplied = false;
           return result;
         }
       } catch {
@@ -238,9 +263,8 @@ export class StreamingSttProvider implements SttProvider {
     }
 
     this.inFlightFlush = null;
-
-    // Pre-warm next session so next mic tap is instant
-    void this.warmUpSession();
+    this.takeContextualStrings = undefined;
+    this.contextApplied = false;
 
     return { text: this.lastText };
   }
@@ -253,25 +277,12 @@ export class StreamingSttProvider implements SttProvider {
       this.feedTimer = null;
     }
 
-    const promises: Promise<void>[] = [];
     if (this.sessionId) {
-      promises.push(this.deleteSession(this.sessionId));
+      await this.deleteSession(this.sessionId);
       this.sessionId = null;
     }
-    if (this.warmSessionId) {
-      promises.push(this.deleteSession(this.warmSessionId));
-      this.warmSessionId = null;
-    }
-    await Promise.allSettled(promises);
-  }
-
-  /** Detect if the sidecar returned our system prompt text instead of a real transcript. */
-  private isPromptLeak(text: string): boolean {
-    if (!this.systemPrompt) return false;
-    // The prompt starts with "Domain terms and proper nouns".
-    // If the transcript starts with the same prefix, it's a hallucination.
-    const promptPrefix = this.systemPrompt.slice(0, 30);
-    return text.startsWith(promptPrefix);
+    this.takeContextualStrings = undefined;
+    this.contextApplied = false;
   }
 
   // ─── Internal ───
@@ -299,64 +310,40 @@ export class StreamingSttProvider implements SttProvider {
   /** Build the JSON body for session creation (model + optional stream_config). */
   private sessionCreateBody(): string {
     const body: Record<string, unknown> = { model: this.model };
-    if (this.systemPrompt) {
-      body.stream_config = { system_prompt: this.systemPrompt };
+    if (this.takeContextualStrings && this.takeContextualStrings.length > 0) {
+      body.stream_config = { contextual_strings: [...this.takeContextualStrings] };
     }
     return JSON.stringify(body);
   }
 
-  private async warmUpSession(): Promise<void> {
-    // Cleanup existing warm session to prevent leak
-    if (this.warmSessionId) {
-      await this.deleteSession(this.warmSessionId);
-      this.warmSessionId = null;
-    }
-
+  private async createSession(): Promise<void> {
+    if (this.stopped) return;
+    const sentHints =
+      this.takeContextualStrings !== undefined && this.takeContextualStrings.length > 0;
+    let res: Response;
     try {
-      const res = await this.fetchFn(this.basePath, {
+      res = await this.fetchFn(this.basePath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: this.sessionCreateBody(),
         signal: AbortSignal.timeout(10_000),
       });
-      if (res.ok) {
-        const data = (await res.json()) as { session_id?: string };
-        this.warmSessionId = data.session_id ?? null;
-      }
     } catch {
-      // Non-fatal — will create on demand in start()
+      throw new SttSessionCreateError({ category: "network" });
     }
-  }
-
-  /** Verify a session is still valid by sending an empty audio chunk. */
-  private async verifySession(id: string): Promise<boolean> {
-    try {
-      const res = await this.fetchFn(`${this.basePath}/${id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: new Uint8Array(0),
-        signal: AbortSignal.timeout(5_000),
-      });
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  private async createSession(): Promise<void> {
-    if (this.stopped) return;
-    const res = await this.fetchFn(this.basePath, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: this.sessionCreateBody(),
-      signal: AbortSignal.timeout(10_000),
-    });
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Create session HTTP ${res.status}: ${body}`);
+      await res.arrayBuffer().catch(() => undefined);
+      throw new SttSessionCreateError({ category: "http_error", status: res.status });
     }
-    const data = (await res.json()) as { session_id?: string };
-    this.sessionId = data.session_id ?? null;
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      throw new SttSessionCreateError({ category: "invalid_response", status: res.status });
+    }
+    const parsed = parseSttCreateEnvelope(data, sentHints);
+    this.sessionId = parsed.sessionId;
+    this.contextApplied = parsed.contextApplied;
   }
 
   private async drainAudioQueue(): Promise<void> {
@@ -418,7 +405,7 @@ export class StreamingSttProvider implements SttProvider {
             ? JSON.stringify([text, committedText ?? "", activeText ?? ""])
             : JSON.stringify([text, snap]);
 
-        if (text && signature !== this.lastPreviewSignature && !this.isPromptLeak(text)) {
+        if (text && signature !== this.lastPreviewSignature) {
           this.lastText = text;
           this.lastPreviewSignature = signature;
           this.tokenCb?.({

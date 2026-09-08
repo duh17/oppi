@@ -693,7 +693,7 @@ struct DictationDeviceAuthTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
             factory.sockets.count == 1
         })
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(factory.sockets.first?.sentDictationStartCount == 1)
 
         let first = try #require(factory.sockets.first)
@@ -705,6 +705,51 @@ struct DictationDeviceAuthTests {
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
         #expect(factory.sockets.last?.sentDictationStartCount == 1)
         #expect(client.status != .disconnected)
+
+        client.disconnect()
+        await consumer.value
+    }
+
+    @Test func authExpiredCloseReplaysCompleteDictationStartPayload() async throws {
+        let factory = ScriptedDictationFactory()
+        let refreshCalls = LockedCallCount()
+        guard let client = DictationStreamClient(
+            baseURL: URL(string: "https://server.example.test")!,
+            token: "at_stale",
+            tlsCertFingerprint: nil,
+            currentTokenProvider: { @Sendable in "at_stale" },
+            refreshTokenProvider: { @Sendable in
+                refreshCalls.increment()
+                return "at_refreshed"
+            },
+            webSocketFactory: { factory.make($0) }
+        ) else {
+            Issue.record("Expected a valid dictation stream URL")
+            return
+        }
+        let stream = client.connect()
+        let consumer = Task { @MainActor in for await _ in stream {} }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        try await client.sendDictation(.dictationStart(contextualStrings: ["Yuwp", "Foo Bar"]))
+        let firstPayload = try #require(factory.sockets.first?.sentTexts.last)
+        #expect(firstPayload.contains("\"type\":\"dictation_start\""))
+        #expect(firstPayload.contains("Yuwp"))
+        #expect(firstPayload.contains("Foo Bar"))
+
+        let first = try #require(factory.sockets.first)
+        first.failAuthExpired()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 2
+        })
+        #expect(refreshCalls.get() == 1)
+        let replayed = try #require(factory.sockets.last?.sentTexts.last)
+        #expect(replayed.contains("\"type\":\"dictation_start\""))
+        #expect(replayed.contains("Yuwp"))
+        #expect(replayed.contains("Foo Bar"))
+        #expect(replayed.contains("contextualStrings"))
 
         client.disconnect()
         await consumer.value
@@ -740,7 +785,7 @@ struct DictationDeviceAuthTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
             factory.sockets.count == 1
         })
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(factory.sockets.first?.sentDictationStartCount == 1)
 
         let first = try #require(factory.sockets.first)
@@ -792,7 +837,7 @@ struct DictationDeviceAuthTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
             factory.sockets.count == 1
         })
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(factory.sockets.first?.sentDictationStartCount == 1)
 
         let first = try #require(factory.sockets.first)
@@ -844,7 +889,7 @@ struct DictationDeviceAuthTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
             factory.sockets.count == 1
         })
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(factory.sockets.first?.sentDictationStartCount == 1)
 
         let first = try #require(factory.sockets.first)
@@ -899,7 +944,7 @@ struct DictationDeviceAuthTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
             factory.sockets.count == 1
         })
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(factory.sockets.first?.sentDictationStartCount == 1)
 
         let first = try #require(factory.sockets.first)
@@ -946,7 +991,7 @@ struct DictationDeviceAuthTests {
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer dt_leftover")
         #expect(client.status == .connecting)
 
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(client.status == .connected)
 
         client.disconnect()
@@ -980,7 +1025,7 @@ struct DictationDeviceAuthTests {
         #expect(client.status != .disconnected)
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer dt_leftover")
 
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(client.status == .connected)
 
         client.disconnect()
@@ -1010,7 +1055,7 @@ struct DictationDeviceAuthTests {
         })
         #expect(factory.sockets.count == 1)
         #expect(client.status != .disconnected)
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(client.status == .connected)
 
         client.disconnect()
@@ -1040,7 +1085,7 @@ struct DictationDeviceAuthTests {
         })
         #expect(factory.sockets.count == 1)
         #expect(client.status != .disconnected)
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
         #expect(client.status == .connected)
 
         client.disconnect()
@@ -1071,7 +1116,7 @@ struct DictationDeviceAuthTests {
         // After dt_ -> at_ migrate the constructor already holds the replacement
         // snapshot. dictation_start is queued until currentAccessToken() resolves
         // so the first writable socket still receives start.
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
 
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
             factory.sockets.count == 1 && factory.sockets.first?.sentDictationStartCount == 1
@@ -1153,7 +1198,7 @@ struct DictationDeviceAuthTests {
 
         // given start is sent while leftover != currentAccessToken is still resolving
         await gate.waitUntilEntered()
-        try await client.sendDictation(.dictationStart)
+        try await client.sendDictation(.dictationStart())
 
         // when the live device token is used for the first socket (no leftover-open)
         await gate.release()
@@ -1213,7 +1258,7 @@ struct DictationDeviceAuthTests {
 
         var sendError: Error?
         do {
-            try await client.sendDictation(.dictationStart)
+            try await client.sendDictation(.dictationStart())
         } catch {
             sendError = error
         }
@@ -1257,7 +1302,7 @@ struct DictationDeviceAuthTests {
 
         var sendError: Error?
         do {
-            try await client.sendDictation(.dictationStart)
+            try await client.sendDictation(.dictationStart())
         } catch {
             sendError = error
         }
@@ -1298,7 +1343,7 @@ struct DictationDeviceAuthTests {
 
         var sendError: Error?
         do {
-            try await client.sendDictation(.dictationStart)
+            try await client.sendDictation(.dictationStart())
         } catch {
             sendError = error
         }

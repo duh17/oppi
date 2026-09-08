@@ -323,7 +323,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings.improveDictationWithFoundationModel")
 
                 Text(
-                    "Runs on-device and never leaves this iPhone. Dictation still works if the model is unavailable."
+                    "The Foundation Model runs on this iPhone. Server dictation sends selected vocabulary to Oppi and its configured speech-to-text provider. Dictation still works if the model is unavailable."
                 )
                 .font(.footnote)
                 .foregroundStyle(.themeComment)

@@ -68,10 +68,18 @@ The HTTP backend must implement this session API:
 Session creation body:
 
 ```json
-{ "model": "<model-id>", "stream_config": { "system_prompt": "..." } }
+{ "model": "<model-id>", "stream_config": { "contextual_strings": ["Foo Bar", "Yuwp"] } }
 ```
 
-`stream_config` is optional.
+`stream_config` is optional. Omit it when the take has no vocabulary hints. `contextual_strings` is a bounded phrase list (max 100 phrases, 256 UTF-8 bytes each, 8192 UTF-8 bytes total). It is vocabulary data, not a client-supplied system prompt.
+
+Create response:
+
+```json
+{ "session_id": "<id>", "context_applied": true }
+```
+
+`context_applied` is optional. `true` means the backend consumed that take's hints. It is not a recognition-accuracy guarantee. Missing or `false` still allows ordinary audio dictation.
 
 ## Local Yuwp ASR setup
 

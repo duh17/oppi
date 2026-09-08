@@ -68,9 +68,10 @@ final class DictationStreamClient: DictationTransport {
     private var continuation: AsyncStream<ServerMessage>.Continuation?
     /// Queued until the current socket is writable, then replayed after a 401
     /// refresh or leftover-token rotate so start lands on the surviving socket.
+    /// Stores the full immutable take payload so auth retry cannot drop hints.
     /// Cleared once the server accepts, completes, or fatally rejects the take
     /// so a later 4001 cannot start a phantom second recording.
-    private var pendingDictationStart = false
+    private var pendingDictationStart: ClientMessage?
     /// True only while a 401 refresh or leftover-token rotate is replacing the
     /// current socket. sendDictation may requeue dictation_start in that window.
     private var isRecoveringFromAuthFailure = false
@@ -213,11 +214,11 @@ final class DictationStreamClient: DictationTransport {
     func sendDictation(_ message: ClientMessage) async throws {
         switch message {
         case .dictationStart:
-            pendingDictationStart = true
+            pendingDictationStart = message
         case .dictationStop, .dictationCancel:
             // User stop/cancel is terminal for replay even if the send later
             // suspends and a 4001 refresh installs a replacement socket.
-            pendingDictationStart = false
+            pendingDictationStart = nil
         default:
             break
         }
@@ -227,7 +228,7 @@ final class DictationStreamClient: DictationTransport {
                 return
             }
             if case .dictationStart = message {
-                pendingDictationStart = false
+                pendingDictationStart = nil
             }
             throw WebSocketError.notConnected
         }
@@ -243,7 +244,7 @@ final class DictationStreamClient: DictationTransport {
                 return
             }
             if case .dictationStart = message {
-                pendingDictationStart = false
+                pendingDictationStart = nil
             }
             throw error
         }
@@ -261,20 +262,23 @@ final class DictationStreamClient: DictationTransport {
     private func clearPendingStartIfAcceptedOrCompleted(_ message: ServerMessage) {
         switch message {
         case .dictationReady, .dictationFinal:
-            pendingDictationStart = false
+            pendingDictationStart = nil
         case .dictationError(_, let fatal) where fatal:
-            pendingDictationStart = false
+            pendingDictationStart = nil
         default:
             break
         }
     }
 
     private func replayPendingDictationStart() async {
-        guard pendingDictationStart, let task, status != .disconnected, continuation != nil else {
+        guard let pending = pendingDictationStart,
+              let task,
+              status != .disconnected,
+              continuation != nil else {
             return
         }
         do {
-            try await sendEncoded(.dictationStart, on: task)
+            try await sendEncoded(pending, on: task)
         } catch {
             dictationStreamLogger.error(
                 "Failed to send queued dictation_start: \(String(describing: error), privacy: .public)"
@@ -297,7 +301,7 @@ final class DictationStreamClient: DictationTransport {
         receiveTask = nil
         task?.cancel(.normalClosure, nil)
         task = nil
-        pendingDictationStart = false
+        pendingDictationStart = nil
         isRecoveringFromAuthFailure = false
         continuation?.finish()
         continuation = nil

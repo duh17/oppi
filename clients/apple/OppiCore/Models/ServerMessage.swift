@@ -123,7 +123,7 @@ enum ServerMessage: Sendable, Equatable {
     case gitStatus(workspaceId: String, worktreeId: String?, status: GitStatus)
 
     // Dictation (session audio stream)
-    case dictationReady(provider: DictationProviderInfo?)
+    case dictationReady(provider: DictationProviderInfo?, contextApplied: Bool? = nil)
     case dictationResult(text: String, snap: Bool, split: DictationTranscriptSplit? = nil)
     case dictationFinal(text: String, split: DictationTranscriptSplit? = nil)
     case dictationError(error: String, fatal: Bool)
@@ -320,7 +320,7 @@ extension ServerMessage: Decodable {
         // git_status
         case workspaceId, worktreeId, status
         // dictation
-        case sttProvider, sttModel
+        case sttProvider, sttModel, contextApplied
         case text, snap, committedText, activeText
     }
 
@@ -602,6 +602,7 @@ extension ServerMessage: Decodable {
         case "dictation_ready":
             let providerName = try c.decodeIfPresent(String.self, forKey: .sttProvider)
             let model = try c.decodeIfPresent(String.self, forKey: .sttModel)
+            let contextApplied = try c.decodeIfPresent(Bool.self, forKey: .contextApplied)
             let info: DictationProviderInfo?
             if let providerName, let model {
                 info = DictationProviderInfo(
@@ -611,7 +612,7 @@ extension ServerMessage: Decodable {
             } else {
                 info = nil
             }
-            self = .dictationReady(provider: info)
+            self = .dictationReady(provider: info, contextApplied: contextApplied)
 
         case "dictation_result":
             let text = try c.decode(String.self, forKey: .text)

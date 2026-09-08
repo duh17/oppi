@@ -9,7 +9,7 @@ import { DictationManager, type DictationSendFn } from "../src/dictation-manager
 import type { DictationServerMessage } from "../src/dictation-types.js";
 import type { ServerMetricCollector } from "../src/server-metric-collector.js";
 import type { ServerMetricName } from "../src/server-metric-registry.js";
-import type { SttProvider } from "../src/stt-provider.js";
+import type { SttProvider, SttStartOptions, SttStartResult } from "../src/stt-provider.js";
 
 // ─── Test helpers ───
 
@@ -66,7 +66,9 @@ function mockSttProvider(tokens: string[]) {
     | null = null;
   const accumulated = tokens.join(" ");
 
-  const startFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  const startFn = vi
+    .fn<(options?: SttStartOptions) => Promise<SttStartResult>>()
+    .mockResolvedValue({ contextApplied: false });
   const feedAudioFn = vi.fn<(pcm: Buffer) => void>();
   const stopFn = vi
     .fn<
@@ -133,12 +135,12 @@ function lateInstallSttProvider() {
       }) => void)
     | null = null;
 
-  const startFn = vi.fn<() => Promise<void>>(
+  const startFn = vi.fn<(options?: SttStartOptions) => Promise<SttStartResult>>(
     () =>
-      new Promise<void>((resolve) => {
+      new Promise<SttStartResult>((resolve) => {
         pendingStarts.push(() => {
           liveSession = true;
-          resolve();
+          resolve({ contextApplied: false });
         });
       }),
   );
@@ -185,10 +187,10 @@ function lateInstallSttProvider() {
 function deferredStartSttProvider() {
   let releaseStart: (() => void) | undefined;
   let rejectStart: ((error: Error) => void) | undefined;
-  const startFn = vi.fn<() => Promise<void>>(
+  const startFn = vi.fn<(options?: SttStartOptions) => Promise<SttStartResult>>(
     () =>
-      new Promise<void>((resolve, reject) => {
-        releaseStart = resolve;
+      new Promise<SttStartResult>((resolve, reject) => {
+        releaseStart = () => resolve({ contextApplied: false });
         rejectStart = reject;
       }),
   );
@@ -222,7 +224,9 @@ function deferredStartSttProvider() {
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function deferredSttProvider() {
   let releaseStop: ((value: { text: string }) => void) | undefined;
-  const startFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  const startFn = vi
+    .fn<(options?: SttStartOptions) => Promise<SttStartResult>>()
+    .mockResolvedValue({ contextApplied: false });
   const feedAudioFn = vi.fn<(pcm: Buffer) => void>();
   const stopFn = vi.fn<() => Promise<{ text: string }>>(
     () =>
@@ -253,7 +257,9 @@ function deferredSttProvider() {
 /** Create a mock SttProvider whose stop() rejects. */
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function failingSttProvider(error: string) {
-  const startFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  const startFn = vi
+    .fn<(options?: SttStartOptions) => Promise<SttStartResult>>()
+    .mockResolvedValue({ contextApplied: false });
   const feedAudioFn = vi.fn<(pcm: Buffer) => void>();
   const stopFn = vi.fn<() => Promise<{ text: string }>>().mockRejectedValue(new Error(error));
 
@@ -301,12 +307,77 @@ describe("DictationManager", () => {
       const ready = messagesOfType(sent, "dictation_ready")[0];
       expect(ready.sttProvider).toBe("mock");
       expect(ready.sttModel).toBe("mock-model");
+      expect(ready.contextApplied).toBe(false);
     });
 
     it("calls start() on dictation_start", async () => {
       manager.handleControlMessage({ type: "dictation_start" }, sendFn);
       await drain();
       expect(provider.start).toHaveBeenCalledTimes(1);
+      expect(provider.start).toHaveBeenCalledWith(undefined);
+    });
+
+    it("forwards contextualStrings to start and reports contextApplied", async () => {
+      provider.start.mockResolvedValue({ contextApplied: true });
+      manager.handleControlMessage(
+        { type: "dictation_start", contextualStrings: ["Foo Bar"] },
+        sendFn,
+      );
+      await drain();
+      expect(provider.start).toHaveBeenCalledWith({ contextualStrings: ["Foo Bar"] });
+      expect(messagesOfType(sent, "dictation_ready")[0].contextApplied).toBe(true);
+    });
+
+    it("reports contextApplied false when the backend does not acknowledge", async () => {
+      manager.handleControlMessage(
+        { type: "dictation_start", contextualStrings: ["Yuwp"] },
+        sendFn,
+      );
+      await drain();
+      expect(provider.start).toHaveBeenCalledWith({ contextualStrings: ["Yuwp"] });
+      expect(messagesOfType(sent, "dictation_ready")[0].contextApplied).toBe(false);
+    });
+
+    it("rejects malformed contextualStrings without starting STT", () => {
+      manager.handleControlMessage(
+        { type: "dictation_start", contextualStrings: ["bad\nphrase"] },
+        sendFn,
+      );
+      expect(provider.start).not.toHaveBeenCalled();
+      const errors = messagesOfType(sent, "dictation_error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0].fatal).toBe(false);
+      expect(errors[0].error).toBe("dictation contextualStrings cannot include control characters");
+      expect(errors[0].error).not.toContain("bad");
+    });
+
+    it("isolates take A then B then empty start options", async () => {
+      manager.handleControlMessage(
+        { type: "dictation_start", contextualStrings: ["Alpha"] },
+        sendFn,
+      );
+      await drain();
+      manager.handleControlMessage({ type: "dictation_stop" }, sendFn);
+      vi.advanceTimersByTime(10);
+      await drain();
+
+      manager.handleControlMessage(
+        { type: "dictation_start", contextualStrings: ["Beta Token"] },
+        sendFn,
+      );
+      await drain();
+      manager.handleControlMessage({ type: "dictation_stop" }, sendFn);
+      vi.advanceTimersByTime(10);
+      await drain();
+
+      manager.handleControlMessage({ type: "dictation_start" }, sendFn);
+      await drain();
+
+      expect(provider.start.mock.calls.map((call) => call[0])).toEqual([
+        { contextualStrings: ["Alpha"] },
+        { contextualStrings: ["Beta Token"] },
+        undefined,
+      ]);
     });
 
     it("pipes audio via feedAudio()", async () => {

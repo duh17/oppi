@@ -72,7 +72,7 @@ enum ClientMessage: Sendable {
     case extensionUIResponse(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil, requestId: String? = nil)
 
     // ── Dictation (session audio stream) ──
-    case dictationStart
+    case dictationStart(contextualStrings: [String] = [])
     case dictationStop
     case dictationCancel
 }
@@ -400,8 +400,12 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
         // ── Dictation ──
-        case .dictationStart:
+        case .dictationStart(let contextualStrings):
             try c.encode("dictation_start", forKey: .type)
+            let prepared = DictationContextualStrings.prepared(contextualStrings)
+            if !prepared.isEmpty {
+                try c.encode(prepared, forKey: .contextualStrings)
+            }
         case .dictationStop:
             try c.encode("dictation_stop", forKey: .type)
         case .dictationCancel:
@@ -412,6 +416,7 @@ extension ClientMessage: Encodable {
     enum CodingKeys: String, CodingKey {
         case type, message, attachments, streamingBehavior, requestId, clientTurnId
         case id, action, redactionPolicy, value, confirmed, cancelled
+        case contextualStrings
         case provider, modelId, persist, level, name, mode, enabled
         case customInstructions, entryId, filterMode
         case targetId, summarize, replaceInstructions, label
@@ -475,5 +480,62 @@ extension ClientMessage {
             throw EncodingError.invalidValue(data, .init(codingPath: [], debugDescription: "JSON data is not valid UTF-8"))
         }
         return string
+    }
+}
+
+/// Wire bounds for per-take dictation vocabulary.
+///
+/// Client code prepares a list that cannot violate these limits. The server
+/// rejects malformed supplied context with a predictable error and does not
+/// echo the phrases.
+enum DictationContextualStrings {
+    static let maxPhraseCount = 100
+    static let maxPhraseUTF8Bytes = 256
+    static let maxTotalUTF8Bytes = 8192
+
+    /// Normalize a local extractor list into a legal `dictation_start` payload.
+    /// Control characters are judged on the supplied string; remaining phrases
+    /// are trimmed with the shared blank policy before UTF-8 budgets.
+    static func prepared(_ phrases: [String]) -> [String] {
+        var result: [String] = []
+        var totalBytes = 0
+        result.reserveCapacity(min(maxPhraseCount, phrases.count))
+        for raw in phrases {
+            guard !containsControl(raw) else { continue }
+            let phrase = trimBlanks(raw)
+            guard !phrase.isEmpty else { continue }
+            let bytes = phrase.utf8.count
+            guard bytes <= maxPhraseUTF8Bytes else { continue }
+            guard totalBytes + bytes <= maxTotalUTF8Bytes else { break }
+            result.append(phrase)
+            totalBytes += bytes
+            if result.count == maxPhraseCount { break }
+        }
+        return result
+    }
+
+    private static let blankScalars: Set<UInt32> = [
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+        0x20, 0x85, 0xA0, 0x1680,
+        0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A,
+        0x2028, 0x2029, 0x202F, 0x205F, 0x3000,
+        0x200B, 0xFEFF,
+    ]
+
+    private static func containsControl(_ phrase: String) -> Bool {
+        phrase.unicodeScalars.contains { scalar in
+            scalar.value <= 0x1F || (0x7F...0x9F).contains(scalar.value)
+        }
+    }
+
+    private static func isBlank(_ value: UInt32) -> Bool {
+        blankScalars.contains(value)
+    }
+
+    private static func trimBlanks(_ raw: String) -> String {
+        let scalars = raw.unicodeScalars
+        guard let first = scalars.firstIndex(where: { !isBlank($0.value) }) else { return "" }
+        guard let last = scalars.lastIndex(where: { !isBlank($0.value) }) else { return "" }
+        return String(scalars[first...last])
     }
 }

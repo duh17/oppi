@@ -160,6 +160,90 @@ struct VoiceInputSessionMonitorTests {
         #expect(receivedErrors.isEmpty)
     }
 
+    @Test func cancelDoesNotWipeSessionBoundDuringAwait() async {
+        let sessionA = MockVoiceSession()
+        let cancelEntered = AsyncGate()
+        let cancelHold = AsyncGate()
+        sessionA.cancelHandler = {
+            await cancelEntered.open()
+            await cancelHold.wait()
+        }
+        let sessionB = MockVoiceSession()
+        let monitor = VoiceInputSessionMonitor()
+        var receivedEvents: [VoiceSessionEvent] = []
+        var receivedLevels: [Float] = []
+
+        bindMonitor(monitor, session: sessionA)
+
+        let cancelA = Task { @MainActor in
+            await monitor.cancel()
+        }
+        await cancelEntered.wait()
+        #expect(sessionA.cancelCallCount == 1)
+
+        bindMonitor(
+            monitor,
+            session: sessionB,
+            onAudioLevel: { receivedLevels.append($0) },
+            onEvent: { receivedEvents.append($0) }
+        )
+
+        await cancelHold.open()
+        await cancelA.value
+
+        #expect(sessionB.cancelCallCount == 0)
+        sessionB.yieldAudioLevel(0.5)
+        sessionB.yieldEvent(.partialTranscript("keep-b"))
+        #expect(await waitForMainActorCondition { receivedLevels == [0.5] })
+        #expect(await waitForMainActorCondition {
+            receivedEvents.contains { eventText($0, expecting: .partialTranscript) == "keep-b" }
+        })
+
+        await monitor.cancel()
+        #expect(sessionB.cancelCallCount == 1)
+        #expect(sessionA.cancelCallCount == 1)
+    }
+
+    @Test func stopDoesNotWipeSessionBoundDuringAwait() async {
+        let sessionA = MockVoiceSession()
+        let stopEntered = AsyncGate()
+        let stopHold = AsyncGate()
+        sessionA.stopHandler = {
+            await stopEntered.open()
+            await stopHold.wait()
+            sessionA.finishEvents()
+        }
+        let sessionB = MockVoiceSession()
+        let monitor = VoiceInputSessionMonitor()
+        var receivedEvents: [VoiceSessionEvent] = []
+
+        bindMonitor(monitor, session: sessionA)
+
+        let stopA = Task { @MainActor in
+            await monitor.stop()
+        }
+        await stopEntered.wait()
+        #expect(sessionA.stopCallCount == 1)
+
+        bindMonitor(
+            monitor,
+            session: sessionB,
+            onEvent: { receivedEvents.append($0) }
+        )
+        sessionB.finishEvents()
+
+        await stopHold.open()
+        await stopA.value
+
+        #expect(sessionB.stopCallCount == 0)
+        #expect(sessionB.cancelCallCount == 0)
+
+        await monitor.cancel()
+        #expect(sessionB.cancelCallCount == 1)
+        #expect(sessionA.cancelCallCount == 0)
+        #expect(sessionA.stopCallCount == 1)
+    }
+
     @Test func rebindCancelsPreviousTasks() async {
         let first = TestVoiceSession()
         let second = TestVoiceSession()
@@ -246,6 +330,26 @@ struct VoiceInputSessionMonitorTests {
         #expect(cancelled)
         #expect(await session.stopCallCount == 0)
     }
+}
+
+@MainActor
+private func bindMonitor(
+    _ monitor: VoiceInputSessionMonitor,
+    session: any VoiceTranscriptionSession,
+    onAudioLevel: @escaping @MainActor (Float) -> Void = { _ in },
+    onEvent: @escaping @MainActor (VoiceSessionEvent) -> Void = { _ in },
+    onError: @escaping @MainActor (Error) -> Void = { error in
+        Issue.record("Unexpected monitor error: \(error)")
+    }
+) {
+    monitor.bind(
+        session: session,
+        recordingStartTime: .now,
+        onAudioLevel: onAudioLevel,
+        onEvent: onEvent,
+        onFirstTranscript: { _, _ in },
+        onError: onError
+    )
 }
 
 private enum TestError: Error {

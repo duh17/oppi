@@ -45,7 +45,7 @@ struct DictationServerMessageDecodingTests {
 
     @Test func decodesReadyMinimal() throws {
         let message = try decode(#"{"type":"dictation_ready"}"#)
-        #expect(message == .dictationReady(provider: nil))
+        #expect(message == .dictationReady(provider: nil, contextApplied: nil))
     }
 
     @Test func decodesReadyWithProviderInfo() throws {
@@ -55,7 +55,23 @@ struct DictationServerMessageDecodingTests {
             sttProvider: "mlx-server",
             sttModel: "Qwen3-ASR-1.7B"
         )
-        #expect(message == .dictationReady(provider: expected))
+        #expect(message == .dictationReady(provider: expected, contextApplied: nil))
+    }
+
+    @Test func decodesReadyWithContextApplied() throws {
+        let json = #"{"type":"dictation_ready","sttProvider":"mlx-server","sttModel":"Qwen3-ASR-1.7B","contextApplied":true}"#
+        let message = try decode(json)
+        let expected = DictationProviderInfo(
+            sttProvider: "mlx-server",
+            sttModel: "Qwen3-ASR-1.7B"
+        )
+        #expect(message == .dictationReady(provider: expected, contextApplied: true))
+    }
+
+    @Test func decodesReadyWithContextAppliedFalse() throws {
+        let json = #"{"type":"dictation_ready","contextApplied":false}"#
+        let message = try decode(json)
+        #expect(message == .dictationReady(provider: nil, contextApplied: false))
     }
 
     @Test func decodesReadyWithPartialProviderInfo() throws {
@@ -117,9 +133,24 @@ struct DictationServerMessageDecodingTests {
 struct DictationClientMessageEncodingTests {
 
     @Test func encodesStart() throws {
-        let message = ClientMessage.dictationStart
+        let message = ClientMessage.dictationStart()
         let json = try encode(message)
         #expect(json.contains("\"type\":\"dictation_start\""))
+        #expect(!json.contains("contextualStrings"))
+    }
+
+    @Test func encodesStartWithContextualStrings() throws {
+        let json = try encode(.dictationStart(contextualStrings: ["Foo Bar", "Yuwp"]))
+        #expect(json.contains("\"type\":\"dictation_start\""))
+        #expect(json.contains("\"contextualStrings\""))
+        #expect(json.contains("Foo Bar"))
+        #expect(json.contains("Yuwp"))
+    }
+
+    @Test func encodingDropsIllegalContextualStrings() throws {
+        let json = try encode(.dictationStart(contextualStrings: ["", "  ", "ok\nno"]))
+        #expect(json.contains("\"type\":\"dictation_start\""))
+        #expect(!json.contains("contextualStrings"))
     }
 
     @Test func encodesStop() throws {
@@ -551,6 +582,32 @@ struct OppiDictationProviderLifecycleTests {
         let preparation = try await provider.prepareSession(context: context)
 
         #expect(preparation.setupMetricTags["transport"] == "dictation_stream")
+        provider.invalidateCache()
+    }
+
+    @Test func prepareSessionSendsPreparedContextualStrings() async throws {
+        let connection = ServerConnection()
+        let credentials = Self.makeCredentials()
+        _ = connection.configure(credentials: credentials)
+        let context = VoiceProviderContext(
+            locale: Locale(identifier: "en-US"),
+            source: "test",
+            serverCredentials: credentials,
+            serverConnection: connection,
+            contextualStrings: ["  Foo Bar  ", "", "Yuwp"]
+        )
+        let provider = OppiDictationProvider()
+        let transport = installTestDictationTransport(on: provider)
+        _ = try await provider.prepareSession(context: context)
+
+        #expect(await waitForMainActorCondition {
+            transport.sentMessages.contains { message in
+                if case .dictationStart(let phrases) = message {
+                    return phrases == ["Foo Bar", "Yuwp"]
+                }
+                return false
+            }
+        })
         provider.invalidateCache()
     }
 

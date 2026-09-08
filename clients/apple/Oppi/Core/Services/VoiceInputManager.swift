@@ -44,6 +44,25 @@ protocol VoicePlaybackCaptureCoordinating: AnyObject {
     func endCaptureInterruption()
 }
 
+/// Visible composer that owns the shared dictation manager.
+/// Hint refresh never claims this; only explicit activation does.
+struct VoiceComposerOwner: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case conversation(sessionId: String)
+        case standalone
+    }
+
+    let serverId: String
+    let kind: Kind
+}
+
+/// Identity of one capture take. `composerGeneration` is the owner at start,
+/// not whoever later claims the shared manager.
+struct VoiceCaptureTakeIdentity: Equatable, Sendable {
+    let requestID: Int
+    let composerGeneration: Int
+}
+
 @MainActor @Observable
 final class VoiceInputManager {
 
@@ -538,6 +557,8 @@ final class VoiceInputManager {
     /// Request ID for start operations, used to cancel stale in-flight starts.
     private var nextStartRequestID = 0
     private var activeStartRequestID: Int?
+    /// Composer generation that owned the take when `activeStartRequestID` was assigned.
+    private var activeStartComposerGeneration: Int?
 
     // MARK: - Session Attribution
 
@@ -570,7 +591,10 @@ final class VoiceInputManager {
     private var conversationHintPhrases: [String] = []
     private var conversationHintSource: String?
     private var conversationHintGeneration = 0
+    private var conversationHintOwner: VoiceComposerOwner?
     private var foundationModelHintTask: Task<Void, Never>?
+    private var composerOwner: VoiceComposerOwner?
+    private var composerGeneration = 0
     #if DEBUG
     var _testFoundationModelExtract: ((String) async -> [String])?
     #endif
@@ -635,11 +659,46 @@ final class VoiceInputManager {
         logger.info("Engine mode: \(mode.logName)")
     }
 
-    /// Precompute dictation hints when an assistant message lands. Never call from startRecording.
-    func updateConversationHints(fromAssistantMessage text: String?) {
+    /// Visible conversation composer claims the shared manager and restores its server.
+    @discardableResult
+    func activateConversationComposer(
+        serverId: String,
+        sessionId: String,
+        credentials: ServerCredentials?,
+        connection: ServerConnection?
+    ) -> Int {
+        let owner = VoiceComposerOwner(serverId: serverId, kind: .conversation(sessionId: sessionId))
+        return claimComposer(owner, credentials: credentials, connection: connection)
+    }
+
+    /// Conversation-free composer. Does not clear the previous conversation cache.
+    @discardableResult
+    func beginStandaloneComposer(
+        serverId: String,
+        credentials: ServerCredentials?,
+        connection: ServerConnection?
+    ) -> Int {
+        let owner = VoiceComposerOwner(serverId: serverId, kind: .standalone)
+        return claimComposer(owner, credentials: credentials, connection: connection)
+    }
+
+    func endComposer(generation: Int) {
+        guard generation == composerGeneration else { return }
+        composerOwner = nil
+    }
+
+    /// Precompute dictation hints when an assistant message lands. Never claims ownership.
+    func updateConversationHints(
+        fromAssistantMessage text: String?,
+        serverId: String,
+        sessionId: String
+    ) {
+        let owner = VoiceComposerOwner(serverId: serverId, kind: .conversation(sessionId: sessionId))
+        guard composerOwner == owner else { return }
         let source = text ?? ""
-        if source == conversationHintSource { return }
+        if source == conversationHintSource, conversationHintOwner == owner { return }
         conversationHintSource = source
+        conversationHintOwner = owner
         conversationHintGeneration += 1
         let generation = conversationHintGeneration
 
@@ -648,10 +707,87 @@ final class VoiceInputManager {
         scheduleFoundationModelHints(generation: generation)
     }
 
-    /// Drop vocabulary when this session still owns the shared capture manager.
+    /// Drop vocabulary when this conversation still owns the shared capture manager.
     func clearConversationHints(ifOwnedBy sessionId: String) {
-        guard activeSessionId == sessionId else { return }
-        updateConversationHints(fromAssistantMessage: nil)
+        guard let kind = composerOwner?.kind, case .conversation(let owned) = kind, owned == sessionId else { return }
+        conversationHintPhrases = []
+        conversationHintSource = nil
+        conversationHintOwner = composerOwner
+        conversationHintGeneration += 1
+        cancelFoundationModelHints()
+    }
+
+    private func claimComposer(
+        _ owner: VoiceComposerOwner,
+        credentials: ServerCredentials?,
+        connection: ServerConnection?
+    ) -> Int {
+        composerGeneration += 1
+        composerOwner = owner
+        if case .conversation(let sessionId) = owner.kind {
+            activeSessionId = sessionId
+            if conversationHintOwner != owner {
+                conversationHintPhrases = []
+                conversationHintSource = nil
+                conversationHintOwner = owner
+                conversationHintGeneration += 1
+                cancelFoundationModelHints()
+            }
+        } else {
+            activeSessionId = nil
+        }
+        setServerCredentials(credentials)
+        setServerConnection(connection)
+        setServerDictationTarget(nil)
+        return composerGeneration
+    }
+
+    /// Frozen per-take snapshot. Named so SwiftLint does not treat this as a large tuple.
+    private struct AuthorizedTakeSnapshot {
+        let credentials: ServerCredentials?
+        let connection: ServerConnection?
+        let target: ServerDictationTarget?
+        let phrases: [String]
+    }
+
+    private func freezeAuthorizedTake() -> AuthorizedTakeSnapshot {
+        let phrases: [String]
+        switch composerOwner?.kind {
+        case .standalone, nil:
+            phrases = []
+        case .conversation:
+            phrases = conversationHintPhrases
+        }
+        return AuthorizedTakeSnapshot(
+            credentials: serverCredentials,
+            connection: serverConnection,
+            target: serverDictationTarget,
+            phrases: phrases
+        )
+    }
+
+    func currentCaptureTakeIdentity() -> VoiceCaptureTakeIdentity? {
+        guard let activeStartRequestID, let activeStartComposerGeneration else { return nil }
+        switch state {
+        case .preparingModel, .recording:
+            return VoiceCaptureTakeIdentity(
+                requestID: activeStartRequestID,
+                composerGeneration: activeStartComposerGeneration
+            )
+        default:
+            return nil
+        }
+    }
+
+    private func clearActiveStartIdentity() {
+        activeStartRequestID = nil
+        activeStartComposerGeneration = nil
+    }
+
+    func cancelRecording(matching identity: VoiceCaptureTakeIdentity?) async {
+        guard let identity else { return }
+        guard currentCaptureTakeIdentity() == identity else { return }
+        await cancelRecording()
     }
 
     private func cancelFoundationModelHints() {
@@ -725,10 +861,11 @@ final class VoiceInputManager {
     }
 
     private func validateServerDictationAvailabilityIfNeeded(
-        for engine: TranscriptionEngine
+        for engine: TranscriptionEngine,
+        take: AuthorizedTakeSnapshot
     ) throws {
         guard engine == .serverDictation else { return }
-        guard serverCredentials != nil, serverConnection != nil else {
+        guard take.credentials != nil, take.connection != nil else {
             throw VoiceInputError.serverNotConnected
         }
     }
@@ -854,11 +991,20 @@ final class VoiceInputManager {
         nextStartRequestID += 1
         let requestID = nextStartRequestID
         activeStartRequestID = requestID
+        activeStartComposerGeneration = composerGeneration
         operationInFlight = true
+        var ownsOperation = true
         defer {
-            if activeStartRequestID == requestID {
-                activeStartRequestID = nil
+            if ownsOperation {
                 operationInFlight = false
+            }
+            switch state {
+            case .preparingModel, .recording:
+                break
+            default:
+                if activeStartRequestID == requestID {
+                    clearActiveStartIdentity()
+                }
             }
         }
 
@@ -872,6 +1018,7 @@ final class VoiceInputManager {
         replaceTranscriptState.reset()
         activeRecordingSource = source
         cancelFoundationModelHints()
+        let frozenTake = freezeAuthorizedTake()
 
         state = .preparingModel
         let startTime = ContinuousClock.now
@@ -888,11 +1035,15 @@ final class VoiceInputManager {
         // provider will surface any real analyzer/model failure during startup.
         if !systemAccess.hasMicPermission {
             guard await systemAccess.requestMicPermission() else {
-                endPlaybackCaptureInterruptionIfNeeded()
-                activeEngine = nil
-                activeRecordingSource = nil
-                state = .error("Microphone permission denied")
-                scheduleErrorReset()
+                if activeStartRequestID == requestID {
+                    endPlaybackCaptureInterruptionIfNeeded()
+                    activeEngine = nil
+                    activeRecordingSource = nil
+                    state = .error("Microphone permission denied")
+                    scheduleErrorReset()
+                } else {
+                    ownsOperation = false
+                }
                 return
             }
         }
@@ -907,16 +1058,16 @@ final class VoiceInputManager {
         let context = VoiceProviderContext(
             locale: locale,
             source: source,
-            serverCredentials: serverCredentials,
-            serverConnection: serverConnection,
-            serverDictationTarget: serverDictationTarget,
-            contextualStrings: conversationHintPhrases
+            serverCredentials: frozenTake.credentials,
+            serverConnection: frozenTake.connection,
+            serverDictationTarget: frozenTake.target,
+            contextualStrings: frozenTake.phrases
         )
         let provider = try provider(for: engine)
         var modelPathTag = "warm_cache"
 
         do {
-            try validateServerDictationAvailabilityIfNeeded(for: engine)
+            try validateServerDictationAvailabilityIfNeeded(for: engine, take: frozenTake)
             try ensureStartRequestActive(requestID)
 
             let timings = try await startProviderRecording(
@@ -946,8 +1097,16 @@ final class VoiceInputManager {
                 extraTags: ["path": modelPathTag]
             )
             logger.info("Voice setup cancelled")
-            await cleanupFailedStart()
-            state = .idle
+            if activeStartRequestID == requestID {
+                let stillOwns = await cleanupFailedStart(for: requestID)
+                if stillOwns {
+                    state = .idle
+                } else {
+                    ownsOperation = false
+                }
+            } else {
+                ownsOperation = false
+            }
             return
         } catch {
             let totalMs = startTime.elapsedMs()
@@ -982,9 +1141,17 @@ final class VoiceInputManager {
             } else {
                 logger.error("Voice setup failed: \(userFacingMessage, privacy: .public)")
             }
-            await cleanupFailedStart()
-            state = .error(userFacingMessage)
-            scheduleErrorReset()
+            if activeStartRequestID == requestID {
+                let stillOwns = await cleanupFailedStart(for: requestID)
+                if stillOwns {
+                    state = .error(userFacingMessage)
+                    scheduleErrorReset()
+                } else {
+                    ownsOperation = false
+                }
+            } else {
+                ownsOperation = false
+            }
             throw error
         }
     }
@@ -1045,7 +1212,7 @@ final class VoiceInputManager {
         if state == .preparingModel {
             // Invalidate any in-flight start operation so stale async work
             // cannot flip us back into recording after cancel.
-            activeStartRequestID = nil
+            clearActiveStartIdentity()
             if let activeEngine {
                 try? provider(for: activeEngine).cancelPreparation()
             }
@@ -1301,6 +1468,7 @@ final class VoiceInputManager {
         activeLanguageLabel = nil
         activeEngine = nil
         activeRecordingSource = nil
+        clearActiveStartIdentity()
         activeMetricAnnotation = nil
         activeDictationMetricTags = [:]
         dictationSessionStart = nil
@@ -1308,11 +1476,17 @@ final class VoiceInputManager {
         resultUpdateCount = 0
     }
 
-    private func cleanupFailedStart() async {
+    /// Tears down a failed start. Returns false if this request lost ownership
+    /// while cancellation suspended, so the caller must not mutate a newer take.
+    @discardableResult
+    private func cleanupFailedStart(for requestID: Int) async -> Bool {
+        guard activeStartRequestID == requestID else { return false }
         await sessionMonitor.cancel()
+        guard activeStartRequestID == requestID else { return false }
         deactivateAudioSession()
         teardownSession()
         endPlaybackCaptureInterruptionIfNeeded()
+        return true
     }
 
     private func handleSessionStreamError(
@@ -1702,6 +1876,14 @@ extension VoiceInputManager {
 
     var _testConversationHints: [String] {
         conversationHintPhrases
+    }
+
+    var _testComposerGeneration: Int {
+        composerGeneration
+    }
+
+    var _testComposerOwner: VoiceComposerOwner? {
+        composerOwner
     }
 
     // periphery:ignore - used by VoiceInputManagerTests via @testable import

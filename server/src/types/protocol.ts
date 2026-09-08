@@ -169,7 +169,7 @@ export type ClientMessage = // ── Prompting ──
         requestId?: string;
       }
     // ── Dictation (dedicated ASR stream) ──
-    | { type: "dictation_start" }
+    | { type: "dictation_start"; contextualStrings?: string[] }
     | { type: "dictation_stop" }
     | { type: "dictation_cancel" }
   ) & {
@@ -580,6 +580,7 @@ export type ServerMessage = // ── Connection ──
         type: "dictation_ready";
         sttProvider?: string;
         sttModel?: string;
+        contextApplied?: boolean;
       }
     | {
         type: "dictation_result";

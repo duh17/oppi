@@ -9,6 +9,7 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
     var hasMicPermission = true
     var requestMicPermissionResult = true
     var requestMicPermissionCallCount = 0
+    var requestMicPermissionHandler: (@MainActor () async -> Bool)?
     var activateAudioSessionCallCount = 0
     var deactivateAudioSessionCallCount = 0
     var activateAudioSessionError: Error?
@@ -21,6 +22,9 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
 
     func requestMicPermission() async -> Bool {
         requestMicPermissionCallCount += 1
+        if let requestMicPermissionHandler {
+            return await requestMicPermissionHandler()
+        }
         return requestMicPermissionResult
     }
 
@@ -126,6 +130,9 @@ final class MockVoiceSession: VoiceTranscriptionSession {
     /// Custom stop handler. When set, called instead of default immediate finish.
     var startHandler: (@MainActor () async -> Void)?
     var stopHandler: (@MainActor () async -> Void)?
+    /// Custom cancel handler. When set, awaited after the first cancel claims the session.
+    var cancelHandler: (@MainActor () async -> Void)?
+    private var didCancel = false
 
     init() {
         let eventPair = AsyncThrowingStream.makeStream(of: VoiceSessionEvent.self, throwing: Error.self)
@@ -157,7 +164,14 @@ final class MockVoiceSession: VoiceTranscriptionSession {
     }
 
     func cancel() async {
+        // Match production sessions: a second cancel is a no-op once stopped,
+        // including while the first cancel is still suspended.
+        guard !didCancel else { return }
+        didCancel = true
         cancelCallCount += 1
+        if let cancelHandler {
+            await cancelHandler()
+        }
         eventContinuation.finish()
         audioLevelContinuation.finish()
     }

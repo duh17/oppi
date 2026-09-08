@@ -132,7 +132,7 @@ final class MacComposerDictationController {
 
         startReceiveLoop(transport, generation: generation)
         do {
-            try await transport.sendControl(.dictationStart)
+            try await transport.sendControl(.dictationStart())
         } catch {
             guard isCurrentLifecycle(generation) else {
                 transport.close()

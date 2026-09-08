@@ -14,7 +14,11 @@ import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
 import { SessionLifecycleError, SessionLifecycleService } from "./session-lifecycle-service.js";
 import type { SessionRuntimes } from "./runtime-router.js";
-import type { DictationClientMessage, DictationServerMessage } from "./dictation-types.js";
+import {
+  parseDictationClientMessage,
+  type DictationClientMessage,
+  type DictationServerMessage,
+} from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isDeclaredControlSession } from "./control-session.js";
@@ -139,14 +143,11 @@ function parseIncomingDictationMessage(
     return decoded;
   }
 
-  const type = decoded.record.type;
-  if (typeof type !== "string" || type.trim().length === 0) {
-    return { ok: false, error: "Message type is required" };
+  const parsed = parseDictationClientMessage(decoded.record);
+  if (!parsed.ok) {
+    return parsed;
   }
-
-  // Dictation frames stay on the light type-string check; command-field
-  // validation is only for session WS/HTTP command bodies.
-  return { ok: true, message: decoded.record as ClientMessage };
+  return { ok: true, message: parsed.message };
 }
 
 /**

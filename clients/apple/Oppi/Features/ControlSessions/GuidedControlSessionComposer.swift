@@ -207,6 +207,7 @@ struct GuidedControlSessionComposer: View {
     @State private var selectedModelId: String?
     @State private var thinkingLevel: ThinkingLevel = AppPreferences.QuickSession.lastThinkingLevel
     @State private var voiceInputManager: VoiceInputManager?
+    @State private var voiceComposerGeneration: Int?
     @State private var streamingBehavior: StreamingBehavior = .followUp
     @State private var showModelPicker = false
     @State private var isInitialized = false
@@ -336,6 +337,23 @@ struct GuidedControlSessionComposer: View {
             }
         }
         .task { await initialize() }
+        .onDisappear {
+            let manager = voiceInputManager
+            let takeIdentity = ComposerShared.takeIdentityForDismissedComposer(
+                manager: manager,
+                generation: voiceComposerGeneration
+            )
+            if let generation = voiceComposerGeneration {
+                manager?.endComposer(generation: generation)
+                voiceComposerGeneration = nil
+            }
+            Task {
+                await ComposerShared.cancelVoiceInputOnDismiss(
+                    manager: manager,
+                    matching: takeIdentity
+                )
+            }
+        }
     }
 
     private func toggleReviewCommentDrawer() {
@@ -452,7 +470,15 @@ struct GuidedControlSessionComposer: View {
         if ReleaseFeatures.voiceInputEnabled {
             let manager = VoiceInputManager.shared
             await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
+            if Task.isCancelled { return }
             configureVoiceInput(manager)
+            if Task.isCancelled {
+                if let generation = voiceComposerGeneration {
+                    manager.endComposer(generation: generation)
+                    voiceComposerGeneration = nil
+                }
+                return
+            }
             voiceInputManager = manager
         }
 
@@ -463,9 +489,17 @@ struct GuidedControlSessionComposer: View {
     }
 
     private func configureVoiceInput(_ manager: VoiceInputManager) {
-        manager.setServerCredentials(connection.credentials)
-        manager.setServerConnection(connection)
-        manager.setPlaybackInterrupter(connection.audioPlayer)
+        let serverId = connection.currentServerId
+            ?? connection.credentials.map { "\($0.host):\($0.port)" }
+            ?? ""
+        voiceComposerGeneration = ComposerShared.prepareStandaloneVoiceInput(
+            manager: manager,
+            serverId: serverId,
+            credentials: connection.credentials,
+            connection: connection,
+            playbackInterrupter: connection.audioPlayer,
+            ownedGeneration: voiceComposerGeneration
+        )
     }
 
     private func prepareVoiceInput(_ manager: VoiceInputManager) async throws {

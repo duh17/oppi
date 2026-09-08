@@ -90,7 +90,11 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
         // flushing buffered audio, so the UI transitions to .recording immediately
         // while the server-side ASR setup completes (~one RTT).
         let readinessTask: Task<DictationProviderInfo?, Error> = Task {
-            try await transport.sendDictation(.dictationStart)
+            try await transport.sendDictation(
+                .dictationStart(
+                    contextualStrings: DictationContextualStrings.prepared(context.contextualStrings)
+                )
+            )
 
             // Wait for dictation_ready to arrive in the recording stream.
             // The message routing task yields it; we consume a copy here.
@@ -139,7 +143,7 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
                 guard let self else { break }
 
                 // Resolve readiness if waiting
-                if case .dictationReady(let provider) = message {
+                if case .dictationReady(let provider, _) = message {
                     readyTimeoutTask?.cancel()
                     readyTimeoutTask = nil
                     if let cont = readyContinuation {
