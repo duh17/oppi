@@ -38,7 +38,8 @@ struct ReviewCommentStripScreenshotPreview: View {
                         ReviewCommentStripPill(
                             count: comments.count,
                             isExpanded: isExpanded,
-                            onToggle: {}
+                            onToggle: {},
+                            onOpenFullScreen: {}
                         )
                     }
                 )
@@ -47,7 +48,7 @@ struct ReviewCommentStripScreenshotPreview: View {
                     ReviewCommentStashDrawer(
                         comments: comments,
                         focusedCommentId: nil,
-                        onEdit: { _, _ in true },
+                        onEdit: { _ in },
                         onDelete: { _ in }
                     )
                 }

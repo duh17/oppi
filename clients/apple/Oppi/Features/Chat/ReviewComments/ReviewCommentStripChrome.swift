@@ -25,6 +25,31 @@ enum ReviewCommentStripChrome {
         "\(count) \(count == 1 ? "comment" : "comments")"
     }
 
+    enum PillAction: Equatable {
+        case peek
+        case sheet
+    }
+
+    /// Chat and control-session pills: tap peeks the drawer, double-tap opens the stash sheet.
+    static func pillAction(tapCount: Int) -> PillAction? {
+        switch tapCount {
+        case 1: return .peek
+        case 2: return .sheet
+        default: return nil
+        }
+    }
+
+    /// Fresh identity per present so list vs already-editing cannot reuse `@State`.
+    struct StashPresentation: Identifiable, Equatable {
+        let id: UUID
+        let initialEditingComment: ReviewComment?
+
+        init(editing comment: ReviewComment? = nil) {
+            id = UUID()
+            initialEditingComment = comment
+        }
+    }
+
     static func shouldShowPill(stagedCount: Int, isDraftingComment: Bool) -> Bool {
         stagedCount > 0 && !isDraftingComment
     }
@@ -64,42 +89,66 @@ struct ReviewCommentStripPill: View {
     let count: Int
     var isExpanded = false
     let onToggle: () -> Void
+    let onOpenFullScreen: () -> Void
 
     var body: some View {
-        Button(action: onToggle) {
-            HStack(spacing: 8) {
-                Image(systemName: "text.bubble")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeCyan)
-                    .accessibilityHidden(true)
+        HStack(spacing: 8) {
+            Image(systemName: "text.bubble")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.themeCyan)
+                .accessibilityHidden(true)
 
-                Text(ReviewCommentStripChrome.pillCountText(count: count))
-                    .font(.subheadline.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .padding(.horizontal, 6)
-            .extensionStripPillSurface(isActive: isExpanded, activeStroke: .themeCyan)
+            Text(ReviewCommentStripChrome.pillCountText(count: count))
+                .font(.subheadline.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier(ReviewCommentStripChrome.pillAccessibilityIdentifier)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(ReviewCommentStripChrome.pillAccessibilityLabel(count: count))
-        .accessibilityValue(ReviewCommentStripChrome.pillAccessibilityValue(count: count))
-        .accessibilityHint(
-            isExpanded
-                ? "Collapses the staged review comments"
-                : "Shows the review comments staged for the next message"
-        )
+        .padding(.horizontal, 6)
+        .accessibilityHidden(true)
+        .extensionStripPillSurface(isActive: isExpanded, activeStroke: .themeCyan)
+        .overlay {
+            Color.clear
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+                .accessibilityElement()
+                .accessibilityIdentifier(ReviewCommentStripChrome.pillAccessibilityIdentifier)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel(ReviewCommentStripChrome.pillAccessibilityLabel(count: count))
+                .accessibilityValue(ReviewCommentStripChrome.pillAccessibilityValue(count: count))
+                .accessibilityHint(
+                    isExpanded
+                        ? "Collapses the staged review comments"
+                        : "Shows the review comments staged for the next message"
+                )
+                .accessibilityAction(named: Text("Open Full Screen"), onOpenFullScreen)
+                .gesture(
+                    TapGesture(count: 2).onEnded {
+                        handleTaps(2)
+                    }
+                    .exclusively(before: TapGesture(count: 1).onEnded {
+                        handleTaps(1)
+                    })
+                )
+        }
+    }
+
+    private func handleTaps(_ tapCount: Int) {
+        switch ReviewCommentStripChrome.pillAction(tapCount: tapCount) {
+        case .peek:
+            onToggle()
+        case .sheet:
+            onOpenFullScreen()
+        case nil:
+            break
+        }
     }
 }
 
 struct ReviewCommentStashDrawer: View {
     let comments: [ReviewComment]
     let focusedCommentId: String?
-    let onEdit: (ReviewComment, String) -> Bool
+    let onEdit: (ReviewComment) -> Void
     let onDelete: (ReviewComment) -> Void
 
     var body: some View {
@@ -112,9 +161,9 @@ struct ReviewCommentStashDrawer: View {
             ReviewCommentStashContent(
                 comments: comments,
                 focusedCommentId: focusedCommentId,
-                onEdit: onEdit,
                 onDelete: onDelete,
-                chrome: .drawer
+                chrome: .drawer,
+                onRequestEdit: onEdit
             )
         }
         .padding(12)

@@ -121,6 +121,7 @@ struct ChatView: View {
     @State private var presentsNowPlayingPlayer = false
     @State private var nowPlayingDrawerExpanded = false
     @State private var reviewCommentDrawerExpanded = false
+    @State private var reviewCommentStashPresentation: ReviewCommentStripChrome.StashPresentation?
     @State private var composerExternalFocusRequestID = 0
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
@@ -671,6 +672,9 @@ struct ChatView: View {
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { filePanelSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
+            .sheet(item: $reviewCommentStashPresentation) { presentation in
+                reviewCommentStashSheet(presentation)
+            }
             .chatAuxiliaryPresentation(
                 isPresented: $showContextInspector,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
@@ -834,6 +838,7 @@ struct ChatView: View {
                 presentsNowPlayingPlayer = false
                 nowPlayingDrawerExpanded = false
                 reviewCommentDrawerExpanded = false
+                reviewCommentStashPresentation = nil
                 if connection.isFocusedSession(oldId) {
                     connection.disconnectSession()
                 }
@@ -986,7 +991,8 @@ struct ChatView: View {
                                         ReviewCommentStripPill(
                                             count: reviewComments.stagedCount,
                                             isExpanded: reviewCommentDrawerExpanded,
-                                            onToggle: toggleReviewCommentDrawer
+                                            onToggle: toggleReviewCommentDrawer,
+                                            onOpenFullScreen: { presentReviewCommentStashSheet() }
                                         )
                                     }
                                     if showsNowPlayingPill {
@@ -2407,21 +2413,37 @@ struct ChatView: View {
         }
     }
 
-    private var reviewCommentStashDrawer: some View {
-        let commentsController = reviewComments
-        let connection = connection
+    private func presentReviewCommentStashSheet(editing comment: ReviewComment? = nil) {
+        reviewCommentDrawerExpanded = false
+        reviewCommentStashPresentation = ReviewCommentStripChrome.StashPresentation(editing: comment)
+        dismissKeyboard()
+    }
 
-        return ReviewCommentStashDrawer(
+    private func reviewCommentStashSheet(
+        _ presentation: ReviewCommentStripChrome.StashPresentation
+    ) -> some View {
+        let commentsController = reviewComments
+
+        return ReviewCommentStashSheet(
             comments: commentsController.stagedComments,
             focusedCommentId: focusedReviewCommentId,
-            // Keep the save callback scoped to the state it needs. The device test
-            // determines whether this affects the watchdog path.
-            onEdit: { [commentsController, connection] comment, body in
-                if let error = commentsController.update(comment, body: body) {
-                    connection.extensionToast = error
-                    return false
-                }
-                return true
+            initialEditingComment: presentation.initialEditingComment,
+            onEdit: { [commentsController] comment, body in
+                commentsController.update(comment, body: body) == nil
+            },
+            onDelete: { comment in
+                deleteReviewComment(comment)
+            },
+            onClose: { reviewCommentStashPresentation = nil }
+        )
+    }
+
+    private var reviewCommentStashDrawer: some View {
+        ReviewCommentStashDrawer(
+            comments: reviewComments.stagedComments,
+            focusedCommentId: focusedReviewCommentId,
+            onEdit: { comment in
+                presentReviewCommentStashSheet(editing: comment)
             },
             onDelete: { comment in
                 deleteReviewComment(comment)

@@ -75,6 +75,41 @@ struct ReviewCommentStripChromeTests {
         #expect(expanded.nowPlayingExpanded)
     }
 
+    @Test("Pill action peeks on a single tap and opens the sheet on a double-tap")
+    func pillActionPeeksOnSingleTapAndOpensSheetOnDoubleTap() {
+        #expect(ReviewCommentStripChrome.pillAction(tapCount: 1) == .peek)
+        #expect(ReviewCommentStripChrome.pillAction(tapCount: 2) == .sheet)
+        #expect(ReviewCommentStripChrome.pillAction(tapCount: 0) == nil)
+        #expect(ReviewCommentStripChrome.pillAction(tapCount: 3) == nil)
+    }
+
+    @Test("Each stash presentation gets a fresh identity")
+    func eachStashPresentationGetsAFreshIdentity() {
+        let first = ReviewCommentStripChrome.StashPresentation()
+        let second = ReviewCommentStripChrome.StashPresentation()
+        #expect(first.id != second.id)
+        #expect(first.initialEditingComment == nil)
+        #expect(second.initialEditingComment == nil)
+    }
+
+    @Test("Pill uses exclusive double-tap before single-tap")
+    func pillUsesExclusiveDoubleTapBeforeSingleTap() throws {
+        let source = try reviewCommentStripChromeSource()
+        let pill = try reviewCommentsSourceSlice(
+            named: "struct ReviewCommentStripPill: View {",
+            until: "struct ReviewCommentStashDrawer: View {",
+            in: source
+        )
+        #expect(pill.contains("TapGesture(count: 2)"))
+        #expect(pill.contains(".exclusively(before:"))
+        #expect(pill.contains("TapGesture(count: 1)"))
+        #expect(pill.contains("Open Full Screen"))
+        #expect(pill.contains("onOpenFullScreen"))
+        #expect(pill.contains("minHeight: 44") || pill.contains("height: 44"))
+        #expect(!pill.contains("highPriorityGesture"))
+        #expect(!pill.contains("Button(action: onToggle)"))
+    }
+
     @Test("Collapsed pill has count, no Review label, and no chevron")
     func collapsedPillHasCountWithoutReviewLabelOrChevron() throws {
         let source = try reviewCommentStripChromeSource()
@@ -150,25 +185,124 @@ struct ReviewCommentStripChromeTests {
         #expect(!drawerList.contains("theme.bg.primary"))
     }
 
-    @Test("Chat footer wires the comments pill into the above-editor strip")
-    func chatFooterWiresCommentsPillIntoAboveEditorStrip() throws {
+    @Test("Chat footer peeks the drawer on single tap and presents the stash sheet on double-tap or Edit")
+    func chatFooterPeeksDrawerOnSingleTapAndPresentsStashSheetOnDoubleTapOrEdit() throws {
         let source = try reviewCommentsChatViewSource()
         #expect(source.contains("ReviewCommentStripPill("))
         #expect(source.contains("showsReviewCommentPill"))
         #expect(source.contains("ReviewCommentStashDrawer("))
         #expect(!source.contains("onReviewCommentsTap"))
-        #expect(!source.contains("showReviewCommentStash"))
-        #expect(!source.contains("reviewCommentStashSheet"))
+        #expect(source.contains("onToggle: toggleReviewCommentDrawer"))
+        #expect(source.contains("onOpenFullScreen:"))
+        #expect(source.contains("reviewCommentStashPresentation"))
+        #expect(source.contains("reviewCommentStashSheet"))
+        #expect(source.contains("sheet(item: $reviewCommentStashPresentation)"))
+        #expect(source.contains("presentReviewCommentStashSheet()"))
+        #expect(source.contains("presentReviewCommentStashSheet(editing:"))
+        #expect(source.contains("initialEditingComment:"))
+
+        let presenter = try reviewCommentsSourceSlice(
+            named: "private func presentReviewCommentStashSheet",
+            until: "private func reviewCommentStashSheet",
+            in: source
+        )
+        #expect(presenter.contains("reviewCommentDrawerExpanded = false"))
+        #expect(presenter.contains("ReviewCommentStripChrome.StashPresentation(editing: comment)"))
+        #expect(presenter.contains("dismissKeyboard()"))
+        #expect(!presenter.contains("reviewCommentDrawerExpanded = true"))
+
+        let sheet = try reviewCommentsSourceSlice(
+            named: "private func reviewCommentStashSheet",
+            until: "private var reviewCommentStashDrawer",
+            in: source
+        )
+        #expect(sheet.contains("ReviewCommentStashSheet("))
+        #expect(sheet.contains("initialEditingComment: presentation.initialEditingComment"))
+        #expect(!sheet.contains("extensionToast"))
+        #expect(!sheet.contains("reviewCommentDrawerExpanded = true"))
+
+        let drawer = try reviewCommentsSourceSlice(
+            named: "private var reviewCommentStashDrawer",
+            until: "private var shareRedactionSheet",
+            in: source
+        )
+        #expect(drawer.contains("presentReviewCommentStashSheet(editing:"))
+        #expect(!drawer.contains("ReviewCommentEditorView"))
+        #expect(!drawer.contains("comment, body"))
     }
 
-    @Test("Control-session composer presents the count pill above the capsule")
-    func controlSessionComposerPresentsCountPillAboveCapsule() throws {
+    @Test("Control-session composer peeks the drawer on single tap and presents the stash sheet on double-tap or Edit")
+    func controlSessionComposerPeeksDrawerOnSingleTapAndPresentsStashSheetOnDoubleTapOrEdit() throws {
         let source = try reviewCommentsGuidedComposerSource()
         #expect(source.contains("ReviewCommentStripPill("))
         #expect(source.contains("reviewCommentPresentation.showsPill"))
         #expect(source.contains("ReviewCommentStashDrawer("))
         #expect(!source.contains("onReviewCommentsTap"))
-        #expect(!source.contains("showReviewCommentStash"))
+        #expect(source.contains("onToggle: toggleReviewCommentDrawer"))
+        #expect(source.contains("onOpenFullScreen:"))
+        #expect(source.contains("reviewCommentStashPresentation"))
+        #expect(source.contains("reviewCommentStashSheet"))
+        #expect(source.contains("sheet(item: $reviewCommentStashPresentation)"))
+        #expect(source.contains("presentReviewCommentStashSheet()"))
+        #expect(source.contains("presentReviewCommentStashSheet(editing:"))
+        #expect(source.contains("initialEditingComment:"))
+
+        let presenter = try reviewCommentsSourceSlice(
+            named: "private func presentReviewCommentStashSheet",
+            until: "private func reviewCommentStashSheet",
+            in: source
+        )
+        #expect(presenter.contains("reviewCommentDrawerExpanded = false"))
+        #expect(presenter.contains("ReviewCommentStripChrome.StashPresentation(editing: comment)"))
+        #expect(presenter.contains("resignFirstResponder"))
+        #expect(!presenter.contains("reviewCommentDrawerExpanded = true"))
+
+        #expect(!source.contains("ReviewCommentEditorView"))
+        #expect(!source.contains("error = updateError"))
+    }
+
+    @Test("Drawer chrome does not inline the comment editor")
+    func drawerChromeDoesNotInlineTheCommentEditor() throws {
+        let chromeSource = try reviewCommentStripChromeSource()
+        let drawer = try reviewCommentsSourceSlice(
+            named: "struct ReviewCommentStashDrawer: View {",
+            until: "accessibilityIdentifier(ReviewCommentStripChrome.drawerAccessibilityIdentifier)",
+            in: chromeSource
+        )
+        #expect(drawer.contains("chrome: .drawer"))
+        #expect(drawer.contains("onRequestEdit:"))
+        #expect(!drawer.contains("ReviewCommentEditorView"))
+        #expect(!drawer.contains("Form {"))
+
+        let stashSource = try reviewCommentStashSheetSource()
+        let content = try reviewCommentsSourceSlice(
+            named: "struct ReviewCommentStashContent: View {",
+            until: "private var commentsStack",
+            in: stashSource
+        )
+        #expect(content.contains("initialEditingComment"))
+        #expect(content.contains("chrome == .sheet"))
+        #expect(content.contains("ReviewCommentEditorView("))
+        #expect(content.contains("editingCommentBinding.wrappedValue = nil"))
+        #expect(content.contains(".onAppear"))
+        #expect(content.contains("editingComment = initialEditingComment"))
+    }
+
+    @Test("Stash sheet can open already editing a comment")
+    func stashSheetCanOpenAlreadyEditingAComment() throws {
+        let stashSource = try reviewCommentStashSheetSource()
+        let sheet = try reviewCommentsSourceSlice(
+            named: "struct ReviewCommentStashSheet: View {",
+            until: "enum ReviewCommentStashChrome",
+            in: stashSource
+        )
+        #expect(sheet.contains("initialEditingComment"))
+        #expect(sheet.contains("ReviewCommentStashContent("))
+        #expect(sheet.contains("initialEditingComment: initialEditingComment"))
+
+        #expect(stashSource.contains("State(initialValue:"))
+        #expect(stashSource.contains("editingComment = initialEditingComment"))
+        #expect(stashSource.contains(".onAppear"))
     }
 }
 

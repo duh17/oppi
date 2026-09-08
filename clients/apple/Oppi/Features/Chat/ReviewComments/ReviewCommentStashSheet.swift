@@ -3,6 +3,7 @@ import SwiftUI
 struct ReviewCommentStashSheet: View {
     let comments: [ReviewComment]
     let focusedCommentId: String?
+    var initialEditingComment: ReviewComment? = nil
     let onEdit: (ReviewComment, String) -> Bool
     let onDelete: (ReviewComment) -> Void
     let onClose: () -> Void
@@ -14,7 +15,8 @@ struct ReviewCommentStashSheet: View {
                 focusedCommentId: focusedCommentId,
                 onEdit: onEdit,
                 onDelete: onDelete,
-                onClose: onClose
+                onClose: onClose,
+                initialEditingComment: initialEditingComment
             )
         }
     }
@@ -28,12 +30,35 @@ enum ReviewCommentStashChrome {
 struct ReviewCommentStashContent: View {
     let comments: [ReviewComment]
     let focusedCommentId: String?
-    let onEdit: (ReviewComment, String) -> Bool
+    var onEdit: ((ReviewComment, String) -> Bool)?
     let onDelete: (ReviewComment) -> Void
     var onClose: (() -> Void)? = nil
     var chrome: ReviewCommentStashChrome = .sheet
+    var initialEditingComment: ReviewComment? = nil
+    var onRequestEdit: ((ReviewComment) -> Void)? = nil
 
     @State private var editingComment: ReviewComment?
+
+    init(
+        comments: [ReviewComment],
+        focusedCommentId: String?,
+        onEdit: ((ReviewComment, String) -> Bool)? = nil,
+        onDelete: @escaping (ReviewComment) -> Void,
+        onClose: (() -> Void)? = nil,
+        chrome: ReviewCommentStashChrome = .sheet,
+        initialEditingComment: ReviewComment? = nil,
+        onRequestEdit: ((ReviewComment) -> Void)? = nil
+    ) {
+        self.comments = comments
+        self.focusedCommentId = focusedCommentId
+        self.onEdit = onEdit
+        self.onDelete = onDelete
+        self.onClose = onClose
+        self.chrome = chrome
+        self.initialEditingComment = initialEditingComment
+        self.onRequestEdit = onRequestEdit
+        _editingComment = State(initialValue: chrome == .sheet ? initialEditingComment : nil)
+    }
 
     private var sortedComments: [ReviewComment] {
         comments.sorted { left, right in
@@ -47,11 +72,11 @@ struct ReviewCommentStashContent: View {
         let editingCommentBinding = $editingComment
 
         Group {
-            if let editingComment {
+            if chrome == .sheet, let editingComment {
                 ReviewCommentEditorView(
                     comment: editingComment,
                     onSave: { body in
-                        guard onEdit(editingComment, body) else { return false }
+                        guard let onEdit, onEdit(editingComment, body) else { return false }
                         editingCommentBinding.wrappedValue = nil
                         return true
                     },
@@ -76,6 +101,18 @@ struct ReviewCommentStashContent: View {
             onCancelEditor: { editingComment = nil },
             onClose: onClose
         ))
+        .onAppear {
+            guard chrome == .sheet else { return }
+            editingComment = initialEditingComment
+        }
+    }
+
+    private func beginEditing(_ comment: ReviewComment) {
+        if chrome == .drawer {
+            onRequestEdit?(comment)
+            return
+        }
+        editingComment = comment
     }
 
     @ViewBuilder
@@ -86,7 +123,7 @@ struct ReviewCommentStashContent: View {
                     comment: comment,
                     comments: comments,
                     isFocused: comment.id == focusedCommentId,
-                    onEdit: { editingComment = comment },
+                    onEdit: { beginEditing(comment) },
                     onDelete: { onDelete(comment) }
                 )
                 .padding(.horizontal, chrome == .drawer ? 0 : 16)

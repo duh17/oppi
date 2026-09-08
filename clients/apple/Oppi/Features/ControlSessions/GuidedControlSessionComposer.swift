@@ -214,6 +214,7 @@ struct GuidedControlSessionComposer: View {
     @State private var isCreating = false
     @State private var revisionLaunchState = ControlRevisionSessionRetryState()
     @State private var reviewCommentDrawerExpanded = false
+    @State private var reviewCommentStashPresentation: ReviewCommentStripChrome.StashPresentation?
     @State private var error: String?
 
     private var reviewCommentPresentation: GuidedControlSessionComposerReviewComments.Presentation {
@@ -257,18 +258,15 @@ struct GuidedControlSessionComposer: View {
                     ReviewCommentStripPill(
                         count: reviewCommentPresentation.pendingCount,
                         isExpanded: reviewCommentDrawerExpanded,
-                        onToggle: toggleReviewCommentDrawer
+                        onToggle: toggleReviewCommentDrawer,
+                        onOpenFullScreen: { presentReviewCommentStashSheet() }
                     )
                     if reviewCommentDrawerExpanded, let stagedComments {
                         ReviewCommentStashDrawer(
                             comments: stagedComments.stagedComments,
                             focusedCommentId: nil,
-                            onEdit: { comment, body in
-                                if let updateError = stagedComments.update(comment, body: body) {
-                                    error = updateError
-                                    return false
-                                }
-                                return true
+                            onEdit: { comment in
+                                presentReviewCommentStashSheet(editing: comment)
                             },
                             onDelete: { stagedComments.delete($0) }
                         )
@@ -331,6 +329,9 @@ struct GuidedControlSessionComposer: View {
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(currentModel: effectiveModelId, onSelect: selectModel)
         }
+        .sheet(item: $reviewCommentStashPresentation) { presentation in
+            reviewCommentStashSheet(presentation)
+        }
         .onChange(of: reviewCommentPresentation.showsPill) { _, visible in
             if !visible {
                 reviewCommentDrawerExpanded = false
@@ -364,6 +365,35 @@ struct GuidedControlSessionComposer: View {
                 to: nil,
                 from: nil,
                 for: nil
+            )
+        }
+    }
+
+    private func presentReviewCommentStashSheet(editing comment: ReviewComment? = nil) {
+        reviewCommentDrawerExpanded = false
+        reviewCommentStashPresentation = ReviewCommentStripChrome.StashPresentation(editing: comment)
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+    }
+
+    @ViewBuilder
+    private func reviewCommentStashSheet(
+        _ presentation: ReviewCommentStripChrome.StashPresentation
+    ) -> some View {
+        if let stagedComments {
+            ReviewCommentStashSheet(
+                comments: stagedComments.stagedComments,
+                focusedCommentId: nil,
+                initialEditingComment: presentation.initialEditingComment,
+                onEdit: { comment, body in
+                    stagedComments.update(comment, body: body) == nil
+                },
+                onDelete: { stagedComments.delete($0) },
+                onClose: { reviewCommentStashPresentation = nil }
             )
         }
     }
