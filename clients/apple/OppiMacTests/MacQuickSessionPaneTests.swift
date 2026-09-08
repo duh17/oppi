@@ -140,6 +140,7 @@ struct MacQuickSessionPaneTests {
         let transport = SuspendedQuickSessionTransport(response: plainPiResponse())
         let client = makeClient(transport)
         let deck = MacSessionPaneDeck()
+        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
         let first = try #require(deck.openOrFocus(target(sessionID: "session-a")))
         let origin = try #require(deck.splitFocusedRight())
         let attempt = try origin.quickSession.launchAttempt(
@@ -170,6 +171,7 @@ struct MacQuickSessionPaneTests {
         let transport = SuspendedQuickSessionTransport(response: plainPiResponse())
         let client = makeClient(transport)
         let deck = MacSessionPaneDeck()
+        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
         let first = try #require(deck.openOrFocus(target(sessionID: "session-a")))
         let origin = try #require(deck.splitFocusedRight())
         let attempt = try origin.quickSession.launchAttempt(
@@ -188,14 +190,172 @@ struct MacQuickSessionPaneTests {
         #expect(deck.close(paneID: origin.id))
         await transport.complete()
 
-        #expect(try await launch.value == nil)
+        let launched = try await launch.value
+        #expect(launched?.sessionId == "session-new")
         #expect(deck.runtime(for: origin.id) == nil)
         #expect(deck.focusedPaneID == first.id)
         #expect(first.target?.sessionId == "session-a")
     }
 
+    @Test func latePiCreateDoesNotOverwriteARepurposedSamePane()
+    async throws {
+        try await assertLateCreateDoesNotOverwriteARepurposedSamePane(
+            response: plainPiResponse(),
+            createdSessionID: "session-new"
+        )
+    }
+
+    @Test func lateAgentCreateDoesNotOverwriteARepurposedSamePane()
+    async throws {
+        try await assertLateCreateDoesNotOverwriteARepurposedSamePane(
+            response: agentResponse(),
+            createdSessionID: "session-agent",
+            request: quickRequest(
+                worktreeId: "wt_feature",
+                agentId: "reviewer",
+                prompt: "Review the mux"
+            )
+        )
+    }
+
+    @Test func lateWorkspaceAListDoesNotReplaceWorkspaceBOrItsCreatePayload()
+    async throws {
+        let listing = MacQuickSessionWorktreeListing()
+        let state = MacQuickSessionPaneState()
+        let treesA = [
+            worktree(id: "main", isMain: true),
+            worktree(id: "wt_a", isMain: false),
+        ]
+        let treesB = [
+            worktree(id: "main", isMain: true),
+            worktree(id: "wt_b", isMain: false),
+        ]
+
+        let generationA = listing.beginLoad(workspaceId: "ws-a")
+        let generationB = listing.beginLoad(workspaceId: "ws-b")
+        state.workspaceId = "ws-b"
+        state.worktreeId = "wt_b"
+
+        listing.applySuccess(workspaceId: "ws-b", generation: generationB, worktrees: treesB)
+        listing.applySuccess(workspaceId: "ws-a", generation: generationA, worktrees: treesA)
+
+        #expect(listing.workspaceId == "ws-b")
+        #expect(listing.worktrees.map(\.id) == ["main", "wt_b"])
+        #expect(state.worktreeId == "wt_b")
+        #expect(listing.launchWorktreeId(selectedId: state.worktreeId) == "wt_b")
+
+        let attempt = try state.launchAttempt(
+            for: quickRequest(worktreeId: listing.launchWorktreeId(selectedId: state.worktreeId), prompt: "From B")
+        ).get()
+        #expect(attempt.plan.worktreeId == "wt_b")
+
+        let transport = RecordingLocalHTTPTransport(response: plainPiResponse())
+        _ = try await MacQuickSessionLauncher.launch(attempt: attempt, client: makeClient(transport))
+        let body = try jsonBody(try #require(await transport.requests.first))
+        #expect(body["worktreeId"] as? String == "wt_b")
+    }
+
+    @Test func agentWorkspaceSwitchResetsCheckoutAndKeepsSameWorkspaceSelection() async throws {
+        let state = MacQuickSessionPaneState()
+        let listing = state.worktreeListing
+        let treesA = [
+            worktree(id: "main", isMain: true),
+            worktree(id: "wt_a", isMain: false),
+        ]
+        let treesB = [
+            worktree(id: "main", isMain: true),
+            worktree(id: "wt_b", isMain: false),
+        ]
+        state.workspaceId = "ws-a"
+        let generationA = listing.beginLoad(workspaceId: "ws-a")
+        listing.applySuccess(workspaceId: "ws-a", generation: generationA, worktrees: treesA)
+        state.worktreeId = "wt_a"
+        state.agentId = "reviewer"
+
+        let stillCompatibleWithA = ["ws-a", "ws-b"]
+        if let workspaceId = state.workspaceId, stillCompatibleWithA.contains(workspaceId) {
+            // keep
+        } else {
+            state.workspaceId = stillCompatibleWithA.first
+        }
+        #expect(state.workspaceId == "ws-a")
+        #expect(state.worktreeId == "wt_a")
+        #expect(listing.workspaceId == "ws-a")
+
+        // Composer onChange of compatible workspaces only assigns workspaceId.
+        let compatibleIDs = ["ws-b"]
+        if let workspaceId = state.workspaceId, compatibleIDs.contains(workspaceId) {
+            // keep
+        } else {
+            state.workspaceId = compatibleIDs.first
+        }
+
+        #expect(state.workspaceId == "ws-b")
+        #expect(state.worktreeId != "wt_a")
+        #expect(listing.workspaceId == "ws-b")
+        #expect(!listing.worktrees.map(\.id).contains("wt_a"))
+
+        let generationB = listing.beginLoad(workspaceId: "ws-b")
+        listing.applySuccess(workspaceId: "ws-b", generation: generationB, worktrees: treesB)
+        #expect(state.worktreeId == nil || state.worktreeId == "wt_b" || state.worktreeId == "main")
+        let resolved = listing.launchWorktreeId(selectedId: state.worktreeId)
+        #expect(resolved != "wt_a")
+        #expect(["main", "wt_b"].contains(resolved))
+
+        let attempt = try state.launchAttempt(
+            for: quickRequest(
+                workspaceId: state.workspaceId,
+                worktreeId: resolved,
+                agentId: state.agentId,
+                prompt: "Review B"
+            )
+        ).get()
+        #expect(attempt.plan.workspaceId == "ws-b")
+        #expect(attempt.plan.worktreeId != "wt_a")
+
+        let transport = RecordingLocalHTTPTransport(response: agentResponse(workspaceId: "ws-b"))
+        _ = try await MacQuickSessionLauncher.launch(attempt: attempt, client: makeClient(transport))
+        let body = try jsonBody(try #require(await transport.requests.first))
+        let target = try #require(body["target"] as? [String: Any])
+        #expect(target["workspaceId"] as? String == "ws-b")
+        #expect(target["worktreeId"] as? String != "wt_a")
+    }
+
+    @Test func failedRefreshKeepsExplicitNonMainCheckoutInTheCreatePayload()
+    async throws {
+        let listing = MacQuickSessionWorktreeListing()
+        let state = MacQuickSessionPaneState()
+        let treesB = [
+            worktree(id: "main", isMain: true),
+            worktree(id: "wt_b", isMain: false),
+        ]
+        let loaded = listing.beginLoad(workspaceId: "ws-b")
+        listing.applySuccess(workspaceId: "ws-b", generation: loaded, worktrees: treesB)
+        state.workspaceId = "ws-b"
+        state.worktreeId = "wt_b"
+
+        let refresh = listing.beginLoad(workspaceId: "ws-b")
+        listing.applySuccess(workspaceId: "ws-b", generation: refresh, worktrees: [])
+
+        #expect(state.worktreeId == "wt_b")
+        #expect(listing.launchWorktreeId(selectedId: state.worktreeId) == "wt_b")
+        let attempt = try state.launchAttempt(
+            for: quickRequest(
+                worktreeId: listing.launchWorktreeId(selectedId: state.worktreeId),
+                prompt: "Keep B checkout"
+            )
+        ).get()
+        #expect(attempt.plan.worktreeId == "wt_b")
+
+        let transport = RecordingLocalHTTPTransport(response: plainPiResponse())
+        _ = try await MacQuickSessionLauncher.launch(attempt: attempt, client: makeClient(transport))
+        let body = try jsonBody(try #require(await transport.requests.first))
+        #expect(body["worktreeId"] as? String == "wt_b")
+    }
+
     @Test func focusingQuickSessionInputActivatesItsPane() async throws {
         let deck = MacSessionPaneDeck()
+        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
         let first = try #require(deck.openOrFocus(target(sessionID: "session-a")))
         let quickSession = try #require(deck.splitFocusedRight())
         #expect(deck.focus(paneID: first.id))
@@ -236,19 +396,70 @@ struct MacQuickSessionPaneTests {
             lhs.convert(lhs.bounds, to: nil).midX < rhs.convert(rhs.bounds, to: nil).midX
         })
         #expect(window.makeFirstResponder(rightmostInput))
-        await Task.yield()
+        for _ in 0..<20 {
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            await Task.yield()
+            if deck.focusedPaneID == quickSession.id,
+               quickSession.composerState.isComposerFirstResponder {
+                break
+            }
+        }
 
         #expect(deck.focusedPaneID == quickSession.id)
         #expect(quickSession.composerState.isComposerFirstResponder)
     }
 
+    private func assertLateCreateDoesNotOverwriteARepurposedSamePane(
+        response: MacLocalHTTPResponse,
+        createdSessionID: String,
+        request: QuickSessionLaunchRequest? = nil
+    ) async throws {
+        let transport = SuspendedQuickSessionTransport(response: response)
+        let client = makeClient(transport)
+        let deck = MacSessionPaneDeck()
+        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
+        let origin = try #require(deck.focusedRuntime)
+        let paneID = origin.id
+        let attempt = try origin.quickSession.launchAttempt(
+            for: request ?? quickRequest(prompt: "Create while I keep typing")
+        ).get()
+
+        let launch = Task {
+            try await MacQuickSessionLauncher.launchIntoOriginatingPane(
+                attempt: attempt,
+                originatingRuntime: origin,
+                deck: deck,
+                client: client
+            )
+        }
+        await transport.waitUntilRequested()
+        let sessionB = try #require(deck.replace(
+            paneID: paneID,
+            with: target(sessionID: "session-b")
+        ))
+        sessionB.composerState.draft = "Keep B's draft"
+        #expect(sessionB === origin)
+        #expect(origin.target?.sessionId == "session-b")
+        await transport.complete()
+
+        let launched = try await launch.value
+        #expect(launched?.sessionId == createdSessionID)
+        #expect(deck.runtime(for: paneID) === origin)
+        #expect(origin.target?.sessionId == "session-b")
+        #expect(origin.composerState.draft == "Keep B's draft")
+        #expect(deck.focusedPaneID == paneID)
+        #expect(origin.quickSession.pendingLaunchAttempt == nil)
+    }
+
     private func quickRequest(
+        workspaceId: String? = "ws-1",
         worktreeId: String = "main",
         agentId: String? = nil,
         prompt: String
     ) -> QuickSessionLaunchRequest {
         QuickSessionLaunchRequest(
-            workspaceId: "ws-1",
+            workspaceId: workspaceId,
             worktreeId: worktreeId,
             agentId: agentId,
             prompt: prompt,
@@ -290,6 +501,19 @@ struct MacQuickSessionPaneTests {
         )
     }
 
+    private func worktree(id: String, isMain: Bool) -> WorkspaceWorktree {
+        WorkspaceWorktree(
+            id: id,
+            name: id,
+            path: "/tmp/\(id)",
+            branch: isMain ? "main" : id,
+            headSha: nil,
+            isMain: isMain,
+            isGitRepo: true,
+            sessionCount: nil
+        )
+    }
+
     private func workspace() -> Workspace {
         Workspace(
             id: "ws-1",
@@ -315,11 +539,11 @@ struct MacQuickSessionPaneTests {
         )
     }
 
-    private func agentResponse() -> MacLocalHTTPResponse {
+    private func agentResponse(workspaceId: String = "ws-1") -> MacLocalHTTPResponse {
         MacLocalHTTPResponse(
             statusCode: 201,
             headers: ["content-type": "application/json"],
-            body: Data(#"{"receipt":{"accepted":true,"agentId":"reviewer","sessionId":"session-agent","promptDispatch":"delivered"},"session":{"id":"session-agent","workspaceId":"ws-1","name":"Review","status":"busy","createdAt":1760000000000,"lastActivity":1760000002000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0}}"#.utf8)
+            body: Data(#"{"receipt":{"accepted":true,"agentId":"reviewer","sessionId":"session-agent","promptDispatch":"delivered"},"session":{"id":"session-agent","workspaceId":"WORKSPACE","name":"Review","status":"busy","createdAt":1760000000000,"lastActivity":1760000002000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0}}"#.replacingOccurrences(of: "WORKSPACE", with: workspaceId).utf8)
         )
     }
 }

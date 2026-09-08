@@ -14,41 +14,21 @@ struct OppiMacApp: App {
     @State private var permissionState = TCCPermissionState()
     @State private var onboardingState = OnboardingState()
     @State private var sessionMonitor = MacSessionMonitor()
-    @State private var workspaceStore = MacWorkspaceSnapshotStore()
     @State private var themeStore = ThemeStore()
+    /// App-scoped workspace snapshot/catalog and the single `/app/events/stream`.
+    @State private var workspaceStore = MacWorkspaceSnapshotStore()
     @State private var showOnboarding = false
     @State private var pendingSessionDeepLinkURL: URL?
 
     init() {
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: false,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
-        MacAttentionNotificationService.shared.configureForLaunch()
         MacScrollChrome.preferOverlayScrollers()
         Task { @MainActor in
             MacScrollChrome.install()
-        }
-
-        // Auto-start server from init. The .task on MenuBarPopover content only
-        // fires when the popover is opened (.menuBarExtraStyle(.window) is lazy),
-        // so we cannot depend on it for launch-time startup.
-        let pm = processManager
-        let hm = healthMonitor
-        let sm = sessionMonitor
-        let obs = onboardingState
-        Task { @MainActor in
-            obs.checkFirstRun()
-            guard !obs.needsOnboarding else { return }
-            guard pm.state == .stopped else { return }
-
-            await MacServerLifecycle.startOrAttachFromLocalConfig(
-                processManager: pm,
-                healthMonitor: hm,
-                sessionMonitor: sm,
-                allowKillingExistingServer: !Self.isRunningTests
-            )
         }
     }
 
@@ -72,14 +52,19 @@ struct OppiMacApp: App {
             .macSharedTheme(themeStore)
             .background(MainWindowActivationView())
             .background(MacScrollChrome.WindowInstaller())
+            .task { [updaterController] in
+                updaterController.startUpdater()
+                MacAttentionNotificationService.shared.configureForLaunch()
+            }
             .task {
-                await permissionState.refresh()
                 onboardingState.checkFirstRun()
                 if onboardingState.needsOnboarding {
                     showOnboarding = true
                 } else {
                     autoStartServer()
                 }
+                workspaceStore.startAppEventStreamIfNeeded()
+                Task { await permissionState.refresh() }
             }
             .sheet(isPresented: $showOnboarding) {
                 OnboardingWindow(
@@ -95,6 +80,7 @@ struct OppiMacApp: App {
         }
         .defaultLaunchBehavior(.presented)
         .commands {
+            MacSessionCommands()
             MacSessionPaneCommandMenu()
         }
 
@@ -344,14 +330,30 @@ private struct MainWindowActivationView: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
+enum MainWindowLaunchPlacement {
+    /// Center only when the restored frame sits on no connected display
+    /// (disconnected ultra-wide). Leave on-screen restored frames alone.
+    static func shouldCenter(frame: CGRect, visibleFrames: [CGRect]) -> Bool {
+        visibleFrames.allSatisfy { !$0.intersects(frame) }
+    }
+}
+
 private final class MainWindowActivationNSView: NSView {
+    private var didApplyLaunchPlacement = false
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window else { return }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        // Restored frames can sit on a disconnected ultra-wide; center on the active display.
-        window.center()
+        guard !didApplyLaunchPlacement else { return }
+        didApplyLaunchPlacement = true
+        if MainWindowLaunchPlacement.shouldCenter(
+            frame: window.frame,
+            visibleFrames: NSScreen.screens.map(\.visibleFrame)
+        ) {
+            window.center()
+        }
     }
 }
 

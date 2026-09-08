@@ -29,7 +29,15 @@ final class MacSessionTraceStore {
     private var runtimeAdapter: MacChatSessionRuntimeAdapter?
     private var sessionManager: ChatSessionManager?
     private var sessionRuntimeTask: Task<Void, Never>?
+    private var isRuntimeSuspended = false
+    private var runtimeLifecycleGeneration: UInt = 0
     private var pendingCommandChanges: [String: MacSessionCommandPendingChange] = [:]
+    private enum MountHydrationStep: Hashable {
+        case sessionChanges
+        case liveQueue
+        case models
+    }
+    private var completedMountHydrationSteps: Set<MountHydrationStep> = []
     private enum CommandAck {
         case expected
         case waiting(CheckedContinuation<Void, Error>)
@@ -85,8 +93,16 @@ final class MacSessionTraceStore {
     private(set) var sessionChangedFilesOverflow = 0
     private(set) var selectedSessionDiff: WorkspaceReviewDiffResponse?
     private(set) var selectedSessionFilePreview: MacSessionFilePreview?
-    private(set) var pendingAskRequests: [AskRequest] = []
+    private(set) var pendingExtensionRequests: [ExtensionUIRequest] = []
+    private(set) var extensionResponseAttempts: [String: UUID] = [:]
+    private(set) var extensionResponseErrors: [String: String] = [:]
+    private var settledExtensionRequestIDs: Set<String> = []
+    private var extensionEditorDrafts: [String: String] = [:]
+    private(set) var extensionNotice: MacExtensionNotice?
+    private var pendingEditorHandoffs: [String] = []
+    @ObservationIgnored private weak var extensionComposer: MacSessionComposerState?
     private(set) var extensionSurface = ExtensionSurfaceState()
+    private var collapsedToolRowIDs: Set<String> = []
     var busyStreamingBehavior: StreamingBehavior = .followUp
     /// Reads persisted mode for every key event so open timelines update live.
     var keybindingMode: KeybindingMode {
@@ -117,6 +133,15 @@ final class MacSessionTraceStore {
     private(set) var lastError: String?
     private(set) var resumeError: String?
     private(set) var lastLoadedAt: Date?
+    private(set) var liveUpdateCount = 0
+
+    /// A connected/streaming runtime. Manager presence alone is not live.
+    var hasLiveRuntime: Bool {
+        if isStreaming { return true }
+        if case .streaming = sessionManager?.entryState { return true }
+        return false
+    }
+    var reducerItemCount: Int { items.count }
 
     var items: [ChatItem] { sessionManager?.reducer.items ?? [] }
     var toolOutputStore: ToolOutputStore {
@@ -143,7 +168,12 @@ final class MacSessionTraceStore {
     func isToolInterrupted(_ id: String) -> Bool {
         sessionManager?.reducer.isToolInterrupted(id) ?? false
     }
-    var currentAskRequest: AskRequest? { pendingAskRequests.first }
+    var currentExtensionRequest: ExtensionUIRequest? { pendingExtensionRequests.first }
+    var currentAskRequest: AskRequest? { currentExtensionRequest?.askRequest }
+    var currentExtensionDialog: ExtensionUIRequest? {
+        guard let request = currentExtensionRequest, request.askRequest == nil else { return nil }
+        return request
+    }
     var messageQueue: MessageQueueState { messageQueueStore.queue(for: selectedTarget?.sessionId) }
 
     var showsMessageQueue: Bool {
@@ -187,6 +217,16 @@ final class MacSessionTraceStore {
         await loadSelectedSession(target: selectedTarget, client: client)
     }
 
+    func mountSelectedFromLocalConfigForTesting(client: MacWorkspaceClient) async {
+        guard let selectedTarget else { return }
+        activateRuntimePresentation()
+        await loadSelectedSession(
+            target: selectedTarget,
+            client: client,
+            restartRuntime: false
+        )
+    }
+
     func startSessionRuntimeLoopForTesting() {
         startSessionRuntimeLoop()
     }
@@ -205,12 +245,14 @@ final class MacSessionTraceStore {
         isLoading = false
         isResumingSession = false
         resetSessionOperationState()
+        completedMountHydrationSteps = []
+        liveUpdateCount = 0
         lastError = nil
         resumeError = nil
         failPendingCommandAcks(MacSessionTraceStoreError.commandRejected("Session selection changed."))
         fullToolOutputLoadsInFlight = []
         pendingCommandChanges = [:]
-        pendingAskRequests = []
+        resetExtensionInteractionState()
         extensionSurface = ExtensionSurfaceState()
         messageQueueError = nil
         fileIndexError = nil
@@ -236,9 +278,24 @@ final class MacSessionTraceStore {
         loadReviewComments()
     }
 
-    /// Drop the live stream without clearing the selected target or drafts.
+    /// A hidden session surface must not retain a focused stream. The target
+    /// and presentation state stay intact so the next view mount can rebuild
+    /// one authoritative runtime and rerun its initial hydration.
     func suspendRuntime() {
+        if !isRuntimeSuspended {
+            isRuntimeSuspended = true
+            runtimeLifecycleGeneration &+= 1
+        }
+        completedMountHydrationSteps = []
+        isLoading = false
+        isResumingSession = false
         tearDownRuntime()
+    }
+
+    private func activateRuntimePresentation() {
+        guard isRuntimeSuspended else { return }
+        isRuntimeSuspended = false
+        runtimeLifecycleGeneration &+= 1
     }
 
     func clearSelection() {
@@ -250,12 +307,14 @@ final class MacSessionTraceStore {
         isLoading = false
         isResumingSession = false
         resetSessionOperationState()
+        completedMountHydrationSteps = []
+        liveUpdateCount = 0
         lastError = nil
         resumeError = nil
         failPendingCommandAcks(MacSessionTraceStoreError.commandRejected("Session selection cleared."))
         fullToolOutputLoadsInFlight = []
         pendingCommandChanges = [:]
-        pendingAskRequests = []
+        resetExtensionInteractionState()
         extensionSurface = ExtensionSurfaceState()
         messageQueueError = nil
         fileIndexWorkspaceId = nil
@@ -283,6 +342,7 @@ final class MacSessionTraceStore {
 
     func isToolRowExpanded(_ id: String) -> Bool {
         expandedToolRowIDs.contains(id)
+            || (extensionSurface.toolsExpanded == true && !collapsedToolRowIDs.contains(id))
     }
 
     func selectToolRow(_ id: String) {
@@ -294,8 +354,10 @@ final class MacSessionTraceStore {
     func setToolRowExpanded(_ id: String, expanded: Bool) {
         if expanded {
             expandedToolRowIDs.insert(id)
+            collapsedToolRowIDs.remove(id)
         } else {
             expandedToolRowIDs.remove(id)
+            collapsedToolRowIDs.insert(id)
         }
     }
 
@@ -378,13 +440,17 @@ final class MacSessionTraceStore {
     private var timelineKeybindingState: MacTimelineKeybinding.State {
         MacTimelineKeybinding.State(
             selectedToolRowID: selectedToolRowID,
-            expandedToolRowIDs: expandedToolRowIDs,
+            expandedToolRowIDs: Set(MacTimelineKeybinding.toolRowIDs(in: items).filter(isToolRowExpanded))
+                .union(expandedToolRowIDs),
             focus: keybindingFocus,
             openToolDocumentID: openToolDocumentID
         )
     }
 
     private func applyTimelineKeybindingState(_ state: MacTimelineKeybinding.State) {
+        let previouslyExpanded = timelineKeybindingState.expandedToolRowIDs
+        collapsedToolRowIDs.formUnion(previouslyExpanded.subtracting(state.expandedToolRowIDs))
+        collapsedToolRowIDs.subtract(state.expandedToolRowIDs)
         selectedToolRowID = state.selectedToolRowID
         expandedToolRowIDs = state.expandedToolRowIDs
         keybindingFocus = state.focus
@@ -394,6 +460,7 @@ final class MacSessionTraceStore {
     private func resetTimelineKeybindingState() {
         selectedToolRowID = nil
         expandedToolRowIDs = []
+        collapsedToolRowIDs = []
         keybindingFocus = .composer
         openToolDocumentID = nil
     }
@@ -422,6 +489,7 @@ final class MacSessionTraceStore {
 
     func loadSelectedFromLocalConfig() async {
         guard let selectedTarget else { return }
+        activateRuntimePresentation()
         guard let client = MacWorkspaceClient.localOwner() else {
             lastError = "Local server config is not initialized yet."
             return
@@ -429,24 +497,66 @@ final class MacSessionTraceStore {
         await loadSelectedSession(target: selectedTarget, client: client)
     }
 
-    private func loadSelectedSession(target: MacSelectedSessionTarget, client: MacWorkspaceClient) async {
-        isLoading = true
-        lastError = nil
-        await installSessionRuntime(target: target, client: client, restart: true)
-        guard shouldContinueLoad(for: target) else { return }
-        startSessionRuntimeLoop()
-        guard shouldContinueLoad(for: target) else { return }
-        await loadSessionChanges(target: target, client: client)
-        guard shouldContinueLoad(for: target) else { return }
-        if shouldRefreshLiveQueue {
-            await refreshQueue(target: target, client: client)
-            guard shouldContinueLoad(for: target) else { return }
+    /// View mounting is idempotent. Retiling a pane reconstructs SwiftUI view
+    /// nodes, but must not tear down and recreate that pane's live stream.
+    func mountSelectedFromLocalConfig() async {
+        guard let selectedTarget else { return }
+        activateRuntimePresentation()
+        guard let client = MacWorkspaceClient.localOwner() else {
+            lastError = "Local server config is not initialized yet."
+            return
         }
-        await loadAvailableModels(client: client)
+        await loadSelectedSession(
+            target: selectedTarget,
+            client: client,
+            restartRuntime: false
+        )
+    }
+
+    private func loadSelectedSession(
+        target: MacSelectedSessionTarget,
+        client: MacWorkspaceClient,
+        restartRuntime: Bool = true
+    ) async {
+        guard !isRuntimeSuspended else { return }
+        let lifecycleGeneration = runtimeLifecycleGeneration
+        if restartRuntime {
+            completedMountHydrationSteps = []
+        }
+        if restartRuntime || sessionManager?.sessionId != target.sessionId {
+            isLoading = true
+            lastError = nil
+        }
+        await installSessionRuntime(target: target, client: client, restart: restartRuntime)
+        guard shouldContinueLoad(for: target, lifecycleGeneration: lifecycleGeneration) else { return }
+        if sessionRuntimeTask == nil {
+            startSessionRuntimeLoop()
+        } else {
+            ensureFocusedStreamConnecting()
+        }
+        guard shouldContinueLoad(for: target, lifecycleGeneration: lifecycleGeneration) else { return }
+
+        if !completedMountHydrationSteps.contains(.sessionChanges) {
+            await loadSessionChanges(target: target, client: client)
+            guard shouldContinueLoad(for: target, lifecycleGeneration: lifecycleGeneration) else { return }
+            completedMountHydrationSteps.insert(.sessionChanges)
+        }
+        if shouldRefreshLiveQueue,
+           !completedMountHydrationSteps.contains(.liveQueue) {
+            await refreshQueue(target: target, client: client)
+            guard shouldContinueLoad(for: target, lifecycleGeneration: lifecycleGeneration) else { return }
+            completedMountHydrationSteps.insert(.liveQueue)
+        }
+        if !completedMountHydrationSteps.contains(.models) {
+            await loadAvailableModels(client: client)
+            guard shouldContinueLoad(for: target, lifecycleGeneration: lifecycleGeneration) else { return }
+            completedMountHydrationSteps.insert(.models)
+        }
     }
 
     func load(target: MacSelectedSessionTarget, client: MacWorkspaceClient) async {
         select(target)
+        activateRuntimePresentation()
         isLoading = true
         lastError = nil
         await installSessionRuntime(target: target, client: client)
@@ -1380,64 +1490,63 @@ final class MacSessionTraceStore {
     }
 
     func submitAskResponseFromLocalConfig(request: AskRequest, draft: MacAskResponseDraft) async {
-        guard let selectedTarget else { return }
-        guard let client = MacWorkspaceClient.localOwner() else {
-            lastError = "Local server config is not initialized yet."
-            return
-        }
-
-        await sendAskResponse(
-            request: request,
-            message: MacAskResponseEncoder.responseMessage(request: request, draft: draft),
-            target: selectedTarget,
-            client: client
+        guard let current = currentExtensionRequest, current.askRequest == request else { return }
+        await sendExtensionResponse(
+            request: current,
+            message: MacAskResponseEncoder.responseMessage(request: request, draft: draft)
         )
     }
 
     func ignoreAskRequestFromLocalConfig(_ request: AskRequest) async {
-        guard let selectedTarget else { return }
-        guard let client = MacWorkspaceClient.localOwner() else {
-            lastError = "Local server config is not initialized yet."
-            return
-        }
-
-        await sendAskResponse(
-            request: request,
-            message: .extensionUIResponse(id: request.id, cancelled: true),
-            target: selectedTarget,
-            client: client
-        )
+        guard let current = currentExtensionRequest, current.askRequest == request else { return }
+        await sendExtensionResponse(request: current, message: .extensionUIResponse(id: request.id, cancelled: true))
     }
 
-    private func sendAskResponse(
-        request: AskRequest,
-        message: ClientMessage,
-        target: MacSelectedSessionTarget,
-        client: MacWorkspaceClient
-    ) async {
-        guard selectedTarget == target, !Task.isCancelled else { return }
-        await installSessionRuntime(target: target, client: client)
-        guard let operationManager = runtimeManager(for: target) else { return }
-        lastError = nil
+    func respondToExtensionRequest(_ request: ExtensionUIRequest, payload: ExtensionUIResponsePayload) async {
+        await sendExtensionResponse(request: request, message: .extensionUIResponse(
+            id: request.id, value: payload.value, confirmed: payload.confirmed, cancelled: payload.cancelled
+        ))
+    }
+
+    private func sendExtensionResponse(request: ExtensionUIRequest, message: ClientMessage) async {
+        guard let target = selectedTarget, target.sessionId == request.sessionId,
+              currentExtensionRequest == request,
+              extensionResponseAttempts[request.id] == nil, !Task.isCancelled else { return }
+        let attempt = UUID()
+        extensionResponseAttempts[request.id] = attempt
+        extensionResponseErrors[request.id] = nil
+        let manager = sessionManager
         do {
-            try await sendSessionCommand(message, target: target)
-            guard isCurrentRuntime(operationManager, for: target) else { return }
-            removeAskRequest(id: request.id)
-            if pendingAskRequests.isEmpty {
-                MacAttentionNotificationService.shared.cancelAskNotification(sessionId: target.sessionId)
+            if _sendLiveMessageForTesting == nil {
+                guard let manager else { throw ChatSessionFocusedStreamBindError.timedOut }
+                ensureFocusedStreamConnecting()
+                try await manager.waitUntilStreaming(timeout: _commandAckTimeoutForTesting ?? ChatSessionManager.focusedStreamBindTimeout)
             }
+            // A remote settlement, replacement, reconnect, or pane switch while
+            // binding must revoke the old response before any bytes are sent.
+            guard selectedTarget == target, sessionManager === manager,
+                  currentExtensionRequest == request,
+                  extensionResponseAttempts[request.id] == attempt, !Task.isCancelled else {
+                if extensionResponseAttempts[request.id] == attempt {
+                    extensionResponseAttempts[request.id] = nil
+                }
+                return
+            }
+            try await sendLiveMessage(message, target: target, boundManager: manager)
+            // Socket write is not settlement. Keep the request visible and
+            // disabled until server authority arrives (or reconnect replays it).
         } catch {
-            macSessionTraceLogger.warning("Ask response failed: \(error.localizedDescription, privacy: .public)")
-            if isCurrentRuntime(operationManager, for: target) {
-                operationManager.reducer.appendSystemEvent("Ask response failed: \(error.localizedDescription)")
-                lastError = error.localizedDescription
-            }
+            guard selectedTarget == target, currentExtensionRequest == request,
+                  extensionResponseAttempts[request.id] == attempt else { return }
+            extensionResponseAttempts[request.id] = nil
+            extensionResponseErrors[request.id] = "Could not send response: \(error.localizedDescription)"
         }
     }
 
     func applyLiveRuntimeMessage(_ message: ServerMessage, sessionId: String) {
         guard let selectedTarget, selectedTarget.sessionId == sessionId else { return }
-        applyAskEffects(from: message, target: selectedTarget)
+        liveUpdateCount += 1
+        applyExtensionRequestEffects(from: message, target: selectedTarget)
         applyExtensionSurfaceEffects(from: message, target: selectedTarget)
         applyQueueEffects(from: message, target: selectedTarget)
         applySlashCommandResult(from: message)
@@ -1466,8 +1575,16 @@ final class MacSessionTraceStore {
         isLoading = false
     }
 
-    private func shouldContinueLoad(for target: MacSelectedSessionTarget) -> Bool {
+    private func shouldContinueLoad(
+        for target: MacSelectedSessionTarget,
+        lifecycleGeneration: UInt? = nil
+    ) -> Bool {
         guard selectedTarget == target else { return false }
+        guard !isRuntimeSuspended else { return false }
+        if let lifecycleGeneration,
+           lifecycleGeneration != runtimeLifecycleGeneration {
+            return false
+        }
         guard !Task.isCancelled else {
             isLoading = false
             return false
@@ -1499,20 +1616,34 @@ final class MacSessionTraceStore {
         client: MacWorkspaceClient,
         restart: Bool = false
     ) async {
-        guard selectedTarget == target, !Task.isCancelled else { return }
+        guard selectedTarget == target,
+              !isRuntimeSuspended,
+              !Task.isCancelled else { return }
+        let lifecycleGeneration = runtimeLifecycleGeneration
         if !restart,
            sessionManager?.sessionId == target.sessionId,
            runtimeAdapter != nil {
             return
         }
 
-        tearDownRuntime()
         if let gate = _sessionRuntimeInstallGateForTesting {
             await gate()
-            guard selectedTarget == target, !Task.isCancelled else { return }
+            guard selectedTarget == target,
+                  !isRuntimeSuspended,
+                  runtimeLifecycleGeneration == lifecycleGeneration,
+                  !Task.isCancelled else { return }
         }
         let token = await client.ownerToken()
-        guard selectedTarget == target, !Task.isCancelled else { return }
+        guard selectedTarget == target,
+              !isRuntimeSuspended,
+              runtimeLifecycleGeneration == lifecycleGeneration,
+              !Task.isCancelled else { return }
+        if !restart,
+           sessionManager?.sessionId == target.sessionId,
+           runtimeAdapter != nil {
+            return
+        }
+        tearDownRuntime()
         let adapter = MacChatSessionRuntimeAdapter(client: client, token: token)
         if let session, session.id == target.sessionId {
             adapter.upsert(session)
@@ -1715,8 +1846,30 @@ final class MacSessionTraceStore {
     }
 
     private func applyExtensionSurfaceEffects(from message: ServerMessage, target: MacSelectedSessionTarget) {
+        if case .connected(let session) = message, session.id == target.sessionId {
+            // The focused stream sends connected before its complete pending UI
+            // replay. Drop stale chrome and ephemeral feedback, not user drafts.
+            extensionSurface = ExtensionSurfaceState()
+            extensionNotice = nil
+        }
         if case .extensionUINotification(let notification) = message {
-            ExtensionSurfaceReducer.apply(notification, to: &extensionSurface)
+            switch notification.method {
+            case "set_editor_text":
+                if let text = notification.text {
+                    pendingEditorHandoffs.append(text)
+                    drainEditorHandoffs()
+                }
+            case "notify":
+                if let text = notification.message, !text.isEmpty {
+                    extensionNotice = MacExtensionNotice(message: text, severity: notification.notifyType)
+                }
+            default:
+                ExtensionSurfaceReducer.apply(notification, to: &extensionSurface)
+                if notification.method == "setToolsExpanded" {
+                    expandedToolRowIDs = []
+                    collapsedToolRowIDs = []
+                }
+            }
         }
 
         let cleanup = ServerMessageEffects.cleanupEffects(
@@ -1726,15 +1879,32 @@ final class MacSessionTraceStore {
         )
         for sessionId in cleanup.clearExtensionSurfaceSessionIds where sessionId == target.sessionId {
             extensionSurface = ExtensionSurfaceState()
+            extensionNotice = nil
         }
     }
 
-    private func applyAskEffects(from message: ServerMessage, target: MacSelectedSessionTarget) {
+    private func applyExtensionRequestEffects(from message: ServerMessage, target: MacSelectedSessionTarget) {
+        if case .connected(let session) = message, session.id == target.sessionId {
+            pendingExtensionRequests = []
+            extensionResponseAttempts = [:]
+            extensionResponseErrors = [:]
+        }
+        if case .extensionUISettled(_, let sessionId) = message, sessionId != target.sessionId { return }
         if case .extensionUIRequest(let request) = message,
            request.sessionId == target.sessionId,
-           let ask = request.askRequest {
-            upsertAskRequest(ask)
-            MacAttentionNotificationService.shared.notifyAskIfNeeded(ask)
+           !settledExtensionRequestIDs.contains(request.id) {
+            if let index = pendingExtensionRequests.firstIndex(where: { $0.id == request.id }) {
+                if pendingExtensionRequests[index] != request {
+                    extensionResponseAttempts[request.id] = nil
+                    extensionResponseErrors[request.id] = nil
+                }
+                pendingExtensionRequests[index] = request
+            } else {
+                pendingExtensionRequests.append(request)
+            }
+            if let ask = currentAskRequest {
+                MacAttentionNotificationService.shared.notifyAskIfNeeded(ask)
+            }
         }
 
         let cleanup = ServerMessageEffects.cleanupEffects(
@@ -1744,33 +1914,69 @@ final class MacSessionTraceStore {
         )
         var didClearSession = false
         for sessionId in cleanup.clearAskSessionIds where sessionId == target.sessionId {
-            pendingAskRequests = []
+            resetExtensionInteractionState()
             didClearSession = true
         }
         var didRemoveRequest = false
         for requestId in cleanup.clearAskRequestIds {
-            if pendingAskRequests.contains(where: { $0.id == requestId }) {
+            if pendingExtensionRequests.contains(where: { $0.id == requestId }) {
                 didRemoveRequest = true
             }
-            removeAskRequest(id: requestId)
+            removeExtensionRequest(id: requestId)
         }
-        if didClearSession || (didRemoveRequest && pendingAskRequests.isEmpty) {
+        if didClearSession || (didRemoveRequest && currentAskRequest == nil) {
             MacAttentionNotificationService.shared.cancelAskNotification(sessionId: target.sessionId)
-        } else if didRemoveRequest, let nextAsk = pendingAskRequests.first {
+        } else if didRemoveRequest, let nextAsk = currentAskRequest {
             MacAttentionNotificationService.shared.notifyAskIfNeeded(nextAsk)
         }
     }
 
-    private func upsertAskRequest(_ request: AskRequest) {
-        if let index = pendingAskRequests.firstIndex(where: { $0.id == request.id }) {
-            pendingAskRequests[index] = request
-        } else {
-            pendingAskRequests.append(request)
-        }
+    private func removeExtensionRequest(id: String) {
+        pendingExtensionRequests.removeAll { $0.id == id }
+        extensionEditorDrafts[id] = nil
+        extensionResponseAttempts[id] = nil
+        extensionResponseErrors[id] = nil
+        settledExtensionRequestIDs.insert(id)
     }
 
-    private func removeAskRequest(id: String) {
-        pendingAskRequests.removeAll { $0.id == id }
+    private func resetExtensionInteractionState() {
+        pendingExtensionRequests = []
+        extensionEditorDrafts = [:]
+        extensionResponseAttempts = [:]
+        extensionResponseErrors = [:]
+        settledExtensionRequestIDs = []
+        pendingEditorHandoffs = []
+        extensionNotice = nil
+    }
+
+    func extensionEditorText(for request: ExtensionUIRequest) -> String {
+        extensionEditorDrafts[request.id] ?? request.prefill ?? ""
+    }
+
+    func setExtensionEditorText(_ text: String, for request: ExtensionUIRequest) {
+        guard selectedTarget?.sessionId == request.sessionId,
+              currentExtensionRequest?.id == request.id else { return }
+        extensionEditorDrafts[request.id] = text
+    }
+
+    func bindExtensionComposer(_ composer: MacSessionComposerState, sessionId: String) {
+        guard selectedTarget?.sessionId == sessionId else { return }
+        extensionComposer = composer
+        composer.bindExtensionSession(sessionId)
+        drainEditorHandoffs()
+    }
+
+    private func drainEditorHandoffs() {
+        guard let extensionComposer, let sessionId = selectedTarget?.sessionId,
+              extensionComposer.extensionSessionId == sessionId else { return }
+        let handoffs = pendingEditorHandoffs
+        pendingEditorHandoffs = []
+        for text in handoffs { extensionComposer.applyExtensionText(text, sessionId: sessionId) }
+    }
+
+    func dismissExtensionNotice(id: UUID) {
+        guard extensionNotice?.id == id else { return }
+        extensionNotice = nil
     }
 
     private func applyQueueEffects(from message: ServerMessage, target: MacSelectedSessionTarget) {

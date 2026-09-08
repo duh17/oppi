@@ -43,6 +43,8 @@ final class MacWorkspaceSnapshotStore {
     /// switches keep the newest (workspaceId, worktreeId, generation).
     private var currentSessionLoadByWorkspace: [String: SessionLoadRequest] = [:]
     private var recentSessionLoadGeneration: UInt64 = 0
+    /// App-owned `/app/events/stream`. Windows must not start a second copy.
+    @ObservationIgnored private var appEventStreamTask: Task<Void, Never>?
 
     var hasLoaded: Bool { lastLoadedAt != nil }
 
@@ -627,6 +629,17 @@ final class MacWorkspaceSnapshotStore {
             break
         }
         return false
+    }
+
+    func startAppEventStreamIfNeeded() {
+        guard appEventStreamTask == nil else { return }
+        appEventStreamTask = Task { @MainActor in
+            while !Task.isCancelled {
+                await runAppEventStreamFromLocalConfig()
+                if Task.isCancelled { break }
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
     }
 
     func runAppEventStreamFromLocalConfig() async {

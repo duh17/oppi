@@ -367,6 +367,105 @@ struct MacComposerDictationControllerTests {
         #expect(controller.composedDraft == "Hi ")
     }
 
+    @Test func sameSessionHandoffRevokesSuspendedStopSendAndCancelCompletions()
+    async throws {
+        try await assertHandoffRevokesSuspendedCompletion(action: .stop)
+        try await assertHandoffRevokesSuspendedCompletion(action: .send)
+    }
+
+    @Test func handoffInvalidatesCancelSetupCompletionBeforeDraftAssignment() {
+        let composer = MacSessionComposerState(initialDraft: "Local text")
+        composer.bindExtensionSession("session-live")
+        let generation = composer.beginComposerAction()
+        composer.applyExtensionText("Handoff", sessionId: "session-live")
+        #expect(!composer.applyStoppedDictationDraftIfCurrent(
+            generation: generation,
+            originatingSessionID: "session-live",
+            currentSessionID: "session-live"
+        ))
+        #expect(composer.draft == "Local text\n\nHandoff")
+    }
+
+    private enum HandoffAction {
+        case stop
+        case send
+    }
+
+    private func assertHandoffRevokesSuspendedCompletion(action: HandoffAction) async throws {
+        let transport = FakeDictationTransport()
+        let audio = FakeDictationAudioCapture()
+        let controller = makeController(transport: transport, audio: audio)
+        let attachment = try MacPendingAttachment(
+            id: "keep-attachment",
+            url: URL(fileURLWithPath: "/tmp/keep-notes.md"),
+            displayName: "keep-notes.md",
+            mimeType: "text/markdown",
+            sizeBytes: 12
+        )
+        let composer = MacSessionComposerState(
+            initialDraft: "Local text",
+            initialAttachments: [attachment],
+            dictation: controller
+        )
+        composer.bindExtensionSession("session-live")
+        var sentDrafts: [String] = []
+
+        try await controller.start(
+            baseText: composer.draft,
+            endpoint: MacDictationEndpoint(socketPath: "/tmp/oppi.sock", token: "sk_secret")
+        )
+        transport.yield(.dictationReady(provider: nil))
+        transport.yield(.dictationResult(text: "partial", snap: false))
+        #expect(await waitUntil { controller.transcript == "partial" })
+
+        let originatingSessionID = "session-live"
+        let submissionID: UUID?
+        if action == .send {
+            submissionID = composer.submissionGate.begin()
+            #expect(submissionID != nil)
+        } else {
+            submissionID = nil
+        }
+        let generation = composer.beginComposerAction()
+        let completion = Task { @MainActor in
+            switch action {
+            case .stop, .send:
+                await controller.stop()
+            }
+            let applied = composer.applyStoppedDictationDraftIfCurrent(
+                generation: generation,
+                originatingSessionID: originatingSessionID,
+                currentSessionID: originatingSessionID
+            )
+            if action == .send,
+               applied,
+               composer.isCurrentComposerAction(generation) {
+                sentDrafts.append(composer.draft)
+            }
+            if let submissionID {
+                composer.submissionGate.finish(submissionID)
+            }
+        }
+
+        #expect(await waitUntil {
+            transport.controls.contains { $0.typeLabel == "dictation_stop" }
+        })
+
+        composer.applyExtensionText("Handoff", sessionId: "session-live")
+        #expect(composer.draft == "Local text\n\nHandoff")
+        #expect(composer.pendingAttachments == [attachment])
+        #expect(composer.submissionGate.isActive == (action == .send))
+
+        transport.yield(.dictationFinal(text: "late asr wipe"))
+        await completion.value
+
+        #expect(composer.draft == "Local text\n\nHandoff")
+        #expect(!composer.draft.contains("late asr wipe"))
+        #expect(composer.pendingAttachments == [attachment])
+        #expect(sentDrafts.isEmpty)
+        #expect(!composer.submissionGate.isActive)
+    }
+
     @Test func fatalServerErrorFailsClosedWithVisibleMessage() async throws {
         let transport = FakeDictationTransport()
         let audio = FakeDictationAudioCapture()

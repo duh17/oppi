@@ -24,6 +24,19 @@ struct MacComposerSubmissionGate {
     }
 }
 
+private struct MacComposerCommandReturnShortcut: ViewModifier {
+    let isActivePane: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if MacComposerPaneKeyboardRouting.installsCommandReturn(isActivePane: isActivePane) {
+            content.keyboardShortcut(.return, modifiers: .command)
+        } else {
+            content
+        }
+    }
+}
+
 /// Docked session composer: queue, ask, attachments, and the send field.
 ///
 /// Layout matches iOS ChatInputBar control placement:
@@ -34,27 +47,30 @@ struct MacSessionComposerBar: View {
     var sessionFocus: FocusState<KeybindingFocus?>.Binding
     @Bindable var composerState: MacSessionComposerState
     var ownsDictationLifecycle = true
+    var isActivePane = true
+    var activatePane: () -> Void = {}
     @Environment(\.theme) private var theme
     /// Compact vs iOS 44pt HIG target; fill/stroke/glyph still match ChatInputBar.
     private let actionVisualDiameter: CGFloat = 32
-    @State private var pastedFileLifetime = MacPastedAttachmentLifetime()
-    @State private var composerLocalError: String?
     @State private var isAttachmentDropTarget = false
     @State private var isModelPickerPresented = false
     @State private var showReviewCommentStash = false
-    @State private var submissionGate = MacComposerSubmissionGate()
 
     init(
         store: MacSessionTraceStore,
         sessionFocus: FocusState<KeybindingFocus?>.Binding,
         composerState: MacSessionComposerState = MacSessionComposerState(),
         ownsDictationLifecycle: Bool = true,
+        isActivePane: Bool = true,
+        activatePane: @escaping () -> Void = {},
         initialDraft: String = "",
         initialAttachments: [MacPendingAttachment] = []
     ) {
         self.store = store
         self.sessionFocus = sessionFocus
         self.ownsDictationLifecycle = ownsDictationLifecycle
+        self.isActivePane = isActivePane
+        self.activatePane = activatePane
         if !initialDraft.isEmpty {
             composerState.draft = initialDraft
         }
@@ -104,6 +120,11 @@ struct MacSessionComposerBar: View {
                 }
             }
         }
+        .onAppear {
+            if let sessionId = store.selectedTarget?.sessionId {
+                store.bindExtensionComposer(composerState, sessionId: sessionId)
+            }
+        }
         .onChange(of: composerState.draft) { _, _ in
             loadFileIndexIfNeeded()
             loadSlashCommandsIfNeeded()
@@ -118,15 +139,16 @@ struct MacSessionComposerBar: View {
                 previousSessionID: previousSessionID,
                 currentSessionID: currentSessionID
             ) else { return }
-            composerLocalError = nil
             isAttachmentDropTarget = false
-            submissionGate.reset()
-            composerState.resetForSessionChange()
+            // Pane runtimes reset and bind synchronously before stream effects;
+            // a later view callback must not erase a newly delivered handoff.
+            if ownsDictationLifecycle {
+                composerState.resetForSessionChange()
+                if let currentSessionID {
+                    store.bindExtensionComposer(composerState, sessionId: currentSessionID)
+                }
+            }
             loadSlashCommandsIfNeeded()
-        }
-        .onChange(of: composerState.pendingAttachments) { previous, next in
-            MacPastedAttachmentFileStore.removeOwned(in: previous, notIn: next)
-            pastedFileLifetime.replace(with: next)
         }
         .onDisappear {
             guard ownsDictationLifecycle else { return }
@@ -189,8 +211,8 @@ struct MacSessionComposerBar: View {
                 isSessionVisible: store.selectedTarget?.sessionId != nil,
                 status: store.session?.status,
                 isLoading: store.isLoading,
-                hasDraft: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                hasAttachments: !pendingAttachments.isEmpty,
+                hasDraft: !composerState.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                hasAttachments: !composerState.pendingAttachments.isEmpty,
                 hasStagedReviewComments: store.hasStagedReviewComments,
                 canSendMessage: store.canSendMessage,
                 isSending: isSendInFlight,
@@ -222,25 +244,35 @@ struct MacSessionComposerBar: View {
     }
 
     private func sendDraft() {
-        guard let submissionID = submissionGate.begin() else { return }
+        guard canSubmitComposer else { return }
+        submitComposerDraft()
+    }
+
+    private func submitComposerDraft() {
+        guard let submissionID = composerState.submissionGate.begin() else { return }
         let originatingSessionID = store.selectedTarget?.sessionId
+        let actionGeneration = composerState.beginComposerAction()
         Task {
-            defer { submissionGate.finish(submissionID) }
-            composerLocalError = nil
-            if dictation.isLive {
-                await dictation.stop()
-                guard MacSessionWindowChrome.shouldApplyComposerCompletion(
+            defer { composerState.submissionGate.finish(submissionID) }
+            composerState.localError = nil
+            if composerState.dictation.isLive {
+                await composerState.dictation.stop()
+                guard composerState.applyStoppedDictationDraftIfCurrent(
+                    generation: actionGeneration,
                     originatingSessionID: originatingSessionID,
                     currentSessionID: store.selectedTarget?.sessionId
                 ) else { return }
-                draft = dictation.composedDraft
             }
-            guard MacSessionWindowChrome.shouldApplyComposerCompletion(
-                originatingSessionID: originatingSessionID,
-                currentSessionID: store.selectedTarget?.sessionId
-            ) else { return }
-            let message = draft
-            let attachments = pendingAttachments
+            guard composerState.isCurrentComposerAction(actionGeneration),
+                  MacSessionWindowChrome.shouldApplyComposerCompletion(
+                    originatingSessionID: originatingSessionID,
+                    currentSessionID: store.selectedTarget?.sessionId
+                  ) else { return }
+            // A blocking editor may arrive while dictation is stopping.
+            // Its response owns Cmd-Return; keep the ordinary draft unsent.
+            guard !hasExtensionEditorRequest else { return }
+            let message = composerState.draft
+            let attachments = composerState.pendingAttachments
             let didSend = await store.sendPromptFromLocalConfig(message, attachments: attachments)
             if didSend, MacSessionWindowChrome.shouldApplyComposerCompletion(
                 originatingSessionID: originatingSessionID,
@@ -248,11 +280,11 @@ struct MacSessionComposerBar: View {
             ) {
                 // Upload and send can take long enough for the user to
                 // keep editing. Clear only the snapshot that was sent.
-                if draft == message {
-                    draft = ""
+                if composerState.draft == message {
+                    composerState.draft = ""
                 }
                 let sentAttachmentIDs = Set(attachments.map(\.id))
-                pendingAttachments.removeAll { sentAttachmentIDs.contains($0.id) }
+                composerState.pendingAttachments.removeAll { sentAttachmentIDs.contains($0.id) }
             }
         }
     }
@@ -266,7 +298,7 @@ struct MacSessionComposerBar: View {
     }
 
     private var visibleEditorError: String? {
-        let error = composerLocalError
+        let error = composerState.localError
             ?? composerState.dictation.lastError
             ?? (store.items.isEmpty ? nil : store.lastError)
         guard let error, !error.isEmpty else { return nil }
@@ -283,7 +315,8 @@ struct MacSessionComposerBar: View {
 
     private var hasEditorAuxiliaryContent: Bool {
         showsMessageQueueEditor
-            || store.currentAskRequest != nil
+            || store.currentExtensionRequest != nil
+            || store.extensionNotice != nil
             || store.attachmentPreparationText != nil
             || visibleEditorError != nil
             || !slashSuggestions.isEmpty
@@ -292,12 +325,12 @@ struct MacSessionComposerBar: View {
     }
 
     private var hasAboveEditorExtensionSurface: Bool {
-        store.currentAskRequest == nil
+        store.currentAskRequest == nil && store.currentExtensionDialog == nil
             && store.extensionSurface.hasVisibleContent(in: .aboveEditor)
     }
 
     private var hasBelowEditorExtensionSurface: Bool {
-        store.currentAskRequest == nil
+        store.currentAskRequest == nil && store.currentExtensionDialog == nil
             && store.extensionSurface.hasVisibleContent(in: .belowEditor)
     }
 
@@ -341,6 +374,20 @@ struct MacSessionComposerBar: View {
                     }
                 )
                 .id(ask.id)
+                .disabled(store.extensionResponseAttempts[ask.id] != nil)
+                if store.extensionResponseAttempts[ask.id] != nil {
+                    Text("Waiting for server…").font(.caption)
+                }
+                if let error = store.extensionResponseErrors[ask.id] {
+                    Text(error).font(.caption).foregroundStyle(.themeRed)
+                }
+            } else if let request = store.currentExtensionDialog {
+                MacExtensionRequestCard(request: request, store: store)
+                    .id(request.id)
+            }
+
+            if let notice = store.extensionNotice {
+                MacExtensionNoticeView(notice: notice) { store.dismissExtensionNotice(id: notice.id) }
             }
 
             if let progress = store.attachmentPreparationText {
@@ -499,6 +546,7 @@ struct MacSessionComposerBar: View {
                         onFocusChange: { focused in
                             composerState.isComposerFirstResponder = focused
                             if focused {
+                                activatePane()
                                 sessionFocus.wrappedValue = .composer
                             }
                         },
@@ -614,7 +662,7 @@ struct MacSessionComposerBar: View {
 
     /// Content + connection, matching iOS ChatInputBar `canSend` for paint.
     private var canSend: Bool {
-        store.canSendMessage && hasComposerContent
+        store.canSendMessage && hasComposerContent && !hasExtensionEditorRequest
     }
 
     private var canSubmitComposer: Bool {
@@ -626,11 +674,15 @@ struct MacSessionComposerBar: View {
     }
 
     private var hasAskRequest: Bool {
-        store.currentAskRequest != nil
+        store.currentExtensionRequest != nil
+    }
+
+    private var hasExtensionEditorRequest: Bool {
+        store.currentExtensionDialog?.nativePresentation == .editorSheet
     }
 
     private var isSendInFlight: Bool {
-        submissionGate.isActive || store.isSending || store.isPreparingAttachments
+        composerState.submissionGate.isActive || store.isSending || store.isPreparingAttachments
     }
 
     private var accentColor: Color { theme.accent.blue }
@@ -751,39 +803,8 @@ struct MacSessionComposerBar: View {
 
     private var sendActionButton: some View {
         Button {
-            guard let submissionID = submissionGate.begin() else { return }
-            let originatingSessionID = store.selectedTarget?.sessionId
-            Task {
-                defer { submissionGate.finish(submissionID) }
-                composerLocalError = nil
-                if composerState.dictation.isLive {
-                    await composerState.dictation.stop()
-                    guard MacSessionWindowChrome.shouldApplyComposerCompletion(
-                        originatingSessionID: originatingSessionID,
-                        currentSessionID: store.selectedTarget?.sessionId
-                    ) else { return }
-                    composerState.draft = composerState.dictation.composedDraft
-                }
-                guard MacSessionWindowChrome.shouldApplyComposerCompletion(
-                    originatingSessionID: originatingSessionID,
-                    currentSessionID: store.selectedTarget?.sessionId
-                ) else { return }
-                let message = composerState.draft
-                let attachments = composerState.pendingAttachments
-                let didSend = await store.sendPromptFromLocalConfig(message, attachments: attachments)
-                if didSend, MacSessionWindowChrome.shouldApplyComposerCompletion(
-                    originatingSessionID: originatingSessionID,
-                    currentSessionID: store.selectedTarget?.sessionId
-                ) {
-                    // Upload and send can take long enough for the user to
-                    // keep editing. Clear only the snapshot that was sent.
-                    if composerState.draft == message {
-                        composerState.draft = ""
-                    }
-                    let sentAttachmentIDs = Set(attachments.map(\.id))
-                    composerState.pendingAttachments.removeAll { sentAttachmentIDs.contains($0.id) }
-                }
-            }
+            guard canSubmitComposer else { return }
+            submitComposerDraft()
         } label: {
             ZStack {
                 Circle().fill(sendActionFillColor)
@@ -803,7 +824,7 @@ struct MacSessionComposerBar: View {
         }
         .buttonStyle(.plain)
         .disabled(!canSubmitComposer)
-        .keyboardShortcut(.return, modifiers: .command)
+        .modifier(MacComposerCommandReturnShortcut(isActivePane: isActivePane))
         .accessibilityIdentifier("mac.composer.send")
         .accessibilityLabel(isSendInFlight ? "Sending" : "Send")
         .help("Send")
@@ -903,27 +924,28 @@ struct MacSessionComposerBar: View {
 
     private func toggleDictation() async {
         let originatingSessionID = store.selectedTarget?.sessionId
-        composerLocalError = nil
+        let actionGeneration = composerState.beginComposerAction()
+        composerState.localError = nil
         switch composerState.dictation.state {
         case .recording:
             await composerState.dictation.stop()
-            guard MacSessionWindowChrome.shouldApplyComposerCompletion(
+            _ = composerState.applyStoppedDictationDraftIfCurrent(
+                generation: actionGeneration,
                 originatingSessionID: originatingSessionID,
                 currentSessionID: store.selectedTarget?.sessionId
-            ) else { return }
-            composerState.draft = composerState.dictation.composedDraft
+            )
         case .requestingPermission, .connecting:
             await composerState.dictation.cancel()
-            guard MacSessionWindowChrome.shouldApplyComposerCompletion(
+            _ = composerState.applyStoppedDictationDraftIfCurrent(
+                generation: actionGeneration,
                 originatingSessionID: originatingSessionID,
                 currentSessionID: store.selectedTarget?.sessionId
-            ) else { return }
-            composerState.draft = composerState.dictation.composedDraft
+            )
         case .stopping:
             return
         case .idle, .error:
             guard let endpoint = MacDictationEndpoint.localOwner() else {
-                composerLocalError = DictationComposerPolicy.unavailableMessage
+                composerState.localError = DictationComposerPolicy.unavailableMessage
                 return
             }
             do {
@@ -933,7 +955,7 @@ struct MacSessionComposerBar: View {
                     originatingSessionID: originatingSessionID,
                     currentSessionID: store.selectedTarget?.sessionId
                 ) else { return }
-                composerLocalError = error.localizedDescription
+                composerState.localError = error.localizedDescription
             }
         }
     }
@@ -1057,7 +1079,7 @@ struct MacSessionComposerBar: View {
 
     private func insertSlashCommand(_ command: SlashCommand) {
         composerState.draft = ComposerAutocomplete.insertSlashCommand(command, into: composerState.draft)
-        composerLocalError = nil
+        composerState.localError = nil
     }
 
     private func insertFileSuggestion(_ suggestion: FileSuggestion) {
@@ -1066,7 +1088,7 @@ struct MacSessionComposerBar: View {
             isDirectory: suggestion.isDirectory,
             into: composerState.draft
         )
-        composerLocalError = nil
+        composerState.localError = nil
     }
 
     private func loadFileIndexIfNeeded() {
@@ -1114,7 +1136,7 @@ struct MacSessionComposerBar: View {
                             currentSessionID: store.selectedTarget?.sessionId,
                             surface: composerSurface
                         ) else { return }
-                        composerLocalError = error.localizedDescription
+                        composerState.localError = error.localizedDescription
                     }
                     return
                 }
@@ -1139,7 +1161,7 @@ struct MacSessionComposerBar: View {
     private func stagePasteboardPayload(_ payload: MacComposerPasteboardPayload) {
         let result = MacComposerPasteboardParser.adding(payload, to: composerState.pendingAttachments)
         composerState.pendingAttachments = result.attachments
-        composerLocalError = result.rejectedMessages.isEmpty
+        composerState.localError = result.rejectedMessages.isEmpty
             ? nil
             : result.rejectedMessages.joined(separator: "\n")
     }

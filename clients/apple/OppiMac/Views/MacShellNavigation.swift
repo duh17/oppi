@@ -94,18 +94,28 @@ enum MacSidebarSection: String, CaseIterable, Identifiable, Hashable, Sendable {
 /// Session whose card is actually on screen. Last-selected is not visible
 /// after leaving Home or tearing down the main window.
 enum MacAttentionVisibleSession {
+    static func ids(
+        section: MacSidebarSection,
+        selectedSessionIDs: some Sequence<String>,
+        isMainWindowPresented: Bool
+    ) -> Set<String> {
+        guard isMainWindowPresented, section == .sessionHome else {
+            return []
+        }
+        return Set(selectedSessionIDs.filter { !$0.isEmpty })
+    }
+
     static func id(
         section: MacSidebarSection,
         selectedSessionID: String?,
         isMainWindowPresented: Bool
     ) -> String? {
-        guard isMainWindowPresented, section == .sessionHome else {
-            return nil
-        }
-        guard let selectedSessionID, !selectedSessionID.isEmpty else {
-            return nil
-        }
-        return selectedSessionID
+        guard let selectedSessionID else { return nil }
+        return ids(
+            section: section,
+            selectedSessionIDs: [selectedSessionID],
+            isMainWindowPresented: isMainWindowPresented
+        ).first
     }
 }
 

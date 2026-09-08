@@ -38,8 +38,9 @@ enum MacQuickSessionLauncher {
         }
     }
 
-    /// Completes a launch into the pane that started it. Returns nil when that
-    /// pane is gone instead of replacing whatever is focused now.
+    /// Completes a launch into the pane that started it. Always returns the
+    /// created session so the catalog can keep it. Placement happens only when
+    /// that same runtime is still empty and still waiting on this attempt.
     @MainActor
     static func launchIntoOriginatingPane(
         attempt: MacQuickSessionLaunchAttempt,
@@ -48,11 +49,34 @@ enum MacQuickSessionLauncher {
         client: MacWorkspaceClient
     ) async throws -> MacSelectedSessionTarget? {
         let target = try await launch(attempt: attempt, client: client)
-        originatingRuntime.quickSession.markLaunchSucceeded(idempotencyKey: attempt.idempotencyKey)
-        guard deck.replace(paneID: originatingRuntime.id, with: target) != nil else {
-            return nil
+        // Server creation succeeded. Place only when this same empty pane is
+        // still waiting on this attempt; otherwise keep the created session
+        // discoverable without clobbering a later draft or session B.
+        if canPlace(
+            attempt: attempt,
+            originatingRuntime: originatingRuntime,
+            deck: deck
+        ) {
+            originatingRuntime.quickSession.markLaunchSucceeded(
+                idempotencyKey: attempt.idempotencyKey
+            )
+            _ = deck.replace(paneID: originatingRuntime.id, with: target)
         }
         return target
+    }
+
+    @MainActor
+    static func canPlace(
+        attempt: MacQuickSessionLaunchAttempt,
+        originatingRuntime: MacSessionPaneRuntime,
+        deck: MacSessionPaneDeck
+    ) -> Bool {
+        guard deck.runtime(for: originatingRuntime.id) === originatingRuntime else {
+            return false
+        }
+        guard originatingRuntime.isEmpty else { return false }
+        return originatingRuntime.quickSession.pendingLaunchAttempt?.idempotencyKey
+            == attempt.idempotencyKey
     }
 }
 

@@ -649,7 +649,6 @@ targets:
         NSLocalNetworkUsageDescription: "Oppi uses the local network to pair nearby iPhones with this Mac."
         NSBonjourServices:
           - "_oppi-pair._tcp"
-        ATSApplicationFontsPath: Fonts
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
 

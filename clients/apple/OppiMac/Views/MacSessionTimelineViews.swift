@@ -12,6 +12,8 @@ struct MacSessionTimelineView: View {
     var isBusy: Bool = false
     let store: MacSessionTraceStore
     var sessionFocus: FocusState<KeybindingFocus?>.Binding
+    /// Pane-owned live-tail intent. Retiling must not reset this from view state.
+    var presentation: MacSessionPanePresentationState? = nil
 
     @State private var fontPreferenceRevision = 0
 
@@ -53,7 +55,8 @@ struct MacSessionTimelineView: View {
                     bottomContentInset: bottomContentInset,
                     isBusy: isBusy,
                     store: store,
-                    sessionFocus: sessionFocus
+                    sessionFocus: sessionFocus,
+                    presentation: presentation
                 )
             }
         }
@@ -124,12 +127,29 @@ private struct MacSessionTimelineScrollView: View {
     var isBusy: Bool = false
     let store: MacSessionTraceStore
     var sessionFocus: FocusState<KeybindingFocus?>.Binding
+    var presentation: MacSessionPanePresentationState? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isAttachedToLatestRow = true
+    @State private var fallbackLiveTailAttached = true
     @State private var lastContentHeight: CGFloat = 0
     @State private var lastViewportWidth: CGFloat = 0
     @State private var scrollPhase: ScrollPhase = .idle
+    @State private var scrollPosition = ScrollPosition(idType: String.self)
+    @State private var pendingRemountTarget: MacSessionTimelineRemountTarget?
+
+    private var isAttachedToLatestRow: Bool {
+        presentation?.isLiveTailAttached ?? fallbackLiveTailAttached
+    }
+
+    private func setAttachedToLatestRow(_ attached: Bool) {
+        if let presentation {
+            if presentation.isLiveTailAttached != attached {
+                presentation.isLiveTailAttached = attached
+            }
+        } else if fallbackLiveTailAttached != attached {
+            fallbackLiveTailAttached = attached
+        }
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -146,8 +166,8 @@ private struct MacSessionTimelineScrollView: View {
                         )
                             .id(item.id)
                     }
-                    if isBusy {
-                        MacWorkingIndicatorRow()
+                    if isBusy, MacWorkingRowPresentation(state: store.extensionSurface.working).isVisible {
+                        MacWorkingIndicatorRow(state: store.extensionSurface.working)
                             .id(MacWorkingIndicatorRow.rowID)
                     }
                     Color.clear
@@ -158,8 +178,10 @@ private struct MacSessionTimelineScrollView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
+                .scrollTargetLayout()
             }
             .defaultScrollAnchor(isAttachedToLatestRow ? .bottom : nil)
+            .scrollPosition($scrollPosition)
             .scrollEdgeEffectStyle(.soft, for: .top)
             .scrollEdgeEffectStyle(.soft, for: .bottom)
             .background {
@@ -181,6 +203,16 @@ private struct MacSessionTimelineScrollView: View {
                     viewportWidth: geometry.containerSize.width
                 )
             } action: { _, snapshot in
+                let remountRestore = MacSessionTimelineAutoFollow.remountRestoreDecision(
+                    pending: pendingRemountTarget,
+                    contentHeight: snapshot.contentHeight,
+                    offsetY: snapshot.offsetY,
+                    viewportHeight: snapshot.viewportHeight
+                )
+                if remountRestore.applyRestore, let pending = pendingRemountTarget {
+                    applyRemountTarget(pending, proxy: proxy)
+                }
+                pendingRemountTarget = remountRestore.pending
                 let contentHeightIncreased = MacSessionTimelineAutoFollow.contentHeightIncreasedFromDocumentGrowth(
                     previousHeight: lastContentHeight,
                     nextHeight: snapshot.contentHeight,
@@ -192,11 +224,16 @@ private struct MacSessionTimelineScrollView: View {
                     offsetY: snapshot.offsetY,
                     viewportHeight: snapshot.viewportHeight
                 )
-                let nextAttachment = MacSessionTimelineAutoFollow.isAttachedAfterGeometryChange(
-                    wasAttached: isAttachedToLatestRow,
-                    isNearBottom: isNearBottom,
-                    scrollPhase: scrollPhase
-                )
+                let nextAttachment: Bool
+                if remountRestore.holdRestore {
+                    nextAttachment = isAttachedToLatestRow
+                } else {
+                    nextAttachment = MacSessionTimelineAutoFollow.isAttachedAfterGeometryChange(
+                        wasAttached: isAttachedToLatestRow,
+                        isNearBottom: isNearBottom,
+                        scrollPhase: scrollPhase
+                    )
+                }
                 if !MacSessionTimelineAutoFollow.measurementsMatch(lastContentHeight, snapshot.contentHeight) {
                     lastContentHeight = snapshot.contentHeight
                 }
@@ -204,9 +241,16 @@ private struct MacSessionTimelineScrollView: View {
                     lastViewportWidth = snapshot.viewportWidth
                 }
                 if isAttachedToLatestRow != nextAttachment {
-                    isAttachedToLatestRow = nextAttachment
+                    setAttachedToLatestRow(nextAttachment)
                 }
-                if MacSessionTimelineAutoFollow.shouldScrollAfterContentGrowth(
+                if !remountRestore.holdRestore {
+                    recordViewport(
+                        offsetY: snapshot.offsetY,
+                        isAttached: nextAttachment
+                    )
+                }
+                if !remountRestore.holdRestore,
+                   MacSessionTimelineAutoFollow.shouldScrollAfterContentGrowth(
                     isAttached: nextAttachment,
                     isNearBottom: isNearBottom,
                     contentHeightIncreased: contentHeightIncreased
@@ -218,9 +262,11 @@ private struct MacSessionTimelineScrollView: View {
                 scrollPhase = newPhase
             }
             .onChange(of: sessionID) { _, _ in
-                isAttachedToLatestRow = true
+                setAttachedToLatestRow(true)
+                presentation?.timelineViewport = MacSessionTimelineViewport()
                 lastContentHeight = 0
                 lastViewportWidth = 0
+                pendingRemountTarget = nil
                 scrollToLatestIfAttached(proxy: proxy, animated: false)
             }
             .onChange(of: store.scrollTargetID) { _, targetID in
@@ -228,13 +274,17 @@ private struct MacSessionTimelineScrollView: View {
                 scrollToOutlineTarget(proxy: proxy, targetID: targetID, items: items)
             }
             .onAppear {
+                restoreViewportIfNeeded(proxy: proxy)
                 guard let targetID = store.scrollTargetID else { return }
                 scrollToOutlineTarget(proxy: proxy, targetID: targetID, items: items)
             }
             .overlay(alignment: .bottomTrailing) {
                 if !isAttachedToLatestRow {
                     Button {
-                        isAttachedToLatestRow = true
+                        pendingRemountTarget = MacSessionTimelineAutoFollow.pendingRemountTargetAfterExplicitNavigation(
+                            pendingRemountTarget
+                        )
+                        setAttachedToLatestRow(true)
                         scrollToLatestIfAttached(proxy: proxy, animated: true)
                     } label: {
                         Label("Latest", systemImage: "arrow.down")
@@ -255,10 +305,13 @@ private struct MacSessionTimelineScrollView: View {
         targetID: String,
         items: [ChatItem]
     ) {
-        isAttachedToLatestRow = MacSessionTimelineAutoFollow.shouldAttachToLatestAfterJump(
+        pendingRemountTarget = MacSessionTimelineAutoFollow.pendingRemountTargetAfterExplicitNavigation(
+            pendingRemountTarget
+        )
+        setAttachedToLatestRow(MacSessionTimelineAutoFollow.shouldAttachToLatestAfterJump(
             targetID: targetID,
             latestItemID: items.last?.id
-        )
+        ))
         if let animation = MacSessionTimelineAutoFollow.scrollAnimation(reduceMotion: reduceMotion) {
             withAnimation(animation) {
                 proxy.scrollTo(targetID, anchor: .center)
@@ -289,6 +342,55 @@ private struct MacSessionTimelineScrollView: View {
         }
         let action = store.applyKeybinding(chord)
         return MacTimelineKeybinding.consumes(action) ? .handled : .ignored
+    }
+
+    private func recordViewport(offsetY: CGFloat, isAttached: Bool) {
+        guard let presentation else { return }
+        let recorded = MacSessionTimelineAutoFollow.recordedViewport(
+            offsetY: Double(offsetY),
+            anchorID: scrollPosition.viewID(type: String.self),
+            isAttached: isAttached
+        )
+        if presentation.timelineViewport != recorded {
+            presentation.timelineViewport = recorded
+        }
+    }
+
+    private func restoreViewportIfNeeded(proxy: ScrollViewProxy) {
+        let target = MacSessionTimelineAutoFollow.remountScrollTarget(
+            isAttached: isAttachedToLatestRow,
+            viewport: presentation?.timelineViewport ?? MacSessionTimelineViewport(),
+            availableAnchorIDs: Set(items.map(\.id))
+        )
+        applyRemountTarget(target, proxy: proxy)
+        switch target {
+        case .anchor(_, let offsetY) where offsetY > 0.5:
+            pendingRemountTarget = target
+        case .offset(let offsetY) where offsetY > 0.5:
+            pendingRemountTarget = target
+        default:
+            pendingRemountTarget = nil
+        }
+    }
+
+    private func applyRemountTarget(
+        _ target: MacSessionTimelineRemountTarget,
+        proxy: ScrollViewProxy
+    ) {
+        switch MacSessionTimelineAutoFollow.restoreCommand(for: target) {
+        case .latest:
+            scrollToLatestIfAttached(proxy: proxy, animated: false)
+        case .rowStart(let id):
+            proxy.scrollTo(id, anchor: .top)
+            scrollPosition.scrollTo(id: id, anchor: .top)
+        case .contentOffset(let offsetY):
+            if case .anchor(let id, _) = target {
+                proxy.scrollTo(id, anchor: .top)
+            }
+            scrollPosition.scrollTo(y: CGFloat(offsetY))
+        case .none:
+            break
+        }
     }
 
     private func scrollToLatestIfAttached(proxy: ScrollViewProxy, animated: Bool) {
@@ -353,6 +455,7 @@ private struct ChatItemSummaryRow: View {
                 preview: preview,
                 hasMore: hasMore,
                 isDone: isDone,
+                hiddenThinkingLabel: store.extensionSurface.hiddenThinkingLabel,
                 workspaceID: workspaceID,
                 sessionID: sessionID,
                 worktreeId: worktreeId
@@ -1770,6 +1873,7 @@ struct ThinkingTimelineBubble: View {
     let preview: String
     let hasMore: Bool
     let isDone: Bool
+    var hiddenThinkingLabel: String? = nil
     var workspaceID: String? = nil
     var sessionID: String? = nil
     var worktreeId: String? = nil
@@ -1810,7 +1914,7 @@ struct ThinkingTimelineBubble: View {
             }
         }
         .accessibilityIdentifier("mac.timeline.thinkingRow")
-        .accessibilityLabel("Thinking")
+        .accessibilityLabel(hiddenThinkingLabel ?? "Thinking")
         .accessibilityValue(foldAccessibilityValue)
         .accessibilityAction(named: isExpanded ? "Show Less" : "Show All") {
             guard overflowsPaintedCap else { return }
@@ -1821,7 +1925,9 @@ struct ThinkingTimelineBubble: View {
     @ViewBuilder
     private var thinkingBody: some View {
         if preview.isEmpty {
-            EmptyView()
+            if let hiddenThinkingLabel {
+                Text(hiddenThinkingLabel).font(.callout).foregroundStyle(.themeComment)
+            }
         } else {
             ThinkingFoldLayout(
                 cap: collapsedCap,

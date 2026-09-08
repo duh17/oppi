@@ -195,21 +195,51 @@ struct SessionTraceShellDetail: View {
     let isStoppingSession: Bool
     let stopSession: () async -> Void
     var composerState: MacSessionComposerState? = nil
+    var presentation: MacSessionPanePresentationState = MacSessionPanePresentationState()
     var isActivePane = true
     var activatePane: (() -> Void)? = nil
     var loadsSessionOnMount = true
     @State private var ownedComposerState = MacSessionComposerState()
-    @State private var isInspectorPresented = MacSessionWindowChrome.inspectorInitiallyPresented
-    @State private var selectedFilesSection: MacSessionFilesInspectorSection = .browser
-    @State private var isOutlinePresented = false
-    @State private var isContextPresented = false
-    @State private var composerHeight = MacSessionTimelineOverlap.defaultComposerHeight
-    @State private var openPlan: FileViewerPlan?
     @State private var openDescriptor: ToolContentDescriptor?
     @State private var isLoadingDocument = false
     @State private var documentError: String?
     @State private var fontPreferenceRevision = 0
     @FocusState private var sessionFocus: KeybindingFocus?
+
+    private var inspectorPresented: Binding<Bool> {
+        Binding(
+            get: { presentation.isInspectorPresented },
+            set: { presentation.isInspectorPresented = $0 }
+        )
+    }
+
+    private var filesSection: Binding<MacSessionFilesInspectorSection> {
+        Binding(
+            get: { presentation.selectedFilesSection },
+            set: { presentation.selectedFilesSection = $0 }
+        )
+    }
+
+    private var outlinePresented: Binding<Bool> {
+        Binding(
+            get: { presentation.isOutlinePresented },
+            set: { presentation.isOutlinePresented = $0 }
+        )
+    }
+
+    private var contextPresented: Binding<Bool> {
+        Binding(
+            get: { presentation.isContextPresented },
+            set: { presentation.isContextPresented = $0 }
+        )
+    }
+
+    private var openPlanBinding: Binding<FileViewerPlan?> {
+        Binding(
+            get: { presentation.openPlan },
+            set: { presentation.openPlan = $0 }
+        )
+    }
 
     var body: some View {
         let _ = fontPreferenceRevision
@@ -225,7 +255,7 @@ struct SessionTraceShellDetail: View {
                     .ignoresSafeArea()
             }
             .environment(\.macOpenFileViewer, MacOpenFileViewerAction { plan in
-                openPlan = plan
+                presentation.openPlan = plan
             })
             .environment(\.macReviewCommentStaging, reviewCommentStaging)
             .navigationTitle(store.session?.displayTitle ?? "Session")
@@ -238,16 +268,13 @@ struct SessionTraceShellDetail: View {
             }
             .task(id: store.selectedTarget?.sessionId) {
                 guard loadsSessionOnMount else { return }
-                await store.loadSelectedFromLocalConfig()
+                await store.mountSelectedFromLocalConfig()
             }
-            .task(id: openPlan) {
+            .task(id: presentation.openPlan) {
                 await loadOpenedDocument()
             }
             .onChange(of: store.selectedTarget?.sessionId) { _, _ in
                 closeFileDocument()
-                selectedFilesSection = .browser
-                isOutlinePresented = false
-                isContextPresented = false
             }
             .onChange(of: sessionFocus) { _, new in
                 store.keybindingFocus = new ?? .composer
@@ -275,7 +302,7 @@ struct SessionTraceShellDetail: View {
 
     private var hasOpenDocument: Bool {
         MacSessionShellLayoutPolicy.hasDocument(
-            workspaceDocumentIsOpen: openPlan != nil,
+            workspaceDocumentIsOpen: presentation.openPlan != nil,
             toolDocumentIsOpen: store.openToolDocumentID != nil
         )
     }
@@ -284,12 +311,12 @@ struct SessionTraceShellDetail: View {
         Binding(
             get: {
                 MacSessionShellLayoutPolicy.shouldPresentInspector(
-                    requested: isInspectorPresented,
+                    requested: presentation.isInspectorPresented,
                     hasDocument: hasOpenDocument
                 )
             },
             set: { requested in
-                isInspectorPresented = MacSessionShellLayoutPolicy.shouldPresentInspector(
+                presentation.isInspectorPresented = MacSessionShellLayoutPolicy.shouldPresentInspector(
                     requested: requested,
                     hasDocument: hasOpenDocument
                 )
@@ -315,15 +342,15 @@ struct SessionTraceShellDetail: View {
     }
 
     private func toggleFiles() {
-        isInspectorPresented.toggle()
+        presentation.isInspectorPresented.toggle()
     }
 
     private func toggleOutline() {
-        isOutlinePresented.toggle()
+        presentation.isOutlinePresented.toggle()
     }
 
     private func toggleContext() {
-        isContextPresented.toggle()
+        presentation.isContextPresented.toggle()
     }
 
     @ViewBuilder
@@ -360,11 +387,12 @@ struct SessionTraceShellDetail: View {
                 await store.loadFullToolOutputIfNeeded(itemID: itemID)
             },
             bottomContentInset: MacSessionTimelineOverlap.bottomContentInset(
-                composerHeight: composerHeight
+                composerHeight: presentation.composerHeight
             ),
             isBusy: store.session?.status.isRunning == true,
             store: store,
-            sessionFocus: $sessionFocus
+            sessionFocus: $sessionFocus,
+            presentation: presentation
         )
         .frame(
             minWidth: MacSessionShellLayoutPolicy.timelineMinimumWidth,
@@ -382,19 +410,21 @@ struct SessionTraceShellDetail: View {
                 store: store,
                 sessionFocus: $sessionFocus,
                 composerState: composerState ?? ownedComposerState,
-                ownsDictationLifecycle: composerState == nil
+                ownsDictationLifecycle: composerState == nil,
+                isActivePane: isActivePane,
+                activatePane: { activatePane?() }
             )
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
             .onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.height
-            } action: { composerHeight = $0 }
+            } action: { presentation.composerHeight = $0 }
         }
     }
 
     @ViewBuilder
     private var documentColumn: some View {
-        if let plan = openPlan {
+        if let plan = presentation.openPlan {
             MacToolDocumentColumn(
                 plan: plan,
                 descriptor: openDescriptor,
@@ -431,14 +461,14 @@ struct SessionTraceShellDetail: View {
     }
 
     private func closeFileDocument() {
-        openPlan = nil
+        presentation.openPlan = nil
         openDescriptor = nil
         documentError = nil
         isLoadingDocument = false
     }
 
     private func loadOpenedDocument() async {
-        guard let plan = openPlan else {
+        guard let plan = presentation.openPlan else {
             openDescriptor = nil
             documentError = nil
             isLoadingDocument = false
@@ -448,7 +478,7 @@ struct SessionTraceShellDetail: View {
         documentError = nil
         isLoadingDocument = true
         if !FileViewerDescriptorBuilder.needsFileBytes(path: plan.path) {
-            guard openPlan == plan, !Task.isCancelled else { return }
+            guard presentation.openPlan == plan, !Task.isCancelled else { return }
             isLoadingDocument = false
             openDescriptor = FileViewerDescriptorBuilder.descriptor(path: plan.path, data: Data())
             documentError = nil
@@ -458,7 +488,7 @@ struct SessionTraceShellDetail: View {
             for: plan,
             sessionID: store.selectedTarget?.sessionId
         )
-        guard openPlan == plan, !Task.isCancelled else { return }
+        guard presentation.openPlan == plan, !Task.isCancelled else { return }
         isLoadingDocument = false
         guard let data else {
             documentError = "Could not load \(plan.fileName)."
@@ -488,13 +518,13 @@ struct SessionTraceShellDetail: View {
         ToolbarItem(placement: .primaryAction) {
             Button(action: toggleFiles) {
                 Label(
-                    isInspectorPresented ? "Close Files" : "Files",
-                    systemImage: isInspectorPresented ? "folder.fill" : "folder"
+                    presentation.isInspectorPresented ? "Close Files" : "Files",
+                    systemImage: presentation.isInspectorPresented ? "folder.fill" : "folder"
                 )
                 .labelStyle(.iconOnly)
             }
             .help("Session Files")
-            .accessibilityLabel(isInspectorPresented ? "Close session files" : "Open session files")
+            .accessibilityLabel(presentation.isInspectorPresented ? "Close session files" : "Open session files")
             .accessibilityIdentifier("mac.session.toolbar.files")
         }
 
@@ -506,9 +536,9 @@ struct SessionTraceShellDetail: View {
             .help("Session Outline")
             .accessibilityLabel("Open session outline")
             .accessibilityIdentifier("mac.session.toolbar.outline")
-            .popover(isPresented: $isOutlinePresented, arrowEdge: .bottom) {
+            .popover(isPresented: outlinePresented, arrowEdge: .bottom) {
                 MacSessionOutlineView(store: store) {
-                    isOutlinePresented = false
+                    presentation.isOutlinePresented = false
                 }
                 .frame(width: 380, height: 480)
             }
@@ -531,7 +561,7 @@ struct SessionTraceShellDetail: View {
         .accessibilityIdentifier("mac.session.toolbar.context")
         .accessibilityLabel("Open context inspector")
         .accessibilityValue(usage.accessibilityLabel)
-        .popover(isPresented: $isContextPresented, arrowEdge: .bottom) {
+        .popover(isPresented: contextPresented, arrowEdge: .bottom) {
             MacSessionContextInspectorView(store: store)
                 .frame(width: 380, height: 480)
         }
@@ -540,7 +570,7 @@ struct SessionTraceShellDetail: View {
     @ViewBuilder
     private var sessionInspector: some View {
         VStack(spacing: 0) {
-            Picker("Files view", selection: $selectedFilesSection) {
+            Picker("Files view", selection: filesSection) {
                 ForEach(MacSessionFilesInspectorSection.allCases) { section in
                     Text(section.title).tag(section)
                 }
@@ -551,13 +581,13 @@ struct SessionTraceShellDetail: View {
 
             Divider()
 
-            switch selectedFilesSection {
+            switch presentation.selectedFilesSection {
             case .browser:
                 if let workspace {
                     MacWorkspaceFileBrowserView(
                         workspace: workspace,
                         worktreeId: store.session?.worktreeId ?? WorkspaceWorktree.mainId,
-                        openPlan: $openPlan
+                        openPlan: openPlanBinding
                     )
                 } else {
                     ContentUnavailableView(

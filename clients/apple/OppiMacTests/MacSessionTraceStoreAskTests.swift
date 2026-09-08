@@ -106,6 +106,52 @@ struct MacSessionTraceStoreAskTests {
         #expect(store.currentAskRequest == nil)
     }
 
+    @Test func editorBlocksLaterAskInServerOrder() {
+        let store = MacSessionTraceStore()
+        let target = makeTarget()
+        store.select(target)
+        store.applyLiveRuntimeMessage(.extensionUIRequest(ExtensionUIRequest(
+            id: "editor", sessionId: target.sessionId, method: "editor", prefill: "Original"
+        )), sessionId: target.sessionId)
+        store.applyLiveRuntimeMessage(.extensionUIRequest(ExtensionUIRequest(
+            id: "later", sessionId: target.sessionId, method: "confirm", title: "Continue?"
+        )), sessionId: target.sessionId)
+        #expect(store.currentAskRequest == nil, "The earlier editor must own the blocking presentation")
+        store.applyLiveRuntimeMessage(.extensionUISettled(id: "editor", sessionId: target.sessionId), sessionId: target.sessionId)
+        #expect(store.currentAskRequest?.id == "later")
+    }
+
+    @Test func editorHandoffReachesPaneWithoutSubmittingOrDiscardingUserText() {
+        let store = MacSessionTraceStore()
+        let target = makeTarget()
+        let pane = MacSessionPaneRuntime(id: MacSessionPaneID(), target: target, traceStore: store)
+        pane.composerState.draft = "User draft"
+        let notification = ExtensionUINotification(
+            method: "set_editor_text", message: nil, notifyType: nil, statusKey: nil,
+            statusText: nil, title: nil, text: "Extension text", widgetKey: nil,
+            widgetLines: nil, widgetPlacement: nil
+        )
+        store.applyLiveRuntimeMessage(.extensionUINotification(notification), sessionId: target.sessionId)
+        #expect(pane.composerState.draft == "User draft\n\nExtension text")
+        #expect(!store.isSending)
+        #expect(store.items.isEmpty)
+    }
+
+    @Test func toolsExpandedEffectReachesMacRowConsumer() {
+        let store = MacSessionTraceStore()
+        let target = makeTarget()
+        store.select(target)
+        let notification = ExtensionUINotification(
+            method: "setToolsExpanded", message: nil, notifyType: nil, statusKey: nil,
+            statusText: nil, title: nil, text: nil, widgetKey: nil,
+            widgetLines: nil, widgetPlacement: nil, toolsExpanded: true
+        )
+        store.applyLiveRuntimeMessage(.extensionUINotification(notification), sessionId: target.sessionId)
+        #expect(store.isToolRowExpanded("future-row"))
+        store.setToolRowExpanded("future-row", expanded: false)
+        #expect(!store.isToolRowExpanded("future-row"), "Local row choice wins until the next extension expansion command")
+    }
+
     private func makeTarget() -> MacSelectedSessionTarget {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let session = Session(

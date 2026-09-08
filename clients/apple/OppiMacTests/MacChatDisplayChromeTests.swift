@@ -35,7 +35,7 @@ struct MacChatDisplayChromeTests {
         let source = try macTimelineSource()
         #expect(source.contains("showsAssistantAvatar: role == .assistant"))
         #expect(source.contains("MacCurrentAssistantAvatarView("))
-        #expect(source.contains("MacWorkingIndicatorRow()"))
+        #expect(source.contains("MacWorkingIndicatorRow(state:"))
         #expect(source.contains("MacWorkingIndicatorRow.rowID"))
         #expect(source.contains("isBusy: Bool = false"))
         #expect(!source.contains("WorkingIndicatorTimelineRowContentView"))

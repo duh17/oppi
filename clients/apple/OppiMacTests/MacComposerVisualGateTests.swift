@@ -6,6 +6,265 @@ import XCTest
 
 @MainActor
 final class MacComposerVisualGateTests: XCTestCase {
+    func testEditorRequestDoesNotClaimComposerCommandReturn() async throws {
+        let store = MacSessionTraceStore()
+        let target = makeTarget(status: .busy)
+        store.select(target)
+        store.applyLiveRuntimeMessage(.extensionUIRequest(ExtensionUIRequest(
+            id: "blocking-editor", sessionId: target.sessionId, method: "editor", title: "Review response"
+        )), sessionId: target.sessionId)
+        let host = NSHostingView(rootView: MacComposerSnapshotHost(store: store, initialDraft: "Do not send this")
+            .frame(width: 680).padding(20).environment(\.theme, AppTheme.dark))
+        host.frame = NSRect(x: 0, y: 0, width: 720, height: 420)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        await flushExtensionHost(host)
+        let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, characters: "\r",
+            charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+        let claimed = window.performKeyEquivalent(with: key)
+        // Revoke the target synchronously, before any accidentally scheduled
+        // send Task can read local configuration. The red run is side-effect free.
+        store.clearSelection()
+        XCTAssertFalse(claimed, "An unanswered editor must disable the ordinary composer shortcut")
+    }
+
+    func testExtensionEditorMountedOpenTypeSubmitAndRemoteSettlement() async throws {
+        let store = MacSessionTraceStore()
+        let target = makeTarget(status: .busy)
+        store.select(target)
+        let request = ExtensionUIRequest(id: "mounted-editor", sessionId: target.sessionId,
+                                         method: "editor", title: "Review response", prefill: "Original")
+        store.applyLiveRuntimeMessage(.extensionUIRequest(request), sessionId: target.sessionId)
+        var responses: [ClientMessage] = []
+        store._sendLiveMessageForTesting = { responses.append($0); return true }
+        let host = NSHostingView(rootView: MacComposerSnapshotHost(store: store, initialDraft: "Untouched draft")
+            .frame(width: 680).padding(20)
+            .environment(\.theme, AppTheme.dark).environment(\.themeID, ThemeID.dark))
+        host.frame = NSRect(x: 0, y: 0, width: 720, height: 420)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            for sheet in window.sheets { window.endSheet(sheet); sheet.orderOut(nil) }
+            window.orderOut(nil); window.contentView = nil; window.close()
+        }
+        await flushExtensionHost(host)
+        let before = XCTAttachment(image: try extensionHostImage(host))
+        before.name = "extension-editor-mounted-entry"
+        before.lifetime = .keepAlways
+        add(before)
+        // Offscreen SwiftUI AX children are absent on the current macOS host.
+        // Dispatch local window events at the fixed fixture's visible button;
+        // this still exercises production hit testing and Button actions.
+        try clickExtensionHost(host, at: NSPoint(x: 90, y: host.isFlipped ? 66 : host.bounds.height - 66))
+        await flushExtensionHost(host)
+        var sheet = try XCTUnwrap(window.sheets.first, "The production composer entry point must mount an editor sheet")
+        var content = try XCTUnwrap(sheet.contentView)
+        XCTAssertGreaterThanOrEqual(content.bounds.height, 360,
+            "The editor sheet must fit its header, input, and response controls instead of clipping to 240 pt")
+        let editor = try XCTUnwrap(visualDescendants(of: content, type: NSTextView.self).first)
+        XCTAssertEqual(editor.string, "Original")
+        editor.insertText("Edited on Mac", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        await flushExtensionHost(content)
+        XCTAssertEqual(store.extensionEditorText(for: request), "Edited on Mac")
+        let escape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: sheet.windowNumber, context: nil, characters: "\u{1b}",
+            charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        XCTAssertTrue(sheet.performKeyEquivalent(with: escape))
+        await flushExtensionHost(host)
+        XCTAssertTrue(responses.isEmpty, "Escape closes without cancelling the server request")
+        XCTAssertEqual(store.extensionEditorText(for: request), "Edited on Mac")
+        XCTAssertNotNil(store.currentExtensionDialog)
+        XCTAssertTrue(window.sheets.isEmpty)
+        try clickExtensionHost(host, at: NSPoint(x: 90, y: host.isFlipped ? 66 : host.bounds.height - 66))
+        await flushExtensionHost(host)
+        sheet = try XCTUnwrap(window.sheets.first)
+        content = try XCTUnwrap(sheet.contentView)
+        let reopenedEditor = try XCTUnwrap(visualDescendants(of: content, type: NSTextView.self).first)
+        XCTAssertEqual(reopenedEditor.string, "Edited on Mac")
+        var replacement = request
+        replacement.title = "Review updated response"
+        store.applyLiveRuntimeMessage(.extensionUIRequest(replacement), sessionId: target.sessionId)
+        await flushExtensionHost(content)
+        XCTAssertEqual(store.currentExtensionDialog, replacement)
+        let ready = XCTAttachment(image: try extensionHostImage(content))
+        ready.name = "extension-editor-mounted-ready-to-submit"
+        ready.lifetime = .keepAlways
+        add(ready)
+        let submitKey = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: sheet.windowNumber, context: nil, characters: "\r",
+            charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+        XCTAssertTrue(sheet.performKeyEquivalent(with: submitKey), "Cmd-Return must reach the production Submit action")
+        await flushExtensionHost(content)
+        XCTAssertEqual(responses.count, 1)
+        guard case .extensionUIResponse(let id, let text, _, _, _) = responses.first else {
+            XCTFail("Expected extension response from mounted Submit"); return
+        }
+        XCTAssertEqual(id, request.id)
+        XCTAssertEqual(text, "Edited on Mac")
+        XCTAssertNotNil(store.currentExtensionDialog, "Transport write is not server settlement")
+        let image = try extensionHostImage(content)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "extension-editor-mounted-after-submit"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        store.applyLiveRuntimeMessage(.extensionUISettled(id: request.id, sessionId: target.sessionId), sessionId: target.sessionId)
+        await flushExtensionHost(host)
+        XCTAssertNil(store.currentExtensionDialog)
+        XCTAssertTrue(window.sheets.isEmpty, "Remote settlement must dismiss the mounted sheet")
+
+        let pointerRequest = ExtensionUIRequest(id: "mounted-editor-pointer", sessionId: target.sessionId,
+                                                method: "editor", title: "Review pointer response", prefill: "Original")
+        store.applyLiveRuntimeMessage(.extensionUIRequest(pointerRequest), sessionId: target.sessionId)
+        await flushExtensionHost(host)
+        try clickExtensionHost(host, at: NSPoint(x: 90, y: host.isFlipped ? 66 : host.bounds.height - 66))
+        await flushExtensionHost(host)
+        sheet = try XCTUnwrap(window.sheets.first, "Pointer cycle must mount an editor sheet")
+        content = try XCTUnwrap(sheet.contentView)
+        let pointerEditor = try XCTUnwrap(visualDescendants(of: content, type: NSTextView.self).first)
+        XCTAssertEqual(pointerEditor.string, "Original")
+        pointerEditor.insertText("Pointer edited", replacementRange: NSRange(location: 0, length: pointerEditor.string.utf16.count))
+        await flushExtensionHost(content)
+        let pointerEscape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: sheet.windowNumber, context: nil, characters: "\u{1b}",
+            charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        XCTAssertTrue(sheet.performKeyEquivalent(with: pointerEscape))
+        await flushExtensionHost(host)
+        XCTAssertEqual(responses.count, 1, "Pointer-cycle Escape must not send")
+        XCTAssertEqual(store.extensionEditorText(for: pointerRequest), "Pointer edited")
+        XCTAssertTrue(window.sheets.isEmpty)
+        try clickExtensionHost(host, at: NSPoint(x: 90, y: host.isFlipped ? 66 : host.bounds.height - 66))
+        await flushExtensionHost(host)
+        sheet = try XCTUnwrap(window.sheets.first)
+        content = try XCTUnwrap(sheet.contentView)
+        XCTAssertEqual(visualDescendants(of: content, type: NSTextView.self).first?.string, "Pointer edited")
+        var pointerReplacement = pointerRequest
+        pointerReplacement.title = "Review updated pointer response"
+        store.applyLiveRuntimeMessage(.extensionUIRequest(pointerReplacement), sessionId: target.sessionId)
+        await flushExtensionHost(content)
+        XCTAssertEqual(store.currentExtensionDialog, pointerReplacement)
+        sheet.makeKeyAndOrderFront(nil)
+        try clickExtensionHost(content, at: visibleSubmitHit(in: content).point)
+        await flushExtensionHost(content)
+        XCTAssertEqual(responses.count, 2)
+        guard case .extensionUIResponse(let pointerId, let pointerText, _, _, _) = responses.last else {
+            XCTFail("Expected extension response from mounted pointer Submit"); return
+        }
+        XCTAssertEqual(pointerId, pointerRequest.id)
+        XCTAssertEqual(pointerText, "Pointer edited")
+        store.applyLiveRuntimeMessage(.extensionUISettled(id: pointerRequest.id, sessionId: target.sessionId), sessionId: target.sessionId)
+        await flushExtensionHost(host)
+        XCTAssertNil(store.currentExtensionDialog)
+        XCTAssertTrue(window.sheets.isEmpty, "Remote settlement must dismiss the pointer sheet")
+    }
+
+    func testExtensionWorkingThinkingAndToolDisplayMountedPaint() throws {
+        let store = MacSessionTraceStore()
+        let target = makeTarget(status: .busy)
+        store.select(target)
+        let rows: [ChatItem] = [
+            .thinking(id: "hidden-thinking", preview: "", hasMore: false, isDone: true),
+            .toolCall(id: "generic-row", tool: "fixture_operation", argsSummary: "Inspect result",
+                      outputPreview: "Detailed extension output\nSecond line", outputByteCount: 42, isError: false, isDone: true),
+        ]
+        func notification(_ method: String, message: String? = nil, visible: Bool? = nil,
+                          frames: [String]? = nil, hidden: String? = nil, expanded: Bool? = nil) {
+            store.applyLiveRuntimeMessage(.extensionUINotification(ExtensionUINotification(
+                method: method, message: message, notifyType: nil, statusKey: nil, statusText: nil,
+                title: nil, text: nil, widgetKey: nil, widgetLines: nil, widgetPlacement: nil,
+                workingIndicator: frames.map { .init(frames: $0, intervalMs: 120) },
+                workingVisible: visible, hiddenThinkingLabel: hidden, toolsExpanded: expanded
+            )), sessionId: target.sessionId)
+        }
+        func capture(_ name: String) throws -> NSImage {
+            let image = try hostedSnapshot(of: MacTimelineSnapshotHost(store: store, isLoading: false,
+                lastError: nil, isBusy: true, items: rows)
+                .frame(width: 640, height: 420)
+                .environment(\.theme, AppTheme.dark).environment(\.themeID, ThemeID.dark))
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+            return image
+        }
+        notification("setWorkingMessage", message: "Checking files")
+        notification("setWorkingIndicator", frames: ["●"])
+        notification("setHiddenThinkingLabel", hidden: "Reasoning is private")
+        let collapsed = try capture("extension-display-collapsed")
+        notification("setToolsExpanded", expanded: true)
+        let expanded = try capture("extension-display-expanded")
+        XCTAssertNotEqual(collapsed.tiffRepresentation, expanded.tiffRepresentation,
+                          "The actual Mac tool painter must change when expansion arrives")
+        notification("setWorkingVisible", visible: false)
+        let hidden = try capture("extension-display-working-hidden")
+        XCTAssertNotEqual(expanded.tiffRepresentation, hidden.tiffRepresentation,
+                          "The actual Mac timeline must remove its working row")
+    }
+
+    private func flushExtensionHost(_ view: NSView) async {
+        for _ in 0..<12 {
+            await Task.yield()
+            view.layoutSubtreeIfNeeded()
+            view.displayIfNeeded()
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        CATransaction.flush()
+    }
+
+    private func clickExtensionHost(_ view: NSView, at point: NSPoint) throws {
+        let window = try XCTUnwrap(view.window)
+        let location = view.convert(point, to: nil)
+        for type in [NSEvent.EventType.leftMouseUp, .leftMouseDown] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location,
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1,
+                clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+            if type == .leftMouseUp {
+                NSApp.postEvent(event, atStart: true)
+            } else {
+                window.sendEvent(event)
+            }
+        }
+    }
+
+    private func visibleSubmitHit(in content: NSView) -> (point: NSPoint, hit: String) {
+        let x = content.bounds.maxX - 50
+        let offsets: [CGFloat] = Array(stride(from: 8, through: 48, by: 4)).map(CGFloat.init)
+        for offset in offsets {
+            let y = content.isFlipped ? content.bounds.maxY - offset : content.bounds.minY + offset
+            let local = NSPoint(x: x, y: y)
+            let windowPoint = content.convert(local, to: nil)
+            let hit = content.window?.contentView?.hitTest(windowPoint)
+            if let hit, !(hit is NSTextView), hit !== content {
+                return (local, String(describing: type(of: hit)))
+            }
+        }
+        let fallback = NSPoint(
+            x: x,
+            y: content.isFlipped ? content.bounds.maxY - 32 : content.bounds.minY + 32
+        )
+        let windowPoint = content.convert(fallback, to: nil)
+        let hit = content.window?.contentView?.hitTest(windowPoint)
+        return (fallback, hit.map { String(describing: type(of: $0)) } ?? "nil")
+    }
+
+    private func extensionHostImage(_ view: NSView) throws -> NSImage {
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(bitmap)
+        return image
+    }
+
     func testPrimaryComposerStates() throws {
         for status in [SessionStatus.ready, .busy, .stopping, .stopped] {
             let store = MacSessionTraceStore()
@@ -847,13 +1106,14 @@ private struct MacTimelineSnapshotHost: View {
     let isLoading: Bool
     let lastError: String?
     let isBusy: Bool
+    var items: [ChatItem] = []
     @FocusState private var focus: KeybindingFocus?
 
     var body: some View {
         MacSessionTimelineView(
             isLoading: isLoading,
             lastError: lastError,
-            items: [],
+            items: items,
             isBusy: isBusy,
             store: store,
             sessionFocus: $focus
@@ -861,6 +1121,7 @@ private struct MacTimelineSnapshotHost: View {
     }
 }
 
+@MainActor
 private func visualDescendants<T: NSView>(of root: NSView, type: T.Type) -> [T] {
     var matches: [T] = []
     if let match = root as? T {

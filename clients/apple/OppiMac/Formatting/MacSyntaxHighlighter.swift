@@ -1,5 +1,37 @@
 import AppKit
+import CoreText
 import Foundation
+
+/// Process-scoped registration of one bundled coding-font family.
+/// Launch no longer ATS-registers all five families; Home chrome uses system type.
+enum MacBundledCodeFontRegistration {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var registered: Set<String> = []
+
+    static func fontFileURLs(in folder: URL) -> [URL] {
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        return urls.filter { ["ttf", "otf"].contains($0.pathExtension.lowercased()) }
+    }
+
+    static func ensureRegistered(_ family: FontPreferenceStore.CodeFontFamily) {
+        guard let folderName = family.fontNamePrefix else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !registered.contains(folderName) else { return }
+        registered.insert(folderName)
+        guard let folder = Bundle.main.resourceURL?
+            .appendingPathComponent("Fonts", isDirectory: true)
+            .appendingPathComponent(folderName, isDirectory: true) else {
+            return
+        }
+        for url in fontFileURLs(in: folder) {
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
+    }
+}
 
 extension FontPreferenceStore.CodeFontFamily {
     fileprivate func macPostScriptName(weight: NSFont.Weight) -> String? {
@@ -17,6 +49,7 @@ extension FontPreferenceStore.CodeFontFamily {
     }
 
     fileprivate func macFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        MacBundledCodeFontRegistration.ensureRegistered(self)
         if let name = macPostScriptName(weight: weight),
            let font = NSFont(name: name, size: size) {
             return font

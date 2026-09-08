@@ -5,6 +5,16 @@ import Testing
 
 @Suite("Mac session command availability")
 struct MacSessionCommandAvailabilityTests {
+    @Test func appCommandsMountSessionAndPaneMenus() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "OppiMac/App/OppiMacApp.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        #expect(source.contains("MacSessionCommands()"))
+        #expect(source.contains("MacSessionPaneCommandMenu()"))
+    }
+
     @Test func absentOrHiddenSessionDisablesEveryCommand() {
         let hiddenHome = MacSessionCommandAvailability.evaluate(
             input(visible: false, status: .ready, hasDraft: true, canSendMessage: true)

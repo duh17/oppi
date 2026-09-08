@@ -44,18 +44,32 @@ enum MacSessionPaneCommand: String, CaseIterable, Sendable {
     }
 }
 
+enum MacSessionPaneCommandAvailability {
+    /// Pane commands belong to the visible Home deck, not a hidden retained tree.
+    /// Stats-only Home detail is the exception: the deck is not on screen.
+    static func isDeckDisplayed(
+        section: MacSidebarSection,
+        homeDetail: MacHomeSessionSelection
+    ) -> Bool {
+        guard section == .sessionHome else { return false }
+        if case .statsOnly = homeDetail { return false }
+        return true
+    }
+}
+
 @MainActor
 @Observable
 final class MacSessionPaneCommandCenter {
     let deck: MacSessionPaneDeck
     var isCheatSheetPresented = false
+    var isDeckDisplayed = true
 
     init(deck: MacSessionPaneDeck) {
         self.deck = deck
     }
 
-    var canSplit: Bool { deck.canSplit }
-    var canClosePane: Bool { deck.layout != nil }
+    var canSplit: Bool { isDeckDisplayed && deck.layout != nil }
+    var canClosePane: Bool { isDeckDisplayed && deck.layout != nil }
     var canShowCheatSheet: Bool {
         MacAppKeybindingHelp.allowsCheatSheetShortcut(
             composerIsFirstResponder: deck.hasComposerFirstResponder
@@ -63,6 +77,7 @@ final class MacSessionPaneCommandCenter {
     }
 
     func perform(_ command: MacSessionPaneCommand) {
+        guard isDeckDisplayed else { return }
         let originID = deck.focusedPaneID
         switch command {
         case .splitRight:
@@ -138,9 +153,7 @@ struct MacSessionPaneCommandMenu: Commands {
 
     private func isEnabled(_ command: MacSessionPaneCommand) -> Bool {
         switch command {
-        case .splitRight, .splitDown:
-            commands?.canSplit == true
-        case .focusLeft, .focusRight, .focusUp, .focusDown, .closePane:
+        case .splitRight, .splitDown, .focusLeft, .focusRight, .focusUp, .focusDown, .closePane:
             commands?.canClosePane == true
         }
     }

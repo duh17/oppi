@@ -176,7 +176,7 @@ extension MacSessionPaneNode: Codable {
 enum MacSessionPaneLayoutError: Error, Equatable, Sendable {
     case paneNotFound
     case splitNotFound
-    case paneLimitReached
+    case paneTooSmall
     case duplicatePaneID
     case duplicateSplitID
     case cannotCloseOnlyPane
@@ -184,13 +184,109 @@ enum MacSessionPaneLayoutError: Error, Equatable, Sendable {
     case focusedPaneNotFound
 }
 
+/// Geometry contract for a useful Mac session pane. Matches the narrow
+/// composer / timeline minimum rather than an arbitrary pane count.
+enum MacSessionPaneSplitAdmission: Equatable, Sendable {
+    static let minimumPaneWidth: Double = 320
+    static let minimumPaneHeight: Double = 240
+    static let dividerThickness: Double = 12
+
+    enum Rejection: Equatable, Sendable {
+        case paneTooSmall
+        case windowTooSmall
+
+        var message: String {
+            switch self {
+            case .paneTooSmall:
+                "This pane is too small to split."
+            case .windowTooSmall:
+                "This window is too small to split."
+            }
+        }
+    }
+
+    /// Painted children subtract the divider first, then apply `fraction` to
+    /// the remaining length. Admission must use this same geometry.
+    static func paintedLeafLengths(along: Double, fraction: Double) -> (first: Double, second: Double) {
+        let usable = max(along - dividerThickness, 0)
+        return (usable * fraction, usable * (1 - fraction))
+    }
+
+    /// Child lengths for a divider that may sit above nested splits.
+    /// `firstMinimum` / `secondMinimum` are subtree minima along this axis.
+    static func subtreeMinimumSize(of node: MacSessionPaneNode) -> MacSessionPaneMeasuredSize {
+        node.subtreeMinimumSize()
+    }
+
+    static func paintedSplitLengths(
+        along: Double,
+        fraction: Double,
+        firstMinimum: Double,
+        secondMinimum: Double
+    ) -> (first: Double, second: Double, overflows: Bool) {
+        let needed = firstMinimum + dividerThickness + secondMinimum
+        let finiteFraction = fraction.isFinite ? fraction : 0.5
+        if along + 0.001 < needed {
+            let contentUsable = max(needed - dividerThickness, 0)
+            let lower = contentUsable == 0 ? 0 : firstMinimum / contentUsable
+            let upper = contentUsable == 0 ? 1 : 1 - secondMinimum / contentUsable
+            let clamped = min(max(finiteFraction, min(lower, upper)), max(lower, upper))
+            let leaves = paintedLeafLengths(along: needed, fraction: clamped)
+            return (
+                max(0, leaves.first),
+                max(0, leaves.second),
+                true
+            )
+        }
+        let usable = max(along - dividerThickness, 0)
+        guard usable > 0 else {
+            return (0, 0, true)
+        }
+        let lower = firstMinimum / usable
+        let upper = 1 - secondMinimum / usable
+        let clamped = min(max(finiteFraction, lower), upper)
+        let leaves = paintedLeafLengths(along: along, fraction: clamped)
+        return (max(0, leaves.first), max(0, leaves.second), false)
+    }
+
+    static func evaluate(
+        paneSize: MacSessionPaneMeasuredSize?,
+        windowSize: MacSessionPaneMeasuredSize?,
+        axis: MacSessionPaneSplitAxis,
+        fraction: Double = 0.5
+    ) -> Rejection? {
+        let minimum = axis == .horizontal ? minimumPaneWidth : minimumPaneHeight
+        let paneAlong = axis == .horizontal ? paneSize?.width : paneSize?.height
+        let windowAlong = axis == .horizontal ? windowSize?.width : windowSize?.height
+        let needed = minimum * 2 + dividerThickness
+
+        // A stale leaf cache can still look large enough after the window
+        // shrinks. The window must independently fit both children.
+        if let windowAlong, windowAlong + 0.001 < needed {
+            return .windowTooSmall
+        }
+        if let paneAlong {
+            let leaves = paintedLeafLengths(along: paneAlong, fraction: fraction)
+            if leaves.first + 0.001 < minimum || leaves.second + 0.001 < minimum {
+                return .paneTooSmall
+            }
+            return nil
+        }
+        // Unknown leaf geometry must not fail open.
+        return .paneTooSmall
+    }
+}
+
+struct MacSessionPaneMeasuredSize: Equatable, Sendable {
+    var width: Double
+    var height: Double
+}
+
 /// Restorable terminal-style tiling state for one Mac session window.
 ///
 /// Replacing a closed split with its surviving child keeps the entire sibling
 /// subtree intact, including its pane routes, identifiers, axes, and fractions.
 struct MacSessionPaneLayout: Codable, Hashable, Sendable {
-    static let maximumPaneCount = 4
-
     private(set) var root: MacSessionPaneNode
     private(set) var focusedPaneID: MacSessionPaneID
 
@@ -259,13 +355,20 @@ struct MacSessionPaneLayout: Codable, Hashable, Sendable {
         newRoute: MacSessionPaneRoute? = nil,
         newPaneID: MacSessionPaneID = MacSessionPaneID(),
         splitID: MacSessionPaneSplitID = MacSessionPaneSplitID(),
-        fraction: Double = 0.5
+        fraction: Double = 0.5,
+        paneSize: MacSessionPaneMeasuredSize? = nil,
+        windowSize: MacSessionPaneMeasuredSize? = nil
     ) throws {
         guard root.contains(paneID: paneID) else {
             throw MacSessionPaneLayoutError.paneNotFound
         }
-        guard paneCount < Self.maximumPaneCount else {
-            throw MacSessionPaneLayoutError.paneLimitReached
+        if MacSessionPaneSplitAdmission.evaluate(
+            paneSize: paneSize,
+            windowSize: windowSize,
+            axis: axis,
+            fraction: fraction
+        ) != nil {
+            throw MacSessionPaneLayoutError.paneTooSmall
         }
         guard !root.contains(paneID: newPaneID) else {
             throw MacSessionPaneLayoutError.duplicatePaneID
@@ -307,6 +410,16 @@ struct MacSessionPaneLayout: Codable, Hashable, Sendable {
             focusedPaneID = remainingPaneIDs[min(closingIndex, remainingPaneIDs.count - 1)]
         }
         root = nextRoot
+    }
+
+    /// Leaf size the renderer would paint for `paneID` inside `windowSize`.
+    /// Used when a pane has not reported `notePaneSize` yet so admission cannot
+    /// pretend the whole window is that leaf.
+    func paintedSize(
+        of paneID: MacSessionPaneID,
+        in windowSize: MacSessionPaneMeasuredSize
+    ) -> MacSessionPaneMeasuredSize? {
+        root.paintedSize(of: paneID, in: windowSize)
     }
 
     func adjacentPaneID(direction: MacSessionPaneFocusDirection) -> MacSessionPaneID? {
@@ -357,9 +470,6 @@ struct MacSessionPaneLayout: Codable, Hashable, Sendable {
         focusedPaneID: MacSessionPaneID
     ) throws {
         let panes = root.panes
-        guard panes.count <= maximumPaneCount else {
-            throw MacSessionPaneLayoutError.paneLimitReached
-        }
         guard Set(panes.map(\.id)).count == panes.count else {
             throw MacSessionPaneLayoutError.duplicatePaneID
         }
@@ -473,6 +583,46 @@ private extension MacSessionPaneNode {
         }
     }
 
+    func subtreeMinimumSize() -> MacSessionPaneMeasuredSize {
+        switch self {
+        case .pane:
+            return MacSessionPaneMeasuredSize(
+                width: MacSessionPaneSplitAdmission.minimumPaneWidth,
+                height: MacSessionPaneSplitAdmission.minimumPaneHeight
+            )
+        case .split(let split):
+            let first = split.first.subtreeMinimumSize()
+            let second = split.second.subtreeMinimumSize()
+            let divider = MacSessionPaneSplitAdmission.dividerThickness
+            switch split.axis {
+            case .horizontal:
+                return MacSessionPaneMeasuredSize(
+                    width: first.width + divider + second.width,
+                    height: max(first.height, second.height)
+                )
+            case .vertical:
+                return MacSessionPaneMeasuredSize(
+                    width: max(first.width, second.width),
+                    height: first.height + divider + second.height
+                )
+            }
+        }
+    }
+
+    func paintedSize(
+        of paneID: MacSessionPaneID,
+        in size: MacSessionPaneMeasuredSize
+    ) -> MacSessionPaneMeasuredSize? {
+        switch self {
+        case .pane(let pane):
+            return pane.id == paneID ? size : nil
+        case .split(let split):
+            let (firstSize, secondSize) = split.paintedChildSizes(in: size)
+            return split.first.paintedSize(of: paneID, in: firstSize)
+                ?? split.second.paintedSize(of: paneID, in: secondSize)
+        }
+    }
+
     func replacingPane(id: MacSessionPaneID, route: MacSessionPaneRoute?) -> MacSessionPaneNode? {
         switch self {
         case .pane(let pane):
@@ -582,6 +732,35 @@ private extension MacSessionPaneSplit {
             first: first ?? self.first,
             second: second ?? self.second
         )
+    }
+
+    func paintedChildSizes(
+        in size: MacSessionPaneMeasuredSize
+    ) -> (MacSessionPaneMeasuredSize, MacSessionPaneMeasuredSize) {
+        switch axis {
+        case .horizontal:
+            let paint = MacSessionPaneSplitAdmission.paintedSplitLengths(
+                along: size.width,
+                fraction: fraction,
+                firstMinimum: first.subtreeMinimumSize().width,
+                secondMinimum: second.subtreeMinimumSize().width
+            )
+            return (
+                MacSessionPaneMeasuredSize(width: paint.first, height: size.height),
+                MacSessionPaneMeasuredSize(width: paint.second, height: size.height)
+            )
+        case .vertical:
+            let paint = MacSessionPaneSplitAdmission.paintedSplitLengths(
+                along: size.height,
+                fraction: fraction,
+                firstMinimum: first.subtreeMinimumSize().height,
+                secondMinimum: second.subtreeMinimumSize().height
+            )
+            return (
+                MacSessionPaneMeasuredSize(width: size.width, height: paint.first),
+                MacSessionPaneMeasuredSize(width: size.width, height: paint.second)
+            )
+        }
     }
 
     func childFrames(

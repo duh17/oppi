@@ -3,6 +3,33 @@ import SwiftUI
 /// Mac timeline follow policy: stay pinned to the latest row while the user
 /// is near the bottom. Geometry math lives here so OppiMacTests can cover it
 /// without embedding UIKit's chat scroller.
+/// Pane-owned timeline viewport. Retiling must restore this instead of
+/// remounting a detached scroller at the top.
+struct MacSessionTimelineViewport: Equatable, Sendable {
+    var offsetY: Double = 0
+    var anchorID: String? = nil
+}
+
+enum MacSessionTimelineRemountTarget: Equatable, Sendable {
+    case latest
+    case anchor(String, offsetY: Double)
+    case offset(Double)
+    case top
+}
+
+enum MacSessionTimelineRestoreCommand: Equatable, Sendable {
+    case latest
+    case rowStart(String)
+    case contentOffset(Double)
+    case none
+}
+
+struct MacSessionTimelineRemountRestoreDecision: Equatable, Sendable {
+    var pending: MacSessionTimelineRemountTarget?
+    var applyRestore: Bool
+    var holdRestore: Bool
+}
+
 enum MacSessionTimelineAutoFollow {
     static let nearBottomThreshold: CGFloat = 64
     static let latestAnchorID = "mac.timeline.latest"
@@ -78,6 +105,137 @@ enum MacSessionTimelineAutoFollow {
 
     static func shouldScrollToLatestRow(isAttached: Bool) -> Bool {
         isAttached
+    }
+
+    static func recordedViewport(
+        offsetY: Double,
+        anchorID: String?,
+        isAttached: Bool
+    ) -> MacSessionTimelineViewport {
+        MacSessionTimelineViewport(
+            offsetY: max(offsetY, 0),
+            anchorID: isAttached ? latestAnchorID : anchorID
+        )
+    }
+
+    static func remountScrollTarget(
+        isAttached: Bool,
+        viewport: MacSessionTimelineViewport,
+        availableAnchorIDs: Set<String>? = nil
+    ) -> MacSessionTimelineRemountTarget {
+        if isAttached {
+            return .latest
+        }
+        if let anchorID = viewport.anchorID,
+           !anchorID.isEmpty,
+           anchorID != latestAnchorID,
+           availableAnchorIDs?.contains(anchorID) ?? true {
+            return .anchor(anchorID, offsetY: viewport.offsetY)
+        }
+        if viewport.offsetY > 0.5 {
+            return .offset(viewport.offsetY)
+        }
+        return .top
+    }
+
+    /// Restore command for a remount target. An anchored row with a stored
+    /// offset must keep that offset; `.top` of the row would jump the user.
+    static func restoreCommand(
+        for target: MacSessionTimelineRemountTarget
+    ) -> MacSessionTimelineRestoreCommand {
+        switch target {
+        case .latest:
+            .latest
+        case .anchor(let id, let offsetY):
+            offsetY > 0.5 ? .contentOffset(offsetY) : .rowStart(id)
+        case .offset(let offsetY):
+            .contentOffset(offsetY)
+        case .top:
+            .none
+        }
+    }
+
+    /// Explicit Latest or outline navigation owns the viewport. Drop any
+    /// pending remount restore so later achievable geometry cannot reapply
+    /// the pre-navigation offset.
+    static func pendingRemountTargetAfterExplicitNavigation(
+        _ pending: MacSessionTimelineRemountTarget?
+    ) -> MacSessionTimelineRemountTarget? {
+        switch pending {
+        case .latest, .anchor, .offset, .top, nil:
+            nil
+        }
+    }
+
+    /// Keep a remount restore until the saved offset is reachable. A short
+    /// first geometry frame would otherwise no-op `scrollTo(y:)`, look
+    /// near-bottom, and reattach live-tail so later growth jumps to latest.
+    static func remountRestoreDecision(
+        pending: MacSessionTimelineRemountTarget?,
+        contentHeight: CGFloat,
+        offsetY: CGFloat,
+        viewportHeight: CGFloat
+    ) -> MacSessionTimelineRemountRestoreDecision {
+        guard let pending else {
+            return MacSessionTimelineRemountRestoreDecision(
+                pending: nil,
+                applyRestore: false,
+                holdRestore: false
+            )
+        }
+        guard let requested = requestedRestoreOffset(for: pending) else {
+            return MacSessionTimelineRemountRestoreDecision(
+                pending: nil,
+                applyRestore: false,
+                holdRestore: false
+            )
+        }
+        if measurementsMatch(offsetY, CGFloat(requested)) {
+            return MacSessionTimelineRemountRestoreDecision(
+                pending: nil,
+                applyRestore: false,
+                holdRestore: false
+            )
+        }
+        if isRestoreOffsetAchievable(
+            offsetY: requested,
+            contentHeight: contentHeight,
+            viewportHeight: viewportHeight
+        ) {
+            return MacSessionTimelineRemountRestoreDecision(
+                pending: nil,
+                applyRestore: true,
+                holdRestore: true
+            )
+        }
+        return MacSessionTimelineRemountRestoreDecision(
+            pending: pending,
+            applyRestore: false,
+            holdRestore: true
+        )
+    }
+
+    private static func requestedRestoreOffset(
+        for target: MacSessionTimelineRemountTarget
+    ) -> Double? {
+        switch target {
+        case .offset(let offsetY) where offsetY > 0.5:
+            offsetY
+        case .anchor(_, let offsetY) where offsetY > 0.5:
+            offsetY
+        default:
+            nil
+        }
+    }
+
+    private static func isRestoreOffsetAchievable(
+        offsetY: Double,
+        contentHeight: CGFloat,
+        viewportHeight: CGFloat
+    ) -> Bool {
+        guard contentHeight > 1, viewportHeight > 1 else { return false }
+        let maxOffset = max(0, contentHeight - viewportHeight)
+        return CGFloat(offsetY) <= maxOffset + 0.5
     }
 
     /// Outline jump pins to a specific row. Stay attached only when that row

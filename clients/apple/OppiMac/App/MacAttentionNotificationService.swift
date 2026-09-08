@@ -24,9 +24,35 @@ final class MacAttentionNotificationService: NSObject, UNUserNotificationCenterD
         }
     }
 
-    /// Session whose card is on screen in the main window. Nil in Settings,
-    /// Workspaces, utilities, and after the window is torn down.
-    var activeSessionId: String?
+    /// Sessions whose conversation surfaces are visible in registered windows.
+    /// Split panes and extra windows aggregate instead of overwriting each other.
+    private var visibleSessionIdsByWindow: [String: Set<String>] = [:]
+
+    var visibleSessionIds: Set<String> {
+        visibleSessionIdsByWindow.values.reduce(into: []) { $0.formUnion($1) }
+    }
+
+    /// Compatibility for single-surface callers and focused tests. Split-pane
+    /// windows publish the complete set through `publishVisibleSessions`.
+    var activeSessionId: String? {
+        get { visibleSessionIds.count == 1 ? visibleSessionIds.first : nil }
+        set {
+            publishVisibleSessions(
+                windowID: Self.defaultWindowID,
+                sessionIDs: newValue.map { Set([$0]) } ?? []
+            )
+        }
+    }
+
+    static let defaultWindowID = "main"
+
+    func publishVisibleSessions(windowID: String, sessionIDs: Set<String>) {
+        if sessionIDs.isEmpty {
+            visibleSessionIdsByWindow.removeValue(forKey: windowID)
+        } else {
+            visibleSessionIdsByWindow[windowID] = sessionIDs
+        }
+    }
 
     var _isAppActiveForTesting: Bool?
     var _skipSchedulingForTesting = false
@@ -75,10 +101,13 @@ final class MacAttentionNotificationService: NSObject, UNUserNotificationCenterD
         // banner after the user already saw the card in the key session.
         postedAskIdBySession[ask.sessionId] = ask.id
 
+        let visibleRequestSessionId = visibleSessionIds.contains(ask.sessionId)
+            ? ask.sessionId
+            : nil
         let shouldNotify = AttentionNotificationPolicy.shouldNotify(
             isAppActive: isAppKey,
             requestSessionId: ask.sessionId,
-            activeSessionId: activeSessionId
+            activeSessionId: visibleRequestSessionId
         )
         guard shouldNotify else {
             return
@@ -113,7 +142,7 @@ final class MacAttentionNotificationService: NSObject, UNUserNotificationCenterD
 
     func resetForTesting() {
         onNavigateToSession = nil
-        activeSessionId = nil
+        visibleSessionIdsByWindow = [:]
         _isAppActiveForTesting = nil
         _skipSchedulingForTesting = true
         _lastScheduledPayloadForTesting = nil

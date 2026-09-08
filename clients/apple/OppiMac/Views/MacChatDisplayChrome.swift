@@ -68,24 +68,52 @@ struct MacWorkingSpinnerView: View {
     }
 }
 
+struct MacWorkingRowPresentation: Equatable {
+    let state: ExtensionWorkingState?
+    var isVisible: Bool { state?.visible ?? true }
+    var message: String {
+        let text = state?.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? "Working…" : text
+    }
+    var frames: [String]? { state?.indicator?.frames }
+    var interval: TimeInterval { max(0.08, Double(state?.indicator?.intervalMs ?? 120) / 1000) }
+    func frame(at date: Date, reduceMotion: Bool) -> String? {
+        guard let frames, !frames.isEmpty else { return nil }
+        let index = reduceMotion ? 0 : Int(abs(date.timeIntervalSinceReferenceDate / interval).truncatingRemainder(dividingBy: Double(frames.count)))
+        return frames[index]
+    }
+}
+
 struct MacWorkingIndicatorRow: View {
+    var state: ExtensionWorkingState? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.theme) private var theme
     @State private var spinnerStyle = SpinnerStyle.current
 
     static let rowID = "mac.timeline.working"
 
     var body: some View {
+        let presentation = MacWorkingRowPresentation(state: state)
         HStack(spacing: 6) {
-            MacWorkingSpinnerView(tint: theme.text.secondary, style: spinnerStyle)
-                .frame(width: 16, height: 16)
-            Text("Working…")
+            if presentation.frames == nil {
+                MacWorkingSpinnerView(tint: theme.text.secondary, style: spinnerStyle)
+                    .frame(width: 16, height: 16)
+            } else if presentation.frames?.isEmpty == false {
+                TimelineView(.periodic(from: .now, by: reduceMotion ? 3_600 : presentation.interval)) { context in
+                    Text(presentation.frame(at: context.date, reduceMotion: reduceMotion) ?? "")
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(.themeComment)
+                }
+                .accessibilityHidden(true)
+            }
+            Text(presentation.message)
                 .font(.callout)
                 .foregroundStyle(theme.text.secondary.opacity(0.6))
         }
         .padding(.leading, 10)
         .padding(.vertical, 6)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Working…")
+        .accessibilityLabel(presentation.message)
         .accessibilityIdentifier("mac.timeline.workingRow")
         .onReceive(
             NotificationCenter.default.publisher(

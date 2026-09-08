@@ -3,7 +3,7 @@ import Testing
 @testable import Oppi
 
 @MainActor
-@Suite("Mac session trace runtime wiring")
+@Suite("Mac session trace runtime wiring", .serialized)
 struct MacSessionTraceStoreRuntimeTests {
     @Test func windowStoreUsesSharedManagerAndUnixSocketAdapter() async throws {
         let transport = RecordingLocalHTTPTransport(response: Self.json("{}"))
@@ -235,6 +235,149 @@ struct MacSessionTraceStoreRuntimeTests {
         #expect(elapsed < .seconds(1))
         #expect(store.messageQueueError == nil)
         #expect(store.lastError != ChatSessionFocusedStreamBindError.timedOut.errorDescription)
+    }
+
+    @Test func remountFinishesCancelledHydrationWithoutReplacingRuntime() async throws {
+        let transport = DeferredMountHydrationTransport()
+        let client = MacWorkspaceClient(
+            socketPath: "/tmp/oppi-mac-runtime.sock",
+            token: "sk_owner",
+            transport: transport
+        )
+        let store = MacSessionTraceStore()
+        let target = Self.makeTarget(status: .stopped)
+        var modelLoadCount = 0
+        store._listModelsForTesting = {
+            modelLoadCount += 1
+            return [Self.gpt]
+        }
+        store.select(target)
+        defer { store.clearSelection() }
+
+        let firstMount = Task {
+            await store.loadSelectedFromLocalConfigForTesting(client: client)
+        }
+        await transport.waitUntilFirstChangesRequest()
+        let originalManager = try #require(store._chatSessionManagerForTesting)
+
+        firstMount.cancel()
+        await transport.releaseFirstChangesRequest()
+        await firstMount.value
+        #expect(modelLoadCount == 0)
+
+        await store.mountSelectedFromLocalConfigForTesting(client: client)
+
+        #expect(store._chatSessionManagerForTesting === originalManager)
+        #expect(await transport.changesRequestCount == 2)
+        #expect(modelLoadCount == 1)
+
+        await store.mountSelectedFromLocalConfigForTesting(client: client)
+
+        #expect(store._chatSessionManagerForTesting === originalManager)
+        #expect(await transport.changesRequestCount == 2)
+        #expect(modelLoadCount == 1)
+    }
+
+    @Test func suspendedPresentationRemountsWithFreshRuntimeAndHydration() async throws {
+        let transport = RecordingLocalHTTPTransport(response: Self.json(
+            #"{"workspaceId":"workspace-runtime","sessionId":"session-runtime","files":[],"changedFileCount":0,"changedFilesOverflow":0}"#
+        ))
+        let client = Self.makeClient(transport: transport)
+        let store = MacSessionTraceStore()
+        let target = Self.makeTarget(status: .stopped)
+        var modelLoadCount = 0
+        store._listModelsForTesting = {
+            modelLoadCount += 1
+            return [Self.gpt]
+        }
+        store.select(target)
+        defer { store.clearSelection() }
+
+        await store.mountSelectedFromLocalConfigForTesting(client: client)
+        let firstManager = try #require(store._chatSessionManagerForTesting)
+
+        #expect(await transport.requests.filter { $0.path.hasSuffix("/changes") }.count == 1)
+        #expect(modelLoadCount == 1)
+
+        store.suspendRuntime()
+        store.suspendRuntime()
+
+        #expect(store.selectedTarget == target)
+        #expect(store.session?.id == target.sessionId)
+        #expect(store._chatSessionManagerForTesting == nil)
+        #expect(store._runtimeAdapterForTesting == nil)
+        #expect(!store._sessionRuntimeLoopRunningForTesting)
+        #expect(!store.isStreaming)
+
+        await store.mountSelectedFromLocalConfigForTesting(client: client)
+        let remountedManager = try #require(store._chatSessionManagerForTesting)
+
+        #expect(remountedManager !== firstManager)
+        #expect(await transport.requests.filter { $0.path.hasSuffix("/changes") }.count == 2)
+        #expect(modelLoadCount == 2)
+
+        await store.mountSelectedFromLocalConfigForTesting(client: client)
+
+        #expect(store._chatSessionManagerForTesting === remountedManager)
+        #expect(await transport.requests.filter { $0.path.hasSuffix("/changes") }.count == 2)
+        #expect(modelLoadCount == 2)
+    }
+
+    @Test func ordinaryViewRemountKeepsTheConnectedFocusedStream() async throws {
+        let transport = RecordingLocalHTTPTransport(response: Self.json(
+            #"{"workspaceId":"workspace-runtime","sessionId":"session-runtime","files":[],"changedFileCount":0,"changedFilesOverflow":0}"#
+        ))
+        let client = Self.makeClient(transport: transport)
+        let store = MacSessionTraceStore()
+        let target = Self.makeTarget(status: .ready)
+        store.select(target)
+        await store.installSessionRuntimeForTesting(client: client)
+        let manager = try #require(store._chatSessionManagerForTesting)
+        let streams = ScriptedMacStreamFactory(session: target.summary.session)
+        manager._loadHistoryForTesting = { _, _ in nil }
+        manager._streamEventsForTesting = streams.makeStream
+        store._listModelsForTesting = { [Self.gpt] }
+        store._sendLiveMessageForTesting = { message in
+            guard case .getQueue(let requestId) = message else { return true }
+            store.applyServerMessageForTesting(
+                .commandResult(
+                    command: "get_queue",
+                    requestId: requestId,
+                    success: true,
+                    data: nil,
+                    error: nil
+                ),
+                target: target
+            )
+            return true
+        }
+        store.startSessionRuntimeLoopForTesting()
+        defer {
+            streams.finish(index: 0)
+            store.clearSelection()
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yieldConnected(index: 0)
+        #expect(await waitUntil { manager.entryState == .streaming })
+        let generation = manager.connectionGeneration
+
+        await store.mountSelectedFromLocalConfigForTesting(client: client)
+        await store.mountSelectedFromLocalConfigForTesting(client: client)
+
+        #expect(store._chatSessionManagerForTesting === manager)
+        #expect(manager.connectionGeneration == generation)
+        #expect(streams.createCount == 1)
+
+        store.suspendRuntime()
+
+        #expect(store._chatSessionManagerForTesting == nil)
+        #expect(!store.isStreaming)
+        if case .disconnected(reason: .cancelled) = manager.entryState {
+            // The connected focused stream was explicitly torn down.
+        } else {
+            Issue.record("Expected suspended runtime to be cancelled, got \(manager.entryState)")
+        }
     }
 
     @Test func refreshQueueSkipsHistoryOnlySessions() async throws {
@@ -779,6 +922,60 @@ private actor DeferredAttachmentUploadTransport: MacLocalHTTPPerforming {
         didReleaseCreate = true
         releaseCreateContinuation?.resume()
         releaseCreateContinuation = nil
+    }
+
+    private static func response(_ body: String) -> MacLocalHTTPResponse {
+        MacLocalHTTPResponse(
+            statusCode: 200,
+            headers: ["content-type": "application/json"],
+            body: Data(body.utf8)
+        )
+    }
+}
+
+private actor DeferredMountHydrationTransport: MacLocalHTTPPerforming {
+    private(set) var changesRequestCount = 0
+    private var firstChangesContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var didStartFirstChangesRequest = false
+    private var didReleaseFirstChangesRequest = false
+
+    func perform(_ request: MacLocalHTTPRequest) async throws -> MacLocalHTTPResponse {
+        guard request.path == "/workspaces/workspace-runtime/sessions/session-runtime/changes" else {
+            return Self.response("{}")
+        }
+
+        changesRequestCount += 1
+        if changesRequestCount == 1 {
+            didStartFirstChangesRequest = true
+            firstChangesContinuation?.resume()
+            firstChangesContinuation = nil
+            if !didReleaseFirstChangesRequest {
+                await withCheckedContinuation { continuation in
+                    releaseContinuation = continuation
+                }
+            }
+        }
+        return Self.response(
+            #"{"workspaceId":"workspace-runtime","sessionId":"session-runtime","files":[],"changedFileCount":0,"changedFilesOverflow":0}"#
+        )
+    }
+
+    func waitUntilFirstChangesRequest() async {
+        if didStartFirstChangesRequest { return }
+        await withCheckedContinuation { continuation in
+            if didStartFirstChangesRequest {
+                continuation.resume()
+            } else {
+                firstChangesContinuation = continuation
+            }
+        }
+    }
+
+    func releaseFirstChangesRequest() {
+        didReleaseFirstChangesRequest = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 
     private static func response(_ body: String) -> MacLocalHTTPResponse {

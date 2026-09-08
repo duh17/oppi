@@ -13,11 +13,11 @@ struct MacQuickSessionPaneComposer: View {
     var sessionFocus: FocusState<KeybindingFocus?>.Binding
     let centersInPane: Bool
     let activate: () -> Void
+    var isActivePane = true
     let loadWorktrees: (String) async -> [WorkspaceWorktree]
     let launch: (MacQuickSessionLaunchAttempt) async -> Void
 
     @Environment(\.theme) private var theme
-    @State private var worktrees: [WorkspaceWorktree] = []
     @State private var isLaunching = false
     private let actionVisualDiameter: CGFloat = 32
 
@@ -54,7 +54,7 @@ struct MacQuickSessionPaneComposer: View {
 
     @ViewBuilder
     private var workspaceControls: some View {
-        if QuickSessionWorktreePickerPolicy.shouldShowPicker(worktreeCount: worktrees.count) {
+        if QuickSessionWorktreePickerPolicy.shouldShowPicker(worktreeCount: state.worktreeListing.worktrees.count) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) {
                     workspacePicker
@@ -110,7 +110,7 @@ struct MacQuickSessionPaneComposer: View {
 
     private var worktreePicker: some View {
         Menu {
-            ForEach(worktrees, id: \.id) { worktree in
+            ForEach(state.worktreeListing.worktrees, id: \.id) { worktree in
                 Button(worktree.displayName) {
                     state.worktreeId = worktree.id
                 }
@@ -118,7 +118,7 @@ struct MacQuickSessionPaneComposer: View {
         } label: {
             MacComposerChromePill(
                 systemImage: "arrow.triangle.branch",
-                text: worktrees.first(where: { $0.id == resolvedWorktreeId })?.displayName ?? "Main",
+                text: worktreeLabel,
                 showChevron: true
             )
         }
@@ -128,10 +128,19 @@ struct MacQuickSessionPaneComposer: View {
     }
 
     private var resolvedWorktreeId: String {
-        QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
-            selectedId: state.worktreeId,
-            worktrees: worktrees
-        )
+        state.worktreeListing.launchWorktreeId(selectedId: state.worktreeId)
+    }
+
+    private var worktreeLabel: String {
+        if let match = state.worktreeListing.worktrees.first(where: { $0.id == resolvedWorktreeId }) {
+            return match.displayName
+        }
+        if let selected = state.worktreeId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !selected.isEmpty,
+           selected != WorkspaceWorktree.mainId {
+            return selected
+        }
+        return "Main"
     }
 
     private var composerCapsule: some View {
@@ -241,7 +250,7 @@ struct MacQuickSessionPaneComposer: View {
         }
         .buttonStyle(.plain)
         .disabled(!canSubmit)
-        .keyboardShortcut(.return, modifiers: .command)
+        .modifier(MacQuickSessionCommandReturnShortcut(isActivePane: isActivePane))
         .accessibilityIdentifier("mac.composer.send")
         .accessibilityLabel(isLaunching ? "Sending" : "Send")
         .help("Send")
@@ -286,14 +295,30 @@ struct MacQuickSessionPaneComposer: View {
     }
 
     private func refreshWorktrees() async {
-        guard let workspaceId = state.workspaceId else {
-            worktrees = []
+        let workspaceId = state.workspaceId
+        let generation = state.worktreeListing.beginLoad(workspaceId: workspaceId)
+        guard let workspaceId else { return }
+        let fetched = await loadWorktrees(workspaceId)
+        if Task.isCancelled {
             return
         }
-        worktrees = await loadWorktrees(workspaceId)
-        state.worktreeId = QuickSessionWorktreePickerPolicy.resolvedWorktreeId(
-            selectedId: state.worktreeId,
-            worktrees: worktrees
+        state.worktreeListing.applySuccess(
+            workspaceId: workspaceId,
+            generation: generation,
+            worktrees: fetched
         )
+    }
+}
+
+private struct MacQuickSessionCommandReturnShortcut: ViewModifier {
+    let isActivePane: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if MacComposerPaneKeyboardRouting.installsCommandReturn(isActivePane: isActivePane) {
+            content.keyboardShortcut(.return, modifiers: .command)
+        } else {
+            content
+        }
     }
 }

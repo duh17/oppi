@@ -44,6 +44,43 @@ struct MacAttentionNotificationServiceTests {
         #expect(service._lastScheduledPayloadForTesting == nil)
     }
 
+    @Test func doesNotPostAskForAnyVisibleSplitPaneSession() {
+        let service = MacAttentionNotificationService.shared
+        service.resetForTesting()
+        service._isAppActiveForTesting = true
+        service.publishVisibleSessions(windowID: "main", sessionIDs: ["left", "right", "bottom"])
+
+        service.notifyAskIfNeeded(makeAsk(sessionId: "right"))
+
+        #expect(service._lastScheduledPayloadForTesting == nil)
+    }
+
+    @Test func postsAskForSessionOutsideVisibleSplitPanes() {
+        let service = MacAttentionNotificationService.shared
+        service.resetForTesting()
+        service._isAppActiveForTesting = true
+        service.publishVisibleSessions(windowID: "main", sessionIDs: ["left", "right"])
+
+        service.notifyAskIfNeeded(makeAsk(sessionId: "background"))
+
+        #expect(service._lastScheduledPayloadForTesting?.identifier == "ask-background")
+    }
+
+    @Test func visibleSessionsAggregateAcrossWindowsInsteadOfOverwriting() {
+        let service = MacAttentionNotificationService.shared
+        service.resetForTesting()
+        service._isAppActiveForTesting = true
+        service.publishVisibleSessions(windowID: "main", sessionIDs: ["left"])
+        service.publishVisibleSessions(windowID: "aux", sessionIDs: ["right"])
+
+        service.notifyAskIfNeeded(makeAsk(sessionId: "left"))
+        service.notifyAskIfNeeded(makeAsk(sessionId: "right"))
+        #expect(service._lastScheduledPayloadForTesting == nil)
+
+        service.notifyAskIfNeeded(makeAsk(sessionId: "background"))
+        #expect(service._lastScheduledPayloadForTesting?.identifier == "ask-background")
+    }
+
     @Test func skipsReplayOfTheSameAsk() {
         let service = MacAttentionNotificationService.shared
         service.resetForTesting()
@@ -163,6 +200,16 @@ struct MacAttentionNotificationServiceTests {
                 selectedSessionID: nil,
                 isMainWindowPresented: true
             ) == nil
+        )
+    }
+
+    @Test func visibleSessionsIncludeEveryPresentedHomePane() {
+        #expect(
+            MacAttentionVisibleSession.ids(
+                section: .sessionHome,
+                selectedSessionIDs: ["left", "right", "", "bottom"],
+                isMainWindowPresented: true
+            ) == ["left", "right", "bottom"]
         )
     }
 

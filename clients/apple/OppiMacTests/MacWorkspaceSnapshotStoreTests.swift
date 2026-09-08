@@ -783,6 +783,28 @@ struct MacWorkspaceSnapshotStoreTests {
         #expect(catalogViews.contains(".keyboardShortcut(.return, modifiers: .command)"))
     }
 
+    @Test func appOwnsWorkspaceSnapshotAndEventStreamNotTheWindow() throws {
+        let app = try source(named: "OppiMac/App/OppiMacApp.swift")
+        let window = try source(named: "OppiMac/Views/MainWindowView.swift")
+        let store = try source(named: "OppiMac/Stores/MacWorkspaceSnapshotStore.swift")
+
+        #expect(app.contains("@State private var workspaceStore = MacWorkspaceSnapshotStore()"))
+        #expect(app.contains("workspaceStore: workspaceStore"))
+        #expect(app.contains("startAppEventStreamIfNeeded()"))
+        #expect(!app.contains("WindowGroup"))
+
+        #expect(window.contains("let workspaceStore: MacWorkspaceSnapshotStore"))
+        #expect(!window.contains("MacWorkspaceSnapshotStore()"))
+        #expect(!window.contains("runAppEventStreamFromLocalConfig"))
+        #expect(!window.contains("startAppEventStreamIfNeeded"))
+        #expect(window.contains("publishVisibleAttentionSession"))
+        #expect(!window.contains("WindowGroup"))
+
+        #expect(store.contains("func startAppEventStreamIfNeeded()"))
+        #expect(store.contains("guard appEventStreamTask == nil else { return }"))
+        #expect(store.contains("MacUnixWebSocketTransport.appEventPath()"))
+    }
+
     private func source(named relativePath: String) throws -> String {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
