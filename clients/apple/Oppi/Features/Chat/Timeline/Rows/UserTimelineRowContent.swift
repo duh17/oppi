@@ -54,6 +54,14 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
 }
 
 final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
+    /// UIControl so the outer timeline can cancel the touch and take a vertical
+    /// drag. A tap recognizer on the first-row commit chip ate pull-to-top.
+    private final class PathPillControl: UIControl {
+        override var isHighlighted: Bool {
+            didSet { alpha = isHighlighted ? 0.72 : 1 }
+        }
+    }
+
     private final class PathPillTapHandler: NSObject {
         weak var owner: UserTimelineRowContentView?
         let pill: UserMessagePathPill
@@ -561,7 +569,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
     private func updatePathPills(_ pathPills: [UserMessagePathPill], palette: ThemePalette) {
         clearArrangedSubviews(in: pathPillRow)
-        pathPillTapHandlers.removeAll()
 
         pathPillRow.isHidden = pathPills.isEmpty
         guard !pathPills.isEmpty else { return }
@@ -586,14 +593,19 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                 background: tint.withAlphaComponent(0.10),
                 textColor: UIColor(palette.userMessageText),
                 font: AppFont.monoSmall,
-                monospaced: true
+                monospaced: true,
+                tappable: true
             )
             pillView.accessibilityIdentifier = "chat.user.path-pill.\(pill.path)"
-            pillView.isUserInteractionEnabled = true
-            let tapHandler = PathPillTapHandler(owner: self, pill: pill)
-            let tap = UITapGestureRecognizer(target: tapHandler, action: #selector(PathPillTapHandler.handleTap))
-            pillView.addGestureRecognizer(tap)
-            pathPillTapHandlers.append(tapHandler)
+            pillView.accessibilityLabel = "\(pill.prefix) \(pill.label)"
+            pillView.accessibilityTraits = .button
+            pillView.isAccessibilityElement = true
+            if let control = pillView as? UIControl {
+                let capturedPill = pill
+                control.addAction(UIAction { [weak self] _ in
+                    self?.openPathPill(capturedPill)
+                }, for: .touchUpInside)
+            }
             pathPillRow.addArrangedSubview(pillView)
         }
     }
@@ -617,9 +629,10 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         background: UIColor,
         textColor: UIColor,
         font: UIFont,
-        monospaced: Bool
+        monospaced: Bool,
+        tappable: Bool = false
     ) -> UIView {
-        let container = UIView()
+        let container: UIView = tappable ? PathPillControl() : UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.backgroundColor = background
         container.layer.cornerRadius = 11
@@ -694,6 +707,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             view.removeFromSuperview()
         }
         thumbnailViews.removeAll()
+        pathPillTapHandlers.removeAll()
 
         let hasAnyInlineMedia = !images.isEmpty || !inlineImagePathPills.isEmpty
         imageStrip.isHidden = !hasAnyInlineMedia

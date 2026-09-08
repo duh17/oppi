@@ -288,6 +288,21 @@ struct UserMessagePathPill: Equatable, Sendable {
             return true
         }
     }
+
+    enum TimelineDestination: Equatable, Sendable {
+        case workspaceFileBrowser
+        case commitDetail
+    }
+
+    /// Timeline chips open the matching viewer. Commit chips are not files.
+    var timelineDestination: TimelineDestination? {
+        switch kind {
+        case .gitCommit:
+            return .commitDetail
+        case .uploadedFile, .reviewFile, .repoFile:
+            return opensWorkspaceFileBrowser ? .workspaceFileBrowser : nil
+        }
+    }
 }
 
 enum UserMessageAttachmentPresentation {

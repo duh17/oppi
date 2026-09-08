@@ -465,7 +465,12 @@ struct PendingFileReferenceTests {
         #expect(pill.symbolName == "arrow.triangle.branch")
         #expect(pill.supportsInlinePreview == false)
         #expect(pill.opensWorkspaceFileBrowser == false)
+        #expect(pill.timelineDestination == .commitDetail)
         #expect(UserMessagePathPill(kind: .repoFile, path: "README.md").opensWorkspaceFileBrowser)
+        #expect(
+            UserMessagePathPill(kind: .repoFile, path: "README.md").timelineDestination
+                == .workspaceFileBrowser
+        )
     }
 
     @Test func appendReferenceBlockEmitsSelectedCommitInsteadOfWorkspaceFiles() {

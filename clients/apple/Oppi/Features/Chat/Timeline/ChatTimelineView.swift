@@ -37,16 +37,40 @@ enum TimelineRenderWindowPolicy {
 }
 
 /// The chat collection view ignores the top safe area so rows can scroll
-/// under Liquid Glass. Measure both frames in the timeline's own coordinate
-/// space (origin at the collection view's top, including under the nav bar).
-/// Inset is the header's bottom edge — not the bar's own height, which
-/// leaves the first rows under the navigation bar. An empty header still
-/// contributes the nav-gap when its origin sits at the safe-area top.
+/// under Liquid Glass. `contentInsetAdjustmentBehavior` is `.never` because
+/// SwiftUI zeros the UIKit safe area on that expanded view.
+///
+/// Named-space frames often share the safe-area origin instead of starting
+/// at 0 under the nav. In that case `header.maxY - timeline.minY` is only
+/// the branch chip, and pull-to-top cannot uncover the first row. Add the
+/// SwiftUI safe-area gap when both frames share `minY`.
 enum ChatTimelineChromeOverlap {
     static let coordinateSpaceName = "chatTimelineChrome"
 
-    static func topInset(timelineFrame: CGRect, headerFrame: CGRect) -> CGFloat {
-        max(0, headerFrame.maxY - timelineFrame.minY)
+    static func topInset(
+        timelineFrame: CGRect,
+        headerFrame: CGRect,
+        safeAreaTop: CGFloat = 0
+    ) -> CGFloat {
+        if timelineFrame == .zero, headerFrame == .zero {
+            return 0
+        }
+
+        let headerBottom = max(0, headerFrame.maxY - timelineFrame.minY)
+        if safeAreaTop > 0, abs(headerFrame.minY - timelineFrame.minY) < 1 {
+            return headerBottom + safeAreaTop
+        }
+        return headerBottom
+    }
+
+    /// Keep overlay measurement on the bar's ideal height, not a full-screen
+    /// `ZStack` proposal from `.overlay(alignment: .top)`.
+    struct HuggingHeader: ViewModifier {
+        func body(content: Content) -> some View {
+            content
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .top)
+        }
     }
 }
 

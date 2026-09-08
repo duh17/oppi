@@ -19,6 +19,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     static let loadMoreID = "__timeline.load-more__"
     static let workingIndicatorID = "working-indicator"
 
+    @Environment(\.composerDraftStore) private var composerDraftStore
+
     struct Configuration {
         let items: [ChatItem]
         let displayRows: [TimelineDisplayRow]
@@ -176,6 +178,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     }
 
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
+        context.coordinator.composerDraftStore = composerDraftStore
         context.coordinator.apply(configuration: configuration, to: collectionView)
     }
 
@@ -221,6 +224,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
         var timelineTopOverlap: CGFloat = 0
         var timelineBottomOverlap: CGFloat = 0
+        var composerDraftStore: ComposerDraftStore?
         private var lastPublishedVisibleAudioStripItemIDs = Set<String>()
 
         override init() {

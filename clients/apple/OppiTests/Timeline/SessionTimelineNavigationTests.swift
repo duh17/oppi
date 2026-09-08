@@ -152,6 +152,73 @@ struct SessionTimelineNavigationTests {
         #expect(result.didHighlightTarget, "Expected first-row target to flash after navigation")
     }
 
+    @Test func scrollingToTopKeepsFirstCommitRowBelowChrome() async throws {
+        let harness = makeWindowedTimelineHarness(
+            sessionId: "session-commit-first-row",
+            useAnchoredCollectionView: true
+        )
+        defer {
+            harness.window.isHidden = true
+            harness.window.rootViewController = nil
+        }
+
+        let commitText = """
+        Is this fix even a real fix?
+
+        Selected commit:
+        - SHA: 0486bc75
+        - Message: keep first chat row below nav
+        """
+        var items: [ChatItem] = [
+            .userMessage(
+                id: "msg-0",
+                text: commitText,
+                images: [],
+                timestamp: Date(timeIntervalSince1970: 0)
+            )
+        ]
+        items.append(contentsOf: (1..<10).map { index in
+            .assistantMessage(
+                id: "msg-\(index)",
+                text: Array(
+                    repeating: "Follow-up line \(index) with enough text to need scrolling.",
+                    count: 6
+                ).joined(separator: "\n"),
+                timestamp: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        })
+
+        applyTimelineItems(
+            items,
+            hiddenCount: 0,
+            nonce: nil,
+            topOverlap: 160,
+            to: harness
+        )
+
+        let collectionView = harness.collectionView
+        let minOffsetY = -collectionView.adjustedContentInset.top
+        collectionView.setContentOffset(CGPoint(x: 0, y: minOffsetY), animated: false)
+        settleTimelineLayout(collectionView, passes: 3)
+
+        #expect(
+            abs(collectionView.contentOffset.y - minOffsetY) < 0.5,
+            "Pull-to-top must reach min offset when the first row has a commit chip"
+        )
+
+        let cell = try #require(timelineCell(for: "msg-0", in: harness))
+        let pill = try #require(
+            firstSubview(withAccessibilityIdentifier: "chat.user.path-pill.0486bc75", in: cell)
+        )
+        let pillInContent = cell.convert(pill.frame, to: collectionView)
+        let pillInBoundsMinY = pillInContent.minY - collectionView.contentOffset.y
+        #expect(
+            pillInBoundsMinY >= collectionView.adjustedContentInset.top - 0.5,
+            "Commit chip must not sit under the nav when pulled to the top"
+        )
+        #expect(pill is UIControl)
+    }
+
     @Test func streamingNoOpApplyStillHonorsOutlineScrollCommand() async throws {
         let harness = makeWindowedTimelineHarness(
             sessionId: "session-outline-streaming-noop",
@@ -538,4 +605,17 @@ private func visibleTimelineIDs(in harness: WindowedTimelineHarness) -> [String]
 private func timelineCell(for itemID: String, in harness: WindowedTimelineHarness) -> SafeSizingCell? {
     guard let index = harness.coordinator.currentIDs.firstIndex(of: itemID) else { return nil }
     return harness.collectionView.cellForItem(at: IndexPath(item: index, section: 0)) as? SafeSizingCell
+}
+
+@MainActor
+private func firstSubview(withAccessibilityIdentifier identifier: String, in root: UIView) -> UIView? {
+    if root.accessibilityIdentifier == identifier {
+        return root
+    }
+    for child in root.subviews {
+        if let match = firstSubview(withAccessibilityIdentifier: identifier, in: child) {
+            return match
+        }
+    }
+    return nil
 }

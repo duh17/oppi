@@ -116,6 +116,7 @@ struct ChatView: View {
     @State private var footerHeight: CGFloat = 0
     @State private var timelineChromeFrame: CGRect = .zero
     @State private var headerChromeFrame: CGRect = .zero
+    @State private var chromeSafeAreaTop: CGFloat = 0
     @State private var visibleAudioStripItemIDs: Set<String> = []
     @State private var presentsNowPlayingPlayer = false
     @State private var nowPlayingDrawerExpanded = false
@@ -572,7 +573,8 @@ struct ChatView: View {
     private var timelineTopOverlap: CGFloat {
         ChatTimelineChromeOverlap.topInset(
             timelineFrame: timelineChromeFrame,
-            headerFrame: headerChromeFrame
+            headerFrame: headerChromeFrame,
+            safeAreaTop: chromeSafeAreaTop
         )
     }
 
@@ -612,7 +614,7 @@ struct ChatView: View {
                     collapseToken: contextBarCollapseToken,
                     onExpandedChanged: handleContextBarExpandedChanged
                 )
-                .frame(maxWidth: .infinity, alignment: .top)
+                .modifier(ChatTimelineChromeOverlap.HuggingHeader())
                 .onGeometryChange(for: CGRect.self) {
                     $0.frame(in: .named(ChatTimelineChromeOverlap.coordinateSpaceName))
                 } action: {
@@ -902,6 +904,15 @@ struct ChatView: View {
                 for: .bottomBar
             )
             .toolbarVisibility(.visible, for: .navigationBar)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { chromeSafeAreaTop = proxy.safeAreaInsets.top }
+                        .onChange(of: proxy.safeAreaInsets.top) { _, top in
+                            chromeSafeAreaTop = top
+                        }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     chatLeadingToolbarItem

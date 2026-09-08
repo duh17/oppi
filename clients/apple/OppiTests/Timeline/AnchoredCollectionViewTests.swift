@@ -102,6 +102,32 @@ struct AnchoredCollectionViewTests {
     }
 
     @MainActor
+    @Test func pathPillControlTouchesCancelIntoVerticalDragAfterTouchDown() {
+        let harness = makeAnchoredHarness(contentHeight: 1_200)
+        let control = UIControl(frame: CGRect(x: 0, y: 0, width: 80, height: 28))
+        control.isUserInteractionEnabled = true
+        harness.collectionView.addSubview(control)
+
+        #expect(
+            harness.collectionView.canCancelContentTouches,
+            "Timeline must be allowed to cancel content touches"
+        )
+        #expect(
+            harness.collectionView.touchesShouldCancel(in: control),
+            "A touch-down on a path pill UIControl must cancel into a vertical drag"
+        )
+
+        let vanilla = UICollectionView(
+            frame: harness.collectionView.bounds,
+            collectionViewLayout: UICollectionViewFlowLayout()
+        )
+        #expect(
+            !vanilla.touchesShouldCancel(in: control),
+            "UIKit's default keeps UIControl touches; the timeline override is the fix"
+        )
+    }
+
+    @MainActor
     @Test func anchorCorrectionClampsToBottomBound() {
         let harness = makeAnchoredHarness(contentHeight: 1_000)
 

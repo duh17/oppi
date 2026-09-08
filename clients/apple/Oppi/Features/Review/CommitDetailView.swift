@@ -21,6 +21,7 @@ struct CommitDetailActionMenuState: Equatable {
 struct CommitDetailView: View {
     let workspaceId: String
     let commit: GitCommitSummary
+    var testingQuickActionDestination: QuickActionSessionNavDestination? = nil
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -75,6 +76,11 @@ struct CommitDetailView: View {
         }
         .task(id: workspaceId) {
             await loadQuickActionsIfNeeded()
+        }
+        .onAppear {
+            if let testingQuickActionDestination {
+                navigateToQuickAction = testingQuickActionDestination
+            }
         }
         .navigationDestination(item: $navigateToQuickAction) { dest in
             ChatView(

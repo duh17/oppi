@@ -13,6 +13,14 @@ import UIKit
 /// cascade, which adjusts contentOffset AFTER `layoutSubviews()` returns.
 @MainActor
 final class AnchoredCollectionView: UICollectionView {
+    /// UIKit keeps a touch on `UIControl` unless this returns true, so a
+    /// slow drag on a path pill never becomes a timeline pan.
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        if view is UIControl {
+            return true
+        }
+        return super.touchesShouldCancel(in: view)
+    }
 
     // Reusable state — no per-frame allocation.
     private var savedAnchorIP: IndexPath?

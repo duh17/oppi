@@ -1,3 +1,4 @@
+import SwiftUI
 import Testing
 import UIKit
 
@@ -281,6 +282,222 @@ struct UserTimelineRowContentTests {
         #expect(
             textView.gestureRecognizerShouldBegin(textView.panGestureRecognizer) == false,
             "Selectable non-scrollable user text should pass vertical drags to the outer timeline"
+        )
+    }
+
+    @MainActor
+    @Test("commit pill stays inside the fitted first-row height and opens as a control")
+    func commitPillStaysInsideFittedHeightAndOpensAsControl() throws {
+        let transport = """
+        Is this fix even a real fix?
+
+        Selected commit:
+        - SHA: 0486bc75
+        - Message: keep first chat row below nav
+        """
+        var openedPill: UserMessagePathPill?
+        var config = UserTimelineRowConfiguration(
+            text: transport,
+            images: [],
+            canFork: false,
+            onFork: nil
+        )
+        config.onOpenPathPill = { pill, _ in
+            openedPill = pill
+        }
+        let view = UserTimelineRowContentView(configuration: config)
+        let fitted = view.systemLayoutSizeFitting(
+            CGSize(width: 358, height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        view.bounds = CGRect(origin: .zero, size: CGSize(width: 358, height: fitted.height))
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let pill = try #require(
+            firstSubview(withAccessibilityIdentifier: "chat.user.path-pill.0486bc75", in: view)
+        )
+        let control = try #require(pill as? UIControl)
+        #expect(pill.gestureRecognizers?.isEmpty ?? true)
+        #expect(pill.frame.minY >= 0)
+        #expect(pill.frame.maxY <= view.bounds.maxY + 0.5)
+        #expect(control.accessibilityTraits.contains(.button))
+
+        let timeline = AnchoredCollectionView(
+            frame: CGRect(x: 0, y: 0, width: 358, height: 400),
+            collectionViewLayout: UICollectionViewFlowLayout()
+        )
+        #expect(
+            timeline.touchesShouldCancel(in: control),
+            "Touch-down on the commit chip must cancel into a timeline drag"
+        )
+
+        control.sendActions(for: .touchUpInside)
+        #expect(openedPill == UserMessagePathPill(kind: .gitCommit, path: "0486bc75"))
+    }
+
+    @MainActor
+    @Test("timeline commit pill presents the commit viewer")
+    func timelineCommitPillPresentsCommitViewer() throws {
+        let harness = makeTimelineHarness(sessionId: "commit-pill-present")
+        let host = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            host.dismiss(animated: false)
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let source = UIView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
+        host.view.addSubview(source)
+
+        harness.coordinator.openUserMessagePathPill(
+            UserMessagePathPill(kind: .gitCommit, path: "0486bc75"),
+            from: source
+        )
+
+        let presented = try #require(host.presentedViewController)
+        #expect(!(presented is UINavigationController))
+        #expect(presented.modalPresentationStyle == .pageSheet)
+        #expect(presented.sheetPresentationController?.prefersGrabberVisible == true)
+        let typeName = String(describing: type(of: presented))
+        #expect(
+            typeName.contains("UIHostingController"),
+            "Commit viewer must be a SwiftUI host, got \(typeName)"
+        )
+    }
+
+    @MainActor
+    @Test("commit quick-action destination pushes inside the SwiftUI navigation stack")
+    func commitQuickActionDestinationPushesInsideNavigationStack() async throws {
+        let connection = ServerConnection()
+        let destination = QuickActionSessionNavDestination.empty(sessionId: "session-from-commit")
+        let host = makeTimelineCommitHostController(
+            connection: connection,
+            destination: destination
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let pushed = await waitForTimelineCondition(timeoutMs: 1_200) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                return nestedNavigationController(in: host)?.viewControllers.count ?? 0 >= 2
+                    || timelineFirstView(ofType: UICollectionView.self, in: host.view)?
+                        .accessibilityIdentifier == "chat.timeline"
+            }
+        }
+        #expect(
+            pushed,
+            "New Session destination must push inside NavigationStack; navCount=\(nestedNavigationController(in: host)?.viewControllers.count ?? -1)"
+        )
+    }
+
+    @MainActor
+    @Test("commit host restores unsent drafts through New Session")
+    func commitHostRestoresUnsentDraftsThroughNewSession() async throws {
+        let connection = ServerConnection()
+        connection.setPreviewServerId("server")
+        connection.sessionStore.switchServer(to: "server")
+        connection.sessionStore.upsert(
+            makeTestSession(id: "session-from-commit", workspaceId: "ws-test", status: .ready)
+        )
+
+        let draftsURL = FileManager.default.temporaryDirectory
+            .appending(path: "commit-host-drafts-\(UUID().uuidString).json", directoryHint: .notDirectory)
+        defer { try? FileManager.default.removeItem(at: draftsURL) }
+        let store = ComposerDraftStore(fileURL: draftsURL, saveDelay: .seconds(60))
+        await store.load()
+        let key = try #require(ComposerDraftKey(
+            serverID: "server",
+            workspaceID: "ws-test",
+            sessionID: "session-from-commit"
+        ))
+        store.setDraft(.init(text: "unsent commit follow-up", repoPointers: []), for: key)
+
+        let destination = QuickActionSessionNavDestination.empty(sessionId: "session-from-commit")
+        let host = makeTimelineCommitHostController(
+            connection: connection,
+            destination: destination,
+            composerDraftStore: store
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let restored = await waitForTimelineCondition(timeoutMs: 1_800) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                return composerInputText(in: host.view)?.contains("unsent commit follow-up") == true
+            }
+        }
+        #expect(restored, "New Session from a commit pill must restore the app-owned unsent draft")
+    }
+
+    @MainActor
+    @Test("commit host updates viewer colors while remaining open")
+    func commitHostUpdatesViewerColorsWhileRemainingOpen() async throws {
+        let store = ThemeStore(initialSystemColorScheme: .dark)
+        store.mode = .system
+        store.updateSystemColorScheme(.dark)
+        let darkColor = UIColor(store.activeThemeID.appTheme.bg.secondary)
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let staleHost = UIHostingController(
+            rootView: commitViewerForThemeTest(injectThemeEnvironment: false)
+        )
+        window.rootViewController = staleHost
+        window.makeKeyAndVisible()
+        staleHost.view.layoutIfNeeded()
+
+        store.updateSystemColorScheme(.light)
+        let lightColor = UIColor(store.activeThemeID.appTheme.bg.secondary)
+        #expect(!color(darkColor, approximatelyEquals: lightColor, tolerance: 0.08))
+
+        staleHost.view.setNeedsLayout()
+        staleHost.view.layoutIfNeeded()
+        let staleSample = try #require(commitViewerThemeBackground(in: staleHost.view))
+        #expect(
+            !color(staleSample, approximatelyEquals: lightColor, tolerance: 0.12),
+            "Without theme environment injection the mounted viewer must stay stale; sampled \(staleSample)"
+        )
+
+        store.updateSystemColorScheme(.dark)
+        let liveHost = UIHostingController(
+            rootView: commitViewerForThemeTest(injectThemeEnvironment: true)
+        )
+        window.rootViewController = liveHost
+        liveHost.view.layoutIfNeeded()
+
+        store.updateSystemColorScheme(.light)
+        let switched = await waitForTimelineCondition(timeoutMs: 800) {
+            await MainActor.run {
+                liveHost.view.setNeedsLayout()
+                liveHost.view.layoutIfNeeded()
+                guard let sample = commitViewerThemeBackground(in: liveHost.view) else { return false }
+                return color(sample, approximatelyEquals: lightColor, tolerance: 0.12)
+            }
+        }
+        #expect(
+            switched,
+            "Injected theme environment must repaint the mounted viewer; sampled \(commitViewerThemeBackground(in: liveHost.view)?.description ?? "nil") expected light \(lightColor)"
         )
     }
 
@@ -1191,4 +1408,128 @@ private func color(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance:
         abs(lg - rg) <= tolerance &&
         abs(lb - rb) <= tolerance &&
         abs(la - ra) <= tolerance
+}
+
+@MainActor
+private func makeTimelineCommitHostController(
+    connection: ServerConnection,
+    destination: QuickActionSessionNavDestination?,
+    composerDraftStore: ComposerDraftStore? = nil
+) -> UIHostingController<some View> {
+    let root = TimelineCommitDetailHost(
+        workspaceId: "ws-test",
+        commit: GitCommitSummary(sha: "0486bc75", message: "", date: ""),
+        onDismiss: {},
+        composerDraftStore: composerDraftStore,
+        testingQuickActionDestination: destination
+    )
+    .environment(\.apiClient, connection.apiClient)
+    .environment(connection)
+    .environment(connection.chatState)
+    .environment(connection.sessionStore)
+    .environment(connection.audioPlayer)
+    .environment(connection.gitStatusStore)
+    .environment(connection.fileIndexStore)
+    .environment(connection.messageQueueStore)
+    .environment(connection.askRequestStore)
+    .environment(AppNavigation())
+    .environment(QuickCommentTemplateStore(templates: []))
+
+    let host = UIHostingController(rootView: root)
+    FullScreenViewerPresentationPolicy.configureLargePresentation(
+        host,
+        traitCollection: UITraitCollection(horizontalSizeClass: .compact)
+    )
+    return host
+}
+
+@MainActor
+private func composerInputText(in root: UIView) -> String? {
+    guard let input = firstSubview(withAccessibilityIdentifier: "chat.input", in: root) else {
+        return nil
+    }
+    if let textView = input as? UITextView {
+        return textView.text
+    }
+    if let textField = input as? UITextField {
+        return textField.text
+    }
+    return input.accessibilityValue
+}
+
+private struct CommitViewerThemeConsumer: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        CommitViewerThemeSwatch(color: UIColor(theme.bg.secondary))
+    }
+}
+
+private struct CommitViewerThemeSwatch: UIViewRepresentable {
+    var color: UIColor
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.accessibilityIdentifier = "commit.viewer.theme-bg"
+        view.backgroundColor = color
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        view.backgroundColor = color
+    }
+}
+
+@MainActor
+private func commitViewerForThemeTest(injectThemeEnvironment: Bool) -> some View {
+    let viewer = NavigationStack {
+        CommitDetailView(
+            workspaceId: "ws-test",
+            commit: GitCommitSummary(sha: "0486bc75", message: "", date: "")
+        )
+        .background {
+            CommitViewerThemeConsumer()
+        }
+    }
+    .environment(ServerConnection().sessionStore)
+
+    if injectThemeEnvironment {
+        return AnyView(viewer.modifier(TimelineCommitThemeEnvironment()))
+    }
+    return AnyView(viewer)
+}
+
+@MainActor
+private func commitViewerThemeBackground(in root: UIView) -> UIColor? {
+    firstSubview(withAccessibilityIdentifier: "commit.viewer.theme-bg", in: root)?.backgroundColor
+}
+
+@MainActor
+private func nestedNavigationController(in root: UIViewController) -> UINavigationController? {
+    if let navigation = root as? UINavigationController {
+        return navigation
+    }
+    for child in root.children {
+        if let navigation = nestedNavigationController(in: child) {
+            return navigation
+        }
+    }
+    return firstNavigationController(in: root.view)
+}
+
+@MainActor
+private func firstNavigationController(in root: UIView) -> UINavigationController? {
+    var responder: UIResponder? = root
+    while let current = responder {
+        if let navigation = current as? UINavigationController {
+            return navigation
+        }
+        responder = current.next
+    }
+    for child in root.subviews {
+        if let navigation = firstNavigationController(in: child) {
+            return navigation
+        }
+    }
+    return nil
 }

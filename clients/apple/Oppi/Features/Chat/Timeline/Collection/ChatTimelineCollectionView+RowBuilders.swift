@@ -14,6 +14,48 @@ private extension UIView {
     }
 }
 
+struct TimelineCommitDetailHost: View {
+    let workspaceId: String
+    let commit: GitCommitSummary
+    let onDismiss: () -> Void
+    var composerDraftStore: ComposerDraftStore? = nil
+    var testingQuickActionDestination: QuickActionSessionNavDestination? = nil
+
+    var body: some View {
+        NavigationStack {
+            CommitDetailView(
+                workspaceId: workspaceId,
+                commit: commit,
+                testingQuickActionDestination: testingQuickActionDestination
+            )
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(action: onDismiss) {
+                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+                    }
+                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
+                    .accessibilityIdentifier("chat.commit-detail.dismiss")
+                }
+            }
+        }
+        .environment(\.composerDraftStore, composerDraftStore)
+        .modifier(TimelineCommitThemeEnvironment())
+    }
+}
+
+struct TimelineCommitThemeEnvironment: ViewModifier {
+    @State private var themeID = ThemeRuntimeState.currentThemeID()
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.theme, themeID.appTheme)
+            .environment(\.themeID, themeID)
+            .onReceive(NotificationCenter.default.publisher(for: .oppiThemeDidChange)) { _ in
+                themeID = ThemeRuntimeState.currentThemeID()
+            }
+    }
+}
+
 // MARK: - Row Configuration Builders
 
 extension ChatTimelineCollectionHost.Controller {
@@ -173,41 +215,122 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
-            onOpenPathPill: { [workspaceId, serverId, weak apiClient = connection?.apiClient, interactionContext = self.interactionContext] pill, sourceView in
-                guard pill.opensWorkspaceFileBrowser,
-                      let workspaceId, !workspaceId.isEmpty,
-                      let apiClient,
-                      let presenter = sourceView.nearestViewController() else {
-                    return
-                }
-
-                let isHostPath = MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil
-                let view = FileBrowserContentView(
-                    workspaceId: workspaceId,
-                    serverId: serverId,
-                    filePath: pill.path,
-                    fileName: pill.label,
-                    source: isHostPath ? .hostFile : .workspaceFile,
-                    sessionId: self.sessionId,
-                    fileSize: nil
-                )
-                .environment(\.apiClient, apiClient)
-                .environment(self.audioPlayer)
-                .environment(\.reviewCommentSelectionScope, interactionContext.reviewCommentSelectionRouter.map(ReviewCommentSelectionScope.activeSession))
-
-                let host = UIHostingController(rootView: view)
-                let navigation = UINavigationController(rootViewController: host)
-                FullScreenViewerPresentationPolicy.configureLargePresentation(
-                    navigation,
-                    traitCollection: sourceView.traitCollection
-                )
-                presenter.present(navigation, animated: true)
+            onOpenPathPill: { [weak self] pill, sourceView in
+                self?.openUserMessagePathPill(pill, from: sourceView)
             },
             canFork: canFork,
             onFork: forkAction,
             itemID: itemID,
             interactionContext: interactionContext
         )
+    }
+
+    func openUserMessagePathPill(_ pill: UserMessagePathPill, from sourceView: UIView) {
+        guard let destination = pill.timelineDestination,
+              let workspaceId, !workspaceId.isEmpty,
+              let presenter = sourceView.nearestViewController() else {
+            return
+        }
+
+        switch destination {
+        case .commitDetail:
+            presentCommitDetail(
+                sha: pill.path,
+                workspaceId: workspaceId,
+                from: sourceView,
+                presenter: presenter
+            )
+        case .workspaceFileBrowser:
+            presentWorkspaceFileBrowser(
+                for: pill,
+                workspaceId: workspaceId,
+                from: sourceView,
+                presenter: presenter
+            )
+        }
+    }
+
+    private func presentCommitDetail(
+        sha: String,
+        workspaceId: String,
+        from sourceView: UIView,
+        presenter: UIViewController
+    ) {
+        guard let connection else { return }
+
+        let commit = GitCommitSummary(sha: sha, message: "", date: "")
+        let view = TimelineCommitDetailHost(
+            workspaceId: workspaceId,
+            commit: commit,
+            onDismiss: { [weak presenter] in
+                presenter?.dismiss(animated: true)
+            },
+            composerDraftStore: composerDraftStore
+        )
+        .environment(\.apiClient, connection.apiClient)
+        .environment(connection)
+        .environment(connection.chatState)
+        .environment(connection.sessionStore)
+        .environment(connection.audioPlayer)
+        .environment(connection.gitStatusStore)
+        .environment(connection.fileIndexStore)
+        .environment(connection.messageQueueStore)
+        .environment(connection.askRequestStore)
+        .environment(AppNavigation())
+        .environment(QuickCommentTemplateStore(templates: []))
+        .environment(
+            \.reviewCommentSelectionScope,
+            interactionContext.reviewCommentSelectionRouter.map(ReviewCommentSelectionScope.activeSession)
+        )
+
+        let host = UIHostingController(rootView: view)
+        FullScreenViewerPresentationPolicy.configureLargePresentation(
+            host,
+            traitCollection: sourceView.traitCollection
+        )
+        presenter.present(host, animated: true)
+    }
+
+    private func presentWorkspaceFileBrowser(
+        for pill: UserMessagePathPill,
+        workspaceId: String,
+        from sourceView: UIView,
+        presenter: UIViewController
+    ) {
+        guard let apiClient = connection?.apiClient else { return }
+
+        let isHostPath = MarkdownWikiLinkRewriter.resolvedHostPath(pill.path) != nil
+        let view = FileBrowserContentView(
+            workspaceId: workspaceId,
+            serverId: serverId,
+            filePath: pill.path,
+            fileName: pill.label,
+            source: isHostPath ? .hostFile : .workspaceFile,
+            sessionId: sessionId,
+            fileSize: nil
+        )
+        .environment(\.apiClient, apiClient)
+        .environment(audioPlayer)
+        .environment(
+            \.reviewCommentSelectionScope,
+            interactionContext.reviewCommentSelectionRouter.map(ReviewCommentSelectionScope.activeSession)
+        )
+
+        presentTimelineViewer(view, from: sourceView, presenter: presenter)
+    }
+
+    private func presentTimelineViewer<Content: View>(
+        _ view: Content,
+        from sourceView: UIView,
+        presenter: UIViewController
+    ) {
+        let host = UIHostingController(rootView: view)
+        let navigation = UINavigationController(rootViewController: host)
+        FullScreenViewerPresentationPolicy.configureLargePresentation(
+            navigation,
+            traitCollection: sourceView.traitCollection
+        )
+        presenter.present(navigation, animated: true)
     }
 
     func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
