@@ -478,6 +478,7 @@
 		4B4EC8E539A0FA24F410C6B0 /* DeviceAuthSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24F80637EB2D077A3410259D /* DeviceAuthSession.swift */; };
 		4B77E0FA00D76795E09EF51C /* PencilKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AAD7BF77A3054DFE0C02EBB6 /* PencilKit.framework */; };
 		4BA67D2253A34FF17AD83C92 /* OnboardingStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 224165BF117754E9EF33CBD0 /* OnboardingStateTests.swift */; };
+		4BCA658487C1CE93E5A80386 /* MacScheduleRunTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FD1C5EDA1AF52B46E9EE82A /* MacScheduleRunTests.swift */; };
 		4C05D937BECC87083F004792 /* FileViewerPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7D6B729D5116B4494E8AD96 /* FileViewerPlan.swift */; };
 		4C42E10BFDD7182B0826DDE9 /* MermaidJourneyParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B8D5B1CE933B1C98D0411 /* MermaidJourneyParser.swift */; };
 		4C87064E2D13D61023C8D4AA /* VoiceInputTelemetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61D76415BF6EA4858023AD26 /* VoiceInputTelemetryTests.swift */; };
@@ -2298,6 +2299,7 @@
 		6F2CA632DE148695D6776950 /* CodeBlockWrappingHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockWrappingHarnessView.swift; sourceTree = "<group>"; };
 		6F39F71544939CACEB47798D /* GitStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitStatus.swift; sourceTree = "<group>"; };
 		6FAC6584DA592860CDBC370D /* ComposerDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraft.swift; sourceTree = "<group>"; };
+		6FD1C5EDA1AF52B46E9EE82A /* MacScheduleRunTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScheduleRunTests.swift; sourceTree = "<group>"; };
 		6FE7CF970D9D9F2C5FEDA09D /* MermaidSankeyRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidSankeyRenderer.swift; sourceTree = "<group>"; };
 		702BC47E7ABC614F3A2C7A0D /* MacWorkspaceWorktreeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceWorktreeTests.swift; sourceTree = "<group>"; };
 		70303C5850323FE73CE1F035 /* ReviewCommentSelectionTextFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentSelectionTextFormatterTests.swift; sourceTree = "<group>"; };
@@ -4812,6 +4814,7 @@
 				C88513D18E6AFDE4E730CA88 /* MacPendingAttachmentTests.swift */,
 				F75E80BAF578255A9EB28C9F /* MacRemoteServerStoreTests.swift */,
 				369CC8375740648865129C00 /* MacReviewCommentTests.swift */,
+				6FD1C5EDA1AF52B46E9EE82A /* MacScheduleRunTests.swift */,
 				B076BE79358DCB57D26B64B3 /* MacScreenAwakeControllerTests.swift */,
 				6967D1470CC713AF430A8877 /* MacServerLifecycleTests.swift */,
 				43DA1D961B8DBC99A67F2F8D /* MacSessionActionPolicyTests.swift */,
@@ -6455,6 +6458,7 @@
 				B4B8DD5105B3D1A07311D0A3 /* MacPendingAttachmentTests.swift in Sources */,
 				AB2366BBB9A69E0412091C34 /* MacRemoteServerStoreTests.swift in Sources */,
 				7DE130FAA8699850AF5917F8 /* MacReviewCommentTests.swift in Sources */,
+				4BCA658487C1CE93E5A80386 /* MacScheduleRunTests.swift in Sources */,
 				C0909E42177D736F610A5552 /* MacScreenAwakeControllerTests.swift in Sources */,
 				130BD3A1C4CAEB259EC06837 /* MacServerLifecycleTests.swift in Sources */,
 				8884E29C0CA88D87338BC7BC /* MacSessionActionPolicyTests.swift in Sources */,

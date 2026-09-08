@@ -19,7 +19,44 @@ final class MacCatalogStore {
 
     var schedules: [AgentScheduleSummary] = []
     var scheduleStatusFilter: AgentScheduleStatus = .active
-    var selectedScheduleID: String?
+    var selectedScheduleID: String? {
+        didSet {
+            guard oldValue != selectedScheduleID else { return }
+            scheduleSelectionGeneration &+= 1
+            scheduleHistoryGeneration &+= 1
+            loadedSchedule = nil
+            scheduleDraft = nil
+            scheduleRuns = []
+            scheduleRunError = nil
+            scheduleRunMessage = nil
+            scheduleHistoryError = nil
+            scheduleOpenError = nil
+            openingScheduleRunID = nil
+            isLoadingScheduleRuns = false
+            hasLoadedScheduleRuns = false
+        }
+    }
+    private(set) var scheduleRuns: [AgentScheduleRunSummary] = []
+    private(set) var scheduleRunError: String?
+    private(set) var scheduleRunMessage: String?
+    private(set) var scheduleHistoryError: String?
+    private(set) var scheduleOpenError: String?
+    private(set) var openingScheduleRunID: String?
+    private(set) var isLoadingScheduleRuns = false
+    private(set) var hasLoadedScheduleRuns = false
+    private var pendingScheduleIDs: Set<String> = []
+    private var scheduleSelectionGeneration: UInt64 = 0
+    private var scheduleHistoryGeneration: UInt64 = 0
+    private var scheduleDetailGeneration: UInt64 = 0
+
+    var isRunningSchedule: Bool {
+        selectedScheduleID.map { pendingScheduleIDs.contains($0) } ?? false
+    }
+
+    var canRunSelectedSchedule: Bool {
+        !isCreatingSchedule && selectedSchedule != nil && selectedSchedule?.status != .archived
+            && !isSaving && !isRunningSchedule && openingScheduleRunID == nil
+    }
     var loadedSchedule: AgentSchedule?
     var scheduleDraft: MacScheduleEditorDraft?
     var isCreatingSchedule = false
@@ -291,14 +328,119 @@ final class MacCatalogStore {
 
     func loadSelectedSchedule() async {
         guard !isCreatingSchedule, let requestedID = selectedScheduleID, let client = makeClient() else { return }
+        let selection = scheduleSelectionGeneration
+        scheduleDetailGeneration &+= 1
+        let detail = scheduleDetailGeneration
+        async let history: Void = refreshScheduleRuns()
         do {
             let schedule = try await client.getAgentSchedule(requestedID)
-            guard !isCreatingSchedule, selectedScheduleID == requestedID else { return }
+            guard !Task.isCancelled, selection == scheduleSelectionGeneration,
+                  detail == scheduleDetailGeneration, !isCreatingSchedule else { return }
             loadedSchedule = schedule
             scheduleDraft = .from(schedule, fallbackWorkspaceId: workspaces.first?.id ?? "")
         } catch {
-            guard !isCreatingSchedule, selectedScheduleID == requestedID else { return }
+            guard !Task.isCancelled, selection == scheduleSelectionGeneration,
+                  detail == scheduleDetailGeneration else { return }
             errors[.schedules] = error.localizedDescription
+        }
+        await history
+    }
+
+    func refreshScheduleRuns() async {
+        guard !isCreatingSchedule, let id = selectedScheduleID else { return }
+        scheduleHistoryGeneration &+= 1
+        let request = scheduleHistoryGeneration
+        let selection = scheduleSelectionGeneration
+        isLoadingScheduleRuns = true
+        scheduleHistoryError = nil
+        defer {
+            if request == scheduleHistoryGeneration { isLoadingScheduleRuns = false }
+        }
+        guard let client = makeClient() else {
+            scheduleHistoryError = "Local server is unavailable."
+            return
+        }
+        do {
+            let runs = try await client.listAgentScheduleRuns(scheduleId: id)
+            guard !Task.isCancelled, request == scheduleHistoryGeneration,
+                  selection == scheduleSelectionGeneration else { return }
+            scheduleRuns = runs
+            hasLoadedScheduleRuns = true
+        } catch {
+            guard !Task.isCancelled, request == scheduleHistoryGeneration,
+                  selection == scheduleSelectionGeneration else { return }
+            scheduleHistoryError = error.localizedDescription
+        }
+    }
+
+    func runSelectedScheduleNow() async -> MacSelectedSessionTarget? {
+        guard canRunSelectedSchedule, let id = selectedScheduleID else { return nil }
+        guard let client = makeClient() else {
+            scheduleRunError = "Local server is unavailable."
+            return nil
+        }
+        let selection = scheduleSelectionGeneration
+        // Keep the per-schedule guard even when selection changes. Cancelling a
+        // view task cannot undo a POST that the server may already have accepted.
+        pendingScheduleIDs.insert(id)
+        scheduleRunError = nil
+        scheduleRunMessage = nil
+        scheduleOpenError = nil
+        defer { pendingScheduleIDs.remove(id) }
+        do {
+            let run = try await client.runAgentSchedule(id)
+            // Identity settles the mutation; generation represents navigation
+            // intent. Returning to A may show A's result, but must not steal focus.
+            // No newer attempt for this ID can exist until this defer releases it.
+            guard !Task.isCancelled, selectedScheduleID == id else { return nil }
+            // A GET begun before this acknowledgement must not erase the new run.
+            scheduleHistoryGeneration &+= 1
+            isLoadingScheduleRuns = false
+            scheduleRuns = Array(([run] + scheduleRuns.filter { $0.id != run.id }).sorted {
+                if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                return $0.id > $1.id
+            }.prefix(20))
+            hasLoadedScheduleRuns = true
+            scheduleRunMessage = "Run \(run.status.rawValue)."
+            guard selection == scheduleSelectionGeneration else { return nil }
+            return await resolveScheduleRunSession(run)
+        } catch {
+            guard !Task.isCancelled, selectedScheduleID == id else { return nil }
+            scheduleRunError = "\(error.localizedDescription) Check recent runs before trying again; the request may have reached the server."
+            return nil
+        }
+    }
+
+    func openScheduleRun(_ run: AgentScheduleRunSummary) async -> MacSelectedSessionTarget? {
+        guard !isRunningSchedule else { return nil }
+        return await resolveScheduleRunSession(run)
+    }
+
+    private func resolveScheduleRunSession(_ run: AgentScheduleRunSummary) async -> MacSelectedSessionTarget? {
+        guard run.scheduleId == selectedScheduleID, let sessionID = run.sessionId,
+              openingScheduleRunID == nil else { return nil }
+        guard let client = makeClient() else {
+            scheduleOpenError = "Local server is unavailable."
+            return nil
+        }
+        let selection = scheduleSelectionGeneration
+        openingScheduleRunID = run.id
+        scheduleOpenError = nil
+        defer {
+            if selection == scheduleSelectionGeneration { openingScheduleRunID = nil }
+        }
+        do {
+            let session = try await client.getSessionRecord(sessionId: sessionID)
+            guard !Task.isCancelled, selection == scheduleSelectionGeneration else { return nil }
+            guard session.id == sessionID, let target = MacSelectedSessionTarget.from(session: session) else {
+                scheduleOpenError = "The run session is unavailable. Refresh recent runs and try again."
+                return nil
+            }
+            return target
+        } catch {
+            guard !Task.isCancelled, selection == scheduleSelectionGeneration else { return nil }
+            scheduleOpenError = "Could not open run session: \(error.localizedDescription)"
+            return nil
         }
     }
 

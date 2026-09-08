@@ -285,10 +285,13 @@ struct MacCatalogListColumn: View {
 struct MacCatalogDetailColumn: View {
     let section: MacSidebarSection
     @Bindable var store: MacCatalogStore
+    let onOpenSession: (MacSelectedSessionTarget) -> Void
 
-    init(section: MacSidebarSection, store: MacCatalogStore = .shared) {
+    init(section: MacSidebarSection, store: MacCatalogStore = .shared,
+         onOpenSession: @escaping (MacSelectedSessionTarget) -> Void) {
         self.section = section
         self.store = store
+        self.onOpenSession = onOpenSession
     }
 
     var body: some View {
@@ -349,7 +352,7 @@ struct MacCatalogDetailColumn: View {
     @ViewBuilder
     private var scheduleDetail: some View {
         if store.isCreatingSchedule || store.scheduleDraft != nil {
-            MacScheduleEditor(store: store)
+            MacScheduleEditor(store: store, onOpenSession: onOpenSession)
         } else {
             MacShellEmptyDetail(
                 title: "Select a Schedule",
@@ -473,8 +476,72 @@ private struct MacAgentEditor: View {
     }
 }
 
-private struct MacScheduleEditor: View {
+struct MacScheduleRunsSection: View {
     @Bindable var store: MacCatalogStore
+    let onOpenSession: (MacSelectedSessionTarget) -> Void
+
+    var body: some View {
+        Section("Run Schedule") {
+            Button {
+                Task {
+                    if let target = await store.runSelectedScheduleNow() { onOpenSession(target) }
+                }
+            } label: {
+                Label(store.isRunningSchedule ? "Running…" : "Run Now", systemImage: "play.fill")
+            }
+            .disabled(!store.canRunSelectedSchedule)
+            .accessibilityIdentifier("mac.schedule.runNow")
+            Text("Runs the saved schedule, not unsaved edits.")
+                .font(.caption).foregroundStyle(.secondary)
+            if store.isRunningSchedule { ProgressView("Requesting run…") }
+            if let message = store.scheduleRunMessage { Text(message) }
+            if let error = store.scheduleRunError {
+                Label(error, systemImage: "exclamationmark.triangle")
+            }
+        }
+        Section("Recent Runs") {
+            Button {
+                Task { await store.refreshScheduleRuns() }
+            } label: {
+                Label(store.scheduleHistoryError == nil ? "Refresh Runs" : "Retry Loading Runs", systemImage: "arrow.clockwise")
+            }
+            .disabled(store.isLoadingScheduleRuns)
+            .accessibilityIdentifier("mac.schedule.refreshRuns")
+            if store.isLoadingScheduleRuns { ProgressView("Loading recent runs…") }
+            if let error = store.scheduleHistoryError {
+                Label(error, systemImage: "exclamationmark.triangle")
+            }
+            if store.hasLoadedScheduleRuns && store.scheduleRuns.isEmpty {
+                Text("No Runs Yet")
+                Text("Scheduled and manual runs will appear here.").foregroundStyle(.secondary)
+            }
+            ForEach(store.scheduleRuns) { run in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(run.status.rawValue.capitalized).font(.headline)
+                    Text("\(run.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(run.kind.rawValue.capitalized)")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let error = run.error { Label(error, systemImage: "exclamationmark.triangle") }
+                    if run.sessionId != nil {
+                        Button(store.openingScheduleRunID == run.id ? "Opening…" : "Open Session") {
+                            Task {
+                                if let target = await store.openScheduleRun(run) { onOpenSession(target) }
+                            }
+                        }
+                        .disabled(store.openingScheduleRunID != nil || store.isRunningSchedule)
+                        .accessibilityIdentifier("mac.schedule.openRun.\(run.id)")
+                    }
+                }
+            }
+            if let error = store.scheduleOpenError {
+                Label(error, systemImage: "exclamationmark.triangle")
+            }
+        }
+    }
+}
+
+struct MacScheduleEditor: View {
+    @Bindable var store: MacCatalogStore
+    let onOpenSession: (MacSelectedSessionTarget) -> Void
     @State private var error: String?
 
     var body: some View {
@@ -503,6 +570,9 @@ private struct MacScheduleEditor: View {
                 TextEditor(text: draftBinding(\.prompt))
                     .font(.body)
                     .frame(minHeight: 140)
+            }
+            if !store.isCreatingSchedule {
+                MacScheduleRunsSection(store: store, onOpenSession: onOpenSession)
             }
             if let error {
                 Section {

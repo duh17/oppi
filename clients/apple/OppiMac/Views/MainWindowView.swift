@@ -416,7 +416,7 @@ struct MainWindowView: View {
                 )
             }
         case .agents, .schedules, .skills, .extensions:
-            MacSidebarUtilityDetail(section: selectedSection)
+            MacSidebarUtilityDetail(section: selectedSection, onOpenSession: selectSessionTarget)
         case .settings:
             SettingsView(
                 pane: selectedSettingsPane,

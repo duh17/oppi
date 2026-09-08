@@ -120,9 +120,10 @@ struct MacSidebarUtilityList: View {
 
 struct MacSidebarUtilityDetail: View {
     let section: MacSidebarSection
+    let onOpenSession: (MacSelectedSessionTarget) -> Void
 
     var body: some View {
-        MacCatalogDetailColumn(section: section)
+        MacCatalogDetailColumn(section: section, onOpenSession: onOpenSession)
             .themedScrollSurface()
     }
 }

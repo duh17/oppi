@@ -253,6 +253,26 @@ actor MacWorkspaceClient {
         return try JSONDecoder().decode(AgentScheduleResponse.self, from: data).schedule
     }
 
+    func runAgentSchedule(_ scheduleId: String) async throws -> AgentScheduleRunSummary {
+        struct Body: Encodable { let requestId: String }
+        let data = try await post(
+            url: try makeURL(pathSegments: ["schedules", scheduleId, "run"]),
+            body: Body(requestId: "mac-manual-\(UUID().uuidString)")
+        )
+        return try JSONDecoder().decode(AgentScheduleRunResponse.self, from: data).run
+    }
+
+    func listAgentScheduleRuns(scheduleId: String, limit: Int = 20) async throws -> [AgentScheduleRunSummary] {
+        let data = try await get(url: try makeURL(
+            pathSegments: ["schedules", scheduleId, "runs"],
+            queryItems: [URLQueryItem(name: "limit", value: String(limit)), URLQueryItem(name: "order", value: "desc")]
+        ))
+        return try JSONDecoder().decode(AgentScheduleRunsResponse.self, from: data).runs.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id > $1.id
+        }
+    }
+
     func createAgentSchedule(
         name: String,
         trigger: AgentScheduleTrigger,
