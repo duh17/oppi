@@ -3,12 +3,14 @@
 # and sim-pool.sh reapplies.
 #
 # Kept on purpose (not listed here):
-#   com.apple.chronod, com.apple.liveactivitiesd  Live Activities
+#   com.apple.chronod, com.apple.liveactivitiesd  Live Activities / widgets
 #   com.apple.corespeechd, com.apple.voiced       dictation / speech
 #   com.apple.assetsd                             Photos picker
 #   com.apple.apsd                                push
 #   com.apple.swcd                                universal links
 #   com.apple.mobileassetd                        system assets
+#   com.apple.diagnosticd                         live Console / log stream
+#                                             (man diagnosticd(8); os_log still goes to logd)
 #
 com.apple.PosterBoard
 com.apple.assistantd
@@ -173,3 +175,24 @@ com.apple.storagedatad
 com.apple.StatusKitAgent
 com.apple.countryd
 com.apple.managedconfiguration.passcodenagd
+# Watch / companion / location-history / MDM. iPhone XCTest does not need these.
+# They were still running on slim Oppi-Pool sims. Not diagnosticd (see above).
+com.apple.nanoregistryd
+com.apple.nanoregistrylaunchd
+com.apple.nanotimekitcompaniond
+com.apple.nanoprefsyncd.2
+com.apple.nanobackupd
+com.apple.nanomapscd
+com.apple.companionappd
+com.apple.appconduitd
+com.apple.NPKCompanionAgent
+com.apple.brook.brookcompaniond
+com.apple.eventkitsyncd
+com.apple.addressbooksyncd
+com.apple.ClipServices.clipserviced
+com.apple.dmd
+com.apple.remotemanagementd
+com.apple.RemoteManagementAgent
+com.apple.bulletindistributord
+com.apple.routined
+com.apple.biomesyncd
