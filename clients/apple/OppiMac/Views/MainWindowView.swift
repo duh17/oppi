@@ -23,6 +23,9 @@ struct MainWindowView: View {
     let healthMonitor: ServerHealthMonitor
     let permissionState: TCCPermissionState
     let sessionMonitor: MacSessionMonitor
+    /// App-owned snapshot/catalog. This window must not create another copy.
+    let workspaceStore: MacWorkspaceSnapshotStore
+    let checkForUpdates: @MainActor () -> Void
     @Binding var pendingSessionDeepLinkURL: URL?
 
     @State private var selectedSection = MacSidebarSection.defaultSection
@@ -35,8 +38,14 @@ struct MainWindowView: View {
     @State private var searchText = ""
     @State private var searchStore = SessionSearchStore()
     @State private var workspacesExpanded = false
-    @State private var workspaceStore = MacWorkspaceSnapshotStore()
-    @State private var paneCommands = MacSessionPaneCommandCenter(deck: MacSessionPaneDeck())
+    @State private var paneCommands = MacSessionPaneCommandCenter(
+        deck: MacSessionPaneDeck(
+            persistence: MacSessionPaneLayoutPersistence(
+                windowID: MacAttentionNotificationService.defaultWindowID
+            ),
+            unresolvedRestoredRoute: .lookup
+        )
+    )
     @State private var remoteServerStore = MacRemoteServerStore()
     @Bindable private var catalogStore = MacCatalogStore.shared
 
@@ -45,16 +54,27 @@ struct MainWindowView: View {
         healthMonitor: ServerHealthMonitor,
         permissionState: TCCPermissionState,
         sessionMonitor: MacSessionMonitor,
-        pendingSessionDeepLinkURL: Binding<URL?>
+        workspaceStore: MacWorkspaceSnapshotStore,
+        pendingSessionDeepLinkURL: Binding<URL?>,
+        checkForUpdates: @escaping @MainActor () -> Void
     ) {
         self.processManager = processManager
         self.healthMonitor = healthMonitor
         self.permissionState = permissionState
         self.sessionMonitor = sessionMonitor
+        self.workspaceStore = workspaceStore
+        self.checkForUpdates = checkForUpdates
         _pendingSessionDeepLinkURL = pendingSessionDeepLinkURL
     }
 
     private var paneDeck: MacSessionPaneDeck { paneCommands.deck }
+
+    private var isPaneDeckDisplayed: Bool {
+        MacSessionPaneCommandAvailability.isDeckDisplayed(
+            section: selectedSection,
+            homeDetail: homeSessionDetail
+        )
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -77,10 +97,13 @@ struct MainWindowView: View {
         .task {
             wireAttentionNotifications()
             await refreshWorkspaceCatalogAndSessions()
+            await resolvePendingRestoredSessions()
             await consumePendingSessionDeepLink()
-            await workspaceStore.runAppEventStreamFromLocalConfig()
         }
         .onChange(of: selectedSessionID) { _, _ in
+            publishVisibleAttentionSession()
+        }
+        .onChange(of: paneDeck.visibleSessionIDs) { _, _ in
             publishVisibleAttentionSession()
         }
         .onChange(of: pendingSessionDeepLinkURL) { _, _ in
@@ -96,7 +119,8 @@ struct MainWindowView: View {
                 await consumePendingSessionDeepLink()
             }
         }
-        .onChange(of: workspaceStore.sessionTargets.map(\.sessionId)) { _, _ in
+        .onChange(of: workspaceStore.sessionTargets.map { "\($0.sessionId):\($0.summary.pendingAskCount)" }) { _, _ in
+            MacSessionRestorationCatalog.apply(workspaceStore, to: paneDeck)
             bindHomeTraceIfCatalogHit()
             Task { await consumePendingSessionDeepLink() }
         }
@@ -117,7 +141,13 @@ struct MainWindowView: View {
             }
             publishVisibleAttentionSession()
         }
-        .focusedSceneValue(\.macSessionPaneCommands, paneCommands)
+        .focusedSceneValue(\.macSessionPaneCommands, isPaneDeckDisplayed ? paneCommands : nil)
+        .onAppear {
+            paneCommands.isDeckDisplayed = isPaneDeckDisplayed
+        }
+        .onChange(of: isPaneDeckDisplayed) { _, displayed in
+            paneCommands.isDeckDisplayed = displayed
+        }
         .onDisappear {
             paneDeck.cancelAllLiveDictation()
             paneDeck.suspendAllSessionRuntimes()
@@ -434,7 +464,15 @@ struct MainWindowView: View {
                         guard let client = MacWorkspaceClient.localOwner() else { return [] }
                         return (try? await client.listWorkspaceWorktrees(workspaceId: workspaceId)) ?? []
                     },
-                    launchQuickSession: launchQuickSession(from:attempt:)
+                    launchQuickSession: launchQuickSession(from:attempt:),
+                    retryRestoration: { runtime in
+                        await MacSessionRestorationCatalog.retryDisconnected(
+                            paneID: runtime.id,
+                            deck: paneDeck,
+                            catalog: workspaceStore,
+                            client: MacWorkspaceClient.localOwner()
+                        )
+                    }
                 )
                 .onDisappear {
                     paneDeck.cancelAllLiveDictation()
@@ -519,10 +557,13 @@ struct MainWindowView: View {
     }
 
     private func publishVisibleAttentionSession(isMainWindowPresented: Bool = true) {
-        MacAttentionNotificationService.shared.activeSessionId = MacAttentionVisibleSession.id(
-            section: selectedSection,
-            selectedSessionID: selectedSessionID,
-            isMainWindowPresented: isMainWindowPresented
+        MacAttentionNotificationService.shared.publishVisibleSessions(
+            windowID: MacAttentionNotificationService.defaultWindowID,
+            sessionIDs: MacAttentionVisibleSession.ids(
+                section: selectedSection,
+                selectedSessionIDs: paneDeck.visibleSessionIDs,
+                isMainWindowPresented: isMainWindowPresented
+            )
         )
     }
 
@@ -675,6 +716,14 @@ struct MainWindowView: View {
         await workspaceStore.loadRecentSessionsForLoadedWorkspacesFromLocalConfig()
     }
 
+    private func resolvePendingRestoredSessions() async {
+        await MacSessionRestorationCatalog.resolvePending(
+            deck: paneDeck,
+            catalog: workspaceStore,
+            client: MacWorkspaceClient.localOwner()
+        )
+    }
+
     private func updateSessionSearch(_ query: String) {
         guard selectedSection == .sessionHome else {
             searchStore.clear()
@@ -683,6 +732,77 @@ struct MainWindowView: View {
         searchStore.search(
             query: query,
             apiClient: MacWorkspaceClient.localOwner()
+        )
+    }
+}
+
+/// Window-owned restoration/catalog composition. The record lookup is a read.
+/// Each still-owned found result is published as the deck accepts it, before
+/// a later pane lookup can suspend. The pane observer also applies independent
+/// catalog refreshes.
+@MainActor
+enum MacSessionRestorationCatalog {
+    static func lookup(
+        route: MacSessionPaneRoute,
+        catalog: MacWorkspaceSnapshotStore,
+        client: MacWorkspaceClient?
+    ) async -> MacSessionPaneRestoredLookup {
+        if let target = catalog.target(for: route.sessionID) {
+            return .found(target)
+        }
+        guard let client else { return .disconnected }
+        return await MacSessionPaneRestoredLookup.fromSessionRecord {
+            try await client.getSessionRecord(sessionId: route.sessionID)
+        }
+    }
+
+    static func publishAccepted(
+        _ targets: [MacSelectedSessionTarget],
+        into catalog: MacWorkspaceSnapshotStore
+    ) {
+        for target in targets {
+            catalog.noteOpenedSession(target)
+        }
+    }
+
+    static func apply(
+        _ catalog: MacWorkspaceSnapshotStore,
+        to deck: MacSessionPaneDeck
+    ) {
+        for target in catalog.sessionTargets {
+            _ = deck.updateOpenTarget(target)
+        }
+    }
+
+    static func resolvePending(
+        deck: MacSessionPaneDeck,
+        catalog: MacWorkspaceSnapshotStore,
+        client: MacWorkspaceClient?
+    ) async {
+        await deck.resolvePendingRestoredSessions(
+            lookup: { route in
+                await lookup(route: route, catalog: catalog, client: client)
+            },
+            onAccepted: { target in
+                publishAccepted([target], into: catalog)
+            }
+        )
+    }
+
+    static func retryDisconnected(
+        paneID: MacSessionPaneID,
+        deck: MacSessionPaneDeck,
+        catalog: MacWorkspaceSnapshotStore,
+        client: MacWorkspaceClient?
+    ) async {
+        await deck.retryDisconnectedRestoration(
+            paneID: paneID,
+            lookup: { route in
+                await lookup(route: route, catalog: catalog, client: client)
+            },
+            onAccepted: { target in
+                publishAccepted([target], into: catalog)
+            }
         )
     }
 }

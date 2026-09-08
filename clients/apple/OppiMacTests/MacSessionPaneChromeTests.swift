@@ -25,6 +25,8 @@ struct MacSessionPaneChromeTests {
         #expect(!source.contains("splitMenu"))
         #expect(!source.contains("Menu(\"Split Right\""))
         #expect(!source.contains("Menu(\"Split Below\""))
+        #expect(header.contains("mac.session.pane.ask"))
+        #expect(header.contains("Needs input"))
     }
 
     @Test func focusChromeDoesNotDimOrCoverTheTimeline() throws {
@@ -36,6 +38,22 @@ struct MacSessionPaneChromeTests {
         #expect(!source.contains("Color.black.opacity"))
         #expect(!source.contains(".overlay {\n            Color."))
         #expect(!source.contains("usesFullPaneDimmingOverlay = true"))
+    }
+
+    @Test func timelineFollowsPaneOwnedLiveTailIntent() throws {
+        let shell = try shellSource()
+        let timelineCall = try sourceSlice(
+            named: "MacSessionTimelineView(",
+            until: ".frame(",
+            in: shell
+        )
+        #expect(timelineCall.contains("presentation: presentation"))
+
+        let timeline = try contents(of: "OppiMac/Views/MacSessionTimelineViews.swift")
+        #expect(timeline.contains("var presentation: MacSessionPanePresentationState?"))
+        #expect(timeline.contains("presentation?.isLiveTailAttached"))
+        #expect(timeline.contains("presentation.isLiveTailAttached = attached"))
+        #expect(!timeline.contains("@State private var isAttachedToLatestRow"))
     }
 
     @Test func documentCloseStaysOutsidePaneTapToFocus() throws {
@@ -122,10 +140,149 @@ struct MacSessionPaneChromeTests {
         )
         #expect(composerCall.contains("activate: activate"))
     }
+
+    @Test func restorationSurfaceNamesPendingOfflineAndRetry() throws {
+        let source = try paneDeckSource()
+        let restoration = try sourceSlice(
+            named: "private func restorationChrome(_ message: String) -> some View {",
+            until: "private var paneHeader: some View {",
+            in: source
+        )
+        #expect(restoration.contains("Opening this session"))
+        #expect(restoration.contains("Retry"))
+        #expect(restoration.contains("mac.session.pane.restoration.retry"))
+        #expect(restoration.contains("mac.session.pane.restoration.pending"))
+        #expect(restoration.contains("mac.session.pane.restoration.disconnected"))
+        #expect(restoration.contains("mac.session.pane.restoration.unavailable"))
+        #expect(restoration.contains("showsRetry"))
+    }
+
+    @Test @MainActor func nestedThreePaneDragAndShrinkKeepNonnegativeReachableChrome() async throws {
+        let deck = MacSessionPaneDeck()
+        let windowSize = MacSessionPaneMeasuredSize(width: 1_320, height: 800)
+        deck.noteWindowSize(windowSize)
+        _ = try #require(deck.openOrFocus(chromeTarget(sessionID: "session-a")))
+        _ = try #require(deck.splitFocusedRight(with: chromeTarget(sessionID: "session-b")))
+        _ = try #require(deck.splitFocusedRight(with: chromeTarget(sessionID: "session-c")))
+        #expect(deck.paneCount == 3)
+
+        let host = NSHostingView(rootView: chromeDeckView(deck: deck))
+        let window = offscreenWindow(hosting: host, size: NSSize(width: 1_320, height: 800))
+        defer { tearDownOffscreen(window) }
+        flush(host)
+
+        let splitIDs = chromeSplitIDs(deck.root)
+        #expect(splitIDs.count == 2)
+        // Fractions are set on the layout model, not claimed as divider gestures.
+        for splitID in splitIDs {
+            for fraction in [0.05, 0.95] {
+                #expect(deck.setFraction(fraction, for: splitID))
+                flush(host)
+                try assertNonnegativeDescendantFrames(host)
+                try assertEachPaneCloseAndComposerReachable(host, paneCount: 3)
+            }
+        }
+
+        host.frame = NSRect(x: 0, y: 0, width: 400, height: 360)
+        window.setContentSize(NSSize(width: 400, height: 360))
+        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 400, height: 360))
+        flush(host)
+        try assertNonnegativeDescendantFrames(host)
+        try assertEachPaneCloseAndComposerReachable(host, paneCount: 3)
+
+        host.frame = NSRect(x: 0, y: 0, width: 1_320, height: 800)
+        window.setContentSize(NSSize(width: 1_320, height: 800))
+        deck.noteWindowSize(windowSize)
+        flush(host)
+        try assertNonnegativeDescendantFrames(host)
+        try assertEachPaneCloseAndComposerReachable(host, paneCount: 3)
+    }
 }
 
 @Suite("Mac session pane commands")
 struct MacSessionPaneCommandTests {
+    @Test @MainActor func paneCommandsStayOffHiddenHomeDeckIncludingStatsOnly() throws {
+        #expect(
+            MacSessionPaneCommandAvailability.isDeckDisplayed(
+                section: .sessionHome,
+                homeDetail: .none
+            )
+        )
+        #expect(
+            !MacSessionPaneCommandAvailability.isDeckDisplayed(
+                section: .agents,
+                homeDetail: .none
+            )
+        )
+        #expect(
+            !MacSessionPaneCommandAvailability.isDeckDisplayed(
+                section: .workspaces,
+                homeDetail: .none
+            )
+        )
+        #expect(
+            !MacSessionPaneCommandAvailability.isDeckDisplayed(
+                section: .settings,
+                homeDetail: .none
+            )
+        )
+        let stats = StatsActiveSession(
+            id: "runtime-only",
+            status: "busy",
+            model: "test/model",
+            cost: 0,
+            name: "runtime-only",
+            firstMessage: nil,
+            workspaceName: "Oppi",
+            thinkingLevel: nil,
+            contextTokens: nil,
+            contextWindow: nil,
+            createdAt: nil
+        )
+        #expect(
+            !MacSessionPaneCommandAvailability.isDeckDisplayed(
+                section: .sessionHome,
+                homeDetail: .statsOnly(stats)
+            )
+        )
+
+        let deck = MacSessionPaneDeck()
+        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
+        let runtime = try #require(deck.openOrFocus(chromeTarget(sessionID: "session-a")))
+        runtime.composerState.draft = "Keep this draft"
+        let paneID = runtime.id
+        let commands = MacSessionPaneCommandCenter(deck: deck)
+        commands.isDeckDisplayed = false
+
+        #expect(!commands.canClosePane)
+        #expect(!commands.canSplit)
+        commands.perform(.closePane)
+        commands.perform(.splitRight)
+        #expect(deck.runtime(for: paneID) === runtime)
+        #expect(runtime.composerState.draft == "Keep this draft")
+        #expect(deck.paneCount == 1)
+
+        commands.isDeckDisplayed = true
+        #expect(commands.canClosePane)
+        commands.perform(.splitRight)
+        #expect(deck.paneCount == 2)
+    }
+
+    @Test func mainWindowWiresRecordLookupAndUnpublishesHiddenPaneCommands() throws {
+        let main = try contents(of: "OppiMac/Views/MainWindowView.swift")
+        #expect(main.contains("unresolvedRestoredRoute: .lookup"))
+        #expect(main.contains("getSessionRecord(sessionId:"))
+        #expect(main.contains("resolvePendingRestoredSessions"))
+        #expect(main.contains("fromSessionRecord"))
+        #expect(main.contains("MacSessionRestorationCatalog.retryDisconnected"))
+        #expect(main.contains("retryDisconnectedRestoration("))
+        #expect(main.contains("paneID: paneID"))
+        #expect(main.contains("MacSessionRestorationCatalog.apply"))
+        #expect(main.contains("onAccepted:"))
+        #expect(main.contains("publishAccepted([target]"))
+        #expect(main.contains("isPaneDeckDisplayed ? paneCommands : nil"))
+    }
+
     @Test func paneShortcutsMatchTheContract() {
         #expect(MacSessionPaneCommand.splitRight.key == "d")
         #expect(MacSessionPaneCommand.splitRight.modifiers == .command)
@@ -152,6 +309,7 @@ struct MacSessionPaneCommandTests {
 
     @Test @MainActor func paneShortcutsTransferKeyboardOwnershipAwayFromTheOriginComposer() async throws {
         let deck = MacSessionPaneDeck()
+        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
         let paneA = try #require(deck.openOrFocus(chromeTarget(sessionID: "session-a")))
         let paneB = try #require(deck.splitFocusedRight())
         #expect(deck.focus(paneID: paneA.id))
@@ -278,6 +436,7 @@ struct MacAppKeybindingHelpTests {
 
     @Test @MainActor func shiftQuestionFollowsTheTypingComposerNotTheOutlinedPane() throws {
         let deck = MacSessionPaneDeck()
+        deck.noteWindowSize(MacSessionPaneMeasuredSize(width: 1_200, height: 800))
         let paneA = try #require(deck.openOrFocus(chromeTarget(sessionID: "session-a")))
         let paneB = try #require(deck.splitFocusedRight())
         #expect(deck.focus(paneID: paneA.id))
@@ -343,6 +502,142 @@ private func chromeWorkspace() -> Workspace {
         createdAt: Date(timeIntervalSince1970: 100),
         updatedAt: Date(timeIntervalSince1970: 100)
     )
+}
+
+@MainActor
+private func offscreenWindow(hosting host: NSView, size: NSSize) -> NSWindow {
+    host.frame = NSRect(origin: .zero, size: size)
+    let window = NSWindow(
+        contentRect: host.frame,
+        styleMask: [.titled],
+        backing: .buffered,
+        defer: false
+    )
+    window.isReleasedWhenClosed = false
+    window.contentView = host
+    window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+    window.orderFront(nil)
+    return window
+}
+
+@MainActor
+private func tearDownOffscreen(_ window: NSWindow) {
+    window.orderOut(nil)
+    window.contentView = nil
+    window.close()
+}
+
+@MainActor
+private func flush(_ host: NSView) {
+    host.layoutSubtreeIfNeeded()
+    host.displayIfNeeded()
+}
+
+private func chromeSplitIDs(_ node: MacSessionPaneNode?) -> [MacSessionPaneSplitID] {
+    guard case .split(let split) = node else { return [] }
+    return [split.id] + chromeSplitIDs(split.first) + chromeSplitIDs(split.second)
+}
+
+@MainActor
+private func assertNonnegativeDescendantFrames(_ root: NSView) throws {
+    var stack = [root]
+    while let view = stack.popLast() {
+        #expect(view.frame.width >= -0.001)
+        #expect(view.frame.height >= -0.001)
+        stack.append(contentsOf: view.subviews)
+    }
+}
+
+@MainActor
+private func assertEachPaneCloseAndComposerReachable(_ root: NSView, paneCount: Int) throws {
+    let closeButtons = chromeIdentifiedViews(root, identifier: "mac.session.pane.close")
+    let composers = chromeDescendants(of: root, type: MacComposerPasteTextView.self)
+    if closeButtons.count != paneCount {
+        let buttons = chromeDescendants(of: root, type: NSButton.self)
+        let descriptions = buttons.map { button -> String in
+            let identifier = button.accessibilityIdentifier() ?? ""
+            let label = button.accessibilityLabel() ?? ""
+            let tip = button.toolTip ?? ""
+            return "id=\(identifier) label=\(label) title=\(button.title) tip=\(tip)"
+        }.joined(separator: " | ")
+        Issue.record("close controls \(closeButtons.count)/\(paneCount); NSButtons: \(descriptions)")
+    }
+    #expect(closeButtons.count == paneCount)
+    #expect(composers.count == paneCount)
+    let reachableControls: [NSView] = closeButtons + composers
+    for control in reachableControls {
+        revealOverflowIfNeeded(control)
+        #expect(control.bounds.width > 0)
+        #expect(control.bounds.height > 0)
+        let windowPoint = control.convert(
+            NSPoint(x: control.bounds.midX, y: control.bounds.midY),
+            to: nil
+        )
+        let hit = control.window?.contentView?.hitTest(windowPoint)
+        if let hit {
+            #expect(hit === control || hit.isDescendant(of: control) || control.isDescendant(of: hit))
+        }
+    }
+}
+
+@MainActor
+private func chromeIdentifiedViews(_ root: NSView, identifier: String) -> [NSView] {
+    var matches: [NSView] = []
+    var stack = [root]
+    while let view = stack.popLast() {
+        if chromeMatchesIdentifier(view, identifier: identifier) {
+            matches.append(view)
+        }
+        stack.append(contentsOf: view.subviews)
+    }
+    return matches
+}
+
+@MainActor
+private func chromeMatchesIdentifier(_ view: NSView, identifier: String) -> Bool {
+    if view.identifier?.rawValue == identifier { return true }
+    if view.accessibilityIdentifier() == identifier { return true }
+    let label = view.accessibilityLabel() ?? ""
+    if identifier == "mac.session.pane.close",
+       label.localizedCaseInsensitiveContains("close"),
+       label.localizedCaseInsensitiveContains("pane")
+    {
+        return true
+    }
+    if identifier == "mac.session.pane.close",
+       (view as? NSButton)?.toolTip?.contains("Close Pane") == true
+    {
+        return true
+    }
+    if identifier == "mac.session.pane.close",
+       (view.accessibilityHelp() ?? "").localizedCaseInsensitiveContains("Close Pane")
+    {
+        return true
+    }
+    if identifier == "mac.session.pane.close",
+       let button = view as? NSButton,
+       button.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+       (button.accessibilityLabel() ?? "").isEmpty
+    {
+        return true
+    }
+    return false
+}
+
+@MainActor
+private func revealOverflowIfNeeded(_ control: NSView) {
+    var ancestor: NSView? = control.superview
+    while let view = ancestor {
+        if let scroll = view as? NSScrollView {
+            let target = scroll.documentView ?? scroll.contentView
+            let rect = control.convert(control.bounds, to: target)
+            target.scrollToVisible(rect)
+            control.window?.layoutIfNeeded()
+            control.layoutSubtreeIfNeeded()
+            return
+        }
+        ancestor = view.superview
+    }
 }
 
 @MainActor

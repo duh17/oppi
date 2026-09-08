@@ -14,6 +14,7 @@ struct OppiMacApp: App {
     @State private var permissionState = TCCPermissionState()
     @State private var onboardingState = OnboardingState()
     @State private var sessionMonitor = MacSessionMonitor()
+    @State private var workspaceStore = MacWorkspaceSnapshotStore()
     @State private var themeStore = ThemeStore()
     @State private var showOnboarding = false
     @State private var pendingSessionDeepLinkURL: URL?
@@ -58,7 +59,11 @@ struct OppiMacApp: App {
                 healthMonitor: healthMonitor,
                 permissionState: permissionState,
                 sessionMonitor: sessionMonitor,
-                pendingSessionDeepLinkURL: $pendingSessionDeepLinkURL
+                workspaceStore: workspaceStore,
+                pendingSessionDeepLinkURL: $pendingSessionDeepLinkURL,
+                checkForUpdates: { [updaterController] in
+                    updaterController.checkForUpdates(nil)
+                }
             )
             .onOpenURL { url in
                 guard MacSessionDeepLink.sessionId(from: url) != nil else { return }
