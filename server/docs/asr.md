@@ -3,7 +3,7 @@
 Oppi provides two dictation paths:
 
 1. **On-device dictation** — Apple local speech recognition on iPhone.
-2. **Server dictation** — iPhone audio streams to Oppi server, and Oppi forwards it to an HTTP STT backend (Yuwp or any compatible streaming endpoint).
+2. **Server dictation** — iPhone audio streams to Oppi server, and Oppi forwards it to an HTTP STT backend ([Yuwp](https://github.com/duh17/yuwp) or any compatible streaming endpoint).
 
 ASR is configured globally in Oppi server through `~/.config/oppi/config.json`, not as a workspace extension.
 
