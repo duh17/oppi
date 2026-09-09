@@ -587,17 +587,8 @@ final class VoiceInputManager {
     /// User-selected engine routing mode.
     private(set) var engineMode: EngineMode = .auto
 
-    /// Precomputed on-device dictation vocabulary from the latest assistant reply.
-    private var conversationHintPhrases: [String] = []
-    private var conversationHintSource: String?
-    private var conversationHintGeneration = 0
-    private var conversationHintOwner: VoiceComposerOwner?
-    private var foundationModelHintTask: Task<Void, Never>?
     private var composerOwner: VoiceComposerOwner?
     private var composerGeneration = 0
-    #if DEBUG
-    var _testFoundationModelExtract: ((String) async -> [String])?
-    #endif
 
     // MARK: - Init
 
@@ -687,36 +678,6 @@ final class VoiceInputManager {
         composerOwner = nil
     }
 
-    /// Precompute dictation hints when an assistant message lands. Never claims ownership.
-    func updateConversationHints(
-        fromAssistantMessage text: String?,
-        serverId: String,
-        sessionId: String
-    ) {
-        let owner = VoiceComposerOwner(serverId: serverId, kind: .conversation(sessionId: sessionId))
-        guard composerOwner == owner else { return }
-        let source = text ?? ""
-        if source == conversationHintSource, conversationHintOwner == owner { return }
-        conversationHintSource = source
-        conversationHintOwner = owner
-        conversationHintGeneration += 1
-        let generation = conversationHintGeneration
-
-        cancelFoundationModelHints()
-        conversationHintPhrases = DictationHintExtractor.extract(from: source)
-        scheduleFoundationModelHints(generation: generation)
-    }
-
-    /// Drop vocabulary when this conversation still owns the shared capture manager.
-    func clearConversationHints(ifOwnedBy sessionId: String) {
-        guard let kind = composerOwner?.kind, case .conversation(let owned) = kind, owned == sessionId else { return }
-        conversationHintPhrases = []
-        conversationHintSource = nil
-        conversationHintOwner = composerOwner
-        conversationHintGeneration += 1
-        cancelFoundationModelHints()
-    }
-
     private func claimComposer(
         _ owner: VoiceComposerOwner,
         credentials: ServerCredentials?,
@@ -726,13 +687,6 @@ final class VoiceInputManager {
         composerOwner = owner
         if case .conversation(let sessionId) = owner.kind {
             activeSessionId = sessionId
-            if conversationHintOwner != owner {
-                conversationHintPhrases = []
-                conversationHintSource = nil
-                conversationHintOwner = owner
-                conversationHintGeneration += 1
-                cancelFoundationModelHints()
-            }
         } else {
             activeSessionId = nil
         }
@@ -747,22 +701,13 @@ final class VoiceInputManager {
         let credentials: ServerCredentials?
         let connection: ServerConnection?
         let target: ServerDictationTarget?
-        let phrases: [String]
     }
 
     private func freezeAuthorizedTake() -> AuthorizedTakeSnapshot {
-        let phrases: [String]
-        switch composerOwner?.kind {
-        case .standalone, nil:
-            phrases = []
-        case .conversation:
-            phrases = conversationHintPhrases
-        }
-        return AuthorizedTakeSnapshot(
+        AuthorizedTakeSnapshot(
             credentials: serverCredentials,
             connection: serverConnection,
-            target: serverDictationTarget,
-            phrases: phrases
+            target: serverDictationTarget
         )
     }
 
@@ -788,45 +733,6 @@ final class VoiceInputManager {
         guard let identity else { return }
         guard currentCaptureTakeIdentity() == identity else { return }
         await cancelRecording()
-    }
-
-    private func cancelFoundationModelHints() {
-        foundationModelHintTask?.cancel()
-        foundationModelHintTask = nil
-    }
-
-    private func scheduleFoundationModelHints(generation: Int) {
-        guard AppPreferences.Voice.isFoundationModelDictationHintsEnabled else { return }
-        let truncated = DictationHintExtractor.truncatedSource(from: conversationHintSource ?? "")
-        guard !truncated.isEmpty else { return }
-
-        // One cancellable task owns the extract. Do not nest Task.detached — cancel
-        // must stop this generation before a newer message or mic start.
-        foundationModelHintTask = Task(priority: .utility) { [weak self] in
-            guard let self else { return }
-            let extra = await self.foundationModelHints(from: truncated)
-            guard !Task.isCancelled else { return }
-            self.applyFoundationModelHints(extra, generation: generation)
-        }
-    }
-
-    private func foundationModelHints(from truncated: String) async -> [String] {
-        #if DEBUG
-        if let hook = _testFoundationModelExtract {
-            return await hook(truncated)
-        }
-        #endif
-        try? await Task.sleep(for: .milliseconds(400))
-        guard !Task.isCancelled else { return [] }
-        return await DictationHintFoundationModel.extract(from: truncated)
-    }
-
-    private func applyFoundationModelHints(_ extra: [String], generation: Int) {
-        guard generation == conversationHintGeneration else { return }
-        conversationHintPhrases = DictationHintExtractor.merge(
-            primary: conversationHintPhrases,
-            extra: extra
-        )
     }
 
     // MARK: - Locale Resolution
@@ -1017,7 +923,6 @@ final class VoiceInputManager {
         resultUpdateCount = 0
         replaceTranscriptState.reset()
         activeRecordingSource = source
-        cancelFoundationModelHints()
         let frozenTake = freezeAuthorizedTake()
 
         state = .preparingModel
@@ -1060,8 +965,7 @@ final class VoiceInputManager {
             source: source,
             serverCredentials: frozenTake.credentials,
             serverConnection: frozenTake.connection,
-            serverDictationTarget: frozenTake.target,
-            contextualStrings: frozenTake.phrases
+            serverDictationTarget: frozenTake.target
         )
         let provider = try provider(for: engine)
         var modelPathTag = "warm_cache"
@@ -1872,10 +1776,6 @@ extension VoiceInputManager {
     var _testActiveRecordingSource: String? {
         get { activeRecordingSource }
         set { activeRecordingSource = newValue }
-    }
-
-    var _testConversationHints: [String] {
-        conversationHintPhrases
     }
 
     var _testComposerGeneration: Int {

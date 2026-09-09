@@ -20,6 +20,7 @@ struct VoiceProviderContext {
     let serverCredentials: ServerCredentials?
     let serverConnection: ServerConnection?
     let serverDictationTarget: ServerDictationTarget?
+    /// Optional per-take vocabulary. Currently empty; reserved for a future source.
     let contextualStrings: [String]
 
     init(

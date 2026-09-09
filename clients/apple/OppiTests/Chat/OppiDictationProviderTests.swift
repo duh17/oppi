@@ -585,18 +585,7 @@ struct OppiDictationProviderLifecycleTests {
         provider.invalidateCache()
     }
 
-    @Test func prepareSessionOmitsContextualStringsWhenServerVocabularyOptInIsOff() async throws {
-        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
-        let original = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.removeObject(forKey: key)
-        defer {
-            if let original {
-                UserDefaults.standard.set(original, forKey: key)
-            } else {
-                UserDefaults.standard.removeObject(forKey: key)
-            }
-        }
-
+    @Test func prepareSessionOmitsEmptyContextualStrings() async throws {
         let connection = ServerConnection()
         let credentials = Self.makeCredentials()
         _ = connection.configure(credentials: credentials)
@@ -605,7 +594,7 @@ struct OppiDictationProviderLifecycleTests {
             source: "test",
             serverCredentials: credentials,
             serverConnection: connection,
-            contextualStrings: ["Foo Bar", "Yuwp"]
+            contextualStrings: []
         )
         let provider = OppiDictationProvider()
         let transport = installTestDictationTransport(on: provider)
@@ -622,18 +611,7 @@ struct OppiDictationProviderLifecycleTests {
         provider.invalidateCache()
     }
 
-    @Test func prepareSessionSendsPreparedContextualStringsWhenServerVocabularyOptInIsOn() async throws {
-        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
-        let original = UserDefaults.standard.object(forKey: key)
-        defer {
-            if let original {
-                UserDefaults.standard.set(original, forKey: key)
-            } else {
-                UserDefaults.standard.removeObject(forKey: key)
-            }
-        }
-        AppPreferences.Voice.setServerDictationVocabularyEnabled(true)
-
+    @Test func prepareSessionSendsPreparedContextualStringsFromContext() async throws {
         let connection = ServerConnection()
         let credentials = Self.makeCredentials()
         _ = connection.configure(credentials: credentials)

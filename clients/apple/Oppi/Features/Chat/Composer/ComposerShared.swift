@@ -640,8 +640,8 @@ enum ComposerShared {
         return identity
     }
 
-    /// Conversation-free composer: no inherited conversation vocabulary.
-    /// If `ownedGeneration` still matches an in-flight take, keep that generation
+    /// Conversation-free composer. If `ownedGeneration` still matches an in-flight
+    /// take, keep that generation
     /// for dismiss matching instead of replacing it with a newer configuration claim.
     @discardableResult
     static func prepareStandaloneVoiceInput(
@@ -668,15 +668,13 @@ enum ComposerShared {
         return generation
     }
 
-    /// Reclaim the conversation composer and refresh hints from current text.
-    /// Does not await Foundation Model enrichment.
+    /// Reclaim the conversation composer for this session.
     static func prepareConversationVoiceInput(
         manager: VoiceInputManager,
         serverId: String?,
         sessionId: String,
         credentials: ServerCredentials?,
         connection: ServerConnection?,
-        assistantMessage: String?,
         playbackInterrupter: (any VoicePlaybackCaptureCoordinating)?
     ) {
         guard let serverId else { return }
@@ -687,11 +685,6 @@ enum ComposerShared {
             connection: connection
         )
         manager.setPlaybackInterrupter(playbackInterrupter)
-        manager.updateConversationHints(
-            fromAssistantMessage: assistantMessage,
-            serverId: serverId,
-            sessionId: sessionId
-        )
     }
 
     @discardableResult

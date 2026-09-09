@@ -350,38 +350,6 @@ struct VoiceEnginePreferenceStoreTests {
         #expect(UserDefaults.standard.string(forKey: key) == "onDevice")
     }
 
-    @Test func usesTheSameFoundationModelDictationHintsKeyAsIOS() {
-        #expect(
-            AppPreferenceStore.Voice.foundationModelDictationHintsEnabledKey
-                == "\(AppIdentifiers.subsystem).voice.improveDictationWithFoundationModel"
-        )
-    }
-
-    @Test func defaultsFoundationModelDictationHintsToOff() {
-        let key = AppPreferenceStore.Voice.foundationModelDictationHintsEnabledKey
-        let original = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { restoreObject(original, forKey: key) }
-
-        #expect(!AppPreferenceStore.Voice.isFoundationModelDictationHintsEnabled)
-    }
-
-    @Test func usesTheSameServerDictationVocabularyKeyAsIOS() {
-        #expect(
-            AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
-                == "\(AppIdentifiers.subsystem).voice.sendServerDictationVocabulary"
-        )
-    }
-
-    @Test func defaultsServerDictationVocabularyToOff() {
-        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
-        let original = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { restoreObject(original, forKey: key) }
-
-        #expect(!AppPreferenceStore.Voice.isServerDictationVocabularyEnabled)
-    }
-
     @Test func usesTheSameReplyModeKeysAsIOS() {
         #expect(
             AppPreferenceStore.Voice.replyModeKey

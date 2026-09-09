@@ -19,10 +19,6 @@ struct SettingsView: View {
     @State private var linkOpeningMode = AppPreferences.Browser.linkOpeningMode
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
     @State private var voiceReplyMode = AppPreferences.Voice.replyMode
-    @State private var improveDictationWithFoundationModel =
-        AppPreferences.Voice.isFoundationModelDictationHintsEnabled
-    @State private var sendServerDictationVocabulary =
-        AppPreferences.Voice.isServerDictationVocabularyEnabled
     @State private var hapticFeedbackEnabled = AppPreferences.Interaction.isHapticFeedbackEnabled
     @State private var quietModeEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
     @State private var workStripStyle = AppPreferences.ChatDisplay.workStripStyle
@@ -317,30 +313,6 @@ struct SettingsView: View {
                 .onChange(of: voiceEngineMode) { _, newValue in
                     AppPreferences.Voice.setEngineMode(newValue)
                 }
-
-                Toggle("Improve dictation with Foundation Model", isOn: $improveDictationWithFoundationModel)
-                    .onChange(of: improveDictationWithFoundationModel) { _, newValue in
-                        AppPreferences.Voice.setFoundationModelDictationHintsEnabled(newValue)
-                    }
-                    .accessibilityIdentifier("settings.improveDictationWithFoundationModel")
-
-                Text(
-                    "The Foundation Model runs on this iPhone and only improves local vocabulary. Dictation still works if the model is unavailable."
-                )
-                .font(.footnote)
-                .foregroundStyle(.themeComment)
-
-                Toggle("Send dictation vocabulary to Server", isOn: $sendServerDictationVocabulary)
-                    .onChange(of: sendServerDictationVocabulary) { _, newValue in
-                        AppPreferences.Voice.setServerDictationVocabularyEnabled(newValue)
-                    }
-                    .accessibilityIdentifier("settings.sendServerDictationVocabulary")
-
-                Text(
-                    "Off by default. On-device dictation can still use local vocabulary without leaving this iPhone. When this is on and Dictation Engine is Server, Oppi sends selected phrases from the latest reply to your paired server and its speech-to-text provider. Those phrases are hints, not the full conversation."
-                )
-                .font(.footnote)
-                .foregroundStyle(.themeComment)
             } header: {
                 Text("Voice")
             } footer: {
@@ -390,10 +362,6 @@ struct SettingsView: View {
         .onAppear {
             // Refresh provider label when returning from AutoTitleSettingsView
             autoTitleProvider = AppPreferences.Session.autoTitleProvider
-            improveDictationWithFoundationModel =
-                AppPreferences.Voice.isFoundationModelDictationHintsEnabled
-            sendServerDictationVocabulary =
-                AppPreferences.Voice.isServerDictationVocabularyEnabled
             selectedCodeTextScale = FontPreferences.codeTextScale
             selectedMessageTextScale = FontPreferences.messageTextScale
             quietModeEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled

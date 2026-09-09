@@ -353,7 +353,7 @@ extension AppleOnDeviceVoiceProvider {
 enum OnDeviceDictationAnalysisContext {
     static func make(phrases: [String]) -> AnalysisContext {
         let context = AnalysisContext()
-        let capped = DictationHintExtractor.merge(primary: phrases, extra: [])
+        let capped = DictationContextualStrings.prepared(phrases)
         if !capped.isEmpty {
             context.contextualStrings = [.general: capped]
         }

@@ -75,6 +75,10 @@ Target: iOS `1.1.2` build `48`, `oppi-server@0.48.0` with bundled Pi runtime `0.
 - **Server:** `oppi server install` uses `gui/<uid>` when available and falls back to `user/<uid>` for headless macOS. Fixes #31.
 - **Docs/Mirror:** Session-tree navigation in Oppi Mirror works. Fixes #30.
 
+### Removed
+
+- **Client:** Removed last-reply dictation vocabulary extraction, on-device Foundation Model hinting, and the related Voice settings. `dictation_start.contextualStrings` remains for a future source.
+
 ### Notes
 
 - `oppi-mirror@0.48.0` on npm latest includes the session-tree navigation fix.

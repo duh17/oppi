@@ -485,6 +485,10 @@ extension ClientMessage {
 
 /// Wire bounds for per-take dictation vocabulary.
 ///
+/// No current Apple source fills this list. Keep the encoder and `SpeechAnalyzer.setContext`
+/// path so a future vocabulary source can attach phrases without a protocol change.
+/// Do not send conversation text. Reintroduce an explicit Server opt-in if phrases leave the device.
+///
 /// Client code prepares a list that cannot violate these limits. The server
 /// rejects malformed supplied context with a predictable error and does not
 /// echo the phrases.
@@ -493,7 +497,7 @@ enum DictationContextualStrings {
     static let maxPhraseUTF8Bytes = 256
     static let maxTotalUTF8Bytes = 8192
 
-    /// Normalize a local extractor list into a legal `dictation_start` payload.
+    /// Normalize phrases into a legal `dictation_start` payload.
     /// Control characters are judged on the supplied string; remaining phrases
     /// are trimmed with the shared blank policy before UTF-8 budgets.
     static func prepared(_ phrases: [String]) -> [String] {

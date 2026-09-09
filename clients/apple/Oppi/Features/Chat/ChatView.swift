@@ -720,9 +720,6 @@ struct ChatView: View {
             .onChange(of: session?.model) { _, _ in
                 audioPlayer.setSessionContext(session)
             }
-            .onChange(of: reducer.renderVersion) { _, _ in
-                refreshDictationHints()
-            }
             .task(id: sessionId) {
                 // Auto-send pending message from QuickSessionSheet.
                 // Keyed on sessionId so it re-fires if the view is reused
@@ -832,7 +829,6 @@ struct ChatView: View {
                 // Tear down old session
                 actionHandler.cleanup()
                 sessionManager.cleanup()
-                voiceInputManager.clearConversationHints(ifOwnedBy: oldId)
                 scrollController.cancel()
                 visibleAudioStripItemIDs = []
                 presentsNowPlayingPlayer = false
@@ -869,7 +865,6 @@ struct ChatView: View {
                 messageQueueEditorState = MessageQueueEditorState(queue: .empty)
                 showContextInspector = false
                 attachComposerDraftIfPossible()
-                refreshDictationHints()
             }
             .onChange(of: selectedFilePanelTab) { _, newTab in
                 ChatFileBrowserPanelTabStore.shared.setTab(newTab, for: sessionId)
@@ -880,7 +875,6 @@ struct ChatView: View {
                 scrollController.suspendForNavigation()
                 actionHandler.cleanup()
                 sessionManager.cleanup()
-                voiceInputManager.clearConversationHints(ifOwnedBy: sessionId)
                 Task {
                     if let composerDraftStore {
                         await composerDraftStore.flush()
@@ -1636,7 +1630,6 @@ struct ChatView: View {
             )
         }
         voiceInputManager.loadPreferences()
-        refreshDictationHints()
         attachComposerDraftIfPossible()
         // Load initial git status for the workspace
         if let wsId = session?.workspaceId, let api = connection.apiClient {
@@ -1654,16 +1647,6 @@ struct ChatView: View {
         }
     }
 
-    private func refreshDictationHints() {
-        guard ReleaseFeatures.voiceInputEnabled else { return }
-        guard let serverId = chatDictationServerId else { return }
-        voiceInputManager.updateConversationHints(
-            fromAssistantMessage: DictationHintExtractor.lastAssistantMessageText(in: reducer.items),
-            serverId: serverId,
-            sessionId: sessionId
-        )
-    }
-
     private var chatDictationServerId: String? {
         if let id = connection.currentServerId, !id.isEmpty { return id }
         if let credentials = connection.credentials {
@@ -1679,7 +1662,6 @@ struct ChatView: View {
             sessionId: sessionId,
             credentials: connection.credentials,
             connection: connection,
-            assistantMessage: DictationHintExtractor.lastAssistantMessageText(in: reducer.items),
             playbackInterrupter: audioPlayer
         )
     }

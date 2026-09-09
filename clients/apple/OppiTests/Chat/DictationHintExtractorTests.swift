@@ -4,227 +4,16 @@ import SwiftUI
 import Testing
 @testable import Oppi
 
-@Suite("Dictation hint extractor")
-struct DictationHintExtractorTests {
-    @Test func ranksBackticksThenWikiThenIdentifiers() {
-        let phrases = DictationHintExtractor.extract(
-            from: """
-                Use `VoiceInputManager.shared` and `setContext` before start.
-                See [[DictationHintExtractor.swift|Hint Extractor]].
-                AnalysisContext.contextualStrings should include FooBar.
-                """
-        )
-
-        #expect(phrases == [
-            "VoiceInputManager.shared",
-            "setContext",
-            "Hint Extractor",
-            "DictationHintExtractor.swift",
-            "AnalysisContext.contextualStrings",
-            "FooBar",
-        ])
-        #expect(!phrases.contains("Oppi"))
-        #expect(!phrases.contains("Yuwp"))
-    }
-
-    @Test func capsExtractedPhrasesAt100() {
-        let text = (0..<120).map { "`Token\($0)`" }.joined(separator: " ")
-        let phrases = DictationHintExtractor.extract(from: text)
-
-        #expect(phrases.count == DictationHintExtractor.maxPhraseCount)
-        #expect(phrases.first == "Token0")
-        #expect(phrases.last == "Token99")
-        #expect(!phrases.contains("Token100"))
-    }
-
-    @Test func keepsShortBacktickPhrasesAndDropsPauseOrLongSpans() {
-        let phrases = DictationHintExtractor.extract(
-            from: """
-                Prefer `contextual strings` and skip `please set the context before you start`.
-                Also skip `hello, world` because of the pause.
-                """
-        )
-
-        #expect(phrases.contains("contextual strings"))
-        #expect(!phrases.contains("please set the context before you start"))
-        #expect(!phrases.contains("hello, world"))
-        #expect(!phrases.contains(where: { $0.contains(",") }))
-    }
-
-    @Test func extractsIdentifiersFromLongBacktickSpans() {
-        let phrases = DictationHintExtractor.extract(
-            from: "Call `AppleOnDeviceVoiceProvider.setContext before start` now."
-        )
-
-        #expect(phrases.contains("AppleOnDeviceVoiceProvider.setContext"))
-        #expect(!phrases.contains("AppleOnDeviceVoiceProvider.setContext before start"))
-    }
-
-    @Test func ignoresGenericProseAndDoesNotInjectProductGlossary() {
-        let phrases = DictationHintExtractor.extract(from: "Hello, how can I help you today?")
-        #expect(phrases.isEmpty)
-    }
-
-    @Test func mergeKeepsPrimaryOrderDedupesAndCapsAt100() {
-        let primary = (0..<90).map { "Primary\($0)" }
-        let extra = ["Primary1", "ExtraA", "extraa", "ExtraB"] + (0..<20).map { "More\($0)" }
-        let merged = DictationHintExtractor.merge(primary: primary, extra: extra)
-
-        #expect(merged.count == 100)
-        #expect(merged.prefix(90).elementsEqual(primary))
-        #expect(merged[90] == "ExtraA")
-        #expect(merged[91] == "ExtraB")
-        #expect(!merged.contains { $0.caseInsensitiveCompare("extraa") == .orderedSame && $0 != "ExtraA" })
-        #expect(merged.contains("More7"))
-        #expect(!merged.contains("More8"))
-    }
-
-    @Test func truncatedSourceStripsFencedCodeAndCapsCharacters() {
-        let source = """
-            Keep VoiceInputManager.
-            ```swift
-            dump(theWholeToolTrace())
-            ```
-            """ + String(repeating: "x", count: 5_000)
-        let truncated = DictationHintExtractor.truncatedSource(from: source)
-
-        #expect(truncated.contains("VoiceInputManager"))
-        #expect(!truncated.contains("dump(theWholeToolTrace())"))
-        #expect(truncated.count <= DictationHintExtractor.maxFoundationModelCharacters)
-    }
-
-    @Test func lastAssistantMessageSkipsTrailingToolCalls() {
-        let items: [ChatItem] = [
-            .userMessage(id: "u1", text: "hi", timestamp: Date()),
-            .assistantMessage(id: "a1", text: "Use `AlphaToken` here.", timestamp: Date()),
-            .toolCall(
-                id: "t1",
-                tool: "read",
-                argsSummary: "file",
-                outputPreview: "huge tool trace",
-                outputByteCount: 12,
-                isError: false,
-                isDone: true
-            ),
-        ]
-
-        #expect(
-            DictationHintExtractor.lastAssistantMessageText(in: items)
-                == "Use `AlphaToken` here."
-        )
-        #expect(DictationHintExtractor.lastAssistantMessageText(in: []) == nil)
-    }
-}
-
-@Suite("Dictation hint preferences", .serialized)
-struct DictationHintPreferenceTests {
-    @Test func foundationModelDictationHintsDefaultOff() {
-        let key = AppPreferenceStore.Voice.foundationModelDictationHintsEnabledKey
-        let original = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { restorePreference(original, forKey: key) }
-
-        #expect(!AppPreferences.Voice.isFoundationModelDictationHintsEnabled)
-        #expect(!AppPreferenceStore.Voice.isFoundationModelDictationHintsEnabled)
-    }
-
-    @Test func persistsFoundationModelDictationHintsChoice() {
-        let key = AppPreferenceStore.Voice.foundationModelDictationHintsEnabledKey
-        let original = UserDefaults.standard.object(forKey: key)
-        defer { restorePreference(original, forKey: key) }
-
-        AppPreferences.Voice.setFoundationModelDictationHintsEnabled(true)
-        #expect(AppPreferences.Voice.isFoundationModelDictationHintsEnabled)
-
-        AppPreferences.Voice.setFoundationModelDictationHintsEnabled(false)
-        #expect(!AppPreferences.Voice.isFoundationModelDictationHintsEnabled)
-    }
-
-    @Test func settingsExplainOnDeviceOnlyFoundationModelHints() throws {
-        let settings = try appleSource("Oppi/Features/Settings/SettingsView.swift")
-        #expect(settings.contains("Improve dictation with Foundation Model"))
-        #expect(settings.contains("The Foundation Model runs on this iPhone"))
-        #expect(settings.contains("only improves local vocabulary"))
-        #expect(settings.contains("isFoundationModelDictationHintsEnabled"))
-        #expect(!settings.contains("never leaves this iPhone"))
-    }
-
-    @Test func serverDictationVocabularyDefaultOff() {
-        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
-        let original = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { restorePreference(original, forKey: key) }
-
-        #expect(!AppPreferences.Voice.isServerDictationVocabularyEnabled)
-        #expect(!AppPreferenceStore.Voice.isServerDictationVocabularyEnabled)
-    }
-
-    @Test func persistsServerDictationVocabularyChoice() {
-        let key = AppPreferenceStore.Voice.serverDictationVocabularyEnabledKey
-        let original = UserDefaults.standard.object(forKey: key)
-        defer { restorePreference(original, forKey: key) }
-
-        AppPreferences.Voice.setServerDictationVocabularyEnabled(true)
-        #expect(AppPreferences.Voice.isServerDictationVocabularyEnabled)
-
-        AppPreferences.Voice.setServerDictationVocabularyEnabled(false)
-        #expect(!AppPreferences.Voice.isServerDictationVocabularyEnabled)
-    }
-
-    @Test func settingsExplainServerDictationVocabularyOptIn() throws {
-        let settings = try appleSource("Oppi/Features/Settings/SettingsView.swift")
-        #expect(settings.contains("Send dictation vocabulary to Server"))
-        #expect(settings.contains("Off by default"))
-        #expect(settings.contains("paired server and its speech-to-text provider"))
-        #expect(settings.contains("isServerDictationVocabularyEnabled"))
-        #expect(!settings.contains("Server dictation sends selected vocabulary"))
-    }
-
-    @Test func chatPrecomputesHintsWhenAssistantMessageLands() throws {
-        let chat = try appleSource("Oppi/Features/Chat/ChatView.swift")
-        #expect(chat.contains("updateConversationHints("))
-        #expect(chat.contains("fromAssistantMessage:"))
-        #expect(chat.contains("reducer.renderVersion"))
-        #expect(chat.contains("DictationHintExtractor.lastAssistantMessageText"))
-        #expect(chat.contains("clearConversationHints(ifOwnedBy: oldId)"))
-        #expect(chat.contains("clearConversationHints(ifOwnedBy: sessionId)"))
-        #expect(chat.contains("ComposerShared.prepareConversationVoiceInput("))
-        #expect(chat.contains("activateConversationComposer("))
-        #expect(chat.contains("onPrepareVoiceInput: prepareChatVoiceInput"))
-        let prepare = try sourceSlice(
-            chat,
-            start: "private func prepareChatVoiceInput(_ manager: VoiceInputManager) async throws {",
-            end: "private func activateChatVoiceComposer(_ manager: VoiceInputManager) {"
-        )
-        #expect(prepare.contains("DictationHintExtractor.lastAssistantMessageText(in: reducer.items)"))
-        #expect(prepare.contains("ComposerShared.prepareConversationVoiceInput("))
-        #expect(!prepare.contains("activateChatVoiceComposer("))
-        let refresh = try sourceSlice(
-            chat,
-            start: "private func refreshDictationHints() {",
-            end: "private var chatDictationServerId: String? {"
-        )
-        #expect(!refresh.contains("activeSessionId = sessionId"))
-        #expect(refresh.contains("serverId: serverId"))
-    }
-
-    @Test func startRecordingDoesNotExtractHints() throws {
-        let source = try appleSource("Oppi/Core/Services/VoiceInputManager.swift")
-        let body = try sourceSlice(
-            source,
-            start: "func startRecording(keyboardLanguage: String? = nil, source: String = \"unknown\") async throws {",
-            end: "func stopRecording() async -> String {"
-        )
-        #expect(!body.contains("DictationHintExtractor"))
-        #expect(!body.contains("updateConversationHints"))
-        #expect(body.contains("freezeAuthorizedTake()"))
-        #expect(body.contains("frozenTake.phrases"))
-    }
-
-    @Test func serverProviderGatesVocabularyOnOptIn() throws {
-        let source = try appleSource("Oppi/Core/Services/OppiDictationProvider.swift")
-        #expect(source.contains("isServerDictationVocabularyEnabled"))
-        #expect(source.contains("dictationStart"))
+@Suite("Dictation hint wiring", .serialized)
+@MainActor
+struct DictationHintWiringTests {
+    @Test func analysisContextUsesGeneralTagAndCapsPhrases() {
+        let overflow = (0..<120).map { "Hint\($0)" }
+        let context = OnDeviceDictationAnalysisContext.make(phrases: overflow)
+        let phrases = context.contextualStrings[.general] ?? []
+        #expect(phrases.count == 100)
+        #expect(phrases.first == "Hint0")
+        #expect(phrases.last == "Hint99")
     }
 
     @Test func onDeviceSessionSetsContextBeforeStart() throws {
@@ -240,229 +29,6 @@ struct DictationHintPreferenceTests {
         let start = try #require(body.range(of: "start(inputSequence:")?.lowerBound)
         #expect(setContext < start)
     }
-}
-
-@Suite("Dictation hint wiring", .serialized)
-@MainActor
-struct DictationHintWiringTests {
-    @Test func analysisContextUsesGeneralTagAndCapsPhrases() {
-        let overflow = (0..<120).map { "Hint\($0)" }
-        let context = OnDeviceDictationAnalysisContext.make(phrases: overflow)
-        let phrases = context.contextualStrings[.general] ?? []
-        #expect(phrases.count == 100)
-        #expect(phrases.first == "Hint0")
-        #expect(phrases.last == "Hint99")
-    }
-
-    @Test func startRecordingFeedsPrecomputedHintsToProviderContext() async throws {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let systemAccess = MockVoiceInputSystemAccess()
-        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
-            systemAccess: systemAccess
-        )
-        manager.setEngineMode(.onDevice)
-        manager.activateTestChat()
-        manager.updateTestHints("Wire `UniqueHintToken` into AnalysisContext.")
-
-        #expect(manager._testConversationHints.contains("UniqueHintToken"))
-        try await manager.startRecording(source: "test")
-
-        #expect(classicProvider.lastContext?.contextualStrings.contains("UniqueHintToken") == true)
-        await manager.cancelRecording()
-    }
-
-    @Test func startRecordingCancelsInFlightFoundationModelExtract() async throws {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let gate = AsyncGate()
-        let systemAccess = MockVoiceInputSystemAccess()
-        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
-            systemAccess: systemAccess
-        )
-        manager.setEngineMode(.onDevice)
-        AppPreferences.Voice.setFoundationModelDictationHintsEnabled(true)
-        manager._testFoundationModelExtract = { _ in
-            await gate.wait()
-            return ["beta token"]
-        }
-
-        manager.activateTestChat()
-        manager.updateTestHints("Use `AlphaToken` next.")
-        #expect(manager._testConversationHints == ["AlphaToken"])
-
-        try await manager.startRecording(source: "test")
-        #expect(classicProvider.lastContext?.contextualStrings == ["AlphaToken"])
-        #expect(!manager._testConversationHints.contains("beta token"))
-        await manager.cancelRecording()
-
-        await gate.open()
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
-            !manager._testConversationHints.contains("beta token")
-        })
-        #expect(manager._testConversationHints.contains("AlphaToken"))
-    }
-
-    @Test func foundationModelMergeAppliesWhenIdle() async {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let gate = AsyncGate()
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [
-                MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation),
-            ]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        AppPreferences.Voice.setFoundationModelDictationHintsEnabled(true)
-        manager._testFoundationModelExtract = { _ in
-            await gate.wait()
-            return ["beta token"]
-        }
-
-        manager.activateTestChat()
-        manager.updateTestHints("Use `AlphaToken` next.")
-        await gate.open()
-        #expect(await waitForMainActorCondition {
-            manager._testConversationHints.contains("beta token")
-        })
-        #expect(manager._testConversationHints.contains("AlphaToken"))
-    }
-
-    @Test func newerAssistantMessageDropsInFlightFoundationModelExtra() async {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let gate = AsyncGate()
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [
-                MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation),
-            ]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        AppPreferences.Voice.setFoundationModelDictationHintsEnabled(true)
-        manager._testFoundationModelExtract = { truncated in
-            if truncated.contains("AlphaToken") {
-                await gate.wait()
-                return ["stale extra"]
-            }
-            return ["fresh extra"]
-        }
-
-        manager.activateTestChat()
-        manager.updateTestHints("Use `AlphaToken` next.")
-        manager.updateTestHints("Now prefer `GammaToken`.")
-        #expect(manager._testConversationHints.contains("GammaToken"))
-        #expect(await waitForMainActorCondition {
-            manager._testConversationHints.contains("fresh extra")
-        })
-
-        await gate.open()
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
-            !manager._testConversationHints.contains("stale extra")
-        })
-    }
-
-    @Test func clearConversationHintsOnlyWhenSessionOwnsTheManager() {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [
-                MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation),
-            ]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        manager.activateTestChat(sessionId: "session-a")
-        manager.updateTestHints("Use `AlphaToken` next.", sessionId: "session-a")
-        #expect(manager._testConversationHints == ["AlphaToken"])
-
-        manager.clearConversationHints(ifOwnedBy: "session-b")
-        #expect(manager._testConversationHints == ["AlphaToken"])
-
-        manager.clearConversationHints(ifOwnedBy: "session-a")
-        #expect(manager._testConversationHints.isEmpty)
-    }
-
-    @Test func foundationModelExtractDoesNotRunWhenSettingIsOff() async throws {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        var hookCalls = 0
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [
-                MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation),
-            ]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        AppPreferences.Voice.setFoundationModelDictationHintsEnabled(false)
-        manager._testFoundationModelExtract = { _ in
-            hookCalls += 1
-            return ["should not appear"]
-        }
-
-        manager.activateTestChat()
-        manager.updateTestHints("Use `AlphaToken` next.")
-        await Task.yield()
-        #expect(hookCalls == 0)
-        #expect(manager._testConversationHints == ["AlphaToken"])
-        #expect(!manager._testConversationHints.contains("should not appear"))
-    }
-
-    @Test func backgroundHintRefreshDoesNotStealVisibleComposer() {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [
-                MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation),
-            ]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        manager.activateTestChat(sessionId: "session-a")
-        manager.updateTestHints("Use `AlphaToken` next.", sessionId: "session-a")
-        #expect(manager._testConversationHints == ["AlphaToken"])
-
-        manager.activeSessionId = "session-b"
-        manager.updateTestHints("Use `OtherToken` next.", sessionId: "session-b")
-        #expect(manager._testConversationHints == ["AlphaToken"])
-    }
-
-    @Test func standaloneComposerDoesNotTransmitConversationHints() async throws {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        manager.setEngineMode(.onDevice)
-        manager.activateTestChat(sessionId: "session-a")
-        manager.updateTestHints("Use `AlphaToken` next.", sessionId: "session-a")
-        #expect(manager._testConversationHints == ["AlphaToken"])
-
-        let standaloneGeneration = manager.beginStandaloneComposer(
-            serverId: "server-a",
-            credentials: nil,
-            connection: nil
-        )
-        try await manager.startRecording(source: "test")
-        #expect(classicProvider.lastContext?.contextualStrings.isEmpty == true)
-        await manager.cancelRecording()
-
-        manager.endComposer(generation: standaloneGeneration)
-        manager.activateTestChat(sessionId: "session-a")
-        try await manager.startRecording(source: "test")
-        #expect(classicProvider.lastContext?.contextualStrings == ["AlphaToken"])
-        await manager.cancelRecording()
-    }
 
     @Test func restoredChatUsesItsServerAfterDifferentServerStandalone() async throws {
         resetHintPreferences()
@@ -477,7 +43,6 @@ struct DictationHintWiringTests {
         let chatCreds = testCredentials(host: "chat.example")
         let qsCreds = testCredentials(host: "qs.example")
         manager.activateTestChat(serverId: "chat", sessionId: "s1", credentials: chatCreds)
-        manager.updateTestHints("Use `AlphaToken` next.", serverId: "chat", sessionId: "s1")
 
         let generation = manager.beginStandaloneComposer(
             serverId: "qs",
@@ -486,48 +51,12 @@ struct DictationHintWiringTests {
         )
         try await manager.startRecording(source: "qs")
         #expect(classicProvider.lastContext?.serverCredentials?.host == "qs.example")
-        #expect(classicProvider.lastContext?.contextualStrings.isEmpty == true)
         await manager.cancelRecording()
 
         manager.endComposer(generation: generation)
         manager.activateTestChat(serverId: "chat", sessionId: "s1", credentials: chatCreds)
         try await manager.startRecording(source: "chat")
         #expect(classicProvider.lastContext?.serverCredentials?.host == "chat.example")
-        #expect(classicProvider.lastContext?.contextualStrings == ["AlphaToken"])
-        await manager.cancelRecording()
-    }
-
-    @Test func startRecordingFreezesPhrasesBeforePermissionWait() async throws {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let gate = AsyncGate()
-        let systemAccess = MockVoiceInputSystemAccess()
-        systemAccess.hasMicPermission = false
-        systemAccess.requestMicPermissionHandler = {
-            await gate.wait()
-            return true
-        }
-        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
-            systemAccess: systemAccess
-        )
-        manager.setEngineMode(.onDevice)
-        manager.activateTestChat(sessionId: "session-a")
-        manager.updateTestHints("Use `AlphaToken` next.", sessionId: "session-a")
-
-        let startTask = Task { @MainActor in
-            try await manager.startRecording(source: "test")
-        }
-        #expect(await waitForMainActorCondition {
-            systemAccess.requestMicPermissionCallCount == 1
-        })
-        _ = manager.beginStandaloneComposer(serverId: "qs", credentials: nil, connection: nil)
-        manager.updateTestHints("Use `OtherToken` next.", sessionId: "session-b")
-        await gate.open()
-        try await startTask.value
-        #expect(classicProvider.lastContext?.contextualStrings == ["AlphaToken"])
         await manager.cancelRecording()
     }
 
@@ -543,7 +72,6 @@ struct DictationHintWiringTests {
         )
         manager.setEngineMode(.onDevice)
         manager.activateTestChat(sessionId: "session-a")
-        manager.updateTestHints("Use `AlphaToken` next.", sessionId: "session-a")
 
         var dismissed = false
         var claimedGeneration: Int?
@@ -562,7 +90,10 @@ struct DictationHintWiringTests {
         #expect(claimedGeneration == nil)
 
         try await manager.startRecording(source: "chat")
-        #expect(classicProvider.lastContext?.contextualStrings == ["AlphaToken"])
+        #expect(
+            manager._testComposerOwner
+                == VoiceComposerOwner(serverId: "server-a", kind: .conversation(sessionId: "session-a"))
+        )
         await manager.cancelRecording()
     }
 
@@ -577,17 +108,22 @@ struct DictationHintWiringTests {
         )
         manager.setEngineMode(.onDevice)
         manager.activateTestChat(sessionId: "session-a")
-        manager.updateTestHints("Use `AlphaToken` next.", sessionId: "session-a")
         let first = manager.beginStandaloneComposer(serverId: "qs", credentials: nil, connection: nil)
         let second = manager.beginStandaloneComposer(serverId: "qs2", credentials: nil, connection: nil)
         manager.endComposer(generation: first)
         try await manager.startRecording(source: "qs")
-        #expect(classicProvider.lastContext?.contextualStrings.isEmpty == true)
+        #expect(
+            manager._testComposerOwner
+                == VoiceComposerOwner(serverId: "qs2", kind: .standalone)
+        )
         await manager.cancelRecording()
         manager.endComposer(generation: second)
         manager.activateTestChat(sessionId: "session-a")
         try await manager.startRecording(source: "chat")
-        #expect(classicProvider.lastContext?.contextualStrings == ["AlphaToken"])
+        #expect(
+            manager._testComposerOwner
+                == VoiceComposerOwner(serverId: "server-a", kind: .conversation(sessionId: "session-a"))
+        )
         await manager.cancelRecording()
     }
 
@@ -610,13 +146,11 @@ struct DictationHintWiringTests {
             credentials: chat.credentials,
             connection: chat.connection
         )
-        manager.updateTestHints("Use `AlphaToken` next.", serverId: "server-a", sessionId: "session-a")
         manager.setServerDictationTarget(
             ServerDictationTarget(workspaceId: "ws-a", sessionId: "session-a")
         )
 
         try await manager.startRecording(source: "negative_control")
-        #expect(classicProvider.lastContext?.contextualStrings == ["AlphaToken"])
         #expect(classicProvider.lastContext?.serverCredentials?.host == "chat.example")
         #expect(classicProvider.lastContext?.serverConnection === chat.connection)
         #expect(classicProvider.lastContext?.serverDictationTarget?.sessionId == "session-a")
@@ -653,7 +187,6 @@ struct DictationHintWiringTests {
             }
         )
 
-        #expect(classicProvider.lastContext?.contextualStrings.isEmpty == true)
         #expect(classicProvider.lastContext?.serverCredentials?.host == "editor.example")
         #expect(classicProvider.lastContext?.serverConnection === editor.connection)
         #expect(classicProvider.lastContext?.serverDictationTarget == nil)
@@ -665,99 +198,7 @@ struct DictationHintWiringTests {
             manager._testComposerOwner
                 == VoiceComposerOwner(serverId: "server-b", kind: .standalone)
         )
-        #expect(manager._testConversationHints == ["AlphaToken"])
         #expect(manager.activeSessionId == nil)
-        await manager.cancelRecording()
-    }
-
-    @Test func chatMicPrepareReconcilesReducerAfterStandaloneModal() async throws {
-        resetHintPreferences()
-        defer { resetHintPreferences() }
-
-        let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
-        let manager = VoiceInputManager(
-            providerRegistry: VoiceProviderRegistry(providers: [classicProvider]),
-            systemAccess: MockVoiceInputSystemAccess()
-        )
-        manager.setEngineMode(.onDevice)
-        let chat = testDictationServer(host: "chat.example")
-
-        manager.activateTestChat(
-            serverId: "chat",
-            sessionId: "s1",
-            credentials: chat.credentials,
-            connection: chat.connection
-        )
-        var items: [ChatItem] = [
-            .assistantMessage(id: "a1", text: "Use `AlphaToken` here.", timestamp: Date()),
-        ]
-        manager.updateConversationHints(
-            fromAssistantMessage: DictationHintExtractor.lastAssistantMessageText(in: items),
-            serverId: "chat",
-            sessionId: "s1"
-        )
-        #expect(manager._testConversationHints == ["AlphaToken"])
-
-        let modalGeneration = manager.beginStandaloneComposer(
-            serverId: "qs",
-            credentials: chat.credentials,
-            connection: chat.connection
-        )
-        items = [
-            .assistantMessage(id: "a1", text: "Use `AlphaToken` here.", timestamp: Date()),
-            .assistantMessage(id: "a2", text: "Now prefer `BetaToken`.", timestamp: Date()),
-        ]
-        manager.updateConversationHints(
-            fromAssistantMessage: DictationHintExtractor.lastAssistantMessageText(in: items),
-            serverId: "chat",
-            sessionId: "s1"
-        )
-        #expect(manager._testConversationHints == ["AlphaToken"])
-        manager.endComposer(generation: modalGeneration)
-
-        var textBeforeRecording: String?
-        var suppressKeyboard = false
-        var focusRequestID = 0
-        try await ComposerShared.startVoiceInput(
-            manager: manager,
-            keyboardLanguage: nil,
-            owner: .inlineComposer,
-            baseText: "",
-            textBeforeRecording: Binding(
-                get: { textBeforeRecording },
-                set: { textBeforeRecording = $0 }
-            ),
-            suppressKeyboard: Binding(
-                get: { suppressKeyboard },
-                set: { suppressKeyboard = $0 }
-            ),
-            focusRequestID: Binding(
-                get: { focusRequestID },
-                set: { focusRequestID = $0 }
-            ),
-            prepare: {
-                ComposerShared.prepareConversationVoiceInput(
-                    manager: manager,
-                    serverId: "chat",
-                    sessionId: "s1",
-                    credentials: chat.credentials,
-                    connection: chat.connection,
-                    assistantMessage: DictationHintExtractor.lastAssistantMessageText(in: items),
-                    playbackInterrupter: nil
-                )
-            }
-        )
-
-        #expect(classicProvider.lastContext?.contextualStrings == ["BetaToken"])
-        #expect(classicProvider.lastContext?.contextualStrings.contains("AlphaToken") != true)
-        #expect(
-            classicProvider.lastContext?.source
-                == ComposerShared.VoiceInputOwner.inlineComposer.rawValue
-        )
-        #expect(
-            manager._testComposerOwner
-                == VoiceComposerOwner(serverId: "chat", kind: .conversation(sessionId: "s1"))
-        )
         await manager.cancelRecording()
     }
 
@@ -1280,7 +721,6 @@ struct DictationContextualStringBoundsTests {
         #expect(shared.contains("beginStandaloneComposer("))
         #expect(shared.contains("ownedGeneration"))
         #expect(shared.contains("activateConversationComposer("))
-        #expect(shared.contains("updateConversationHints("))
         #expect(shared.contains("cancelRecording(matching:"))
         #expect(shared.contains("takeIdentityForDismissedComposer("))
     }
@@ -1301,18 +741,6 @@ private extension VoiceInputManager {
             connection: connection
         )
     }
-
-    func updateTestHints(
-        _ text: String?,
-        serverId: String = "server-a",
-        sessionId: String = "session-a"
-    ) {
-        updateConversationHints(
-            fromAssistantMessage: text,
-            serverId: serverId,
-            sessionId: sessionId
-        )
-    }
 }
 
 private func testCredentials(host: String) -> ServerCredentials {
@@ -1329,8 +757,6 @@ private func testDictationServer(host: String) -> (credentials: ServerCredential
 
 private func resetHintPreferences() {
     AppPreferences.Voice.setEngineMode(.onDevice)
-    AppPreferences.Voice.setFoundationModelDictationHintsEnabled(false)
-    AppPreferences.Voice.setServerDictationVocabularyEnabled(false)
 }
 
 private func restorePreference(_ value: Any?, forKey key: String) {
