@@ -87,7 +87,7 @@ On Mac Studio, do not add writable repository, worktree, report, or output bind 
 | `E2E_MLX_PORT`        | unset           | Legacy alias for `E2E_OMLX_PORT`                                             |
 | `E2E_NATIVE`          | `0`             | `1` to skip Docker, run server natively                                      |
 | `E2E_SERVER_DIR`      | unset           | Override native server package dir for tarball/install validation            |
-| `E2E_TLS_MODE`        | `self-signed`   | Native mode TLS setting; use `disabled` for iOS harnesses that need HTTP     |
+| `E2E_TLS_MODE`        | `self-signed`   | Native mode TLS setting. Apple `/pair` and `/auth/*` require HTTPS; do not use `disabled` for iOS pairing |
 | `OPPI_E2E_UI_HARNESS` | `0`             | Enables `/e2e/ui/...` injection routes for Apple extension UI snapshot tests |
 
 Tailscale benchmark-only variables:

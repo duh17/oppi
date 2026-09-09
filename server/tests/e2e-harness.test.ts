@@ -508,11 +508,12 @@ describe("E2E harness helpers", () => {
   });
 
   it("canonical Apple bootstrap defaults native TLS to self-signed HTTPS", () => {
-    const cli = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../e2e/harness-cli.ts"),
-      "utf8",
-    );
+    const e2eDir = join(dirname(fileURLToPath(import.meta.url)), "../e2e");
+    const cli = readFileSync(join(e2eDir, "harness-cli.ts"), "utf8");
+    const readme = readFileSync(join(e2eDir, "README.md"), "utf8");
     expect(cli).not.toMatch(/E2E_TLS_MODE\s*\?\?=\s*["']disabled["']/);
+    expect(readme).not.toMatch(/use `disabled` for iOS harnesses that need HTTP/);
+    expect(readme).toMatch(/Apple `\/pair` and `\/auth\/\*` require HTTPS/);
     const env: NodeJS.ProcessEnv = {};
     applyAppleE2EBootstrapEnv(env);
     expect(nativeE2ETlsPosture(env)).toEqual({
