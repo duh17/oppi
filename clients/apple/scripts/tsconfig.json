@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "typeRoots": ["../../../server/node_modules/@types"]
+  },
+  "include": [
+    "sim-pool.ts",
+    "sim-pool-lock.ts",
+    "sim-pool-supervise.ts",
+    "sim-pool-simctl.ts",
+    "sim-pool-ops.ts",
+    "sim-pool-ffi.d.ts"
+  ]
+}

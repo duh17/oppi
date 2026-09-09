@@ -11,6 +11,8 @@
 #   com.apple.mobileassetd                        system assets
 #   com.apple.diagnosticd                         live Console / log stream
 #                                             (man diagnosticd(8); os_log still goes to logd)
+#   com.apple.nanoregistryd                       CoreSimulatorBridge boot wait
+#   com.apple.nanoregistrylaunchd                 NanoRegistry launch helper
 #
 com.apple.PosterBoard
 com.apple.assistantd
@@ -177,8 +179,9 @@ com.apple.countryd
 com.apple.managedconfiguration.passcodenagd
 # Watch / companion / location-history / MDM. iPhone XCTest does not need these.
 # They were still running on slim Oppi-Pool sims. Not diagnosticd (see above).
-com.apple.nanoregistryd
-com.apple.nanoregistrylaunchd
+# Keep nanoregistryd + nanoregistrylaunchd: CoreSimulatorBridge waits on
+# NanoRegistry even on iPhone, so disabling them leaves bootstatus stuck on
+# "Waiting on System App".
 com.apple.nanotimekitcompaniond
 com.apple.nanoprefsyncd.2
 com.apple.nanobackupd

@@ -1,0 +1,218 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  closeOwned,
+  flockFd,
+  LOCK_EX,
+  LOCK_NB,
+  lockPath,
+  readSlotState,
+  releaseReusable,
+  releaseUncertain,
+  statePath,
+  tryAcquireSlot,
+} from "./sim-pool-lock";
+
+const fixture = join(import.meta.dir, "sim-pool-lock.fixture.ts");
+const temps: string[] = [];
+
+function tempDir(label: string): string {
+  const dir = mkdtempSync(join(tmpdir(), `oppi-sim-pool-${label}-`));
+  temps.push(dir);
+  return dir;
+}
+
+function waitForFile(path: string, timeoutMs = 3000): Promise<string> {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      if (existsSync(path)) {
+        resolve(readFileSync(path, "utf8"));
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        reject(new Error(`timeout waiting for ${path}`));
+        return;
+      }
+      setTimeout(tick, 20);
+    };
+    tick();
+  });
+}
+
+function spawnFixture(args: string[]): ReturnType<typeof spawn> {
+  return spawn("bun", [fixture, ...args], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+afterEach(() => {
+  for (const dir of temps.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe("sim-pool-lock", () => {
+  test("two processes cannot both own a slot", async () => {
+    const lockDir = tempDir("two");
+    const ready = join(lockDir, "ready");
+    const holder = spawnFixture(["hold", lockDir, "0", ready]);
+    await waitForFile(ready);
+    const second = tryAcquireSlot({ lockDir, slot: 0, argv: ["run"] });
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.reason).toContain("busy");
+    }
+    expect(existsSync(lockPath(lockDir, 0))).toBe(true);
+    holder.kill("SIGKILL");
+    await new Promise((resolve) => holder.once("exit", resolve));
+  });
+
+  test("loser does not delete the lock inode", async () => {
+    const lockDir = tempDir("inode");
+    const ready = join(lockDir, "ready");
+    const holder = spawnFixture(["hold", lockDir, "1", ready]);
+    await waitForFile(ready);
+    const inoBefore = statSync(lockPath(lockDir, 1)).ino;
+    const second = tryAcquireSlot({ lockDir, slot: 1, argv: ["run"] });
+    expect(second.ok).toBe(false);
+    expect(existsSync(lockPath(lockDir, 1))).toBe(true);
+    expect(statSync(lockPath(lockDir, 1)).ino).toBe(inoBefore);
+    holder.kill("SIGKILL");
+    await new Promise((resolve) => holder.once("exit", resolve));
+  });
+
+  test("failed acquire after creating the inode leaves the inode", () => {
+    const lockDir = tempDir("create");
+    mkdirSync(lockDir, { recursive: true });
+    const path = lockPath(lockDir, 2);
+    writeFileSync(path, "");
+    const fd = openSync(path, "r+");
+    expect(flockFd(fd, LOCK_EX | LOCK_NB)).toBe(0);
+    const second = tryAcquireSlot({ lockDir, slot: 2, argv: ["run"] });
+    expect(second.ok).toBe(false);
+    expect(existsSync(path)).toBe(true);
+    closeSync(fd);
+  });
+
+  test("legacy mkdir directory is skipped and not reaped", () => {
+    const lockDir = tempDir("legacy");
+    mkdirSync(join(lockDir, "slot-3"), { recursive: true });
+    writeFileSync(join(lockDir, "slot-3", "pid"), "1\n");
+    const result = tryAcquireSlot({ lockDir, slot: 3, argv: ["run"] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("legacy");
+    }
+    expect(existsSync(join(lockDir, "slot-3", "pid"))).toBe(true);
+  });
+
+  test("in-flight sidecar blocks reuse after flock is free", () => {
+    const lockDir = tempDir("inflight");
+    const first = tryAcquireSlot({ lockDir, slot: 4, argv: ["run"] });
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    closeOwned(first.owned);
+    const again = tryAcquireSlot({ lockDir, slot: 4, argv: ["run"] });
+    expect(again.ok).toBe(false);
+    if (!again.ok) {
+      expect(again.reason).toContain("in-flight");
+    }
+    const state = readSlotState(lockDir, 4);
+    expect(state === "unreadable" ? undefined : state?.status).toBe("in-flight");
+  });
+
+  test("reusable release allows the next owner to mutate", () => {
+    const lockDir = tempDir("reuse");
+    const first = tryAcquireSlot({ lockDir, slot: 5, argv: ["run"] });
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    releaseReusable(first.owned);
+    const again = tryAcquireSlot({ lockDir, slot: 5, argv: ["run"] });
+    expect(again.ok).toBe(true);
+    if (again.ok) {
+      releaseReusable(again.owned);
+    }
+  });
+
+  test("uncertain release stays fail-closed", () => {
+    const lockDir = tempDir("uncertain");
+    const first = tryAcquireSlot({ lockDir, slot: 6, argv: ["shutdown-idle"] });
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    releaseUncertain(first.owned, "descendants still running");
+    const again = tryAcquireSlot({ lockDir, slot: 6, argv: ["run"] });
+    expect(again.ok).toBe(false);
+    if (!again.ok) {
+      expect(again.reason).toContain("uncertain");
+    }
+  });
+
+  test("killed wrapper with surviving child does not authorize reuse", async () => {
+    const lockDir = tempDir("survive");
+    const ready = join(lockDir, "ready");
+    const childFile = join(lockDir, "child-pid");
+    const holder = spawnFixture(["hold-with-child", lockDir, "7", ready, childFile]);
+    await waitForFile(ready);
+    const childPid = Number((await waitForFile(childFile)).trim());
+    expect(childPid).toBeGreaterThan(0);
+    holder.kill("SIGKILL");
+    await new Promise((resolve) => holder.once("exit", resolve));
+    expect(process.kill(childPid, 0)).toBe(true);
+    const second = tryAcquireSlot({ lockDir, slot: 7, argv: ["run"] });
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.reason).toContain("in-flight");
+    }
+    process.kill(childPid, "SIGKILL");
+  });
+
+  test("release is idempotent and does not clobber a later owner", () => {
+    const lockDir = tempDir("idempotent");
+    const first = tryAcquireSlot({ lockDir, slot: 9, argv: ["run"] });
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    releaseReusable(first.owned);
+    const second = tryAcquireSlot({ lockDir, slot: 9, argv: ["run"] });
+    if (!second.ok) {
+      throw new Error("expected second acquire");
+    }
+    releaseUncertain(first.owned, "stale release");
+    const state = readSlotState(lockDir, 9);
+    expect(state === "unreadable" ? undefined : state?.status).toBe("in-flight");
+    expect(state === "unreadable" ? undefined : state?.nonce).toBe(second.owned.nonce);
+    releaseReusable(second.owned);
+  });
+
+  test("status sidecar is not deleted on skip", () => {
+    const lockDir = tempDir("status");
+    const first = tryAcquireSlot({ lockDir, slot: 8, argv: ["run"] });
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    closeOwned(first.owned);
+    tryAcquireSlot({ lockDir, slot: 8, argv: ["run"] });
+    expect(existsSync(statePath(lockDir, 8))).toBe(true);
+    expect(existsSync(lockPath(lockDir, 8))).toBe(true);
+  });
+});

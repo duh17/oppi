@@ -1,30 +1,28 @@
 #!/usr/bin/env bash
 # Create/use a dedicated iPad simulator pool slot and run iPad shell diagnostics.
 #
-# This wrapper keeps using the shared oppi-dev sim-pool/e2e lanes, but reserves
-# lower simulator-pool slots so sim-pool lands on a dedicated iPad slot instead
-# of the default iPhone pool.
+# This wrapper keeps using the shared oppi-dev sim-pool/e2e lanes. It selects a
+# dedicated iPad slot with OPPI_SIM_POOL_SLOT_START / OPPI_SIM_POOL_COUNT=1
+# instead of mkdir-locking lower slots.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$APPLE_DIR/../.." && pwd)"
-SIM_POOL="${OPPI_SIM_POOL:-$HOME/.pi/agent/skills/oppi-dev/scripts/sim-pool.sh}"
-OPPI_WORKFLOW="${OPPI_WORKFLOW:-$HOME/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh}"
-LOCK_DIR="${OPPI_SIM_POOL_LOCK_DIR:-/tmp/oppi-sim-pool}"
+SIM_POOL="${OPPI_SIM_POOL:-$REPO_ROOT/clients/apple/scripts/sim-pool.sh}"
+OPPI_WORKFLOW="${OPPI_WORKFLOW:-}"
 IPAD_SLOT="${OPPI_IPAD_SIM_SLOT:-8}"
 IPAD_SIM_NAME="Oppi-Pool-${IPAD_SLOT}"
 ONLY_TESTING="${OPPI_IPAD_SHELL_ONLY_TESTING:-OppiE2ETests/IPadAdaptiveShellScreenshotE2ETests/testIPadMainAndChatTimelineScreenshots}"
-RESERVED_LOCKS=()
 
 usage() {
   cat <<'EOF'
 Usage: ipad-shell-diagnostic.sh <command>
 
 Commands:
-  ensure      Create and boot the dedicated iPad simulator pool slot.
-  build       Build Oppi on the dedicated iPad simulator via sim-pool.
-  test-shell  Run the iPad adaptive shell E2E screenshot test via oppi-workflow sim-test.
+  ensure      Refused: pool create/boot must go through the leased sim-pool runner.
+  build       Build Oppi on the dedicated iPad slot via repository sim-pool.sh.
+  test-shell  Refused unless OPPI_WORKFLOW is set (personal cutover is staged).
   all         Run build, then test-shell.
 
 Environment:
@@ -43,18 +41,6 @@ EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
-
-cleanup_reserved_locks() {
-  local path pid
-  for path in "${RESERVED_LOCKS[@]:-}"; do
-    [[ -d "$path" ]] || continue
-    pid="$(cat "$path/pid" 2>/dev/null || true)"
-    if [[ "$pid" == "$$" ]]; then
-      rm -rf "$path"
-    fi
-  done
-}
-trap cleanup_reserved_locks EXIT
 
 require_exec() {
   local path="$1"
@@ -143,43 +129,17 @@ boot_ipad_simulator() {
   open -a Simulator --args -CurrentDeviceUDID "$udid" >/dev/null 2>&1 || true
 }
 
-reserve_lower_pool_slots() {
-  mkdir -p "$LOCK_DIR"
-  local slot path pid
-  if (( IPAD_SLOT <= 0 )); then
-    return 0
-  fi
-  for slot in $(seq 0 $((IPAD_SLOT - 1))); do
-    path="$LOCK_DIR/slot-${slot}"
-    if mkdir "$path" 2>/dev/null; then
-      echo $$ > "$path/pid"
-      RESERVED_LOCKS+=("$path")
-      continue
-    fi
-
-    pid="$(cat "$path/pid" 2>/dev/null || true)"
-    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
-      rm -rf "$path"
-      if mkdir "$path" 2>/dev/null; then
-        echo $$ > "$path/pid"
-        RESERVED_LOCKS+=("$path")
-      fi
-    fi
-  done
-}
-
 with_ipad_pool_env() {
   local device_type="$1"
   shift
-  reserve_lower_pool_slots
-  OPPI_SIM_POOL_COUNT="$((IPAD_SLOT + 1))" \
+  OPPI_SIM_POOL_SLOT_START="$IPAD_SLOT" \
+  OPPI_SIM_POOL_COUNT=1 \
   OPPI_SIM_DEVICE_TYPE="$device_type" \
     "$@"
 }
 
 run_build() {
   local device_type="$1"
-  ensure_ipad_simulator "$device_type" >/dev/null
   cd "$APPLE_DIR"
   with_ipad_pool_env "$device_type" "$SIM_POOL" run -- \
     xcodebuild -project Oppi.xcodeproj -scheme Oppi build
@@ -187,7 +147,8 @@ run_build() {
 
 run_shell_test() {
   local device_type="$1"
-  ensure_ipad_simulator "$device_type" >/dev/null
+  [[ -n "$OPPI_WORKFLOW" ]] || die "test-shell requires OPPI_WORKFLOW (personal oppi-workflow cutover is staged and not activated)"
+  require_exec "$OPPI_WORKFLOW"
   with_ipad_pool_env "$device_type" "$OPPI_WORKFLOW" sim-test --native --only-testing "$ONLY_TESTING"
 
   echo "[ipad-shell] Expected screenshots:" >&2
@@ -208,15 +169,13 @@ main() {
   [[ $# -eq 0 ]] || die "unexpected arguments: $*"
   [[ "$IPAD_SLOT" =~ ^[0-9]+$ ]] || die "OPPI_IPAD_SIM_SLOT must be a number"
   require_exec "$SIM_POOL"
-  require_exec "$OPPI_WORKFLOW"
 
   local device_type udid
   device_type="$(resolve_ipad_device_type)"
 
   case "$command" in
     ensure)
-      udid="$(ensure_ipad_simulator "$device_type")"
-      boot_ipad_simulator "$udid"
+      die "ensure is unsupported without a pool lease. Use: OPPI_SIM_POOL_SLOT_START=$IPAD_SLOT OPPI_SIM_POOL_COUNT=1 OPPI_SIM_DEVICE_TYPE=<iPad type> $SIM_POOL run -- <xcodebuild args>"
       ;;
     build)
       run_build "$device_type"
@@ -226,8 +185,6 @@ main() {
       ;;
     all)
       run_build "$device_type"
-      cleanup_reserved_locks
-      RESERVED_LOCKS=()
       run_shell_test "$device_type"
       ;;
     *)
