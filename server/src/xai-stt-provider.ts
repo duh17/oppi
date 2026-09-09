@@ -144,9 +144,18 @@ export class XaiSttProvider implements SttProvider {
       throw new SttSessionCreateError({ category: "network" });
     }
     this.socket = socket;
-    socket.on("message", (data) => this.handleMessage(data));
-    socket.on("error", () => this.handleSocketFailure("network"));
-    socket.on("close", () => this.handleSocketClose());
+    socket.on("message", (data) => {
+      if (this.socket !== socket) return;
+      this.handleMessage(data);
+    });
+    socket.on("error", () => {
+      if (this.socket !== socket) return;
+      this.handleSocketFailure("network");
+    });
+    socket.on("close", () => {
+      if (this.socket !== socket) return;
+      this.handleSocketClose();
+    });
 
     await new Promise<void>((resolve, reject) => {
       this.startWait = { resolve, reject };
@@ -239,7 +248,8 @@ export class XaiSttProvider implements SttProvider {
       return;
     }
     if (type === "transcript.done") {
-      const text = typeof event.text === "string" ? event.text : this.lastText;
+      const incoming = typeof event.text === "string" ? event.text.trim() : "";
+      const text = incoming.length > 0 ? incoming : this.lastText;
       this.lastText = text;
       this.finishStop({ text });
     }

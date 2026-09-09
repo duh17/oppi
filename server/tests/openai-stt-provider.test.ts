@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { DictationManager } from "../src/dictation-manager.js";
 import { SttSessionCreateError } from "../src/stt-provider.js";
 import { OpenAiSttProvider } from "../src/openai-stt-provider.js";
 
@@ -225,5 +226,39 @@ describe("OpenAiSttProvider", () => {
     provider.feedAudio(Buffer.from([1, 0]));
     await provider.stop();
     expect(calls[0]?.url).toBe("https://proxy.example.com/v1/audio/transcriptions");
+  });
+
+  it.each([
+    [
+      "dictation_cancel",
+      (mgr: DictationManager) => {
+        mgr.handleControlMessage({ type: "dictation_cancel" }, () => {});
+      },
+    ],
+    ["pre-stop disconnect", (mgr: DictationManager) => mgr.handleDisconnect()],
+  ] as const)("%s does not POST OpenAI transcriptions", async (_label, abort) => {
+    const calls: FetchCall[] = [];
+    const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({
+        url,
+        method: init?.method ?? "GET",
+        headers: headerMap(init?.headers),
+        form: init?.body instanceof FormData ? init.body : undefined,
+      });
+      return jsonResponse({ text: "should not upload on cancel" });
+    }) as typeof globalThis.fetch;
+
+    const provider = makeProvider(fetchFn);
+    const manager = new DictationManager(provider);
+    manager.handleControlMessage({ type: "dictation_start" }, () => {});
+    await Promise.resolve();
+    manager.handleAudioData(Buffer.from([1, 0, 2, 0, 3, 0, 4, 0]));
+    abort(manager);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toHaveLength(0);
   });
 });

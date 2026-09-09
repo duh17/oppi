@@ -201,4 +201,64 @@ describe("XaiSttProvider", () => {
       expect(err instanceof Error ? err.message : String(err)).not.toContain(SENTINEL);
     }
   });
+
+  it.each([
+    ["close", (socket: FakeSttSocket) => socket.emit("close")],
+    ["error", (socket: FakeSttSocket) => socket.emit("error", new Error("late take-1"))],
+  ] as const)("ignores delayed take-1 %s while take 2 is starting", async (_label, fire) => {
+    const sockets: FakeSttSocket[] = [];
+    const provider = new XaiSttProvider({
+      endpoint: "https://api.x.ai",
+      resolveApiKey: () => "xai-test",
+      createWebSocket: (url, headers) => {
+        const socket = new FakeSttSocket(url, headers);
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    const start1 = provider.start();
+    await flush();
+    sockets[0]?.open();
+    sockets[0]?.emitJson({ type: "transcript.created" });
+    await start1;
+
+    const start2 = provider.start();
+    await flush();
+    expect(sockets).toHaveLength(2);
+    fire(sockets[0]!);
+
+    sockets[1]?.open();
+    sockets[1]?.emitJson({ type: "transcript.created" });
+    await expect(start2).resolves.toEqual({ contextApplied: false });
+
+    fire(sockets[0]!);
+    const pcm = Buffer.from([1, 0, 2, 0]);
+    provider.feedAudio(pcm);
+    expect(sockets[1]?.sent.some((chunk) => Buffer.isBuffer(chunk) && chunk.equals(pcm))).toBe(
+      true,
+    );
+    await provider.dispose();
+  });
+
+  it.each([
+    ["empty string", { type: "transcript.done", text: "" }],
+    ["missing text", { type: "transcript.done" }],
+  ])("keeps lastText when transcript.done has %s", async (_label, doneEvent) => {
+    const sockets: FakeSttSocket[] = [];
+    const provider = makeProvider(sockets);
+    await provider.start();
+    await flush();
+    sockets[0]?.emitJson({
+      type: "transcript.partial",
+      text: "hello",
+      is_final: false,
+      speech_final: false,
+    });
+
+    const stopPromise = provider.stop();
+    await flush();
+    sockets[0]?.emitJson(doneEvent);
+    await expect(stopPromise).resolves.toEqual({ text: "hello" });
+  });
 });

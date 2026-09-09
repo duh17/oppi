@@ -290,7 +290,9 @@ export class DictationManager {
   }
 
   private cancelSession(): void {
-    void this.sttProvider.stop().catch(() => {});
+    // dispose() drops buffered audio without a finalize upload; stop() transcribes.
+    const cleanup = this.sttProvider.dispose?.() ?? this.sttProvider.stop();
+    void Promise.resolve(cleanup).catch(() => {});
   }
 
   private async finalizeSession(session: DictationSession): Promise<void> {
