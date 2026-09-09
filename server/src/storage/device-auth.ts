@@ -185,15 +185,22 @@ export class DeviceAuthStore {
         config.pairingToken = raw.pairingToken;
         config.pairingTokenExpiresAt =
           typeof raw.pairingTokenExpiresAt === "number" ? raw.pairingTokenExpiresAt : undefined;
+      } else {
+        config.pairingToken = undefined;
+        config.pairingTokenExpiresAt = undefined;
       }
     } catch {
       // Another process may be writing config; the in-memory state is safer.
     }
   }
 
-  private validatePairingToken(candidate: string): PairingTokenValidation {
-    this.reloadPairingFromDisk();
-    const config = this.configStore.getConfig();
+  private validatePairingToken(
+    candidate: string,
+    config: {
+      pairingToken?: string;
+      pairingTokenExpiresAt?: number;
+    } = this.configStore.getConfig(),
+  ): PairingTokenValidation {
     if (!config.pairingToken || !secureTokenEquals(candidate, config.pairingToken)) {
       return { ok: false, status: 401, error: "Invalid or expired pairing token" };
     }
@@ -210,7 +217,6 @@ export class DeviceAuthStore {
     candidate: string,
     deviceInput: { publicKey: unknown; name?: unknown },
   ): EnrollResult | null {
-    if (!this.validatePairingToken(candidate).ok) return null;
     if (!isDevicePublicKey(deviceInput.publicKey)) return null;
     try {
       importDevicePublicKey(deviceInput.publicKey);
@@ -240,15 +246,22 @@ export class DeviceAuthStore {
       expiresAt: now + ACCESS_TOKEN_TTL_MS,
       lastUsedAt: now,
     };
-    this.configStore.mutate((config) => ({
-      pairingToken: undefined,
-      pairingTokenExpiresAt: undefined,
-      authDevices: [...(config.authDevices ?? []), device],
-      authAccessTokens: this.unexpiredAccessTokens(
-        [...(config.authAccessTokens ?? []), access],
-        now,
-      ),
-    }));
+    let accepted = false;
+    this.configStore.mutate((config) => {
+      this.reloadPairingFromDisk();
+      if (!this.validatePairingToken(candidate, config).ok) return {};
+      accepted = true;
+      return {
+        pairingToken: undefined,
+        pairingTokenExpiresAt: undefined,
+        authDevices: [...(config.authDevices ?? []), device],
+        authAccessTokens: this.unexpiredAccessTokens(
+          [...(config.authAccessTokens ?? []), access],
+          now,
+        ),
+      };
+    });
+    if (!accepted) return null;
     const refreshChallenge = this.issueChallenge(device.id);
     if (!refreshChallenge) throw new Error("failed to issue refresh challenge");
     return {

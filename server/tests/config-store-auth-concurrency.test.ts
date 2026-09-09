@@ -1,5 +1,13 @@
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -50,6 +58,35 @@ describe("config store auth concurrency", () => {
 
   afterEach(() => {
     rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("rejects an outstanding pairing token after rotate on another ConfigStore", () => {
+    const issuer = new ConfigStore(dataDir);
+    const issuerAuth = new AuthStore(issuer);
+    issuerAuth.ensurePaired();
+    const pairingToken = issuerAuth.issuePairingToken(60_000);
+
+    const enrollee = new ConfigStore(dataDir);
+    const enrolleeDevices = new DeviceAuthStore(enrollee);
+    expect(enrollee.getConfig().pairingToken).toBe(pairingToken);
+
+    const rotator = new ConfigStore(dataDir);
+    const rotated = new AuthStore(rotator).rotateToken();
+    expect(rotated).toMatch(/^sk_/);
+    expect(enrollee.getConfig().pairingToken).toBe(pairingToken);
+
+    const enrolled = enrolleeDevices.enrollViaPairing(pairingToken, {
+      publicKey: devicePublicKey(),
+      name: "Phone",
+    });
+    expect(enrolled).toBeNull();
+
+    const disk = new ConfigStore(dataDir).getConfig();
+    expect(disk.token).toBe(rotated);
+    expect(disk.pairingToken).toBeUndefined();
+    expect(disk.authDevices ?? []).toEqual([]);
+    expect(disk.authAccessTokens ?? []).toEqual([]);
+    expect(enrollee.getConfig().pairingToken).toBeUndefined();
   });
 
   it("does not let a stale pairing writer restore pre-rotation auth", () => {
