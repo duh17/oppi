@@ -159,7 +159,7 @@ Optional `asr.sttEndpoint` overrides the default `https://api.openai.com` (base 
 
 ### xAI / Grok
 
-Official APIs: [Speech to Text](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) ([REST `/v1/stt` and WebSocket `wss://api.x.ai/v1/stt`](https://docs.x.ai/developers/rest-api-reference/inference/voice#speech-to-text---streaming); announcement: [Grok STT and TTS APIs](https://x.ai/news/grok-stt-and-tts-apis)). Oppi uses the WebSocket API with `encoding=pcm`, `sample_rate=16000`, and `interim_results=true`, so live `dictation_result` ticks are real partials. This is **not** OpenAI's `/v1/audio/transcriptions` path.
+Official APIs: [Speech to Text](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) ([REST `/v1/stt` and WebSocket `wss://api.x.ai/v1/stt`](https://docs.x.ai/developers/rest-api-reference/inference/voice#speech-to-text---streaming); announcement: [Grok STT and TTS APIs](https://x.ai/news/grok-stt-and-tts-apis)). Oppi uses the WebSocket API with `encoding=pcm`, `sample_rate=16000`, and `interim_results=true`, so live `dictation_result` ticks are real partials. xAI `transcript.partial` text is the current chunk or utterance (`is_final` / `speech_final`), not the whole take, so the provider accumulates those events into the full visible transcript before forwarding. This is **not** OpenAI's `/v1/audio/transcriptions` path.
 
 Auth reuses existing Pi/Oppi provider auth for `xai` — API key or SuperGrok/X OAuth access token via `getAuth` (same credentials as Grok chat), then `XAI_API_KEY`. Vocabulary is sent as documented `keyterm` query parameters (max 100 terms, 50 characters each; longer Oppi phrases are dropped).
 

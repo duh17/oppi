@@ -78,6 +78,17 @@ struct ScreenshotPreviewView: View {
             )
         case "quick-session-dictation-composer":
             QuickSessionDictationComposerPreview()
+        case "dictation-non-wipe-composer":
+            QuickSessionDictationComposerPreview(
+                title: "Non-wipe dictation composer",
+                subtitle: "Earlier utterances stay when a later short phrase arrives.",
+                transcriptSteps: [
+                    ("hello world this is a test", 0),
+                    ("hello world this is a test testing now", 11),
+                ],
+                initialDelay: .milliseconds(400),
+                stepDelay: .milliseconds(900)
+            )
         case "ask-card-long-composer":
             AskCardLongComposerPreview()
         case "extension-dock-stress":
@@ -1535,6 +1546,12 @@ private struct ChatInputAttachmentContainmentPreview: View {
 // MARK: - Quick Session Dictation Composer Preview
 
 private struct QuickSessionDictationComposerPreview: View {
+    var title: String = "Streaming dictation composer"
+    var subtitle: String = "The blue volatile suffix should advance without the caret jumping backward."
+    var transcriptSteps: [(String, Int)] = Self.defaultTranscriptSteps
+    var initialDelay: Duration = .seconds(2)
+    var stepDelay: Duration = .milliseconds(600)
+
     @State private var text = ""
     @State private var volatileSuffixLength = 0
     @State private var focusRequestID = 0
@@ -1543,7 +1560,7 @@ private struct QuickSessionDictationComposerPreview: View {
     @State private var immediateCaretSteps: Set<Int> = []
     @State private var deferredCaretSteps: Set<Int> = []
 
-    private static let transcriptSteps = [
+    private static let defaultTranscriptSteps = [
         ("So right now, each", 8),
         ("So right now, each of our git push", 12),
         ("So right now, each of our git push is taking quite long to finish,", 15),
@@ -1556,10 +1573,10 @@ private struct QuickSessionDictationComposerPreview: View {
                 .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("Streaming dictation composer")
+                Text(title)
                     .font(.headline)
                     .foregroundStyle(.themeFg)
-                Text("The blue volatile suffix should advance without the caret jumping backward.")
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.themeComment)
                 Spacer()
@@ -1642,7 +1659,7 @@ private struct QuickSessionDictationComposerPreview: View {
             VStack(alignment: .trailing, spacing: 4) {
                 Text("step \(streamStep)")
                     .accessibilityIdentifier("dictation.preview.step")
-                Text("\(verifiedCaretStepCount)/\(Self.transcriptSteps.count) caret steps passed")
+                Text("\(verifiedCaretStepCount)/\(transcriptSteps.count) caret steps passed")
                     .accessibilityIdentifier("dictation.preview.caretProbe")
             }
             .font(.caption2.monospacedDigit())
@@ -1657,14 +1674,14 @@ private struct QuickSessionDictationComposerPreview: View {
                 .accessibilityIdentifier("screenshot.ready")
         }
         .task {
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: initialDelay)
             focusRequestID &+= 1
 
-            for (index, step) in Self.transcriptSteps.enumerated() {
+            for (index, step) in transcriptSteps.enumerated() {
                 text = step.0
                 volatileSuffixLength = step.1
                 streamStep = index + 1
-                try? await Task.sleep(for: .milliseconds(600))
+                try? await Task.sleep(for: stepDelay)
             }
         }
         .preferredColorScheme(.dark)
@@ -1679,7 +1696,7 @@ private struct QuickSessionDictationComposerPreview: View {
         selection: NSRange,
         storageLength: Int
     ) {
-        guard let index = Self.transcriptSteps.firstIndex(where: {
+        guard let index = transcriptSteps.firstIndex(where: {
             ($0.0 as NSString).length == storageLength
         }) else { return }
         let step = index + 1

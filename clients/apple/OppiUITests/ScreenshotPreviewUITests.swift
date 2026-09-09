@@ -665,6 +665,33 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "quick-session-dictation-composer-streamed")
     }
 
+    func testDictationComposerKeepsEarlierTextAcrossShortPhrase() throws {
+        launchPreview(screen: "dictation-non-wipe-composer")
+
+        let input = app.descendants(matching: .any)["dictation.preview.input"]
+        let step = app.staticTexts["dictation.preview.step"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5), "Dictation input not visible")
+        XCTAssertTrue(step.waitForExistence(timeout: 5), "Dictation progress probe not visible")
+
+        let finalStep = NSPredicate(format: "label == %@", "step 2")
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: finalStep, object: step)], timeout: 8),
+            .completed,
+            "Simulated non-wipe dictation did not finish streaming. last=\(step.label)"
+        )
+        let finalText = input.value as? String ?? input.label
+        XCTAssertTrue(
+            finalText.contains("hello world this is a test"),
+            "Earlier dictated text disappeared after the short phrase: \(finalText)"
+        )
+        XCTAssertTrue(
+            finalText.contains("testing now"),
+            "Later short phrase missing from composer: \(finalText)"
+        )
+
+        saveScreenshot(name: "dictation-non-wipe-composer")
+    }
+
     func testLongAskPillsStayPutAndScroll() throws {
         launchPreview(screen: "ask-card-long-composer")
 

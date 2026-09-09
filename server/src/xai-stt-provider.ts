@@ -25,6 +25,70 @@ export const DEFAULT_XAI_STT_ENDPOINT = "https://api.x.ai";
 export const DEFAULT_XAI_STT_MODEL = "grok-stt";
 export const XAI_KEYTERM_MAX_CHARS = 50;
 
+export interface XaiTranscriptMergeInput {
+  committed: string;
+  volatile: string;
+  incoming: string;
+  isFinal: boolean;
+  speechFinal: boolean;
+}
+
+export interface XaiTranscriptMergeResult {
+  committed: string;
+  volatile: string;
+  text: string;
+  snap: boolean;
+}
+
+/**
+ * xAI `transcript.partial` text is the current chunk or utterance, not the
+ * full session. `is_final` locks ~3s of speech; `speech_final` is one stitched
+ * utterance. Downstream `text` must stay the full visible transcript because
+ * iOS `replaceFinalTranscript` replaces the whole composer.
+ */
+export function joinXaiTranscript(stable: string, piece: string): string {
+  const a = stable.trim();
+  const b = piece.trim();
+  if (!a) return b;
+  if (!b) return a;
+  if (b.startsWith(a)) return b;
+  if (a.endsWith(b)) return a;
+  return `${a} ${b}`;
+}
+
+export function mergeXaiStreamingTranscript(
+  input: XaiTranscriptMergeInput,
+): XaiTranscriptMergeResult {
+  const incoming = input.incoming.trim();
+  const committed = input.committed.trim();
+  const volatile = input.volatile.trim();
+  if (!incoming) {
+    return {
+      committed,
+      volatile,
+      text: joinXaiTranscript(committed, volatile),
+      snap: false,
+    };
+  }
+
+  if (input.speechFinal || input.isFinal) {
+    const nextCommitted = joinXaiTranscript(committed, incoming);
+    return {
+      committed: nextCommitted,
+      volatile: "",
+      text: nextCommitted,
+      snap: true,
+    };
+  }
+
+  return {
+    committed,
+    volatile: incoming,
+    text: joinXaiTranscript(committed, incoming),
+    snap: false,
+  };
+}
+
 const START_TIMEOUT_MS = 10_000;
 const STOP_TIMEOUT_MS = 10_000;
 
@@ -104,6 +168,8 @@ export class XaiSttProvider implements SttProvider {
   private audioQueue: Buffer[] = [];
   private stopped = false;
   private ready = false;
+  private committed = "";
+  private volatile = "";
   private lastText = "";
   private contextApplied = false;
   private tokenCb: ((update: SttTranscriptUpdate) => void) | null = null;
@@ -239,17 +305,30 @@ export class XaiSttProvider implements SttProvider {
       return;
     }
     if (type === "transcript.partial") {
-      const text = typeof event.text === "string" ? event.text.trim() : "";
-      if (!text) return;
-      const isFinal = event.is_final === true;
-      if (text === this.lastText && !isFinal) return;
-      this.lastText = text;
-      this.tokenCb?.({ text, ...(isFinal ? { snap: true } : {}) });
+      const incoming = typeof event.text === "string" ? event.text.trim() : "";
+      if (!incoming) return;
+      const merged = mergeXaiStreamingTranscript({
+        committed: this.committed,
+        volatile: this.volatile,
+        incoming,
+        isFinal: event.is_final === true,
+        speechFinal: event.speech_final === true,
+      });
+      if (merged.text === this.lastText && !merged.snap) return;
+      this.committed = merged.committed;
+      this.volatile = merged.volatile;
+      this.lastText = merged.text;
+      this.tokenCb?.({
+        text: merged.text,
+        ...(merged.snap ? { snap: true } : {}),
+      });
       return;
     }
     if (type === "transcript.done") {
       const incoming = typeof event.text === "string" ? event.text.trim() : "";
-      const text = incoming.length > 0 ? incoming : this.lastText;
+      const text = incoming.length > 0 ? joinXaiTranscript(this.lastText, incoming) : this.lastText;
+      this.committed = text;
+      this.volatile = "";
       this.lastText = text;
       this.finishStop({ text });
     }
@@ -352,6 +431,8 @@ export class XaiSttProvider implements SttProvider {
     this.audioQueue = [];
     this.ready = false;
     this.stopped = false;
+    this.committed = "";
+    this.volatile = "";
     this.lastText = "";
     this.contextApplied = false;
     this.startWait = null;

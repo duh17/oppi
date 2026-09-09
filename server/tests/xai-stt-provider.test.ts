@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { SttSessionCreateError } from "../src/stt-provider.js";
-import { XaiSttProvider, type SttWebSocket } from "../src/xai-stt-provider.js";
+import {
+  joinXaiTranscript,
+  mergeXaiStreamingTranscript,
+  XaiSttProvider,
+  type SttWebSocket,
+} from "../src/xai-stt-provider.js";
 
 const SENTINEL = "ReviewSyntheticVocabulary";
 
@@ -69,6 +74,34 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
+describe("xAI transcript accumulation", () => {
+  it.each([
+    ["", "hello", "hello"],
+    ["hello", "hello world", "hello world"],
+    ["hello world this is a test", "testing now", "hello world this is a test testing now"],
+    ["hello world this is a test", "this is a test", "hello world this is a test"],
+  ] as const)("joinXaiTranscript(%j, %j)", (stable, piece, expected) => {
+    expect(joinXaiTranscript(stable, piece)).toBe(expected);
+  });
+
+  it("keeps committed text while an interim starts a new utterance", () => {
+    expect(
+      mergeXaiStreamingTranscript({
+        committed: "hello world this is a test",
+        volatile: "",
+        incoming: "testing now",
+        isFinal: false,
+        speechFinal: false,
+      }),
+    ).toEqual({
+      committed: "hello world this is a test",
+      volatile: "testing now",
+      text: "hello world this is a test testing now",
+      snap: false,
+    });
+  });
+});
+
 describe("XaiSttProvider", () => {
   it("connects the official streaming STT WebSocket with bearer auth", async () => {
     const sockets: FakeSttSocket[] = [];
@@ -123,6 +156,95 @@ describe("XaiSttProvider", () => {
     expect(doneFrame).toBe('{"type":"audio.done"}');
     sockets[0]?.emitJson({ type: "transcript.done", text: "hello world final", duration: 1.2 });
     await expect(stopPromise).resolves.toEqual({ text: "hello world final" });
+  });
+
+  it("keeps earlier words when a later xAI utterance is not cumulative", async () => {
+    const sockets: FakeSttSocket[] = [];
+    const provider = makeProvider(sockets);
+    const tokens: Array<{ text: string; snap?: boolean }> = [];
+    provider.onToken((update) => tokens.push({ text: update.text, snap: update.snap }));
+    await provider.start();
+    await flush();
+
+    sockets[0]?.emitJson({
+      type: "transcript.partial",
+      text: "hello world this is a test",
+      is_final: false,
+      speech_final: false,
+    });
+    sockets[0]?.emitJson({
+      type: "transcript.partial",
+      text: "hello world this is a test",
+      is_final: true,
+      speech_final: true,
+    });
+    sockets[0]?.emitJson({
+      type: "transcript.partial",
+      text: "testing now",
+      is_final: false,
+      speech_final: false,
+    });
+    sockets[0]?.emitJson({
+      type: "transcript.partial",
+      text: "testing now",
+      is_final: true,
+      speech_final: true,
+    });
+
+    expect(tokens.map((token) => token.text)).toEqual([
+      "hello world this is a test",
+      "hello world this is a test",
+      "hello world this is a test testing now",
+      "hello world this is a test testing now",
+    ]);
+    expect(tokens[1]?.snap).toBe(true);
+    expect(tokens[3]?.snap).toBe(true);
+
+    const stopPromise = provider.stop();
+    await flush();
+    sockets[0]?.emitJson({ type: "transcript.done", text: "testing now" });
+    await expect(stopPromise).resolves.toEqual({
+      text: "hello world this is a test testing now",
+    });
+  });
+
+  it("stitches non-cumulative chunk finals and ignores a restated last chunk on done", async () => {
+    const sockets: FakeSttSocket[] = [];
+    const provider = makeProvider(sockets);
+    const tokens: string[] = [];
+    provider.onToken((update) => tokens.push(update.text));
+    await provider.start();
+    await flush();
+
+    sockets[0]?.emitJson({
+      type: "transcript.partial",
+      text: "hello world",
+      is_final: true,
+      speech_final: false,
+    });
+    sockets[0]?.emitJson({
+      type: "transcript.partial",
+      text: "this is a test",
+      is_final: true,
+      speech_final: false,
+    });
+    sockets[0]?.emitJson({
+      type: "transcript.partial",
+      text: "hello world this is a test",
+      is_final: true,
+      speech_final: true,
+    });
+
+    expect(tokens).toEqual([
+      "hello world",
+      "hello world this is a test",
+      "hello world this is a test",
+    ]);
+
+    const stopPromise = provider.stop();
+    await flush();
+    sockets[0]?.emitJson({ type: "transcript.done", text: "" });
+    await expect(stopPromise).resolves.toEqual({ text: "hello world this is a test" });
   });
 
   it("maps vocabulary to documented keyterm query params and reports contextApplied", async () => {
