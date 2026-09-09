@@ -43,13 +43,6 @@ struct InAppNowPlayingChromeTests {
                 visibleStripItemIDs: ["tool-voice-1"]
             )
         )
-        #expect(
-            !InAppNowPlayingChrome.shouldShowChatPill(
-                hasActivePlayback: true,
-                playbackItemID: "stream:tool-voice-1",
-                visibleStripItemIDs: ["tool-voice-1"]
-            )
-        )
     }
 
     @Test func showsChatPillWhenVoiceStreamPlaybackHasNoMatchingVisibleCell() {

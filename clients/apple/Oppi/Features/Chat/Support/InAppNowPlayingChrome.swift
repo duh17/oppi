@@ -58,7 +58,6 @@ enum InAppNowPlayingChrome {
     }
 
     static let directSpeakPlaybackPrefix = "audio-stream-"
-    static let streamPlaybackPrefix = "stream:"
 
     static func playbackItemID(playingItemID: String?, loadingItemID: String?) -> String? {
         if let playingItemID, !playingItemID.isEmpty { return playingItemID }
@@ -143,7 +142,6 @@ enum InAppNowPlayingChrome {
     static func matchesPlayback(_ playbackItemID: String, stripItemID: String) -> Bool {
         if playbackItemID == stripItemID { return true }
         if playbackItemID == directSpeakPlaybackPrefix + stripItemID { return true }
-        if playbackItemID == streamPlaybackPrefix + stripItemID { return true }
         return false
     }
 

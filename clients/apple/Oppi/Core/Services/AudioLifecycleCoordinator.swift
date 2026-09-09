@@ -217,9 +217,6 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
     }
 
     private func canonicalItemID(fromPlaybackID playbackID: String) -> String {
-        if playbackID.hasPrefix(Self.legacyDirectSpeakPlaybackPrefix) {
-            return String(playbackID.dropFirst(Self.legacyDirectSpeakPlaybackPrefix.count))
-        }
         if playbackID.hasPrefix(Self.directSpeakPlaybackPrefix) {
             return String(playbackID.dropFirst(Self.directSpeakPlaybackPrefix.count))
         }
@@ -228,11 +225,9 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
 
     private func isDirectSpeakPlaybackID(_ playbackID: String) -> Bool {
         playbackID.hasPrefix(Self.directSpeakPlaybackPrefix)
-            || playbackID.hasPrefix(Self.legacyDirectSpeakPlaybackPrefix)
     }
 
     private static let directSpeakPlaybackPrefix = "audio-stream-"
-    private static let legacyDirectSpeakPlaybackPrefix = "stream:"
 
     private func normalizedTranscript(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)

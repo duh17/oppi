@@ -97,14 +97,6 @@ struct AudioLifecycleCoordinatorTests {
         #expect(coordinator.mode == .idle)
     }
 
-    @Test func legacyDirectSpeakPlaybackIDsRemainSupported() {
-        let coordinator = AudioLifecycleCoordinator()
-
-        coordinator.syncPlaybackState(playingItemID: "stream:voice-1", loadingItemID: nil)
-
-        #expect(coordinator.mode == .playing(itemID: "voice-1", source: .directSpeak))
-    }
-
     @Test func captureLifecycleProjectsComposerState() {
         let coordinator = AudioLifecycleCoordinator()
 
