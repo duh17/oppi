@@ -17,6 +17,7 @@ import { basename, dirname, join } from "node:path";
 import {
   inspectSlot,
   lockPath,
+  recordOwnedPgid,
   releaseReusable,
   releaseUncertain,
   tryAcquireSlot,
@@ -1055,6 +1056,10 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
   try {
     owned = await acquireRunSlot(config, ["run", ...args], session);
     slotWaitEndHolder.value = nowEpoch();
+    const slotOwner = owned;
+    session.onSpawned = (child) => {
+      recordOwnedPgid(slotOwner, child.pgid);
+    };
     if (session.canceled) {
       uncertain = true;
       return session.cancelExitCode();
@@ -1257,25 +1262,21 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
           },
         });
         log(`[sim-pool] Artifact: ${finalArtifact}`);
-        if (
-          printSummary({
-            logFile,
-            exitCode,
-            startedAt: xcodeStart,
-            endedAt: xcodeEnd,
-            totalStartedAt: runStart,
-            totalEndedAt: runEnd,
-            attemptCount: attemptsUsed,
-            hangDetected,
-            slotWait: slotWaitEnd - runStart,
-            simPrep,
-            artifactPath: finalArtifact,
-            videoPath,
-            derivedData,
-          })
-        ) {
-          uncertain = true;
-        }
+        printSummary({
+          logFile,
+          exitCode,
+          startedAt: xcodeStart,
+          endedAt: xcodeEnd,
+          totalStartedAt: runStart,
+          totalEndedAt: runEnd,
+          attemptCount: attemptsUsed,
+          hangDetected,
+          slotWait: slotWaitEnd - runStart,
+          simPrep,
+          artifactPath: finalArtifact,
+          videoPath,
+          derivedData,
+        });
       } catch {
         uncertain = true;
       }
@@ -1301,8 +1302,8 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
       }
     }
     if (owned) {
-      if (uncertain || session.canceled) {
-        releaseUncertain(owned, "run ended without proven quiescence");
+      if (!stopped.quiescent) {
+        releaseUncertain(owned, stopped.note ?? "run ended without proven quiescence");
       } else {
         releaseReusable(owned);
       }

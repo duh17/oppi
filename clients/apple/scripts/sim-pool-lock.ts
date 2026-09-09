@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { queryProcessGroup } from "./sim-pool-supervise";
 
 export const LOCK_SH = 1;
 export const LOCK_EX = 2;
@@ -43,6 +44,7 @@ export type SlotState = {
   argv: string[];
   started_at: string;
   note?: string;
+  pgids: number[];
 };
 
 export type OwnedSlot = {
@@ -53,6 +55,7 @@ export type OwnedSlot = {
   nonce: string;
   argv: string[];
   closed: boolean;
+  pgids: number[];
 };
 
 export type AcquireFailure = {
@@ -92,6 +95,9 @@ export function readSlotState(lockDir: string, slot: number): SlotState | "unrea
     if (parsed.status !== "reusable" && parsed.status !== "in-flight" && parsed.status !== "uncertain") {
       return "unreadable";
     }
+    const pgids = Array.isArray(parsed.pgids)
+      ? parsed.pgids.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+      : [];
     return {
       format: "flock-v1",
       status: parsed.status,
@@ -99,6 +105,7 @@ export function readSlotState(lockDir: string, slot: number): SlotState | "unrea
       nonce: String(parsed.nonce ?? ""),
       argv: Array.isArray(parsed.argv) ? parsed.argv.map(String) : [],
       started_at: String(parsed.started_at ?? ""),
+      pgids,
       ...(parsed.note ? { note: String(parsed.note) } : {}),
     };
   } catch {
@@ -114,6 +121,7 @@ function writeState(owned: OwnedSlot, status: SlotStatus, note?: string): void {
     nonce: owned.nonce,
     argv: owned.argv,
     started_at: new Date().toISOString(),
+    pgids: [...owned.pgids],
     ...(note ? { note } : {}),
   };
   const tempPath = `${owned.statePath}.${process.pid}.tmp`;
@@ -156,6 +164,7 @@ export function tryAcquireSlot(input: {
     nonce: randomUUID(),
     argv: [...argv],
     closed: false,
+    pgids: [],
   };
 
   let fd: number;
@@ -180,10 +189,13 @@ export function tryAcquireSlot(input: {
     return { ok: false, reason: `slot ${slot} uncertain (unreadable state)` };
   }
   if (state && state.status !== "reusable") {
-    const reason = `slot ${slot} ${state.status}${state.note ? `: ${state.note}` : ""}`;
-    closeSync(fd);
-    owned.fd = -1;
-    return { ok: false, reason };
+    const reclaimUncertain = state.status === "uncertain" && recordedGroupsIdle(state);
+    if (!reclaimUncertain) {
+      const reason = `slot ${slot} ${state.status}${state.note ? `: ${state.note}` : ""}`;
+      closeSync(fd);
+      owned.fd = -1;
+      return { ok: false, reason };
+    }
   }
 
   try {
@@ -206,6 +218,32 @@ export function closeOwned(owned: OwnedSlot): void {
     owned.fd = -1;
   }
   owned.closed = true;
+}
+
+export function recordedGroupsIdle(state: SlotState): boolean {
+  if (state.pgids.length === 0) {
+    return false;
+  }
+  for (const pgid of state.pgids) {
+    const query = queryProcessGroup(pgid);
+    if (!query.ok || query.pids.length > 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function recordOwnedPgid(owned: OwnedSlot, pgid: number): void {
+  if (owned.closed || owned.fd < 0) {
+    return;
+  }
+  if (!Number.isInteger(pgid) || pgid <= 0) {
+    return;
+  }
+  if (!owned.pgids.includes(pgid)) {
+    owned.pgids.push(pgid);
+  }
+  writeState(owned, "in-flight");
 }
 
 export function releaseReusable(owned: OwnedSlot): void {

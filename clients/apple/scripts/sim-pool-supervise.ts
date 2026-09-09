@@ -194,6 +194,7 @@ export function spawnOwned(
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     stdio?: StdioOptions;
+    onSpawned?: (owned: Supervised) => void;
   } = {},
 ): Promise<SpawnOwnedResult> {
   return new Promise((resolve) => {
@@ -228,6 +229,11 @@ export function spawnOwned(
       }
       owned.pid = child.pid;
       owned.pgid = child.pid;
+      try {
+        options.onSpawned?.(owned);
+      } catch {
+        // Child is already running; publication still tracks it.
+      }
       finish({ ok: true, owned });
     });
   });
@@ -259,8 +265,8 @@ export function waitOwned(
   ]).then(([wait]) => wait);
 }
 
-function combineStop(stop: StopResult, streamsClosed: boolean, extra?: string): StopResult {
-  if (stop.quiescent && streamsClosed && !extra) {
+export function combineStop(stop: StopResult, streamsClosed: boolean, extra?: string): StopResult {
+  if (stop.quiescent && !extra) {
     return stop;
   }
   const notes = [stop.note, streamsClosed ? undefined : "stdout/stderr did not close", extra].filter(
@@ -450,6 +456,7 @@ export async function completeOwned(
 
 export class CommandSession {
   private readonly children: Supervised[] = [];
+  onSpawned?: (owned: Supervised) => void;
   private cancelSignal: "INT" | "TERM" | null = null;
   private handlersInstalled = false;
   private sessionRetired = false;
@@ -511,7 +518,10 @@ export class CommandSession {
     if (this.cancelSignal || this.sessionRetired) {
       return { ok: false, reason: `canceled before spawn ${command}` };
     }
-    const spawned = await spawnOwned(command, args, options);
+    const spawned = await spawnOwned(command, args, {
+      ...options,
+      onSpawned: this.onSpawned,
+    });
     if (!spawned.ok) {
       return spawned;
     }

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   closeOwned,
+  recordOwnedPgid,
   flockFd,
   LOCK_EX,
   LOCK_NB,
@@ -202,6 +203,73 @@ describe("sim-pool-lock", () => {
     expect(state === "unreadable" ? undefined : state?.status).toBe("in-flight");
     expect(state === "unreadable" ? undefined : state?.nonce).toBe(second.owned.nonce);
     releaseReusable(second.owned);
+  });
+
+  test("uncertain with idle recorded groups is claimed by the next owner", () => {
+    const lockDir = tempDir("auto-idle");
+    const first = tryAcquireSlot({ lockDir, slot: 10, argv: ["run"] });
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    recordOwnedPgid(first.owned, 1_000_000_001);
+    releaseUncertain(first.owned, "unproven cleanup");
+    const again = tryAcquireSlot({ lockDir, slot: 10, argv: ["run"] });
+    expect(again.ok).toBe(true);
+    if (again.ok) {
+      releaseReusable(again.owned);
+    }
+  });
+
+  test("in-flight with idle recorded groups does not authorize reuse", () => {
+    const lockDir = tempDir("inflight-idle");
+    const first = tryAcquireSlot({ lockDir, slot: 12, argv: ["run"] });
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    recordOwnedPgid(first.owned, 1_000_000_001);
+    closeOwned(first.owned);
+    const again = tryAcquireSlot({ lockDir, slot: 12, argv: ["run"] });
+    expect(again.ok).toBe(false);
+    if (!again.ok) {
+      expect(again.reason).toContain("in-flight");
+    }
+  });
+
+  test("in-flight with a live recorded group stays fail-closed", () => {
+    const lockDir = tempDir("auto-live");
+    const first = tryAcquireSlot({ lockDir, slot: 11, argv: ["run"] });
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    const child = spawn("sleep", ["30"], { stdio: "ignore", detached: true });
+    const pgid = child.pid;
+    expect(pgid).toBeGreaterThan(0);
+    if (pgid == null) {
+      throw new Error("expected child pid");
+    }
+    child.unref();
+    try {
+      recordOwnedPgid(first.owned, pgid);
+      closeOwned(first.owned);
+      const again = tryAcquireSlot({ lockDir, slot: 11, argv: ["run"] });
+      expect(again.ok).toBe(false);
+      if (!again.ok) {
+        expect(again.reason).toContain("in-flight");
+      }
+    } finally {
+      try {
+        process.kill(-pgid, "SIGKILL");
+      } catch {
+        try {
+          process.kill(pgid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    }
   });
 
   test("status sidecar is not deleted on skip", () => {

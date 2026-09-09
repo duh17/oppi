@@ -8,6 +8,7 @@ import {
   completeOwned,
   processGroupPids,
   queryProcessGroup,
+  combineStop,
   spawnOwned,
   stopOwned,
   waitExitStatus,
@@ -56,6 +57,17 @@ afterEach(() => {
 });
 
 describe("sim-pool-supervise", () => {
+  test("empty process group stays quiescent if stdout did not close", () => {
+    const stop = combineStop({ quiescent: true }, false);
+    expect(stop.quiescent).toBe(true);
+  });
+
+  test("nonempty process group stays unproven", () => {
+    const stop = combineStop({ quiescent: false, note: "pids remain" }, true);
+    expect(stop.quiescent).toBe(false);
+    expect(stop.note).toContain("pids remain");
+  });
+
   test("detached spawn uses its own process group", async () => {
     const spawned = await spawnOwned("sleep", ["30"]);
     expect(spawned.ok).toBe(true);

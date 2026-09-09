@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readSlotState, tryAcquireSlot } from "./sim-pool-lock";
+import { readSlotState, releaseReusable, tryAcquireSlot } from "./sim-pool-lock";
 
 const cli = join(import.meta.dir, "sim-pool.ts");
 const temps: string[] = [];
@@ -259,7 +259,7 @@ describe("sim-pool CLI", () => {
     expect(result.stderr).toMatch(/busy or quarantined|in-flight/);
   });
 
-  test("TERM during xcodebuild does not publish reusable", async () => {
+  test("TERM during xcodebuild fails the run and frees the slot once the child group is idle", async () => {
     const root = tempDir("run-term");
     const fake = join(root, "fake");
     const bin = join(root, "bin");
@@ -308,7 +308,10 @@ sleep 30
     const code = await new Promise<number | null>((resolve) => child.once("exit", (value) => resolve(value)));
     expect(code).not.toBe(0);
     const reuse = tryAcquireSlot({ lockDir: join(root, "locks"), slot: 0, argv: ["run"] });
-    expect(reuse.ok).toBe(false);
+    expect(reuse.ok).toBe(true);
+    if (reuse.ok) {
+      releaseReusable(reuse.owned);
+    }
   });
 
   test("warm reuse of a booted simulator does not erase or force shutdown", () => {
@@ -473,7 +476,7 @@ sleep 30
     expect(simctl).toContain("shutdown");
     expect(simctl).not.toContain("erase");
     const state = readSlotState(join(root, "locks"), 0);
-    expect(state === "unreadable" ? undefined : state?.status).not.toBe("reusable");
+    expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
   }, 15000);
 
   test("full-path xcodebuild keeps argv after the executable", () => {
@@ -812,7 +815,7 @@ esac
     expect(result.status).not.toBe(143);
     expect(result.stdout).not.toContain("========== BUILD SUCCEEDED ==========");
     const state = readSlotState(join(root, "locks"), 0);
-    expect(state === "unreadable" ? undefined : state?.status).toBe("uncertain");
+    expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
     const logs = join(root, "clients", "apple", ".build", "logs");
     const summaries = existsSync(logs)
       ? readdirSync(logs).filter((name) => name.endsWith(".summary.json"))
@@ -902,7 +905,7 @@ esac
     expect(result.status).not.toBe(143);
     expect(result.stdout).not.toContain("========== BUILD SUCCEEDED ==========");
     const state = readSlotState(join(root, "locks"), 0);
-    expect(state === "unreadable" ? undefined : state?.status).toBe("uncertain");
+    expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
   });
 
   test("successful build and requested shutdown stays reusable", () => {
