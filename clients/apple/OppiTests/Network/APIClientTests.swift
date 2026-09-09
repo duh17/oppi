@@ -1760,6 +1760,319 @@ struct APIClientTests {
         #expect(range.headerValue == "bytes=0-1048575")
         #expect(range.end == 1_048_575)
         #expect(range.continuesToEnd == false)
+        #expect(range.requestedEnd == 2_097_151)
+    }
+
+    @Test func authenticatedMediaRangeContinuesFiniteRequestAcrossChunksUntilRequestedEnd() {
+        let first = AuthenticatedMediaRequestedRange.make(
+            offset: 0,
+            requestedLength: 2_097_152,
+            requestsAllDataToEndOfResource: false
+        )
+        #expect(first.headerValue == "bytes=0-1048575")
+        #expect(first.continuesToEnd == false)
+        #expect(first.requestedEnd == 2_097_151)
+
+        let nextOffset = AuthenticatedMediaRangeContinuation.nextOffset(
+            afterEnd: 1_048_575,
+            totalLength: 5_242_880,
+            requestedEnd: first.requestedEnd
+        )
+        #expect(nextOffset == 1_048_576)
+
+        let second = AuthenticatedMediaRangeContinuation.nextChunk(
+            offset: 1_048_576,
+            continueToEnd: false,
+            requestedEnd: first.requestedEnd
+        )
+        #expect(second?.headerValue == "bytes=1048576-2097151")
+        #expect(second?.continuesToEnd == false)
+        #expect(second?.requestedEnd == 2_097_151)
+
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 2_097_151,
+                totalLength: 5_242_880,
+                requestedEnd: first.requestedEnd
+            ) == nil
+        )
+    }
+
+    @Test func authenticatedMediaRangeFiniteContinuationStopsAtResourceEnd() {
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 1_572_863,
+                totalLength: 1_572_864,
+                requestedEnd: 2_097_151
+            ) == nil
+        )
+    }
+
+    @Test func authenticatedMediaRangeFiniteContinuationDoesNotFetchRemainder() {
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 2_097_151,
+                totalLength: 10_485_760,
+                requestedEnd: 2_097_151
+            ) == nil
+        )
+    }
+
+    @Test func authenticatedMediaRangeFiniteTailChunkMatchesRemainingBytes() {
+        let tail = AuthenticatedMediaRangeContinuation.nextChunk(
+            offset: 1_048_576,
+            continueToEnd: false,
+            requestedEnd: 1_048_675
+        )
+        #expect(tail?.headerValue == "bytes=1048576-1048675")
+        #expect(tail?.continuesToEnd == false)
+        #expect(tail?.end == 1_048_675)
+        #expect(tail?.requestedEnd == 1_048_675)
+    }
+
+    @Test func authenticatedMediaRangeFiniteRequestedEndUsesOriginalOffsetWhenCurrentHasAdvanced() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            currentOffset: 1_000,
+            requestedOffset: 0,
+            requestedLength: 2_097_152,
+            requestsAllDataToEndOfResource: false
+        )
+        #expect(range.start == 1_000)
+        #expect(range.requestedEnd == 2_097_151)
+        #expect(range.requestedEnd != 2_098_151)
+        #expect(range.end == 1_049_575)
+        #expect(range.continuesToEnd == false)
+    }
+
+    @Test func authenticatedMediaRangeFiniteResumeReducesRemainingNotRequestedEnd() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            currentOffset: 1_048_576,
+            requestedOffset: 0,
+            requestedLength: 2_097_152,
+            requestsAllDataToEndOfResource: false
+        )
+        #expect(range.headerValue == "bytes=1048576-2097151")
+        #expect(range.requestedEnd == 2_097_151)
+        #expect(range.continuesToEnd == false)
+    }
+
+    @Test func authenticatedMediaRangeNextOffsetAfterInt64MaxIsNil() {
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: Int64.max,
+                totalLength: nil,
+                requestedEnd: Int64.max
+            ) == nil
+        )
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: Int64.max,
+                totalLength: Int64.max
+            ) == nil
+        )
+    }
+
+    @Test func authenticatedMediaRangeFiniteRemainderAtIntMaxDoesNotBecomeOpenEnded() {
+        let chunk = AuthenticatedMediaRangeContinuation.nextChunk(
+            offset: 0,
+            continueToEnd: false,
+            requestedEnd: Int64.max
+        )
+        #expect(chunk?.continuesToEnd == false)
+        #expect(chunk?.requestedEnd == Int64.max)
+        #expect(chunk?.headerValue == "bytes=0-1048575")
+        #expect(chunk?.end == AuthenticatedMediaRequestedRange.maxChunkLength - 1)
+    }
+
+    @Test func authenticatedMediaRangeShorter206ContinuesAtActualDeliveredOffsetNotRequestedEnd() {
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 65_535,
+                totalLength: 4_000_000,
+                requestedEnd: 1_048_575
+            ) == 65_536
+        )
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 65_535,
+                totalLength: 4_000_000,
+                requestedEnd: 1_048_575
+            ) != 1_048_576
+        )
+        let next = AuthenticatedMediaRangeContinuation.nextChunk(
+            offset: 65_536,
+            continueToEnd: false,
+            requestedEnd: 1_048_575
+        )
+        #expect(next?.start == 65_536)
+        #expect(next?.requestedEnd == 1_048_575)
+        #expect(next?.end == 1_048_575)
+        #expect(next?.continuesToEnd == false)
+    }
+
+    @Test func authenticatedMediaRangeDoesNotSkipToAdvertisedEndAfterShortBody() {
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 31,
+                totalLength: 4_000_000,
+                requestedEnd: 1_048_575
+            ) == 32
+        )
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextChunk(
+                offset: 32,
+                continueToEnd: false,
+                requestedEnd: 1_048_575
+            )?.start == 32
+        )
+    }
+
+    @Test func authenticatedMediaResponseValidatorAcceptsShorter206WithinRequestedChunk() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 0,
+            requestedLength: 1_048_576,
+            requestsAllDataToEndOfResource: false
+        )
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 206,
+            requestedRange: range,
+            contentRange: "bytes 0-65535/4000000"
+        )
+        #expect(error == nil)
+        #expect(range.end == 1_048_575)
+    }
+
+    @Test func authenticatedMediaResponseBodyShortfallUsesAdvertisedSpanNotRequestedChunk() {
+        #expect(
+            AuthenticatedMediaResponseBody.shortfallErrorMessage(
+                receivedByteCount: 65_536,
+                rangeStart: 0,
+                advertisedEnd: 65_535
+            ) == nil
+        )
+        #expect(
+            AuthenticatedMediaResponseBody.shortfallErrorMessage(
+                receivedByteCount: 32,
+                rangeStart: 0,
+                advertisedEnd: 1_048_575
+            ) == AuthenticatedMediaResponseBody.shorterThanContentRange
+        )
+        #expect(
+            AuthenticatedMediaResponseBody.shortfallErrorMessage(
+                receivedByteCount: 32,
+                rangeStart: 0,
+                advertisedEnd: 31
+            ) == nil
+        )
+        #expect(
+            AuthenticatedMediaResponseBody.shortfallErrorMessage(
+                receivedByteCount: 32,
+                rangeStart: 0,
+                advertisedEnd: nil
+            ) == nil
+        )
+    }
+
+    @Test func authenticatedMediaResponseBodyOverrunRejectsLargerThanAdvertisedSpan() {
+        #expect(
+            AuthenticatedMediaResponseBody.overrunErrorMessage(
+                receivedByteCount: 1_048_577,
+                rangeStart: 0,
+                advertisedEnd: 1_048_575
+            ) == AuthenticatedMediaResponseBody.longerThanContentRange
+        )
+        #expect(
+            AuthenticatedMediaResponseBody.overrunErrorMessage(
+                receivedByteCount: 1_048_576,
+                rangeStart: 0,
+                advertisedEnd: 1_048_575
+            ) == nil
+        )
+        #expect(
+            AuthenticatedMediaResponseBody.overrunErrorMessage(
+                receivedByteCount: 2_000_000,
+                rangeStart: 0,
+                advertisedEnd: nil
+            ) == nil
+        )
+    }
+
+    @Test func authenticatedMediaResponseBodyDoesNotForwardBytesPastAdvertisedSpan() {
+        #expect(
+            AuthenticatedMediaResponseBody.allowedForwardableByteCount(
+                receivedByteCount: 0,
+                incomingByteCount: 2_097_152,
+                rangeStart: 0,
+                advertisedEnd: 1_048_575
+            ) == 1_048_576
+        )
+        #expect(
+            AuthenticatedMediaResponseBody.allowedForwardableByteCount(
+                receivedByteCount: 1_048_576,
+                incomingByteCount: 64,
+                rangeStart: 0,
+                advertisedEnd: 1_048_575
+            ) == 0
+        )
+        #expect(
+            AuthenticatedMediaResponseBody.allowedForwardableByteCount(
+                receivedByteCount: 1_048_000,
+                incomingByteCount: 2_000,
+                rangeStart: 0,
+                advertisedEnd: 1_048_575
+            ) == 576
+        )
+        #expect(
+            AuthenticatedMediaResponseBody.allowedForwardableByteCount(
+                receivedByteCount: 0,
+                incomingByteCount: 64,
+                rangeStart: 0,
+                advertisedEnd: nil
+            ) == 64
+        )
+    }
+
+    @Test func authenticatedMediaResponseValidatorAcceptsUnknownTotalContentRange() {
+        let range = AuthenticatedMediaRequestedRange.make(
+            offset: 0,
+            requestedLength: 1_048_576,
+            requestsAllDataToEndOfResource: false
+        )
+        let error = AuthenticatedMediaResponseValidator.errorMessage(
+            statusCode: 206,
+            requestedRange: range,
+            contentRange: "bytes 0-1048575/*"
+        )
+        #expect(error == nil)
+    }
+
+    @Test func authenticatedMediaOpenEndedUnknownTotalDoesNotContinueAfterFirstChunk() {
+        // Pre-existing: Oppi's server sends totals. Open-ended `*` stops after
+        // the first capped GET rather than looping without an end.
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 1_048_575,
+                totalLength: nil,
+                requestedEnd: nil
+            ) == nil
+        )
+    }
+
+    @Test func authenticatedMediaFiniteUnknownTotalStillContinuesToRequestedEnd() {
+        #expect(
+            AuthenticatedMediaRangeContinuation.nextOffset(
+                afterEnd: 1_048_575,
+                totalLength: nil,
+                requestedEnd: 2_097_151
+            ) == 1_048_576
+        )
+        let next = AuthenticatedMediaRangeContinuation.nextChunk(
+            offset: 1_048_576,
+            continueToEnd: false,
+            requestedEnd: 2_097_151
+        )
+        #expect(next?.headerValue == "bytes=1048576-2097151")
+        #expect(next?.continuesToEnd == false)
     }
 
     @Test func authenticatedMediaRangeContinuationStopsAtKnownTotal() {

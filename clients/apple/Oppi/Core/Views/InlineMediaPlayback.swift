@@ -1291,6 +1291,7 @@ enum TimedTextCaptionOverlay {
 
 struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
     let player: AVPlayer
+    var playbackModel: AuthenticatedMediaPlayerModel? = nil
     var captionText: String? = nil
     var captionTracks: [TimedText.Track] = []
     var selectedCaptionTrackIndex: Int = 0
@@ -1347,7 +1348,12 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         controller.entersFullScreenWhenPlaybackBegins = false
         controller.exitsFullScreenWhenPlaybackEnds = false
         controller.view.accessibilityIdentifier = "videoPlayer.native"
-        guard let overlay = controller.contentOverlayView else { return }
+        guard let overlay = controller.contentOverlayView else {
+#if DEBUG
+            AuthenticatedMediaE2EPlaybackProbe.install(on: controller, model: playbackModel)
+#endif
+            return
+        }
         TimedTextCaptionOverlay.apply(
             caption: captionText,
             tracks: captionTracks,
@@ -1355,6 +1361,9 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             onSelectTrack: onSelectTrack ?? onSelectCaptionTrack,
             to: overlay
         )
+#if DEBUG
+        AuthenticatedMediaE2EPlaybackProbe.install(on: controller, model: playbackModel)
+#endif
     }
 
     final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
@@ -1395,6 +1404,29 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
             if wasPlayingBeforeFullScreen {
                 playerViewController.player?.play()
             }
+#if DEBUG
+            MainActor.assumeIsolated {
+                AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
+                    from: playerViewController,
+                    destination: coordinator.viewController(forKey: .to)
+                )
+            }
+            coordinator.animate(alongsideTransition: { context in
+                MainActor.assumeIsolated {
+                    AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
+                        from: playerViewController,
+                        destination: context.viewController(forKey: .to)
+                    )
+                }
+            }, completion: { context in
+                MainActor.assumeIsolated {
+                    AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
+                        from: playerViewController,
+                        destination: context.isCancelled ? nil : context.viewController(forKey: .to)
+                    )
+                }
+            })
+#endif
         }
 
         func playerViewController(

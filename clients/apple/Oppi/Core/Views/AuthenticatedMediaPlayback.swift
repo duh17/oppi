@@ -17,11 +17,14 @@ struct AuthenticatedMediaRequestedRange: Equatable, Sendable {
     let end: Int64?
     /// True when this HTTP range is only the next chunk of a larger AVPlayer request.
     let continuesToEnd: Bool
+    /// Inclusive end of a finite AV loading request. Nil when AV asked for the rest.
+    let requestedEnd: Int64?
 
-    init(start: Int64, end: Int64?, continuesToEnd: Bool = false) {
+    init(start: Int64, end: Int64?, continuesToEnd: Bool = false, requestedEnd: Int64? = nil) {
         self.start = start
         self.end = end
         self.continuesToEnd = continuesToEnd
+        self.requestedEnd = requestedEnd
     }
 
     /// AVPlayer often asks for the rest of the resource with `requestedLength ==
@@ -33,19 +36,48 @@ struct AuthenticatedMediaRequestedRange: Equatable, Sendable {
         requestedLength: Int,
         requestsAllDataToEndOfResource: Bool
     ) -> AuthenticatedMediaRequestedRange {
-        let start = max(offset, 0)
+        Self.make(
+            currentOffset: offset,
+            requestedOffset: offset,
+            requestedLength: requestedLength,
+            requestsAllDataToEndOfResource: requestsAllDataToEndOfResource
+        )
+    }
+
+    /// `requestedEnd` is always `requestedOffset + requestedLength - 1` for a
+    /// finite AV request. `currentOffset` only reduces remaining bytes.
+    static func make(
+        currentOffset: Int64,
+        requestedOffset: Int64,
+        requestedLength: Int,
+        requestsAllDataToEndOfResource: Bool
+    ) -> AuthenticatedMediaRequestedRange {
+        let origin = max(requestedOffset, 0)
+        let start = max(currentOffset, origin)
         let wantsRest = requestsAllDataToEndOfResource
             || requestedLength <= 0
             || requestedLength == Int.max
-        let requested = wantsRest ? Self.maxChunkLength : Int64(requestedLength)
-        let length = min(max(requested, 1), Self.maxChunkLength)
-        if start > Int64.max - length {
-            return AuthenticatedMediaRequestedRange(start: start, end: nil, continuesToEnd: wantsRest)
+        let finiteEnd: Int64?
+        if wantsRest {
+            finiteEnd = nil
+        } else {
+            finiteEnd = AuthenticatedMediaRangeContinuation.inclusiveEnd(
+                start: origin,
+                length: Int64(requestedLength)
+            ) ?? Int64.max
+        }
+        if let chunk = AuthenticatedMediaRangeContinuation.chunk(
+            start: start,
+            continueToEnd: wantsRest,
+            requestedEnd: finiteEnd
+        ) {
+            return chunk
         }
         return AuthenticatedMediaRequestedRange(
             start: start,
-            end: start + length - 1,
-            continuesToEnd: wantsRest
+            end: start,
+            continuesToEnd: wantsRest,
+            requestedEnd: finiteEnd
         )
     }
 
@@ -58,10 +90,86 @@ struct AuthenticatedMediaRequestedRange: Equatable, Sendable {
 }
 
 enum AuthenticatedMediaRangeContinuation {
-    static func nextOffset(afterEnd: Int64, totalLength: Int64?) -> Int64? {
-        guard let totalLength else { return nil }
-        let next = afterEnd + 1
-        return next < totalLength ? next : nil
+    static func nextOffset(
+        afterEnd: Int64,
+        totalLength: Int64?,
+        requestedEnd: Int64? = nil
+    ) -> Int64? {
+        guard let next = adding(afterEnd, 1) else { return nil }
+        if let requestedEnd, next > requestedEnd {
+            return nil
+        }
+        if let totalLength {
+            return next < totalLength ? next : nil
+        }
+        return requestedEnd == nil ? nil : next
+    }
+
+    /// Next 1 MiB-or-smaller HTTP range. Finite requests stop at `requestedEnd`;
+    /// open-ended requests keep `continuesToEnd` and never enlarge the cap.
+    static func nextChunk(
+        offset: Int64,
+        continueToEnd: Bool,
+        requestedEnd: Int64?
+    ) -> AuthenticatedMediaRequestedRange? {
+        chunk(start: max(offset, 0), continueToEnd: continueToEnd, requestedEnd: requestedEnd)
+    }
+
+    /// Inclusive end of `length` bytes starting at `start`, or nil on overflow.
+    static func inclusiveEnd(start: Int64, length: Int64) -> Int64? {
+        guard length > 0 else { return nil }
+        guard let sum = adding(start, length) else { return nil }
+        return sum - 1
+    }
+
+    /// `requestedEnd - offset + 1`, saturating at `Int64.max` without wrapping.
+    static func remainingBytes(from offset: Int64, to requestedEnd: Int64) -> Int64? {
+        guard offset >= 0, offset <= requestedEnd else { return nil }
+        let (diff, overflow) = requestedEnd.subtractingReportingOverflow(offset)
+        if overflow { return nil }
+        if let remaining = adding(diff, 1) {
+            return remaining
+        }
+        return Int64.max
+    }
+
+    static func chunk(
+        start: Int64,
+        continueToEnd: Bool,
+        requestedEnd: Int64?
+    ) -> AuthenticatedMediaRequestedRange? {
+        let remaining: Int64
+        if continueToEnd {
+            remaining = AuthenticatedMediaRequestedRange.maxChunkLength
+        } else {
+            guard let requestedEnd,
+                  let finiteRemaining = remainingBytes(from: start, to: requestedEnd),
+                  finiteRemaining > 0 else {
+                return nil
+            }
+            remaining = finiteRemaining
+        }
+        let length = min(max(remaining, 1), AuthenticatedMediaRequestedRange.maxChunkLength)
+        guard let end = inclusiveEnd(start: start, length: length) else {
+            return AuthenticatedMediaRequestedRange(
+                start: start,
+                end: nil,
+                continuesToEnd: continueToEnd,
+                requestedEnd: requestedEnd
+            )
+        }
+        let cappedEnd = requestedEnd.map { min(end, $0) } ?? end
+        return AuthenticatedMediaRequestedRange(
+            start: start,
+            end: cappedEnd,
+            continuesToEnd: continueToEnd,
+            requestedEnd: requestedEnd
+        )
+    }
+
+    private static func adding(_ lhs: Int64, _ rhs: Int64) -> Int64? {
+        let (result, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? nil : result
     }
 }
 
@@ -116,6 +224,65 @@ enum AuthenticatedMediaResponseValidator {
     }
 }
 
+/// Body length is checked against the **response** Content-Range span, not the
+/// requested HTTP chunk. A valid shorter 206 must continue at the next actual
+/// byte rather than fail or skip to the advertised request end.
+enum AuthenticatedMediaResponseBody {
+    static let shorterThanContentRange = "Ranged media response body shorter than Content-Range"
+    static let longerThanContentRange = "Ranged media response body larger than Content-Range"
+
+    static func shortfallErrorMessage(
+        receivedByteCount: Int64,
+        rangeStart: Int64,
+        advertisedEnd: Int64?
+    ) -> String? {
+        guard let expected = expectedByteCount(rangeStart: rangeStart, advertisedEnd: advertisedEnd),
+              expected > 0 else {
+            return nil
+        }
+        return receivedByteCount >= expected ? nil : shorterThanContentRange
+    }
+
+    static func overrunErrorMessage(
+        receivedByteCount: Int64,
+        rangeStart: Int64,
+        advertisedEnd: Int64?
+    ) -> String? {
+        guard let expected = expectedByteCount(rangeStart: rangeStart, advertisedEnd: advertisedEnd),
+              expected > 0 else {
+            return nil
+        }
+        return receivedByteCount > expected ? longerThanContentRange : nil
+    }
+
+    /// Bytes of `incoming` that stay inside the advertised Content-Range.
+    /// Extra bytes are not forwarded.
+    static func allowedForwardableByteCount(
+        receivedByteCount: Int64,
+        incomingByteCount: Int,
+        rangeStart: Int64,
+        advertisedEnd: Int64?
+    ) -> Int {
+        guard incomingByteCount > 0 else { return 0 }
+        guard let expected = expectedByteCount(rangeStart: rangeStart, advertisedEnd: advertisedEnd),
+              expected > 0 else {
+            return incomingByteCount
+        }
+        let remaining = expected - receivedByteCount
+        if remaining <= 0 { return 0 }
+        if remaining >= Int64(incomingByteCount) { return incomingByteCount }
+        return Int(remaining)
+    }
+
+    private static func expectedByteCount(rangeStart: Int64, advertisedEnd: Int64?) -> Int64? {
+        guard let advertisedEnd else { return nil }
+        return AuthenticatedMediaRangeContinuation.remainingBytes(
+            from: rangeStart,
+            to: advertisedEnd
+        )
+    }
+}
+
 /// Streams bearer-authenticated media through AVFoundation without putting the
 /// token in the URL. AVPlayer talks to an `oppi-media://` URL; this loader
 /// turns AVFoundation byte-range requests into normal HTTP requests with the
@@ -125,8 +292,10 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         let loadingRequest: AVAssetResourceLoadingRequest
         var requestedRange: AuthenticatedMediaRequestedRange?
         var continueToEnd = false
+        var requestedEnd: Int64?
         var totalLength: Int64?
         var deliveredEnd: Int64?
+        var receivedByteCount: Int64 = 0
         var cancelled = false
         var responseError: Error?
 
@@ -137,6 +306,7 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
             self.loadingRequest = loadingRequest
             self.requestedRange = requestedRange
             self.continueToEnd = requestedRange?.continuesToEnd ?? false
+            self.requestedEnd = requestedRange?.requestedEnd
         }
     }
 
@@ -217,9 +387,11 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         let requestedRange: AuthenticatedMediaRequestedRange?
         let rangeHeader: String?
         if let dataRequest = loadingRequest.dataRequest {
-            let offset = max(dataRequest.currentOffset, dataRequest.requestedOffset)
+            let requestedOffset = dataRequest.requestedOffset
+            let currentOffset = max(dataRequest.currentOffset, requestedOffset)
             requestedRange = AuthenticatedMediaRequestedRange.make(
-                offset: offset,
+                currentOffset: currentOffset,
+                requestedOffset: requestedOffset,
                 requestedLength: dataRequest.requestedLength,
                 requestsAllDataToEndOfResource: dataRequest.requestsAllDataToEndOfResource
             )
@@ -377,6 +549,16 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         if let deliveredEnd = endFromContentRange(contentRange) {
             context.deliveredEnd = deliveredEnd
         }
+        if let shortfall = contentLengthShortfallError(http, context: context) {
+            context.responseError = shortfall
+            completionHandler(.cancel)
+            return
+        }
+        if let overrun = contentLengthOverrunError(http, context: context) {
+            context.responseError = overrun
+            completionHandler(.cancel)
+            return
+        }
         fillContentInformation(
             context.loadingRequest.contentInformationRequest,
             response: http
@@ -390,7 +572,20 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         didReceive data: Data
     ) {
         guard let context = context(for: dataTask), !context.cancelled else { return }
-        context.loadingRequest.dataRequest?.respond(with: data)
+        let advertisedEnd = context.deliveredEnd ?? context.requestedRange?.end
+        let allowed = AuthenticatedMediaResponseBody.allowedForwardableByteCount(
+            receivedByteCount: context.receivedByteCount,
+            incomingByteCount: data.count,
+            rangeStart: context.requestedRange?.start ?? 0,
+            advertisedEnd: advertisedEnd
+        )
+        if allowed < data.count {
+            context.responseError = mediaError(AuthenticatedMediaResponseBody.longerThanContentRange)
+        }
+        guard allowed > 0 else { return }
+        let forwarded = allowed == data.count ? data : Data(data.prefix(allowed))
+        context.receivedByteCount += Int64(allowed)
+        context.loadingRequest.dataRequest?.respond(with: forwarded)
     }
 
     func urlSession(
@@ -407,11 +602,14 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         if let context, !context.cancelled {
             if let error = context.responseError ?? error {
                 context.loadingRequest.finishLoading(with: error)
-            } else if context.continueToEnd,
-                      let deliveredEnd = context.deliveredEnd,
+            } else if let shortfall = shortfallError(context) {
+                context.loadingRequest.finishLoading(with: shortfall)
+            } else if context.continueToEnd || context.requestedEnd != nil,
+                      let deliveredEnd = actualDeliveredEnd(context),
                       let nextOffset = AuthenticatedMediaRangeContinuation.nextOffset(
                         afterEnd: deliveredEnd,
-                        totalLength: context.totalLength
+                        totalLength: context.totalLength,
+                        requestedEnd: context.requestedEnd
                       ) {
                 startNextChunk(context: context, offset: nextOffset)
             } else {
@@ -431,13 +629,19 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
     }
 
     private func startNextChunk(context: LoadingContext, offset: Int64) {
-        let nextRange = AuthenticatedMediaRequestedRange.make(
+        guard let nextRange = AuthenticatedMediaRangeContinuation.nextChunk(
             offset: offset,
-            requestedLength: Int(AuthenticatedMediaRequestedRange.maxChunkLength),
-            requestsAllDataToEndOfResource: true
-        )
+            continueToEnd: context.continueToEnd,
+            requestedEnd: context.requestedEnd
+        ) else {
+            if !context.loadingRequest.isCancelled, !context.loadingRequest.isFinished {
+                context.loadingRequest.finishLoading()
+            }
+            return
+        }
         let loadingRequest = context.loadingRequest
         let continueToEnd = context.continueToEnd
+        let requestedEnd = context.requestedEnd
         let totalLength = context.totalLength
         let requestId = ObjectIdentifier(loadingRequest)
         let authorizationProvider = source.authorizationProvider
@@ -459,7 +663,7 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
             request.setValue(authorization, forHTTPHeaderField: "Authorization")
             request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             request.setValue(nextRange.headerValue, forHTTPHeaderField: "Range")
-            if loadingRequest.isCancelled || loadingRequest.isFinished {
+            if self.isAbandoned(loadingRequest) {
                 return
             }
             let nextContext = LoadingContext(
@@ -467,6 +671,7 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
                 requestedRange: nextRange
             )
             nextContext.continueToEnd = continueToEnd
+            nextContext.requestedEnd = requestedEnd
             nextContext.totalLength = totalLength
             let task = self.session.dataTask(with: request)
             let shouldStart = self.lock.withLock { () -> Bool in
@@ -484,6 +689,73 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
                 task.cancel()
             }
         }
+    }
+
+    private func actualDeliveredEnd(_ context: LoadingContext) -> Int64? {
+        if let dataRequest = context.loadingRequest.dataRequest {
+            let current = dataRequest.currentOffset
+            let start = context.requestedRange?.start ?? dataRequest.requestedOffset
+            if current > start {
+                return current - 1
+            }
+        }
+        guard let start = context.requestedRange?.start, context.receivedByteCount > 0 else {
+            return nil
+        }
+        return AuthenticatedMediaRangeContinuation.inclusiveEnd(
+            start: start,
+            length: context.receivedByteCount
+        )
+    }
+
+    private func contentLengthShortfallError(
+        _ http: HTTPURLResponse,
+        context: LoadingContext
+    ) -> Error? {
+        guard context.loadingRequest.dataRequest != nil else { return nil }
+        let contentLength = http.expectedContentLength
+        guard contentLength >= 0 else { return nil }
+        return responseSpanShortfall(context, receivedByteCount: contentLength)
+    }
+
+    private func contentLengthOverrunError(
+        _ http: HTTPURLResponse,
+        context: LoadingContext
+    ) -> Error? {
+        guard context.loadingRequest.dataRequest != nil else { return nil }
+        let contentLength = http.expectedContentLength
+        guard contentLength >= 0 else { return nil }
+        return responseSpanOverrun(context, receivedByteCount: contentLength)
+    }
+
+    private func shortfallError(_ context: LoadingContext) -> Error? {
+        guard context.loadingRequest.dataRequest != nil else { return nil }
+        return responseSpanShortfall(context, receivedByteCount: context.receivedByteCount)
+    }
+
+    private func responseSpanShortfall(_ context: LoadingContext, receivedByteCount: Int64) -> Error? {
+        let start = context.requestedRange?.start ?? 0
+        guard let message = AuthenticatedMediaResponseBody.shortfallErrorMessage(
+            receivedByteCount: receivedByteCount,
+            rangeStart: start,
+            advertisedEnd: context.deliveredEnd
+        ) else {
+            return nil
+        }
+        return mediaError(message)
+    }
+
+    private func responseSpanOverrun(_ context: LoadingContext, receivedByteCount: Int64) -> Error? {
+        let start = context.requestedRange?.start ?? 0
+        let advertisedEnd = context.deliveredEnd ?? context.requestedRange?.end
+        guard let message = AuthenticatedMediaResponseBody.overrunErrorMessage(
+            receivedByteCount: receivedByteCount,
+            rangeStart: start,
+            advertisedEnd: advertisedEnd
+        ) else {
+            return nil
+        }
+        return mediaError(message)
     }
 
     private func isAbandoned(_ loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
@@ -906,6 +1178,47 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
 #if DEBUG
     var debugDidTeardownForTesting = false
     var debugIsVisibleForTesting: Bool { ownership.isVisible }
+    var debugIsFullScreenForTesting: Bool { ownership.isFullScreen }
+    var debugIsPictureInPictureForTesting: Bool { ownership.isPictureInPicture }
+    var debugPlaybackProbeForTesting: String {
+        let item = player?.currentItem
+        let itemLabel: String
+        switch item?.status {
+        case .readyToPlay: itemLabel = "ready"
+        case .failed: itemLabel = "failed"
+        case .unknown: itemLabel = "unknown"
+        case .none: itemLabel = "nil"
+        @unknown default: itemLabel = "other"
+        }
+        let rate = player?.rate ?? 0
+        let tcs: String
+        switch player?.timeControlStatus {
+        case .playing: tcs = "playing"
+        case .paused: tcs = "paused"
+        case .waitingToPlayAtSpecifiedRate: tcs = "waiting"
+        case .none: tcs = "none"
+        @unknown default: tcs = "other"
+        }
+        let waiting = player?.reasonForWaitingToPlay?.rawValue ?? "none"
+        let seconds = player?.currentTime().seconds ?? currentTime
+        let timeLabel = seconds.isFinite ? String(format: "%.3f", seconds) : "nan"
+        let err = item?.error == nil ? "none" : "yes"
+        let mid = String(UInt(bitPattern: ObjectIdentifier(self)), radix: 16)
+        let pid = player.map { String(UInt(bitPattern: ObjectIdentifier($0)), radix: 16) } ?? "nil"
+        return [
+            "item=\(itemLabel)",
+            "rate=\(String(format: "%.2f", rate))",
+            "tcs=\(tcs)",
+            "wait=\(waiting)",
+            "time=\(timeLabel)",
+            "vis=\(ownership.isVisible ? 1 : 0)",
+            "fs=\(ownership.isFullScreen ? 1 : 0)",
+            "pip=\(ownership.isPictureInPicture ? 1 : 0)",
+            "err=\(err)",
+            "mid=\(mid)",
+            "pid=\(pid)",
+        ].joined(separator: " ")
+    }
 #endif
 
     func prepare(
@@ -1255,6 +1568,7 @@ private struct AuthenticatedMediaPlayerSurface: View {
             if let player = model.player {
                 AVPlayerViewControllerContainer(
                     player: player,
+                    playbackModel: model,
                     captionText: currentCaptionText,
                     captionTracks: timedText.tracks,
                     selectedCaptionTrackIndex: resolvedTrackIndex,
@@ -1555,6 +1869,243 @@ final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
 }
 
 #if DEBUG
+/// DEBUG-only currentTime oracle bound to the receiving AVPlayerViewController.
+/// time/pid/rate/fs come from that controller's player, not by copying the
+/// initiating model's probe string onto unrelated controllers.
+@MainActor
+enum AuthenticatedMediaE2EPlaybackProbe {
+    static let identifier = "e2e.video.playback"
+    static var testingForceEnabled = false
+
+    static var isEnabled: Bool {
+        if testingForceEnabled { return true }
+        let env = ProcessInfo.processInfo.environment
+        return env["PI_E2E_INVITE_URL"] != nil || env["OPPI_E2E_DIAGNOSTICS"] == "1"
+    }
+
+    static func install(
+        on controller: AVPlayerViewController,
+        model: AuthenticatedMediaPlayerModel?
+    ) {
+        guard isEnabled else { return }
+        controller.view.accessibilityIdentifier = "videoPlayer.native"
+        let boundModel = modelOwning(controller.player, candidate: model)
+        guard let host = controller.contentOverlayView ?? controller.view else { return }
+        let probe = attachedProbe(on: host) ?? addProbe(to: host)
+        probe.controller = controller
+        probe.model = boundModel
+        probe.playerView = controller.view
+        probe.refresh()
+        probe.startIfNeeded()
+    }
+
+    /// AVKit moves the player's content overlay into its fullscreen container;
+    /// it need not present another AVPlayerViewController. Observe the original
+    /// controller's actual player and verify that its overlay reached the
+    /// transition destination, rather than searching unrelated controllers.
+    static func bindPresentedFullscreen(
+        from controller: AVPlayerViewController,
+        destination: UIViewController?
+    ) {
+        guard isEnabled else { return }
+        for probe in probeViews(on: controller) {
+            probe.fullscreenView = destination?.view
+            probe.refresh()
+        }
+    }
+
+    static func uninstall(from controller: AVPlayerViewController) {
+        let probes = probeViews(on: controller)
+        for probe in probes {
+            probe.stop()
+            probe.removeFromSuperview()
+        }
+        if controller.view.accessibilityIdentifier == "videoPlayer.native" {
+            controller.view.accessibilityValue = nil
+        }
+    }
+
+    static func debugProbeValue(on controller: AVPlayerViewController) -> String? {
+        if let probe = probeViews(on: controller).first {
+            probe.refresh()
+            return probe.accessibilityValue
+        }
+        return controller.view.accessibilityValue
+    }
+
+    static func debugIsDisplayLinkActive(on controller: AVPlayerViewController) -> Bool {
+        probeViews(on: controller).contains { $0.isDisplayLinkActive }
+    }
+
+    static func debugHasProbeView(on controller: AVPlayerViewController) -> Bool {
+        !probeViews(on: controller).isEmpty
+    }
+
+    private static func modelOwning(
+        _ player: AVPlayer?,
+        candidate: AuthenticatedMediaPlayerModel?
+    ) -> AuthenticatedMediaPlayerModel? {
+        guard let candidate else { return nil }
+        guard let player, candidate.player === player else { return nil }
+        return candidate
+    }
+
+    private static func probeViews(on controller: AVPlayerViewController) -> [ProbeView] {
+        let overlayViews = controller.contentOverlayView?.subviews.compactMap { $0 as? ProbeView } ?? []
+        let viewProbes = controller.view.subviews.compactMap { $0 as? ProbeView }
+        return overlayViews + viewProbes
+    }
+
+    private static func attachedProbe(on overlay: UIView) -> ProbeView? {
+        overlay.subviews.compactMap { $0 as? ProbeView }.first
+    }
+
+    private static func addProbe(to overlay: UIView) -> ProbeView {
+        let probe = ProbeView()
+        overlay.addSubview(probe)
+        probe.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            probe.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
+            probe.topAnchor.constraint(equalTo: overlay.topAnchor),
+            probe.widthAnchor.constraint(equalToConstant: 8),
+            probe.heightAnchor.constraint(equalToConstant: 8),
+        ])
+        return probe
+    }
+
+    fileprivate static func probeValue(
+        player: AVPlayer?,
+        model: AuthenticatedMediaPlayerModel?,
+        reportsFullScreen: Bool
+    ) -> String {
+        let item = player?.currentItem
+        let itemLabel: String
+        switch item?.status {
+        case .readyToPlay: itemLabel = "ready"
+        case .failed: itemLabel = "failed"
+        case .unknown: itemLabel = "unknown"
+        case .none: itemLabel = "nil"
+        @unknown default: itemLabel = "other"
+        }
+        let rate = player?.rate ?? 0
+        let tcs: String
+        switch player?.timeControlStatus {
+        case .playing: tcs = "playing"
+        case .paused: tcs = "paused"
+        case .waitingToPlayAtSpecifiedRate: tcs = "waiting"
+        case .none: tcs = "none"
+        @unknown default: tcs = "other"
+        }
+        let waiting = player?.reasonForWaitingToPlay?.rawValue ?? "none"
+        let seconds = player?.currentTime().seconds ?? 0
+        let timeLabel = seconds.isFinite ? String(format: "%.3f", seconds) : "nan"
+        let err = item?.error == nil ? "none" : "yes"
+        let ownedModel = modelOwning(player, candidate: model)
+        let mid = ownedModel.map { String(UInt(bitPattern: ObjectIdentifier($0)), radix: 16) } ?? "none"
+        let pid = player.map { String(UInt(bitPattern: ObjectIdentifier($0)), radix: 16) } ?? "nil"
+        let vis: Int
+        if let ownedModel {
+            vis = ownedModel.debugIsVisibleForTesting ? 1 : 0
+        } else {
+            vis = 0
+        }
+        let fs = reportsFullScreen ? 1 : 0
+        let pip = ownedModel?.debugIsPictureInPictureForTesting == true ? 1 : 0
+        return [
+            "item=\(itemLabel)",
+            "rate=\(String(format: "%.2f", rate))",
+            "tcs=\(tcs)",
+            "wait=\(waiting)",
+            "time=\(timeLabel)",
+            "vis=\(vis)",
+            "fs=\(fs)",
+            "pip=\(pip)",
+            "err=\(err)",
+            "mid=\(mid)",
+            "pid=\(pid)",
+        ].joined(separator: " ")
+    }
+
+    private final class ProbeView: UIView {
+        weak var model: AuthenticatedMediaPlayerModel?
+        weak var controller: AVPlayerViewController?
+        weak var playerView: UIView?
+        weak var fullscreenView: UIView?
+        private nonisolated(unsafe) var displayLink: CADisplayLink?
+        private let displayLinkProxy = DisplayLinkProxy()
+
+        var isDisplayLinkActive: Bool { displayLink != nil }
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            isAccessibilityElement = true
+            accessibilityIdentifier = AuthenticatedMediaE2EPlaybackProbe.identifier
+            backgroundColor = .clear
+            alpha = 0.01
+            displayLinkProxy.owner = self
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        func startIfNeeded() {
+            guard displayLink == nil else { return }
+            let link = CADisplayLink(target: displayLinkProxy, selector: #selector(DisplayLinkProxy.tick(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 5, maximum: 10, preferred: 5)
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
+
+        func stop() {
+            displayLink?.invalidate()
+            displayLink = nil
+        }
+
+        func refresh() {
+            let player = controller?.player
+            let boundModel = AuthenticatedMediaE2EPlaybackProbe.modelOwning(player, candidate: model)
+            if model != nil, boundModel == nil {
+                model = nil
+            }
+            let resolvedFullscreen = fullscreenView.map {
+                $0.window != nil && isDescendant(of: $0)
+            } ?? false
+            let value = AuthenticatedMediaE2EPlaybackProbe.probeValue(
+                player: player,
+                model: boundModel,
+                reportsFullScreen: resolvedFullscreen
+            )
+            accessibilityLabel = value
+            accessibilityValue = value
+            playerView?.accessibilityValue = value
+            if resolvedFullscreen, let fullscreenView {
+                fullscreenView.accessibilityIdentifier = "videoPlayer.native"
+                fullscreenView.accessibilityValue = value
+            }
+        }
+
+        override func removeFromSuperview() {
+            stop()
+            super.removeFromSuperview()
+        }
+
+        nonisolated deinit {
+            displayLink?.invalidate()
+            displayLink = nil
+        }
+    }
+
+    @MainActor
+    private final class DisplayLinkProxy: NSObject {
+        weak var owner: ProbeView?
+
+        @objc func tick(_ link: CADisplayLink) {
+            owner?.refresh()
+        }
+    }
+}
+
 enum AuthenticatedMediaPlayerTesting {
     @MainActor static var resolvedModels: [ObjectIdentifier] = []
     /// Empty means recording is off. Parallel Swift Testing suites can mount
