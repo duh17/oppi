@@ -554,6 +554,278 @@ struct ChatTimelinePreparationRunwayTests {
         #expect(windowed.coordinator.debugPreparedArtifactReconfiguredItemIDs == [preparedID])
     }
 
+    @Test func preparedArtifactVisibleMissRetriesOnceWhenTheRowBecomesVisible() async throws {
+        let windowed = makeWindowedTimelineHarness(
+            sessionId: "session-visible-miss-retry",
+            frame: CGRect(x: 0, y: 0, width: 390, height: 220)
+        )
+        let hiddenID = "assistant-hidden"
+        let items = (0..<8).map { index in
+            ChatItem.assistantMessage(
+                id: index == 0 ? hiddenID : "assistant-\(index)",
+                text: "Row \(index)\n\n\(String(repeating: "Tall body. ", count: 12))",
+                timestamp: Date(timeIntervalSince1970: Double(index))
+            )
+        }
+        windowed.applyItems(items, isBusy: false)
+        let last = IndexPath(item: items.count - 1, section: 0)
+        windowed.collectionView.scrollToItem(at: last, at: .bottom, animated: false)
+        settleTimelineLayout(windowed.collectionView)
+
+        let hiddenIndexPath = try #require(windowed.coordinator.dataSource?.indexPath(for: hiddenID))
+        #expect(!windowed.collectionView.indexPathsForVisibleItems.contains(hiddenIndexPath))
+
+        let scope = ChatTimelinePreparationRunway.Scope(
+            sessionID: windowed.sessionId,
+            serverID: nil,
+            workspaceID: "ws-test",
+            worktreeID: nil
+        )
+        windowed.coordinator.handlePreparedArtifact(scope: scope, itemID: hiddenID)
+        #expect(windowed.coordinator.debugPreparedArtifactReconfiguredItemIDs.isEmpty)
+
+        windowed.collectionView.scrollToItem(at: hiddenIndexPath, at: .centeredVertically, animated: false)
+        settleTimelineLayout(windowed.collectionView)
+        #expect(windowed.collectionView.indexPathsForVisibleItems.contains(hiddenIndexPath))
+
+        await pumpMainQueueOnce()
+        #expect(windowed.coordinator.debugPreparedArtifactReconfiguredItemIDs == [hiddenID])
+
+        await pumpMainQueueOnce()
+        #expect(windowed.coordinator.debugPreparedArtifactReconfiguredItemIDs == [hiddenID])
+    }
+
+    @Test func inFlightPreparationWaiterPresentsPreparedRasterWithoutCollectionReconfigure() async throws {
+        NativeMarkdownImageView.debugResetPreparedArtifactsForTesting()
+        defer { NativeMarkdownImageView.debugResetPreparedArtifactsForTesting() }
+
+        let png = try #require(Self.makeRunwayTestPNG())
+        let fetchGate = TimelineRunwayFetchGate()
+        let broker = TimelineImagePreparationBroker()
+        let url = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://oppi.example")!,
+            workspaceID: "workspace-a",
+            filePath: "images/waiter.png"
+        ))
+        let loaders = ChatTimelinePreparationRunway.ImageLoaders(
+            fetchWorkspaceFile: { _, path in
+                await fetchGate.fetch(path: path, data: png)
+            }
+        )
+        let itemID = "assistant-waiter"
+
+        #expect(broker.request(
+            url: url,
+            scope: scope,
+            itemID: itemID,
+            target: target,
+            loaders: loaders,
+            demand: .prefetch(itemID: itemID),
+            onReady: {},
+            serverBaseURL: trustedServerBaseURL
+        ) == .inFlight)
+        #expect(await waitForTimelineCondition(timeoutMs: 2_000) {
+            await fetchGate.startedCount() == 1
+        })
+
+        let context = TimelineImagePreparationContext(
+            broker: broker,
+            scope: scope,
+            itemID: itemID,
+            target: target,
+            loaders: loaders,
+            serverBaseURL: trustedServerBaseURL,
+            resourcePressure: .nominal,
+            onReady: {},
+            onCancelled: {}
+        )
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 160)
+        view.apply(
+            url: url,
+            alt: "Waiter",
+            fetchWorkspaceFile: loaders.fetchWorkspaceFile,
+            fetchSessionFile: nil,
+            fetchHostFile: nil,
+            preparationContext: context
+        )
+        #expect(!view.debugHasRasterPreviewForTesting)
+
+        await fetchGate.releaseAll()
+        #expect(await waitForTimelineCondition(timeoutMs: 5_000) { @MainActor in
+            view.debugHasRasterPreviewForTesting
+        })
+        #expect(await fetchGate.startedCount() == 1)
+        #expect(NativeMarkdownImageView.debugPreparedOperationCountForTesting == 0)
+    }
+
+    @Test func completedPreparationWaiterCanStartAgainOnALaterInFlight() async throws {
+        NativeMarkdownImageView.debugResetPreparedArtifactsForTesting()
+        defer { NativeMarkdownImageView.debugResetPreparedArtifactsForTesting() }
+
+        let png = try #require(Self.makeRunwayTestPNG())
+        let fetchGate = TimelineRunwayFetchGate()
+        let broker = TimelineImagePreparationBroker()
+        let url = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://oppi.example")!,
+            workspaceID: "workspace-a",
+            filePath: "images/waiter-again.png"
+        ))
+        let loaders = ChatTimelinePreparationRunway.ImageLoaders(
+            fetchWorkspaceFile: { _, path in
+                await fetchGate.fetch(path: path, data: png)
+            }
+        )
+        let itemID = "assistant-waiter-again"
+
+        func startPrefetch() {
+            #expect(broker.request(
+                url: url,
+                scope: scope,
+                itemID: itemID,
+                target: target,
+                loaders: loaders,
+                demand: .prefetch(itemID: itemID),
+                onReady: {},
+                serverBaseURL: trustedServerBaseURL
+            ) == .inFlight)
+        }
+
+        startPrefetch()
+        #expect(await waitForTimelineCondition(timeoutMs: 2_000) {
+            await fetchGate.startedCount() == 1
+        })
+
+        let context = TimelineImagePreparationContext(
+            broker: broker,
+            scope: scope,
+            itemID: itemID,
+            target: target,
+            loaders: loaders,
+            serverBaseURL: trustedServerBaseURL,
+            resourcePressure: .nominal,
+            onReady: {},
+            onCancelled: {}
+        )
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 160)
+        view.apply(
+            url: url,
+            alt: "Waiter again",
+            fetchWorkspaceFile: loaders.fetchWorkspaceFile,
+            fetchSessionFile: nil,
+            fetchHostFile: nil,
+            preparationContext: context
+        )
+        await fetchGate.releaseAll()
+        #expect(await waitForTimelineCondition(timeoutMs: 5_000) { @MainActor in
+            view.debugHasRasterPreviewForTesting
+        })
+
+        broker.trimUnreferencedArtifacts()
+        startPrefetch()
+        #expect(await waitForTimelineCondition(timeoutMs: 2_000) {
+            await fetchGate.startedCount() == 2
+        })
+
+        view.apply(
+            url: url,
+            alt: "Waiter again",
+            fetchWorkspaceFile: loaders.fetchWorkspaceFile,
+            fetchSessionFile: nil,
+            fetchHostFile: nil,
+            preparationContext: context
+        )
+        #expect(!view.debugHasRasterPreviewForTesting)
+        await fetchGate.releaseAll()
+        #expect(await waitForTimelineCondition(timeoutMs: 5_000) { @MainActor in
+            view.debugHasRasterPreviewForTesting
+        })
+        #expect(await fetchGate.startedCount() == 2)
+        #expect(NativeMarkdownImageView.debugPreparedOperationCountForTesting == 0)
+    }
+
+    @Test func parkedInFlightWaiterPresentsAfterFinishWithEmptyDemandsUsingOneJoinedFetch() async throws {
+        NativeMarkdownImageView.debugResetPreparedArtifactsForTesting()
+        defer { NativeMarkdownImageView.debugResetPreparedArtifactsForTesting() }
+
+        let png = try #require(Self.makeRunwayTestPNG())
+        let fetchGate = TimelineRunwayFetchGate()
+        let broker = TimelineImagePreparationBroker()
+        let url = try #require(WorkspaceFileURL.make(
+            baseURL: URL(string: "https://oppi.example")!,
+            workspaceID: "workspace-a",
+            filePath: "images/empty-demands.png"
+        ))
+        let loaders = ChatTimelinePreparationRunway.ImageLoaders(
+            fetchWorkspaceFile: { _, path in
+                await fetchGate.fetch(path: path, data: png)
+            }
+        )
+        let itemID = "assistant-empty-demands"
+
+        #expect(broker.request(
+            url: url,
+            scope: scope,
+            itemID: itemID,
+            target: target,
+            loaders: loaders,
+            demand: .prefetch(itemID: itemID),
+            onReady: {},
+            serverBaseURL: trustedServerBaseURL
+        ) == .inFlight)
+        #expect(await waitForTimelineCondition(timeoutMs: 2_000) {
+            await fetchGate.startedCount() == 1
+        })
+
+        let context = TimelineImagePreparationContext(
+            broker: broker,
+            scope: scope,
+            itemID: itemID,
+            target: target,
+            loaders: loaders,
+            serverBaseURL: trustedServerBaseURL,
+            resourcePressure: .nominal,
+            onReady: {},
+            onCancelled: {}
+        )
+        let view = NativeMarkdownImageView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 160)
+        view.apply(
+            url: url,
+            alt: "Empty demands",
+            fetchWorkspaceFile: loaders.fetchWorkspaceFile,
+            fetchSessionFile: nil,
+            fetchHostFile: nil,
+            preparationContext: context
+        )
+        #expect(!view.debugHasRasterPreviewForTesting)
+
+        for _ in 0..<8 { await Task.yield() }
+        broker.cancel(itemID: itemID)
+        #expect(await waitForTimelineCondition(timeoutMs: 5_000) { @MainActor in
+            await fetchGate.releaseAll()
+            return view.debugHasRasterPreviewForTesting
+        })
+
+        let fetchesAfterPresent = await fetchGate.startedCount()
+        #expect(fetchesAfterPresent >= 1)
+        #expect(fetchesAfterPresent <= 2)
+        #expect(NativeMarkdownImageView.debugPreparedOperationCountForTesting <= 1)
+
+        view.apply(
+            url: url,
+            alt: "Empty demands",
+            fetchWorkspaceFile: loaders.fetchWorkspaceFile,
+            fetchSessionFile: nil,
+            fetchHostFile: nil,
+            preparationContext: context
+        )
+        #expect(view.debugHasRasterPreviewForTesting)
+        #expect(await fetchGate.startedCount() == fetchesAfterPresent)
+        #expect(NativeMarkdownImageView.debugPreparedOperationCountForTesting <= 1)
+    }
+
     @Test func finalizedMarkdownParseStartsInternalRasterPreparation() async throws {
         let sourceImage = UIGraphicsImageRenderer(
             size: CGSize(width: 900, height: 450)
@@ -1493,5 +1765,20 @@ struct ChatTimelinePreparationRunwayTests {
             serverBaseURL: nil,
             target: target
         )
+    }
+
+    private func pumpMainQueueOnce() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+    }
+
+    private static func makeRunwayTestPNG() -> Data? {
+        UIGraphicsImageRenderer(size: CGSize(width: 64, height: 32)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 32))
+        }.pngData()
     }
 }

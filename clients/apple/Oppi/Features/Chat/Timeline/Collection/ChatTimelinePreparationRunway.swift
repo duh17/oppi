@@ -37,6 +37,10 @@ struct TimelineImagePreparationContext {
         broker.preparedImage(url: url, scope: scope, target: target)
     }
 
+    func waitForPreparedImage(for url: URL) async -> TimelinePreparedRasterImage? {
+        await broker.waitForPreparedImage(url: url, scope: scope, target: target)
+    }
+
     func cancel(url: URL, visibleDemandID: UUID) {
         broker.cancel(
             url: url,
@@ -683,6 +687,7 @@ final class TimelineImagePreparationBroker {
         let loaders: ChatTimelinePreparationRunway.ImageLoaders
         var demands: Set<Demand>
         var callbacksByItemID: [String: () -> Void]
+        var waiters: [CheckedContinuation<TimelinePreparedRasterImage?, Never>] = []
         var task: Task<TimelinePreparedRasterImage?, Never>?
 
         init(
@@ -836,6 +841,29 @@ final class TimelineImagePreparationBroker {
         return cached.artifact
     }
 
+    func waitForPreparedImage(
+        url: URL,
+        scope: ChatTimelinePreparationRunway.Scope,
+        target: ChatTimelinePreparationRunway.ImageTarget
+    ) async -> TimelinePreparedRasterImage? {
+        let key = makeKey(url: url, scope: scope, target: target)
+        if let cached = cache[key] {
+            return cached.artifact
+        }
+        guard operations[key] != nil else { return nil }
+        return await withCheckedContinuation { continuation in
+            if let cached = cache[key] {
+                continuation.resume(returning: cached.artifact)
+                return
+            }
+            guard let operation = operations[key] else {
+                continuation.resume(returning: nil)
+                return
+            }
+            operation.waiters.append(continuation)
+        }
+    }
+
     func cancel(
         url: URL,
         scope: ChatTimelinePreparationRunway.Scope,
@@ -870,11 +898,16 @@ final class TimelineImagePreparationBroker {
             guard let operation = operations[key] else { continue }
             operation.demands.removeAll()
             operation.callbacksByItemID.removeAll()
+            let waiters = operation.waiters
+            operation.waiters.removeAll(keepingCapacity: false)
             if operation.task == nil {
                 operations.removeValue(forKey: key)
                 releaseAdmission(for: key)
             } else {
                 operation.task?.cancel()
+            }
+            for waiter in waiters {
+                waiter.resume(returning: nil)
             }
         }
         queuedKeys.removeAll(keepingCapacity: false)
@@ -910,16 +943,22 @@ final class TimelineImagePreparationBroker {
         guard operation.demands.isEmpty else { return }
 
         if operation.task == nil {
+            let waiters = operation.waiters
+            operation.waiters.removeAll(keepingCapacity: false)
             operations.removeValue(forKey: key)
             queuedKeys.removeAll { $0 == key }
             releaseAdmission(for: key)
+            for waiter in waiters {
+                waiter.resume(returning: nil)
+            }
             pump()
-        } else {
+        } else if operation.waiters.isEmpty {
             // A loader may ignore cooperative cancellation. Keep the active
             // tombstone and its slot until task completion so physical fetch
             // concurrency never exceeds the configured bound.
             operation.task?.cancel()
         }
+        // Parked waiters keep the in-flight fetch so `finish` can still deliver.
     }
 
     private func pump() {
@@ -976,13 +1015,20 @@ final class TimelineImagePreparationBroker {
         activeFetchCount = max(0, activeFetchCount - 1)
 
         let callbacks = operation.callbacksByItemID.values
-        if !operation.demands.isEmpty {
-            if let artifact {
+        let waiters = operation.waiters
+        operation.waiters.removeAll(keepingCapacity: false)
+        if let artifact {
+            if !operation.demands.isEmpty || !waiters.isEmpty {
                 insert(artifact, for: key)
-            } else {
-                recordFailure(for: key)
             }
+        } else if !operation.demands.isEmpty {
+            recordFailure(for: key)
+        }
+        if !operation.demands.isEmpty {
             for callback in callbacks { callback() }
+        }
+        for waiter in waiters {
+            waiter.resume(returning: artifact)
         }
         pump()
     }
@@ -1293,15 +1339,29 @@ extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefe
 
     func handlePreparedArtifact(
         scope: ChatTimelinePreparationRunway.Scope,
-        itemID: String
+        itemID: String,
+        isRetry: Bool = false
     ) {
         guard scope.sessionID == sessionId,
               scope.serverID == serverId,
               scope.workspaceID == workspaceId,
               currentItemByID[itemID] != nil,
               let collectionView,
-              let indexPath = dataSource?.indexPath(for: itemID),
-              collectionView.indexPathsForVisibleItems.contains(indexPath) else {
+              let indexPath = dataSource?.indexPath(for: itemID) else {
+            return
+        }
+        guard collectionView.indexPathsForVisibleItems.contains(indexPath) else {
+            // Live-tail apply can miss a visible cell. Retry once after UIKit
+            // updates the visible set. Never reconfigure off-screen rows.
+            if !isRetry {
+                DispatchQueue.main.async { [weak self] in
+                    self?.handlePreparedArtifact(
+                        scope: scope,
+                        itemID: itemID,
+                        isRetry: true
+                    )
+                }
+            }
             return
         }
         #if DEBUG

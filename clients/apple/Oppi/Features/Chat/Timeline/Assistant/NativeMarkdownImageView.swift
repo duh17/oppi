@@ -82,6 +82,7 @@ final class NativeMarkdownImageView: UIView {
     private var preparesForDisplay = true
     private var pendingRemoteLoad: PendingImageLoad?
     private var loadTask: Task<Void, Never>?
+    private var timelinePreparationWaiterID: UUID?
     private let visiblePreparationDemandID = UUID()
     private var currentPreparationContext: TimelineImagePreparationContext?
     private var usesCanonicalLoadingForCurrentRequest = false
@@ -329,6 +330,7 @@ final class NativeMarkdownImageView: UIView {
             #endif
 
             loadTask?.cancel()
+            timelinePreparationWaiterID = nil
 
             if consumeTimelinePreparationIfAvailable(
                 context: preparationContext,
@@ -421,11 +423,46 @@ final class NativeMarkdownImageView: UIView {
             showPreparedTimelineRaster(prepared)
         case .inFlight:
             showLoadingState(alt: alt)
+            startTimelinePreparationWaiterIfNeeded(url: url, alt: alt, context: context)
         case .neverRequested:
             currentPreparationContext = nil
             return false
         }
         return true
+    }
+
+    private func startTimelinePreparationWaiterIfNeeded(
+        url: URL,
+        alt: String,
+        context: TimelineImagePreparationContext
+    ) {
+        // A finished Task is not cancelled. Skip only while a waiter for
+        // this view is actually running so a later `.inFlight` can start again.
+        if timelinePreparationWaiterID != nil {
+            return
+        }
+        let waiterID = UUID()
+        timelinePreparationWaiterID = waiterID
+        loadTask = Task { [weak self] in
+            let artifact = await context.waitForPreparedImage(for: url)
+            guard let self else { return }
+            let stillCurrent = self.timelinePreparationWaiterID == waiterID
+            if stillCurrent {
+                self.timelinePreparationWaiterID = nil
+            }
+            guard stillCurrent, !Task.isCancelled, self.currentURL == url else { return }
+            if let artifact {
+                self.showPreparedTimelineRaster(artifact)
+                return
+            }
+            await self.loadImage(
+                url: url,
+                alt: alt,
+                fetchWorkspaceFile: context.loaders.fetchWorkspaceFile,
+                fetchSessionFile: context.loaders.fetchSessionFile,
+                fetchHostFile: context.loaders.fetchHostFile
+            )
+        }
     }
 
     private func showPreparedTimelineRaster(_ prepared: TimelinePreparedRasterImage) {
