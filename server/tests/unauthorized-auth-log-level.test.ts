@@ -4,8 +4,9 @@ import { unauthorizedAuthLogLevel } from "../src/server.js";
 
 describe("unauthorizedAuthLogLevel", () => {
   // First-pass choice: we do not track first vs repeat unknown_token. The Apple
-  // 401-retry path is WS /app/events/stream and /dictation/stream, so those
-  // unknown_token handshakes are info. Everything else stays warn.
+  // 401-retry path is WS /app/events/stream, /dictation/stream, and HTTP
+  // /telemetry/* uploads, so those unknown_token handshakes are info.
+  // Everything else stays warn.
   it.each([
     {
       name: "logs the app-event stream unknown_token handshake at info",
@@ -32,6 +33,27 @@ describe("unauthorizedAuthLogLevel", () => {
       name: "keeps HTTP unknown_token at warn even on the retry path",
       transport: "http" as const,
       path: "/app/events/stream",
+      reason: "unknown_token",
+      level: "warn",
+    },
+    {
+      name: "logs telemetry chat-metrics unknown_token at info",
+      transport: "http" as const,
+      path: "/telemetry/chat-metrics",
+      reason: "unknown_token",
+      level: "info",
+    },
+    {
+      name: "logs telemetry client-logs unknown_token at info",
+      transport: "http" as const,
+      path: "/telemetry/client-logs",
+      reason: "unknown_token",
+      level: "info",
+    },
+    {
+      name: "keeps catalog HTTP unknown_token at warn",
+      transport: "http" as const,
+      path: "/workspaces",
       reason: "unknown_token",
       level: "warn",
     },

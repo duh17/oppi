@@ -171,8 +171,8 @@ enum ServerRouteCandidateKind: Hashable, Sendable {
 
 enum ServerRouteFailure {
     static func mayAdvance(after error: Error) -> Bool {
-        if let urlError = error as? URLError {
-            return [.timedOut, .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet].contains(urlError.code)
+        if APIClientAvailabilityFailure(error: error) != nil {
+            return true
         }
         if case APIError.server(let status, _) = error {
             return status == 401 || status == 404 || status == 408 || status >= 500

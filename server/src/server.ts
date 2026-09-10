@@ -240,19 +240,23 @@ const EXPECTED_UNKNOWN_TOKEN_WS_PATHS = new Set(["/app/events/stream", "/dictati
  * First-pass 401 log level. We do not track first vs repeat unknown_token.
  * The Apple client retries WS /app/events/stream and /dictation/stream after
  * refresh, so unknown_token on those two paths is the expected handshake and
- * logs at info. Revoked, evicted, missing/malformed, owner_on_network, expired,
- * and unknown_token on any other transport or path stay warn.
+ * logs at info. HTTP /telemetry/* uploads also retry after rotation, so those
+ * unknown_token posts are the same expected handshake. Revoked, evicted,
+ * missing/malformed, owner_on_network, expired, and unknown_token on any other
+ * transport or path stay warn.
  */
 export function unauthorizedAuthLogLevel(opts: {
   transport: "http" | "ws";
   path: string;
   reason: string;
 }): "info" | "warn" {
-  if (
-    opts.transport === "ws" &&
-    opts.reason === "unknown_token" &&
-    EXPECTED_UNKNOWN_TOKEN_WS_PATHS.has(opts.path)
-  ) {
+  if (opts.reason !== "unknown_token") {
+    return "warn";
+  }
+  if (opts.transport === "ws" && EXPECTED_UNKNOWN_TOKEN_WS_PATHS.has(opts.path)) {
+    return "info";
+  }
+  if (opts.transport === "http" && opts.path.startsWith("/telemetry/")) {
     return "info";
   }
   return "warn";

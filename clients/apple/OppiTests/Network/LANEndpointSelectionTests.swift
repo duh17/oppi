@@ -278,3 +278,33 @@ struct LANEndpointSelectionTests {
         )
     }
 }
+
+@Suite("ServerRouteFailure")
+struct ServerRouteFailureTests {
+    @Test(arguments: [
+        URLError.Code.timedOut,
+        .cannotConnectToHost,
+        .networkConnectionLost,
+        .notConnectedToInternet,
+        .cannotFindHost,
+        .dnsLookupFailed,
+        .cannotLoadFromNetwork,
+    ])
+    func availabilityURLErrorsAdvance(code: URLError.Code) {
+        #expect(ServerRouteFailure.mayAdvance(after: URLError(code)))
+    }
+
+    @Test func serverCertificateFailureDoesNotAdvance() {
+        #expect(!ServerRouteFailure.mayAdvance(after: URLError(.serverCertificateUntrusted)))
+    }
+
+    @Test func retryableHTTPStatusesAdvance() {
+        #expect(ServerRouteFailure.mayAdvance(after: APIError.server(status: 401, message: "unauthorized")))
+        #expect(ServerRouteFailure.mayAdvance(after: APIError.server(status: 404, message: "missing")))
+        #expect(ServerRouteFailure.mayAdvance(after: APIError.server(status: 503, message: "unavailable")))
+    }
+
+    @Test func forbiddenHTTPStatusDoesNotAdvance() {
+        #expect(!ServerRouteFailure.mayAdvance(after: APIError.server(status: 403, message: "forbidden")))
+    }
+}

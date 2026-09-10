@@ -115,6 +115,58 @@ struct ServerConnectionLifecycleTests {
         #expect(await conn.apiClient?.baseURL.host == "my-server.tail00000.ts.net")
     }
 
+    @Test func dnsMissOnLANAdvancesToPairedCandidate() async {
+        let conn = ServerConnection()
+        let credentials = makeHTTPOnlyCredentials()
+        conn.setDiscoveredLANEndpoint(makeLANCandidate(host: "192.168.1.42"))
+        var lanBootstraps = 0
+        var pairedBootstraps = 0
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: { client, _ in
+                if await client.baseURL.host == "192.168.1.42" {
+                    lanBootstraps += 1
+                    throw URLError(.cannotFindHost)
+                }
+                pairedBootstraps += 1
+                return successfulServerInfo()
+            }
+        ))
+        #expect(lanBootstraps == 1)
+        #expect(pairedBootstraps == 1)
+        #expect(conn.transportPath == .paired)
+        #expect(conn.canAutomaticallyRetryInitialTransport)
+        #expect(await conn.apiClient?.baseURL.host == "my-server.tail00000.ts.net")
+    }
+
+    @Test func pairedOnlyDNSMissStaysRetryableAndRecoversOnNextBootstrap() async {
+        let conn = ServerConnection()
+        let credentials = makeHTTPOnlyCredentials()
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: { _, _ in throw URLError(.cannotFindHost) }
+        ) == false)
+        #expect(conn.apiClient == nil)
+        #expect(conn.canAutomaticallyRetryInitialTransport)
+
+        #expect(await conn.configureForUse(
+            credentials: credentials,
+            serverInfoBootstrap: successfulServerInfoBootstrap
+        ))
+        #expect(conn.apiClient != nil)
+        #expect(conn.canAutomaticallyRetryInitialTransport)
+    }
+
+    @Test func tlsBootstrapFailureStillFailCloses() async {
+        let conn = ServerConnection()
+        #expect(await conn.configureForUse(
+            credentials: makeHTTPOnlyCredentials(),
+            serverInfoBootstrap: { _, _ in throw URLError(.serverCertificateUntrusted) }
+        ) == false)
+        #expect(conn.apiClient == nil)
+        #expect(!conn.canAutomaticallyRetryInitialTransport)
+    }
+
     @Test func replacingLANCandidateCannotAdoptStaleBootstrapResult() async {
         let conn = ServerConnection()
         let credentials = makeHTTPOnlyCredentials()
