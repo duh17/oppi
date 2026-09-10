@@ -23,6 +23,14 @@ struct AskComposerClearingState: Equatable {
         return ""
     }
 
+    /// Claim synchronously before invoking a callback. The server may keep the
+    /// same card mounted until settlement, and another control can still fire.
+    mutating func beginSubmission(request: AskRequest?) -> Bool {
+        guard let request, submittedRequestID != request.id else { return false }
+        _ = markSubmitted(request: request)
+        return true
+    }
+
     /// Ask request id changed. Reset page and drafts. Keep the submitted mark
     /// unless a *different* ask id arrived. Clearing the pending request after
     /// a successful send must not drop the mark.
@@ -607,11 +615,11 @@ struct ChatInputBar<ActionRow: View>: View {
             currentPage: $askClearing.currentPage,
             answers: $askClearing.draftAnswers,
             onSubmit: { answers in
-                markAskRequestSubmitted()
+                guard markAskRequestSubmitted() else { return }
                 onAskSubmit?(answers)
             },
             onIgnoreAll: {
-                markAskRequestSubmitted()
+                guard markAskRequestSubmitted() else { return }
                 onAskIgnoreAll?()
             },
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
@@ -764,8 +772,7 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var ignoreAskActionButton: some View {
         Button(action: {
-            guard !isCurrentAskSubmitted else { return }
-            markAskRequestSubmitted()
+            guard markAskRequestSubmitted() else { return }
             onAskIgnoreAll?()
             FeatureEducationTips.markPromptAnswered()
         }) {
@@ -1234,8 +1241,7 @@ struct ChatInputBar<ActionRow: View>: View {
             return
         }
         if askRequest != nil {
-            guard !isCurrentAskSubmitted else { return }
-            markAskRequestSubmitted()
+            guard markAskRequestSubmitted() else { return }
             onAskIgnoreAll?()
             FeatureEducationTips.markPromptAnswered()
             return
@@ -1258,7 +1264,7 @@ struct ChatInputBar<ActionRow: View>: View {
         }
 
         if transition.shouldSubmit {
-            markAskRequestSubmitted()
+            guard markAskRequestSubmitted() else { return true }
             askClearing.draftAnswers = transition.answers
             onAskSubmit?(transition.answers)
             FeatureEducationTips.markPromptAnswered()
@@ -1275,9 +1281,11 @@ struct ChatInputBar<ActionRow: View>: View {
         return true
     }
 
-    private func markAskRequestSubmitted() {
-        text = askClearing.markSubmitted(request: askRequest)
+    private func markAskRequestSubmitted() -> Bool {
+        guard askClearing.beginSubmission(request: askRequest) else { return false }
+        text = ""
         textBeforeRecording = nil
+        return true
     }
 
     private func handleAlternateSend() {

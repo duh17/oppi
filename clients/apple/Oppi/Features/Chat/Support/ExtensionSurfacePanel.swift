@@ -1656,6 +1656,7 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)? = nil
     var onExpandedEntryChange: ((Bool) -> Void)? = nil
+    var collapseRequestID: Int = 0
     var showsLeadingStripContent = false
     var leadingStripContent: LeadingStripContent
 
@@ -1666,6 +1667,7 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
         linkContext: ExtensionSurfaceLinkContext = .empty,
         onOpenURL: ((URL) -> Bool)? = nil,
         onExpandedEntryChange: ((Bool) -> Void)? = nil,
+        collapseRequestID: Int = 0,
         showsLeadingStripContent: Bool = false,
         @ViewBuilder leadingStripContent: () -> LeadingStripContent = { EmptyView() }
     ) {
@@ -1675,6 +1677,7 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
         self.linkContext = linkContext
         self.onOpenURL = onOpenURL
         self.onExpandedEntryChange = onExpandedEntryChange
+        self.collapseRequestID = collapseRequestID
         self.showsLeadingStripContent = showsLeadingStripContent
         self.leadingStripContent = leadingStripContent()
     }
@@ -1774,6 +1777,9 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
                 .id(activeEntry.id)
                 .transition(.opacity)
             }
+        }
+        .onChange(of: collapseRequestID) { _, _ in
+            collapseActiveEntry()
         }
         .onChange(of: stripEntries.map(\.id)) { _, ids in
             if let expandedEntryID, !ids.contains(expandedEntryID) {

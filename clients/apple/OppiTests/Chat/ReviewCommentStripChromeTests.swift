@@ -7,6 +7,31 @@ import UIKit
 @Suite("Review comment strip chrome")
 @MainActor
 struct ReviewCommentStripChromeTests {
+    @Test("Opening review clears both extension drawers; either extension placement closes review")
+    func reviewAndExtensionDrawersAreExclusiveInBothDirections() throws {
+        let chat = try reviewCommentsChatViewSource()
+        let toggle = try reviewCommentsSourceSlice(
+            named: "private func toggleReviewCommentDrawer", until: "private var timelineTopOverlap", in: chat
+        )
+        #expect(toggle.contains("extensionDrawerCollapseRequestID &+= 1"))
+        #expect(chat.components(separatedBy: "collapseRequestID: extensionDrawerCollapseRequestID").count - 1 == 2)
+        #expect(chat.components(separatedBy: "onExpandedEntryChange: handleExtensionDrawerExpansion").count - 1 == 2)
+        let panel = try reviewCommentsFeatureSource(path: "Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift")
+        #expect(panel.contains(".onChange(of: collapseRequestID)"))
+        let collapse = try reviewCommentsSourceSlice(
+            named: ".onChange(of: collapseRequestID)", until: ".onChange(of: stripEntries", in: panel
+        )
+        #expect(collapse.contains("collapseActiveEntry()"))
+    }
+
+    @Test("Review UI test uses the same count-aware stash title as the product")
+    func reviewUITestUsesCountAwareStashTitle() throws {
+        let uiTest = try reviewCommentsFeatureSource(path: "OppiUITests/FullScreenReviewCommentUITests.swift")
+        #expect(uiTest.contains("app.navigationBars[\"1 review comment staged\"]"))
+        let sheet = try reviewCommentStashSheetSource()
+        #expect(sheet.contains("ReviewCommentStripChrome.stashTitle(count:"))
+    }
+
     @Test("Collapsed pill title keeps the full staged-count phrase")
     func collapsedPillTitleKeepsStagedCountPhrase() {
         #expect(ReviewCommentStripChrome.stashTitle(count: 1) == "1 review comment staged")

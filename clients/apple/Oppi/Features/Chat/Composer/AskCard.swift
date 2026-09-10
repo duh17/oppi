@@ -28,6 +28,7 @@ struct AskCard: View {
     @State private var expandedSheetDetent: PresentationDetent = .large
     @State private var presentedAtNs: UInt64 = 0
     @State private var didRecordResponseMetric = false
+    @State private var locallySubmittedRequestID: String?
     @State private var ownedAutoAdvanceController = AskInlineAutoAdvanceController()
 
     private let cardCornerRadius: CGFloat = 14
@@ -57,7 +58,7 @@ struct AskCard: View {
     }
 
     private var isAskSubmitted: Bool {
-        submittedRequestID == request.id
+        submittedRequestID == request.id || locallySubmittedRequestID == request.id
     }
 
     var body: some View {
@@ -337,6 +338,8 @@ struct AskCard: View {
                         .background(.themeBlue, in: RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
+                .disabled(isAskSubmitted)
+                .accessibilityIdentifier("ask.send")
             }
         }
         .padding(.horizontal, 12)
@@ -438,6 +441,8 @@ struct AskCard: View {
     }
 
     private func submitAnswers(_ submittedAnswers: [String: AskAnswer], surface: String) {
+        guard !isAskSubmitted else { return }
+        locallySubmittedRequestID = request.id
         pageAdvance.invalidate()
         recordResponseMetric(outcome: submittedAnswers.isEmpty ? "empty" : "answered", surface: surface, submittedAnswers: submittedAnswers)
         onSubmit(submittedAnswers)
@@ -445,6 +450,8 @@ struct AskCard: View {
     }
 
     private func ignoreAll(surface: String) {
+        guard !isAskSubmitted else { return }
+        locallySubmittedRequestID = request.id
         pageAdvance.invalidate()
         recordResponseMetric(outcome: "ignored", surface: surface, submittedAnswers: [:])
         onIgnoreAll()

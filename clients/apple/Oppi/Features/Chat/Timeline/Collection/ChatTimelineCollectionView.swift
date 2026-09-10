@@ -1775,7 +1775,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         /// Scroll commands measure against first-pass estimated heights. After
         /// preferred sizes land, pin an idle attached timeline to the true bottom.
-        private func reconcileScrollAfterTimelineApply(
+        func reconcileScrollAfterTimelineApply(
             didScroll: Bool,
             hadPendingScrollCommand: Bool,
             configuration: Configuration,
@@ -1783,7 +1783,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             itemCount: Int,
             structuralAppend: Bool = false
         ) {
-            guard configuration.scrollCommand?.anchor != .top else { return }
+            // Only the apply that consumes an outline jump owns its landing.
+            // SwiftUI retains handled commands; they must not disable follow
+            // after the user scrolls back to the live tail.
+            guard !(hadPendingScrollCommand && configuration.scrollCommand?.anchor == .top) else { return }
             if didScroll || hadPendingScrollCommand {
                 collectionView.layoutIfNeeded()
                 guard scrollController?.isCurrentlyNearBottom ?? true else { return }

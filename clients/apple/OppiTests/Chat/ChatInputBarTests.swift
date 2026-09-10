@@ -1370,6 +1370,62 @@ struct ChatInputBarTests {
     }
 }
 
+@Suite("Ask submission wiring")
+@MainActor
+struct AskSubmissionWiringTests {
+    @Test func repeatedSubmissionClaimsOnlyForwardOnceUntilADifferentRequestArrives() {
+        var state = AskComposerClearingState()
+        let request = AskRequest(
+            id: "ask-final", sessionId: "session", questions: [], allowCustom: true, timeout: nil
+        )
+        var forwarded = 0
+        for _ in 0..<3 {
+            if state.beginSubmission(request: request) { forwarded += 1 }
+        }
+        #expect(forwarded == 1)
+        #expect(state.submittedRequestID == request.id)
+        state.applyRequestIDChange(nil)
+        let staleAccepted = state.beginSubmission(request: request)
+        let missingAccepted = state.beginSubmission(request: nil)
+        #expect(!staleAccepted, "Settlement must not rearm stale callbacks")
+        #expect(!missingAccepted)
+
+        let next = AskRequest(
+            id: "ask-next", sessionId: "session", questions: [], allowCustom: true, timeout: nil
+        )
+        state.applyRequestIDChange(next.id)
+        let nextAccepted = state.beginSubmission(request: next)
+        let duplicateAccepted = state.beginSubmission(request: next)
+        #expect(nextAccepted)
+        #expect(!duplicateAccepted)
+    }
+
+    @Test func inlineCallbacksRejectAlreadySubmittedRequestsBeforeForwarding() throws {
+        let source = try chatInputBarSource()
+        let card = try chatInputBarSourceSlice(
+            named: "private func askCard(request: AskRequest)",
+            until: "private var attachButton",
+            in: source
+        )
+        #expect(card.components(separatedBy: "guard markAskRequestSubmitted() else { return }").count - 1 == 2)
+        let marker = try chatInputBarSourceSlice(
+            named: "private func markAskRequestSubmitted()", until: "private func handleAlternateSend", in: source
+        )
+        #expect(marker.contains("guard askClearing.beginSubmission(request: askRequest) else { return false }"))
+    }
+
+    @Test func finalPageSendIsDisabledAndSubmissionIsGuarded() throws {
+        let source = try composerSource(named: "AskCard.swift")
+        let footer = try chatInputBarSourceSlice(named: "private func questionFooter", until: "// MARK: - Page Indicator", in: source)
+        #expect(footer.components(separatedBy: ".disabled(isAskSubmitted)").count - 1 == 2)
+        for (start, end) in [("private func submitAnswers", "private func ignoreAll"),
+                             ("private func ignoreAll", "private func recordResponseMetric")] {
+            let action = try chatInputBarSourceSlice(named: start, until: end, in: source)
+            #expect(action.contains("guard !isAskSubmitted else { return }"))
+        }
+    }
+}
+
 private func chatInputBarSource() throws -> String {
     try composerSource(named: "ChatInputBar.swift")
 }

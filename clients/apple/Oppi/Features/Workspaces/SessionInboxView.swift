@@ -206,6 +206,16 @@ struct SessionInboxView: View {
         return servers.first
     }
 
+    private func refreshSearch() {
+        searchStore.search(
+            query: searchText,
+            workspaceId: SessionInboxSearchScope.workspaceId(
+                scopedTo: selectedWorkspace?.workspace.id
+            ),
+            apiClient: activeConnection?.apiClient
+        )
+    }
+
     private var hasSearchQuery: Bool {
         SessionListSearchPresentation.hasQuery(searchText)
     }
@@ -343,14 +353,13 @@ struct SessionInboxView: View {
                 InAppNowPlayingPlayerScreen(audioPlayer: player)
             }
         }
-        .onChange(of: searchText) { _, newValue in
-            searchStore.search(
-                query: newValue,
-                workspaceId: SessionInboxSearchScope.workspaceId(
-                    scopedTo: selectedWorkspace?.workspace.id
-                ),
-                apiClient: activeConnection?.apiClient
-            )
+        .onChange(of: searchText) { _, _ in
+            refreshSearch()
+        }
+        .onChange(of: selectedWorkspace?.workspace.id) { _, _ in
+            // Same query, different result domain. Search cancels the old task
+            // and clears completed results before starting the scoped request.
+            refreshSearch()
         }
         .toolbar { toolbarContent }
         .refreshable {

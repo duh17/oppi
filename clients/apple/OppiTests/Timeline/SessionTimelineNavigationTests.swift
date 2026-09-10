@@ -256,6 +256,44 @@ struct SessionTimelineNavigationTests {
         #expect(landed, "Expected outline jump to survive a structurally unchanged streaming apply")
     }
 
+    @Test(arguments: [false, true])
+    func outlineCommandOnlySuppressesTailReconciliationWhilePending(isPending: Bool) {
+        let harness = makeTimelineHarness(sessionId: "outline-return-to-tail")
+        let cv = TimelineScrollMetricsCollectionView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 500)
+        )
+        cv.layoutIfNeeded()
+        cv.testContentSize = CGSize(width: 390, height: 2_000)
+        cv.testAdjustedContentInset = .zero
+        harness.scrollController.detachFromBottomForUserScroll()
+        cv.contentOffset.y = 1_500
+        harness.coordinator.updateScrollState(cv)
+        #expect(harness.scrollController.isCurrentlyNearBottom)
+
+        // Isolate the post-apply policy from UIKit's own offset preservation.
+        // The rendered tail grows after the user has reattached at the bottom.
+        cv.testContentSize.height += 24
+        let configuration = makeTimelineConfiguration(
+            scrollCommand: ChatTimelineScrollCommand(id: "tool-1", anchor: .top, animated: false, nonce: 42),
+            sessionId: harness.sessionId,
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.reconcileScrollAfterTimelineApply(
+            didScroll: isPending,
+            hadPendingScrollCommand: isPending,
+            configuration: configuration,
+            collectionView: cv,
+            itemCount: 1,
+            structuralAppend: true
+        )
+        #expect(cv.contentOffset.y == (isPending ? 1_500 : 1_524))
+    }
+
     @Test func detachedNavigationExpandsHistoryAndLandsOnSelectedToolRow() async throws {
         let result = await navigateFromDetachedTail(to: "tool-21")
         #expect(

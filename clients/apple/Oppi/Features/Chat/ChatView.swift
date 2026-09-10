@@ -121,6 +121,7 @@ struct ChatView: View {
     @State private var presentsNowPlayingPlayer = false
     @State private var nowPlayingDrawerExpanded = false
     @State private var reviewCommentDrawerExpanded = false
+    @State private var extensionDrawerCollapseRequestID = 0
     @State private var reviewCommentStashPresentation: ReviewCommentStripChrome.StashPresentation?
     @State private var composerExternalFocusRequestID = 0
     @State private var contextBarCollapseToken = 0
@@ -567,6 +568,16 @@ struct ChatView: View {
         reviewCommentDrawerExpanded = next.commentsExpanded
         nowPlayingDrawerExpanded = next.nowPlayingExpanded
         if reviewCommentDrawerExpanded {
+            // Extension panels own their selection; ask both placements to
+            // collapse without hiding their pills or resetting their content.
+            extensionDrawerCollapseRequestID &+= 1
+            dismissKeyboard()
+        }
+    }
+
+    private func handleExtensionDrawerExpansion(_ expanded: Bool) {
+        if expanded {
+            reviewCommentDrawerExpanded = false
             dismissKeyboard()
         }
     }
@@ -972,12 +983,8 @@ struct ChatView: View {
                             messageQueue: (showsMessageQueue || hasMessageQueueDraft) ? messageQueueSurfaceConfiguration : nil,
                             linkContext: extensionSurfaceLinkContext,
                             onOpenURL: openExtensionSurfaceURL,
-                            onExpandedEntryChange: { expanded in
-                                if expanded {
-                                    reviewCommentDrawerExpanded = false
-                                    dismissKeyboard()
-                                }
-                            },
+                            onExpandedEntryChange: handleExtensionDrawerExpansion,
+                            collapseRequestID: extensionDrawerCollapseRequestID,
                             showsLeadingStripContent: showsReviewCommentPill || showsNowPlayingPill,
                             leadingStripContent: {
                                 HStack(spacing: 8) {
@@ -1097,7 +1104,9 @@ struct ChatView: View {
                         surface: surface,
                         placement: .belowEditor,
                         linkContext: extensionSurfaceLinkContext,
-                        onOpenURL: openExtensionSurfaceURL
+                        onOpenURL: openExtensionSurfaceURL,
+                        onExpandedEntryChange: handleExtensionDrawerExpansion,
+                        collapseRequestID: extensionDrawerCollapseRequestID
                     )
                     .padding(.horizontal, 16)
                 }

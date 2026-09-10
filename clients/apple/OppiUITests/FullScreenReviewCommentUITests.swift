@@ -110,7 +110,7 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         XCTAssertEqual(stashButton.value as? String, "1 staged comment")
 
         tapElement(stashButton)
-        let stashNavigation = app.navigationBars["Staged Comments"]
+        let stashNavigation = app.navigationBars["1 review comment staged"]
         XCTAssertTrue(
             stashNavigation.waitForExistence(timeout: 5),
             "Stash button did not present the staged comments sheet"

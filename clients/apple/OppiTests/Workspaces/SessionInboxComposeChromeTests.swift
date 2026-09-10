@@ -182,6 +182,19 @@ struct SessionInboxSearchScopeTests {
         #expect(SessionInboxSearchScope.workspaceId(scopedTo: "  ws-1  ") == "ws-1")
     }
 
+    @Test func workspaceScopeChangeRefreshesTheCurrentSearch() throws {
+        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
+        let observer = try sourceSlice(
+            inbox,
+            start: ".onChange(of: selectedWorkspace?.workspace.id)",
+            end: ".toolbar { toolbarContent }"
+        )
+        #expect(observer.contains("refreshSearch()"))
+        let refresh = try sourceSlice(inbox, start: "private func refreshSearch()", end: "private var")
+        #expect(refresh.contains("query: searchText"))
+        #expect(refresh.contains("scopedTo: selectedWorkspace?.workspace.id"))
+    }
+
     @Test func listsPassSearchScopeIntoTheStore() throws {
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
