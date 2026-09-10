@@ -628,6 +628,138 @@ struct VoiceInputManagerTests {
                 "A failed take must not surface in a later composer's generation")
     }
 
+    @Test(arguments: [false, true])
+    func sendDuringRouteLossDrainNeverSubmitsDiscardedPreview(expanded: Bool) async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        let cancelEntered = AsyncGate()
+        let finishCancel = AsyncGate()
+        session.cancelHandler = { await cancelEntered.open(); await finishCancel.wait() }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        var draft = "Keep original draft"
+        var prefix: String?
+        var suppressed = false
+        var focus = 0
+        let text = Binding(get: { draft }, set: { draft = $0 })
+        let before = Binding(get: { prefix }, set: { prefix = $0 })
+        let keyboard = Binding(get: { suppressed }, set: { suppressed = $0 })
+        try await ComposerShared.startVoiceInput(
+            manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
+            baseText: draft, text: text, textBeforeRecording: before,
+            suppressKeyboard: keyboard, focusRequestID: Binding(get: { focus }, set: { focus = $0 }),
+            playActivationHaptic: {}
+        )
+        // The editor has already committed a partial preview before route loss.
+        draft = "Keep original draft discarded preview words"
+        let loss = Task {
+            await manager.handleLostBluetoothRoute(
+                rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+                previousHadBluetooth: true
+            )
+        }
+        await cancelEntered.wait()
+        #expect(manager.state == .processing)
+        #expect(manager.currentComposerCaptureFailure != nil)
+        #expect(draft == "Keep original draft", "Rollback must precede hardware cancellation's suspension")
+        #expect(prefix == nil)
+        #expect(!suppressed)
+        await #expect(throws: VoiceInputError.self) {
+            try await ComposerShared.startVoiceInput(
+                manager: manager, keyboardLanguage: "en-US", owner: .expandedComposer,
+                baseText: draft, text: text, textBeforeRecording: before,
+                suppressKeyboard: keyboard, focusRequestID: .constant(0), playActivationHaptic: {}
+            )
+        }
+        #expect(prefix == nil, "A rejected retry must not change the shared draft bindings")
+        let owner: ComposerShared.VoiceInputOwner = expanded ? .expandedComposer : .inlineComposer
+        // Match both Send entry points: processing skips voice finalization
+        // and submits the stored binding, not currentComposerText's projection.
+        if ComposerShared.ownsVoiceInput(manager, owner: owner), manager.isRecording || manager.isPreparing {
+            await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+                manager: manager, owner: owner, text: text, textBeforeRecording: before,
+                suppressKeyboard: keyboard
+            )
+        }
+        let submitted = draft
+        #expect(submitted == "Keep original draft")
+        // Sending clears the editor. Late failure observers must not resurrect it.
+        draft = ""
+        await finishCancel.open()
+        await loss.value
+        ComposerShared.discardFailedTake(
+            manager: manager, owner: owner, text: text, textBeforeRecording: before,
+            suppressKeyboard: keyboard
+        )
+        #expect(draft.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func retiredComposerStartupCannotMutateCrossPresentationRetry(lateFailure: Bool) async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let old = MockVoiceSession()
+        let entered = AsyncGate()
+        let resume = AsyncGate()
+        old.startHandler = { await entered.open(); await resume.wait() }
+        if lateFailure { old.startError = TestVoiceError("late startup failure") }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in old }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        var draft = "Take A draft"
+        var prefix: String?
+        var inlineSuppressed = false
+        var expandedSuppressed = false
+        var haptics = 0
+        let text = Binding(get: { draft }, set: { draft = $0 })
+        let before = Binding(get: { prefix }, set: { prefix = $0 })
+        let start = Task {
+            try await ComposerShared.startVoiceInput(
+                manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
+                baseText: draft, text: text, textBeforeRecording: before,
+                suppressKeyboard: Binding(get: { inlineSuppressed }, set: { inlineSuppressed = $0 }),
+                focusRequestID: .constant(0), playActivationHaptic: { haptics += 1 }
+            )
+        }
+        await entered.wait()
+        await manager.handleLostBluetoothRoute(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true
+        )
+        draft = "Take B edited draft"
+        let retry = MockVoiceSession()
+        provider.makeSessionHandler = { _, _ in retry }
+        try await ComposerShared.startVoiceInput(
+            manager: manager, keyboardLanguage: "en-US", owner: .expandedComposer,
+            baseText: draft, text: text, textBeforeRecording: before,
+            suppressKeyboard: Binding(get: { expandedSuppressed }, set: { expandedSuppressed = $0 }),
+            focusRequestID: .constant(0), playActivationHaptic: { haptics += 1 }
+        )
+        let retryIdentity = manager.currentCaptureTakeIdentity()
+        draft = "Take B edited draft new preview"
+        // Remounted inline presentation has adopted B's keyboard suppression.
+        inlineSuppressed = true
+        await resume.open()
+        await #expect(throws: CancellationError.self) { _ = try await start.value }
+        #expect(prefix == "Take B edited draft ")
+        #expect(draft == "Take B edited draft new preview")
+        #expect(inlineSuppressed)
+        #expect(expandedSuppressed)
+        #expect(haptics == 1)
+        #expect(manager.state == .recording)
+        #expect(manager.currentCaptureTakeIdentity() == retryIdentity)
+        #expect(retry.cancelCallCount == 0)
+        await manager.cancelRecording()
+    }
+
     @Test func streamErrorCancellationCannotReleaseRouteLossEarlyOrDestroyRetry() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }

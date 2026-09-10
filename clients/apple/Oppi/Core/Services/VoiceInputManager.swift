@@ -467,6 +467,17 @@ final class VoiceInputManager {
         return captureFailure
     }
     @ObservationIgnored private var captureAcquisitionObservers: [UUID: @MainActor () -> Void] = [:]
+    @ObservationIgnored private var captureFailureHandler: (@MainActor () -> Void)?
+    @ObservationIgnored private(set) var composerStartupID: UUID?
+
+    /// A composer attempt starts before its async preparation. Keep its identity
+    /// on the shared owner so inline/expanded handoff cannot revive old cleanup.
+    func beginComposerStartup() throws -> UUID {
+        try validateStartAdmission()
+        let id = UUID()
+        composerStartupID = id
+        return id
+    }
 
     func observeCaptureAcquisition(_ pause: @escaping @MainActor () -> Void) -> UUID {
         let id = UUID()
@@ -926,10 +937,7 @@ final class VoiceInputManager {
 
     // MARK: - Recording
 
-    /// Start recording and streaming transcription.
-    /// Pass `keyboardLanguage` from the text view's `textInputMode?.primaryLanguage`
-    /// to match the user's active keyboard. Falls back to device locale when nil.
-    func startRecording(keyboardLanguage: String? = nil, source: String = "unknown") async throws {
+    private func validateStartAdmission() throws {
         guard !operationInFlight else {
             logger.warning("Cannot start: operation already in flight")
             throw VoiceInputError.captureBusy
@@ -943,8 +951,18 @@ final class VoiceInputManager {
             logger.warning("Cannot start: state is \(String(describing: self.state))")
             throw VoiceInputError.captureBusy
         }
+    }
 
+    /// Start recording and streaming transcription.
+    /// Pass `keyboardLanguage` from the text view's `textInputMode?.primaryLanguage`
+    /// to match the user's active keyboard. Falls back to device locale when nil.
+    func startRecording(
+        keyboardLanguage: String? = nil, source: String = "unknown",
+        onCaptureFailure: (@MainActor () -> Void)? = nil
+    ) async throws {
+        try validateStartAdmission()
         captureFailure = nil
+        captureFailureHandler = onCaptureFailure
         nextStartRequestID += 1
         let requestID = nextStartRequestID
         activeStartRequestID = requestID
@@ -1429,6 +1447,14 @@ final class VoiceInputManager {
         let failureGeneration = nextStartRequestID
         state = .processing
         clearActiveStartIdentity()
+        let message = "Bluetooth microphone disconnected. This take was discarded. Your earlier draft was kept. Reconnect or use the built-in microphone, then retry."
+        if let failedTake, let failedSource {
+            captureFailure = VoiceCaptureFailure(take: failedTake, source: failedSource, message: message)
+            // SwiftUI onChange is deferred. Commit the editor's rollback now,
+            // before hardware cancellation suspends and Send can run.
+            captureFailureHandler?()
+            captureFailureHandler = nil
+        }
         if let activeEngine {
             try? provider(for: activeEngine).cancelPreparation()
         }
@@ -1444,10 +1470,6 @@ final class VoiceInputManager {
         teardownSession()
         endPlaybackCaptureInterruptionIfNeeded()
         operationInFlight = false
-        let message = "Bluetooth microphone disconnected. This take was discarded. Your earlier draft was kept. Reconnect or use the built-in microphone, then retry."
-        if let failedTake, let failedSource {
-            captureFailure = VoiceCaptureFailure(take: failedTake, source: failedSource, message: message)
-        }
         // Do not auto-dismiss: the interrupted take was not successfully
         // recovered or finalized. The existing mic action accepts .error retry.
         state = .error(message)
@@ -1544,6 +1566,7 @@ final class VoiceInputManager {
     // MARK: - Cleanup
 
     private func teardownSession() {
+        captureFailureHandler = nil
         typewriterAnimator.reset()
         sessionMonitor.teardown()
         finalizedTranscript = ""

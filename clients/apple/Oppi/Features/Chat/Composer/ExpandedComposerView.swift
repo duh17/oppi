@@ -488,6 +488,7 @@ struct ExpandedComposerView: View {
                             keyboardLanguage: keyboardLanguage,
                             owner: .expandedComposer,
                             baseText: text,
+                            text: $text,
                             textBeforeRecording: $textBeforeRecording,
                             suppressKeyboard: $suppressKeyboard,
                             focusRequestID: $focusRequestID,

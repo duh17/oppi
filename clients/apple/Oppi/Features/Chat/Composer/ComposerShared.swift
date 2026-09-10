@@ -613,12 +613,16 @@ enum ComposerShared {
         keyboardLanguage: String?,
         owner: VoiceInputOwner,
         baseText: String,
+        text: Binding<String>? = nil,
         textBeforeRecording: Binding<String?>? = nil,
         suppressKeyboard: Binding<Bool>,
         focusRequestID: Binding<Int>,
         prepare: (() async throws -> Void)? = nil,
         playActivationHaptic: () -> Void = { AppHaptics.dictationActivated() }
     ) async throws -> String {
+        // Admission precedes binding writes: a tap during cancellation drain
+        // must not replace the failed take's rollback or a retry's prefix.
+        let startupID = try manager.beginComposerStartup()
         let prefix = dictationPrefix(for: baseText)
         textBeforeRecording?.wrappedValue = prefix
         suppressKeyboard.wrappedValue = true
@@ -626,13 +630,19 @@ enum ComposerShared {
 
         do {
             try await prepare?()
+            guard manager.composerStartupID == startupID else { throw CancellationError() }
             try await manager.startRecording(
                 keyboardLanguage: keyboardLanguage,
-                source: owner.rawValue
+                source: owner.rawValue,
+                onCaptureFailure: { [weak manager] in
+                    guard manager?.composerStartupID == startupID, let text else { return }
+                    text.wrappedValue = baseText
+                    textBeforeRecording?.wrappedValue = nil
+                    suppressKeyboard.wrappedValue = false
+                }
             )
+            guard manager.composerStartupID == startupID else { throw CancellationError() }
             guard manager.isActiveRecordingSource(owner.rawValue), manager.isRecording || manager.isPreparing else {
-                textBeforeRecording?.wrappedValue = nil
-                suppressKeyboard.wrappedValue = false
                 if case .error(let message) = manager.state {
                     throw VoiceInputError.internalError(message)
                 }
@@ -642,6 +652,9 @@ enum ComposerShared {
             if manager.isRecording { playActivationHaptic() }
             return prefix
         } catch {
+            // The retired surface must not clear shared bindings or report a
+            // stale error after another presentation has admitted a new take.
+            guard manager.composerStartupID == startupID else { throw CancellationError() }
             textBeforeRecording?.wrappedValue = nil
             suppressKeyboard.wrappedValue = false
             throw error
