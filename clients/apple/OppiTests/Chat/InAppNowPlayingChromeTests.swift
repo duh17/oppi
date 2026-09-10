@@ -75,13 +75,11 @@ struct InAppNowPlayingChromeTests {
         )
     }
 
-    @Test func playingKeepsSystemSearchToolbarItemAndMinimizes() {
+    @Test func playingShowsNowPlayingWithoutPinningSearchInTheBottomBar() {
         let toolbar = InAppNowPlayingChrome.sessionListToolbar(
             hasActivePlayback: true,
             isSearchPresented: false
         )
-        #expect(toolbar.keepsSystemSearchToolbarItem)
-        #expect(toolbar.usesMinimizedSearch)
         #expect(toolbar.showsNowPlayingPill)
         #expect(!toolbar.parksNowPlayingNextToCompose)
         #expect(toolbar.avoidsHidingContentWhileSearching)
@@ -92,20 +90,16 @@ struct InAppNowPlayingChromeTests {
             hasActivePlayback: true,
             isSearchPresented: true
         )
-        #expect(toolbar.keepsSystemSearchToolbarItem)
-        #expect(toolbar.usesMinimizedSearch)
         #expect(toolbar.showsNowPlayingPill)
         #expect(toolbar.parksNowPlayingNextToCompose)
         #expect(toolbar.avoidsHidingContentWhileSearching)
     }
 
-    @Test func idleUsesAutomaticSystemSearchWithoutPill() {
+    @Test func idleOmitsNowPlayingPill() {
         let toolbar = InAppNowPlayingChrome.sessionListToolbar(
             hasActivePlayback: false,
             isSearchPresented: false
         )
-        #expect(toolbar.keepsSystemSearchToolbarItem)
-        #expect(!toolbar.usesMinimizedSearch)
         #expect(!toolbar.showsNowPlayingPill)
         #expect(!toolbar.parksNowPlayingNextToCompose)
         #expect(!toolbar.avoidsHidingContentWhileSearching)
@@ -116,8 +110,6 @@ struct InAppNowPlayingChromeTests {
             hasActivePlayback: false,
             isSearchPresented: true
         )
-        #expect(toolbar.keepsSystemSearchToolbarItem)
-        #expect(!toolbar.usesMinimizedSearch)
         #expect(!toolbar.showsNowPlayingPill)
         #expect(!toolbar.parksNowPlayingNextToCompose)
     }

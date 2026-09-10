@@ -1,11 +1,11 @@
 import SwiftUI
 
 /// Session-list bottom chrome shared by All Sessions and workspace lists.
-/// Search stays a leading system toolbar item, grouped with folder into one
-/// capsule by omitting a spacer. The trailing Quick Session control is one
-/// toolbar capsule — placeholder plus an optional trailing mic — using the
-/// same system glass. Tapping the capsule presents Quick Session; tapping the
-/// mic starts dictation there. Workspace lists keep Incognito on a context menu.
+/// The leading capsule is folder only. Search lives in the navigation-bar
+/// drawer and reveals by pulling the list. The trailing Quick Session control
+/// is one toolbar capsule — placeholder plus an optional trailing mic — using
+/// the same system glass. Tapping the capsule presents Quick Session; tapping
+/// the mic starts dictation there. Workspace lists keep Incognito on a context menu.
 enum SessionInboxComposeChrome {
     static let compactBarPlaceholder = "Message"
     static let compactBarMicWidth: CGFloat = 44
@@ -92,9 +92,9 @@ private struct SessionInboxIncognitoContextMenu: ViewModifier {
     }
 }
 
-/// Folder control that groups with the system search toolbar item into one
-/// leading capsule. Keep this a single toolbar Button — do not wrap it in
-/// nested toolbar Buttons or a custom glass effect.
+/// Folder control for the leading bottom-bar capsule. Keep this a single
+/// toolbar Button — do not wrap it in nested toolbar Buttons or a custom
+/// glass effect.
 struct SessionInboxFolderToolbarButton: View {
     let isEnabled: Bool
     let accessibilityLabel: String

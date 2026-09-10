@@ -4093,8 +4093,11 @@ private struct InboxProviderSetupPreview: View {
             .themedListSurface()
             .navigationTitle("All Sessions")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "Search sessions")
-            .searchToolbarBehavior(.minimize)
+            .searchable(
+                text: $searchText,
+                placement: .navigationBarDrawer(displayMode: .automatic),
+                prompt: "Search sessions"
+            )
             .toolbar {
                 ToolbarItem(placement: .bottomBar) {
                     SessionInboxFolderToolbarButton(
@@ -4103,7 +4106,6 @@ private struct InboxProviderSetupPreview: View {
                         onOpen: {}
                     )
                 }
-                DefaultToolbarItem(kind: .search, placement: .bottomBar)
                 ToolbarSpacer(.flexible, placement: .bottomBar)
                 ToolbarItem(placement: .bottomBar) {
                     SessionInboxCompactComposeBar(

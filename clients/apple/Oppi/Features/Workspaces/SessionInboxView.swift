@@ -339,9 +339,12 @@ struct SessionInboxView: View {
         .themedListSurface()
         .navigationTitle(inboxNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, isPresented: $isSearchPresented, prompt: "Search sessions")
-        // Occasional search stays a leading toolbar button so compose remains primary.
-        .searchToolbarBehavior(.minimize)
+        .searchable(
+            text: $searchText,
+            isPresented: $isSearchPresented,
+            placement: .navigationBarDrawer(displayMode: .automatic),
+            prompt: "Search sessions"
+        )
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )
@@ -551,9 +554,6 @@ struct SessionInboxView: View {
 
         ToolbarItem(placement: .bottomBar) {
             inboxFolderButton
-        }
-        if sessionListToolbar.keepsSystemSearchToolbarItem {
-            DefaultToolbarItem(kind: .search, placement: .bottomBar)
         }
         if sessionListToolbar.showsNowPlayingPill {
             ToolbarSpacer(.flexible, placement: .bottomBar)

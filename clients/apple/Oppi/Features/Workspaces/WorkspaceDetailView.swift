@@ -575,9 +575,12 @@ struct WorkspaceDetailView: View {
         .onChange(of: workspace.id) { _, _ in
             handleWorkspaceIdentityChanged()
         }
-        .searchable(text: $sessionSearchText, isPresented: $isSearchPresented, prompt: "Search sessions")
-        // Occasional search stays a leading toolbar button so compose remains primary.
-        .searchToolbarBehavior(.minimize)
+        .searchable(
+            text: $sessionSearchText,
+            isPresented: $isSearchPresented,
+            placement: .navigationBarDrawer(displayMode: .automatic),
+            prompt: "Search sessions"
+        )
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )
@@ -612,9 +615,6 @@ struct WorkspaceDetailView: View {
             if !isNavigatingDeeperInWorkspaceStack {
                 ToolbarItem(placement: .bottomBar) {
                     workspaceFilesToolbarItem
-                }
-                if sessionListToolbar.keepsSystemSearchToolbarItem {
-                    DefaultToolbarItem(kind: .search, placement: .bottomBar)
                 }
                 if sessionListToolbar.showsNowPlayingPill {
                     ToolbarSpacer(.flexible, placement: .bottomBar)

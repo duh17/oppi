@@ -191,17 +191,28 @@ final class SessionHistoryE2ETests: E2ETestCase {
         searchField: XCUIElement,
         timeout: TimeInterval
     ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if searchField.exists { return true }
-            let toolbarSearch = app.toolbars.buttons["Search"]
-            if toolbarSearch.exists {
-                tap(toolbarSearch, named: "session search", timeout: 1)
-                return waitForElementToExist(searchField, timeout: 3)
+        if searchField.exists { return true }
+
+        let toolbarSearch = app.toolbars.buttons["Search"]
+        if toolbarSearch.exists {
+            tap(toolbarSearch, named: "session search", timeout: 1)
+            if waitForElementToExist(searchField, timeout: 3) {
+                return true
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        return searchField.exists
+
+        let navBar = app.navigationBars.firstMatch
+        if navBar.exists {
+            navBar.swipeDown()
+        } else {
+            let sessionList = app.descendants(matching: .any)["workspace.sessionList"]
+            if sessionList.exists {
+                sessionList.swipeDown()
+            } else {
+                app.swipeDown()
+            }
+        }
+        return waitForElementToExist(searchField, timeout: timeout)
     }
 
     @MainActor

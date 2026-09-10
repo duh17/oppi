@@ -130,6 +130,34 @@ struct SessionInboxComposeChromeTests {
         #expect(!start.contains("worktreeId: nil"))
     }
 
+    @Test func sessionListsKeepFolderOnlyLeadingCapsuleWithoutBottomSearch() throws {
+        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
+        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
+        let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
+        let preview = try appleSource("Oppi/App/ScreenshotPreviewView.swift")
+        let nowPlaying = try appleSource("Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
+        let drawer = "placement: .navigationBarDrawer(displayMode: .automatic)"
+        let bottomSearch = "DefaultToolbarItem(kind: .search, placement: .bottomBar)"
+
+        #expect(inbox.contains("inboxFolderButton"))
+        #expect(inbox.contains("SessionInboxFolderToolbarButton"))
+        #expect(workspace.contains("SessionInboxFolderToolbarButton"))
+        #expect(preview.contains("SessionInboxFolderToolbarButton"))
+        #expect(chrome.contains("workspace.files.open"))
+
+        for source in [inbox, workspace, preview] {
+            #expect(source.contains(drawer))
+            #expect(!source.contains(".searchToolbarBehavior(.minimize)"))
+            #expect(!source.contains(bottomSearch))
+            #expect(!source.contains("keepsSystemSearchToolbarItem"))
+        }
+
+        #expect(!chrome.contains("grouped with"))
+        #expect(!chrome.contains("system search toolbar item"))
+        #expect(!nowPlaying.contains("keepsSystemSearchToolbarItem"))
+        #expect(!nowPlaying.contains("Search stays a leading"))
+    }
+
     @Test func disabledFolderUsesUnavailableForegroundInTheSameCapsule() throws {
         let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
         let buttonStart = try #require(chrome.range(of: "struct SessionInboxFolderToolbarButton: View {"))

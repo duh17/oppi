@@ -7,13 +7,6 @@ enum InAppNowPlayingChrome {
         case minimizedSearchWithNowPlaying
         case expandedSearchWithCompactNowPlaying
 
-        /// iOS search only expands from the system search toolbar item.
-        var keepsSystemSearchToolbarItem: Bool { true }
-
-        var usesMinimizedSearch: Bool {
-            self != .searchField
-        }
-
         var showsNowPlayingPill: Bool {
             self != .searchField
         }
