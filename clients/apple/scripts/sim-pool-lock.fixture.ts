@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { tryAcquireSlot } from "./sim-pool-lock";
+import { recordOwnedPgid, tryAcquireSlot } from "./sim-pool-lock";
 
 async function main(): Promise<void> {
   const mode = process.argv[2];
@@ -38,6 +38,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     writeFileSync(childPath, `${child.pid}\n`);
+    recordOwnedPgid(acquired.owned, child.pid);
   }
 
   writeFileSync(readyPath, "ready\n");

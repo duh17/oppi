@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  beginPublishing,
   closeOwned,
   recordOwnedPgid,
   flockFd,
@@ -121,7 +122,7 @@ describe("sim-pool-lock", () => {
     expect(existsSync(join(lockDir, "slot-3", "pid"))).toBe(true);
   });
 
-  test("in-flight sidecar blocks reuse after flock is free", () => {
+  test("gated empty ledger is reclaimed after flock is free", () => {
     const lockDir = tempDir("inflight");
     const first = tryAcquireSlot({ lockDir, slot: 4, argv: ["run"] });
     expect(first.ok).toBe(true);
@@ -130,12 +131,49 @@ describe("sim-pool-lock", () => {
     }
     closeOwned(first.owned);
     const again = tryAcquireSlot({ lockDir, slot: 4, argv: ["run"] });
+    expect(again.ok).toBe(true);
+    if (again.ok) {
+      releaseReusable(again.owned);
+    }
+  });
+
+  test("flock-v1 in-flight empty ledger stays fail-closed", () => {
+    const lockDir = tempDir("v1-empty");
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(lockPath(lockDir, 4), "");
+    writeFileSync(
+      statePath(lockDir, 4),
+      `${JSON.stringify({
+        format: "flock-v1",
+        status: "in-flight",
+        pid: 1,
+        nonce: "legacy",
+        argv: ["run"],
+        started_at: new Date().toISOString(),
+        pgids: [],
+      }, null, 2)}\n`,
+    );
+    const again = tryAcquireSlot({ lockDir, slot: 4, argv: ["run"] });
     expect(again.ok).toBe(false);
     if (!again.ok) {
       expect(again.reason).toContain("in-flight");
     }
-    const state = readSlotState(lockDir, 4);
-    expect(state === "unreadable" ? undefined : state?.status).toBe("in-flight");
+  });
+
+  test("gated publishing in-flight is not reclaimed", () => {
+    const lockDir = tempDir("publishing");
+    const first = tryAcquireSlot({ lockDir, slot: 4, argv: ["run"] });
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      throw new Error("expected acquire");
+    }
+    beginPublishing(first.owned);
+    closeOwned(first.owned);
+    const again = tryAcquireSlot({ lockDir, slot: 4, argv: ["run"] });
+    expect(again.ok).toBe(false);
+    if (!again.ok) {
+      expect(again.reason).toContain("in-flight");
+    }
   });
 
   test("reusable release allows the next owner to mutate", () => {
@@ -153,18 +191,38 @@ describe("sim-pool-lock", () => {
     }
   });
 
-  test("uncertain release stays fail-closed", () => {
+  test("uncertain release with a live recorded group stays fail-closed", () => {
     const lockDir = tempDir("uncertain");
     const first = tryAcquireSlot({ lockDir, slot: 6, argv: ["shutdown-idle"] });
     expect(first.ok).toBe(true);
     if (!first.ok) {
       throw new Error("expected acquire");
     }
-    releaseUncertain(first.owned, "descendants still running");
-    const again = tryAcquireSlot({ lockDir, slot: 6, argv: ["run"] });
-    expect(again.ok).toBe(false);
-    if (!again.ok) {
-      expect(again.reason).toContain("uncertain");
+    const child = spawn("sleep", ["30"], { stdio: "ignore", detached: true });
+    const pgid = child.pid;
+    expect(pgid).toBeGreaterThan(0);
+    if (pgid == null) {
+      throw new Error("expected child pid");
+    }
+    child.unref();
+    try {
+      recordOwnedPgid(first.owned, pgid);
+      releaseUncertain(first.owned, "descendants still running");
+      const again = tryAcquireSlot({ lockDir, slot: 6, argv: ["run"] });
+      expect(again.ok).toBe(false);
+      if (!again.ok) {
+        expect(again.reason).toContain("uncertain");
+      }
+    } finally {
+      try {
+        process.kill(-pgid, "SIGKILL");
+      } catch {
+        try {
+          process.kill(pgid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
     }
   });
 
@@ -221,7 +279,7 @@ describe("sim-pool-lock", () => {
     }
   });
 
-  test("in-flight with idle recorded groups does not authorize reuse", () => {
+  test("in-flight with idle recorded groups is claimed by the next owner", () => {
     const lockDir = tempDir("inflight-idle");
     const first = tryAcquireSlot({ lockDir, slot: 12, argv: ["run"] });
     expect(first.ok).toBe(true);
@@ -231,9 +289,9 @@ describe("sim-pool-lock", () => {
     recordOwnedPgid(first.owned, 1_000_000_001);
     closeOwned(first.owned);
     const again = tryAcquireSlot({ lockDir, slot: 12, argv: ["run"] });
-    expect(again.ok).toBe(false);
-    if (!again.ok) {
-      expect(again.reason).toContain("in-flight");
+    expect(again.ok).toBe(true);
+    if (again.ok) {
+      releaseReusable(again.owned);
     }
   });
 
@@ -272,12 +330,36 @@ describe("sim-pool-lock", () => {
     }
   });
 
+  test("flock-v1 in-flight with idle recorded groups stays fail-closed", () => {
+    const lockDir = tempDir("v1-idle");
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(lockPath(lockDir, 13), "");
+    writeFileSync(
+      statePath(lockDir, 13),
+      `${JSON.stringify({
+        format: "flock-v1",
+        status: "in-flight",
+        pid: 1,
+        nonce: "legacy",
+        argv: ["run"],
+        started_at: new Date().toISOString(),
+        pgids: [1_000_000_001],
+      }, null, 2)}\n`,
+    );
+    const again = tryAcquireSlot({ lockDir, slot: 13, argv: ["run"] });
+    expect(again.ok).toBe(false);
+    if (!again.ok) {
+      expect(again.reason).toContain("in-flight");
+    }
+  });
+
   test("status sidecar is not deleted on skip", () => {
     const lockDir = tempDir("status");
     const first = tryAcquireSlot({ lockDir, slot: 8, argv: ["run"] });
     if (!first.ok) {
       throw new Error("expected acquire");
     }
+    beginPublishing(first.owned);
     closeOwned(first.owned);
     tryAcquireSlot({ lockDir, slot: 8, argv: ["run"] });
     expect(existsSync(statePath(lockDir, 8))).toBe(true);

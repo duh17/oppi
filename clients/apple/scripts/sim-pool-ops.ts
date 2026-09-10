@@ -17,6 +17,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   inspectSlot,
   lockPath,
+  beginPublishing,
   recordOwnedPgid,
   releaseReusable,
   releaseUncertain,
@@ -1161,6 +1162,9 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
     owned = await acquireRunSlot(config, ["run", ...args], session);
     slotWaitEndHolder.value = nowEpoch();
     const slotOwner = owned;
+    session.onBeforeSpawn = () => {
+      beginPublishing(slotOwner);
+    };
     session.onSpawned = (child) => {
       recordOwnedPgid(slotOwner, child.pgid);
     };
@@ -1649,6 +1653,9 @@ export async function commandShutdownIdle(config: PoolConfig): Promise<number> {
         continue;
       }
       const slotOwner = acquired.owned;
+      session.onBeforeSpawn = () => {
+        beginPublishing(slotOwner);
+      };
       session.onSpawned = (child) => {
         recordOwnedPgid(slotOwner, child.pgid);
       };
@@ -1658,6 +1665,7 @@ export async function commandShutdownIdle(config: PoolConfig): Promise<number> {
           return;
         }
         released = true;
+        session.onBeforeSpawn = undefined;
         session.onSpawned = undefined;
         if (kind === "uncertain") {
           releaseUncertain(slotOwner, note ?? "shutdown-idle did not prove quiescence");
@@ -1858,9 +1866,10 @@ COMPILER_INDEX_STORE_ENABLE. Ordinary run does not delete unavailable
 simulators or CoreSimulator device caches.
 
 shutdown-idle acquires each slot with flock and records child process groups.
-Existing live, legacy, and in-flight slots are skipped. uncertain is reclaimed
-only when recorded groups exist and are idle. Booted is rechecked as device
-state, not idleness. Killing xcrun does not mean CoreSimulator finished.
+Existing live, legacy, and flock-v1 in-flight slots are skipped. gated-v1
+in-flight/uncertain reclaim when recorded groups are idle or the ledger is
+proven empty. Booted is rechecked as device state, not idleness. Killing xcrun
+does not mean CoreSimulator finished.
 
 prune-cache dry-runs this checkout's numeric pool-* dirs, derived-data-*, and
 one-off mac-* experiment dirs. --apply deletes pool-* only after acquiring the

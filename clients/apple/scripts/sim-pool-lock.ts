@@ -35,9 +35,12 @@ export function flockFd(fd: number, op: number): number {
 }
 
 export type SlotStatus = "reusable" | "in-flight" | "uncertain";
+export type SlotFormat = "flock-v1" | "flock-v2";
+export type LeaseProtocol = "ungated" | "gated-v1";
 
 export type SlotState = {
-  format: "flock-v1";
+  format: SlotFormat;
+  protocol: LeaseProtocol;
   status: SlotStatus;
   pid: number;
   nonce: string;
@@ -45,6 +48,8 @@ export type SlotState = {
   started_at: string;
   note?: string;
   pgids: number[];
+  publishing: boolean;
+  publishedCount: number;
 };
 
 export type OwnedSlot = {
@@ -56,6 +61,10 @@ export type OwnedSlot = {
   argv: string[];
   closed: boolean;
   pgids: number[];
+  protocol: LeaseProtocol;
+  format: SlotFormat;
+  publishing: boolean;
+  publishedCount: number;
 };
 
 export type AcquireFailure = {
@@ -88,24 +97,33 @@ export function readSlotState(lockDir: string, slot: number): SlotState | "unrea
     return null;
   }
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<SlotState>;
-    if (parsed.format !== "flock-v1") {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<SlotState> & { format?: string };
+    if (parsed.format !== "flock-v1" && parsed.format !== "flock-v2") {
       return "unreadable";
     }
     if (parsed.status !== "reusable" && parsed.status !== "in-flight" && parsed.status !== "uncertain") {
       return "unreadable";
     }
+    const protocol: LeaseProtocol =
+      parsed.format === "flock-v2" && parsed.protocol === "gated-v1" ? "gated-v1" : "ungated";
+    if (parsed.format === "flock-v2" && protocol !== "gated-v1") {
+      return "unreadable";
+    }
     const pgids = Array.isArray(parsed.pgids)
       ? parsed.pgids.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
       : [];
+    const publishedCount = Number(parsed.publishedCount);
     return {
-      format: "flock-v1",
+      format: parsed.format,
+      protocol,
       status: parsed.status,
       pid: Number(parsed.pid) || 0,
       nonce: String(parsed.nonce ?? ""),
       argv: Array.isArray(parsed.argv) ? parsed.argv.map(String) : [],
       started_at: String(parsed.started_at ?? ""),
       pgids,
+      publishing: Boolean(parsed.publishing),
+      publishedCount: Number.isInteger(publishedCount) && publishedCount >= 0 ? publishedCount : 0,
       ...(parsed.note ? { note: String(parsed.note) } : {}),
     };
   } catch {
@@ -115,13 +133,16 @@ export function readSlotState(lockDir: string, slot: number): SlotState | "unrea
 
 function writeState(owned: OwnedSlot, status: SlotStatus, note?: string): void {
   const payload: SlotState = {
-    format: "flock-v1",
+    format: owned.format,
+    protocol: owned.protocol,
     status,
     pid: process.pid,
     nonce: owned.nonce,
     argv: owned.argv,
     started_at: new Date().toISOString(),
     pgids: [...owned.pgids],
+    publishing: owned.publishing,
+    publishedCount: owned.publishedCount,
     ...(note ? { note } : {}),
   };
   const tempPath = `${owned.statePath}.${process.pid}.tmp`;
@@ -165,6 +186,10 @@ export function tryAcquireSlot(input: {
     argv: [...argv],
     closed: false,
     pgids: [],
+    format: "flock-v2",
+    protocol: "gated-v1",
+    publishing: false,
+    publishedCount: 0,
   };
 
   let fd: number;
@@ -189,8 +214,7 @@ export function tryAcquireSlot(input: {
     return { ok: false, reason: `slot ${slot} uncertain (unreadable state)` };
   }
   if (state && state.status !== "reusable") {
-    const reclaimUncertain = state.status === "uncertain" && recordedGroupsIdle(state);
-    if (!reclaimUncertain) {
+    if (!canReclaimAbandoned(state)) {
       const reason = `slot ${slot} ${state.status}${state.note ? `: ${state.note}` : ""}`;
       closeSync(fd);
       owned.fd = -1;
@@ -233,16 +257,43 @@ export function recordedGroupsIdle(state: SlotState): boolean {
   return true;
 }
 
+export function canReclaimAbandoned(state: SlotState): boolean {
+  if (state.status !== "in-flight" && state.status !== "uncertain") {
+    return false;
+  }
+  const gated = state.format === "flock-v2" && state.protocol === "gated-v1";
+  if (!gated) {
+    return state.status === "uncertain" && recordedGroupsIdle(state);
+  }
+  if (state.publishing) {
+    return false;
+  }
+  if (state.pgids.length > 0) {
+    return recordedGroupsIdle(state);
+  }
+  return state.publishedCount === 0;
+}
+
+export function beginPublishing(owned: OwnedSlot): void {
+  if (owned.closed || owned.fd < 0) {
+    throw new Error("cannot publish on a closed slot");
+  }
+  owned.publishing = true;
+  writeState(owned, "in-flight");
+}
+
 export function recordOwnedPgid(owned: OwnedSlot, pgid: number): void {
   if (owned.closed || owned.fd < 0) {
-    return;
+    throw new Error("cannot publish pgid on a closed slot");
   }
   if (!Number.isInteger(pgid) || pgid <= 0) {
-    return;
+    throw new Error(`invalid pgid ${pgid}`);
   }
   if (!owned.pgids.includes(pgid)) {
     owned.pgids.push(pgid);
   }
+  owned.publishing = false;
+  owned.publishedCount = owned.pgids.length;
   writeState(owned, "in-flight");
 }
 

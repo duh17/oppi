@@ -187,6 +187,112 @@ function attachOwned(child: ChildProcess): Supervised {
   return owned;
 }
 
+const GATE_SCRIPT = `read go || exit 1
+[ "$go" = "go" ] || exit 1
+exec "$0" "$@"`;
+
+function gatedStdio(stdio?: StdioOptions): StdioOptions {
+  if (stdio == null) {
+    return ["pipe", "pipe", "pipe"];
+  }
+  if (typeof stdio === "string") {
+    if (stdio === "ignore" || stdio === "inherit" || stdio === "pipe") {
+      return ["pipe", stdio, stdio];
+    }
+    return ["pipe", "pipe", "pipe"];
+  }
+  if (Array.isArray(stdio)) {
+    return ["pipe", stdio[1] ?? "pipe", stdio[2] ?? "pipe"];
+  }
+  return ["pipe", "pipe", "pipe"];
+}
+
+export type GatedSpawn = {
+  owned: Supervised;
+  authorize: () => void;
+  abort: () => Promise<StopResult>;
+};
+
+export type SpawnGatedResult =
+  | { ok: true; gated: GatedSpawn }
+  | { ok: false; reason: string; stop?: StopResult };
+
+export function spawnGateWaiting(
+  command: string,
+  args: string[],
+  options: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    stdio?: StdioOptions;
+  } = {},
+): Promise<SpawnGatedResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: SpawnGatedResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(result);
+    };
+    let child: ChildProcess;
+    try {
+      child = spawn("/bin/sh", ["-c", GATE_SCRIPT, command, ...args], {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: gatedStdio(options.stdio),
+        detached: true,
+      });
+    } catch (error) {
+      finish({ ok: false, reason: `spawn ${command} failed: ${error}` });
+      return;
+    }
+    const owned = attachOwned(child);
+    child.once("error", (error) => {
+      finish({ ok: false, reason: `spawn ${command} failed: ${error}` });
+    });
+    child.once("spawn", () => {
+      if (child.pid == null) {
+        finish({ ok: false, reason: `spawn ${command}: no pid` });
+        return;
+      }
+      owned.pid = child.pid;
+      owned.pgid = child.pid;
+      let authorized = false;
+      finish({
+        ok: true,
+        gated: {
+          owned,
+          authorize: () => {
+            if (authorized || owned.retired) {
+              return;
+            }
+            authorized = true;
+            try {
+              child.stdin?.write("go\n");
+            } catch {
+              // stdin may already be closed
+            }
+            try {
+              child.stdin?.end();
+            } catch {
+              // already ended
+            }
+          },
+          abort: async () => {
+            try {
+              child.stdin?.end();
+            } catch {
+              // already ended
+            }
+            return stopOwned(owned, { firstSignal: "SIGKILL" });
+          },
+        },
+      });
+    });
+  });
+}
+
 export function spawnOwned(
   command: string,
   args: string[],
@@ -456,6 +562,7 @@ export async function completeOwned(
 
 export class CommandSession {
   private readonly children: Supervised[] = [];
+  onBeforeSpawn?: () => void;
   onSpawned?: (owned: Supervised) => void;
   private cancelSignal: "INT" | "TERM" | null = null;
   private handlersInstalled = false;
@@ -518,23 +625,40 @@ export class CommandSession {
     if (this.cancelSignal || this.sessionRetired) {
       return { ok: false, reason: `canceled before spawn ${command}` };
     }
-    const spawned = await spawnOwned(command, args, {
-      ...options,
-      onSpawned: this.onSpawned,
-    });
+    try {
+      this.onBeforeSpawn?.();
+    } catch (error) {
+      return { ok: false, reason: `publication failed before spawn ${command}: ${error}` };
+    }
+    const spawned = await spawnGateWaiting(command, args, options);
     if (!spawned.ok) {
       return spawned;
     }
-    this.children.push(spawned.owned);
+    this.children.push(spawned.gated.owned);
+    try {
+      this.onSpawned?.(spawned.gated.owned);
+    } catch (error) {
+      const stop = await spawned.gated.abort();
+      this.rememberStop(stop);
+      this.retire(spawned.gated.owned);
+      return {
+        ok: false,
+        reason: `publication failed ${command}: ${error}`,
+        stop,
+      };
+    }
     if (this.cancelSignal || this.sessionRetired) {
-      const completed = await this.complete(spawned.owned, { stopFirst: true });
+      const stop = await spawned.gated.abort();
+      this.rememberStop(stop);
+      this.retire(spawned.gated.owned);
       return {
         ok: false,
         reason: `canceled before spawn publication ${command}`,
-        stop: completed.stop,
+        stop,
       };
     }
-    return spawned;
+    spawned.gated.authorize();
+    return { ok: true, owned: spawned.gated.owned };
   }
 
   retire(owned: Supervised): void {

@@ -9,6 +9,7 @@ import {
   processGroupPids,
   queryProcessGroup,
   combineStop,
+  spawnGateWaiting,
   spawnOwned,
   stopOwned,
   waitExitStatus,
@@ -66,6 +67,71 @@ describe("sim-pool-supervise", () => {
     const stop = combineStop({ quiescent: false, note: "pids remain" }, true);
     expect(stop.quiescent).toBe(false);
     expect(stop.note).toContain("pids remain");
+  });
+
+  test("gate does not exec the payload before authorize", async () => {
+    const dir = tempDir("gate-block");
+    const marker = join(dir, "ran");
+    const spawned = await spawnGateWaiting("/bin/bash", ["-c", `printf ran > "${marker}"`]);
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) {
+      throw new Error(spawned.reason);
+    }
+    await Bun.sleep(150);
+    expect(existsSync(marker)).toBe(false);
+    const stop = await spawned.gated.abort();
+    expect(stop.quiescent).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test("gate execs the payload after authorize", async () => {
+    const dir = tempDir("gate-go");
+    const marker = join(dir, "ran");
+    const spawned = await spawnGateWaiting("/bin/bash", ["-c", `printf ran > "${marker}"`]);
+    expect(spawned.ok).toBe(true);
+    if (!spawned.ok) {
+      throw new Error(spawned.reason);
+    }
+    spawned.gated.authorize();
+    await waitForFile(marker);
+    expect(readFileSync(marker, "utf8")).toContain("ran");
+    await stopOwned(spawned.gated.owned);
+  });
+
+  test("publication failure aborts the gate without exec", async () => {
+    const dir = tempDir("gate-pubfail");
+    const marker = join(dir, "ran");
+    const session = new CommandSession();
+    session.onSpawned = () => {
+      throw new Error("persist failed");
+    };
+    const result = await session.spawn("/bin/bash", ["-c", `printf ran > "${marker}"`]);
+    expect(result.ok).toBe(false);
+    await Bun.sleep(150);
+    expect(existsSync(marker)).toBe(false);
+    await session.dispose();
+  });
+
+  test("second gated spawn after an idle first group still requires authorize", async () => {
+    const dir = tempDir("gate-second");
+    const firstMark = join(dir, "first");
+    const secondMark = join(dir, "second");
+    const first = await spawnGateWaiting("/bin/bash", ["-c", `printf first > "${firstMark}"`]);
+    if (!first.ok) {
+      throw new Error(first.reason);
+    }
+    first.gated.authorize();
+    await waitForFile(firstMark);
+    await stopOwned(first.gated.owned);
+    const second = await spawnGateWaiting("/bin/bash", ["-c", `printf second > "${secondMark}"`]);
+    if (!second.ok) {
+      throw new Error(second.reason);
+    }
+    await Bun.sleep(150);
+    expect(existsSync(secondMark)).toBe(false);
+    second.gated.authorize();
+    await waitForFile(secondMark);
+    await stopOwned(second.gated.owned);
   });
 
   test("detached spawn uses its own process group", async () => {
