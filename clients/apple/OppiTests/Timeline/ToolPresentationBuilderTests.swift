@@ -718,6 +718,48 @@ struct ToolPresentationBuilderTests {
 
     // MARK: - Write
 
+    @Test("only completed successful text writes carry an exact current-file intent")
+    func completedWriteCurrentFileIntentEligibility() {
+        func build(
+            tool: String = "write",
+            path: JSONValue? = .string("docs/current.md"),
+            isError: Bool = false,
+            isDone: Bool = true,
+            isInterrupted: Bool = false
+        ) -> ToolTimelineRowConfiguration {
+            var args: [String: JSONValue] = ["content": .string("")]
+            args["path"] = path
+            return ToolPresentationBuilder.build(
+                itemID: "current-file-\(tool)",
+                tool: tool,
+                argsSummary: "path: fallback.md",
+                outputPreview: "",
+                isError: isError,
+                isDone: isDone,
+                isInterrupted: isInterrupted,
+                context: emptyContext(args: args, expanded: ["current-file-\(tool)"])
+            )
+        }
+
+        let emptyWrite = build()
+        #expect(emptyWrite.currentFileOpenIntent?.path == "docs/current.md")
+        guard case .status(let message) = emptyWrite.expandedContent else {
+            Issue.record("An eligible empty write must retain an expanded activation surface")
+            return
+        }
+        #expect(message == "Open current file")
+        #expect(build(path: .string("   ")).currentFileOpenIntent == nil)
+        #expect(build(path: nil).currentFileOpenIntent == nil)
+        #expect(build(isDone: false).currentFileOpenIntent == nil)
+        #expect(build(isError: true).currentFileOpenIntent == nil)
+        #expect(build(isInterrupted: true).currentFileOpenIntent == nil)
+        #expect(build(tool: "read").currentFileOpenIntent == nil)
+        #expect(build(tool: "edit").currentFileOpenIntent == nil)
+        #expect(build(tool: "extensions.write").currentFileOpenIntent == nil)
+        #expect(build(path: .string("image.png")).currentFileOpenIntent == nil)
+        #expect(build(path: .string("archive.zip")).currentFileOpenIntent == nil)
+    }
+
     @Test("write collapsed shows file path")
     func writeCollapsed() {
         let config = ToolPresentationBuilder.build(

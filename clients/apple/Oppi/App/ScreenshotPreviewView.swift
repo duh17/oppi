@@ -1304,6 +1304,8 @@ private struct SplitFileNavigationLinkedFileProbe: View {
         switch target.kind {
         case .workspaceFile(let path, _):
             return "Linked file: \(path)"
+        case .sessionFile(let path, _, _):
+            return "Current file: \(path)"
         case .hostFile(let path, _):
             return "Host file: \(path)"
         }
@@ -1311,7 +1313,9 @@ private struct SplitFileNavigationLinkedFileProbe: View {
 
     private var fileName: String {
         switch target.kind {
-        case .workspaceFile(_, let fileName), .hostFile(_, let fileName):
+        case .workspaceFile(_, let fileName),
+             .sessionFile(_, let fileName, _),
+             .hostFile(_, let fileName):
             return fileName
         }
     }

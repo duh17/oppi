@@ -1719,17 +1719,34 @@ actor APIClient: ClientLogUploading {
     }
 
     /// Fetch an authenticated host file through GET `/files/raw?path=`.
-    func browseHostFile(path: String) async throws -> Data {
-        try await get(url: makeHostRawURL(path: path))
+    func browseHostFile(
+        path: String,
+        controlSessionId: String? = nil
+    ) async throws -> Data {
+        try await browseHostFileContent(path: path, controlSessionId: controlSessionId).data
+    }
+
+    /// Keep the server's canonical path with the bytes from the same GET.
+    /// Relative control files need it as the base for child Markdown links.
+    func browseHostFileContent(
+        path: String,
+        controlSessionId: String? = nil
+    ) async throws -> (data: Data, resolvedPath: String?) {
+        let (data, response) = try await request(
+            "GET", url: makeHostRawURL(path: path, controlSessionId: controlSessionId)
+        )
+        try checkStatus(response, data: data)
+        return (data, HostRawFileHeaders.resolvedPath(from: response))
     }
 
     func makeHostFileMediaSource(
         path: String,
+        controlSessionId: String? = nil,
         contentTypeHint: String? = nil,
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: try makeHostRawURL(path: path),
+            url: try makeHostRawURL(path: path, controlSessionId: controlSessionId),
             authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
@@ -2238,10 +2255,17 @@ actor APIClient: ClientLogUploading {
         )
     }
 
-    private func makeHostRawURL(path: String) throws -> URL {
-        try makeURL(
+    private func makeHostRawURL(
+        path: String,
+        controlSessionId: String? = nil
+    ) throws -> URL {
+        var queryItems = [URLQueryItem(name: "path", value: path)]
+        if let controlSessionId, !controlSessionId.isEmpty {
+            queryItems.append(URLQueryItem(name: "controlSessionId", value: controlSessionId))
+        }
+        return try makeURL(
             pathSegments: ["files", "raw"],
-            queryItems: [URLQueryItem(name: "path", value: path)]
+            queryItems: queryItems
         )
     }
 

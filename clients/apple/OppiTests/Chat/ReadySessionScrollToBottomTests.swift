@@ -168,6 +168,7 @@ struct ReadySessionScrollToBottomTests {
                 sessionManager: sessionManager,
                 audioLifecycleCoordinator: nil,
                 onFork: { _ in },
+                onOpenCurrentFile: { _ in },
                 onBackSwipe: {},
                 reviewCommentSelectionRouter: nil,
                 topOverlap: 0,

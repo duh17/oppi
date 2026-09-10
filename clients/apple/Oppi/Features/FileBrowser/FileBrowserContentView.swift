@@ -24,7 +24,13 @@ enum FileBrowserMarkdownViewportRestoreHost: String, CaseIterable, Sendable {
 
 enum FileBrowserContentSource: Equatable {
     case workspaceFile
+    case sessionFile(sessionId: String)
     case hostFile
+
+    var routesFileReferencesThroughSession: Bool {
+        if case .sessionFile = self { return true }
+        return false
+    }
 }
 
 enum FileBrowserTextRenderer: Equatable {
@@ -109,6 +115,7 @@ struct FileBrowserContentView: View {
     let fileName: String
     var source: FileBrowserContentSource = .workspaceFile
     var sessionId: String? = nil
+    var controlSessionId: String? = nil
     var workspaceRuntime: WorkspaceRuntime? = nil
     /// Known file size from directory listing. Nil when opened from search results.
     var fileSize: Int?
@@ -137,6 +144,15 @@ struct FileBrowserContentView: View {
     var debugMarkdownViewportRestoreForTesting: Binding<FullScreenMarkdownViewportRestoreState>? {
         markdownViewportRestore
     }
+
+    var debugSourceForTesting: FileBrowserContentSource { source }
+    var debugSessionIdForTesting: String? { sessionId }
+    var debugControlSessionIdForTesting: String? { controlSessionId }
+    var debugServerIdForTesting: String? { serverId }
+
+    func debugFullScreenContentForTesting(text: String, api: APIClient) -> FullScreenCodeContent {
+        fullScreenContent(text: text, api: api)
+    }
 #endif
 
     @Environment(\.apiClient) private var apiClient
@@ -147,6 +163,7 @@ struct FileBrowserContentView: View {
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
     @State private var loadedMediaPath: String?
+    @State private var loadedHostFilePath: String?
     @State private var isExpensiveNetwork = false
 
     /// Captured API client reference from when the file was loaded.
@@ -508,6 +525,7 @@ struct FileBrowserContentView: View {
         }
 
         loadedMediaPath = nil
+        loadedHostFilePath = nil
         timedText = .empty
         timedTextLoadFinished = false
         content = .loading
@@ -537,7 +555,17 @@ struct FileBrowserContentView: View {
                 content = .audio(source)
                 await loadTimedText(api: api, path: requestedPath, kind: .audio)
             case .image, .pdf, .text, .binary:
-                let data = try await browseFile(api: api, path: requestedPath)
+                let data: Data
+                if source == .hostFile {
+                    let file = try await api.browseHostFileContent(
+                        path: requestedPath, controlSessionId: controlSessionId
+                    )
+                    guard isCurrentFile(requestedPath) else { return }
+                    data = file.data
+                    loadedHostFilePath = file.resolvedPath
+                } else {
+                    data = try await browseFile(api: api, path: requestedPath)
+                }
                 guard isCurrentFile(requestedPath) else { return }
                 if source == .hostFile, HostFilePreviewPolicy.usesStringFetchViewer(for: requestedPath) {
                     if FileType.detect(from: requestedPath) == .html,
@@ -576,9 +604,9 @@ struct FileBrowserContentView: View {
     /// `@Environment(\.apiClient)` because environment values can be nil when SwiftUI
     /// re-evaluates `body` after an async state change. The captured reference is
     /// guaranteed non-nil since we used it to successfully load the file.
-    private func fullScreenContent(text: String) -> FullScreenCodeContent {
-        let sourcePath = currentFilePath
-        guard let api = loadedApiClient ?? apiClient else {
+    private func fullScreenContent(text: String, api: APIClient? = nil) -> FullScreenCodeContent {
+        let sourcePath = loadedHostFilePath ?? currentFilePath
+        guard let api = api ?? loadedApiClient ?? apiClient else {
             return .fromText(text, filePath: sourcePath)
         }
         return .fromText(
@@ -589,17 +617,40 @@ struct FileBrowserContentView: View {
                 serverID: serverId,
                 worktreeId: worktreeId,
                 serverBaseURL: api.baseURL,
-                fetchWorkspaceFile: { [workspaceId, worktreeId, source] wsID, filePath in
-                    if source == .hostFile {
-                        return try await api.browseHostFile(path: filePath)
+                fetchWorkspaceFile: { [workspaceId, worktreeId, source, controlSessionId] wsID, filePath in
+                    switch source {
+                    case .hostFile:
+                        return try await api.browseHostFile(
+                            path: filePath,
+                            controlSessionId: controlSessionId
+                        )
+                    case .sessionFile(let sourceSessionId):
+                        return try await api.getSessionFileData(
+                            workspaceId: wsID.isEmpty ? workspaceId : wsID,
+                            sessionId: sourceSessionId,
+                            path: filePath
+                        )
+                    case .workspaceFile:
+                        return try await api.browseWorkspaceFile(
+                            workspaceId: wsID.isEmpty ? workspaceId : wsID,
+                            path: filePath,
+                            worktreeId: worktreeId
+                        )
                     }
-                    return try await api.browseWorkspaceFile(
-                        workspaceId: wsID.isEmpty ? workspaceId : wsID,
-                        path: filePath,
-                        worktreeId: worktreeId
+                },
+                sessionID: sessionId,
+                routesFileReferencesThroughSession: source.routesFileReferencesThroughSession,
+                fetchSessionFile: { workspaceID, sourceSessionID, path in
+                    try await api.getSessionFileData(
+                        workspaceId: workspaceID,
+                        sessionId: sourceSessionID,
+                        path: path
                     )
                 },
-                fetchHostFile: { [workspaceId, worktreeId, sessionId, workspaceRuntime] path in
+                fetchHostFile: { [workspaceId, worktreeId, sessionId, controlSessionId, workspaceRuntime] path in
+                    if case .sessionFile = source {
+                        return try await browseFile(api: api, path: path)
+                    }
                     let route = MarkdownVideoMediaSourceRoute.resolve(
                         filePath: path,
                         kind: .hostFile,
@@ -611,7 +662,10 @@ struct FileBrowserContentView: View {
                     )
                     switch route {
                     case .host(let hostPath):
-                        return try await api.browseHostFile(path: hostPath)
+                        return try await api.browseHostFile(
+                            path: hostPath,
+                            controlSessionId: controlSessionId
+                        )
                     case .session(let workspaceID, let sessionID, let sessionPath):
                         return try await api.getSessionFileData(
                             workspaceId: workspaceID,
@@ -628,7 +682,14 @@ struct FileBrowserContentView: View {
                         throw CocoaError(.fileNoSuchFile)
                     }
                 },
-                makeMarkdownVideoSource: { [workspaceId, worktreeId, sessionId, workspaceRuntime] embed in
+                makeMarkdownVideoSource: { [workspaceId, worktreeId, sessionId, controlSessionId, workspaceRuntime] embed in
+                    if case .sessionFile = source {
+                        return try await mediaSource(
+                            api: api, path: embed.filePath,
+                            contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: (embed.filePath as NSString).pathExtension),
+                            sourceFileExtension: (embed.filePath as NSString).pathExtension
+                        )
+                    }
                     guard let route = MarkdownVideoMediaSourceRoute.resolve(
                         embed: embed,
                         workspaceID: workspaceId,
@@ -644,6 +705,7 @@ struct FileBrowserContentView: View {
                     case .host(let path):
                         return try await api.makeHostFileMediaSource(
                             path: path,
+                            controlSessionId: controlSessionId,
                             contentTypeHint: contentType,
                             sourceFileExtension: pathExtension
                         )
@@ -665,7 +727,14 @@ struct FileBrowserContentView: View {
                         )
                     }
                 },
-                makeMarkdownAudioSource: { [workspaceId, worktreeId, sessionId, workspaceRuntime] embed in
+                makeMarkdownAudioSource: { [workspaceId, worktreeId, sessionId, controlSessionId, workspaceRuntime] embed in
+                    if case .sessionFile = source {
+                        return try await mediaSource(
+                            api: api, path: embed.filePath,
+                            contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: (embed.filePath as NSString).pathExtension),
+                            sourceFileExtension: (embed.filePath as NSString).pathExtension
+                        )
+                    }
                     guard let route = MarkdownVideoMediaSourceRoute.resolve(
                         embed: embed,
                         workspaceID: workspaceId,
@@ -681,6 +750,7 @@ struct FileBrowserContentView: View {
                     case .host(let path):
                         return try await api.makeHostFileMediaSource(
                             path: path,
+                            controlSessionId: controlSessionId,
                             contentTypeHint: contentType,
                             sourceFileExtension: pathExtension
                         )
@@ -703,6 +773,12 @@ struct FileBrowserContentView: View {
                     }
                 },
                 makeTimedTextSidecar: { [workspaceId, worktreeId, sessionId, workspaceRuntime] mediaPath, kind, reference in
+                    if case .sessionFile = source {
+                        return await Self.loadTimedTextResult(
+                            api: api, path: mediaPath, kind: kind, source: source,
+                            workspaceId: workspaceId, worktreeId: worktreeId
+                        )
+                    }
                     return await TimedText.load(
                         mediaPath: mediaPath,
                         kind: kind,
@@ -772,6 +848,17 @@ struct FileBrowserContentView: View {
                 sourceKind: .host,
                 fetchFile: { _ in throw CocoaError(.fileNoSuchFile) }
             )
+        case .sessionFile(let sessionId):
+            access = TimedText.Access(
+                sourceKind: .session,
+                fetchFile: { sidecarPath in
+                    try await api.getSessionFileData(
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        path: sidecarPath
+                    )
+                }
+            )
         case .workspaceFile:
             access = TimedText.Access(
                 sourceKind: .workspace,
@@ -802,7 +889,16 @@ struct FileBrowserContentView: View {
     private func browseFile(api: APIClient, path: String) async throws -> Data {
         switch source {
         case .hostFile:
-            return try await api.browseHostFile(path: path)
+            return try await api.browseHostFile(
+                path: path,
+                controlSessionId: controlSessionId
+            )
+        case .sessionFile(let sessionId):
+            return try await api.getSessionFileData(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                path: path
+            )
         case .workspaceFile:
             return try await api.browseWorkspaceFile(
                 workspaceId: workspaceId,
@@ -821,6 +917,15 @@ struct FileBrowserContentView: View {
         switch source {
         case .hostFile:
             return try await api.makeHostFileMediaSource(
+                path: path,
+                controlSessionId: controlSessionId,
+                contentTypeHint: contentTypeHint,
+                sourceFileExtension: sourceFileExtension
+            )
+        case .sessionFile(let sessionId):
+            return try await api.makeSessionFileMediaSource(
+                workspaceId: workspaceId,
+                sessionId: sessionId,
                 path: path,
                 contentTypeHint: contentTypeHint,
                 sourceFileExtension: sourceFileExtension

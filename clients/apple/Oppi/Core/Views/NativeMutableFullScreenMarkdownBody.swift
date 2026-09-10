@@ -69,6 +69,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private var workspaceID: String?
     private var worktreeId: String?
     private var sessionID: String?
+    private var routesFileReferencesThroughSession: Bool
     private var serverBaseURL: URL?
     private var sourceFilePath: String?
     private let lineAnchor: SourceLineAnchor?
@@ -115,6 +116,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         workspaceID: String? = nil,
         worktreeId: String? = nil,
         sessionID: String? = nil,
+        routesFileReferencesThroughSession: Bool = false,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
@@ -137,6 +139,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.workspaceID = workspaceID
         self.worktreeId = worktreeId
         self.sessionID = sessionID
+        self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
         self.lineAnchor = lineAnchor
@@ -226,6 +229,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             workspaceID: workspaceID,
             worktreeId: worktreeId,
             sessionID: sessionID,
+            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
             fetchWorkspaceFile: fetchWorkspaceFile,
@@ -247,6 +251,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         workspaceID: String?,
         worktreeId: String? = nil,
         sessionID: String?,
+        routesFileReferencesThroughSession: Bool = false,
         serverBaseURL: URL?,
         sourceFilePath: String?,
         fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)?,
@@ -267,6 +272,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             || self.workspaceID != workspaceID
             || self.worktreeId != worktreeId
             || self.sessionID != sessionID
+            || self.routesFileReferencesThroughSession != routesFileReferencesThroughSession
             || self.serverBaseURL != serverBaseURL
             || self.sourceFilePath != sourceFilePath
 
@@ -276,6 +282,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.workspaceID = workspaceID
         self.worktreeId = worktreeId
         self.sessionID = sessionID
+        self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
         self.fetchWorkspaceFile = fetchWorkspaceFile
@@ -332,6 +339,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             workspaceID: workspaceID,
             worktreeId: worktreeId,
             sessionID: sessionID,
+            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,
@@ -366,6 +374,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             workspaceID: workspaceID,
             worktreeId: worktreeId,
             sessionID: sessionID,
+            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,

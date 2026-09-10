@@ -41,6 +41,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let agentIcon: IconChoice?
         let routeScope: SessionRouteScope?
         let onFork: (String) -> Void
+        let onOpenCurrentFile: (String) -> Void
         let onBackSwipe: () -> Void
         let onQuietWorkLineToggle: (String) -> Void
         let onShowEarlier: () -> Void
@@ -80,6 +81,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             agentIcon: IconChoice? = nil,
             routeScope: SessionRouteScope? = nil,
             onFork: @escaping (String) -> Void,
+            onOpenCurrentFile: @escaping (String) -> Void = { _ in },
             onBackSwipe: @escaping () -> Void,
             onQuietWorkLineToggle: @escaping (String) -> Void = { _ in },
             onShowEarlier: @escaping () -> Void,
@@ -119,6 +121,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.routeScope = routeScope
                 ?? workspaceId.map(SessionRouteScope.workspace)
             self.onFork = onFork
+            self.onOpenCurrentFile = onOpenCurrentFile
             self.onBackSwipe = onBackSwipe
             self.onQuietWorkLineToggle = onQuietWorkLineToggle
             self.onShowEarlier = onShowEarlier
@@ -295,6 +298,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
             installer.install(on: collectionView)
             backSwipeGestureInstaller = installer
+        }
+
+        var onOpenCurrentFile: ((String) -> Void)? {
+            get { context.onOpenCurrentFile }
+            set { context.onOpenCurrentFile = newValue }
         }
 
         var onShowEarlier: (() -> Void)? {

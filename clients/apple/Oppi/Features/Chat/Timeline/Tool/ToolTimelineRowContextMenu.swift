@@ -9,6 +9,7 @@ enum ToolTimelineRowContextMenuBuilder {
         hasCommand: Bool,
         hasOutput: Bool,
         canShowFullScreenContent: Bool,
+        opensCurrentFile: Bool,
         hasPreviewImage: Bool,
         onCopyCommand: @escaping (ContextMenuTarget) -> Void,
         onCopyOutput: @escaping (ContextMenuTarget) -> Void,
@@ -38,26 +39,30 @@ enum ToolTimelineRowContextMenuBuilder {
             }
 
         case .output, .expanded:
-            guard hasOutput else {
+            guard hasOutput || opensCurrentFile else {
                 return nil
             }
 
             if canShowFullScreenContent {
                 actions.append(
                     UIAction(
-                        title: String(localized: "Open Full Screen"),
-                        image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+                        title: opensCurrentFile
+                            ? String(localized: "Open Current File")
+                            : String(localized: "Open Full Screen"),
+                        image: UIImage(systemName: opensCurrentFile ? "doc.text" : "arrow.up.left.and.arrow.down.right")
                     ) { _ in
                         onOpenFullScreenContent()
                     }
                 )
             }
 
-            actions.append(
-                UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
-                    onCopyOutput(target)
-                }
-            )
+            if hasOutput {
+                actions.append(
+                    UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
+                        onCopyOutput(target)
+                    }
+                )
+            }
 
             if hasCommand {
                 actions.append(

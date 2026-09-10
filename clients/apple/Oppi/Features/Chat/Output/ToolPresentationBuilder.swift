@@ -165,11 +165,29 @@ enum ToolPresentationBuilder {
         let segmentToolNamePrefix = SegmentRenderer.toolNamePrefix(from: context.callSegments ?? [])
         let segmentToolNameColor = SegmentRenderer.toolNameColor(from: context.callSegments ?? [])
 
-        return ToolTimelineRowConfiguration(
+        let currentFileOpenIntent = currentFileOpenIntent(
+            rawTool: tool,
+            normalizedTool: normalizedTool,
+            args: args,
+            isDone: isDone,
+            isError: isError,
+            isInterrupted: isInterrupted
+        )
+        let expandedContent: ToolExpandedContent? = if isExpanded,
+                                                       currentFileOpenIntent != nil,
+                                                       expanded.content == nil {
+            // Successful empty writes still need a visible expanded surface
+            // from which the user can open the actual current file.
+            .status(message: "Open current file")
+        } else {
+            expanded.content
+        }
+
+        var configuration = ToolTimelineRowConfiguration(
             itemID: itemID,
             title: title,
             preview: nil, // collapsed tool rows single-line
-            expandedContent: expanded.content,
+            expandedContent: expandedContent,
             copyCommandText: expanded.copyCommandText,
             copyOutputText: expanded.copyOutputText,
             languageBadge: isVoicePresentationResult ? nil : languageBadge,
@@ -194,6 +212,29 @@ enum ToolPresentationBuilder {
             segmentAttributedTitle: segmentAttributedTitle,
             segmentAttributedTrailing: segmentAttributedTrailing
         )
+        configuration.currentFileOpenIntent = currentFileOpenIntent
+        return configuration
+    }
+
+    private static func currentFileOpenIntent(
+        rawTool: String,
+        normalizedTool: String,
+        args: [String: JSONValue]?,
+        isDone: Bool,
+        isError: Bool,
+        isInterrupted: Bool
+    ) -> ToolCurrentFileOpenIntent? {
+        guard normalizedTool == "write",
+              rawTool.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "write",
+              isDone,
+              !isError,
+              !isInterrupted,
+              let path = ToolCallFormatting.filePath(from: args),
+              !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              FileType.detect(from: path).previewCategory == .text else {
+            return nil
+        }
+        return ToolCurrentFileOpenIntent(path: path)
     }
 
     // MARK: - Collapsed Presentation

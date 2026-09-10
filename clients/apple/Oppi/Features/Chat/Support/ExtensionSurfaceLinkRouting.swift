@@ -47,7 +47,7 @@ enum ExtensionSurfaceLinkRouting {
             return .inviteDeepLink(destination)
         case .webLink(let destination):
             return .webLink(destination)
-        case .resourceReference(let reference):
+        case .resourceReference(let reference), .sessionFileReference(let reference):
             return .resourceReference(reference)
         case .fileLink(let payload):
             return .fileLink(payload)

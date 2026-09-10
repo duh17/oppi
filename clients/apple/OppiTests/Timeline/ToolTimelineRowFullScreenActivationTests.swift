@@ -34,6 +34,35 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    @Test("eligible current-file activation uses navigation action without presenting output")
+    func currentFileActivationUsesNavigationAction() {
+        let harness = makeHostHarness()
+        let host = harness.host
+        var activationCount = 0
+        var configuration = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: "", filePath: "docs/current.md"),
+            copyOutputText: nil,
+            toolNamePrefix: "write",
+            isExpanded: true
+        )
+        configuration.currentFileOpenIntent = .init(path: "docs/current.md")
+        configuration.openCurrentFile = { activationCount += 1 }
+        let view = ToolTimelineRowContentView(configuration: configuration)
+
+        host.view.addSubview(view)
+        view.frame = host.view.bounds
+        host.view.layoutIfNeeded()
+        view.performExpandedActivation()
+
+        #expect(activationCount == 1)
+        #expect(host.presentedViewController == nil)
+        let menu = view.contextMenu(for: .expanded)
+        #expect(menu?.children.map(\.title) == ["Open Current File"])
+        #expect(view.accessibilityCustomActions?.first?.name == "Open Current File")
+
+        harness.window.isHidden = true
+    }
+
     @Test("expanded code activation opens full screen")
     func expandedCodeActivationOpensFullScreen() throws {
         let harness = makeHostHarness()

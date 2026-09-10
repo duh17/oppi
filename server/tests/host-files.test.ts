@@ -91,11 +91,19 @@ function makeLogger(lines: HostFileLogLine[]): Logger {
   };
 }
 
-function makeContext(): RouteContext {
+function makeContext(
+  options: { dataDir?: string; controlSessionIds?: string[]; workspaceSessionIds?: string[] } = {},
+): RouteContext {
   return {
     storage: {
       getWorkspace: () => undefined,
-      getDataDir: () => tmpdir(),
+      getDataDir: () => options.dataDir ?? tmpdir(),
+      getSession: (id: string) =>
+        options.controlSessionIds?.includes(id)
+          ? { id, control: { domain: "skills", intent: "create" } }
+          : options.workspaceSessionIds?.includes(id)
+            ? { id, workspaceId: "workspace-1", control: { domain: "skills", intent: "create" } }
+            : undefined,
     },
   } as unknown as RouteContext;
 }
@@ -111,13 +119,24 @@ async function dispatchHost(
     logger?: Logger;
     homeDir?: string;
     headers?: Record<string, string>;
+    dataDir?: string;
+    controlSessionIds?: string[];
+    workspaceSessionIds?: string[];
   } = {},
 ): Promise<MockWritableResponse> {
   const logs: HostFileLogLine[] = [];
-  const dispatch = createHostFileRoutes(makeContext(), createRouteHelpers(), {
-    logger: options.logger ?? makeLogger(logs),
-    homeDir: options.homeDir,
-  });
+  const dispatch = createHostFileRoutes(
+    makeContext({
+      dataDir: options.dataDir,
+      controlSessionIds: options.controlSessionIds,
+      workspaceSessionIds: options.workspaceSessionIds,
+    }),
+    createRouteHelpers(),
+    {
+      logger: options.logger ?? makeLogger(logs),
+      homeDir: options.homeDir,
+    },
+  );
   const res = new MockWritableResponse();
   const finished = once(res, "finish");
   const url = new URL(`https://localhost${rawPath}`);
@@ -223,6 +242,74 @@ describe("GET/HEAD /files/raw", () => {
     expect(JSON.stringify(infoLogs)).not.toContain(resolvedFilePath);
     expect(JSON.stringify(logs)).not.toContain("workspace");
   });
+
+  it("resolves relative paths only from a declared control-session cwd", async () => {
+    const dataDir = tempRoot("oppi-control-hostfile-");
+    const controlCwd = join(dataDir, "control-sessions", "cwd");
+    mkdirSync(controlCwd, { recursive: true });
+    writeFileSync(join(controlCwd, "note.md"), "control current bytes\n", "utf8");
+
+    const query = `path=note.md&controlSessionId=control-1`;
+    const allowed = await dispatchHost("GET", `/files/raw?${query}`, {
+      dataDir,
+      controlSessionIds: ["control-1"],
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.body.toString("utf8")).toBe("control current bytes\n");
+    expect(allowed.headers["X-Oppi-Resolved-Path"]).toBe(realpathSync(join(controlCwd, "note.md")));
+
+    const unknown = await dispatchHost(
+      "GET",
+      "/files/raw?path=note.md&controlSessionId=missing-control",
+      { dataDir, controlSessionIds: ["control-1"] },
+    );
+    expect(unknown.statusCode).toBe(404);
+
+    const unscoped = await dispatchHost("GET", "/files/raw?path=note.md", { dataDir });
+    expect(unscoped.statusCode).toBe(404);
+  });
+
+  it("rejects relative paths from workspace sessions even with control metadata", async () => {
+    const dataDir = tempRoot("oppi-control-hostfile-");
+    const controlCwd = join(dataDir, "control-sessions", "cwd");
+    mkdirSync(controlCwd, { recursive: true });
+    writeFileSync(join(controlCwd, "note.md"), "must not serve\n");
+    const response = await dispatchHost(
+      "GET",
+      "/files/raw?path=note.md&controlSessionId=workspace-1",
+      {
+        dataDir,
+        workspaceSessionIds: ["workspace-1"],
+      },
+    );
+    expect(response.statusCode).toBe(404);
+  });
+
+  it.each(["parent", "cwd"])(
+    "rejects a symlinked control cwd %s instead of reading alternate bytes",
+    async (symlinkAt) => {
+      const dataDir = tempRoot("oppi-control-hostfile-");
+      const alternate = tempRoot("oppi-control-alternate-");
+      mkdirSync(join(alternate, "cwd"));
+      writeFileSync(join(alternate, "note.md"), "wrong root\n");
+      writeFileSync(join(alternate, "cwd", "note.md"), "wrong parent\n");
+      if (symlinkAt === "parent") {
+        symlinkSync(alternate, join(dataDir, "control-sessions"));
+      } else {
+        mkdirSync(join(dataDir, "control-sessions"));
+        symlinkSync(alternate, join(dataDir, "control-sessions", "cwd"));
+      }
+      const response = await dispatchHost(
+        "GET",
+        "/files/raw?path=note.md&controlSessionId=control-1",
+        {
+          dataDir,
+          controlSessionIds: ["control-1"],
+        },
+      );
+      expect(response.statusCode).toBe(404);
+    },
+  );
 
   it("serves a non-Latin filename through Node header validation", async () => {
     const root = tempRoot("oppi-hostfile-cjk-");

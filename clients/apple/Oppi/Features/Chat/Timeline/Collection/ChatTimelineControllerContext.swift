@@ -9,6 +9,7 @@ final class ChatTimelineControllerContext {
     var agentIcon: IconChoice?
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
+    var onOpenCurrentFile: ((String) -> Void)?
     var onShowEarlier: (() -> Void)?
     var onQuietWorkLineToggle: ((String) -> Void)?
     weak var scrollController: ChatScrollController?
@@ -45,6 +46,7 @@ final class ChatTimelineControllerContext {
         agentIcon = configuration.agentIcon
         routeScope = configuration.routeScope
         onFork = configuration.onFork
+        onOpenCurrentFile = configuration.onOpenCurrentFile
         onShowEarlier = configuration.onShowEarlier
         onQuietWorkLineToggle = configuration.onQuietWorkLineToggle
         scrollController = configuration.scrollController

@@ -45,9 +45,12 @@ enum ToolRowPlanBuilder {
         let markdownSelectionEnabled = expandedSurfaceInteraction.inlineSelectionEnabled
             && markdownSelectionEligible
 
+        let hasCurrentFileActivation = configuration.currentFileOpenIntent != nil
         let interactionSpec = TimelineInteractionSpec(
-            enablesTapCopyGesture: interactionPolicy.enablesTapCopyGesture && expandedSurfaceInteraction.enablesTapActivation,
-            enablesPinchGesture: interactionPolicy.enablesPinchGesture && expandedSurfaceInteraction.enablesPinchActivation,
+            enablesTapCopyGesture: hasCurrentFileActivation
+                || (interactionPolicy.enablesTapCopyGesture && expandedSurfaceInteraction.enablesTapActivation),
+            enablesPinchGesture: hasCurrentFileActivation
+                || (interactionPolicy.enablesPinchGesture && expandedSurfaceInteraction.enablesPinchActivation),
             allowsHorizontalScroll: interactionPolicy.allowsHorizontalScroll,
             commandSelectionEnabled: commandSelectionEnabled,
             outputSelectionEnabled: outputSelectionEnabled,

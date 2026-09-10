@@ -57,6 +57,8 @@ final class AssistantMarkdownContentView: UIView {
         let worktreeId: String?
         /// Session context retained for review and full-screen presentation.
         let sessionID: String?
+        /// File-reader links keep using the exact source-session file route.
+        let routesFileReferencesThroughSession: Bool
         let serverBaseURL: URL?
         /// Path of the source markdown file in the workspace (e.g. "docs/readme.md").
         /// Used to resolve relative image paths against the file's directory.
@@ -100,6 +102,7 @@ final class AssistantMarkdownContentView: UIView {
             workspaceID: String? = nil,
             worktreeId: String? = nil,
             sessionID: String? = nil,
+            routesFileReferencesThroughSession: Bool = false,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
@@ -119,6 +122,7 @@ final class AssistantMarkdownContentView: UIView {
             self.workspaceID = workspaceID
             self.worktreeId = worktreeId
             self.sessionID = sessionID
+            self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
             self.serverBaseURL = serverBaseURL
             self.sourceFilePath = sourceFilePath
             self.lineAnchor = lineAnchor
@@ -140,6 +144,7 @@ final class AssistantMarkdownContentView: UIView {
             workspaceID: String? = nil,
             worktreeId: String? = nil,
             sessionID: String? = nil,
+            routesFileReferencesThroughSession: Bool = false,
             serverBaseURL: URL? = nil,
             sourceFilePath: String? = nil,
             lineAnchor: SourceLineAnchor? = nil,
@@ -160,6 +165,7 @@ final class AssistantMarkdownContentView: UIView {
                 workspaceID: workspaceID,
                 worktreeId: worktreeId,
                 sessionID: sessionID,
+                routesFileReferencesThroughSession: routesFileReferencesThroughSession,
                 serverBaseURL: serverBaseURL,
                 sourceFilePath: sourceFilePath,
                 lineAnchor: lineAnchor,
@@ -182,6 +188,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.workspaceID == rhs.workspaceID
                 && lhs.worktreeId == rhs.worktreeId
                 && lhs.sessionID == rhs.sessionID
+                && lhs.routesFileReferencesThroughSession == rhs.routesFileReferencesThroughSession
                 && lhs.serverBaseURL == rhs.serverBaseURL
                 && lhs.sourceFilePath == rhs.sourceFilePath
                 && lhs.lineAnchor == rhs.lineAnchor
@@ -425,6 +432,7 @@ enum LinkAction: Equatable {
     case inAppSessionLink(InAppDeepLinkIntent)
     case webLink(URL)
     case resourceReference(ResourceReference)
+    case sessionFileReference(ResourceReference)
     case fileLink(FileLinkPayload)
     case systemDefault
 }
@@ -434,7 +442,9 @@ enum MarkdownLinkInteractionSupport {
     static func classify(
         _ url: URL,
         serverID: String? = nil,
-        workspaceID: String?
+        workspaceID: String?,
+        sessionID: String? = nil,
+        routesFileReferencesThroughSession: Bool = false
     ) -> LinkAction {
         let normalizedURL = AssistantMarkdownContentView.normalizedInteractionURL(url)
         guard let scheme = normalizedURL.scheme?.lowercased() else {
@@ -455,6 +465,20 @@ enum MarkdownLinkInteractionSupport {
         if scheme == ResourceReferenceURL.scheme,
            let reference = ResourceReferenceURL.parse(normalizedURL),
            ResourceReferenceTapScope.matches(reference, serverID: serverID, workspaceID: workspaceID) {
+            if routesFileReferencesThroughSession {
+                // The mounted reader owns origin. A serialized link supplies a
+                // path/anchor, never replacement server/workspace/session authority.
+                return .sessionFileReference(ResourceReference(
+                    target: reference.target,
+                    sourceServerID: serverID,
+                    workspaceID: workspaceID,
+                    sourceSessionID: sessionID,
+                    fileCandidatePath: reference.fileCandidatePath,
+                    kind: reference.kind,
+                    lineAnchor: reference.lineAnchor,
+                    visibleLabel: reference.visibleLabel
+                ))
+            }
             return .resourceReference(reference)
         }
         if scheme == "file",
@@ -502,6 +526,10 @@ enum MarkdownLinkInteractionSupport {
         case .resourceReference(let reference):
             return UIAction { _ in
                 NotificationCenter.default.post(name: .resourceReferenceTapped, object: reference)
+            }
+        case .sessionFileReference(let reference):
+            return UIAction { _ in
+                NotificationCenter.default.post(name: .sessionFileReferenceTapped, object: reference)
             }
         case .fileLink(let payload):
             return UIAction { _ in
@@ -557,7 +585,9 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
         MarkdownLinkInteractionSupport.classify(
             url,
             serverID: currentConfig?.serverID,
-            workspaceID: currentConfig?.workspaceID
+            workspaceID: currentConfig?.workspaceID,
+            sessionID: currentConfig?.sessionID,
+            routesFileReferencesThroughSession: currentConfig?.routesFileReferencesThroughSession ?? false
         )
     }
 

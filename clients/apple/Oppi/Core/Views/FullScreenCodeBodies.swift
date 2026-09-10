@@ -1867,6 +1867,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let workspaceID: String?
     private let worktreeId: String?
     private let sessionID: String?
+    private let routesFileReferencesThroughSession: Bool
     private let serverBaseURL: URL?
     private let sourceFilePath: String?
     private let lineAnchor: SourceLineAnchor?
@@ -1938,6 +1939,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         workspaceID: String? = nil,
         worktreeId: String? = nil,
         sessionID: String? = nil,
+        routesFileReferencesThroughSession: Bool = false,
         serverBaseURL: URL? = nil,
         sourceFilePath: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
@@ -1965,6 +1967,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.workspaceID = workspaceID
         self.worktreeId = worktreeId
         self.sessionID = sessionID
+        self.routesFileReferencesThroughSession = routesFileReferencesThroughSession
         self.serverBaseURL = serverBaseURL
         self.sourceFilePath = sourceFilePath
         self.lineAnchor = lineAnchor
@@ -2345,6 +2348,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             workspaceID: workspaceID,
             worktreeId: worktreeId,
             sessionID: sessionID,
+            routesFileReferencesThroughSession: routesFileReferencesThroughSession,
             serverBaseURL: serverBaseURL,
             sourceFilePath: sourceFilePath,
             lineAnchor: lineAnchor,
@@ -4129,6 +4133,16 @@ extension NativeFullScreenMarkdownBody {
 #endif
 
 extension NativeFullScreenMarkdownBody: UITextViewDelegate {
+    func linkAction(for url: URL) -> LinkAction {
+        MarkdownLinkInteractionSupport.classify(
+            url,
+            serverID: serverID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            routesFileReferencesThroughSession: routesFileReferencesThroughSession
+        )
+    }
+
     func textView(
         _ textView: UITextView,
         menuConfigurationFor textItem: UITextItem,
@@ -4138,11 +4152,7 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
             return UITextItem.MenuConfiguration(menu: defaultMenu)
         }
 
-        let action = MarkdownLinkInteractionSupport.classify(
-            url,
-            serverID: currentConfig?.serverID,
-            workspaceID: currentConfig?.workspaceID
-        )
+        let action = linkAction(for: url)
         return MarkdownLinkInteractionSupport.menuConfiguration(
             for: action,
             defaultMenu: defaultMenu,
@@ -4176,11 +4186,7 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
             return defaultAction
         }
 
-        let action = MarkdownLinkInteractionSupport.classify(
-            url,
-            serverID: currentConfig?.serverID,
-            workspaceID: currentConfig?.workspaceID
-        )
+        let action = linkAction(for: url)
         return MarkdownLinkInteractionSupport.primaryAction(
             for: action,
             defaultAction: defaultAction

@@ -603,6 +603,12 @@ extension ChatTimelineCollectionHost.Controller {
             fallback: configuration.expandedContent
         )
         configuration.resourcePressure = resourcePressure
+        if let intent = configuration.currentFileOpenIntent,
+           let onOpenCurrentFile {
+            configuration.openCurrentFile = {
+                onOpenCurrentFile(intent.path)
+            }
+        }
         configuration.serverID = serverId
         configuration.workspaceID = workspaceId
         configuration.sessionID = sessionId

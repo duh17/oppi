@@ -6,6 +6,10 @@ import UIKit
 ///
 /// Supports both collapsed and expanded presentation for tool rows, so row
 /// expansion uses the same native renderer in both states.
+struct ToolCurrentFileOpenIntent: Equatable {
+    let path: String
+}
+
 struct ToolTimelineRowConfiguration: UIContentConfiguration {
     let itemID: String
     let title: String
@@ -56,6 +60,8 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var sourceFilePath: String? = nil
     var fetchWorkspaceFile: ((_ workspaceID: String, _ path: String) async throws -> Data)? = nil
     var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
+    var currentFileOpenIntent: ToolCurrentFileOpenIntent? = nil
+    var openCurrentFile: (() -> Void)? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -1447,6 +1453,14 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isExpandingTransition: isExpandingTransition
         )
 
+        accessibilityCustomActions = currentFileActivationAvailable
+            ? [UIAccessibilityCustomAction(
+                name: String(localized: "Open Current File"),
+                target: self,
+                selector: #selector(handleCurrentFileAccessibilityAction)
+            )]
+            : nil
+
         // 6. Status appearance
         ToolTimelineRowDisplayState.applyStatusAppearance(
             isDone: configuration.isDone,
@@ -1637,7 +1651,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         showOutput: Bool
     ) -> Bool {
         guard configuration.isExpanded, showExpanded || showOutput else { return false }
-        return canShowFullScreenContent || outputCopyText != nil
+        return canActivateExpandedContent || outputCopyText != nil
     }
 
     private func shouldRenderExpandedContent(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Bool {
@@ -2270,7 +2284,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     @objc private func handleExpandedPinch(_ recognizer: UIPinchGestureRecognizer) {
-        guard canShowFullScreenContent else { return }
+        guard canActivateExpandedContent else { return }
 
         switch recognizer.state {
         case .began:
@@ -2283,7 +2297,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             }
 
             expandedPinchDidTriggerFullScreen = true
-            showFullScreenContent()
+            activateExpandedContent()
             FeatureEducationTips.markToolOutputShortcutUsed()
             dismissFeatureEducationTipForAction()
 
@@ -2356,8 +2370,33 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         )
     }
 
+    private var currentFileActivationAvailable: Bool {
+        currentConfiguration.currentFileOpenIntent != nil
+            && currentConfiguration.openCurrentFile != nil
+    }
+
+    var canActivateExpandedContent: Bool {
+        currentFileActivationAvailable || canShowFullScreenContent
+    }
+
     var canShowFullScreenContent: Bool {
         fullScreenContent != nil
+    }
+
+    func activateExpandedContent() {
+        if currentFileActivationAvailable {
+            currentConfiguration.openCurrentFile?()
+            return
+        }
+        showFullScreenContent()
+    }
+
+    @objc private func handleCurrentFileAccessibilityAction() -> Bool {
+        guard currentFileActivationAvailable else { return false }
+        activateExpandedContent()
+        FeatureEducationTips.markToolOutputShortcutUsed()
+        dismissFeatureEducationTipForAction()
+        return true
     }
 
     func showFullScreenContent() {
@@ -2447,7 +2486,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             target: target,
             hasCommand: command != nil,
             hasOutput: output != nil,
-            canShowFullScreenContent: canShowFullScreenContent,
+            canShowFullScreenContent: canActivateExpandedContent,
+            opensCurrentFile: currentFileActivationAvailable,
             hasPreviewImage: imagePreviewImageView.image != nil,
             onCopyCommand: { [weak self] copyTarget in
                 guard let self, let command else { return }
@@ -2474,7 +2514,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 self.dismissFeatureEducationTipForAction()
             },
             onOpenFullScreenContent: { [weak self] in
-                self?.showFullScreenContent()
+                self?.activateExpandedContent()
                 FeatureEducationTips.markToolOutputShortcutUsed()
                 self?.dismissFeatureEducationTipForAction()
             },

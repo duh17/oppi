@@ -1536,6 +1536,112 @@ struct APIClientTests {
         #expect(methods == ["HEAD", "GET"])
     }
 
+    @MainActor
+    @Test func currentSessionReaderProvidersNeverUseHostWhenRuntimeMetadataIsMissing() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let view = FileBrowserContentView(
+            workspaceId: "workspace-origin",
+            serverId: "server-origin",
+            filePath: "/workspace/project/docs/current.md",
+            fileName: "current.md",
+            source: .sessionFile(sessionId: "session-origin"),
+            sessionId: "session-origin",
+            workspaceRuntime: nil
+        )
+        guard case .markdown(_, _, let context) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
+            Issue.record("Expected current-file Markdown reader context")
+            return
+        }
+        let reader = try #require(context)
+        let expectedHost = await client.baseURL.host
+        #expect(reader.routesFileReferencesThroughSession)
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/workspaces/workspace-origin/sessions/session-origin/raw//workspace/project/docs/image.png")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (Data("session image bytes".utf8), response)
+        }
+        let fetchImage = try #require(reader.fetchHostFile)
+        let image = try await fetchImage("/workspace/project/docs/image.png")
+        #expect(String(data: image, encoding: .utf8) == "session image bytes")
+        for path in ["/workspace/project/docs/clip.mp4", "docs/clip.mp4"] {
+            let reference = ResourceReference(
+                target: path, sourceServerID: "server-origin", workspaceID: "workspace-origin",
+                sourceSessionID: "session-origin", fileCandidatePath: path,
+                kind: path.hasPrefix("/") ? .hostFile : .workspaceFile
+            )
+            let makeVideo = try #require(reader.makeMarkdownVideoSource)
+            let makeAudio = try #require(reader.makeMarkdownAudioSource)
+            let video = try await makeVideo(MarkdownVideoEmbed(reference: reference))
+            let audio = try await makeAudio(MarkdownAudioEmbed(reference: reference))
+            for source in [video, audio] {
+                #expect(source.url.path == "/workspaces/workspace-origin/sessions/session-origin/raw/\(path)")
+                #expect(source.url.host == expectedHost)
+            }
+        }
+    }
+
+    @Test func controlHostReadPreservesCanonicalParentForNestedLinksInOneGET() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+        let canonicalPath = "/data/control-sessions/cwd/notes/current.md"
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/files/raw")
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil,
+                headerFields: ["X-Oppi-Resolved-Path": canonicalPath]
+            )!
+            return (Data("[Child](child.md)".utf8), response)
+        }
+        let file = try await client.browseHostFileContent(path: "notes/current.md", controlSessionId: "control-1")
+        #expect(file.resolvedPath == canonicalPath)
+        let rewritten = MarkdownWikiLinkRewriter.rewrite(
+            blocks: parseCommonMark(try #require(String(data: file.data, encoding: .utf8))),
+            serverID: "server-origin", workspaceID: "", sessionID: "control-1",
+            sourceDirectory: (try #require(file.resolvedPath) as NSString).deletingLastPathComponent
+        )
+        guard case .paragraph(let inlines) = try #require(rewritten.first),
+              case .link(_, let destination) = try #require(inlines.first),
+              let destination, let url = URL(string: destination),
+              let reference = ResourceReferenceURL.parse(url) else {
+            Issue.record("Expected an owner-host child link with canonical parent")
+            return
+        }
+        #expect(reference.kind == .hostFile)
+        #expect(reference.fileCandidatePath == "/data/control-sessions/cwd/notes/child.md")
+        #expect(reference.sourceServerID == "server-origin")
+        #expect(reference.sourceSessionID == "control-1")
+    }
+
+    @Test func controlHostRawFileCarriesDeclaredSessionForRelativePath() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            #expect(components?.percentEncodedPath == "/files/raw")
+            #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "notes/current.md")
+            #expect(components?.queryItems?.first(where: { $0.name == "controlSessionId" })?.value == "control-1")
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+            )!
+            return (Data("control bytes".utf8), response)
+        }
+
+        let data = try await client.browseHostFile(
+            path: "notes/current.md",
+            controlSessionId: "control-1"
+        )
+        let source = try await client.makeHostFileMediaSource(
+            path: "notes/current.md",
+            controlSessionId: "control-1"
+        )
+        let sourceComponents = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
+        #expect(String(data: data, encoding: .utf8) == "control bytes")
+        #expect(sourceComponents?.queryItems?.first(where: { $0.name == "controlSessionId" })?.value == "control-1")
+    }
+
     @Test func hostRawFileHEADUsesCanonicalResolvedPathHeader() async throws {
         let client = makeClient()
         defer { cleanup() }

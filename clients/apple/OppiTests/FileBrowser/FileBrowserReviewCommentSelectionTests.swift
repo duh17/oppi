@@ -405,6 +405,87 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(target.worktreeId == "wt-feature")
     }
 
+    @Test func currentFileRoutingUsesSessionRawForWorkspaceAndHostBrowseForControl() throws {
+        let workspaceTarget = try #require(ChatView.currentToolFileTarget(
+            serverId: "server-origin",
+            routeScope: .workspace("workspace-origin"),
+            sessionId: "session-origin",
+            path: "/workspace/docs/current.md"
+        ))
+        let controlTarget = try #require(ChatView.currentToolFileTarget(
+            serverId: "server-origin",
+            routeScope: .control,
+            sessionId: "control-session",
+            path: "notes/current.md"
+        ))
+
+        #expect(workspaceTarget.kind == .sessionFile(
+            path: "/workspace/docs/current.md",
+            fileName: "current.md",
+            sessionId: "session-origin"
+        ))
+        #expect(controlTarget.kind == .hostFile(
+            path: "notes/current.md",
+            fileName: "current.md"
+        ))
+        #expect(controlTarget.workspaceId.isEmpty)
+        #expect(controlTarget.controlSessionId == "control-session")
+        let controlContent = WorkspaceLinkedFileDestinationView(target: controlTarget)
+            .debugHostFileContentForTesting(
+                store: .constant(FullScreenMarkdownViewportRestoreState())
+            )
+        #expect(controlContent.debugControlSessionIdForTesting == "control-session")
+        #expect(ChatView.currentToolFileTarget(
+            serverId: "server-origin",
+            routeScope: nil,
+            sessionId: "unknown-session",
+            path: "/tmp/unknown.md"
+        ) == nil)
+    }
+
+    @Test func linkedFileConnectionPhaseSurfacesPreparationFailure() {
+        #expect(WorkspaceLinkedFileConnectionPhase.resolve(
+            preparationSucceeded: false,
+            connectionAvailable: false
+        ) == .failed("Could not connect to this server."))
+        #expect(WorkspaceLinkedFileConnectionPhase.resolve(
+            preparationSucceeded: true,
+            connectionAvailable: false
+        ) == .failed("The server connection is unavailable."))
+        #expect(WorkspaceLinkedFileConnectionPhase.resolve(
+            preparationSucceeded: true,
+            connectionAvailable: true
+        ) == .connected)
+    }
+
+    @Test func currentFileTargetKeepsExactServerWorkspaceSessionAndPath() {
+        let target = WorkspaceLinkedFileNavTarget.sessionFile(
+            serverId: "server-origin",
+            workspaceId: "workspace-origin",
+            sessionId: "session-origin",
+            path: "/workspace/docs/current.md",
+            sourceSessionId: "session-origin"
+        )
+        let destination = WorkspaceLinkedFileDestinationView(target: target)
+        let store = Binding.constant(FullScreenMarkdownViewportRestoreState())
+        let content = destination.debugSessionFileContentForTesting(store: store)
+
+        #expect(target.serverId == "server-origin")
+        #expect(target.workspaceId == "workspace-origin")
+        #expect(target.worktreeId == nil)
+        #expect(target.sourceSessionId == "session-origin")
+        #expect(content.debugServerIdForTesting == "server-origin")
+        #expect(content.debugSessionIdForTesting == "session-origin")
+        #expect(content.debugSourceForTesting == .sessionFile(sessionId: "session-origin"))
+        guard case .sessionFile(let path, let fileName, let sessionId) = target.kind else {
+            Issue.record("Expected exact session file target")
+            return
+        }
+        #expect(path == "/workspace/docs/current.md")
+        #expect(fileName == "current.md")
+        #expect(sessionId == "session-origin")
+    }
+
     @Test func wikiLinkedFileTargetCarriesSourceSessionId() {
         let workspace = WorkspaceLinkedFileNavTarget.workspaceFile(
             serverId: "server-1",

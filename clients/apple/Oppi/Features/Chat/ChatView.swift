@@ -516,6 +516,7 @@ struct ChatView: View {
             quietModeEnabled: compactTurnsEnabled,
             workStripStyle: workStripStyle,
             onFork: forkFromMessage,
+            onOpenCurrentFile: openCurrentToolFile,
             onBackSwipe: navigateBackFromChat,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             topOverlap: timelineTopOverlap,
@@ -523,6 +524,64 @@ struct ChatView: View {
             onVisibleAudioStripItemIDsChange: { ids in
                 visibleAudioStripItemIDs = ids
             }
+        )
+    }
+
+    static func currentToolFileTarget(
+        serverId: String?,
+        routeScope: SessionRouteScope?,
+        sessionId: String,
+        path: String
+    ) -> WorkspaceLinkedFileNavTarget? {
+        guard let serverId, !serverId.isEmpty else { return nil }
+        switch routeScope {
+        case .workspace(let workspaceId) where !workspaceId.isEmpty:
+            return .sessionFile(
+                serverId: serverId,
+                workspaceId: workspaceId,
+                sessionId: sessionId,
+                path: path,
+                sourceSessionId: sessionId
+            )
+        case .control:
+            // Control sessions are owner-host sessions and have no workspace
+            // route. Preserve that declared origin instead of inventing one.
+            return .hostFile(
+                serverId: serverId,
+                workspaceId: "",
+                path: path,
+                sourceSessionId: sessionId,
+                controlSessionId: sessionId
+            )
+        case .workspace, nil:
+            return nil
+        }
+    }
+
+    private func openCurrentToolFile(path: String) {
+        let serverId = serverIdHint ?? connection.currentServerId ?? sessionStore.activeServerId
+        guard let target = Self.currentToolFileTarget(
+            serverId: serverId,
+            routeScope: focusedRouteScope,
+            sessionId: sessionId,
+            path: path
+        ), let serverId else {
+            connection.extensionToast = "Could not open the current file"
+            return
+        }
+
+        NotificationCenter.default.post(
+            name: .workspaceLinkedFileWillOpen,
+            object: sessionId,
+            userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: serverId]
+        )
+        appNavigation.openReferencedWorkspaceLinkedFile(
+            target,
+            sourceSession: WorkspaceSessionNavTarget(
+                serverId: serverId,
+                sessionId: sessionId,
+                routeScope: focusedRouteScope
+            )
         )
     }
 

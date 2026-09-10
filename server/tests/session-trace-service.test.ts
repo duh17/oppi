@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -614,6 +622,8 @@ describe("SessionTraceService", () => {
       { branch: "feature/raw-worktree" },
       { dataDir },
     );
+    mkdirSync(join(workspaceRoot, "notes"), { recursive: true });
+    writeFileSync(join(workspaceRoot, "notes", "hello.txt"), "wrong main checkout bytes\n", "utf8");
     mkdirSync(join(worktree.path, "notes"), { recursive: true });
     writeFileSync(join(worktree.path, "notes", "hello.txt"), "hello from worktree\n", "utf8");
     const session = makeSession({
@@ -628,13 +638,28 @@ describe("SessionTraceService", () => {
     });
     const { service } = makeService({ dataDir, workspace });
 
-    await expect(
-      service.getSessionRawFile({ workspace, session, path: "notes/hello.txt" }),
-    ).resolves.toMatchObject({
+    const result = await service.getSessionRawFile({
+      workspace,
+      session,
+      path: "notes/hello.txt",
+    });
+    expect(result).toMatchObject({
       kind: "ok",
       contentType: "text/plain; charset=utf-8",
       size: 20,
     });
+    if (result.kind !== "ok") throw new Error("Expected worktree file");
+    expect(readFileSync(result.filePath, "utf8")).toBe("hello from worktree\n");
+
+    rmSync(join(worktree.path, "notes", "hello.txt"));
+    await expect(
+      service.getSessionRawFile({ workspace, session, path: "notes/hello.txt" }),
+    ).resolves.toEqual({ kind: "file-not-found" });
+
+    rmSync(worktree.path, { recursive: true, force: true });
+    await expect(
+      service.getSessionRawFile({ workspace, session, path: "notes/hello.txt" }),
+    ).resolves.toEqual({ kind: "workspace-root-not-found" });
   });
 
   it("serves a reported workspace-relative symlink that resolves outside the workspace", async () => {

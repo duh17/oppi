@@ -45,7 +45,7 @@ struct SessionTimelineNavigationTests {
             currentModel: nil, connection: connection, scrollController: scrollController,
             sessionManager: manager, audioLifecycleCoordinator: nil,
             quietModeEnabled: scenario == .quietTool,
-            onFork: { _ in }, onBackSwipe: {}, reviewCommentSelectionRouter: nil,
+            onFork: { _ in }, onOpenCurrentFile: { _ in }, onBackSwipe: {}, reviewCommentSelectionRouter: nil,
             topOverlap: 160, bottomOverlap: 0
         )
         let host = UIHostingController(rootView:

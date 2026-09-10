@@ -379,6 +379,48 @@ struct ToolPresentationConfigTests {
         #expect(config.trailing == "modified")
     }
 
+    @Test func expandedSuccessfulWriteCarriesCompositionOwnedCurrentFileAction() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        harness.reducer.expandedItemIDs.insert("write-current")
+        harness.toolArgsStore.set([
+            "path": .string("docs/current.md"),
+            "content": .string(""),
+        ], for: "write-current")
+        var openedPaths: [String] = []
+        harness.coordinator.onOpenCurrentFile = { openedPaths.append($0) }
+        let item = ChatItem.toolCall(
+            id: "write-current",
+            tool: "write",
+            argsSummary: "path: misleading-fallback.md",
+            outputPreview: "",
+            outputByteCount: 0,
+            isError: false,
+            isDone: true
+        )
+
+        let config = try #require(
+            timelineToolRowConfiguration(
+                from: harness.coordinator.toolRowConfiguration(itemID: item.id, item: item)
+            )
+        )
+        #expect(config.currentFileOpenIntent?.path == "docs/current.md")
+        #expect(config.expandedContent != nil, "Empty writes need a reachable expanded row action")
+        let renderPlan = ToolRowPlanBuilder.build(configuration: config)
+        #expect(renderPlan.interactionSpec.enablesTapCopyGesture)
+        #expect(renderPlan.interactionSpec.enablesPinchGesture)
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
+        view.layoutIfNeeded()
+        #expect(view.activeExpandedSurfaceKindForTesting == .label)
+        #expect(view.expandedTapCopyGestureEnabledForTesting)
+        let pinches = timelineAllViews(in: view).flatMap { $0.gestureRecognizers ?? [] }
+            .compactMap { $0 as? UIPinchGestureRecognizer }
+        #expect(pinches.contains { $0.isEnabled && $0.view?.isHidden == false })
+        #expect(view.contextMenu(for: .expanded)?.children.map(\.title) == ["Open Current File"])
+        view.performExpandedActivation()
+        #expect(openedPaths == ["docs/current.md"])
+    }
+
     @Test func expandedEditToolUsesNativeDiffLines() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
         harness.reducer.expandedItemIDs.insert("edit-diff")

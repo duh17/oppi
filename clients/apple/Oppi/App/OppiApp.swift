@@ -550,6 +550,12 @@ struct OppiApp: App {
                 guard let reference = notification.object as? ResourceReference else { return }
                 startResourceReferenceRequest(reference)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .sessionFileReferenceTapped)) { notification in
+                guard let reference = notification.object as? ResourceReference else { return }
+                Task { @MainActor in
+                    await openSessionFileReference(reference)
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .fileLinkTapped)) { notification in
                 guard let payload = notification.object as? FileLinkPayload else { return }
                 Task { @MainActor in
@@ -720,6 +726,58 @@ struct OppiApp: App {
             return
         }
         await handleIncomingInviteURL(url)
+    }
+
+    static func sessionFileTarget(
+        for reference: ResourceReference
+    ) -> WorkspaceLinkedFileNavTarget? {
+        guard let serverID = reference.sourceServerID,
+              let workspaceID = reference.workspaceID,
+              let sessionID = reference.sourceSessionID,
+              let path = reference.fileCandidatePath,
+              !serverID.isEmpty,
+              !workspaceID.isEmpty,
+              !sessionID.isEmpty,
+              !path.isEmpty else {
+            return nil
+        }
+        return .sessionFile(
+            serverId: serverID,
+            workspaceId: workspaceID,
+            sessionId: sessionID,
+            path: path,
+            lineAnchor: reference.lineAnchor,
+            sourceSessionId: sessionID
+        )
+    }
+
+    @MainActor
+    private func openSessionFileReference(_ reference: ResourceReference) async {
+        guard let target = Self.sessionFileTarget(for: reference) else {
+            connection.extensionToast = "Could not open this session file"
+            return
+        }
+        guard await coordinator.switchToServerReady(target.serverId) else {
+            connection.extensionToast = "Could not open the server for this session file"
+            return
+        }
+        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate {
+            NotificationCenter.default.post(
+                name: .workspaceLinkedFileWillOpen,
+                object: target.sourceSessionId,
+                userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: target.serverId]
+            )
+            navigation.openReferencedWorkspaceLinkedFile(
+                target,
+                sourceSession: target.sourceSessionId.map {
+                    WorkspaceSessionNavTarget(
+                        serverId: target.serverId,
+                        sessionId: $0,
+                        workspaceId: target.workspaceId
+                    )
+                }
+            )
+        }
     }
 
     @MainActor

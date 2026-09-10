@@ -101,6 +101,7 @@ struct ChatTimelineView: View {
     var quietModeEnabled: Bool = false
     var workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons
     let onFork: (String) -> Void
+    let onOpenCurrentFile: (String) -> Void
     let onBackSwipe: () -> Void
     let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let topOverlap: CGFloat
@@ -230,6 +231,7 @@ struct ChatTimelineView: View {
                 agentIcon: agentIcon,
                 routeScope: routeScope,
                 onFork: onFork,
+                onOpenCurrentFile: onOpenCurrentFile,
                 onBackSwipe: onBackSwipe,
                 onQuietWorkLineToggle: { turnID in
                     expandedQuietTurnIDs.formSymmetricDifference([turnID])

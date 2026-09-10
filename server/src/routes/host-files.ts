@@ -2,8 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createReadStream, constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { extname, isAbsolute } from "node:path";
+import { extname, isAbsolute, resolve } from "node:path";
 
+import { isDeclaredControlSession } from "../control-session.js";
 import { listDirectoryEntries } from "../directory-listing.js";
 import {
   decodeWorkspaceRoutePath,
@@ -16,8 +17,9 @@ import {
 import { encodeHostResolvedPathHeader, expandExactHostPath } from "../host-file-path.js";
 import { logRejectedByteRange, parseByteRangeHeader } from "../http-range.js";
 import { createLogger, type Logger } from "../logger.js";
+import { resolveSdkSessionCwd } from "../sdk-backend.js";
 import type { DirectoryListingResponse } from "../types.js";
-import type { RouteDispatcher, RouteHelpers } from "./types.js";
+import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export interface HostFileRouteOptions {
   logger?: Logger;
@@ -47,7 +49,7 @@ function pipeFileStream(
 }
 
 export function createHostFileRoutes(
-  _ctx: unknown,
+  ctx: RouteContext,
   helpers: RouteHelpers,
   options: HostFileRouteOptions = {},
 ): RouteDispatcher {
@@ -61,7 +63,7 @@ export function createHostFileRoutes(
       if (normalizedMethod !== "GET" && normalizedMethod !== "HEAD") {
         return false;
       }
-      await handleHostRawFile(normalizedMethod, url, req, res, helpers, log, homeDir);
+      await handleHostRawFile(normalizedMethod, url, req, res, helpers, log, ctx, homeDir);
       return true;
     }
 
@@ -119,6 +121,35 @@ async function handleListHostDirectory(
   helpers.json(res, response);
 }
 
+function resolveRequestedHostPath(
+  requestedPath: string,
+  controlSessionId: string | null,
+  ctx: RouteContext,
+  homeDir: string | undefined,
+): string | null {
+  const exactHostPath = expandExactHostPath(requestedPath, { homeDir });
+  if (exactHostPath) return exactHostPath;
+
+  // Relative paths have meaning only when the caller names an existing,
+  // declared control session. All control sessions share this dedicated cwd.
+  if (!controlSessionId || !requestedPath || requestedPath.includes("\0")) return null;
+  if (requestedPath.startsWith("~") || requestedPath.toLowerCase().startsWith("file:")) {
+    return null;
+  }
+  const session = ctx.storage.getSession(controlSessionId);
+  if (!session || !isDeclaredControlSession(session)) return null;
+  try {
+    return resolve(
+      resolveSdkSessionCwd(undefined, session, { dataDir: ctx.storage.getDataDir() }),
+      requestedPath,
+    );
+  } catch {
+    // The runtime rejects symlinked/non-directory control roots. File reads
+    // must reject the same invalid origin, not follow it to alternate bytes.
+    return null;
+  }
+}
+
 async function handleHostRawFile(
   method: string,
   url: URL,
@@ -126,6 +157,7 @@ async function handleHostRawFile(
   res: ServerResponse,
   helpers: RouteHelpers,
   log: Logger,
+  ctx: RouteContext,
   homeDir: string | undefined,
 ): Promise<void> {
   let status = 404;
@@ -138,7 +170,12 @@ async function handleHostRawFile(
 
   try {
     const requestedPath = url.searchParams.get("path") ?? "";
-    const expanded = expandExactHostPath(requestedPath, { homeDir });
+    const expanded = resolveRequestedHostPath(
+      requestedPath,
+      url.searchParams.get("controlSessionId"),
+      ctx,
+      homeDir,
+    );
     if (!expanded) {
       helpers.error(res, 404, "File not found");
       finish(404);
