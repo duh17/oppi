@@ -373,7 +373,7 @@ enum AppleOnDeviceSpeechSettings {
     )
 }
 
-private enum TranscriberModule {
+enum TranscriberModule {
     case speech(SpeechTranscriber)
     case dictation(DictationTranscriber)
 
@@ -388,7 +388,7 @@ private enum TranscriberModule {
 }
 
 @MainActor
-private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
+final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
     let audioLevels: AsyncStream<Float>
 
@@ -400,9 +400,11 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
 
     private var analyzer: SpeechAnalyzer?
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
-    private var audioCapture: AudioEngineHelper.RunningCapture?
+    private var audioCapture: (any OnDeviceAudioCapture)?
     private var resultsTask: Task<Void, Never>?
     private var audioLevelTask: Task<Void, Never>?
+    private var hasCapturedAudio = false
+    private var stopped = false
 
     init(
         transcriber: TranscriberModule,
@@ -464,12 +466,12 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         guard let inputBuilder else {
             throw VoiceInputError.internalError("Input builder not initialized")
         }
-        let capture = try AudioEngineHelper.startEngine(
-            inputBuilder: inputBuilder,
-            targetFormat: preferredAudioFormat
-        )
-        audioCapture = capture
-        startAudioLevelBridge(capture.audioLevels)
+        try await startAudioCapture {
+            try AudioEngineHelper.startEngine(
+                inputBuilder: inputBuilder,
+                targetFormat: self.preferredAudioFormat
+            )
+        }
         let audioStartMs = audioStart.elapsedMs()
 
         return VoiceSessionStartTimings(
@@ -478,7 +480,34 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         )
     }
 
+    func startAudioCapture(
+        makeCapture: () throws -> any OnDeviceAudioCapture,
+        sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) async throws {
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: {
+                self.hasCapturedAudio = false
+                let capture = try makeCapture()
+                self.audioCapture = capture
+                self.startAudioLevelBridge(capture.audioLevels)
+            },
+            hasAudio: { self.hasCapturedAudio },
+            isRunning: { self.audioCapture?.isRunning == true },
+            stop: {
+                self.audioLevelTask?.cancel()
+                self.audioLevelTask = nil
+                // Keep the analyzer sequence open for the bounded same-route retry.
+                self.audioCapture?.stop()
+                self.audioCapture = nil
+            },
+            isCancelled: { self.stopped },
+            sleep: sleep
+        )
+    }
+
     func stop() async {
+        guard !stopped else { return }
+        stopped = true
         audioCapture?.stopAndFinishInput(flush: true)
         audioCapture = nil
 
@@ -493,6 +522,8 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     }
 
     func cancel() async {
+        guard !stopped else { return }
+        stopped = true
         audioCapture?.stopAndFinishInput(flush: false)
         audioCapture = nil
 
@@ -503,6 +534,7 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         await analyzer?.cancelAndFinishNow()
 
         analyzer = nil
+        inputBuilder?.finish()
         inputBuilder = nil
         eventContinuation.finish()
         audioLevelContinuation.finish()
@@ -549,9 +581,11 @@ private final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         audioLevelTask = Task {
             for await level in levelStream {
                 guard !Task.isCancelled else { break }
+                hasCapturedAudio = true
                 audioLevelContinuation.yield(level)
             }
-            audioLevelContinuation.finish()
+            // A failed capture attempt can end its levels before retry. Only
+            // session stop/cancel may finish the public level stream.
         }
     }
 

@@ -34,6 +34,43 @@ struct AuthenticatedMediaPlaybackAudioTests {
         #expect(!didReplacePlayback)
     }
 
+    @Test("mounting an authenticated player does not acquire the audio session")
+    func mountingDoesNotReplaceCaptureCategory() throws {
+        let audio = AVAudioSession.sharedInstance()
+        let previousCategory = audio.category
+        let previousMode = audio.mode
+        let previousOptions = audio.categoryOptions
+        defer { try? audio.setCategory(previousCategory, mode: previousMode, options: previousOptions) }
+        try audio.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
+        let session = AuthenticatedMediaPlaybackSession(source: dummyMediaSource())
+        defer { session.teardown() }
+        #expect(audio.category == .playAndRecord)
+        #expect(audio.categoryOptions.contains(.allowBluetoothHFP))
+    }
+
+    @Test("playback preparation cannot take the route while dictation is active")
+    func playbackPreparationRespectsCaptureOwner() throws {
+        let manager = VoiceInputManager.shared
+        let previousState = manager.state
+        let audio = AVAudioSession.sharedInstance()
+        let previousCategory = audio.category
+        let previousMode = audio.mode
+        let previousOptions = audio.categoryOptions
+        defer {
+            manager._testState = previousState
+            try? audio.setCategory(previousCategory, mode: previousMode, options: previousOptions)
+        }
+        for state: VoiceInputManager.State in [.preparingModel, .recording, .processing] {
+            manager._testState = state
+            try audio.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
+            #expect(!MediaPlaybackAudioSession.prepareSharedSession())
+            #expect(audio.category == .playAndRecord)
+        }
+        manager._testState = .idle
+        #expect(MediaPlaybackAudioSession.prepareSharedSession())
+        #expect(audio.category == .playback)
+    }
+
     @Test("muted output is silent and unmute restores the previous volume")
     func mutePolicyZerosVolumeAndRestoresPrevious() {
         let muted = MediaPlaybackMutePolicy.appliedVolume(

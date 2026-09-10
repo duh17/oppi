@@ -949,6 +949,10 @@ final class VoiceInputManager {
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
         let engine = await effectiveEngine(for: locale)
+        guard activeStartRequestID == requestID, state == .preparingModel else {
+            ownsOperation = false
+            throw CancellationError()
+        }
         dictationSessionStart = startTime
         activeEngine = engine
         beginPlaybackCaptureInterruptionIfNeeded()
@@ -973,6 +977,10 @@ final class VoiceInputManager {
             }
         }
 
+        guard activeStartRequestID == requestID, state == .preparingModel else {
+            ownsOperation = false
+            throw CancellationError()
+        }
         let metricAnnotation = VoiceMetricAnnotation(
             engine: engine.logName,
             locale: localeID,
@@ -1291,6 +1299,7 @@ final class VoiceInputManager {
         _ session: any VoiceTranscriptionSession,
         metricAnnotation: VoiceMetricAnnotation
     ) {
+        let requestID = activeStartRequestID
         sessionMonitor.bind(
             session: session,
             recordingStartTime: ContinuousClock.now,
@@ -1322,13 +1331,23 @@ final class VoiceInputManager {
             onError: { [weak self] error in
                 guard let self else { return }
                 Task { @MainActor [weak self] in
-                    await self?.handleSessionStreamError(error, annotation: metricAnnotation)
+                    guard let self, self.activeStartRequestID == requestID else { return }
+                    await self.handleSessionStreamError(error, annotation: metricAnnotation)
                 }
             }
         )
     }
 
     // MARK: - Setup
+
+    /// Media preparation must consult the capture owner, not infer ownership
+    /// from AVAudioSession.category (which persists after deactivation).
+    var ownsCaptureAudioSession: Bool {
+        switch state {
+        case .preparingModel, .recording, .processing: true
+        case .idle, .error: false
+        }
+    }
 
     private func setupAudioSession() throws {
         try systemAccess.activateAudioSession()
@@ -1351,7 +1370,7 @@ final class VoiceInputManager {
                 as? AVAudioSessionRouteDescription
             let previousHadBluetooth = previous.map(Self.routeHasBluetooth(_:)) ?? false
             Task { @MainActor in
-                self?.handleLostBluetoothRoute(
+                await self?.handleLostBluetoothRoute(
                     rawReason: rawReason,
                     previousHadBluetooth: previousHadBluetooth
                 )
@@ -1359,7 +1378,7 @@ final class VoiceInputManager {
         }
     }
 
-    private func handleLostBluetoothRoute(rawReason: UInt?, previousHadBluetooth: Bool) {
+    func handleLostBluetoothRoute(rawReason: UInt?, previousHadBluetooth: Bool) async {
         let reason = rawReason.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
         guard Self.shouldAbandonCaptureForRouteChange(
             reason: reason,
@@ -1367,9 +1386,30 @@ final class VoiceInputManager {
         ) else {
             return
         }
-        logger.warning("Bluetooth audio route lost; abandoning dictation if active")
         guard state == .recording || state == .preparingModel else { return }
-        Task { await self.cancelRecording() }
+        logger.warning("Bluetooth audio route lost; failing the interrupted take")
+        // Invalidate startup before the first suspension: its completion must
+        // neither announce recording nor retry on the built-in mic. Keep the
+        // capture state occupied until cancellation releases the hardware.
+        state = .processing
+        clearActiveStartIdentity()
+        if let activeEngine {
+            try? provider(for: activeEngine).cancelPreparation()
+        }
+        if let annotation = activeMetricAnnotation {
+            recordDictationCountMetric(
+                .dictationError, value: 1, annotation: annotation, status: "error",
+                extraTags: ["phase": "capture", "error_kind": "bluetooth_route_lost"]
+            )
+        }
+        await sessionMonitor.cancel()
+        deactivateAudioSession()
+        teardownSession()
+        endPlaybackCaptureInterruptionIfNeeded()
+        operationInFlight = false
+        // Do not auto-dismiss: the interrupted take was not successfully
+        // recovered or finalized. The existing mic action accepts .error retry.
+        state = .error("Bluetooth microphone disconnected. This take was discarded. Reconnect or use the built-in microphone, then try dictation again.")
     }
 
     nonisolated static func routeHasBluetooth(_ route: AVAudioSessionRouteDescription) -> Bool {
@@ -1519,9 +1559,12 @@ final class VoiceInputManager {
     }
 
     private func scheduleErrorReset() {
+        let failedState = state
+        let failedRequestGeneration = nextStartRequestID
         Task {
             try? await Task.sleep(for: .seconds(3))
-            if case .error = state {
+            // A prior take's timer must not dismiss a newer route-loss error.
+            if state == failedState, nextStartRequestID == failedRequestGeneration {
                 state = .idle
             }
         }

@@ -8,22 +8,44 @@ private protocol AnalyzerInputFeeding: AnyObject {
     func flush()
 }
 
+protocol OnDeviceAudioCapture: AnyObject {
+    var audioLevels: AsyncStream<Float> { get }
+    var isRunning: Bool { get }
+    func stop()
+    func stopAndFinishInput(flush: Bool)
+}
+
 enum AudioEngineHelper {
-    final class RunningCapture {
+    final class RunningCapture: OnDeviceAudioCapture {
         let engine: AVAudioEngine
         let audioLevels: AsyncStream<Float>
         private let feed: any AnalyzerInputFeeding
         private let inputBuilder: AsyncStream<AnalyzerInput>.Continuation
+        private let levelContinuation: AsyncStream<Float>.Continuation
         private var didFinish = false
+        private var didStop = false
+
+        var isRunning: Bool { engine.isRunning }
+
+        /// A failed startup attempt must not finish the analyzer's input stream.
+        func stop() {
+            guard !didStop else { return }
+            didStop = true
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            levelContinuation.finish()
+        }
 
         fileprivate init(
             engine: AVAudioEngine,
             audioLevels: AsyncStream<Float>,
+            levelContinuation: AsyncStream<Float>.Continuation,
             feed: any AnalyzerInputFeeding,
             inputBuilder: AsyncStream<AnalyzerInput>.Continuation
         ) {
             self.engine = engine
             self.audioLevels = audioLevels
+            self.levelContinuation = levelContinuation
             self.feed = feed
             self.inputBuilder = inputBuilder
         }
@@ -33,8 +55,7 @@ enum AudioEngineHelper {
         func stopAndFinishInput(flush: Bool) {
             guard !didFinish else { return }
             didFinish = true
-            engine.inputNode.removeTap(onBus: 0)
-            engine.stop()
+            stop()
             if flush {
                 feed.flush()
             }
@@ -42,7 +63,13 @@ enum AudioEngineHelper {
         }
 
         deinit {
-            stopAndFinishInput(flush: false)
+            // Do not finish input here: a retry can replace this capture while
+            // the same analyzer still owns the sequence.
+            if !didStop {
+                engine.inputNode.removeTap(onBus: 0)
+                engine.stop()
+            }
+            levelContinuation.finish()
         }
     }
 
@@ -64,6 +91,7 @@ enum AudioEngineHelper {
         let (levelStream, levelContinuation) = AsyncStream.makeStream(of: Float.self)
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, time in
+            guard buffer.frameLength > 0 else { return }
             if let channelData = buffer.floatChannelData?[0] {
                 let frameLength = UInt(buffer.frameLength)
                 var rms: Float = 0
@@ -90,6 +118,7 @@ enum AudioEngineHelper {
         return RunningCapture(
             engine: engine,
             audioLevels: levelStream,
+            levelContinuation: levelContinuation,
             feed: feed,
             inputBuilder: inputBuilder
         )

@@ -558,6 +558,140 @@ struct VoiceInputManagerTests {
         #endif
     }
 
+    @Test func bluetoothRouteLossSurfacesFailureAndAllowsExplicitRetry() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let access = MockVoiceInputSystemAccess()
+        let playback = MockVoicePlaybackInterrupter()
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        manager.setPlaybackInterrupter(playback)
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        await manager.handleLostBluetoothRoute(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true
+        )
+        if case .error(let message) = manager.state {
+            #expect(message.contains("Bluetooth"))
+            #expect(message.contains("try"))
+            #expect(message.contains("discarded"))
+        } else {
+            Issue.record("Lost capture must end in an explicit error, got \(manager.state)")
+        }
+        #expect(session.cancelCallCount == 1)
+        #expect(access.deactivateAudioSessionCallCount == 1)
+        #expect(playback.endCaptureInterruptionCallCount == 1)
+        #expect(manager.activeRecordingSource == nil)
+        #expect(!manager._testOperationInFlight)
+        let retry = MockVoiceSession()
+        provider.makeSessionHandler = { _, _ in retry }
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "retry")
+        #expect(manager.state == .recording)
+        await manager.cancelRecording()
+    }
+
+    @Test func routeLossDuringStartupCannotBecomeRecordingOrFallback() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let access = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let entered = AsyncGate()
+        let resume = AsyncGate()
+        session.startHandler = { await entered.open(); await resume.wait() }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        let start = Task { try await manager.startRecording(keyboardLanguage: "en-US", source: "test") }
+        await entered.wait()
+        await manager.handleLostBluetoothRoute(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true
+        )
+        await resume.open()
+        _ = try? await start.value
+        if case .error = manager.state {} else { Issue.record("Route loss was hidden: \(manager.state)") }
+        #expect(session.cancelCallCount == 1)
+        #expect(access.activateBuiltInAudioSessionCallCount == 0)
+        #expect(!manager._testOperationInFlight)
+    }
+
+    @Test func routeLossOwnsCleanupUntilCancelledAndIgnoresDuplicateNotification() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let access = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let cancelEntered = AsyncGate()
+        let finishCancel = AsyncGate()
+        session.cancelHandler = { await cancelEntered.open(); await finishCancel.wait() }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        let loss = Task {
+            await manager.handleLostBluetoothRoute(
+                rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+                previousHadBluetooth: true
+            )
+        }
+        await cancelEntered.wait()
+        #expect(manager.ownsCaptureAudioSession)
+        #expect(access.deactivateAudioSessionCallCount == 0)
+        await #expect(throws: VoiceInputError.self) {
+            try await manager.startRecording(keyboardLanguage: "en-US", source: "too-early")
+        }
+        await manager.handleLostBluetoothRoute(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true
+        )
+        #expect(session.cancelCallCount == 1)
+        await finishCancel.open()
+        await loss.value
+        #expect(!manager.ownsCaptureAudioSession)
+        #expect(access.deactivateAudioSessionCallCount == 1)
+        if case .error = manager.state {} else { Issue.record("Lost route must stay explicit") }
+    }
+
+    @Test func retiredStartupCannotOverwriteRetryAfterRouteLoss() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let access = MockVoiceInputSystemAccess()
+        let old = MockVoiceSession()
+        let entered = AsyncGate()
+        let resume = AsyncGate()
+        old.startHandler = { await entered.open(); await resume.wait() }
+        old.startError = TestVoiceError("late old capture failure")
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in old }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        let start = Task { try await manager.startRecording(keyboardLanguage: "en-US", source: "old") }
+        await entered.wait()
+        await manager.handleLostBluetoothRoute(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true
+        )
+        let retry = MockVoiceSession()
+        provider.makeSessionHandler = { _, _ in retry }
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "retry")
+        await resume.open()
+        _ = try? await start.value
+        #expect(manager.state == .recording)
+        #expect(manager.activeRecordingSource == "retry")
+        #expect(retry.cancelCallCount == 0)
+        #expect(access.activateBuiltInAudioSessionCallCount == 0)
+        #expect(access.deactivateAudioSessionCallCount == 1)
+        await manager.cancelRecording()
+    }
+
     @Test func startRecordingStopsActivePlaybackBeforeAudioSessionActivationAndCapture() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }

@@ -1009,10 +1009,8 @@ final class AuthenticatedMediaPlaybackSession {
         // Custom resource-loader assets should not wait to minimize stalling;
         // AVPlayer cannot see the real network buffer behind oppi-media://.
         player.automaticallyWaitsToMinimizeStalling = false
-        // Dictation leaves playAndRecord + HFP selected after deactivate.
-        // AVKit mute/volume then bind to call audio, so AirPods can keep
-        // playing while the chrome shows muted.
-        MediaPlaybackAudioSession.prepareSharedSession()
+        // Mounting/render-ahead is not playback intent. In particular it must
+        // not replace a live dictation route with .playback.
         observeMute()
         observeStalls(kind: MediaPlaybackTelemetry.mediaKind(
             mimeType: source.contentTypeHint,
@@ -1057,9 +1055,14 @@ final class AuthenticatedMediaPlaybackSession {
     }
 
     private func handleTimeControlChange(_ status: AVPlayer.TimeControlStatus, kind: String) {
+        if status == .playing || status == .waitingToPlayAtSpecifiedRate {
+            guard MediaPlaybackAudioSession.prepareSharedSession() else {
+                player.pause()
+                return
+            }
+        }
         if status == .playing {
             hasStartedPlaying = true
-            MediaPlaybackAudioSession.prepareSharedSession()
             return
         }
         guard hasStartedPlaying, status == .waitingToPlayAtSpecifiedRate else { return }
@@ -1212,18 +1215,22 @@ enum MediaPlaybackAudioSession {
     }
 
     @MainActor
-    static func prepareSharedSession() {
+    @discardableResult
+    static func prepareSharedSession() -> Bool {
+        guard !VoiceInputManager.shared.ownsCaptureAudioSession else { return false }
         let session = AVAudioSession.sharedInstance()
         do {
             try prepare(currentCategory: session.category) { category, mode, options in
                 try session.setCategory(category, mode: mode, options: options)
             }
+            return true
         } catch {
             ClientLog.warning(
                 "MediaPlayback",
                 "Could not configure playback audio session",
                 metadata: ["error": error.localizedDescription]
             )
+            return false
         }
     }
 }
