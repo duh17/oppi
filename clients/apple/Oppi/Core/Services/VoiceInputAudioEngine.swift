@@ -76,7 +76,16 @@ enum AudioEngineHelper {
         }
 
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // RunningCapture hasn't taken ownership yet; release the failed
+            // engine's tap and hardware before the manager retries capture.
+            inputNode.removeTap(onBus: 0)
+            engine.stop()
+            levelContinuation.finish()
+            throw error
+        }
 
         return RunningCapture(
             engine: engine,

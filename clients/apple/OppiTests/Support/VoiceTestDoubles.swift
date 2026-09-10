@@ -11,6 +11,7 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
     var requestMicPermissionCallCount = 0
     var requestMicPermissionHandler: (@MainActor () async -> Bool)?
     var activateAudioSessionCallCount = 0
+    var activateBuiltInAudioSessionCallCount = 0
     var deactivateAudioSessionCallCount = 0
     var activateAudioSessionError: Error?
     var onActivateAudioSession: (() -> Void)?
@@ -34,6 +35,11 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
         if let activateAudioSessionError {
             throw activateAudioSessionError
         }
+    }
+
+    func activateBuiltInAudioSession() throws {
+        activateBuiltInAudioSessionCallCount += 1
+        try activateAudioSession()
     }
 
     func deactivateAudioSession() {

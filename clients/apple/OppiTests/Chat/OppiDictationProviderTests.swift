@@ -492,6 +492,7 @@ private struct MockSystemAccess: VoiceInputSystemAccessing {
     func requestPermissions() async -> Bool { hasPermissions }
     func requestMicPermission() async -> Bool { hasPermissions }
     func activateAudioSession() throws {}
+    func activateBuiltInAudioSession() throws {}
     func deactivateAudioSession() {}
 }
 
@@ -674,6 +675,28 @@ struct OppiDictationProviderLifecycleTests {
 
         // Cleanup
         provider.invalidateCache()
+    }
+
+    @Test func cancelledTakeCanBeRepreparedWithFreshTransport() async throws {
+        let (context, _) = Self.makeContextWithConnection()
+        let provider = OppiDictationProvider()
+        let firstTransport = installTestDictationTransport(on: provider)
+        let firstPreparation = try await provider.prepareSession(context: context)
+        let first = try provider.makeSession(context: context, preparation: firstPreparation)
+        #expect(await waitForMainActorCondition { !firstTransport.sentMessages.isEmpty })
+        await first.cancel()
+        provider.cancelPreparation()
+        #expect(firstTransport.closeCount == 1)
+
+        let secondTransport = installTestDictationTransport(on: provider)
+        let secondPreparation = try await provider.prepareSession(context: context)
+        let second = try provider.makeSession(context: context, preparation: secondPreparation)
+        #expect(await waitForMainActorCondition { !secondTransport.sentMessages.isEmpty })
+        #expect(secondTransport.closeCount == 0)
+        #expect(firstTransport.closeCount == 1)
+        await second.cancel()
+        provider.cancelPreparation()
+        #expect(secondTransport.closeCount == 1)
     }
 
     @Test func makeSessionThrowsWhenConnectionMissing() async throws {

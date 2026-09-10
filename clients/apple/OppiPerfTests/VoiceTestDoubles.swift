@@ -30,6 +30,10 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
         }
     }
 
+    func activateBuiltInAudioSession() throws {
+        try activateAudioSession()
+    }
+
     func deactivateAudioSession() {
         deactivateAudioSessionCallCount += 1
     }

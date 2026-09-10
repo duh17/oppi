@@ -463,7 +463,16 @@ enum DictationAudioEngineHelper {
         }
 
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // The session doesn't own this engine until we return. Tear down
+            // partial capture here so a fallback can acquire the microphone.
+            inputNode.removeTap(onBus: 0)
+            engine.stop()
+            levelContinuation.finish()
+            throw error
+        }
         return (engine, levelStream)
     }
 }

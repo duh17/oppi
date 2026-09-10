@@ -900,6 +900,88 @@ struct VoiceInputManagerTests {
         }())
     }
 
+    @Test func serverCaptureStartFailureRetriesWithFreshPreparation() async throws {
+        let systemAccess = MockVoiceInputSystemAccess()
+        let firstSession = MockVoiceSession()
+        // Exact error reported by Duh Ifone, from AVAudioEngine.start().
+        firstSession.startError = NSError(domain: "com.apple.coreaudio.avfaudio", code: 1936094051)
+        let secondSession = MockVoiceSession()
+        var sessions = [firstSession, secondSession]
+        let provider = MockVoiceProvider(id: .oppiServer, engine: .serverDictation)
+        provider.makeSessionHandler = { _, _ in sessions.removeFirst() }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.remote)
+        manager.setServerCredentials(ServerCredentials(
+            host: "localhost", port: 7749, token: "test-token", name: "test", scheme: .http
+        ))
+        manager.setServerConnection(ServerConnection())
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "inline_mic_tap")
+
+        #expect(manager.state == .recording)
+        #expect(manager.activeEngine == .serverDictation)
+        #expect(systemAccess.activateBuiltInAudioSessionCallCount == 1)
+        #expect(provider.prepareSessionCallCount == 2, "A cancelled remote take cannot reuse its readiness task or stream")
+        #expect(provider.makeSessionCallCount == 2)
+        #expect(firstSession.cancelCallCount == 1)
+        #expect(secondSession.startCallCount == 1)
+        #expect(systemAccess.activateAudioSessionCallCount == 2)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
+        await manager.cancelRecording()
+    }
+
+    @Test(arguments: [true, false])
+    func remoteCaptureRetryIsBoundedAndDoesNotRetryNetworkErrors(isAudioError: Bool) async {
+        let systemAccess = MockVoiceInputSystemAccess()
+        let provider = MockVoiceProvider(id: .oppiServer, engine: .serverDictation)
+        provider.makeSessionHandler = { _, _ in
+            let session = MockVoiceSession()
+            session.startError = isAudioError
+                ? NSError(domain: "com.apple.coreaudio.avfaudio", code: 1936094051)
+                : NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+            return session
+        }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.remote)
+        manager.setServerCredentials(ServerCredentials(
+            host: "localhost", port: 7749, token: "test-token", name: "test", scheme: .http
+        ))
+        manager.setServerConnection(ServerConnection())
+        await #expect(throws: NSError.self) { try await manager.startRecording(source: "test") }
+        #expect(provider.prepareSessionCallCount == (isAudioError ? 2 : 1))
+        #expect(provider.makeSessionCallCount == (isAudioError ? 2 : 1))
+        #expect(systemAccess.activateBuiltInAudioSessionCallCount == (isAudioError ? 1 : 0))
+        #expect(!manager.isRecording)
+        #expect(!manager._testOperationInFlight)
+        #expect(manager.activeRecordingSource == nil)
+    }
+
+    @Test func cancelledCaptureStartDoesNotRetry() async throws {
+        let systemAccess = MockVoiceInputSystemAccess()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        provider.makeSessionHandler = { _, _ in
+            let session = MockVoiceSession()
+            session.startError = CancellationError()
+            return session
+        }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.onDevice)
+        try await manager.startRecording(source: "test")
+        #expect(manager.state == .idle)
+        #expect(provider.makeSessionCallCount == 1)
+        #expect(systemAccess.activateBuiltInAudioSessionCallCount == 0)
+        #expect(!manager._testOperationInFlight)
+    }
+
     @Test func startRecordingRetriesOnDeviceSessionStartAfterAudioReset() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }

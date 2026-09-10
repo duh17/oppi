@@ -92,7 +92,10 @@ struct VoiceInputAudioRoutePlannerTests {
         var categories: [AVAudioSession.CategoryOptions] = []
         var activations: [Bool] = []
         let fallback = try VoiceInputSystemAccess.configureAndActivate(
-            setCategory: { categories.append($0) },
+            setCategory: { mode, options in
+                #expect(mode == .default)
+                categories.append(options)
+            },
             setActive: { active, options in
                 activations.append(active)
                 #expect(options.isEmpty)
@@ -103,6 +106,27 @@ struct VoiceInputAudioRoutePlannerTests {
         #expect(activations == [true])
     }
 
+    @Test @MainActor func captureFallbackStartsDirectlyWithMeasurementAndNoBluetooth() throws {
+        var activationCount = 0
+        var categoryCount = 0
+        let fallback = try VoiceInputSystemAccess.configureAndActivate(
+            preferBuiltIn: true,
+            setCategory: { mode, options in
+                categoryCount += 1
+                #expect(mode == .measurement)
+                #expect(options.isEmpty)
+            },
+            setActive: { active, options in
+                activationCount += 1
+                #expect(active)
+                #expect(options.isEmpty)
+            }
+        )
+        #expect(fallback)
+        #expect(categoryCount == 1)
+        #expect(activationCount == 1)
+    }
+
     // These exercise the production sequence, not a disconnected list of action
     // names. setCategory itself can throw before we ever get to setActive.
     @Test(arguments: [true, false]) @MainActor
@@ -111,7 +135,8 @@ struct VoiceInputAudioRoutePlannerTests {
         var categories: [AVAudioSession.CategoryOptions] = []
         var activationAttempts = 0
         let fallback = try VoiceInputSystemAccess.configureAndActivate(
-            setCategory: { options in
+            setCategory: { mode, options in
+                #expect(mode == (options.isEmpty ? .measurement : .default))
                 categories.append(options)
                 events.append(options.isEmpty ? "builtInCategory" : "bluetoothCategory")
                 if failCategory && !options.isEmpty { throw TestVoiceError("category rejected") }
@@ -137,7 +162,8 @@ struct VoiceInputAudioRoutePlannerTests {
         var categories: [AVAudioSession.CategoryOptions] = []
         #expect(throws: TestVoiceError.self) {
             try VoiceInputSystemAccess.configureAndActivate(
-                setCategory: { options in
+                setCategory: { mode, options in
+                    #expect(mode == (options.isEmpty ? .measurement : .default))
                     categories.append(options)
                     if failCategory { throw TestVoiceError("no category") }
                 },

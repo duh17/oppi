@@ -1215,7 +1215,7 @@ final class VoiceInputManager {
         var timings = StartupTimings()
 
         let modelPhaseStart = ContinuousClock.now
-        let preparation = try await provider.prepareSession(context: context)
+        var preparation = try await provider.prepareSession(context: context)
         try ensureStartRequestActive(requestID)
 
         modelPathTag = preparation.pathTag
@@ -1236,17 +1236,42 @@ final class VoiceInputManager {
         do {
             sessionTimings = try await session.start()
         } catch {
-            guard provider.engine != .serverDictation else { throw error }
-            logger.error("On-device voice session start failed; retrying after audio session reset: \(error.localizedDescription, privacy: .public)")
-            await sessionMonitor.cancel()
-            deactivateAudioSession()
+            if error is CancellationError { throw error }
             try ensureStartRequestActive(requestID)
+            let failure = error as NSError
+            // Remote ASR still captures locally. Its AVAudioEngine can fail
+            // after activation succeeded, so activation-only fallback misses it.
+            // Never retry a server/network error as an audio route failure.
+            guard provider.engine != .serverDictation
+                || failure.domain == "com.apple.coreaudio.avfaudio" else { throw error }
+            ClientLog.error("VoiceInput", "Capture start failed; retrying built-in microphone", metadata: [
+                "phase": "capture_start",
+                "engine": provider.engine.logName,
+                "errorDomain": failure.domain,
+                "errorCode": String(failure.code),
+            ])
+            await sessionMonitor.cancel()
+            try ensureStartRequestActive(requestID)
+            deactivateAudioSession()
+            try systemAccess.activateBuiltInAudioSession()
+            // Preferred-input/data-source changes can reconfigure hardware.
+            // Build the new engine only after the reset's settling interval.
             try await Task.sleep(for: .milliseconds(250))
             try ensureStartRequestActive(requestID)
 
+            if provider.engine == .serverDictation {
+                // makeSession consumes the readiness task and recording stream.
+                // Cancellation invalidated both; a fresh engine needs a fresh take.
+                provider.cancelPreparation()
+                preparation = try await provider.prepareSession(context: context)
+                try ensureStartRequestActive(requestID)
+                modelPathTag = preparation.pathTag
+                timings.pathTag = preparation.pathTag
+                timings.providerTags = preparation.setupMetricTags
+            }
+            timings.providerTags["audio_route"] = "built_in_fallback"
             session = try provider.makeSession(context: context, preparation: preparation)
             bindSessionMonitor(session, metricAnnotation: metricAnnotation)
-            try setupAudioSession()
             sessionTimings = try await session.start()
         }
         try ensureStartRequestActive(requestID)

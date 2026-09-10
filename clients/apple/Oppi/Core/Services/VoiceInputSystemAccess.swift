@@ -12,6 +12,7 @@ protocol VoiceInputSystemAccessing {
     func requestPermissions() async -> Bool
     func requestMicPermission() async -> Bool
     func activateAudioSession() throws
+    func activateBuiltInAudioSession() throws
     func deactivateAudioSession()
 }
 
@@ -50,11 +51,20 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     }
 
     func activateAudioSession() throws {
+        try activateAudioSession(preferBuiltIn: false)
+    }
+
+    func activateBuiltInAudioSession() throws {
+        try activateAudioSession(preferBuiltIn: true)
+    }
+
+    private func activateAudioSession(preferBuiltIn: Bool) throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         let usedBuiltInFallback = try Self.configureAndActivate(
-            setCategory: { options in
-                try session.setCategory(Self.recordingCategory, mode: Self.recordingMode, options: options)
+            preferBuiltIn: preferBuiltIn,
+            setCategory: { mode, options in
+                try session.setCategory(Self.recordingCategory, mode: mode, options: options)
             },
             setActive: { active, options in try session.setActive(active, options: options) }
         )
@@ -69,7 +79,17 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
             availableInputs = (session.availableInputs ?? []).map(VoiceInputAudioRouteInput.init)
         }
         if usedBuiltInFallback {
-            availableInputs = availableInputs.filter { $0.portType == .builtInMic }
+            // Restore the pre-routing-feature capture path: measurement mode,
+            // primary built-in mic, no front/cardioid request. Applying the
+            // normal planner here would immediately reapply the failing route.
+            if let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                for source in builtIn.dataSources ?? [] where source.preferredPolarPattern != nil {
+                    try? source.setPreferredPolarPattern(nil)
+                }
+                try? builtIn.setPreferredDataSource(nil)
+                try session.setPreferredInput(builtIn)
+            }
+            return
         }
         var plan = VoiceInputAudioRoutePlanner.plan(availableInputs: availableInputs)
         Self.apply(plan, to: session)
@@ -100,21 +120,23 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     /// Bluetooth is optional: retry once with no Bluetooth category options.
     /// Returns true when the caller must prefer the built-in microphone.
     static func configureAndActivate(
-        setCategory: (AVAudioSession.CategoryOptions) throws -> Void,
+        preferBuiltIn: Bool = false,
+        setCategory: (AVAudioSession.Mode, AVAudioSession.CategoryOptions) throws -> Void,
         setActive: (Bool, AVAudioSession.SetActiveOptions) throws -> Void
     ) throws -> Bool {
         do {
-            try setCategory(recordingCategoryOptions)
+            try setCategory(preferBuiltIn ? .measurement : recordingMode, preferBuiltIn ? [] : recordingCategoryOptions)
             // notifyOthersOnDeactivation is only valid with active=false.
             try setActive(true, [])
-            return false
+            return preferBuiltIn
         } catch {
+            guard !preferBuiltIn else { throw error }
             let failure = error as NSError
             logger.warning(
                 "Dictation audio configuration failed (\(failure.domain, privacy: .public)/\(failure.code)); retrying without Bluetooth"
             )
             try? setActive(false, .notifyOthersOnDeactivation)
-            try setCategory([])
+            try setCategory(.measurement, [])
             try setActive(true, [])
             return true
         }
