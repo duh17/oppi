@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import UIKit
 
 /// Small, optional haptics for direct user actions.
@@ -11,9 +12,27 @@ enum AppHaptics {
         impact(style: .light, intensity: 0.45)
     }
 
-    /// A short tap when dictation is ready to capture speech.
+    /// Use the same confirmation as saving a comment, once capture is ready.
     static func dictationActivated() {
-        impact(style: .light, intensity: 0.45)
+        guard AppPreferences.Interaction.isHapticFeedbackEnabled else { return }
+        #if os(iOS)
+        // Reassert after the engine has finished configuring its audio session,
+        // not just before category/route setup. This never changes the mic route.
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
+        } catch {
+            ClientLog.warning("VoiceInput", "Could not enable activation haptic", metadata: [
+                "error_domain": (error as NSError).domain,
+                "error_code": String((error as NSError).code),
+            ])
+        }
+        ClientLog.info("VoiceInput", "Dictation activation haptic requested", metadata: [
+            "feedback": "success",
+            "recording_haptics_allowed": String(session.allowHapticsAndSystemSoundsDuringRecording),
+        ])
+        #endif
+        success()
     }
 
     /// A crisper confirmation that a long-press threshold has been crossed.

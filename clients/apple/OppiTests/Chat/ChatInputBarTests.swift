@@ -355,6 +355,17 @@ struct ChatInputBarTests {
 
         #expect(saveSlice.contains("AppHaptics.success()"))
         #expect(!presenterSave.contains("AppHaptics.success()"))
+
+        let hapticsURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Oppi/Core/Services/AppHaptics.swift")
+        let haptics = try String(contentsOf: hapticsURL, encoding: .utf8)
+        let activation = try chatInputBarSourceSlice(
+            named: "static func dictationActivated() {", until: "static func longPressThreshold() {", in: haptics
+        )
+        #expect(activation.contains("success()"), "Dictation must use the same feedback as comment saving")
+        #expect(!activation.contains("impact(style:"))
+        #expect(activation.contains("setAllowHapticsAndSystemSoundsDuringRecording(true)"))
     }
 
     @Test("ComposerShared cancels owned dictation without committing transcript")
