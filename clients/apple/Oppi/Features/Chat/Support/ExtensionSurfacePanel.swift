@@ -190,13 +190,13 @@ private struct ExtensionNativeSurfaceExpandedViewport: View {
 struct NativeSurfaceViewportScrollContainer<Content: View>: UIViewRepresentable {
     let maxHeight: CGFloat
     let accessibilityIdentifier: String
-    let onDoubleTap: () -> Void
+    let onDoubleTap: (() -> Void)?
     let content: Content
 
     init(
         maxHeight: CGFloat,
         accessibilityIdentifier: String,
-        onDoubleTap: @escaping () -> Void,
+        onDoubleTap: (() -> Void)? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.maxHeight = maxHeight
@@ -242,7 +242,7 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
     private let hostingController: UIHostingController<Content>
     private var hostedHeightConstraint: NSLayoutConstraint?
     private var maxHeight: CGFloat
-    private var onDoubleTap: () -> Void
+    private var onDoubleTap: (() -> Void)?
     private var lastIntrinsicHeight: CGFloat = 0
 
     private lazy var doubleTapRecognizer: UITapGestureRecognizer = {
@@ -257,7 +257,7 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
         rootView: Content,
         maxHeight: CGFloat,
         accessibilityIdentifier: String,
-        onDoubleTap: @escaping () -> Void
+        onDoubleTap: (() -> Void)?
     ) {
         hostingController = UIHostingController(rootView: rootView)
         self.maxHeight = maxHeight
@@ -285,13 +285,14 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
         rootView: Content,
         maxHeight: CGFloat,
         accessibilityIdentifier: String,
-        onDoubleTap: @escaping () -> Void
+        onDoubleTap: (() -> Void)?
     ) {
         hostingController.rootView = rootView
         hostingController.view.invalidateIntrinsicContentSize()
         self.maxHeight = maxHeight
         self.onDoubleTap = onDoubleTap
         scrollView.accessibilityIdentifier = accessibilityIdentifier
+        syncDoubleTapRecognizer()
         setNeedsLayout()
         invalidateIntrinsicContentSize()
     }
@@ -307,8 +308,8 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = true
         scrollView.accessibilityIdentifier = accessibilityIdentifier
-        scrollView.addGestureRecognizer(doubleTapRecognizer)
         addSubview(scrollView)
+        syncDoubleTapRecognizer()
 
         let hostedView = hostingController.view
         hostedView?.translatesAutoresizingMaskIntoConstraints = false
@@ -374,9 +375,20 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
         scrollView.setContentOffset(CGPoint(x: 0, y: clampedY), animated: false)
     }
 
+    private func syncDoubleTapRecognizer() {
+        let isInstalled = doubleTapRecognizer.view === scrollView
+        if onDoubleTap != nil {
+            if !isInstalled {
+                scrollView.addGestureRecognizer(doubleTapRecognizer)
+            }
+        } else if isInstalled {
+            scrollView.removeGestureRecognizer(doubleTapRecognizer)
+        }
+    }
+
     @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
-        onDoubleTap()
+        onDoubleTap?()
     }
 
     func gestureRecognizer(

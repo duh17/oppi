@@ -164,11 +164,7 @@ struct ReviewCommentStripChromeTests {
     @Test("Drawer hugs comment content instead of filling a tall empty panel")
     func drawerHugsCommentContentInsteadOfFillingTallPanel() throws {
         let chromeSource = try reviewCommentStripChromeSource()
-        let drawer = try reviewCommentsSourceSlice(
-            named: "struct ReviewCommentStashDrawer: View {",
-            until: "accessibilityIdentifier(ReviewCommentStripChrome.drawerAccessibilityIdentifier)",
-            in: chromeSource
-        )
+        let drawer = try reviewCommentStashDrawerSourceSlice(in: chromeSource)
         #expect(drawer.contains("chrome: .drawer"))
         #expect(drawer.contains("alignment: .top"))
         #expect(!drawer.contains("fixedSize("))
@@ -190,14 +186,17 @@ struct ReviewCommentStripChromeTests {
     @Test("Expanded drawer reuses the native-surface expanded viewport cap")
     func expandedDrawerReusesNativeSurfaceExpandedViewportCap() throws {
         let chromeSource = try reviewCommentStripChromeSource()
-        let drawer = try reviewCommentsSourceSlice(
-            named: "struct ReviewCommentStashDrawer: View {",
-            until: "accessibilityIdentifier(ReviewCommentStripChrome.drawerAccessibilityIdentifier)",
-            in: chromeSource
-        )
+        let drawer = try reviewCommentStashDrawerSourceSlice(in: chromeSource)
         #expect(drawer.contains("NativeSurfaceViewportScrollContainer("))
         #expect(drawer.contains("ExtensionNativeSurfaceLayout.expandedMaxHeight"))
         #expect(!drawer.contains("maxHeight: .infinity"))
+        #expect(!drawer.contains("onDoubleTap"))
+        #expect(!drawer.contains(".accessibilityIdentifier("))
+        let titleRange = try #require(drawer.range(of: "stashTitle(count:"))
+        let viewportRange = try #require(drawer.range(of: "NativeSurfaceViewportScrollContainer("))
+        let contentRange = try #require(drawer.range(of: "ReviewCommentStashContent("))
+        #expect(titleRange.lowerBound < viewportRange.lowerBound)
+        #expect(viewportRange.lowerBound < contentRange.lowerBound)
 
         let extensionSource = try reviewCommentsFeatureSource(
             path: "Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift"
@@ -218,12 +217,17 @@ struct ReviewCommentStripChromeTests {
         let cap = ExtensionNativeSurfaceLayout.expandedMaxHeight
 
         let scrollView = try #require(layout.scrollView)
+        let chrome = layout.fittedHeight - scrollView.bounds.height
         #expect(layout.fittedHeight > 1)
         #expect(scrollView.bounds.height > 1)
         #expect(scrollView.bounds.height < cap)
-        #expect(layout.fittedHeight < cap + 80)
+        #expect(layout.fittedHeight < cap)
+        #expect(chrome >= 8)
+        #expect(chrome <= maxReviewCommentStashDrawerChromeHeight)
         #expect(scrollView.contentSize.height <= cap + 0.5 || !scrollView.isScrollEnabled)
         #expect(!scrollView.isScrollEnabled)
+        #expect(!layout.hasDoubleTapRecognizer)
+        #expect(layout.identifierCount == 1)
         #expect(scrollView.accessibilityIdentifier == ReviewCommentStripChrome.drawerAccessibilityIdentifier)
     }
 
@@ -240,11 +244,16 @@ struct ReviewCommentStripChromeTests {
         let cap = ExtensionNativeSurfaceLayout.expandedMaxHeight
 
         let scrollView = try #require(layout.scrollView)
+        let chrome = layout.fittedHeight - scrollView.bounds.height
         #expect(layout.fittedHeight > 1)
-        #expect(layout.fittedHeight < 844)
         #expect(scrollView.bounds.height <= cap + 0.5)
+        #expect(layout.fittedHeight <= cap + maxReviewCommentStashDrawerChromeHeight + 0.5)
+        #expect(chrome >= 8)
+        #expect(chrome <= maxReviewCommentStashDrawerChromeHeight)
         #expect(scrollView.contentSize.height > cap + 0.5)
         #expect(scrollView.isScrollEnabled)
+        #expect(!layout.hasDoubleTapRecognizer)
+        #expect(layout.identifierCount == 1)
         #expect(scrollView.accessibilityIdentifier == ReviewCommentStripChrome.drawerAccessibilityIdentifier)
     }
 
@@ -327,11 +336,7 @@ struct ReviewCommentStripChromeTests {
     @Test("Drawer chrome does not inline the comment editor")
     func drawerChromeDoesNotInlineTheCommentEditor() throws {
         let chromeSource = try reviewCommentStripChromeSource()
-        let drawer = try reviewCommentsSourceSlice(
-            named: "struct ReviewCommentStashDrawer: View {",
-            until: "accessibilityIdentifier(ReviewCommentStripChrome.drawerAccessibilityIdentifier)",
-            in: chromeSource
-        )
+        let drawer = try reviewCommentStashDrawerSourceSlice(in: chromeSource)
         #expect(drawer.contains("chrome: .drawer"))
         #expect(drawer.contains("onRequestEdit:"))
         #expect(!drawer.contains("ReviewCommentEditorView"))
@@ -418,9 +423,22 @@ private enum ReviewCommentStripChromeSourceSliceError: Error {
     case missingMarker(String)
 }
 
+/// Title + 10pt stack spacing + 12pt padding on both edges, at default Dynamic Type.
+private let maxReviewCommentStashDrawerChromeHeight: CGFloat = 96
+
+private func reviewCommentStashDrawerSourceSlice(in source: String) throws -> String {
+    try reviewCommentsSourceSlice(
+        named: "struct ReviewCommentStashDrawer: View {",
+        until: ".extensionGlassPanel(cornerRadius: 18)",
+        in: source
+    )
+}
+
 private struct ReviewCommentStashDrawerLayout {
     var fittedHeight: CGFloat
     var scrollView: UIScrollView?
+    var identifierCount: Int
+    var hasDoubleTapRecognizer: Bool
 }
 
 @MainActor
@@ -460,9 +478,15 @@ private func measureReviewCommentStashDrawer(
         return fitted.height > 1 && (scrollView?.bounds.height ?? 0) > 1
     }
 
+    let resolvedScrollView = scrollView ?? firstScrollView(in: host.view)
     return ReviewCommentStashDrawerLayout(
         fittedHeight: fitted.height,
-        scrollView: scrollView ?? firstScrollView(in: host.view)
+        scrollView: resolvedScrollView,
+        identifierCount: viewsWithAccessibilityIdentifier(
+            ReviewCommentStripChrome.drawerAccessibilityIdentifier,
+            in: host.view
+        ).count,
+        hasDoubleTapRecognizer: resolvedScrollView.map(hasDoubleTapRecognizer(in:)) ?? false
     )
 }
 
@@ -476,6 +500,23 @@ private func firstScrollView(in view: UIView) -> UIScrollView? {
         }
     }
     return nil
+}
+
+private func viewsWithAccessibilityIdentifier(_ identifier: String, in view: UIView) -> [UIView] {
+    var matches: [UIView] = []
+    if view.accessibilityIdentifier == identifier {
+        matches.append(view)
+    }
+    for subview in view.subviews {
+        matches.append(contentsOf: viewsWithAccessibilityIdentifier(identifier, in: subview))
+    }
+    return matches
+}
+
+private func hasDoubleTapRecognizer(in scrollView: UIScrollView) -> Bool {
+    (scrollView.gestureRecognizers ?? []).contains { recognizer in
+        (recognizer as? UITapGestureRecognizer)?.numberOfTapsRequired == 2
+    }
 }
 
 private func stashDrawerComment(
