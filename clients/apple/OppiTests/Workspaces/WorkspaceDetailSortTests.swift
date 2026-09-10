@@ -167,6 +167,71 @@ struct WorkspaceEditSaveCompletionTests {
     }
 }
 
+@Suite("Workspace Delete Confirmation")
+struct WorkspaceDeleteConfirmationTests {
+    @Test func confirmationCopyRemovesRecordKeepsFilesAndWarnsSessions() {
+        let message = WorkspaceDeleteConfirmationPolicy.deleteMessage(
+            for: makeTestWorkspace(id: "ws-notes", name: "Notes")
+        )
+
+        #expect(
+            message
+                == "This removes the Oppi workspace record for \"Notes\". Files on disk stay. Sessions in this workspace may become unreachable."
+        )
+    }
+
+    @Test func deleteSwipeActionOnlyOpensConfirmation() {
+        #expect(WorkspaceDeleteConfirmationPolicy.swipeButtonRole == nil)
+    }
+
+    @Test func deleteConfirmationClearsPendingBeforeDeleteCallback() {
+        let workspace = makeTestWorkspace(id: "ws-delete", name: "Delete Me")
+        var pendingWorkspace: Workspace? = workspace
+        var didDelete = false
+        var pendingWasClearedBeforeDelete = false
+
+        WorkspaceDeleteConfirmationPolicy.confirm(
+            workspace: workspace,
+            clearPending: { pendingWorkspace = nil },
+            performDelete: { deleted in
+                didDelete = deleted.id == workspace.id
+                pendingWasClearedBeforeDelete = pendingWorkspace == nil
+            }
+        )
+
+        #expect(didDelete)
+        #expect(pendingWorkspace == nil)
+        #expect(pendingWasClearedBeforeDelete)
+    }
+}
+
+@Suite("Workspace Edit Delete Completion")
+struct WorkspaceEditDeleteCompletionTests {
+    @Test func callbackOwnsCompletionWhenProvided() {
+        var callbackCount = 0
+        var dismissCount = 0
+
+        WorkspaceEditDeleteCompletionPolicy.complete(
+            onDeleted: { callbackCount += 1 },
+            dismiss: { dismissCount += 1 }
+        )
+
+        #expect(callbackCount == 1)
+        #expect(dismissCount == 0)
+    }
+
+    @Test func environmentDismissesWhenNoCallbackIsProvided() {
+        var dismissCount = 0
+
+        WorkspaceEditDeleteCompletionPolicy.complete(
+            onDeleted: nil,
+            dismiss: { dismissCount += 1 }
+        )
+
+        #expect(dismissCount == 1)
+    }
+}
+
 @Suite("Workspace Pi Resource Scope")
 struct WorkspacePiResourceScopePolicyTests {
     @Test func mountlessSandboxUsesWorkspaceIdentity() {

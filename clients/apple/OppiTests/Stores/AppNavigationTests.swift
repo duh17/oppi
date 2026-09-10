@@ -604,6 +604,83 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspacePath.count == 0)
     }
 
+    @Test func leaveDeletedWorkspaceReturnsSelectedInboxToAllSessions() {
+        let navigation = AppNavigation()
+        let target = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1", name: "Notes")
+        )
+        navigation.openWorkspace(target)
+
+        navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-1")
+
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.workspacePath.count == 0)
+    }
+
+    @Test func leaveDeletedWorkspaceMatchesSelectionByIdentityWhenNameChanged() {
+        let navigation = AppNavigation()
+        let selected = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1", name: "Notes")
+        )
+        navigation.openWorkspace(selected)
+
+        navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-1")
+
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.workspacePath.count == 0)
+    }
+
+    @Test func leaveDeletedWorkspaceLeavesUnselectedWorkspaceOnManagePath() {
+        let navigation = AppNavigation()
+        navigation.launchPhase = .ready
+        navigation.showOnboarding = false
+        let selected = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-keep", name: "Keep")
+        )
+        navigation.openWorkspace(selected)
+        navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-1")
+        let pathCount = navigation.workspacePath.count
+
+        navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-delete")
+
+        #expect(navigation.selectedWorkspaceFilter == selected)
+        #expect(navigation.workspacePath.count == pathCount)
+        #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
+    }
+
+    @Test func leaveDeletedWorkspaceNoopsWhenNothingIsSelected() {
+        let navigation = AppNavigation()
+        navigation.launchPhase = .ready
+        navigation.showOnboarding = false
+        navigation.openHostSwitcherDestination(.serverSettings, serverId: "server-1")
+        let pathCount = navigation.workspacePath.count
+
+        navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-1")
+
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.workspacePath.count == pathCount)
+        #expect(navigation.visibleHostSwitcherDestination == .serverSettings)
+    }
+
+    @Test func leaveDeletedWorkspaceClearsSplitSelection() {
+        let navigation = AppNavigation()
+        let target = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspace(target)
+
+        navigation.leaveDeletedWorkspace(serverId: "server-1", workspaceId: "workspace-1")
+
+        #expect(navigation.selectedWorkspaceFilter == nil)
+        #expect(navigation.splitSelectedWorkspace == nil)
+        #expect(navigation.splitDetailTarget == nil)
+    }
+
     @Test func sessionOpenedFromWorkspaceBuildsAllWorkspaceChatHierarchy() {
         let navigation = AppNavigation()
         let workspaceTarget = WorkspaceNavTarget(

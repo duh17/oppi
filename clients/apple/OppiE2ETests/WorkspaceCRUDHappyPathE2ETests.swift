@@ -34,7 +34,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         stopAndDeleteSession(id: sessionId)
 
         navigateToWorkspaceHome()
-        try deleteWorkspace(named: updatedWorkspaceName)
+        try deleteWorkspaceFromManageList(named: updatedWorkspaceName)
     }
 
     // MARK: - Workspace Create
@@ -141,14 +141,41 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         )
     }
 
-    private func deleteWorkspace(named workspaceName: String) throws {
+    private func deleteWorkspaceFromManageList(named workspaceName: String) throws {
         navigateToWorkspaceHome()
-        let workspaceId = try e2eWorkspaceId(named: workspaceName)
-        _ = try e2eLabAPIJSON(method: "DELETE", path: "/workspaces/\(workspaceId)")
 
-        let openButton = app.buttons["workspace.open.\(workspaceName)"]
+        let serverSwitcher = app.buttons
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:"))
+            .firstMatch
+        tap(serverSwitcher, named: "server switcher", timeout: 10)
+        tap(app.buttons["hostSwitcher.serverSettings"], named: "server settings", timeout: 5)
+
+        let manageWorkspaces = app.buttons["server.manageWorkspaces"]
+        tap(manageWorkspaces, named: "manage workspaces button", timeout: 15)
         XCTAssertTrue(
-            waitForElementToDisappear(openButton, timeout: 15) || !openButton.exists,
+            app.collectionViews["server.workspaceList"].waitForExistence(timeout: 10),
+            "Server workspace management list did not appear"
+        )
+
+        let workspaceId = try e2eWorkspaceId(named: workspaceName)
+        let row = app.descendants(matching: .any)["server.workspace.\(workspaceId)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "Workspace row \(workspaceName) not found in manage list")
+        row.swipeLeft()
+
+        let deleteButton = app.buttons["Delete"]
+        XCTAssertTrue(deleteButton.waitForExistence(timeout: 5), "Workspace delete button not exposed")
+        tap(deleteButton, named: "workspace delete button")
+
+        let confirmDelete = app.buttons["Delete Workspace"]
+        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 5), "Workspace delete confirmation not shown")
+        if confirmDelete.isHittable {
+            confirmDelete.tap()
+        } else {
+            confirmDelete.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+
+        XCTAssertTrue(
+            waitForElementToDisappear(row, timeout: 15) || !row.exists,
             "Workspace \(workspaceName) still visible after delete"
         )
     }

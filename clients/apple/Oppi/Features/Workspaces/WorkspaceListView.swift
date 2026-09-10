@@ -11,7 +11,11 @@ struct WorkspaceListView: View {
     let server: PairedServer
 
     @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(AppNavigation.self) private var navigation
     @State private var showCreate = false
+    @State private var pendingDelete: Workspace?
+    @State private var error: String?
+    @State private var isDeleting = false
 
     private var workspaces: [Workspace] {
         coordinator.connection(for: server.id)?.workspaceStore.workspaces ?? []
@@ -26,9 +30,15 @@ struct WorkspaceListView: View {
                     WorkspaceRowView(workspace: workspace)
                 }
                 .accessibilityIdentifier("server.workspace.\(workspace.id)")
-            }
-            .onDelete { offsets in
-                Task { await deleteWorkspaces(at: offsets) }
+                .swipeActions(edge: .trailing) {
+                    Button(role: WorkspaceDeleteConfirmationPolicy.swipeButtonRole) {
+                        pendingDelete = workspace
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .tint(.themeRed)
+                    .disabled(isDeleting)
+                }
             }
         }
         .themedListSurface()
@@ -66,26 +76,62 @@ struct WorkspaceListView: View {
                 )
             }
         }
+        .confirmationDialog(
+            "Delete Workspace?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingDelete {
+                Button("Delete Workspace", role: .destructive) {
+                    WorkspaceDeleteConfirmationPolicy.confirm(
+                        workspace: pendingDelete,
+                        clearPending: { self.pendingDelete = nil },
+                        performDelete: { workspace in
+                            Task { await deleteWorkspace(workspace) }
+                        }
+                    )
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDelete = nil
+            }
+        } message: {
+            if let pendingDelete {
+                Text(WorkspaceDeleteConfirmationPolicy.deleteMessage(for: pendingDelete))
+            }
+        }
+        .alert("Error", isPresented: Binding(
+            get: { error != nil },
+            set: { if !$0 { error = nil } }
+        )) {
+            Button("OK", role: .cancel) { error = nil }
+        } message: {
+            Text(error ?? "")
+        }
     }
 
-    private func deleteWorkspaces(at offsets: IndexSet) async {
+    private func deleteWorkspace(_ workspace: Workspace) async {
+        guard !isDeleting else { return }
         guard let conn = coordinator.connection(for: server.id) else { return }
-        guard let api = conn.apiClient else { return }
-        let toDelete = offsets.map { workspaces[$0] }
-
-        // Optimistic removal
-        for workspace in toDelete {
-            conn.workspaceStore.remove(id: workspace.id, serverId: server.id)
+        guard let api = conn.apiClient else {
+            error = "Server is offline"
+            return
         }
 
-        // Server-side delete
-        for workspace in toDelete {
-            do {
-                try await api.deleteWorkspace(id: workspace.id)
-            } catch {
-                // Re-add on failure — next refresh reconciles
-                logger.error("Delete failed for \(workspace.id.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
+        isDeleting = true
+        error = nil
+        defer { isDeleting = false }
+
+        do {
+            try await api.deleteWorkspace(id: workspace.id)
+            conn.workspaceStore.remove(id: workspace.id, serverId: server.id)
+            navigation.leaveDeletedWorkspace(serverId: server.id, workspaceId: workspace.id)
+        } catch {
+            logger.error("Delete failed for \(workspace.id.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
+            self.error = error.localizedDescription
         }
     }
 }

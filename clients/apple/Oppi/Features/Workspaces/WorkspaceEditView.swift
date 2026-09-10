@@ -25,6 +25,33 @@ enum WorkspaceEditSaveCompletionPolicy {
     }
 }
 
+enum WorkspaceEditDeleteCompletionPolicy {
+    static func complete(onDeleted: (() -> Void)?, dismiss: () -> Void) {
+        if let onDeleted {
+            onDeleted()
+        } else {
+            dismiss()
+        }
+    }
+}
+
+enum WorkspaceDeleteConfirmationPolicy {
+    static let swipeButtonRole: ButtonRole? = nil
+
+    static func confirm(
+        workspace: Workspace,
+        clearPending: () -> Void,
+        performDelete: (Workspace) -> Void
+    ) {
+        clearPending()
+        performDelete(workspace)
+    }
+
+    static func deleteMessage(for workspace: Workspace) -> String {
+        "This removes the Oppi workspace record for \"\(workspace.name)\". Files on disk stay. Sessions in this workspace may become unreachable."
+    }
+}
+
 struct WorkspacePiResourceScope: Equatable {
     let workspaceId: String?
     let cwd: String?
@@ -52,15 +79,18 @@ struct WorkspaceEditView: View {
     let workspace: Workspace
     private let previewAvailableExtensions: [ExtensionInfo]?
     private let onSaved: (() -> Void)?
+    private let onDeleted: (() -> Void)?
 
     init(
         workspace: Workspace,
         previewAvailableExtensions: [ExtensionInfo]? = nil,
-        onSaved: (() -> Void)? = nil
+        onSaved: (() -> Void)? = nil,
+        onDeleted: (() -> Void)? = nil
     ) {
         self.workspace = workspace
         self.previewAvailableExtensions = previewAvailableExtensions
         self.onSaved = onSaved
+        self.onDeleted = onDeleted
     }
 
     @Environment(\.apiClient) private var apiClient
@@ -89,6 +119,8 @@ struct WorkspaceEditView: View {
     @State private var skillsError: String?
     @State private var togglingResourceKeys: Set<String> = []
     @State private var isSaving = false
+    @State private var isDeleting = false
+    @State private var isConfirmingDelete = false
     @State private var isLaunchingOppi = false
     @State private var error: String?
     @State private var selectedSkillDetail: SkillDetailDestination?
@@ -171,7 +203,7 @@ struct WorkspaceEditView: View {
     }
 
     private var canSave: Bool {
-        if name.isEmpty || isSaving { return false }
+        if name.isEmpty || isSaving || isDeleting { return false }
         if !trimmedHostMount.isEmpty {
             guard let hostMountStatus, hostMountStatus.path == trimmedHostMount else { return false }
             if !hostMountStatus.isValidWorkspaceDirectory { return false }
@@ -379,6 +411,14 @@ struct WorkspaceEditView: View {
                 }
                 .selectionDisabled()
             }
+
+            Section {
+                Button("Delete Workspace", role: .destructive) {
+                    isConfirmingDelete = true
+                }
+                .disabled(isSaving || isDeleting)
+                .accessibilityIdentifier("workspace.edit.delete")
+            }
         }
         .listStyle(.insetGrouped)
         .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
@@ -393,6 +433,26 @@ struct WorkspaceEditView: View {
                 .disabled(!canSave)
                 .accessibilityIdentifier("workspace.edit.save")
             }
+        }
+        .confirmationDialog(
+            "Delete Workspace?",
+            isPresented: $isConfirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Workspace", role: .destructive) {
+                WorkspaceDeleteConfirmationPolicy.confirm(
+                    workspace: workspace,
+                    clearPending: { isConfirmingDelete = false },
+                    performDelete: { _ in
+                        Task { await deleteWorkspace() }
+                    }
+                )
+            }
+            Button("Cancel", role: .cancel) {
+                isConfirmingDelete = false
+            }
+        } message: {
+            Text(WorkspaceDeleteConfirmationPolicy.deleteMessage(for: workspace))
         }
         .navigationDestination(item: $selectedSkillDetail) { dest in
             SkillDetailView(skillName: dest.skillName, cwd: dest.cwd)
@@ -850,6 +910,35 @@ struct WorkspaceEditView: View {
         } catch {
             self.error = error.localizedDescription
             isSaving = false
+        }
+    }
+
+    private func deleteWorkspace() async {
+        guard !isSaving, !isDeleting else { return }
+        guard let api = apiClient else {
+            error = "Server is offline"
+            return
+        }
+
+        isDeleting = true
+        error = nil
+
+        do {
+            try await api.deleteWorkspace(id: workspace.id)
+            let serverId = activeServerId ?? connection.currentServerId
+            if let serverId {
+                workspaceStore.remove(id: workspace.id, serverId: serverId)
+            }
+            WorkspaceEditDeleteCompletionPolicy.complete(
+                onDeleted: onDeleted,
+                dismiss: { dismiss() }
+            )
+            if let serverId {
+                navigation.leaveDeletedWorkspace(serverId: serverId, workspaceId: workspace.id)
+            }
+        } catch {
+            self.error = error.localizedDescription
+            isDeleting = false
         }
     }
 

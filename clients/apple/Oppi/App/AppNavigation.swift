@@ -375,6 +375,19 @@ final class AppNavigation {
         }
     }
 
+    /// If the deleted workspace is the current selection, leave it through the
+    /// all-sessions inbox. Manage-list deletes of an unselected workspace stay put.
+    func leaveDeletedWorkspace(serverId: String, workspaceId: String) {
+        let matches: (WorkspaceNavTarget?) -> Bool = { target in
+            guard let target else { return false }
+            return target.serverId == serverId && target.workspace.id == workspaceId
+        }
+        guard matches(selectedWorkspaceFilter) || matches(splitSelectedWorkspace) else {
+            return
+        }
+        showAllWorkspaceSessions()
+    }
+
     func openWorkspaceSession(_ target: WorkspaceSessionNavTarget, workspace: WorkspaceNavTarget? = nil) {
         selectedTab = .workspaces
         let resolvedTarget = target.withWorkspaceIdIfMissing(workspace?.workspace.id)

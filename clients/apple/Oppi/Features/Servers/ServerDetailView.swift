@@ -317,6 +317,17 @@ struct ServerDetailView: View {
         }
 
         Section {
+            NavigationLink {
+                WorkspaceListView(server: pairedServer)
+            } label: {
+                Label("Manage Workspaces", systemImage: "square.grid.2x2")
+            }
+            .accessibilityIdentifier("server.manageWorkspaces")
+        } header: {
+            Text("Workspaces")
+        }
+
+        Section {
             mobileOutputGuideRow
         } footer: {
             Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
