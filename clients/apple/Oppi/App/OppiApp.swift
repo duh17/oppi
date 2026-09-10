@@ -1031,14 +1031,16 @@ struct OppiApp: App {
             }
             let workspaceID = connection.sessionReentryWorkspaceId(for: session.sessionID)
             let routeScope = connection.sessionStore.routeScope(for: session.sessionID)
-            connection.sessionStore.activeSessionId = session.sessionID
-            connection.prepareForSessionReentry(session.sessionID, workspaceIdHint: workspaceID)
-            navigation.openReferencedSession(WorkspaceSessionNavTarget(
-                serverId: session.serverID,
-                sessionId: session.sessionID,
-                workspaceId: workspaceID,
-                routeScope: routeScope
-            ))
+            await dismissCoveringDocumentOverlayThenNavigateIfCurrent(token: token) {
+                connection.sessionStore.activeSessionId = session.sessionID
+                connection.prepareForSessionReentry(session.sessionID, workspaceIdHint: workspaceID)
+                navigation.openReferencedSession(WorkspaceSessionNavTarget(
+                    serverId: session.serverID,
+                    sessionId: session.sessionID,
+                    workspaceId: workspaceID,
+                    routeScope: routeScope
+                ))
+            }
 
         case .workspaceFile(let file):
             guard let connection = coordinator.connection(for: file.serverID),
@@ -1053,36 +1055,38 @@ struct OppiApp: App {
                 return
             }
 
-            if let sourceSessionID = reference.sourceSessionID,
-               let sourceServerID = reference.sourceServerID {
-                // Session IDs are only unique within one server. Keep this
-                // pre-navigation capture scoped so another server's chat cannot
-                // freeze its viewport when IDs happen to collide.
-                NotificationCenter.default.post(
-                    name: .workspaceLinkedFileWillOpen,
-                    object: sourceSessionID,
-                    userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
+            await dismissCoveringDocumentOverlayThenNavigateIfCurrent(token: token) {
+                if let sourceSessionID = reference.sourceSessionID,
+                   let sourceServerID = reference.sourceServerID {
+                    // Session IDs are only unique within one server. Keep this
+                    // pre-navigation capture scoped so another server's chat cannot
+                    // freeze its viewport when IDs happen to collide.
+                    NotificationCenter.default.post(
+                        name: .workspaceLinkedFileWillOpen,
+                        object: sourceSessionID,
+                        userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
+                    )
+                }
+                navigation.openReferencedWorkspaceLinkedFile(
+                    .workspaceFile(
+                        serverId: file.serverID,
+                        workspaceId: file.workspaceID,
+                        worktreeId: file.worktreeID,
+                        path: file.path,
+                        lineAnchor: reference.lineAnchor,
+                        sourceSessionId: reference.sourceSessionID
+                    ),
+                    workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
+                    sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
+                        reference.sourceServerID.map { sourceServerID in
+                            WorkspaceSessionNavTarget(
+                                serverId: sourceServerID,
+                                sessionId: sourceSessionID
+                            )
+                        }
+                    }
                 )
             }
-            navigation.openReferencedWorkspaceLinkedFile(
-                .workspaceFile(
-                    serverId: file.serverID,
-                    workspaceId: file.workspaceID,
-                    worktreeId: file.worktreeID,
-                    path: file.path,
-                    lineAnchor: reference.lineAnchor,
-                    sourceSessionId: reference.sourceSessionID
-                ),
-                workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
-                sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
-                    reference.sourceServerID.map { sourceServerID in
-                        WorkspaceSessionNavTarget(
-                            serverId: sourceServerID,
-                            sessionId: sourceSessionID
-                        )
-                    }
-                }
-            )
 
         case .hostFile(let file):
             guard let connection = coordinator.connection(for: file.serverID) else {
@@ -1096,34 +1100,47 @@ struct OppiApp: App {
                 return
             }
 
-            if let sourceSessionID = reference.sourceSessionID,
-               let sourceServerID = reference.sourceServerID {
-                NotificationCenter.default.post(
-                    name: .workspaceLinkedFileWillOpen,
-                    object: sourceSessionID,
-                    userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
+            await dismissCoveringDocumentOverlayThenNavigateIfCurrent(token: token) {
+                if let sourceSessionID = reference.sourceSessionID,
+                   let sourceServerID = reference.sourceServerID {
+                    NotificationCenter.default.post(
+                        name: .workspaceLinkedFileWillOpen,
+                        object: sourceSessionID,
+                        userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: sourceServerID]
+                    )
+                }
+                // Host files stay on the current stack. Do not select another
+                // workspace or pretend the file lives in this checkout.
+                navigation.openReferencedWorkspaceLinkedFile(
+                    .hostFile(
+                        serverId: file.serverID,
+                        workspaceId: reference.workspaceID ?? "",
+                        path: file.path,
+                        lineAnchor: reference.lineAnchor,
+                        sourceSessionId: reference.sourceSessionID
+                    ),
+                    sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
+                        reference.sourceServerID.map { sourceServerID in
+                            WorkspaceSessionNavTarget(
+                                serverId: sourceServerID,
+                                sessionId: sourceSessionID
+                            )
+                        }
+                    }
                 )
             }
-            // Host files stay on the current stack. Do not select another
-            // workspace or pretend the file lives in this checkout.
-            navigation.openReferencedWorkspaceLinkedFile(
-                .hostFile(
-                    serverId: file.serverID,
-                    workspaceId: reference.workspaceID ?? "",
-                    path: file.path,
-                    lineAnchor: reference.lineAnchor,
-                    sourceSessionId: reference.sourceSessionID
-                ),
-                sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
-                    reference.sourceServerID.map { sourceServerID in
-                        WorkspaceSessionNavTarget(
-                            serverId: sourceServerID,
-                            sessionId: sourceSessionID
-                        )
-                    }
-                }
-            )
         }
+    }
+
+    @MainActor
+    private func dismissCoveringDocumentOverlayThenNavigateIfCurrent(
+        token: ResourceReferenceRequestCoordinator.Token,
+        navigate: () -> Void
+    ) async {
+        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
+            shouldNavigate: { resourceReferenceRequestCoordinator.isCurrent(token) },
+            navigate: navigate
+        )
     }
 
     private func resourceReferenceServerName(_ serverID: String) -> String {
@@ -1147,7 +1164,9 @@ struct OppiApp: App {
         } else {
             workspace = nil
         }
-        navigation.openWorkspaceLinkedFile(resolution.target, workspace: workspace)
+        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate {
+            navigation.openWorkspaceLinkedFile(resolution.target, workspace: workspace)
+        }
         return true
     }
 
