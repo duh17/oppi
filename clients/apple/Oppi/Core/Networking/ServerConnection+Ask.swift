@@ -97,8 +97,9 @@ extension ServerConnection {
     /// HTTP repair for pending ask cards after a notification or deep-link open.
     ///
     /// Network failures leave the in-memory ask queue untouched. An empty 200
-    /// clears only this session.
+    /// clears only this session, unless a newer store write superseded the fetch.
     func hydrateSessionDialogs(sessionId: String) async {
+        let revision = askRequestStore.revision
         let workspaceId = sessionReentryWorkspaceId(for: sessionId)
         do {
             let response: APIClient.SessionDialogsResponse
@@ -109,6 +110,9 @@ extension ServerConnection {
             } else {
                 return
             }
+            // Live settlement/replacement, another snapshot, or a server switch
+            // wins over this older HTTP read. Fence before any store/UI effects.
+            guard askRequestStore.revision == revision else { return }
             applySessionDialogsSnapshot(
                 sessionId: sessionId,
                 workspaceId: workspaceId,

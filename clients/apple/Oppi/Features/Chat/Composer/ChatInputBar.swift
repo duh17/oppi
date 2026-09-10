@@ -16,6 +16,7 @@ enum ChatInputPrimaryActionKind: Equatable {
 struct AskComposerClearingState {
     var currentPage = 0
     var draftAnswers: [String: AskAnswer] = [:]
+    var textRevision: UInt64 = 0
     var submission = AskResponseSubmission()
     var submittedRequestID: String? { submission.submittedRequestID }
 
@@ -284,7 +285,45 @@ struct ChatInputBar<ActionRow: View>: View {
 
     /// Text binding for the input field.
     private var textFieldBinding: Binding<String> {
-        ComposerShared.textFieldBinding(text: $text) { composerDisplayText }
+        Self.askComposerTextFieldBinding(text: $text, clearing: $askClearing) { composerDisplayText }
+    }
+
+    static func askComposerTextFieldBinding(
+        text: Binding<String>,
+        clearing: Binding<AskComposerClearingState>,
+        displayText: @escaping () -> String
+    ) -> Binding<String> {
+        let field = ComposerShared.textFieldBinding(text: text, displayText: displayText)
+        return Binding(
+            get: { field.wrappedValue },
+            set: {
+                // Track edits synchronously, not in onChange: failure can arrive
+                // before SwiftUI renders, and type-then-delete is still an edit.
+                clearing.wrappedValue.textRevision &+= 1
+                field.wrappedValue = $0
+            }
+        )
+    }
+
+    @discardableResult
+    static func restoreFailedAskComposerText(
+        text: Binding<String>,
+        clearing: AskComposerClearingState,
+        submittedTextRevision: UInt64,
+        request: AskRequest?,
+        activeQuestionID: String?
+    ) -> Bool {
+        // Other binding writers may also have staged text while delivery was
+        // pending. Restore only our untouched post-submit empty composer.
+        guard clearing.textRevision == submittedTextRevision, text.wrappedValue.isEmpty else { return false }
+        guard let restored = composerTextForActiveAskQuestion(
+            request: request,
+            activeQuestionID: activeQuestionID,
+            draftAnswers: clearing.draftAnswers,
+            keepComposerClearedForSubmittedRequestID: clearing.submittedRequestID
+        ) else { return false }
+        text.wrappedValue = restored
+        return true
     }
 
     private var correctionRangesForDisplay: [NSRange] {
@@ -1243,7 +1282,11 @@ struct ChatInputBar<ActionRow: View>: View {
             completion(.completed)
             return
         }
+        // Only the callback that actually clears the composer may restore it;
+        // mixed actions joining an in-flight attempt must not take a new snapshot.
+        var submittedTextRevision: UInt64?
         askClearing.submission.submit(requestID: request.id, deliver: { complete in
+            submittedTextRevision = askClearing.textRevision
             text = ""
             textBeforeRecording = nil
             if let answers, let onAskSubmit {
@@ -1255,8 +1298,16 @@ struct ChatInputBar<ActionRow: View>: View {
             }
             FeatureEducationTips.markPromptAnswered()
         }, completion: { result in
-            if result == .retryableFailure {
-                syncComposerTextWithActiveAskQuestion()
+            if result == .retryableFailure,
+               let submittedTextRevision,
+               Self.restoreFailedAskComposerText(
+                   text: $text,
+                   clearing: askClearing,
+                   submittedTextRevision: submittedTextRevision,
+                   request: askRequest,
+                   activeQuestionID: activeAskQuestionID
+               ) {
+                textBeforeRecording = nil
             }
             completion(result)
         })

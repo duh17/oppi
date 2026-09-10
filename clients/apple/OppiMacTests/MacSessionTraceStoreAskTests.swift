@@ -152,6 +152,26 @@ struct MacSessionTraceStoreAskTests {
         #expect(!store.isToolRowExpanded("future-row"), "Local row choice wins until the next extension expansion command")
     }
 
+    @Test func sharedAskStoreRevisionFencesEveryQueueAndPartitionWriter() {
+        let store = AskRequestStore()
+        let ask = AskRequest(id: "A", sessionId: "s", questions: [], allowCustom: true, timeout: nil)
+        let writes: [(String, () -> Void)] = [
+            ("insert", { store.set(ask, for: "s") }),
+            ("same-ID replay", { store.set(ask, for: "s") }),
+            ("workspace snapshot", {
+                store.applyWorkspaceSnapshot(workspaceId: "w", asks: [ask], workspaceSessionIds: ["s"])
+            }),
+            ("settlement", { store.remove(id: "A") }),
+            ("session clear", { store.remove(for: "s") }),
+            ("partition switch", { store.switchServer(to: "other") }),
+        ]
+        for (name, write) in writes {
+            let revision = store.revision
+            write()
+            #expect(store.revision != revision, "Snapshot fence must advance after \(name)")
+        }
+    }
+
     private func makeTarget() -> MacSelectedSessionTarget {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let session = Session(

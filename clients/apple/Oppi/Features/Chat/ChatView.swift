@@ -1995,6 +1995,9 @@ struct ChatView: View {
             try await send()
             return .completed
         } catch {
+            // Do not start a stale request's repair after live settlement or
+            // replacement. Hydration also fences store writes during its await.
+            guard isPending() else { return .completed }
             await reconcile()
             guard isPending() else { return .completed }
             showFailure(error)

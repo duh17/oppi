@@ -17,11 +17,18 @@ final class AskRequestStore {
     /// Which server's asks are currently active.
     private(set) var activeServerId: String?
 
+    /// Local fence for asynchronous snapshot repair. Every queue write and
+    /// partition switch invalidates earlier reads, including same-ID replays.
+    private(set) var revision: UInt64 = 0
+
     private var activeServerKey: String { activeServerId ?? "" }
 
     private var activePendingQueues: [String: [AskRequest]] {
         get { serverPending[activeServerKey] ?? [:] }
-        set { serverPending[activeServerKey] = newValue }
+        set {
+            serverPending[activeServerKey] = newValue
+            revision &+= 1
+        }
     }
 
     // MARK: - Active server API
@@ -166,6 +173,7 @@ final class AskRequestStore {
     func switchServer(to serverId: String) {
         guard serverId != activeServerId else { return }
         activeServerId = serverId
+        revision &+= 1
         if serverPending[serverId] == nil {
             serverPending[serverId] = [:]
         }

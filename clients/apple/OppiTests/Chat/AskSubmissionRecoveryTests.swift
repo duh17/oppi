@@ -143,7 +143,7 @@ struct AskSubmissionRecoveryTests {
             showFailure: { _ in events.append("failure") }
         )
         done?(failure)
-        #expect(events == ["send", "reconcile", "pending", "failure"])
+        #expect(events == ["send", "pending", "reconcile", "pending", "failure"])
         #expect(card.phase == .failed("ask"))
         #expect(composer.phase == .failed("ask"))
         tap()
@@ -185,6 +185,139 @@ struct AskSubmissionRecoveryTests {
         #expect(result == .retryableFailure)
     }
 
+    @Test(arguments: [true, false])
+    func delayedHydrationCannotReplaceNewAskAfterSettlement(snapshotContainsA: Bool) async throws {
+        let connection = ServerConnection()
+        let question = AskQuestion(id: "q", question: "Which?", options: [], multiSelect: false)
+        let askA = AskRequest(id: "A", sessionId: "s", questions: [question], allowCustom: true, timeout: nil)
+        let askB = AskRequest(id: "B", sessionId: "s", questions: [question], allowCustom: true, timeout: nil)
+        connection.askRequestStore.set(askA, for: "s")
+        let (started, signal) = AsyncStream<Void>.makeStream()
+        var reply: CheckedContinuation<APIClient.SessionDialogsResponse, Never>?
+        connection._getSessionDialogsForTesting = { _ in
+            await withCheckedContinuation { continuation in
+                reply = continuation
+                signal.yield(())
+            }
+        }
+        let submission = AskResponseSubmission()
+        var complete: AskResponseSubmission.Completion?
+        submission.submit(requestID: "A") { complete = $0 }
+        let delivery = Task {
+            let result = await ChatView.deliverAskResponse(
+                send: { throw DeliveryFailure.offline },
+                reconcile: { await connection.hydrateSessionDialogs(sessionId: "s") },
+                isPending: { connection.askRequestStore.pending(for: "s")?.id == "A" },
+                showFailure: { _ in Issue.record("A settled while hydration was pending") }
+            )
+            complete?(result)
+            return result
+        }
+        var iterator = started.makeAsyncIterator()
+        await iterator.next()
+        #expect(submission.phase == .inFlight("A"))
+        connection.clearAskRequest(id: "A")
+        connection.askRequestStore.set(askB, for: "s")
+        submission.applyRequestIDChange("B")
+        submission.submit(requestID: "B") { _ in }
+        let continuation = try #require(reply)
+        continuation.resume(returning: APIClient.SessionDialogsResponse(
+            dialogs: snapshotContainsA ? [.init(id: "A", method: "ask", questions: [question], allowCustom: true)] : [],
+            serverNow: 1
+        ))
+        #expect(await delivery.value == .completed)
+        #expect(connection.askRequestStore.pending(for: "s") == askB)
+        #expect(submission.phase == .inFlight("B"))
+    }
+
+    @Test func settledBeforeFailureDoesNotStartHydration() async {
+        let result = await ChatView.deliverAskResponse(
+            send: { throw DeliveryFailure.offline },
+            reconcile: { Issue.record("An obsolete response must not start snapshot repair") },
+            isPending: { false },
+            showFailure: { _ in Issue.record("Settled requests must stay closed") }
+        )
+        #expect(result == .completed)
+    }
+
+    @Test(arguments: ["queue", "same-id", "workspace", "partition"])
+    func delayedHydrationPreservesInterveningStoreWrites(mutation: String) async throws {
+        let connection = ServerConnection()
+        let ask = AskRequest(id: "A", sessionId: "s", questions: [], allowCustom: true, timeout: nil)
+        connection.askRequestStore.set(ask, for: "s")
+        let (started, signal) = AsyncStream<Void>.makeStream()
+        var reply: CheckedContinuation<APIClient.SessionDialogsResponse, Never>?
+        connection._getSessionDialogsForTesting = { _ in
+            await withCheckedContinuation { continuation in
+                reply = continuation
+                signal.yield(())
+            }
+        }
+        let hydration = Task { await connection.hydrateSessionDialogs(sessionId: "s") }
+        var iterator = started.makeAsyncIterator()
+        await iterator.next()
+        switch mutation {
+        case "queue":
+            connection.askRequestStore.set(
+                AskRequest(id: "B", sessionId: "s", questions: [], allowCustom: true, timeout: nil), for: "s"
+            )
+        case "same-id":
+            connection.askRequestStore.set(ask, for: "s")
+        case "workspace":
+            connection.askRequestStore.applyWorkspaceSnapshot(workspaceId: "w", asks: [ask], workspaceSessionIds: ["s"])
+        case "partition":
+            connection.askRequestStore.switchServer(to: "other")
+            connection.askRequestStore.set(ask, for: "s")
+        default:
+            Issue.record("Unexpected mutation")
+        }
+        // Visible identity still equals A: an identity-only fence would miss this.
+        #expect(connection.askRequestStore.pending(for: "s")?.id == "A")
+        let continuation = try #require(reply)
+        continuation.resume(returning: .init(dialogs: [], serverNow: 1))
+        await hydration.value
+        #expect(connection.askRequestStore.pending(for: "s") == ask)
+        if mutation == "queue" {
+            connection.clearAskRequest(id: "A")
+            #expect(connection.askRequestStore.pending(for: "s")?.id == "B")
+        }
+    }
+
+    @Test(arguments: ["newer typing", ""])
+    func failurePreservesNewerTextThroughTheComposerBinding(newText: String) {
+        var state = AskComposerClearingState(draftAnswers: ["q": .custom("sent answer")])
+        var text = "sent answer"
+        let request = AskRequest(id: "ask", sessionId: "s", questions: [
+            AskQuestion(id: "q", question: "Which?", options: [], multiSelect: false),
+        ], allowCustom: true, timeout: nil)
+        let textBinding = Binding(get: { text }, set: { text = $0 })
+        let field = ChatInputBar<EmptyView>.askComposerTextFieldBinding(
+            text: textBinding,
+            clearing: Binding(get: { state }, set: { state = $0 }),
+            displayText: { text }
+        )
+        let revision = state.textRevision
+        var done: AskResponseSubmission.Completion?
+        state.submission.submit(requestID: request.id, deliver: {
+            text = ""
+            done = $0
+        }, completion: { result in
+            if result == .retryableFailure {
+                ChatInputBar<EmptyView>.restoreFailedAskComposerText(
+                    text: textBinding, clearing: state, submittedTextRevision: revision,
+                    request: request, activeQuestionID: "q"
+                )
+            }
+        })
+        // Exercise the binding supplied to PastableTextView, including type-then-delete (ABA).
+        field.wrappedValue = "newer typing"
+        field.wrappedValue = newText
+        done?(.retryableFailure)
+        #expect(text == newText)
+        #expect(field.wrappedValue == newText)
+        #expect(state.submission.phase == .failed(request.id))
+    }
+
     private enum DeliveryFailure: Error { case offline }
 
     @Test func settlementBeforeFailureDoesNotRearmMountedRequest() {
@@ -209,6 +342,12 @@ struct AskSubmissionRecoveryTests {
         done?(.retryableFailure)
         #expect(state.submittedRequestID == nil)
         #expect(state.currentPage == 1)
+        var text = ""
+        #expect(ChatInputBar<EmptyView>.restoreFailedAskComposerText(
+            text: Binding(get: { text }, set: { text = $0 }), clearing: state,
+            submittedTextRevision: state.textRevision, request: request, activeQuestionID: "q"
+        ))
+        #expect(text == "keep this")
         #expect(ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
             request: request, activeQuestionID: "q", draftAnswers: state.draftAnswers,
             keepComposerClearedForSubmittedRequestID: state.submittedRequestID

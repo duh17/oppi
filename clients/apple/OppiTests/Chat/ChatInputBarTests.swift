@@ -1419,7 +1419,15 @@ struct AskSubmissionWiringTests {
         )
         #expect(marker.contains("guard askRequest?.id == request.id else"))
         #expect(marker.contains("askClearing.submission.submit(requestID: request.id"))
-        #expect(marker.contains("syncComposerTextWithActiveAskQuestion()"))
+        #expect(marker.contains("Self.restoreFailedAskComposerText("))
+        let delivery = try chatInputBarSourceSlice(
+            named: "deliver: { complete in", until: "text = \"\"", in: marker
+        )
+        #expect(delivery.contains("submittedTextRevision = askClearing.textRevision"))
+        let binding = try chatInputBarSourceSlice(
+            named: "private var textFieldBinding:", until: "static func askComposerTextFieldBinding", in: source
+        )
+        #expect(binding.contains("Self.askComposerTextFieldBinding(text: $text, clearing: $askClearing)"))
     }
 
     @Test func finalPageSendIsDisabledAndSubmissionIsGuarded() throws {
