@@ -152,22 +152,28 @@ struct ReviewCommentStashDrawer: View {
     let onDelete: (ReviewComment) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(ReviewCommentStripChrome.stashTitle(count: comments.count))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.themeComment)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        NativeSurfaceViewportScrollContainer(
+            maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight,
+            accessibilityIdentifier: ReviewCommentStripChrome.drawerAccessibilityIdentifier,
+            onDoubleTap: {}
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(ReviewCommentStripChrome.stashTitle(count: comments.count))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            ReviewCommentStashContent(
-                comments: comments,
-                focusedCommentId: focusedCommentId,
-                onDelete: onDelete,
-                chrome: .drawer,
-                onRequestEdit: onEdit
-            )
+                ReviewCommentStashContent(
+                    comments: comments,
+                    focusedCommentId: focusedCommentId,
+                    onDelete: onDelete,
+                    chrome: .drawer,
+                    onRequestEdit: onEdit
+                )
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .top)
         .extensionGlassPanel(cornerRadius: 18)
         .accessibilityIdentifier(ReviewCommentStripChrome.drawerAccessibilityIdentifier)
     }

@@ -8,6 +8,10 @@ enum ExtensionStripPillMetrics {
     static let verticalPadding: CGFloat = 8
 }
 
+enum ExtensionNativeSurfaceLayout {
+    static let expandedMaxHeight: CGFloat = 260
+}
+
 extension View {
     func extensionGlassPanel(cornerRadius: CGFloat = 18) -> some View {
         self
@@ -183,7 +187,7 @@ private struct ExtensionNativeSurfaceExpandedViewport: View {
     }
 }
 
-private struct NativeSurfaceViewportScrollContainer<Content: View>: UIViewRepresentable {
+struct NativeSurfaceViewportScrollContainer<Content: View>: UIViewRepresentable {
     let maxHeight: CGFloat
     let accessibilityIdentifier: String
     let onDoubleTap: () -> Void
@@ -233,7 +237,7 @@ private struct NativeSurfaceViewportScrollContainer<Content: View>: UIViewRepres
     }
 }
 
-private final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGestureRecognizerDelegate {
+final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGestureRecognizerDelegate {
     private let scrollView = UIScrollView()
     private let hostingController: UIHostingController<Content>
     private var hostedHeightConstraint: NSLayoutConstraint?
@@ -1588,7 +1592,7 @@ private struct ExtensionSurfaceDrawer: View {
             ExtensionNativeSurfaceExpandedViewport(
                 surface: nativeSurface.surface,
                 identifierSuffix: identifierSuffix,
-                maxHeight: 260,
+                maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight,
                 onOpenFullScreen: { nativeDetailPresented = true },
                 linkContext: linkContext,
                 onOpenURL: onOpenURL

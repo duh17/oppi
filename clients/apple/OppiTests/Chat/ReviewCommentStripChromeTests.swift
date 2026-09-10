@@ -1,5 +1,7 @@
 import Foundation
+import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Review comment strip chrome")
@@ -185,6 +187,67 @@ struct ReviewCommentStripChromeTests {
         #expect(!drawerList.contains("theme.bg.primary"))
     }
 
+    @Test("Expanded drawer reuses the native-surface expanded viewport cap")
+    func expandedDrawerReusesNativeSurfaceExpandedViewportCap() throws {
+        let chromeSource = try reviewCommentStripChromeSource()
+        let drawer = try reviewCommentsSourceSlice(
+            named: "struct ReviewCommentStashDrawer: View {",
+            until: "accessibilityIdentifier(ReviewCommentStripChrome.drawerAccessibilityIdentifier)",
+            in: chromeSource
+        )
+        #expect(drawer.contains("NativeSurfaceViewportScrollContainer("))
+        #expect(drawer.contains("ExtensionNativeSurfaceLayout.expandedMaxHeight"))
+        #expect(!drawer.contains("maxHeight: .infinity"))
+
+        let extensionSource = try reviewCommentsFeatureSource(
+            path: "Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift"
+        )
+        #expect(extensionSource.contains("enum ExtensionNativeSurfaceLayout"))
+        #expect(extensionSource.contains("static let expandedMaxHeight: CGFloat = 260"))
+        #expect(extensionSource.contains("maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight"))
+        #expect(ExtensionNativeSurfaceLayout.expandedMaxHeight == 260)
+    }
+
+    @Test("Short staged-comment peek hugs content below the expanded native-surface cap")
+    func shortPeekHugsContentBelowExpandedNativeSurfaceCap() async throws {
+        let layout = await measureReviewCommentStashDrawer(
+            comments: [
+                stashDrawerComment(id: "short-1", body: "Keep this."),
+            ]
+        )
+        let cap = ExtensionNativeSurfaceLayout.expandedMaxHeight
+
+        let scrollView = try #require(layout.scrollView)
+        #expect(layout.fittedHeight > 1)
+        #expect(scrollView.bounds.height > 1)
+        #expect(scrollView.bounds.height < cap)
+        #expect(layout.fittedHeight < cap + 80)
+        #expect(scrollView.contentSize.height <= cap + 0.5 || !scrollView.isScrollEnabled)
+        #expect(!scrollView.isScrollEnabled)
+        #expect(scrollView.accessibilityIdentifier == ReviewCommentStripChrome.drawerAccessibilityIdentifier)
+    }
+
+    @Test("Long staged-comment peek stays within the expanded native-surface height and scrolls")
+    func longPeekStaysWithinExpandedNativeSurfaceHeightAndScrolls() async throws {
+        let comments = (1...8).map { index in
+            stashDrawerComment(
+                id: "long-\(index)",
+                body: "Comment \(index) should stay inside the bounded peek instead of covering the chat timeline.",
+                selectedText: "let value = computeValue(\(index))\nreturn value"
+            )
+        }
+        let layout = await measureReviewCommentStashDrawer(comments: comments)
+        let cap = ExtensionNativeSurfaceLayout.expandedMaxHeight
+
+        let scrollView = try #require(layout.scrollView)
+        #expect(layout.fittedHeight > 1)
+        #expect(layout.fittedHeight < 844)
+        #expect(scrollView.bounds.height <= cap + 0.5)
+        #expect(scrollView.contentSize.height > cap + 0.5)
+        #expect(scrollView.isScrollEnabled)
+        #expect(scrollView.accessibilityIdentifier == ReviewCommentStripChrome.drawerAccessibilityIdentifier)
+    }
+
     @Test("Chat footer peeks the drawer on single tap and presents the stash sheet on double-tap or Edit")
     func chatFooterPeeksDrawerOnSingleTapAndPresentsStashSheetOnDoubleTapOrEdit() throws {
         let source = try reviewCommentsChatViewSource()
@@ -353,4 +416,98 @@ private func reviewCommentsSourceSlice(
 
 private enum ReviewCommentStripChromeSourceSliceError: Error {
     case missingMarker(String)
+}
+
+private struct ReviewCommentStashDrawerLayout {
+    var fittedHeight: CGFloat
+    var scrollView: UIScrollView?
+}
+
+@MainActor
+private func measureReviewCommentStashDrawer(
+    comments: [ReviewComment]
+) async -> ReviewCommentStashDrawerLayout {
+    let host = UIHostingController(
+        rootView: ReviewCommentStashDrawer(
+            comments: comments,
+            focusedCommentId: nil,
+            onEdit: { _ in },
+            onDelete: { _ in }
+        )
+        .environment(\.theme, ThemeID.dark.appTheme)
+        .environment(\.themeID, .dark)
+        .ignoresSafeArea()
+    )
+    host.safeAreaRegions = []
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    var fitted = CGSize.zero
+    var scrollView: UIScrollView?
+    _ = await waitForMainActorCondition {
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        fitted = host.sizeThatFits(in: CGSize(width: 390, height: 2_000))
+        host.view.frame = CGRect(origin: .zero, size: CGSize(width: 390, height: max(fitted.height, 1)))
+        window.frame.size = host.view.frame.size
+        host.view.layoutIfNeeded()
+        scrollView = firstScrollView(in: host.view)
+        return fitted.height > 1 && (scrollView?.bounds.height ?? 0) > 1
+    }
+
+    return ReviewCommentStashDrawerLayout(
+        fittedHeight: fitted.height,
+        scrollView: scrollView ?? firstScrollView(in: host.view)
+    )
+}
+
+private func firstScrollView(in view: UIView) -> UIScrollView? {
+    if let scrollView = view as? UIScrollView {
+        return scrollView
+    }
+    for subview in view.subviews {
+        if let found = firstScrollView(in: subview) {
+            return found
+        }
+    }
+    return nil
+}
+
+private func stashDrawerComment(
+    id: String,
+    body: String,
+    selectedText: String? = nil
+) -> ReviewComment {
+    ReviewComment(
+        id: id,
+        workspaceId: "workspace-1",
+        sessionId: "session-1",
+        turnId: nil,
+        author: .human,
+        status: .staged,
+        severity: nil,
+        body: body,
+        attachments: nil,
+        reference: ReviewCommentReference(
+            source: .file,
+            label: nil,
+            path: "App.swift",
+            side: nil,
+            startLine: 1,
+            endLine: 4,
+            selectedText: selectedText,
+            languageHint: "swift",
+            toolCallId: nil,
+            timelineItemId: nil,
+            url: nil
+        ),
+        createdAt: 1,
+        updatedAt: 1,
+        sentAt: nil
+    )
 }
