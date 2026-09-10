@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -373,6 +374,114 @@ sleep 30
     if (reuse.ok) {
       releaseReusable(reuse.owned);
     }
+  });
+
+  test("run uses OPPI_ROOT checkout even when launched from another clients/apple", () => {
+    const mainRoot = tempDir("main-checkout");
+    const worktree = tempDir("worktree-checkout");
+    const fake = join(worktree, "fake");
+    const bin = join(worktree, "bin");
+    mkdirSync(fake, { recursive: true });
+    mkdirSync(join(worktree, "home"), { recursive: true });
+    initCheckout(mainRoot);
+    initCheckout(worktree);
+    writeFileSync(join(fake, "devices.json"), devicesJson());
+    writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+    writeFakeXcrun(bin, fake);
+    writeFileSync(
+      join(bin, "xcodebuild"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+pwd > "${fake}/xcodebuild.cwd"
+printf '%s\\n' "$@" > "${fake}/xcodebuild.args"
+echo "** BUILD SUCCEEDED **"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOME: join(worktree, "home"),
+      OPPI_ROOT: worktree,
+      OPPI_SIM_POOL_LOCK_DIR: join(worktree, "locks"),
+      OPPI_SIM_POOL_COUNT: "1",
+      OPPI_SIM_POOL_WAIT: "0",
+      OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_BOOT_TIMEOUT: "1",
+      OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
+    };
+    delete env.PIOS_ROOT;
+    const result = spawnSync(
+      "bun",
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      { cwd: join(mainRoot, "clients", "apple"), env, encoding: "utf8" },
+    );
+    expect(result.status).toBe(0);
+    const appleDir = realpathSync.native(join(worktree, "clients", "apple"));
+    expect(result.stdout + result.stderr).toContain(`Apple checkout ${appleDir}`);
+    expect(readFileSync(join(fake, "xcodebuild.cwd"), "utf8").trim()).toBe(appleDir);
+  });
+
+  test("run --root targets that checkout from another tree", () => {
+    const mainRoot = tempDir("main-root-flag");
+    const worktree = tempDir("worktree-root-flag");
+    const fake = join(worktree, "fake");
+    const bin = join(worktree, "bin");
+    mkdirSync(fake, { recursive: true });
+    mkdirSync(join(worktree, "home"), { recursive: true });
+    initCheckout(mainRoot);
+    initCheckout(worktree);
+    writeFileSync(join(fake, "devices.json"), devicesJson());
+    writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+    writeFakeXcrun(bin, fake);
+    writeFileSync(
+      join(bin, "xcodebuild"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+pwd > "${fake}/xcodebuild.cwd"
+printf '%s\\n' "$@" > "${fake}/xcodebuild.args"
+echo "** BUILD SUCCEEDED **"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOME: join(worktree, "home"),
+      OPPI_SIM_POOL_LOCK_DIR: join(worktree, "locks"),
+      OPPI_SIM_POOL_COUNT: "1",
+      OPPI_SIM_POOL_WAIT: "0",
+      OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_BOOT_TIMEOUT: "1",
+      OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
+    };
+    delete env.PIOS_ROOT;
+    delete env.OPPI_ROOT;
+    const result = spawnSync(
+      "bun",
+      [
+        cli,
+        "run",
+        "--root",
+        worktree,
+        "--",
+        "xcodebuild",
+        "-project",
+        "Oppi.xcodeproj",
+        "-scheme",
+        "Oppi",
+        "build",
+      ],
+      { cwd: join(mainRoot, "clients", "apple"), env, encoding: "utf8" },
+    );
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(fake, "xcodebuild.cwd"), "utf8").trim()).toBe(
+      realpathSync.native(join(worktree, "clients", "apple")),
+    );
   });
 
   test("warm reuse of a booted simulator does not erase or force shutdown", () => {

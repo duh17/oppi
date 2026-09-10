@@ -8,6 +8,7 @@ import {
   commandRun,
   commandShutdownIdle,
   commandStatus,
+  extractRootFlag,
   loadConfig,
   PoolError,
   usage,
@@ -52,18 +53,20 @@ function selfTest(): number {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const command = argv[0];
+  const peeled = extractRootFlag(argv);
+  const command = peeled.rest[0];
   if (!command) {
     usage();
   }
   if (command === "self-test") {
     process.exit(selfTest());
   }
-  const config = loadConfig(process.env, process.cwd(), scriptDir);
+  const env = peeled.root ? { ...process.env, OPPI_ROOT: peeled.root } : process.env;
+  const config = loadConfig(env, process.cwd(), scriptDir);
   try {
     switch (command) {
       case "run":
-        process.exit(await commandRun(config, argv.slice(1)));
+        process.exit(await commandRun(config, peeled.rest.slice(1)));
         break;
       case "status":
         process.exit(commandStatus(config));
@@ -72,7 +75,7 @@ async function main(): Promise<void> {
         process.exit(await commandShutdownIdle(config));
         break;
       case "prune-cache":
-        process.exit(commandPruneCache(config, argv.slice(1)));
+        process.exit(commandPruneCache(config, peeled.rest.slice(1)));
         break;
       default:
         usage();

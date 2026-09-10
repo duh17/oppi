@@ -150,9 +150,15 @@ Use the dedicated `OppiUnitTests` scheme for `OppiTests`.
 
 From the repo root, `./scripts/sim-pool.sh` and `clients/apple/scripts/sim-pool.sh` both work. An OppiTests-only `-scheme Oppi` run is rewritten to `OppiUnitTests` so agents do not build UI/E2E/perf bundles.
 
+`run` always executes `xcodebuild` in the resolved checkout (`--root`, `OPPI_ROOT`, or this git root), even if you launched the script from another tree's `clients/apple`. Pass a worktree path or that tree's `clients/apple`. Missing worktree `.build/OppiTestsInfo.plist` is created automatically.
+
 ```bash
 cd clients/apple
 ./scripts/sim-pool.sh run -- \
+  xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
+
+# From any cwd, including main, test a worktree:
+./scripts/sim-pool.sh run --root /path/to/worktree -- \
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
 ```
 

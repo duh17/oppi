@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyPoolBuildSettings,
+  applyRunCheckout,
+  ensureOppiTestsInfoPlist,
   extractBuildTimingSummary,
   extractCompilerLinkerErrors,
+  extractRootFlag,
   loadConfig,
   normalizeCommandArgs,
+  normalizeOppiRoot,
   normalizeVideoPolicy,
   parsePruneKeepSlots,
   PoolError,
@@ -315,5 +319,70 @@ esac
         }
       }
     }
+  });
+});
+
+describe("sim-pool checkout targeting", () => {
+  const temps: string[] = [];
+
+  afterEach(() => {
+    for (const dir of temps.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function tempCheckout(label: string): string {
+    const root = mkdtempSync(join(tmpdir(), `oppi-sim-ops-${label}-`));
+    temps.push(root);
+    mkdirSync(join(root, "clients", "apple", "Oppi.xcodeproj"), { recursive: true });
+    writeFileSync(join(root, "clients", "apple", "Oppi.xcodeproj", "project.pbxproj"), "// fixture\n");
+    return root;
+  }
+
+  test("extractRootFlag peels --root before --", () => {
+    expect(extractRootFlag(["run", "--root", "/wt", "--", "xcodebuild", "build"])).toEqual({
+      root: "/wt",
+      rest: ["run", "--", "xcodebuild", "build"],
+    });
+    expect(extractRootFlag(["--root=/wt", "run", "--", "xcodebuild"])).toEqual({
+      root: "/wt",
+      rest: ["run", "--", "xcodebuild"],
+    });
+    expect(extractRootFlag(["run", "--", "xcodebuild", "--root", "not-ours"])).toEqual({
+      rest: ["run", "--", "xcodebuild", "--root", "not-ours"],
+    });
+  });
+
+  test("normalizeOppiRoot accepts repo root or clients/apple", () => {
+    const root = tempCheckout("normalize");
+    expect(normalizeOppiRoot(root)).toBe(root);
+    expect(normalizeOppiRoot(join(root, "clients", "apple"))).toBe(root);
+  });
+
+  test("applyRunCheckout chdirs to OPPI_ROOT apple dir and writes missing test plist", () => {
+    const launchedFrom = tempCheckout("launched");
+    const target = tempCheckout("target");
+    const previous = process.cwd();
+    process.chdir(join(launchedFrom, "clients", "apple"));
+    try {
+      const config = loadConfig({ OPPI_ROOT: target }, process.cwd(), scriptDir);
+      const cwd = applyRunCheckout(config);
+      const expected = realpathSync.native(join(target, "clients", "apple"));
+      expect(cwd).toBe(expected);
+      expect(process.cwd()).toBe(expected);
+      expect(existsSync(join(target, "clients", "apple", ".build", "OppiTestsInfo.plist"))).toBe(true);
+    } finally {
+      process.chdir(previous);
+    }
+  });
+
+  test("ensureOppiTestsInfoPlist does not overwrite an existing file", () => {
+    const root = tempCheckout("plist");
+    const appleDir = join(root, "clients", "apple");
+    mkdirSync(join(appleDir, ".build"), { recursive: true });
+    const plist = join(appleDir, ".build", "OppiTestsInfo.plist");
+    writeFileSync(plist, "keep-me\n");
+    expect(ensureOppiTestsInfoPlist(appleDir)).toBe(plist);
+    expect(readFileSync(plist, "utf8")).toBe("keep-me\n");
   });
 });

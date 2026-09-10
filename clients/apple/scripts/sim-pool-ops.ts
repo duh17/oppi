@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   inspectSlot,
   lockPath,
@@ -153,11 +153,113 @@ function gitTopLevel(cwd: string): string | null {
   return result.stdout.trim();
 }
 
+export function extractRootFlag(args: string[]): { root?: string; rest: string[] } {
+  const rest: string[] = [];
+  let root: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--") {
+      rest.push(...args.slice(i));
+      return { root, rest };
+    }
+    if (arg === "--root") {
+      const value = args[i + 1];
+      if (!value || value.startsWith("-")) {
+        die("--root requires a path");
+      }
+      root = value;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--root=")) {
+      const value = arg.slice("--root=".length);
+      if (!value) {
+        die("--root requires a path");
+      }
+      root = value;
+      continue;
+    }
+    rest.push(arg);
+  }
+  return { root, rest };
+}
+
+export function normalizeOppiRoot(raw: string, cwd = process.cwd()): string {
+  const resolved = resolve(cwd, raw);
+  if (existsSync(join(resolved, "clients", "apple"))) {
+    return resolved;
+  }
+  if (basename(resolved) === "apple" && existsSync(join(resolved, "Oppi.xcodeproj"))) {
+    const clients = dirname(resolved);
+    if (basename(clients) === "clients") {
+      return dirname(clients);
+    }
+  }
+  return resolved;
+}
+
+const OPPI_TESTS_INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+</dict>
+</plist>
+`;
+
+export function ensureOppiTestsInfoPlist(appleDir: string): string {
+  const buildDir = join(appleDir, ".build");
+  const plist = join(buildDir, "OppiTestsInfo.plist");
+  if (!existsSync(plist)) {
+    mkdirSync(buildDir, { recursive: true });
+    writeFileSync(plist, OPPI_TESTS_INFO_PLIST);
+  }
+  return plist;
+}
+
+export function applyRunCheckout(config: PoolConfig): string {
+  const pbx = join(config.appleDir, "Oppi.xcodeproj", "project.pbxproj");
+  if (!existsSync(pbx)) {
+    die(`Apple checkout is missing Oppi.xcodeproj: ${config.appleDir}`);
+  }
+  let current = process.cwd();
+  let target = config.appleDir;
+  try {
+    current = canonical(current);
+    target = canonical(config.appleDir);
+  } catch {
+    current = resolve(current);
+    target = resolve(config.appleDir);
+  }
+  if (current !== target) {
+    process.chdir(config.appleDir);
+  }
+  log(`[sim-pool] Apple checkout ${process.cwd()}`);
+  ensureOppiTestsInfoPlist(config.appleDir);
+  return process.cwd();
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: string): PoolConfig {
   let oppiRootFromEnv = false;
   let oppiRoot = env.OPPI_ROOT ?? "";
   if (oppiRoot) {
     oppiRootFromEnv = true;
+    oppiRoot = normalizeOppiRoot(oppiRoot, cwd);
   } else {
     const gitRoot = gitTopLevel(cwd);
     if (gitRoot && existsSync(join(gitRoot, "clients", "apple"))) {
@@ -1026,12 +1128,7 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
     usage();
   }
   let args = rawArgs.slice(1);
-  const cwdPbx = join(process.cwd(), "Oppi.xcodeproj", "project.pbxproj");
-  const scriptPbx = join(config.appleDir, "Oppi.xcodeproj", "project.pbxproj");
-  if (!existsSync(cwdPbx) && existsSync(scriptPbx)) {
-    process.chdir(config.appleDir);
-    log(`[sim-pool] Using Apple checkout ${process.cwd()}`);
-  }
+  applyRunCheckout(config);
   const normalized = normalizeCommandArgs(config, args);
   args = normalized.args;
   if (normalized.log) {
@@ -1741,11 +1838,15 @@ export function commandStatus(config: PoolConfig): number {
 
 export function usage(): never {
   process.stderr.write(`Usage:
-  sim-pool.sh run -- <xcodebuild args...>
+  sim-pool.sh run [--root <checkout>] -- <xcodebuild args...>
   sim-pool.sh self-test
   sim-pool.sh status
   sim-pool.sh shutdown-idle
   sim-pool.sh prune-cache [--apply] [--keep-slots START-END]
+
+--root PATH is the Oppi checkout or worktree to test (also clients/apple).
+It overrides OPPI_ROOT. run always executes xcodebuild in that checkout's
+clients/apple, even if the script was launched from another tree.
 
 run acquires a simulator pool slot, injects -destination and -derivedDataPath,
 runs xcodebuild, and releases the slot on exit. An already-booted pool
