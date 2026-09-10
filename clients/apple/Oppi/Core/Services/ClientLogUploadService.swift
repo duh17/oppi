@@ -135,6 +135,8 @@ enum ClientLogUploadService {
         "Memory",
         "Network",
         "StreamSession",
+        // Bounded capture-start/first-audio evidence distinguishes HFP from fallback.
+        "VoiceInput",
         "WebSocket",
     ]
 
