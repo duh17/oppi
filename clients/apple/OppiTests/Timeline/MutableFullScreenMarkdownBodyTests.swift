@@ -343,11 +343,11 @@ struct MutableFullScreenMarkdownBodyTests {
             ),
             (
                 "workspaceLinkedDestination.workspaceFile",
-                workspaceDestination.debugWorkspaceFileContentForTesting(store: binding)
+                workspaceDestination.debugFileContentForTesting(store: binding)
             ),
             (
                 "workspaceLinkedDestination.hostFile",
-                hostDestination.debugHostFileContentForTesting(store: binding)
+                hostDestination.debugFileContentForTesting(store: binding)
             ),
         ]
 

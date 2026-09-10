@@ -682,95 +682,17 @@ struct FileBrowserContentView: View {
                         throw CocoaError(.fileNoSuchFile)
                     }
                 },
-                makeMarkdownVideoSource: { [workspaceId, worktreeId, sessionId, controlSessionId, workspaceRuntime] embed in
-                    if case .sessionFile = source {
-                        return try await mediaSource(
-                            api: api, path: embed.filePath,
-                            contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: (embed.filePath as NSString).pathExtension),
-                            sourceFileExtension: (embed.filePath as NSString).pathExtension
-                        )
-                    }
-                    guard let route = MarkdownVideoMediaSourceRoute.resolve(
-                        embed: embed,
-                        workspaceID: workspaceId,
-                        sessionID: sessionId,
-                        worktreeID: worktreeId,
-                        workspaceRuntime: workspaceRuntime
-                    ) else {
-                        throw CocoaError(.fileNoSuchFile)
-                    }
-                    let pathExtension = (route.path as NSString).pathExtension
-                    let contentType = MediaMimeType.videoMimeType(forPathExtension: pathExtension)
-                    switch route {
-                    case .host(let path):
-                        return try await api.makeHostFileMediaSource(
-                            path: path,
-                            controlSessionId: controlSessionId,
-                            contentTypeHint: contentType,
-                            sourceFileExtension: pathExtension
-                        )
-                    case .session(let workspaceID, let sessionID, let path):
-                        return try await api.makeSessionFileMediaSource(
-                            workspaceId: workspaceID,
-                            sessionId: sessionID,
-                            path: path,
-                            contentTypeHint: contentType,
-                            sourceFileExtension: pathExtension
-                        )
-                    case .workspace(let workspaceID, let path, let worktreeID):
-                        return try await api.makeWorkspaceMediaSource(
-                            workspaceId: workspaceID,
-                            path: path,
-                            worktreeId: worktreeID,
-                            contentTypeHint: contentType,
-                            sourceFileExtension: pathExtension
-                        )
-                    }
+                makeMarkdownVideoSource: { embed in
+                    try await markdownMediaSource(
+                        api: api, path: embed.filePath, reference: embed.reference,
+                        mimeType: MediaMimeType.videoMimeType(forPathExtension:)
+                    )
                 },
-                makeMarkdownAudioSource: { [workspaceId, worktreeId, sessionId, controlSessionId, workspaceRuntime] embed in
-                    if case .sessionFile = source {
-                        return try await mediaSource(
-                            api: api, path: embed.filePath,
-                            contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: (embed.filePath as NSString).pathExtension),
-                            sourceFileExtension: (embed.filePath as NSString).pathExtension
-                        )
-                    }
-                    guard let route = MarkdownVideoMediaSourceRoute.resolve(
-                        embed: embed,
-                        workspaceID: workspaceId,
-                        sessionID: sessionId,
-                        worktreeID: worktreeId,
-                        workspaceRuntime: workspaceRuntime
-                    ) else {
-                        throw CocoaError(.fileNoSuchFile)
-                    }
-                    let pathExtension = (route.path as NSString).pathExtension
-                    let contentType = MediaMimeType.audioMimeType(forPathExtension: pathExtension)
-                    switch route {
-                    case .host(let path):
-                        return try await api.makeHostFileMediaSource(
-                            path: path,
-                            controlSessionId: controlSessionId,
-                            contentTypeHint: contentType,
-                            sourceFileExtension: pathExtension
-                        )
-                    case .session(let workspaceID, let sessionID, let path):
-                        return try await api.makeSessionFileMediaSource(
-                            workspaceId: workspaceID,
-                            sessionId: sessionID,
-                            path: path,
-                            contentTypeHint: contentType,
-                            sourceFileExtension: pathExtension
-                        )
-                    case .workspace(let workspaceID, let path, let worktreeID):
-                        return try await api.makeWorkspaceMediaSource(
-                            workspaceId: workspaceID,
-                            path: path,
-                            worktreeId: worktreeID,
-                            contentTypeHint: contentType,
-                            sourceFileExtension: pathExtension
-                        )
-                    }
+                makeMarkdownAudioSource: { embed in
+                    try await markdownMediaSource(
+                        api: api, path: embed.filePath, reference: embed.reference,
+                        mimeType: MediaMimeType.audioMimeType(forPathExtension:)
+                    )
                 },
                 makeTimedTextSidecar: { [workspaceId, worktreeId, sessionId, workspaceRuntime] mediaPath, kind, reference in
                     if case .sessionFile = source {
@@ -793,6 +715,61 @@ struct FileBrowserContentView: View {
                 audioPlayer: audioPlayer
             )
         )
+    }
+
+    private func markdownMediaSource(
+        api: APIClient,
+        path: String,
+        reference: ResourceReference,
+        mimeType: (String?) -> String?
+    ) async throws -> AuthenticatedMediaSource {
+        // Exact session readers keep their captured origin even without runtime metadata.
+        if case .sessionFile = source {
+            let pathExtension = (path as NSString).pathExtension
+            return try await mediaSource(
+                api: api, path: path,
+                contentTypeHint: mimeType(pathExtension),
+                sourceFileExtension: pathExtension
+            )
+        }
+        guard let route = MarkdownVideoMediaSourceRoute.resolve(
+            filePath: path,
+            kind: reference.kind,
+            referenceWorkspaceID: reference.workspaceID,
+            workspaceID: workspaceId,
+            sessionID: sessionId,
+            worktreeID: worktreeId,
+            workspaceRuntime: workspaceRuntime
+        ) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let pathExtension = (route.path as NSString).pathExtension
+        let contentType = mimeType(pathExtension)
+        switch route {
+        case .host(let path):
+            return try await api.makeHostFileMediaSource(
+                path: path,
+                controlSessionId: controlSessionId,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        case .session(let workspaceID, let sessionID, let path):
+            return try await api.makeSessionFileMediaSource(
+                workspaceId: workspaceID,
+                sessionId: sessionID,
+                path: path,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        case .workspace(let workspaceID, let path, let worktreeID):
+            return try await api.makeWorkspaceMediaSource(
+                workspaceId: workspaceID,
+                path: path,
+                worktreeId: worktreeID,
+                contentTypeHint: contentType,
+                sourceFileExtension: pathExtension
+            )
+        }
     }
 
     private func loadTimedText(

@@ -431,7 +431,7 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(controlTarget.workspaceId.isEmpty)
         #expect(controlTarget.controlSessionId == "control-session")
         let controlContent = WorkspaceLinkedFileDestinationView(target: controlTarget)
-            .debugHostFileContentForTesting(
+            .debugFileContentForTesting(
                 store: .constant(FullScreenMarkdownViewportRestoreState())
             )
         #expect(controlContent.debugControlSessionIdForTesting == "control-session")
@@ -443,19 +443,92 @@ struct FileBrowserReviewCommentSelectionTests {
         ) == nil)
     }
 
-    @Test func linkedFileConnectionPhaseSurfacesPreparationFailure() {
-        #expect(WorkspaceLinkedFileConnectionPhase.resolve(
-            preparationSucceeded: false,
-            connectionAvailable: false
-        ) == .failed("Could not connect to this server."))
-        #expect(WorkspaceLinkedFileConnectionPhase.resolve(
-            preparationSucceeded: true,
-            connectionAvailable: false
-        ) == .failed("The server connection is unavailable."))
-        #expect(WorkspaceLinkedFileConnectionPhase.resolve(
-            preparationSucceeded: true,
-            connectionAvailable: true
-        ) == .connected)
+    @Test func linkedFileConstructionPreservesPerKindContextAndRestoreBinding() throws {
+        let navigation = FileBrowserNavigationContext(files: [
+            FileBrowserSelection(path: "docs/current.md", name: "current.md", size: nil),
+            FileBrowserSelection(path: "docs/child.md", name: "child.md", size: nil),
+        ])
+        let anchor = SourceLineAnchor(startLine: 2, endLine: 4)
+        for kind: WorkspaceLinkedFileKind in [
+            .workspaceFile(path: "docs/current.md", fileName: "current.md"),
+            .sessionFile(path: "docs/current.md", fileName: "current.md", sessionId: "exact-session"),
+            .hostFile(path: "docs/current.md", fileName: "current.md"),
+        ] {
+            let target = WorkspaceLinkedFileNavTarget(
+                serverId: "origin-server", workspaceId: "origin-workspace", worktreeId: "origin-worktree",
+                kind: kind, navigationContext: navigation, lineAnchor: anchor,
+                sourceSessionId: "review-session", controlSessionId: "control-session"
+            )
+            var restore = FullScreenMarkdownViewportRestoreState()
+            let binding = Binding(get: { restore }, set: { restore = $0 })
+            let destination = WorkspaceLinkedFileDestinationView(target: target)
+            var anchorNotice: String?
+            let content = destination.debugFileContentForTesting(
+                workspaceRuntime: .sandbox, onLineAnchorNotice: { anchorNotice = $0 }, store: binding
+            )
+            #expect(content.workspaceRuntime == (content.source == .hostFile ? nil : .sandbox))
+            content.onLineAnchorNotice?("Line out of range")
+            #expect(anchorNotice == "Line out of range")
+            guard case .connecting = destination.debugConnectionStateForTesting else {
+                Issue.record("Linked reader must start connecting")
+                return
+            }
+            #expect(content.serverId == "origin-server")
+            #expect(content.workspaceId == "origin-workspace")
+            #expect(content.filePath == "docs/current.md")
+            #expect(content.fileName == "current.md")
+            #expect(content.lineAnchor == anchor)
+            #expect(content.chromeMode == .pushed)
+            switch kind {
+            case .workspaceFile:
+                #expect(content.source == .workspaceFile)
+                #expect(content.sessionId == "review-session")
+                #expect(content.worktreeId == "origin-worktree")
+                #expect(content.navigationContext == navigation)
+                #expect(content.controlSessionId == nil)
+            case .sessionFile:
+                #expect(content.source == .sessionFile(sessionId: "exact-session"))
+                #expect(content.sessionId == "exact-session")
+                #expect(content.worktreeId == nil)
+                #expect(content.navigationContext == nil)
+                #expect(content.controlSessionId == nil)
+            case .hostFile:
+                #expect(content.source == .hostFile)
+                #expect(content.sessionId == "review-session")
+                #expect(content.worktreeId == nil)
+                #expect(content.navigationContext == nil)
+                #expect(content.controlSessionId == "control-session")
+            }
+            let store = try #require(content.markdownViewportRestore)
+            store.wrappedValue[content.filePath] = .top
+            #expect(restore[content.filePath] == .top)
+        }
+    }
+
+    @Test func linkedFileConnectionStateSurfacesFailureOrCarriesExactConnection() {
+        let connection = ServerConnection()
+        for available in [nil, connection] {
+            let state = WorkspaceLinkedFileConnectionState(preparationSucceeded: false, connection: available)
+            guard case .failed(let message) = state else {
+                Issue.record("Failed preparation must not use even an available connection")
+                return
+            }
+            #expect(message == "Could not connect to this server.")
+        }
+        guard case .failed(let message) = WorkspaceLinkedFileConnectionState(
+            preparationSucceeded: true, connection: nil
+        ) else {
+            Issue.record("Missing connection must fail, not stay connecting")
+            return
+        }
+        #expect(message == "The server connection is unavailable.")
+        guard case .connected(let resolved) = WorkspaceLinkedFileConnectionState(
+            preparationSucceeded: true, connection: connection
+        ) else {
+            Issue.record("Prepared connection must be carried by the connected state")
+            return
+        }
+        #expect(resolved === connection)
     }
 
     @Test func currentFileTargetKeepsExactServerWorkspaceSessionAndPath() {
@@ -468,7 +541,7 @@ struct FileBrowserReviewCommentSelectionTests {
         )
         let destination = WorkspaceLinkedFileDestinationView(target: target)
         let store = Binding.constant(FullScreenMarkdownViewportRestoreState())
-        let content = destination.debugSessionFileContentForTesting(store: store)
+        let content = destination.debugFileContentForTesting(store: store)
 
         #expect(target.serverId == "server-origin")
         #expect(target.workspaceId == "workspace-origin")

@@ -1581,6 +1581,81 @@ struct APIClientTests {
         }
     }
 
+    @MainActor
+    @Test func fileBrowserMarkdownMediaProvidersPreserveRoutesIdentityAndMissingOrigin() async throws {
+        let client = APIClient(environment: OppiClientEnvironment(
+            baseURL: URL(string: "https://origin.example:7749")!, bearerToken: "fixture-token",
+            pinnedCertificateFingerprint: "fixture-pin", tlsServerName: "origin.example"
+        ))
+        struct Case {
+            var source: FileBrowserContentSource = .workspaceFile
+            var workspace = "origin-workspace"
+            var session: String?
+            var runtime: WorkspaceRuntime?
+            var kind: ResourceReferenceKind = .workspaceFile
+            var route: String?
+        }
+        let cases: [Case] = [
+            .init(source: .hostFile, workspace: "", session: "control-session", kind: .hostFile, route: "/files/raw"),
+            .init(route: "/workspaces/reference-workspace/raw/"),
+            .init(session: "origin-session", route: "/workspaces/reference-workspace/sessions/origin-session/raw/"),
+            .init(session: "origin-session", runtime: .sandbox, kind: .hostFile,
+                  route: "/workspaces/origin-workspace/sessions/origin-session/raw/"),
+            .init(runtime: .sandbox, kind: .hostFile, route: "/workspaces/origin-workspace/raw/"),
+            .init(source: .sessionFile(sessionId: "exact-session"), kind: .hostFile,
+                  route: "/workspaces/origin-workspace/sessions/exact-session/raw/"),
+            .init(source: .sessionFile(sessionId: "exact-session"), session: "other-session",
+                  route: "/workspaces/origin-workspace/sessions/exact-session/raw/"),
+            .init(workspace: "", runtime: .sandbox, kind: .hostFile),
+            .init(workspace: ""),
+        ]
+        for item in cases {
+            let view = FileBrowserContentView(
+                workspaceId: item.workspace, worktreeId: "origin-worktree", serverId: "origin-server",
+                filePath: "docs/current.md", fileName: "current.md", source: item.source,
+                sessionId: item.session, controlSessionId: "control-session", workspaceRuntime: item.runtime
+            )
+            guard case .markdown(_, _, let context) = view.debugFullScreenContentForTesting(text: "# Current", api: client) else {
+                Issue.record("Expected Markdown reader context")
+                return
+            }
+            let reader = try #require(context)
+            let makeVideo = try #require(reader.makeMarkdownVideoSource)
+            let makeAudio = try #require(reader.makeMarkdownAudioSource)
+            for (ext, mime) in [("mp4", "video/mp4"), ("m4a", "audio/mp4")] {
+                let path = "/tmp/clip.\(ext)"
+                let reference = ResourceReference(
+                    target: "ignored-label", sourceServerID: "origin-server",
+                    workspaceID: item.workspace.isEmpty ? nil : "reference-workspace",
+                    sourceSessionID: item.session,
+                    fileCandidatePath: item.source.routesFileReferencesThroughSession ? path : " \(path) ", kind: item.kind
+                )
+                do {
+                    let source: AuthenticatedMediaSource = if ext == "mp4" {
+                        try await makeVideo(MarkdownVideoEmbed(reference: reference))
+                    } else {
+                        try await makeAudio(MarkdownAudioEmbed(reference: reference))
+                    }
+                    let route = try #require(item.route, "Missing origin must fail closed")
+                    let components = try #require(URLComponents(url: source.url, resolvingAgainstBaseURL: false))
+                    #expect(source.url.path == (route == "/files/raw" ? route : route + path))
+                    #expect(source.url.host == "origin.example")
+                    #expect(components.queryItems?.first(where: { $0.name == "path" })?.value == (route == "/files/raw" ? path : nil))
+                    #expect(components.queryItems?.first(where: { $0.name == "controlSessionId" })?.value == (route == "/files/raw" ? "control-session" : nil))
+                    #expect(components.queryItems?.first(where: { $0.name == "worktreeId" })?.value == (route.contains("/sessions/") || route == "/files/raw" ? nil : "origin-worktree"))
+                    #expect(source.contentTypeHint == mime)
+                    #expect(source.sourceFileExtension == ext)
+                    #expect(source.tlsCertFingerprint == "fixture-pin")
+                    #expect(source.tlsServerName == "origin.example")
+                    #expect(source.identity == [source.url.absoluteString, "fixture-pin", "origin.example", mime, ext].joined(separator: "|"))
+                    #expect(try await source.authorizationProvider() == "Bearer fixture-token")
+                } catch let error as CocoaError where item.route == nil {
+                    #expect(error.code == .fileNoSuchFile)
+                }
+            }
+        }
+    }
+
     @Test func controlHostReadPreservesCanonicalParentForNestedLinksInOneGET() async throws {
         let client = makeClient()
         defer { cleanup() }
