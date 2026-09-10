@@ -710,11 +710,89 @@ struct UserTimelineRowContentTests {
             guard let thumbnail = firstSubview(withAccessibilityIdentifier: "chat.user.thumbnail.0", in: view) else {
                 return false
             }
+            let hasNativePreview = firstSubview(ofType: AnimatedImageWebContainerView.self, in: thumbnail) != nil
             let hasHostedPreview = thumbnail.subviews.contains { String(describing: type(of: $0)).contains("Hosting") }
-            return hasHostedPreview && abs(thumbnail.bounds.width - 80) < 0.5 && abs(thumbnail.bounds.height - 80) < 0.5
+            return hasNativePreview && !hasHostedPreview && abs(thumbnail.bounds.width - 80) < 0.5 && abs(thumbnail.bounds.height - 80) < 0.5
         }
 
         #expect(rendered, "Uploaded SVG thumbnail should stay square and use the shared preview path")
+    }
+
+    @MainActor
+    @Test("UIKit attachment thumbnails downsample static images, animate GIFs, and expose decode failures")
+    func nativeAttachmentThumbnailContentAndTaps() async throws {
+        let png = try #require(makeTestImage().pngData())
+        let gif = "R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCgABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7"
+        let view = UserTimelineRowContentView(configuration: UserTimelineRowConfiguration(
+            text: "",
+            images: [
+                ImageAttachment(data: png.base64EncodedString(), mimeType: "image/png"),
+                ImageAttachment(data: gif, mimeType: "image/gif"),
+                ImageAttachment(data: Data("not an image".utf8).base64EncodedString(), mimeType: "application/octet-stream"),
+                ImageAttachment(data: "a", mimeType: "image/png"),
+            ],
+            canFork: false,
+            onFork: nil
+        ))
+        let thumbnails = try (0..<4).map { index in
+            try #require(firstSubview(withAccessibilityIdentifier: "chat.user.thumbnail.\(index)", in: view))
+        }
+        #expect(firstSubview(ofType: UIActivityIndicatorView.self, in: thumbnails[0]) != nil)
+        let rendered = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            firstSubview(ofType: UIImageView.self, in: thumbnails[0])?.image != nil
+                && firstSubview(ofType: AnimatedImageWebContainerView.self, in: thumbnails[1]) != nil
+                && allLabelTexts(in: thumbnails[2]).contains("Image preview unavailable")
+        }
+        #expect(rendered)
+        let image = try #require(firstSubview(ofType: UIImageView.self, in: thumbnails[0])?.image?.cgImage)
+        #expect(max(image.width, image.height) <= 512)
+        for index in 0..<2 {
+            let content = try #require(thumbnails[index].subviews.first)
+            #expect(content.isUserInteractionEnabled)
+            #expect(content.gestureRecognizers?.count == 1)
+        }
+        #expect(firstSubview(ofType: UIImageView.self, in: thumbnails[3])?.image != nil)
+        #expect(thumbnails[2].subviews.first?.isUserInteractionEnabled == false)
+        for thumbnail in thumbnails {
+            assertNoSwiftUIHosting(in: thumbnail)
+            #expect(firstSubview(ofType: UIActivityIndicatorView.self, in: thumbnail) == nil)
+        }
+    }
+
+    @MainActor
+    @Test("static and animated image path pills keep the path handler as their only tap owner", arguments: [false, true])
+    func nativePathThumbnailKeepsPathTap(animated: Bool) async throws {
+        let png = try #require(makeTestImage().pngData())
+        let svg = Data("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\"><rect width=\"20\" height=\"20\"/></svg>".utf8)
+        let path = animated ? "images/demo.svg" : "images/demo.png"
+        let view = UserTimelineRowContentView(configuration: UserTimelineRowConfiguration(
+            text: "Attached files:\n- \((path as NSString).lastPathComponent): \(path)",
+            images: [],
+            fetchWorkspaceFileData: { _ in animated ? svg : png },
+            canFork: false,
+            onFork: nil
+        ))
+        let thumbnail = try #require(firstSubview(withAccessibilityIdentifier: "chat.user.inline-path-thumbnail.0", in: view))
+        let rendered = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            if animated { return firstSubview(ofType: AnimatedImageWebContainerView.self, in: thumbnail) != nil }
+            return firstSubview(ofType: UIImageView.self, in: thumbnail)?.image != nil
+        }
+        #expect(rendered)
+        #expect(thumbnail.gestureRecognizers?.count == 1)
+        #expect(thumbnail.subviews.first?.isUserInteractionEnabled == false)
+        #expect(thumbnail.subviews.first?.gestureRecognizers?.isEmpty != false)
+        assertNoSwiftUIHosting(in: thumbnail)
+    }
+
+    @MainActor
+    private func assertNoSwiftUIHosting(in view: UIView) {
+        #expect(!String(describing: type(of: view)).contains("Hosting"))
+        var responder: UIResponder? = view
+        while let current = responder {
+            #expect(!String(describing: type(of: current)).contains("UIHostingController"))
+            responder = current.next
+        }
+        for child in view.subviews { assertNoSwiftUIHosting(in: child) }
     }
 
     @MainActor

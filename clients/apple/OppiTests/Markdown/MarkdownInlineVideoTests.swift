@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import Foundation
 import SwiftUI
 import Testing
@@ -780,8 +781,8 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
-    @Test("player hosting controller is contained and removed from a real parent")
-    func playerHostingControllerUsesValidContainment() async throws {
+    @Test("UIKit player controller is contained and removed from a real parent")
+    func playerControllerUsesValidContainment() async throws {
         let embed = try makeEmbed("![[movie.mp4]]")
         let source = dummyMediaSource()
         let parent = UIViewController()
@@ -813,8 +814,17 @@ struct MarkdownInlineVideoTests {
             await Task.yield()
         }
         #expect(installed)
-        #expect(video.debugHostingParentForTesting === parent)
-        #expect(parent.children.contains { $0 === video.debugHostingControllerForTesting })
+        #expect(video.debugPlayerParentForTesting === parent)
+        #expect(parent.children.contains { $0 === video.debugPlayerControllerForTesting })
+        let controller = try #require(video.debugPlayerControllerForTesting)
+        #expect(controller.player === video.debugPlaybackModelForTesting.player)
+        #expect(controller.showsPlaybackControls)
+        #expect(controller.allowsPictureInPicturePlayback)
+        #expect(controller.canStartPictureInPictureAutomaticallyFromInline)
+        #expect(!controller.entersFullScreenWhenPlaybackBegins)
+        #expect(!controller.exitsFullScreenWhenPlaybackEnds)
+        #expect(controller.view.accessibilityIdentifier == "videoPlayer.native")
+        #expect(controller.delegate is InlineVideoPlayerDelegate)
 
         video.apply(
             embed: embed,
@@ -823,8 +833,66 @@ struct MarkdownInlineVideoTests {
             preferredDisplayWidth: 320
         )
         #expect(!video.debugHasPlayerForTesting)
-        #expect(video.debugHostingParentForTesting == nil)
+        #expect(video.debugPlayerParentForTesting == nil)
         #expect(parent.children.isEmpty)
+    }
+
+    @MainActor
+    @Test("UIKit player observes captions and failure without replacing its playback owner")
+    func nativePlayerCaptionsAndFailure() async throws {
+        let parent = UIViewController()
+        let video = NativeMarkdownVideoView()
+        parent.view.addSubview(video)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { video.prepareForRemoval(); window.isHidden = true }
+        let tracks = ["en", "fr"].map { language in
+            TimedText.Track(
+                candidate: .init(fileName: "movie.\(language).vtt", path: "movie.\(language).vtt", format: .vtt, language: language),
+                cues: [.init(text: language, startTime: 1, endTime: 3)]
+            )
+        }
+        video.apply(
+            embed: try makeEmbed("![[movie.mp4]]"),
+            sourceProvider: { _ in dummyMediaSource() },
+            renderingMode: .live,
+            preferredDisplayWidth: 320,
+            sidecarProvider: { _, _, _ in .init(tracks: tracks, selectedIndex: 1) }
+        )
+        let ready = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            let overlay = video.debugPlayerControllerForTesting?.contentOverlayView
+            return overlay?.viewWithTag(TimedTextCaptionOverlay.languageTag)?.isHidden == false
+        }
+        #expect(ready)
+        let controller = try #require(video.debugPlayerControllerForTesting)
+        let model = video.debugPlaybackModelForTesting
+        let delegate = try #require(controller.delegate as? InlineVideoPlayerDelegate)
+        delegate.playerViewControllerWillStartPictureInPicture(controller)
+        #expect(model.debugIsPictureInPictureForTesting)
+        video.setPlaybackVisible(false)
+        #expect(video.debugIsPlaybackVisibleForTesting)
+        delegate.playerViewControllerDidStopPictureInPicture(controller)
+        #expect(!model.debugIsPictureInPictureForTesting)
+        model.currentTime = 2
+        let captionUpdated = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            (controller.contentOverlayView?.viewWithTag(TimedTextCaptionOverlay.captionTag) as? UILabel)?.text == "  fr  "
+        }
+        #expect(captionUpdated)
+        model.currentTime = 4
+        let captionCleared = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            controller.contentOverlayView?.viewWithTag(TimedTextCaptionOverlay.captionTag)?.isHidden == true
+        }
+        #expect(captionCleared)
+        model.errorMessage = "Test failure"
+        model.player = nil
+        let failed = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
+            !video.debugOpenButtonIsHiddenForTesting && controller.view.isHidden
+        }
+        #expect(failed)
+        #expect(video.debugPlaybackModelForTesting === model)
+        #expect(video.debugPlayerControllerForTesting === controller)
+        #expect(controller.parent === parent)
     }
 
     @MainActor
@@ -885,7 +953,7 @@ struct MarkdownInlineVideoTests {
             preferredDisplayWidth: 320
         )
         #expect(!video.debugHasPlayerForTesting)
-        #expect(video.debugHostingParentForTesting == nil)
+        #expect(video.debugPlayerParentForTesting == nil)
     }
 
     @MainActor
@@ -910,7 +978,7 @@ struct MarkdownInlineVideoTests {
         for _ in 0..<80 where !video.debugHasActivePlayerForTesting {
             await Task.yield()
         }
-        let host = video.debugHostingControllerForTesting
+        let host = video.debugPlayerControllerForTesting
         let player = video.debugPlaybackModelForTesting.player
         #expect(host != nil)
         #expect(video.debugIsPlaybackVisibleForTesting)
@@ -919,7 +987,7 @@ struct MarkdownInlineVideoTests {
 
         video.setPlaybackVisible(false)
         #expect(!video.debugIsPlaybackVisibleForTesting)
-        #expect(video.debugHostingControllerForTesting === host)
+        #expect(video.debugPlayerControllerForTesting === host)
         #expect(video.debugHasActivePlayerForTesting)
         #expect(player?.currentItem != nil)
         #expect(player?.rate == 0)

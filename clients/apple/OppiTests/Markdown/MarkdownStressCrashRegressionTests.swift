@@ -39,7 +39,7 @@ struct MarkdownStressCrashRegressionTests {
         #expect(video.debugHasCurrentSourceForTesting)
         #expect(
             !video.debugHasPlayerForTesting,
-            "render-ahead resolve must store the source without UIHostingController containment"
+            "render-ahead resolve must store the source without AVPlayerViewController containment"
         )
 
         let parent = UIViewController()
@@ -51,7 +51,7 @@ struct MarkdownStressCrashRegressionTests {
 
         video.setPlaybackVisible(true)
         #expect(video.debugHasPlayerForTesting)
-        #expect(video.debugHostingParentForTesting === parent)
+        #expect(video.debugPlayerParentForTesting === parent)
     }
 
     @Test("prepareForRemoval cancels a pending resolve so it cannot install a host")

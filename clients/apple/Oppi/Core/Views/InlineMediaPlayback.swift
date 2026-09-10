@@ -1344,12 +1344,7 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
         _ controller: AVPlayerViewController,
         onSelectTrack: ((Int) -> Void)? = nil
     ) {
-        controller.showsPlaybackControls = true
-        controller.allowsPictureInPicturePlayback = true
-        controller.canStartPictureInPictureAutomaticallyFromInline = true
-        controller.entersFullScreenWhenPlaybackBegins = false
-        controller.exitsFullScreenWhenPlaybackEnds = false
-        controller.view.accessibilityIdentifier = "videoPlayer.native"
+        InlineVideoPlayerConfiguration.apply(to: controller)
         guard let overlay = controller.contentOverlayView else {
 #if DEBUG
             AuthenticatedMediaE2EPlaybackProbe.install(on: controller, model: playbackModel)
@@ -1368,120 +1363,135 @@ struct AVPlayerViewControllerContainer: UIViewControllerRepresentable {
 #endif
     }
 
-    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
-        var onFullScreenChange: ((Bool) -> Void)?
-        var onFullScreenWillEnd: (() -> Void)?
-        var onFullScreenDidEnd: ((Bool) -> Void)?
-        var onFullScreenTransitionFinished: (() -> Void)?
-        var onPictureInPictureChange: ((Bool) -> Void)?
-        var onPictureInPictureDidStop: ((Bool) -> Void)?
-        var onSelectCaptionTrack: ((Int) -> Void)?
-        private var wasPlayingBeforeFullScreen = false
+    typealias Coordinator = InlineVideoPlayerDelegate
 
-        init(
-            onFullScreenChange: ((Bool) -> Void)?,
-            onFullScreenWillEnd: (() -> Void)?,
-            onFullScreenDidEnd: ((Bool) -> Void)?,
-            onFullScreenTransitionFinished: (() -> Void)?,
-            onPictureInPictureChange: ((Bool) -> Void)?,
-            onPictureInPictureDidStop: ((Bool) -> Void)?,
-            onSelectCaptionTrack: ((Int) -> Void)?
-        ) {
-            self.onFullScreenChange = onFullScreenChange
-            self.onFullScreenWillEnd = onFullScreenWillEnd
-            self.onFullScreenDidEnd = onFullScreenDidEnd
-            self.onFullScreenTransitionFinished = onFullScreenTransitionFinished
-            self.onPictureInPictureChange = onPictureInPictureChange
-            self.onPictureInPictureDidStop = onPictureInPictureDidStop
-            self.onSelectCaptionTrack = onSelectCaptionTrack
+}
+
+@MainActor
+enum InlineVideoPlayerConfiguration {
+    static func apply(to controller: AVPlayerViewController) {
+        controller.showsPlaybackControls = true
+        controller.allowsPictureInPicturePlayback = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.entersFullScreenWhenPlaybackBegins = false
+        controller.exitsFullScreenWhenPlaybackEnds = false
+        controller.view.accessibilityIdentifier = "videoPlayer.native"
+    }
+}
+
+final class InlineVideoPlayerDelegate: NSObject, AVPlayerViewControllerDelegate {
+    var onFullScreenChange: ((Bool) -> Void)?
+    var onFullScreenWillEnd: (() -> Void)?
+    var onFullScreenDidEnd: ((Bool) -> Void)?
+    var onFullScreenTransitionFinished: (() -> Void)?
+    var onPictureInPictureChange: ((Bool) -> Void)?
+    var onPictureInPictureDidStop: ((Bool) -> Void)?
+    var onSelectCaptionTrack: ((Int) -> Void)?
+    private var wasPlayingBeforeFullScreen = false
+
+    init(
+        onFullScreenChange: ((Bool) -> Void)?,
+        onFullScreenWillEnd: (() -> Void)?,
+        onFullScreenDidEnd: ((Bool) -> Void)?,
+        onFullScreenTransitionFinished: (() -> Void)?,
+        onPictureInPictureChange: ((Bool) -> Void)?,
+        onPictureInPictureDidStop: ((Bool) -> Void)?,
+        onSelectCaptionTrack: ((Int) -> Void)?
+    ) {
+        self.onFullScreenChange = onFullScreenChange
+        self.onFullScreenWillEnd = onFullScreenWillEnd
+        self.onFullScreenDidEnd = onFullScreenDidEnd
+        self.onFullScreenTransitionFinished = onFullScreenTransitionFinished
+        self.onPictureInPictureChange = onPictureInPictureChange
+        self.onPictureInPictureDidStop = onPictureInPictureDidStop
+        self.onSelectCaptionTrack = onSelectCaptionTrack
+    }
+
+    func playerViewController(
+        _ playerViewController: AVPlayerViewController,
+        willBeginFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        wasPlayingBeforeFullScreen = playerViewController.player?.timeControlStatus == .playing
+            || playerViewController.player?.rate ?? 0 > 0
+        onFullScreenChange?(true)
+        if wasPlayingBeforeFullScreen {
+            playerViewController.player?.play()
         }
-
-        func playerViewController(
-            _ playerViewController: AVPlayerViewController,
-            willBeginFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
-        ) {
-            wasPlayingBeforeFullScreen = playerViewController.player?.timeControlStatus == .playing
-                || playerViewController.player?.rate ?? 0 > 0
-            onFullScreenChange?(true)
-            if wasPlayingBeforeFullScreen {
-                playerViewController.player?.play()
-            }
 #if DEBUG
+        MainActor.assumeIsolated {
+            AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
+                from: playerViewController,
+                destination: coordinator.viewController(forKey: .to)
+            )
+        }
+        coordinator.animate(alongsideTransition: { context in
             MainActor.assumeIsolated {
                 AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
                     from: playerViewController,
-                    destination: coordinator.viewController(forKey: .to)
+                    destination: context.viewController(forKey: .to)
                 )
             }
-            coordinator.animate(alongsideTransition: { context in
-                MainActor.assumeIsolated {
-                    AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
-                        from: playerViewController,
-                        destination: context.viewController(forKey: .to)
-                    )
-                }
-            }, completion: { context in
-                MainActor.assumeIsolated {
-                    AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
-                        from: playerViewController,
-                        destination: context.isCancelled ? nil : context.viewController(forKey: .to)
-                    )
-                }
-            })
-#endif
-        }
-
-        func playerViewController(
-            _ playerViewController: AVPlayerViewController,
-            willEndFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
-        ) {
-            // Keep ownership through the dismiss animation. AVKit still holds
-            // the player until this coordinator completes.
-            onFullScreenWillEnd?()
-            let handoff = FullScreenEndHandoff(
-                onDidEnd: onFullScreenDidEnd,
-                onTransitionFinished: onFullScreenTransitionFinished
-            )
+        }, completion: { context in
             MainActor.assumeIsolated {
-                let isPlayingNow = playerViewController.player?.timeControlStatus == .playing
-                    || playerViewController.player?.rate ?? 0 > 0
-                let player = playerViewController.player
-                let animated = coordinator.animate(alongsideTransition: nil) { context in
-                    let hostIsAttached = playerViewController.view.window != nil
-                        || playerViewController.view.superview != nil
-                    handoff.complete(
-                        cancelled: context.isCancelled,
-                        player: player,
-                        isPlayingNow: isPlayingNow,
-                        hostIsAttached: hostIsAttached
-                    )
-                }
-                if !animated {
-                    let hostIsAttached = playerViewController.view.window != nil
-                        || playerViewController.view.superview != nil
-                    handoff.complete(
-                        cancelled: false,
-                        player: player,
-                        isPlayingNow: isPlayingNow,
-                        hostIsAttached: hostIsAttached
-                    )
-                }
+                AuthenticatedMediaE2EPlaybackProbe.bindPresentedFullscreen(
+                    from: playerViewController,
+                    destination: context.isCancelled ? nil : context.viewController(forKey: .to)
+                )
+            }
+        })
+#endif
+    }
+
+    func playerViewController(
+        _ playerViewController: AVPlayerViewController,
+        willEndFullScreenPresentationWithAnimationCoordinator coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        // Keep ownership through the dismiss animation. AVKit still holds
+        // the player until this coordinator completes.
+        onFullScreenWillEnd?()
+        let handoff = FullScreenEndHandoff(
+            onDidEnd: onFullScreenDidEnd,
+            onTransitionFinished: onFullScreenTransitionFinished
+        )
+        MainActor.assumeIsolated {
+            let isPlayingNow = playerViewController.player?.timeControlStatus == .playing
+                || playerViewController.player?.rate ?? 0 > 0
+            let player = playerViewController.player
+            let animated = coordinator.animate(alongsideTransition: nil) { context in
+                let hostIsAttached = playerViewController.view.window != nil
+                    || playerViewController.view.superview != nil
+                handoff.complete(
+                    cancelled: context.isCancelled,
+                    player: player,
+                    isPlayingNow: isPlayingNow,
+                    hostIsAttached: hostIsAttached
+                )
+            }
+            if !animated {
+                let hostIsAttached = playerViewController.view.window != nil
+                    || playerViewController.view.superview != nil
+                handoff.complete(
+                    cancelled: false,
+                    player: player,
+                    isPlayingNow: isPlayingNow,
+                    hostIsAttached: hostIsAttached
+                )
             }
         }
+    }
 
-        func playerViewControllerWillStartPictureInPicture(
-            _ playerViewController: AVPlayerViewController
-        ) {
-            onPictureInPictureChange?(true)
-        }
+    func playerViewControllerWillStartPictureInPicture(
+        _ playerViewController: AVPlayerViewController
+    ) {
+        onPictureInPictureChange?(true)
+    }
 
-        func playerViewControllerDidStopPictureInPicture(
-            _ playerViewController: AVPlayerViewController
-        ) {
-            let hostIsAttached = playerViewController.view.window != nil
-                || playerViewController.view.superview != nil
-            onPictureInPictureDidStop?(hostIsAttached)
-        }
+    func playerViewControllerDidStopPictureInPicture(
+        _ playerViewController: AVPlayerViewController
+    ) {
+        let hostIsAttached = playerViewController.view.window != nil
+            || playerViewController.view.superview != nil
+        onPictureInPictureDidStop?(hostIsAttached)
     }
 }
 

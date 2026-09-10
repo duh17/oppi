@@ -1,4 +1,5 @@
-import SwiftUI
+import AVKit
+import Combine
 import UIKit
 
 /// Resolves one policy-checked Markdown video reference to the existing
@@ -24,13 +25,16 @@ enum MarkdownInlineVideoLayout {
 /// Source resolution can run in the full-screen reader's render-ahead runway,
 /// but the final fallback geometry is installed synchronously. Playback remains
 /// user initiated and delegates byte loading, controls, full-screen, and PiP to
-/// `AuthenticatedMediaPlayerView` / `AuthenticatedMediaPlaybackSession`.
+/// AVKit / `AuthenticatedMediaPlaybackSession`.
 @MainActor
 final class NativeMarkdownVideoView: UIView {
     private let statusLabel = UILabel()
     private let openButton = UIButton(type: .system)
     private var heightConstraint: NSLayoutConstraint?
-    private var hostingController: UIHostingController<AuthenticatedMediaPlayerView>?
+    private var playerController: AVPlayerViewController?
+    private var playerDelegate: InlineVideoPlayerDelegate?
+    private var playbackObservation: AnyCancellable?
+    private var selectedTrackIndex = 0
     private let playbackModel = AuthenticatedMediaPlayerModel()
     private var currentSource: AuthenticatedMediaSource?
     private var isPlaybackVisible = true
@@ -163,8 +167,8 @@ final class NativeMarkdownVideoView: UIView {
         super.didMoveToWindow()
         if window != nil {
             hasCommittedRevealGeometry = true
-            if let hostingController {
-                attachPlayerHost(hostingController)
+            if let playerController {
+                attachPlayerHost(playerController)
             }
         }
     }
@@ -257,17 +261,46 @@ final class NativeMarkdownVideoView: UIView {
         accessibilityLabel = nil
         backgroundColor = .clear
 
-        let player = makePlayerView(
+        playbackModel.setVisible(isPlaybackVisible)
+        playbackModel.prepare(
             source: source,
-            embed: embed,
-            isActive: isPlaybackVisible
+            autoplay: MarkdownInlineVideoLayout.autoplay,
+            telemetrySource: "markdown_inline_video",
+            telemetryMode: "inline",
+            telemetrySessionId: embed.reference.sourceSessionID,
+            onPresentationSize: nil
         )
-        let host = UIHostingController(rootView: player)
+        let host = AVPlayerViewController()
+        InlineVideoPlayerConfiguration.apply(to: host)
+        playerDelegate = InlineVideoPlayerDelegate(
+            onFullScreenChange: { [weak self] active in
+                guard active else { return }
+                self?.playbackModel.setFullScreen(true)
+                WorkspaceMediaOverlayPost.begin()
+            },
+            onFullScreenWillEnd: { [weak self] in self?.playbackModel.handleWillEndFullScreen() },
+            onFullScreenDidEnd: { [weak self] attached in
+                self?.playbackModel.handleDidEndFullScreen(hostIsAttached: attached)
+            },
+            onFullScreenTransitionFinished: { WorkspaceMediaOverlayPost.end() },
+            onPictureInPictureChange: { [weak self] active in self?.playbackModel.setPictureInPicture(active) },
+            onPictureInPictureDidStop: { [weak self] attached in
+                self?.playbackModel.handleDidStopPictureInPicture(hostIsAttached: attached)
+            },
+            onSelectCaptionTrack: nil
+        )
+        host.delegate = playerDelegate
+        host.player = playbackModel.player
+        // Published values emit before mutation; render on the next main-queue turn.
+        playbackObservation = playbackModel.objectWillChange.sink { [weak self] in
+            DispatchQueue.main.async { [weak self] in self?.refreshPlaybackState() }
+        }
         host.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.backgroundColor = .clear
-        hostingController = host
+        playerController = host
         currentSource = source
         attachPlayerHost(host)
+        refreshPlaybackState()
         loadSidecar(for: embed)
         NSLayoutConstraint.activate([
             host.view.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -292,7 +325,7 @@ final class NativeMarkdownVideoView: UIView {
         // Visibility reveal is the only deferred mount point. An already-true
         // flag still has to install if a probe/async resolve stored a source.
         if let source = currentSource, let embed = currentEmbed,
-           hostingController == nil, window != nil {
+           playerController == nil, window != nil {
             isPlaybackVisible = true
             installPlayer(source: source, embed: embed)
             return
@@ -312,27 +345,22 @@ final class NativeMarkdownVideoView: UIView {
         )
     }
 
-    private func makePlayerView(
-        source: AuthenticatedMediaSource,
-        embed: MarkdownVideoEmbed?,
-        isActive: Bool
-    ) -> AuthenticatedMediaPlayerView {
-        AuthenticatedMediaPlayerView(
-            source: source,
-            height: reservedHeight,
-            cornerRadius: 8,
-            autoplay: MarkdownInlineVideoLayout.autoplay,
-            isActive: isActive,
-            unavailableTitle: String(localized: "Video preview unavailable"),
-            unavailableSystemImage: "film",
-            failureActionTitle: String(localized: "Open video file"),
-            onFailureAction: { [weak self] in self?.openReference() },
-            telemetrySource: "markdown_inline_video",
-            telemetryMode: "inline",
-            telemetrySessionId: embed?.reference.sourceSessionID,
-            model: playbackModel,
-            timedText: timedText
-        )
+    private func refreshPlaybackState() {
+        guard let playerController else { return }
+        if playerController.player !== playbackModel.player {
+            playerController.player = playbackModel.player
+        }
+        let failed = playbackModel.player == nil && playbackModel.errorMessage != nil
+        backgroundColor = failed ? UIColor(ThemeRuntimeState.currentPalette().bgHighlight) : .clear
+        playerController.view.isHidden = failed
+        statusLabel.isHidden = !failed
+        openButton.isHidden = !failed
+        if failed {
+            statusLabel.text = String(localized: "Video preview unavailable") + "\n" + (playbackModel.errorMessage ?? "")
+            openButton.accessibilityLabel = String(localized: "Open video file")
+            openButton.accessibilityHint = String(localized: "Opens the video file")
+        }
+        refreshPlayerCaptions()
     }
 
     private func loadSidecar(for embed: MarkdownVideoEmbed) {
@@ -343,32 +371,50 @@ final class NativeMarkdownVideoView: UIView {
             await MainActor.run {
                 guard let self, !Task.isCancelled, self.currentEmbed == embed else { return }
                 self.timedText = result
+                self.selectedTrackIndex = result.selectedIndex
                 self.refreshPlayerCaptions()
             }
         }
     }
 
     private func refreshPlayerCaptions() {
-        guard let host = hostingController, let source = currentSource else { return }
-        host.rootView = makePlayerView(
-            source: source,
-            embed: currentEmbed,
-            isActive: isPlaybackVisible
-        )
+        guard let controller = playerController else { return }
+        if let overlay = controller.contentOverlayView {
+            let caption = timedText.tracks.indices.contains(selectedTrackIndex)
+                ? TimedText.currentCue(in: timedText.tracks[selectedTrackIndex].cues, at: playbackModel.currentTime)?.text
+                : nil
+            TimedTextCaptionOverlay.apply(
+                caption: caption,
+                tracks: timedText.tracks,
+                selectedIndex: selectedTrackIndex,
+                onSelectTrack: { [weak self] index in
+                    self?.selectedTrackIndex = index
+                    self?.refreshPlayerCaptions()
+                },
+                to: overlay
+            )
+        }
+#if DEBUG
+        AuthenticatedMediaE2EPlaybackProbe.install(on: controller, model: playbackModel)
+#endif
     }
 
     private func removePlayer() {
+        playbackObservation = nil
         playbackModel.teardown()
-        if let host = hostingController {
+        if let host = playerController {
+            host.player = nil
+            host.delegate = nil
             host.willMove(toParent: nil)
             host.view.removeFromSuperview()
             host.removeFromParent()
         }
-        hostingController = nil
+        playerController = nil
         currentSource = nil
+        playerDelegate = nil
     }
 
-    private func attachPlayerHost(_ host: UIHostingController<AuthenticatedMediaPlayerView>) {
+    private func attachPlayerHost(_ host: AVPlayerViewController) {
         if host.parent == nil, let parent = nearestViewController() {
             parent.addChild(host)
             if host.view.superview != self {
@@ -388,13 +434,6 @@ final class NativeMarkdownVideoView: UIView {
         guard reservedHeight != height else { return }
         reservedHeight = height
         heightConstraint?.constant = height
-        if let host = hostingController, let source = currentSource {
-            host.rootView = makePlayerView(
-                source: source,
-                embed: currentEmbed,
-                isActive: isPlaybackVisible
-            )
-        }
         if !hasCommittedRevealGeometry {
             onPreparedGeometry?(height)
         }
@@ -445,13 +484,13 @@ final class NativeMarkdownVideoView: UIView {
 extension NativeMarkdownVideoView {
     var debugIsStaticFallbackForTesting: Bool { isStaticFallback }
     var debugReservedHeightForTesting: CGFloat { reservedHeight }
-    var debugHasPlayerForTesting: Bool { hostingController != nil }
+    var debugHasPlayerForTesting: Bool { playerController != nil }
     var debugHasCurrentSourceForTesting: Bool { currentSource != nil }
     var debugIsPlaybackVisibleForTesting: Bool { isPlaybackVisible }
     var debugHasActivePlayerForTesting: Bool { playbackModel.player != nil }
     var debugHasCommittedRevealGeometryForTesting: Bool { hasCommittedRevealGeometry }
-    var debugHostingControllerForTesting: UIViewController? { hostingController }
-    var debugHostingParentForTesting: UIViewController? { hostingController?.parent }
+    var debugPlayerControllerForTesting: AVPlayerViewController? { playerController }
+    var debugPlayerParentForTesting: UIViewController? { playerController?.parent }
     var debugPlaybackModelForTesting: AuthenticatedMediaPlayerModel { playbackModel }
     var debugFailureHitAreaForTesting: CGSize { openButton.bounds.size }
     var debugStatusLabelAdjustsFontForTesting: Bool { statusLabel.adjustsFontForContentSizeCategory }

@@ -101,7 +101,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     private var currentConfiguration: UserTimelineRowConfiguration
     private var decodeTasks: [Task<Void, Never>] = []
     private var thumbnailViews: [UIView] = []
-    private var thumbnailHostingControllers: [UIHostingController<DataImagePreviewView>] = []
     private var hasAppliedConfiguration = false
     private var previousThemeID: ThemeID?
     private var interactionHandlers: TimelineRowInteractionHandlers?
@@ -699,7 +698,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         // Cancel outstanding decodes.
         for task in decodeTasks { task.cancel() }
         decodeTasks.removeAll()
-        thumbnailHostingControllers.removeAll()
 
         // Clear previous thumbnails.
         for view in thumbnailViews {
@@ -728,21 +726,9 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             thumbnailViews.append(container)
 
             if let data = Data(base64Encoded: attachment.data, options: .ignoreUnknownCharacters) {
-                let host = UIHostingController(
-                    rootView: DataImagePreviewView(
-                        data: data,
-                        mimeType: attachment.mimeType,
-                        maxPixelSize: 512,
-                        heightMode: .fixed(Self.thumbnailSize),
-                        allowsFullscreenStaticImage: true
-                    )
-                )
-                host.view.translatesAutoresizingMaskIntoConstraints = false
-                host.view.backgroundColor = .clear
-                container.addSubview(host.view)
-                pinThumbnailContent(host.view, in: container)
-                thumbnailHostingControllers.append(host)
+                installThumbnail(data: data, mimeType: attachment.mimeType, in: container, allowsFullscreen: true)
             } else {
+                container.subviews.forEach { $0.removeFromSuperview() }
                 let fallback = UIImageView(image: UIImage(systemName: "photo.badge.exclamationmark"))
                 fallback.translatesAutoresizingMaskIntoConstraints = false
                 fallback.tintColor = UIColor(palette.comment)
@@ -774,36 +760,36 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                 do {
                     let data = try await fetch(pill.path)
                     guard !Task.isCancelled, let self, let container else { return }
-                    await MainActor.run {
-                        let host = UIHostingController(
-                            rootView: DataImagePreviewView(
-                                data: data,
-                                mimeType: mimeType,
-                                maxPixelSize: 512,
-                                heightMode: .fixed(Self.thumbnailSize),
-                                allowsFullscreenStaticImage: false
-                            )
-                        )
-                        host.view.translatesAutoresizingMaskIntoConstraints = false
-                        host.view.backgroundColor = .clear
-                        container.addSubview(host.view)
-                        self.pinThumbnailContent(host.view, in: container)
-                        self.thumbnailHostingControllers.append(host)
-                    }
+                    self.installThumbnail(data: data, mimeType: mimeType, in: container, allowsFullscreen: false)
                 } catch {
                     guard !Task.isCancelled, let container else { return }
-                    await MainActor.run {
-                        let fallback = UIImageView(image: UIImage(systemName: "photo"))
-                        fallback.translatesAutoresizingMaskIntoConstraints = false
-                        fallback.tintColor = UIColor(palette.comment)
-                        fallback.contentMode = .scaleAspectFit
-                        container.addSubview(fallback)
-                        self?.pinThumbnailContent(fallback, in: container, inset: 18)
-                    }
+                    container.subviews.forEach { $0.removeFromSuperview() }
+                    let fallback = UIImageView(image: UIImage(systemName: "photo"))
+                    fallback.translatesAutoresizingMaskIntoConstraints = false
+                    fallback.tintColor = UIColor(palette.comment)
+                    fallback.contentMode = .scaleAspectFit
+                    container.addSubview(fallback)
+                    self?.pinThumbnailContent(fallback, in: container, inset: 18)
                 }
             }
             decodeTasks.append(task)
         }
+    }
+
+    private func installThumbnail(data: Data, mimeType: String, in container: UIView, allowsFullscreen: Bool) {
+        container.subviews.forEach { $0.removeFromSuperview() }
+        let thumbnail = UserTimelineImageThumbnailView()
+        thumbnail.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(thumbnail)
+        pinThumbnailContent(thumbnail, in: container)
+        let task = Task { [weak thumbnail] in
+            let content = await Task.detached(priority: .userInitiated) {
+                UserTimelineImageThumbnailView.decode(data: data, mimeType: mimeType)
+            }.value
+            guard !Task.isCancelled, let thumbnail else { return }
+            thumbnail.apply(content, data: data, mimeType: mimeType, allowsFullscreen: allowsFullscreen)
+        }
+        decodeTasks.append(task)
     }
 
     private func makeThumbnailContainer(
@@ -821,6 +807,14 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         container.isAccessibilityElement = true
         container.accessibilityIdentifier = accessibilityIdentifier
         container.accessibilityLabel = accessibilityLabel
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.startAnimating()
+        container.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
         NSLayoutConstraint.activate([
             container.widthAnchor.constraint(equalToConstant: Self.thumbnailSize),
             container.heightAnchor.constraint(equalToConstant: Self.thumbnailSize),
@@ -837,22 +831,111 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         ])
     }
 
-    @objc private func thumbnailTapped(_ gesture: UITapGestureRecognizer) {
-        guard let container = gesture.view,
-              let imageView = container.subviews.compactMap({ $0 as? UIImageView }).first,
-              let image = imageView.image else { return }
-
-        presentFullScreenImage(image)
-    }
-
-    private func presentFullScreenImage(_ image: UIImage) {
-        ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
-    }
-
     // Note: double-tap copy and context menu are handled by
     // TimelineRowInteractionProvider + TimelineRowInteractionInstaller.
     // The UIContextMenuInteractionDelegate override below filters out
     // taps inside the selectable text area.
+}
+
+/// UIKit-only thumbnail; the row owns decode cancellation and path-pill taps.
+@MainActor
+private final class UserTimelineImageThumbnailView: UIView {
+    enum Content: Sendable {
+        case image(UIImage)
+        case web(String)
+        case failure
+    }
+
+    private var onTap: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let spinner = UIActivityIndicatorView(style: .medium)
+        install(spinner)
+        spinner.startAnimating()
+        isUserInteractionEnabled = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    nonisolated static func decode(data: Data, mimeType: String) -> Content {
+        let info = ImageMediaInspector.inspect(data: data, mimeType: mimeType)
+        if info.prefersWebRenderer {
+            let mime = MediaMimeType.safeImageMimeType(info.normalizedMimeType, fallback: "image/gif")
+            return .web("data:\(mime);base64,\(data.base64EncodedString())")
+        }
+        if let image = ImageMediaInspector.downsampledImage(data: data, maxPixelSize: 512) {
+            return .image(image)
+        }
+        if MediaMimeType.isSupportedImageMimeType(info.normalizedMimeType) {
+            let mime = MediaMimeType.safeImageMimeType(info.normalizedMimeType)
+            return .web("data:\(mime);base64,\(data.base64EncodedString())")
+        }
+        return .failure
+    }
+
+    func apply(_ content: Content, data: Data, mimeType: String, allowsFullscreen: Bool) {
+        subviews.forEach { $0.removeFromSuperview() }
+        switch content {
+        case .image(let image):
+            let imageView = UIImageView(image: image)
+            imageView.contentMode = .scaleAspectFit
+            install(imageView)
+            onTap = { [weak self] in
+                guard let self else { return }
+                ToolTimelineRowPresentationHelpers.presentFullScreenImage(UIImage(data: data) ?? image, from: self)
+            }
+        case .web(let dataURL):
+            let web = AnimatedImageWebContainerView()
+            web.isUserInteractionEnabled = false
+            install(web)
+            web.apply(dataURLString: dataURL)
+            onTap = { FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType) }
+        case .failure:
+            let label = UILabel()
+            label.text = String(localized: "Image preview unavailable")
+            label.font = .preferredFont(forTextStyle: .caption2)
+            label.adjustsFontForContentSizeCategory = true
+            label.textColor = UIColor(ThemeRuntimeState.currentPalette().comment)
+            label.textAlignment = .center
+            label.numberOfLines = 3
+            let icon = UIImageView(image: UIImage(systemName: "photo.badge.exclamationmark"))
+            icon.tintColor = label.textColor
+            icon.contentMode = .scaleAspectFit
+            let stack = UIStackView(arrangedSubviews: [icon, label])
+            stack.axis = .vertical
+            stack.alignment = .center
+            stack.spacing = 4
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(stack)
+            NSLayoutConstraint.activate([
+                icon.heightAnchor.constraint(equalToConstant: 16),
+                stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+                stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+                stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            ])
+            onTap = nil
+        }
+        // Path-pill containers alone own their tap, for static AND animated data.
+        isUserInteractionEnabled = allowsFullscreen && onTap != nil
+        if isUserInteractionEnabled {
+            addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+        }
+    }
+
+    @objc private func tapped() { onTap?() }
+
+    private func install(_ view: UIView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
 }
 
 // MARK: - Context Menu
