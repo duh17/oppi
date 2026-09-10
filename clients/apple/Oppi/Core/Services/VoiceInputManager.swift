@@ -1242,8 +1242,11 @@ final class VoiceInputManager {
             // Remote ASR still captures locally. Its AVAudioEngine can fail
             // after activation succeeded, so activation-only fallback misses it.
             // Never retry a server/network error as an audio route failure.
-            guard provider.engine != .serverDictation
-                || failure.domain == "com.apple.coreaudio.avfaudio" else { throw error }
+            let isCaptureFailure = switch error {
+            case VoiceInputError.audioCaptureUnavailable: true
+            default: failure.domain == "com.apple.coreaudio.avfaudio"
+            }
+            guard provider.engine != .serverDictation || isCaptureFailure else { throw error }
             ClientLog.error("VoiceInput", "Capture start failed; retrying built-in microphone", metadata: [
                 "phase": "capture_start",
                 "engine": provider.engine.logName,

@@ -1032,6 +1032,86 @@ struct OppiDictationSessionMessageListenerTests {
 
 // MARK: - Session Audio Drain Tests
 
+@Suite("Dictation first-audio startup")
+@MainActor
+struct DictationCaptureStartupTests {
+    @Test func stoppedEngineIsRebuiltBeforeSuccess() async throws {
+        var starts = 0
+        var stops = 0
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: { starts += 1 }, hasAudio: { starts == 2 },
+            isRunning: { starts == 2 }, stop: { stops += 1 },
+            isCancelled: { false }, sleep: { _ in }
+        )
+        #expect(starts == 2)
+        #expect(stops == 1)
+    }
+
+    @Test func runningWithoutAudioIsNotSuccess() async {
+        var starts = 0
+        var stops = 0
+        await #expect(throws: (any Error).self) {
+            try await DictationAudioEngineHelper.startWithFirstAudio(
+                start: { starts += 1 }, hasAudio: { false }, isRunning: { true },
+                stop: { stops += 1 }, isCancelled: { false }, sleep: { _ in }
+            )
+        }
+        #expect(starts == 2)
+        #expect(stops == 2)
+    }
+
+    @Test func firstAudioCompletesWithoutRetry() async throws {
+        var starts = 0
+        var waits = 0
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: { starts += 1 }, hasAudio: { waits > 0 }, isRunning: { true },
+            stop: { Issue.record("Healthy capture must not stop") },
+            isCancelled: { false }, sleep: { _ in waits += 1 }
+        )
+        #expect(starts == 1)
+        #expect(waits > 0)
+    }
+
+    @Test func cancellationDuringReadinessStopsWithoutRetry() async {
+        var cancelled = false
+        var starts = 0
+        var stops = 0
+        await #expect(throws: CancellationError.self) {
+            try await DictationAudioEngineHelper.startWithFirstAudio(
+                start: { starts += 1 }, hasAudio: { false }, isRunning: { true },
+                stop: { stops += 1 }, isCancelled: { cancelled },
+                sleep: { _ in cancelled = true }
+            )
+        }
+        #expect(starts == 1)
+        #expect(stops == 1)
+    }
+
+    @Test func failedStartsAreBoundedAndCleanedUp() async {
+        var starts = 0
+        var stops = 0
+        await #expect(throws: TestVoiceError.self) {
+            try await DictationAudioEngineHelper.startWithFirstAudio(
+                start: { starts += 1; throw TestVoiceError("hardware changed") },
+                hasAudio: { false }, isRunning: { false }, stop: { stops += 1 },
+                isCancelled: { false }, sleep: { _ in }
+            )
+        }
+        #expect(starts == 2)
+        #expect(stops == 2)
+    }
+
+    @Test func cancellationBeforeStartDoesNotAcquireMicrophone() async {
+        await #expect(throws: CancellationError.self) {
+            try await DictationAudioEngineHelper.startWithFirstAudio(
+                start: { Issue.record("Cancelled capture must not start") },
+                hasAudio: { false }, isRunning: { false }, stop: {},
+                isCancelled: { true }, sleep: { _ in }
+            )
+        }
+    }
+}
+
 @Suite("OppiDictationSession audio drain")
 @MainActor
 struct OppiDictationSessionAudioDrainTests {

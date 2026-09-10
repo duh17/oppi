@@ -38,6 +38,8 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     /// Pending audio stream, transferred to the drain task on start.
     private var pendingAudioStream: AsyncStream<Data>?
     private var audioEngine: AVAudioEngine?
+    private var audioLevelTask: Task<Void, Never>?
+    private var hasCapturedAudio = false
     /// Actual route/formats observed after this engine started, not a requested preference.
     private var captureMetadata: [String: String]?
     private var stopped = false
@@ -80,7 +82,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
 
         // Start audio engine with conversion to 16kHz mono
         let audioStart = ContinuousClock.now
-        try startAudioCapture()
+        try await startAudioCapture()
         let audioStartMs = audioStart.elapsedMs()
 
         // Begin draining audio to WS in background (blocks on readinessTask first)
@@ -154,7 +156,28 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     /// PCM chunks are yielded into `pendingAudioStream` via `audioContinuation`.
     /// `AsyncStream.Continuation.yield()` is thread-safe and safe to call
     /// directly from the RT audio thread without dispatch indirection.
-    private func startAudioCapture() throws {
+    private func startAudioCapture() async throws {
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: { try self.startCaptureAttempt() },
+            hasAudio: { self.hasCapturedAudio },
+            isRunning: { self.audioEngine?.isRunning == true },
+            stop: {
+                self.stopAudioEngine()
+                self.audioContinuation?.finish()
+                self.audioContinuation = nil
+                self.pendingAudioStream = nil
+            },
+            isCancelled: { self.stopped }
+        )
+        if let audioEngine {
+            captureMetadata = DictationAudioEngineHelper.captureMetadata(engine: audioEngine)
+            ClientLog.info("VoiceInput", "Dictation audio engine started", metadata: captureMetadata ?? [:])
+        }
+        logger.info("Audio capture delivering PCM (16kHz, 16-bit, mono)")
+    }
+
+    private func startCaptureAttempt() throws {
+        hasCapturedAudio = false
         let (audioStream, audioContinuation) = AsyncStream<Data>.makeStream()
         self.audioContinuation = audioContinuation
         self.pendingAudioStream = audioStream
@@ -163,17 +186,16 @@ final class OppiDictationSession: VoiceTranscriptionSession {
             audioContinuation: audioContinuation
         )
         self.audioEngine = engine
-        captureMetadata = DictationAudioEngineHelper.captureMetadata(engine: engine)
-        ClientLog.info("VoiceInput", "Dictation audio engine started", metadata: captureMetadata ?? [:])
 
         // Drain level stream in the background (inherits MainActor from class)
-        Task { [weak self] in
+        audioLevelTask = Task { [weak self] in
             for await level in levelStream {
+                guard !Task.isCancelled else { return }
+                self?.hasCapturedAudio = true
                 self?.audioLevelContinuation.yield(level)
             }
         }
 
-        logger.info("Audio capture started (16kHz, 16-bit, mono)")
     }
 
     /// Starts a background task that:
@@ -239,6 +261,8 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     }
 
     private func stopAudioEngine() {
+        audioLevelTask?.cancel()
+        audioLevelTask = nil
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine = nil
@@ -408,6 +432,47 @@ extension OppiDictationSession {
 /// `AsyncStream.Continuation.yield()` is thread-safe and does not create Tasks,
 /// so it is safe to call from the real-time audio callback.
 enum DictationAudioEngineHelper {
+    @MainActor
+    static func startWithFirstAudio(
+        start: () throws -> Void,
+        hasAudio: () -> Bool,
+        isRunning: () -> Bool,
+        stop: () -> Void,
+        isCancelled: () -> Bool,
+        sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) async throws {
+        // A hardware format change can stop AVAudioEngine during start(),
+        // without start() throwing. Require a running engine AND real tap audio.
+        // Rebuild once on the same route, outside any configuration-change
+        // notification callback (Apple warns against teardown in that callback).
+        for attempt in 0..<2 {
+            try Task.checkCancellation()
+            guard !isCancelled() else { throw CancellationError() }
+            do {
+                try start()
+                for _ in 0..<20 {
+                    try Task.checkCancellation()
+                    guard !isCancelled() else { throw CancellationError() }
+                    guard isRunning() else { break }
+                    if hasAudio() { return }
+                    try await sleep(.milliseconds(50))
+                }
+                throw VoiceInputError.audioCaptureUnavailable
+            } catch {
+                let wasRunning = isRunning()
+                stop()
+                if error is CancellationError || isCancelled() { throw CancellationError() }
+                guard attempt == 0 else { throw error }
+                ClientLog.warning("VoiceInput", "Rebuilding capture after missing first audio or engine start failure", metadata: [
+                    "engine_running": String(wasRunning),
+                    "error_domain": (error as NSError).domain,
+                    "error_code": String((error as NSError).code),
+                ])
+                try await sleep(.milliseconds(250))
+            }
+        }
+    }
+
     static func startEngine(
         audioContinuation: AsyncStream<Data>.Continuation
     ) throws -> (AVAudioEngine, AsyncStream<Float>) {
@@ -459,6 +524,7 @@ enum DictationAudioEngineHelper {
                 outputBuffer = buffer
             }
 
+            guard outputBuffer.frameLength > 0 else { return }
             // Audio level — AsyncStream.Continuation.yield() is thread-safe
             if let channelData = outputBuffer.floatChannelData?[0] {
                 let frameLength = UInt(outputBuffer.frameLength)
@@ -497,17 +563,19 @@ enum DictationAudioEngineHelper {
     /// Port types only: never upload Bluetooth names or hardware identifiers.
     static func captureMetadata(engine: AVAudioEngine) -> [String: String] {
         let input = engine.inputNode.inputFormat(forBus: 0)
-        let output = engine.outputNode.outputFormat(forBus: 0)
+        // Do not access outputNode for diagnostics: it is created on demand
+        // and can change this input-only graph. Read session output state instead.
         var metadata = [
             "input_hz": String(input.sampleRate),
             "input_channels": String(input.channelCount),
-            "output_hz": String(output.sampleRate),
-            "output_channels": String(output.channelCount),
+            "engine_running": String(engine.isRunning),
         ]
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         metadata["category"] = session.category.rawValue
         metadata["mode"] = session.mode.rawValue
+        metadata["session_hz"] = String(session.sampleRate)
+        metadata["session_output_channels"] = String(session.outputNumberOfChannels)
         metadata["input_ports"] = session.currentRoute.inputs.map { $0.portType.rawValue }.joined(separator: ",")
         metadata["output_ports"] = session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
         #endif

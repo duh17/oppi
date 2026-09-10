@@ -900,11 +900,15 @@ struct VoiceInputManagerTests {
         }())
     }
 
-    @Test func serverCaptureStartFailureRetriesWithFreshPreparation() async throws {
+    @Test(arguments: [true, false])
+    func serverCaptureStartFailureRetriesWithFreshPreparation(engineThrew: Bool) async throws {
         let systemAccess = MockVoiceInputSystemAccess()
         let firstSession = MockVoiceSession()
-        // Exact error reported by Duh Ifone, from AVAudioEngine.start().
-        firstSession.startError = NSError(domain: "com.apple.coreaudio.avfaudio", code: 1936094051)
+        // Both a throwing engine and one that silently stops without PCM must
+        // reach the built-in safety net after the same-route restart is exhausted.
+        firstSession.startError = engineThrew
+            ? NSError(domain: "com.apple.coreaudio.avfaudio", code: 1936094051)
+            : VoiceInputError.audioCaptureUnavailable
         let secondSession = MockVoiceSession()
         var sessions = [firstSession, secondSession]
         let provider = MockVoiceProvider(id: .oppiServer, engine: .serverDictation)
