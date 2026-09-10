@@ -31,9 +31,13 @@ final class NativeMarkdownVideoView: UIView {
     private let statusLabel = UILabel()
     private let openButton = UIButton(type: .system)
     private var heightConstraint: NSLayoutConstraint?
+    /// Slot-sized parent so AVKit chrome follows the cell, not ChatView.
+    private var slotController: InlineVideoSlotController?
     private var playerController: AVPlayerViewController?
     private var playerDelegate: InlineVideoPlayerDelegate?
     private var playbackObservation: AnyCancellable?
+    private var lastAppliedPlayer: AVPlayer?
+    private var lastAppliedFailed = false
     private var selectedTrackIndex = 0
     private let playbackModel = AuthenticatedMediaPlayerModel()
     private var currentSource: AuthenticatedMediaSource?
@@ -167,8 +171,8 @@ final class NativeMarkdownVideoView: UIView {
         super.didMoveToWindow()
         if window != nil {
             hasCommittedRevealGeometry = true
-            if let playerController {
-                attachPlayerHost(playerController)
+            if playerController != nil {
+                attachPlayerHost()
             }
         }
     }
@@ -270,6 +274,8 @@ final class NativeMarkdownVideoView: UIView {
             telemetrySessionId: embed.reference.sourceSessionID,
             onPresentationSize: nil
         )
+        let slot = InlineVideoSlotController()
+        slot.view.translatesAutoresizingMaskIntoConstraints = false
         let host = AVPlayerViewController()
         InlineVideoPlayerConfiguration.apply(to: host)
         playerDelegate = InlineVideoPlayerDelegate(
@@ -297,16 +303,22 @@ final class NativeMarkdownVideoView: UIView {
         }
         host.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.backgroundColor = .clear
+        host.view.insetsLayoutMarginsFromSafeArea = false
+        slotController = slot
         playerController = host
         currentSource = source
-        attachPlayerHost(host)
+        attachPlayerHost()
         refreshPlaybackState()
         loadSidecar(for: embed)
         NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
-            host.view.topAnchor.constraint(equalTo: topAnchor),
-            host.view.bottomAnchor.constraint(equalTo: bottomAnchor),
+            slot.view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            slot.view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            slot.view.topAnchor.constraint(equalTo: topAnchor),
+            slot.view.bottomAnchor.constraint(equalTo: bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: slot.view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: slot.view.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: slot.view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: slot.view.bottomAnchor),
         ])
     }
 
@@ -351,14 +363,19 @@ final class NativeMarkdownVideoView: UIView {
             playerController.player = playbackModel.player
         }
         let failed = playbackModel.player == nil && playbackModel.errorMessage != nil
-        backgroundColor = failed ? UIColor(ThemeRuntimeState.currentPalette().bgHighlight) : .clear
-        playerController.view.isHidden = failed
-        statusLabel.isHidden = !failed
-        openButton.isHidden = !failed
-        if failed {
-            statusLabel.text = String(localized: "Video preview unavailable") + "\n" + (playbackModel.errorMessage ?? "")
-            openButton.accessibilityLabel = String(localized: "Open video file")
-            openButton.accessibilityHint = String(localized: "Opens the video file")
+        let playerChanged = playbackModel.player !== lastAppliedPlayer
+        if failed != lastAppliedFailed || playerChanged {
+            lastAppliedFailed = failed
+            lastAppliedPlayer = playbackModel.player
+            backgroundColor = failed ? UIColor(ThemeRuntimeState.currentPalette().bgHighlight) : .clear
+            playerController.view.isHidden = failed
+            statusLabel.isHidden = !failed
+            openButton.isHidden = !failed
+            if failed {
+                statusLabel.text = String(localized: "Video preview unavailable") + "\n" + (playbackModel.errorMessage ?? "")
+                openButton.accessibilityLabel = String(localized: "Open video file")
+                openButton.accessibilityHint = String(localized: "Opens the video file")
+            }
         }
         refreshPlayerCaptions()
     }
@@ -409,20 +426,38 @@ final class NativeMarkdownVideoView: UIView {
             host.view.removeFromSuperview()
             host.removeFromParent()
         }
+        if let slot = slotController {
+            slot.willMove(toParent: nil)
+            slot.view.removeFromSuperview()
+            slot.removeFromParent()
+        }
         playerController = nil
+        slotController = nil
+        lastAppliedPlayer = nil
+        lastAppliedFailed = false
         currentSource = nil
         playerDelegate = nil
     }
 
-    private func attachPlayerHost(_ host: AVPlayerViewController) {
-        if host.parent == nil, let parent = nearestViewController() {
-            parent.addChild(host)
-            if host.view.superview != self {
-                insertSubview(host.view, at: 0)
+    private func attachPlayerHost() {
+        guard let slot = slotController, let host = playerController else { return }
+        if slot.parent == nil, let parent = nearestViewController() {
+            parent.addChild(slot)
+            if slot.view.superview != self {
+                insertSubview(slot.view, at: 0)
             }
-            host.didMove(toParent: parent)
-        } else if host.view.superview != self {
-            insertSubview(host.view, at: 0)
+            slot.didMove(toParent: parent)
+        } else if slot.view.superview != self {
+            insertSubview(slot.view, at: 0)
+        }
+        if host.parent == nil {
+            slot.addChild(host)
+            if host.view.superview != slot.view {
+                slot.view.addSubview(host.view)
+            }
+            host.didMove(toParent: slot)
+        } else if host.view.superview != slot.view {
+            slot.view.addSubview(host.view)
         }
     }
 
@@ -480,6 +515,20 @@ final class NativeMarkdownVideoView: UIView {
     }
 }
 
+/// AVKit lays out playback chrome against its parent view controller.
+/// That parent must be this slot, whose view lives in the timeline cell.
+/// Parenting `AVPlayerViewController` to ChatView pins the picture to the
+/// screen while the bubble scrolls.
+private final class InlineVideoSlotController: UIViewController {
+    override func loadView() {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.clipsToBounds = true
+        view.insetsLayoutMarginsFromSafeArea = false
+        self.view = view
+    }
+}
+
 #if DEBUG
 extension NativeMarkdownVideoView {
     var debugIsStaticFallbackForTesting: Bool { isStaticFallback }
@@ -491,6 +540,7 @@ extension NativeMarkdownVideoView {
     var debugHasCommittedRevealGeometryForTesting: Bool { hasCommittedRevealGeometry }
     var debugPlayerControllerForTesting: AVPlayerViewController? { playerController }
     var debugPlayerParentForTesting: UIViewController? { playerController?.parent }
+    var debugPlayerSlotForTesting: UIViewController? { slotController }
     var debugPlaybackModelForTesting: AuthenticatedMediaPlayerModel { playbackModel }
     var debugFailureHitAreaForTesting: CGSize { openButton.bounds.size }
     var debugStatusLabelAdjustsFontForTesting: Bool { statusLabel.adjustsFontForContentSizeCategory }

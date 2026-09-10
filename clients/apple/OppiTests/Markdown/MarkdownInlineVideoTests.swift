@@ -814,8 +814,7 @@ struct MarkdownInlineVideoTests {
             await Task.yield()
         }
         #expect(installed)
-        #expect(video.debugPlayerParentForTesting === parent)
-        #expect(parent.children.contains { $0 === video.debugPlayerControllerForTesting })
+        try expectPlayerScrollsWithHost(video, screenParent: parent)
         let controller = try #require(video.debugPlayerControllerForTesting)
         #expect(controller.player === video.debugPlaybackModelForTesting.player)
         #expect(controller.showsPlaybackControls)
@@ -892,7 +891,8 @@ struct MarkdownInlineVideoTests {
         #expect(failed)
         #expect(video.debugPlaybackModelForTesting === model)
         #expect(video.debugPlayerControllerForTesting === controller)
-        #expect(controller.parent === parent)
+        #expect(controller.parent === video.debugPlayerSlotForTesting)
+        #expect(controller.parent !== parent)
     }
 
     @MainActor
@@ -1193,7 +1193,7 @@ struct MarkdownInlineVideoTests {
         model.teardown()
         let installedPlayer = model.debugInstallStandalonePlayerForTesting()
         model.setFullScreen(true)
-        // AVKit detaches the timeline cell as well as the inline SwiftUI host.
+        // AVKit detaches the timeline cell as well as the inline player slot.
         // UICollectionView.didEndDisplaying forwards this false offscreen signal
         // through setPlaybackVisible(false); it is not recycle while AVKit owns
         // the player, and apply() will no-op on the same identity after dismiss.
@@ -1682,6 +1682,21 @@ struct MarkdownInlineVideoTests {
         if let resized = failureControl(in: host.view) {
             #expect(resized.bounds.height >= 44)
         }
+    }
+
+    @MainActor
+    private func expectPlayerScrollsWithHost(
+        _ video: NativeMarkdownVideoView,
+        screenParent: UIViewController
+    ) throws {
+        let player = try #require(video.debugPlayerControllerForTesting)
+        let slot = try #require(video.debugPlayerSlotForTesting)
+        #expect(player.view.isDescendant(of: video))
+        #expect(slot.view.isDescendant(of: video))
+        #expect(player.parent === slot)
+        #expect(slot !== screenParent)
+        #expect(screenParent.children.contains { $0 === slot })
+        #expect(slot.children.contains { $0 === player })
     }
 
     private func dummyMediaSource(

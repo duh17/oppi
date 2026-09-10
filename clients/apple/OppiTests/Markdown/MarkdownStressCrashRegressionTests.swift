@@ -51,7 +51,7 @@ struct MarkdownStressCrashRegressionTests {
 
         video.setPlaybackVisible(true)
         #expect(video.debugHasPlayerForTesting)
-        #expect(video.debugPlayerParentForTesting === parent)
+        try expectPlayerScrollsWithHost(video, screenParent: parent)
     }
 
     @Test("prepareForRemoval cancels a pending resolve so it cannot install a host")
@@ -271,6 +271,21 @@ struct MarkdownStressCrashRegressionTests {
             sessionID: "session-a",
             serverBaseURL: URL(string: "https://server.example.com")
         )
+    }
+
+    @MainActor
+    private func expectPlayerScrollsWithHost(
+        _ video: NativeMarkdownVideoView,
+        screenParent: UIViewController
+    ) throws {
+        let player = try #require(video.debugPlayerControllerForTesting)
+        let slot = try #require(video.debugPlayerSlotForTesting)
+        #expect(player.view.isDescendant(of: video))
+        #expect(slot.view.isDescendant(of: video))
+        #expect(player.parent === slot)
+        #expect(slot !== screenParent)
+        #expect(screenParent.children.contains { $0 === slot })
+        #expect(slot.children.contains { $0 === player })
     }
 
     private func dummyMediaSource() -> AuthenticatedMediaSource {

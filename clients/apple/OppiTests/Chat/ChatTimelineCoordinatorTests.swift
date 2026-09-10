@@ -688,10 +688,15 @@ struct ChatTimelineCoordinatorTests {
         let button = UIButton(type: .system)
         let textField = UITextField()
         let label = UILabel()
+        let video = NativeMarkdownVideoView()
+        let playerChrome = UIView()
+        video.addSubview(playerChrome)
 
         #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: button))
         #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: textField))
         #expect(ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: label))
+        #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: video))
+        #expect(!ChatTimelineCollectionHost.Controller.shouldReceiveTimelineGestureTouch(from: playerChrome))
     }
 
     @MainActor

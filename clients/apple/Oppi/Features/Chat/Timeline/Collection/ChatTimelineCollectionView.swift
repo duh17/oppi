@@ -1299,6 +1299,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             var current = view
             while let candidate = current {
                 if candidate is UIControl { return false }
+                if candidate is NativeMarkdownVideoView { return false }
                 if let textView = candidate as? UITextView, textView.isSelectable { return false }
                 current = candidate.superview
             }
