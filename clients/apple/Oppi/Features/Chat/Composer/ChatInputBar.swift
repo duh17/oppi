@@ -12,24 +12,12 @@ enum ChatInputPrimaryActionKind: Equatable {
 
 /// Owns inline-ask paging, draft answers, and the submitted-request mark
 /// that keeps the composer empty after submit/ignore until a different ask arrives.
-struct AskComposerClearingState: Equatable {
+@MainActor
+struct AskComposerClearingState {
     var currentPage = 0
     var draftAnswers: [String: AskAnswer] = [:]
-    var submittedRequestID: String?
-
-    /// Final submit or ignore: mark this request submitted and clear composer text.
-    mutating func markSubmitted(request: AskRequest?) -> String {
-        submittedRequestID = request?.id
-        return ""
-    }
-
-    /// Claim synchronously before invoking a callback. The server may keep the
-    /// same card mounted until settlement, and another control can still fire.
-    mutating func beginSubmission(request: AskRequest?) -> Bool {
-        guard let request, submittedRequestID != request.id else { return false }
-        _ = markSubmitted(request: request)
-        return true
-    }
+    var submission = AskResponseSubmission()
+    var submittedRequestID: String? { submission.submittedRequestID }
 
     /// Ask request id changed. Reset page and drafts. Keep the submitted mark
     /// unless a *different* ask id arrived. Clearing the pending request after
@@ -37,9 +25,7 @@ struct AskComposerClearingState: Equatable {
     mutating func applyRequestIDChange(_ incomingRequestID: String?) {
         currentPage = 0
         draftAnswers = [:]
-        if let incomingRequestID, incomingRequestID != submittedRequestID {
-            submittedRequestID = nil
-        }
+        submission.applyRequestIDChange(incomingRequestID)
     }
 }
 
@@ -77,8 +63,8 @@ struct ChatInputBar<ActionRow: View>: View {
     let showForceStop: Bool
     let isForceStopInFlight: Bool
     var askRequest: AskRequest?
-    var onAskSubmit: (([String: AskAnswer]) -> Void)?
-    var onAskIgnoreAll: (() -> Void)?
+    var onAskSubmit: ((AskRequest, [String: AskAnswer], @escaping AskResponseSubmission.Completion) -> Void)?
+    var onAskIgnoreAll: ((AskRequest, @escaping AskResponseSubmission.Completion) -> Void)?
     var autoAdvanceController: AskInlineAutoAdvanceController? = nil
 
     let slashCommands: [SlashCommand]
@@ -614,16 +600,15 @@ struct ChatInputBar<ActionRow: View>: View {
             request: request,
             currentPage: $askClearing.currentPage,
             answers: $askClearing.draftAnswers,
-            onSubmit: { answers in
-                guard markAskRequestSubmitted() else { return }
-                onAskSubmit?(answers)
+            onSubmit: { answers, complete in
+                submitAskResponse(request: request, answers: answers, completion: complete)
             },
-            onIgnoreAll: {
-                guard markAskRequestSubmitted() else { return }
-                onAskIgnoreAll?()
+            onIgnoreAll: { complete in
+                submitAskResponse(request: request, answers: nil, completion: complete)
             },
             voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
             submittedRequestID: askClearing.submittedRequestID,
+            responseFailed: askClearing.submission.phase == .failed(request.id),
             autoAdvanceController: autoAdvanceController
         )
     }
@@ -765,16 +750,15 @@ struct ChatInputBar<ActionRow: View>: View {
             .frame(width: actionVisualDiameter, height: actionVisualDiameter)
         }
         .buttonStyle(.plain)
-        .disabled(!canSend || isSendInFlight)
+        .disabled(!canSend || isSendInFlight || isCurrentAskSubmitted)
         .accessibilityIdentifier("chat.send")
         .accessibilityLabel(isSendInFlight ? "Sending" : "Send")
     }
 
     private var ignoreAskActionButton: some View {
         Button(action: {
-            guard markAskRequestSubmitted() else { return }
-            onAskIgnoreAll?()
-            FeatureEducationTips.markPromptAnswered()
+            guard let askRequest else { return }
+            submitAskResponse(request: askRequest, answers: nil)
         }) {
             ZStack {
                 Circle().fill(Color.themeBgHighlight)
@@ -1115,33 +1099,6 @@ struct ChatInputBar<ActionRow: View>: View {
         return customAskText(answers: draftAnswers, questionID: activeQuestionID)
     }
 
-    /// Keep the submitted-ask mark until a *different* ask id appears.
-    /// Clearing the pending request after a successful send must not drop it.
-    static func retainedSubmittedAskRequestID(
-        current: String?,
-        incomingRequestID: String?
-    ) -> String? {
-        var state = AskComposerClearingState(submittedRequestID: current)
-        state.applyRequestIDChange(incomingRequestID)
-        return state.submittedRequestID
-    }
-
-    struct AskComposerSubmitClearance: Equatable {
-        let nextComposerText: String
-        let submittedRequestID: String?
-    }
-
-    /// Any final ask submit or ignore clears visible composer text and marks
-    /// that request submitted before draft-answer sync can restore it.
-    static func askComposerSubmitClearance(request: AskRequest?) -> AskComposerSubmitClearance {
-        var state = AskComposerClearingState()
-        let nextComposerText = state.markSubmitted(request: request)
-        return AskComposerSubmitClearance(
-            nextComposerText: nextComposerText,
-            submittedRequestID: state.submittedRequestID
-        )
-    }
-
     struct AskComposerSendTransition: Equatable {
         let nextPage: Int
         let answers: [String: AskAnswer]
@@ -1240,10 +1197,8 @@ struct ChatInputBar<ActionRow: View>: View {
         if handleAskComposerSendIfNeeded() {
             return
         }
-        if askRequest != nil {
-            guard markAskRequestSubmitted() else { return }
-            onAskIgnoreAll?()
-            FeatureEducationTips.markPromptAnswered()
+        if let askRequest {
+            submitAskResponse(request: askRequest, answers: nil)
             return
         }
         if isBusy {
@@ -1263,11 +1218,9 @@ struct ChatInputBar<ActionRow: View>: View {
             return false
         }
 
-        if transition.shouldSubmit {
-            guard markAskRequestSubmitted() else { return true }
+        if transition.shouldSubmit, let askRequest {
             askClearing.draftAnswers = transition.answers
-            onAskSubmit?(transition.answers)
-            FeatureEducationTips.markPromptAnswered()
+            submitAskResponse(request: askRequest, answers: transition.answers)
             return true
         }
 
@@ -1281,11 +1234,32 @@ struct ChatInputBar<ActionRow: View>: View {
         return true
     }
 
-    private func markAskRequestSubmitted() -> Bool {
-        guard askClearing.beginSubmission(request: askRequest) else { return false }
-        text = ""
-        textBeforeRecording = nil
-        return true
+    private func submitAskResponse(
+        request: AskRequest,
+        answers: [String: AskAnswer]?,
+        completion: @escaping AskResponseSubmission.Completion = { _ in }
+    ) {
+        guard askRequest?.id == request.id else {
+            completion(.completed)
+            return
+        }
+        askClearing.submission.submit(requestID: request.id, deliver: { complete in
+            text = ""
+            textBeforeRecording = nil
+            if let answers, let onAskSubmit {
+                onAskSubmit(request, answers, complete)
+            } else if answers == nil, let onAskIgnoreAll {
+                onAskIgnoreAll(request, complete)
+            } else {
+                complete(.retryableFailure)
+            }
+            FeatureEducationTips.markPromptAnswered()
+        }, completion: { result in
+            if result == .retryableFailure {
+                syncComposerTextWithActiveAskQuestion()
+            }
+            completion(result)
+        })
     }
 
     private func handleAlternateSend() {

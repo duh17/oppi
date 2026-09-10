@@ -1935,40 +1935,70 @@ struct ChatView: View {
         return error.localizedDescription
     }
 
-    private func handleComposerAskSubmit(_ answers: [String: AskAnswer]) {
-        guard let ask = activeComposerAskRequest,
-              let payload = ask.responsePayload(from: answers) else { return }
+    private func handleComposerAskSubmit(
+        _ ask: AskRequest,
+        _ answers: [String: AskAnswer],
+        completion: @escaping AskResponseSubmission.Completion
+    ) {
+        guard let payload = ask.responsePayload(from: answers) else {
+            connection.extensionToast = "Couldn't prepare this response. Try again."
+            completion(.retryableFailure)
+            return
+        }
+        deliverComposerAskResponse(ask, payload: payload, completion: completion)
+    }
 
+    private func handleComposerAskIgnoreAll(
+        _ ask: AskRequest,
+        completion: @escaping AskResponseSubmission.Completion
+    ) {
+        deliverComposerAskResponse(ask, payload: .cancelled, completion: completion)
+    }
+
+    private func deliverComposerAskResponse(
+        _ ask: AskRequest,
+        payload: ExtensionUIResponsePayload,
+        completion: @escaping AskResponseSubmission.Completion
+    ) {
+        guard activeComposerAskRequest?.id == ask.id else {
+            completion(.completed)
+            return
+        }
         composerDraftController.clearSubmittedAskAnswer()
-
         Task {
-            do {
-                try await connection.respondToExtensionUI(
-                    id: ask.id,
-                    sessionId: ask.sessionId,
-                    payload: payload
-                )
-            } catch {
-                connection.extensionToast = "Failed to respond: \(error.localizedDescription)"
-            }
+            let result = await Self.deliverAskResponse(
+                send: {
+                    try await connection.respondToExtensionUI(
+                        id: ask.id, sessionId: ask.sessionId, payload: payload
+                    )
+                },
+                reconcile: { await connection.hydrateSessionDialogs(sessionId: ask.sessionId) },
+                isPending: { connection.askRequestStore.pending(for: ask.sessionId)?.id == ask.id },
+                showFailure: { connection.extensionToast = "Couldn't confirm response: \($0.localizedDescription). Try again." }
+            )
+            completion(result)
         }
     }
 
-    private func handleComposerAskIgnoreAll() {
-        guard let ask = activeComposerAskRequest else { return }
-
-        composerDraftController.clearSubmittedAskAnswer()
-
-        Task {
-            do {
-                try await connection.respondToExtensionUI(
-                    id: ask.id,
-                    sessionId: ask.sessionId,
-                    payload: .cancelled
-                )
-            } catch {
-                connection.extensionToast = "Failed to cancel: \(error.localizedDescription)"
-            }
+    /// A failed transport can have delivered before its acknowledgement was
+    /// lost. Repair the existing dialog projection first. If still pending (or
+    /// repair is unavailable), retry the same Ask ID: the server's first-wins
+    /// response handling ignores IDs already settled, never answers twice.
+    @MainActor
+    static func deliverAskResponse(
+        send: () async throws -> Void,
+        reconcile: () async -> Void,
+        isPending: () -> Bool,
+        showFailure: (Error) -> Void
+    ) async -> AskResponseSubmission.Result {
+        do {
+            try await send()
+            return .completed
+        } catch {
+            await reconcile()
+            guard isPending() else { return .completed }
+            showFailure(error)
+            return .retryableFailure
         }
     }
 

@@ -210,8 +210,8 @@ private struct FeatureEducationPromptCardPreview: View {
             request: Self.request,
             currentPage: $currentPage,
             answers: $answers,
-            onSubmit: { _ in },
-            onIgnoreAll: {}
+            onSubmit: { _, complete in complete(.completed) },
+            onIgnoreAll: { complete in complete(.completed) }
         )
         .padding(12)
         .background(Color.themeBgHighlight, in: RoundedRectangle(cornerRadius: 22, style: .continuous))

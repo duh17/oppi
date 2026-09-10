@@ -1,6 +1,93 @@
 import SwiftUI
 import UIKit
 
+/// A local response claim, not server settlement. Both card and composer claim
+/// synchronously; delivery completion releases failed attempts, including any
+/// mixed-action callbacks that joined the same in-flight response.
+@MainActor
+@Observable
+final class AskResponseSubmission {
+    enum Result { case completed, retryableFailure }
+    enum Phase: Equatable {
+        case idle, inFlight(String), failed(String), completed(String)
+    }
+    typealias Completion = @MainActor (Result) -> Void
+    typealias Delivery = (@escaping Completion) -> Void
+
+    private(set) var phase: Phase = .idle
+    private var requestID: String?
+    private var attemptID: UUID?
+    private var completions: [Completion] = []
+
+    var submittedRequestID: String? {
+        switch phase {
+        case .inFlight(let id), .completed(let id): id
+        case .idle, .failed: nil
+        }
+    }
+
+    func blocksResponse(to requestID: String) -> Bool {
+        submittedRequestID == requestID
+    }
+
+    func submit(
+        requestID: String,
+        deliver: Delivery,
+        completion: @escaping Completion = { _ in }
+    ) {
+        if self.requestID == nil, phase == .idle {
+            self.requestID = requestID
+        }
+        guard self.requestID == requestID else {
+            completion(.completed)
+            return
+        }
+        if phase == .inFlight(requestID) {
+            completions.append(completion)
+            return
+        }
+        guard !blocksResponse(to: requestID) else {
+            completion(.completed)
+            return
+        }
+        let attempt = UUID()
+        attemptID = attempt
+        phase = .inFlight(requestID)
+        completions.append(completion)
+        deliver { [self] result in
+            guard attemptID == attempt else { return }
+            attemptID = nil
+            phase = result == .completed ? .completed(requestID) : .failed(requestID)
+            finishCallbacks(result)
+        }
+    }
+
+    func applyRequestIDChange(_ incomingID: String?) {
+        let currentID: String?
+        switch phase {
+        case .idle: currentID = nil
+        case .inFlight(let id), .failed(let id), .completed(let id): currentID = id
+        }
+        guard incomingID != requestID else { return }
+        requestID = incomingID
+        attemptID = nil
+        // Removing a request is settlement, not a failed delivery. Keep its
+        // closed identity so a queued old action cannot rearm it.
+        if incomingID == nil, let currentID {
+            phase = .completed(currentID)
+        } else {
+            phase = .idle
+        }
+        finishCallbacks(.completed)
+    }
+
+    private func finishCallbacks(_ result: Result) {
+        let callbacks = completions
+        completions = []
+        for callback in callbacks { callback(result) }
+    }
+}
+
 // MARK: - AskCard
 
 /// Inline question card rendered inside the ChatInputBar capsule.
@@ -14,10 +101,11 @@ struct AskCard: View {
     let request: AskRequest
     @Binding var currentPage: Int
     @Binding var answers: [String: AskAnswer]
-    let onSubmit: ([String: AskAnswer]) -> Void
-    let onIgnoreAll: () -> Void
+    let onSubmit: ([String: AskAnswer], @escaping AskResponseSubmission.Completion) -> Void
+    let onIgnoreAll: (@escaping AskResponseSubmission.Completion) -> Void
     var voiceInputManager: VoiceInputManager? = nil
     var submittedRequestID: String? = nil
+    var responseFailed = false
     var autoAdvanceController: AskInlineAutoAdvanceController? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -28,7 +116,7 @@ struct AskCard: View {
     @State private var expandedSheetDetent: PresentationDetent = .large
     @State private var presentedAtNs: UInt64 = 0
     @State private var didRecordResponseMetric = false
-    @State private var locallySubmittedRequestID: String?
+    @State private var submission = AskResponseSubmission()
     @State private var ownedAutoAdvanceController = AskInlineAutoAdvanceController()
 
     private let cardCornerRadius: CGFloat = 14
@@ -58,7 +146,7 @@ struct AskCard: View {
     }
 
     private var isAskSubmitted: Bool {
-        submittedRequestID == request.id || locallySubmittedRequestID == request.id
+        submittedRequestID == request.id || submission.blocksResponse(to: request.id)
     }
 
     var body: some View {
@@ -101,6 +189,7 @@ struct AskCard: View {
         // promises so the agent never gets stuck waiting.
         // Announce page changes for VoiceOver
         .onChange(of: request) { _, newRequest in
+            submission.applyRequestIDChange(newRequest.id)
             let clamped = Self.clampedPage(currentPage, for: newRequest)
             if clamped != currentPage {
                 currentPage = clamped
@@ -179,6 +268,13 @@ struct AskCard: View {
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
+            }
+
+            if responseFailed || submission.phase == .failed(request.id) {
+                Text("Couldn't confirm response. Try again.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                    .padding(.horizontal, 12)
             }
 
             // Footer: type answer + ignore
@@ -330,7 +426,7 @@ struct AskCard: View {
                 Button {
                     submitAnswers(answers, surface: "inline")
                 } label: {
-                    Text("Send")
+                    Text(responseFailed || submission.phase == .failed(request.id) ? "Retry" : "Send")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.themeOnBlue)
                         .padding(.horizontal, 12)
@@ -442,20 +538,22 @@ struct AskCard: View {
 
     private func submitAnswers(_ submittedAnswers: [String: AskAnswer], surface: String) {
         guard !isAskSubmitted else { return }
-        locallySubmittedRequestID = request.id
         pageAdvance.invalidate()
-        recordResponseMetric(outcome: submittedAnswers.isEmpty ? "empty" : "answered", surface: surface, submittedAnswers: submittedAnswers)
-        onSubmit(submittedAnswers)
-        FeatureEducationTips.markPromptAnswered()
+        submission.submit(requestID: request.id) { complete in
+            recordResponseMetric(outcome: submittedAnswers.isEmpty ? "empty" : "answered", surface: surface, submittedAnswers: submittedAnswers)
+            onSubmit(submittedAnswers, complete)
+            FeatureEducationTips.markPromptAnswered()
+        }
     }
 
     private func ignoreAll(surface: String) {
         guard !isAskSubmitted else { return }
-        locallySubmittedRequestID = request.id
         pageAdvance.invalidate()
-        recordResponseMetric(outcome: "ignored", surface: surface, submittedAnswers: [:])
-        onIgnoreAll()
-        FeatureEducationTips.markPromptAnswered()
+        submission.submit(requestID: request.id) { complete in
+            recordResponseMetric(outcome: "ignored", surface: surface, submittedAnswers: [:])
+            onIgnoreAll(complete)
+            FeatureEducationTips.markPromptAnswered()
+        }
     }
 
     private func recordResponseMetric(

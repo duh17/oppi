@@ -115,11 +115,13 @@ struct AskCardIntentRegressionPreview: View {
                 showForceStop: false,
                 isForceStopInFlight: false,
                 askRequest: session.askRequest,
-                onAskSubmit: { _ in
+                onAskSubmit: { _, _, complete in
                     session.status = "Submitted"
+                    complete(.completed)
                 },
-                onAskIgnoreAll: {
+                onAskIgnoreAll: { _, complete in
                     session.status = "Ignored all"
+                    complete(.completed)
                 },
                 autoAdvanceController: session.autoAdvance,
                 slashCommands: [],

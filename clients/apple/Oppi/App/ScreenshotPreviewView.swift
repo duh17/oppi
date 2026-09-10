@@ -1789,8 +1789,8 @@ private struct AskCardLongComposerPreview: View {
                 showForceStop: false,
                 isForceStopInFlight: false,
                 askRequest: Self.request,
-                onAskSubmit: { _ in },
-                onAskIgnoreAll: {},
+                onAskSubmit: { _, _, complete in complete(.completed) },
+                onAskIgnoreAll: { _, complete in complete(.completed) },
                 slashCommands: [],
                 fileSuggestions: [],
                 onFileSuggestionQuery: nil,
@@ -2034,11 +2034,13 @@ private struct AskCardPreview: View {
                         request: AskCardPreviewFixture.request,
                         currentPage: $currentPage,
                         answers: $answers,
-                        onSubmit: { submittedAnswers in
+                        onSubmit: { submittedAnswers, complete in
                             lastAction = AskResponseEncoder.encode(submittedAnswers)
+                            complete(.completed)
                         },
-                        onIgnoreAll: {
+                        onIgnoreAll: { complete in
                             lastAction = "Ignored"
+                            complete(.completed)
                         }
                     )
                     .padding(.horizontal, 14)
@@ -2140,11 +2142,13 @@ private struct AskCardMultiSelectLongOptionsPreview: View {
                         request: AskCardPreviewFixture.multiSelectLongOptionsRequest,
                         currentPage: $currentPage,
                         answers: $answers,
-                        onSubmit: { submittedAnswers in
+                        onSubmit: { submittedAnswers, complete in
                             lastAction = AskResponseEncoder.encode(submittedAnswers)
+                            complete(.completed)
                         },
-                        onIgnoreAll: {
+                        onIgnoreAll: { complete in
                             lastAction = "Ignored"
+                            complete(.completed)
                         }
                     )
                     .padding(.horizontal, 14)
@@ -2296,16 +2300,18 @@ private struct OppiCommandApprovalInlinePreview: View {
                     request: AskCardPreviewFixture.oppiCommandApprovalRequest,
                     currentPage: $currentPage,
                     answers: $answers,
-                    onSubmit: { submitted in
+                    onSubmit: { submitted, complete in
                         if submitted[ExtensionUIRequest.inlineQuestionId]
                             == .single(ExtensionUIRequest.confirmValue) {
                             lastAction = "Confirmed"
                         } else {
                             lastAction = "Cancelled"
                         }
+                        complete(.completed)
                     },
-                    onIgnoreAll: {
+                    onIgnoreAll: { complete in
                         lastAction = "Ignored"
+                        complete(.completed)
                     }
                 )
 

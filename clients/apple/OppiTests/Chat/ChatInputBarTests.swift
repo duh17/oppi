@@ -1176,10 +1176,10 @@ struct ChatInputBarTests {
         )
         #expect(whileVisible == "")
 
-        let retainedID = ChatInputBar<EmptyView>.retainedSubmittedAskRequestID(
-            current: request.id,
-            incomingRequestID: nil
-        )
+        let submission = AskResponseSubmission()
+        submission.submit(requestID: request.id) { $0(.completed) }
+        submission.applyRequestIDChange(nil)
+        let retainedID = submission.submittedRequestID
         #expect(retainedID == request.id)
 
         let afterServerCleared = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
@@ -1202,15 +1202,18 @@ struct ChatInputBarTests {
             timeout: nil
         )
         let submittedText = "typed custom answer"
-        let clearance = ChatInputBar<EmptyView>.askComposerSubmitClearance(request: request)
+        let submission = AskResponseSubmission()
+        submission.submit(requestID: request.id) { $0(.completed) }
+        #expect(submission.submittedRequestID == request.id)
+        #expect(ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: request,
+            activeQuestionID: "q1",
+            draftAnswers: ["q1": .custom(submittedText)],
+            keepComposerClearedForSubmittedRequestID: submission.submittedRequestID
+        ) == "")
 
-        #expect(clearance.nextComposerText.isEmpty)
-        #expect(clearance.submittedRequestID == request.id)
-
-        let retainedID = ChatInputBar<EmptyView>.retainedSubmittedAskRequestID(
-            current: clearance.submittedRequestID,
-            incomingRequestID: nil
-        )
+        submission.applyRequestIDChange(nil)
+        let retainedID = submission.submittedRequestID
         #expect(retainedID == request.id)
 
         let replacement = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
@@ -1234,12 +1237,12 @@ struct ChatInputBarTests {
         incoming: String?,
         expected: String?
     ) {
-        #expect(
-            ChatInputBar<EmptyView>.retainedSubmittedAskRequestID(
-                current: current,
-                incomingRequestID: incoming
-            ) == expected
-        )
+        let submission = AskResponseSubmission()
+        if let current {
+            submission.submit(requestID: current) { $0(.completed) }
+        }
+        submission.applyRequestIDChange(incoming)
+        #expect(submission.submittedRequestID == expected)
     }
 
     @Test("Ask composer clearing state retains the submitted mark until a different ask arrives")
@@ -1257,15 +1260,21 @@ struct ChatInputBarTests {
             draftAnswers: ["q1": .custom(submittedText)]
         )
 
-        let nextComposerText = state.markSubmitted(request: request)
-        #expect(nextComposerText.isEmpty)
+        state.submission.submit(requestID: request.id) { $0(.completed) }
+        let nextComposerText = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+            request: request,
+            activeQuestionID: "q1",
+            draftAnswers: state.draftAnswers,
+            keepComposerClearedForSubmittedRequestID: state.submittedRequestID
+        )
+        #expect(nextComposerText == "")
         #expect(state.submittedRequestID == request.id)
 
         state.applyRequestIDChange(nil)
         #expect(state.submittedRequestID == request.id)
         #expect(state.currentPage == 0)
         #expect(state.draftAnswers.isEmpty)
-        #expect(nextComposerText.isEmpty)
+        #expect(nextComposerText == "")
 
         let afterRequestCleared = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
             request: nil,
@@ -1380,24 +1389,21 @@ struct AskSubmissionWiringTests {
         )
         var forwarded = 0
         for _ in 0..<3 {
-            if state.beginSubmission(request: request) { forwarded += 1 }
+            state.submission.submit(requestID: request.id) { _ in forwarded += 1 }
         }
         #expect(forwarded == 1)
         #expect(state.submittedRequestID == request.id)
         state.applyRequestIDChange(nil)
-        let staleAccepted = state.beginSubmission(request: request)
-        let missingAccepted = state.beginSubmission(request: nil)
-        #expect(!staleAccepted, "Settlement must not rearm stale callbacks")
-        #expect(!missingAccepted)
+        state.submission.submit(requestID: request.id) { _ in forwarded += 1 }
+        #expect(forwarded == 1, "Settlement must not rearm stale callbacks")
 
         let next = AskRequest(
             id: "ask-next", sessionId: "session", questions: [], allowCustom: true, timeout: nil
         )
         state.applyRequestIDChange(next.id)
-        let nextAccepted = state.beginSubmission(request: next)
-        let duplicateAccepted = state.beginSubmission(request: next)
-        #expect(nextAccepted)
-        #expect(!duplicateAccepted)
+        state.submission.submit(requestID: next.id) { _ in forwarded += 1 }
+        state.submission.submit(requestID: next.id) { _ in forwarded += 1 }
+        #expect(forwarded == 2)
     }
 
     @Test func inlineCallbacksRejectAlreadySubmittedRequestsBeforeForwarding() throws {
@@ -1407,11 +1413,13 @@ struct AskSubmissionWiringTests {
             until: "private var attachButton",
             in: source
         )
-        #expect(card.components(separatedBy: "guard markAskRequestSubmitted() else { return }").count - 1 == 2)
+        #expect(card.components(separatedBy: "submitAskResponse(request: request, answers:").count - 1 == 2)
         let marker = try chatInputBarSourceSlice(
-            named: "private func markAskRequestSubmitted()", until: "private func handleAlternateSend", in: source
+            named: "private func submitAskResponse(", until: "private func handleAlternateSend", in: source
         )
-        #expect(marker.contains("guard askClearing.beginSubmission(request: askRequest) else { return false }"))
+        #expect(marker.contains("guard askRequest?.id == request.id else"))
+        #expect(marker.contains("askClearing.submission.submit(requestID: request.id"))
+        #expect(marker.contains("syncComposerTextWithActiveAskQuestion()"))
     }
 
     @Test func finalPageSendIsDisabledAndSubmissionIsGuarded() throws {
