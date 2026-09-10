@@ -1473,11 +1473,6 @@ final class ScreenshotPreviewUITests: XCTestCase {
                 description: "README-style [label](path) links open in the document viewer."
             ),
             (
-                id: "session-prompt-swipe",
-                title: "Prompt from the session list",
-                description: "Swipe a live workspace session to send a prompt template without opening chat."
-            ),
-            (
                 id: "commit-new-session",
                 title: "New Session from a commit",
                 description: "Starting from a commit attaches that commit, not every changed file."

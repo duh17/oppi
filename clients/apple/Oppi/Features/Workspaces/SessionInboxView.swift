@@ -29,15 +29,6 @@ private struct SessionInboxPendingDelete: Identifiable {
     var id: String { "\(serverId):\(session.id)" }
 }
 
-private struct SessionInboxPendingPrompt: Identifiable {
-    let serverId: String
-    let routeScope: SessionRouteScope
-    let session: Session
-    let workspaceId: String
-
-    var id: String { "\(serverId):\(session.id)" }
-}
-
 enum WorkspaceCatalogAvailability: Equatable {
     case loading
     case unavailable
@@ -159,7 +150,6 @@ struct SessionInboxView: View {
     @State private var error: String?
     @State private var isCreating = false
     @State private var pendingDelete: SessionInboxPendingDelete?
-    @State private var pendingPrompt: SessionInboxPendingPrompt?
     @State private var expandedStoppedGroupIDs: Set<String> = []
     @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var hasAutoOpenedE2EWorkspace = false
@@ -403,19 +393,6 @@ struct SessionInboxView: View {
             Button("OK", role: .cancel) { error = nil }
         } message: {
             Text(error ?? "")
-        }
-        .sheet(item: $pendingPrompt) { pending in
-            SessionListPromptTemplatePicker(
-                workspaceId: pending.workspaceId,
-                apiClient: coordinator.connection(for: pending.serverId)?.apiClient,
-                onSelect: { commandName in
-                    Task { await sendPromptTemplate(pending, commandName: commandName) }
-                },
-                onError: { message in
-                    pendingPrompt = nil
-                    error = message
-                }
-            )
         }
         .confirmationDialog(
             "Delete Session?",
@@ -745,13 +722,7 @@ struct SessionInboxView: View {
             .accessibilityIdentifier("session.nav.\(item.session.id)")
             .accessibilityValue(sessionRowAccessibilityValue(for: item))
             .listRowBackground(theme.bg.primary)
-            .swipeActions(
-                edge: .trailing,
-                allowsFullSwipe: SessionListPromptSwipePolicy.trailingAction(
-                    status: item.session.status,
-                    workspaceId: item.session.workspaceId ?? item.workspace?.id
-                ) != .prompt
-            ) {
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 sessionSwipeActions(for: item)
             }
     }
@@ -813,8 +784,6 @@ struct SessionInboxView: View {
                 .accessibilityIdentifier("session.delete.\(item.session.id)")
             }
         } else {
-            // SwiftUI trailing swipeActions declare from the trailing edge toward
-            // center. Stop first so it sits at the screen edge: [Prompt] [Stop] |.
             Button {
                 Task { await stopSession(item) }
             } label: {
@@ -822,19 +791,6 @@ struct SessionInboxView: View {
             }
             .tint(.themeOrange)
             .accessibilityIdentifier("session.stop.\(item.session.id)")
-
-            if SessionListPromptSwipePolicy.trailingAction(
-                status: item.session.status,
-                workspaceId: item.session.workspaceId ?? item.workspace?.id
-            ) == .prompt {
-                Button {
-                    presentPromptPicker(for: item)
-                } label: {
-                    Label("Prompt", systemImage: SlashCommand.Source.prompt.iconName)
-                }
-                .tint(.themeCyan)
-                .accessibilityIdentifier("session.prompt.\(item.session.id)")
-            }
         }
     }
 
@@ -940,39 +896,6 @@ struct SessionInboxView: View {
             ),
             workspace: workspaceTarget
         )
-    }
-
-    private func presentPromptPicker(for item: SessionInboxItem) {
-        let workspaceId = item.session.workspaceId ?? item.workspace?.id
-        guard let workspaceId,
-              !workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard let routeScope = routeScope(for: item.session) else {
-            error = "Session route is unavailable"
-            return
-        }
-        pendingPrompt = SessionInboxPendingPrompt(
-            serverId: item.serverId,
-            routeScope: routeScope,
-            session: item.session,
-            workspaceId: workspaceId
-        )
-    }
-
-    private func sendPromptTemplate(_ pending: SessionInboxPendingPrompt, commandName: String) async {
-        guard let connection = coordinator.connection(for: pending.serverId),
-              let api = connection.apiClient else {
-            error = "Server is offline — reconnecting in background"
-            return
-        }
-        do {
-            try await api.sendSessionCommand(
-                scope: pending.routeScope,
-                sessionId: pending.session.id,
-                message: SessionListPromptSwipePolicy.sendMessage(commandName: commandName)
-            )
-        } catch {
-            self.error = "Prompt failed: \(error.localizedDescription)"
-        }
     }
 
     private func stopSession(_ item: SessionInboxItem) async {

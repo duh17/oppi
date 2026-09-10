@@ -102,13 +102,6 @@ struct WhatsNewView: View {
             description: String(localized: "README-style [label](path) links open in the document viewer.")
         ),
         WhatsNewFeature(
-            id: "session-prompt-swipe",
-            icon: "paperplane",
-            iconColor: .themeOrange,
-            title: String(localized: "Prompt from the session list"),
-            description: String(localized: "Swipe a live workspace session to send a prompt template without opening chat.")
-        ),
-        WhatsNewFeature(
             id: "commit-new-session",
             icon: "plus.square.on.square",
             iconColor: .themeGreen,

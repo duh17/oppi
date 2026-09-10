@@ -134,7 +134,6 @@ struct WorkspaceDetailView: View {
     @State private var isImportingLocal = false
     @State private var navigateToSessionId: String?
     @State private var pendingDeleteSession: Session?
-    @State private var pendingPromptSession: Session?
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var contextBarHeight: CGFloat = 0
@@ -674,19 +673,6 @@ struct WorkspaceDetailView: View {
         } message: {
             Text(error ?? "")
         }
-        .sheet(item: $pendingPromptSession) { session in
-            SessionListPromptTemplatePicker(
-                workspaceId: session.workspaceId ?? workspace.id,
-                apiClient: apiClient,
-                onSelect: { commandName in
-                    Task { await sendPromptTemplate(session, commandName: commandName) }
-                },
-                onError: { message in
-                    pendingPromptSession = nil
-                    error = message
-                }
-            )
-        }
         .modifier(SessionDeleteConfirmationModifier(pendingSession: $pendingDeleteSession) { session in
             Task { await deleteSession(session) }
         })
@@ -700,7 +686,7 @@ struct WorkspaceDetailView: View {
     }
 
     /// Live/search rows use a tap recognizer instead of Button so a trailing
-    /// Prompt swipe does not also open the session. Stopped rows stay as Button.
+    /// Stop swipe does not also open the session. Stopped rows stay as Button.
     @ViewBuilder
     private func liveSessionNavigationRow<Trailing: View>(
         for session: Session,
@@ -722,13 +708,7 @@ struct WorkspaceDetailView: View {
             .accessibilityIdentifier("session.nav.\(session.id)")
             .accessibilityValue(sessionRowAccessibilityValue(for: session))
             .themedListRowBackground()
-            .swipeActions(
-                edge: .trailing,
-                allowsFullSwipe: SessionListPromptSwipePolicy.trailingAction(
-                    status: session.status,
-                    workspaceId: session.workspaceId ?? workspace.id
-                ) != .prompt
-            ) {
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 trailingSwipeActions()
             }
     }
@@ -752,8 +732,6 @@ struct WorkspaceDetailView: View {
             .tint(.themeRed)
             .accessibilityIdentifier("session.delete.\(session.id)")
         } else {
-            // SwiftUI trailing swipeActions declare from the trailing edge toward
-            // center. Stop first so it sits at the screen edge: [Prompt] [Stop] |.
             Button {
                 Task { await stopSession(session) }
             } label: {
@@ -761,19 +739,6 @@ struct WorkspaceDetailView: View {
             }
             .accessibilityIdentifier("session.stop.\(session.id)")
             .tint(.themeOrange)
-
-            if SessionListPromptSwipePolicy.trailingAction(
-                status: session.status,
-                workspaceId: session.workspaceId ?? workspace.id
-            ) == .prompt {
-                Button {
-                    pendingPromptSession = session
-                } label: {
-                    Label("Prompt", systemImage: SlashCommand.Source.prompt.iconName)
-                }
-                .tint(.themeCyan)
-                .accessibilityIdentifier("session.prompt.\(session.id)")
-            }
         }
     }
 
@@ -1016,22 +981,6 @@ struct WorkspaceDetailView: View {
         } catch {
             self.error = error.localizedDescription
             isCreating = false
-        }
-    }
-
-    private func sendPromptTemplate(_ session: Session, commandName: String) async {
-        guard let api = apiClient else {
-            error = "Server is offline — reconnecting in background"
-            return
-        }
-        do {
-            try await api.sendSessionCommand(
-                scope: .workspace(workspace.id),
-                sessionId: session.id,
-                message: SessionListPromptSwipePolicy.sendMessage(commandName: commandName)
-            )
-        } catch {
-            self.error = "Prompt failed: \(error.localizedDescription)"
         }
     }
 
