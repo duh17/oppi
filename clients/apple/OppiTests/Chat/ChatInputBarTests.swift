@@ -165,6 +165,7 @@ struct ChatInputBarTests {
         var prefix: String?
         var suppressed = false
         var focus = 0
+        var haptics = 0
         await #expect(throws: VoiceInputError.self) {
             try await ComposerShared.startVoiceInput(
                 manager: manager,
@@ -173,14 +174,72 @@ struct ChatInputBarTests {
                 baseText: "draft",
                 textBeforeRecording: Binding(get: { prefix }, set: { prefix = $0 }),
                 suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
-                focusRequestID: Binding(get: { focus }, set: { focus = $0 })
+                focusRequestID: Binding(get: { focus }, set: { focus = $0 }),
+                playActivationHaptic: { haptics += 1 }
             )
         }
+        #expect(haptics == 0)
         #expect(manager.state == .error("Microphone permission denied"))
         #expect(!manager._testOperationInFlight)
         #expect(prefix == nil)
         #expect(!suppressed)
         #expect(provider.prepareSessionCallCount == 0)
+    }
+
+    @Test("Dictation haptic fires once after capture succeeds, including recovery", arguments: [false, true])
+    func dictationActivationHapticFollowsCapture(retryCapture: Bool) async throws {
+        let access = MockVoiceInputSystemAccess()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        let first = MockVoiceSession()
+        let recovered = MockVoiceSession()
+        var haptics = 0
+        first.startHandler = { #expect(haptics == 0) }
+        recovered.startHandler = { #expect(haptics == 0) }
+        if retryCapture { first.startError = TestVoiceError("route changed") }
+        var sessions = [first, recovered]
+        provider.makeSessionHandler = { _, _ in sessions.removeFirst() }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        manager.setEngineMode(.onDevice)
+        var suppressed = false
+        var focus = 0
+        try await ComposerShared.startVoiceInput(
+            manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer, baseText: "",
+            suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
+            focusRequestID: Binding(get: { focus }, set: { focus = $0 }),
+            prepare: { #expect(haptics == 0) },
+            playActivationHaptic: {
+                #expect(manager.isRecording)
+                #expect(manager.isActiveRecordingSource(ComposerShared.VoiceInputOwner.inlineComposer.rawValue))
+                haptics += 1
+            }
+        )
+        #expect(haptics == 1)
+        #expect(provider.makeSessionCallCount == (retryCapture ? 2 : 1))
+        await manager.cancelRecording()
+    }
+
+    @Test("Cancelled dictation does not play an activation haptic")
+    func cancelledDictationHasNoActivationHaptic() async {
+        let access = MockVoiceInputSystemAccess()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        let session = MockVoiceSession()
+        session.startError = CancellationError()
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        manager.setEngineMode(.onDevice)
+        var haptics = 0
+        await #expect(throws: CancellationError.self) {
+            try await ComposerShared.startVoiceInput(
+                manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer, baseText: "",
+                suppressKeyboard: .constant(false), focusRequestID: .constant(0),
+                playActivationHaptic: { haptics += 1 }
+            )
+        }
+        #expect(haptics == 0)
     }
 
     @Test("ComposerShared commits final dictation text before submit")

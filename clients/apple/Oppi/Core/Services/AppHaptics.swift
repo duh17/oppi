@@ -11,6 +11,11 @@ enum AppHaptics {
         impact(style: .light, intensity: 0.45)
     }
 
+    /// A short tap when dictation is ready to capture speech.
+    static func dictationActivated() {
+        impact(style: .light, intensity: 0.45)
+    }
+
     /// A crisper confirmation that a long-press threshold has been crossed.
     static func longPressThreshold() {
         impact(style: .rigid, intensity: 0.65)

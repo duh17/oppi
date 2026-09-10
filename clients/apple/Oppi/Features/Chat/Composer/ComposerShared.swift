@@ -559,7 +559,8 @@ enum ComposerShared {
         textBeforeRecording: Binding<String?>? = nil,
         suppressKeyboard: Binding<Bool>,
         focusRequestID: Binding<Int>,
-        prepare: (() async throws -> Void)? = nil
+        prepare: (() async throws -> Void)? = nil,
+        playActivationHaptic: () -> Void = { AppHaptics.dictationActivated() }
     ) async throws -> String {
         let prefix = dictationPrefix(for: baseText)
         textBeforeRecording?.wrappedValue = prefix
@@ -580,6 +581,8 @@ enum ComposerShared {
                 }
                 throw CancellationError()
             }
+            // One pulse after capture is ready, including any route recovery.
+            if manager.isRecording { playActivationHaptic() }
             return prefix
         } catch {
             textBeforeRecording?.wrappedValue = nil

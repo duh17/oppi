@@ -68,7 +68,8 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
             setCategory: { category, mode, options in
                 try session.setCategory(category, mode: mode, options: options)
             },
-            setActive: { active, options in try session.setActive(active, options: options) }
+            setActive: { active, options in try session.setActive(active, options: options) },
+            setAllowHaptics: { try session.setAllowHapticsAndSystemSoundsDuringRecording($0) }
         )
         // Apple requires category + mode + activation before preferred-input
         // changes. Re-read ports now, not from the previous playback session.
@@ -124,8 +125,17 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     static func configureAndActivate(
         preferBuiltIn: Bool = false,
         setCategory: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions) throws -> Void,
-        setActive: (Bool, AVAudioSession.SetActiveOptions) throws -> Void
+        setActive: (Bool, AVAudioSession.SetActiveOptions) throws -> Void,
+        setAllowHaptics: (Bool) throws -> Void = { _ in }
     ) throws -> Bool {
+        // iOS suppresses feedback during recording by default. Permission to
+        // play it is separate from AppHaptics' user preference; never let an
+        // optional feedback failure prevent microphone capture.
+        do {
+            try setAllowHaptics(true)
+        } catch {
+            logger.warning("Could not enable recording haptics: \(error.localizedDescription, privacy: .public)")
+        }
         do {
             try setCategory(
                 preferBuiltIn ? .record : recordingCategory,

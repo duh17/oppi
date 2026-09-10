@@ -128,6 +128,32 @@ struct VoiceInputAudioRoutePlannerTests {
         #expect(activationCount == 1)
     }
 
+    @Test(arguments: [false, true]) @MainActor
+    func recordingAllowsHapticsBeforeActivation(preferBuiltIn: Bool) throws {
+        var events: [String] = []
+        _ = try VoiceInputSystemAccess.configureAndActivate(
+            preferBuiltIn: preferBuiltIn,
+            setCategory: { _, _, _ in events.append("category") },
+            setActive: { _, _ in events.append("activate") },
+            setAllowHaptics: { allowed in
+                #expect(allowed)
+                events.append("haptics")
+            }
+        )
+        #expect(events == ["haptics", "category", "activate"])
+    }
+
+    @Test @MainActor func unavailableHapticsDoNotPreventRecording() throws {
+        var activated = false
+        let fallback = try VoiceInputSystemAccess.configureAndActivate(
+            setCategory: { _, _, _ in },
+            setActive: { active, _ in activated = active },
+            setAllowHaptics: { _ in throw TestVoiceError("haptics unavailable") }
+        )
+        #expect(activated)
+        #expect(!fallback)
+    }
+
     // These exercise the production sequence, not a disconnected list of action
     // names. setCategory itself can throw before we ever get to setActive.
     @Test(arguments: [true, false]) @MainActor
