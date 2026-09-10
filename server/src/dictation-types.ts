@@ -7,7 +7,7 @@
 
 // ─── Config ───
 
-export type AsrProviderId = "http" | "openai-codex" | "xai";
+export type AsrProviderId = "http" | "xai";
 
 export interface DictationConfig {
   /** Explicit backend. Omitted with a non-empty sttEndpoint means "http". */
@@ -29,18 +29,15 @@ export function resolveAsrProvider(
         sttEndpoint?: string;
       }
     | undefined,
-): AsrProviderId {
-  if (asr?.provider === "openai-codex" || asr?.provider === "openai") {
-    return "openai-codex";
-  }
+): AsrProviderId | undefined {
   if (asr?.provider === "xai" || asr?.provider === "http") {
     return asr.provider;
   }
+  if (asr?.provider !== undefined) return undefined;
   const endpoint = asr?.sttEndpoint?.trim();
   if (!endpoint) return "http";
   try {
     const host = new URL(endpoint).hostname.toLowerCase();
-    if (host === "api.openai.com") return "openai-codex";
     if (host === "api.x.ai") return "xai";
   } catch {
     return "http";
@@ -60,7 +57,8 @@ export function isDictationStreamEnabled(
     | undefined,
 ): boolean {
   const provider = resolveAsrProvider(asr);
-  if (provider === "openai-codex" || provider === "xai") return true;
+  if (!provider) return false;
+  if (provider === "xai") return true;
   return typeof asr?.sttEndpoint === "string" && asr.sttEndpoint.trim().length > 0;
 }
 

@@ -571,15 +571,19 @@ private extension Data {
 
 @Suite("PairDeviceResponse")
 struct PairDeviceResponseTests {
-    @Test func olderPairingResponseKeepsTheIssuedDeviceToken() throws {
-        let json = """
-        {"deviceToken":"dt_old_server"}
-        """
-        let decoded = try JSONDecoder().decode(PairDeviceResponse.self, from: Data(json.utf8))
+    @Test func olderPairingResponseRequiresServerUpdateAndRepairing() {
+        let data = Data(#"{"deviceToken":"dt_old_server"}"#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(PairDeviceResponse.self, from: data)
+        }
+    }
 
-        #expect(decoded.deviceToken == "dt_old_server")
-        #expect(decoded.accessToken.isEmpty)
-        #expect(decoded.deviceCredential == nil)
+    @Test func deviceKeyPairingResponsePreservesCredential() throws {
+        let data = Data(#"{"deviceId":"dev_phone","accessToken":"at_paired","expiresAt":123456,"refreshChallenge":{"nonce":"next","audience":"oppi:refresh:v1","expiresAt":123000}}"#.utf8)
+        let decoded = try JSONDecoder().decode(PairDeviceResponse.self, from: data)
+        #expect(decoded.deviceCredential?.deviceId == "dev_phone")
+        #expect(decoded.deviceCredential?.accessToken == "at_paired")
+        #expect(decoded.deviceCredential?.refreshChallenge?.nonce == "next")
     }
 }
 

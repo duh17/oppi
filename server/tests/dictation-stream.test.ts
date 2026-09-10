@@ -84,14 +84,16 @@ describe("isDictationStreamEnabled", () => {
     expect(isDictationStreamEnabled({ sttEndpoint: "  " })).toBe(false);
   });
 
-  it("is true for openai-codex or xai provider without sttEndpoint", () => {
-    expect(isDictationStreamEnabled({ provider: "openai-codex" })).toBe(true);
-    expect(isDictationStreamEnabled({ provider: "openai" })).toBe(true);
+  it("only enables xai without sttEndpoint", () => {
+    expect(isDictationStreamEnabled({ provider: "openai-codex" })).toBe(false);
+    expect(isDictationStreamEnabled({ provider: "openai" })).toBe(false);
+    expect(
+      isDictationStreamEnabled({ provider: "openai-codex", sttEndpoint: "https://api.openai.com" }),
+    ).toBe(false);
     expect(isDictationStreamEnabled({ provider: "xai" })).toBe(true);
   });
 
-  it("infers openai and xai from official API hosts", () => {
-    expect(isDictationStreamEnabled({ sttEndpoint: "https://api.openai.com" })).toBe(true);
+  it("infers xai from its official API host", () => {
     expect(isDictationStreamEnabled({ sttEndpoint: "https://api.x.ai" })).toBe(true);
   });
 
@@ -138,10 +140,9 @@ describe("GET /server/info dictationStream", () => {
     expect(capabilities.dictationStream).toEqual({ version: 1 });
   });
 
-  it("advertises when asr.provider is openai-codex or xai", async () => {
-    expect((await getServerInfo({ provider: "openai-codex" })).dictationStream).toEqual({
-      version: 1,
-    });
+  it("advertises xai but not removed OpenAI providers", async () => {
+    expect((await getServerInfo({ provider: "openai-codex" })).dictationStream).toBeUndefined();
+    expect((await getServerInfo({ provider: "openai" })).dictationStream).toBeUndefined();
     expect((await getServerInfo({ provider: "xai" })).dictationStream).toEqual({
       version: 1,
     });
@@ -169,19 +170,19 @@ describe("Server HTTP dictation boot enablement", () => {
     }
   });
 
-  it("enables dictation from asr.provider openai-codex without sttEndpoint", () => {
-    const dataDir = tempDir("oppi-stt-openai-boot-");
+  it("enables dictation from asr.provider xai without sttEndpoint", () => {
+    const dataDir = tempDir("oppi-stt-xai-boot-");
     const storage = new Storage(dataDir);
     storage.updateConfig({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "disabled" },
-      asr: { provider: "openai-codex" },
+      asr: { provider: "xai" },
     });
 
     const server = new Server(storage) as unknown as ServerDictationInternals;
     try {
-      expect(server.dictationConfig?.provider).toBe("openai-codex");
+      expect(server.dictationConfig?.provider).toBe("xai");
       expect(server.createDictationManager()).toBeDefined();
     } finally {
       server.searchIndex?.close();

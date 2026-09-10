@@ -279,27 +279,20 @@ describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {
 
   it("rejects leftover dt_ on ordinary HTTP and WebSocket routes", async () => {
     const legacyToken = "dt_ordinary_route_rejected";
-    storage.updateConfig({ authDeviceTokens: [legacyToken] });
-
     expect(await networkGet("/me", legacyToken)).toBe(401);
     expect(await websocketUpgradeStatus(legacyToken)).toBe(401);
     expect(await localGet("/me", ownerToken)).toBe(200);
   });
 
-  it("still migrates a leftover dt_ to at_ without re-pairing", async () => {
-    const legacyToken = "dt_migrate_only";
-    storage.updateConfig({ authDeviceTokens: [legacyToken] });
-
-    const migrated = await networkPost("/auth/migrate", legacyToken, {
-      devicePublicKey: makeDeviceKey(),
-      deviceName: "Upgraded phone",
-    });
-    expect(migrated.status).toBe(200);
-    const body = migrated.body as { accessToken?: string; deviceId?: string };
-    expect(body.deviceId?.startsWith("dev_")).toBe(true);
-    expect(body.accessToken?.startsWith("at_")).toBe(true);
-    expect(await networkGet("/me", body.accessToken as string)).toBe(200);
-    expect(await networkGet("/me", legacyToken)).toBe(401);
+  it("rejects deleted migration routes and requires re-pairing", async () => {
+    const device = enroll(storage);
+    for (const path of ["/auth/migrate", "/auth/finalize", "/auth/compat"]) {
+      expect(
+        (await networkPost(path, "dt_obsolete", { devicePublicKey: makeDeviceKey() })).status,
+      ).toBe(401);
+      expect((await networkPost(path, device.token, {})).status).toBe(404);
+    }
+    expect(await networkGet("/me", device.token)).toBe(200);
   });
 
   it("rejects pairing without a device public key and does not issue dt_", async () => {
@@ -307,6 +300,6 @@ describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {
     const res = await networkPost("/pair", undefined, { pairingToken });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "devicePublicKey required" });
-    expect(storage.getAuthDeviceTokens()).toEqual([]);
+    expect(storage.listDevices()).toEqual([]);
   });
 });

@@ -40,28 +40,27 @@ struct InviteBootstrapServiceTests {
         #expect(result.effectiveCredentials.deviceCredential?.accessToken == "at_paired")
     }
 
-    @Test func olderServerPairingResponseKeepsTheIssuedDeviceToken() async throws {
+    @Test func incompletePairingResponseFailsClosed() async throws {
         let log = InviteBootstrapCallLog()
-        let pairingAPI = RecordingInviteBootstrapAPI(log: log, deviceToken: "dt_old_server")
-        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
-        var apis = [pairingAPI, authenticatedAPI]
+        let pairingAPI = RecordingInviteBootstrapAPI(log: log, incompleteResponse: true)
         var factoryTokens: [String] = []
 
-        let result = try await InviteBootstrapService.validateAndBootstrap(
-            credentials: credentials(),
-            existingCredentials: nil,
-            confirmTrust: { _ in true },
-            apiFactory: { _, token, _ in
-                factoryTokens.append(token)
-                return apis.removeFirst()
-            },
-            deviceKeyProvider: { InMemoryP256DeviceKey() }
-        )
-
-        #expect(factoryTokens == ["", "dt_old_server"])
-        #expect(result.effectiveCredentials.token == "dt_old_server")
-        #expect(result.effectiveCredentials.deviceCredential == nil)
-        #expect(result.effectiveCredentials.pairingToken == nil)
+        await #expect(throws: InviteBootstrapError.message(
+            "Server returned an invalid pairing response. Request a fresh invite and try again."
+        )) {
+            _ = try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials(),
+                existingCredentials: nil,
+                confirmTrust: { _ in true },
+                apiFactory: { _, token, _ in
+                    factoryTokens.append(token)
+                    return pairingAPI
+                },
+                deviceKeyProvider: { InMemoryP256DeviceKey() }
+            )
+        }
+        #expect(factoryTokens == [""])
+        #expect(await log.snapshot() == ["pair:one-time-token"])
     }
 
     @Test func cancelledTrustDoesNotProbeOrExchangePairingToken() async throws {
@@ -186,16 +185,16 @@ private actor InviteBootstrapCallLog {
 private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     private let log: InviteBootstrapCallLog
     private let accessToken: String
-    private let deviceToken: String?
+    private let incompleteResponse: Bool
 
     init(
         log: InviteBootstrapCallLog,
         accessToken: String = "at_current",
-        deviceToken: String? = nil
+        incompleteResponse: Bool = false
     ) {
         self.log = log
         self.accessToken = accessToken
-        self.deviceToken = deviceToken
+        self.incompleteResponse = incompleteResponse
     }
 
     func pairDevice(
@@ -206,13 +205,8 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
         await log.append("pair:\(pairingToken)")
         #expect(devicePublicKey.kty == "EC")
         #expect(devicePublicKey.crv == "P-256")
-        if let deviceToken {
-            return PairDeviceResponse(
-                deviceId: "",
-                accessToken: "",
-                expiresAt: 0,
-                deviceToken: deviceToken
-            )
+        if incompleteResponse {
+            return PairDeviceResponse(deviceId: "", accessToken: "", expiresAt: 0, refreshChallenge: nil)
         }
         return PairDeviceResponse(
             deviceId: "dev_https",

@@ -737,6 +737,11 @@ describe("oppi help", () => {
 // ── Unknown command ──
 
 describe("unknown command", () => {
+  it.each(["status", "compat", "finalize"])("rejects removed auth %s command", (action) => {
+    const result = run(["auth", action]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("Unknown command: auth");
+  });
   it("exits 1 with error message", () => {
     const { stdout, exitCode } = run(["bananas"]);
     expect(exitCode).toBe(1);
@@ -751,7 +756,6 @@ describe("oppi config", () => {
     const secrets = {
       owner: "sk_owner-config-display-secret",
       pairing: "pt_pairing-config-display-secret",
-      authDevice: "dt_auth-config-display-secret",
       push: "apns-config-display-secret",
       liveActivity: "live-config-display-secret",
       runtime: "runtime-config-display-secret",
@@ -760,13 +764,18 @@ describe("oppi config", () => {
     storage.updateConfig({
       token: secrets.owner,
       pairingToken: secrets.pairing,
-      authDeviceTokens: [secrets.authDevice],
       pushDeviceTokens: [secrets.push],
       liveActivityToken: secrets.liveActivity,
       runtimeEnv: { OPENAI_API_KEY: secrets.runtime },
     });
     return secrets;
   }
+
+  it.each(["openai", "openai-codex"])("rejects removed STT provider %s", (provider) => {
+    const result = run(["config", "set", "asr.provider", provider]);
+    expect(result.exitCode).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain("expected http or xai");
+  });
 
   it("config show displays config", () => {
     const { stdout, exitCode } = run(["config", "show"]);
@@ -780,7 +789,6 @@ describe("oppi config", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain('"token": "[REDACTED]"');
     expect(stdout).toContain('"pairingToken": "[REDACTED]"');
-    expect(stdout).toContain('"authDeviceTokens": "[REDACTED 1 token]"');
     expect(stdout).toContain('"pushDeviceTokens": "[REDACTED 1 token]"');
     expect(stdout).toContain('"liveActivityToken": "[REDACTED]"');
     expect(stdout).toContain('"OPENAI_API_KEY": "[REDACTED]"');
@@ -790,7 +798,6 @@ describe("oppi config", () => {
   it.each([
     "token",
     "pairingToken",
-    "authDeviceTokens",
     "pushDeviceTokens",
     "liveActivityToken",
     "runtimeEnv.OPENAI_API_KEY",
@@ -828,10 +835,10 @@ describe("oppi config", () => {
     );
     run(["config", "set", "asr.sttEndpoint", "http://127.0.0.1:7936"]);
     expect(run(["config", "get", "asr.sttEndpoint"]).stdout.trim()).toBe("http://127.0.0.1:7936");
-    run(["config", "set", "asr.provider", "openai-codex"]);
-    expect(run(["config", "get", "asr.provider"]).stdout.trim()).toBe("openai-codex");
-    run(["config", "set", "asr.sttModel", "gpt-4o-mini-transcribe"]);
-    expect(run(["config", "get", "asr.sttModel"]).stdout.trim()).toBe("gpt-4o-mini-transcribe");
+    run(["config", "set", "asr.provider", "xai"]);
+    expect(run(["config", "get", "asr.provider"]).stdout.trim()).toBe("xai");
+    run(["config", "set", "asr.sttModel", "yuwp-model"]);
+    expect(run(["config", "get", "asr.sttModel"]).stdout.trim()).toBe("yuwp-model");
     const setExtension = run(["config", "set", "asr.extension", "@earendil-works/pi-transcribe"]);
     expect(setExtension.exitCode).toBe(1);
     expect(`${setExtension.stdout}${setExtension.stderr}`).toContain("Unknown config key");

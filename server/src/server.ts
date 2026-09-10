@@ -107,7 +107,6 @@ import {
   type DictationConfig,
 } from "./dictation-types.js";
 import { createSttProvider } from "./create-stt-provider.js";
-import { DEFAULT_OPENAI_STT_MODEL } from "./openai-stt-provider.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { fetchProviderQuotas } from "./provider-quota.js";
@@ -554,7 +553,7 @@ export class Server {
     });
 
     // Dictation pipeline. Dictation streams create one DictationManager per WebSocket.
-    // Enable when asr.provider is openai-codex/xai, or when asr.sttEndpoint is non-empty.
+    // Enable for xAI or a configured HTTP/Yuwp endpoint.
     // Do not inherit DEFAULT_DICTATION_CONFIG.sttEndpoint (that would enable Yuwp
     // when the operator left asr unset).
     const asr = config.asr;
@@ -566,11 +565,7 @@ export class Server {
         sttEndpoint: asr?.sttEndpoint,
         sttModel:
           asr?.sttModel?.trim() ||
-          (provider === "openai-codex"
-            ? DEFAULT_OPENAI_STT_MODEL
-            : provider === "xai"
-              ? DEFAULT_XAI_STT_MODEL
-              : DEFAULT_DICTATION_CONFIG.sttModel),
+          (provider === "xai" ? DEFAULT_XAI_STT_MODEL : DEFAULT_DICTATION_CONFIG.sttModel),
       };
       this.dictationManager = this.createDictationManager();
     }
@@ -1170,16 +1165,7 @@ export class Server {
     }
     return new DictationManager(
       createSttProvider(this.dictationConfig, {
-        getAuth: async (providerId) => {
-          const runtime = this.modelRuntime;
-          if (!runtime) return undefined;
-          const primary = await runtime.getAuth(providerId);
-          if (primary?.auth.apiKey?.trim()) return primary;
-          if (providerId === "openai-codex") {
-            return runtime.getAuth("openai");
-          }
-          return primary;
-        },
+        getAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),
       }),
       this.opsMetrics,
     );
@@ -1323,7 +1309,6 @@ export class Server {
 
     const access = this.storage.validateAccessToken(candidate);
     if (access.ok) {
-      this.storage.commitLegacyRevocation(access.deviceId);
       return {
         ok: true,
         principal: {
@@ -1382,11 +1367,10 @@ export class Server {
     }
 
     // Pairing and device-auth bootstrap are supported only on the remote TLS
-    // listener. Plain HTTP cannot enroll, migrate, challenge, or refresh
+    // listener. Plain HTTP cannot enroll, challenge, or refresh
     // HTTPS/WSS device credentials.
     const isDeviceAuthBootstrap =
       (path === "/pair" && method === "POST") ||
-      (path === "/auth/migrate" && method === "POST") ||
       (path === "/auth/challenge" && method === "POST") ||
       (path === "/auth/refresh" && method === "POST");
     if (isDeviceAuthBootstrap && !isSecureNetworkRequest(req)) {

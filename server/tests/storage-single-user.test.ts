@@ -63,7 +63,6 @@ describe("Storage pairing", () => {
     storage.updateConfig({
       pairingToken: "pt_rotation-fixture-secret",
       pairingTokenExpiresAt: Date.now() + 60_000,
-      authDeviceTokens: ["dt_rotation-fixture-secret"],
       pushDeviceTokens: ["push-rotation-fixture-secret"],
       liveActivityToken: "live-rotation-fixture-secret",
     });
@@ -73,7 +72,7 @@ describe("Storage pairing", () => {
     const config = storage.getConfig();
     expect(config.pairingToken).toBeUndefined();
     expect(config.pairingTokenExpiresAt).toBeUndefined();
-    expect(config.authDeviceTokens).toEqual([]);
+    expect(config.authAccessTokens).toEqual([]);
     expect(config.pushDeviceTokens).toEqual([]);
     expect(config.liveActivityToken).toBeUndefined();
   });

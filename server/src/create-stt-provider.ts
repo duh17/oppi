@@ -1,17 +1,11 @@
 /**
  * Choose the STT adapter for a dictation take.
  *
- * Yuwp keeps the stateful session API. OpenAI transcriptions and xAI STT use
- * existing Pi/Oppi provider credentials (`ModelRuntime.getAuth`, same store
- * as models). The OpenAI dictation provider id is `openai-codex`.
+ * Yuwp keeps the stateful session API. xAI STT uses existing Pi/Oppi provider
+ * credentials (`ModelRuntime.getAuth`, same store as models).
  */
 
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
-import {
-  DEFAULT_OPENAI_STT_ENDPOINT,
-  DEFAULT_OPENAI_STT_MODEL,
-  OpenAiSttProvider,
-} from "./openai-stt-provider.js";
 import { resolveAsrProvider, type DictationConfig } from "./dictation-types.js";
 import { StreamingSttProvider, type SttProvider } from "./stt-provider.js";
 import {
@@ -21,7 +15,7 @@ import {
   type SttWebSocketFactory,
 } from "./xai-stt-provider.js";
 
-export type SttAuthProviderId = "openai-codex" | "xai";
+export type SttAuthProviderId = "xai";
 
 export type SttGetAuth = (
   providerId: SttAuthProviderId,
@@ -53,11 +47,6 @@ function storedBearer(providerId: string): string | undefined {
 export function resolveSttProviderApiKey(providerId: SttAuthProviderId): string | undefined {
   const primary = storedBearer(providerId);
   if (primary) return primary;
-  if (providerId === "openai-codex") {
-    const openaiKey = storedBearer("openai");
-    if (openaiKey) return openaiKey;
-    return process.env.OPENAI_API_KEY?.trim() || undefined;
-  }
   return process.env.XAI_API_KEY?.trim() || undefined;
 }
 
@@ -86,23 +75,13 @@ export function createSttProvider(
   deps: CreateSttProviderDeps = {},
 ): SttProvider {
   const provider = resolveAsrProvider(config);
+  if (!provider) throw new Error("STT provider must be http or xai");
   const resolveApiKey = (
     providerId: SttAuthProviderId,
   ): string | undefined | Promise<string | undefined> => {
     if (deps.resolveApiKey) return deps.resolveApiKey(providerId);
     return resolveSttBearerToken(providerId, { getAuth: deps.getAuth });
   };
-
-  if (provider === "openai-codex") {
-    return new OpenAiSttProvider(
-      {
-        endpoint: config.sttEndpoint || DEFAULT_OPENAI_STT_ENDPOINT,
-        model: config.sttModel || DEFAULT_OPENAI_STT_MODEL,
-        resolveApiKey: () => resolveApiKey("openai-codex"),
-      },
-      deps.fetchFn,
-    );
-  }
 
   if (provider === "xai") {
     return new XaiSttProvider({

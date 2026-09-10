@@ -102,7 +102,6 @@ beforeAll(async () => {
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
-    authDeviceTokens: [authDeviceToken],
     pushDeviceTokens: [pushOnlyToken],
   });
   storage.ensurePaired();
@@ -219,7 +218,6 @@ describe("auth", () => {
       port: 0,
       host: "127.0.0.1",
       tls: { mode: "disabled" },
-      authDeviceTokens: [authDeviceToken],
       pushDeviceTokens: [pushOnlyToken],
     });
     rotationStorage.ensurePaired();

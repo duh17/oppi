@@ -75,9 +75,9 @@ struct E2EAppAuthBootstrapTests {
         #expect(result.effectiveCredentials.pairingToken == nil)
     }
 
-    @Test func httpPairingRejectsADeviceTokenOnlyResponse() async throws {
+    @Test func httpPairingRejectsAnIncompleteResponse() async throws {
         let log = E2EAppAuthBootstrapCallLog()
-        let pairingAPI = E2EAppAuthRecordingAPI(log: log, deviceToken: "dt_old_server")
+        let pairingAPI = E2EAppAuthRecordingAPI(log: log, incompleteResponse: true)
 
         await #expect(throws: InviteBootstrapError.message(
             "Server returned an invalid pairing response. Request a fresh invite and try again."
@@ -123,16 +123,16 @@ private actor E2EAppAuthBootstrapCallLog {
 private actor E2EAppAuthRecordingAPI: InviteBootstrapAPI {
     private let log: E2EAppAuthBootstrapCallLog
     private let accessToken: String
-    private let deviceToken: String?
+    private let incompleteResponse: Bool
 
     init(
         log: E2EAppAuthBootstrapCallLog,
         accessToken: String = "at_current",
-        deviceToken: String? = nil
+        incompleteResponse: Bool = false
     ) {
         self.log = log
         self.accessToken = accessToken
-        self.deviceToken = deviceToken
+        self.incompleteResponse = incompleteResponse
     }
 
     func pairDevice(
@@ -143,18 +143,14 @@ private actor E2EAppAuthRecordingAPI: InviteBootstrapAPI {
         await log.append("pair:\(pairingToken)")
         #expect(devicePublicKey.kty == "EC")
         #expect(devicePublicKey.crv == "P-256")
-        if let deviceToken {
-            return PairDeviceResponse(
-                deviceId: "",
-                accessToken: "",
-                expiresAt: 0,
-                deviceToken: deviceToken
-            )
+        if incompleteResponse {
+            return PairDeviceResponse(deviceId: "", accessToken: "", expiresAt: 0, refreshChallenge: nil)
         }
         return PairDeviceResponse(
             deviceId: "dev_e2e",
             accessToken: accessToken,
-            expiresAt: 4_102_444_800_000
+            expiresAt: 4_102_444_800_000,
+            refreshChallenge: nil
         )
     }
 

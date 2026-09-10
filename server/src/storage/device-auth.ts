@@ -88,12 +88,6 @@ function importDevicePublicKey(publicKey: DevicePublicKey): ReturnType<typeof cr
   });
 }
 
-function sameDevicePublicKey(left: DevicePublicKey, right: DevicePublicKey): boolean {
-  return (
-    left.kty === right.kty && left.crv === right.crv && left.x === right.x && left.y === right.y
-  );
-}
-
 function derLength(length: number): Buffer {
   return length < 0x80 ? Buffer.from([length]) : Buffer.from([0x81, length]);
 }
@@ -272,95 +266,6 @@ export class DeviceAuthStore {
     };
   }
 
-  migrateLegacyRecords(): void {
-    this.configStore.mutate((config) => {
-      const existing = new Map((config.authDevices ?? []).map((device) => [device.id, device]));
-      let changed = false;
-      for (const token of config.authDeviceTokens ?? []) {
-        const id = `dev_${tokenHash(token).slice(7, 23)}`;
-        if (existing.has(id)) continue;
-        existing.set(id, {
-          id,
-          name: "Device",
-          scope: "device",
-          createdAt: Date.now(),
-          legacyTokenHash: tokenHash(token),
-        });
-        changed = true;
-      }
-      return changed ? { authDevices: [...existing.values()] } : {};
-    });
-  }
-
-  migrateLegacyDevice(
-    candidate: string,
-    deviceInput: { publicKey: unknown; name?: unknown },
-  ): EnrollResult | null {
-    if (this.isMigrationFinalized()) return null;
-    this.migrateLegacyRecords();
-    const config = this.configStore.getConfig();
-    const hash = tokenHash(candidate);
-    const existing = (config.authDevices ?? []).find((device) => device.legacyTokenHash === hash);
-    if (!existing || !isDevicePublicKey(deviceInput.publicKey)) return null;
-    try {
-      importDevicePublicKey(deviceInput.publicKey);
-    } catch {
-      return null;
-    }
-    if (existing.publicKey && !sameDevicePublicKey(existing.publicKey, deviceInput.publicKey)) {
-      return null;
-    }
-    const device: DeviceRecord = {
-      ...existing,
-      publicKey: existing.publicKey ?? deviceInput.publicKey,
-      name:
-        typeof deviceInput.name === "string" && deviceInput.name.trim()
-          ? deviceInput.name.trim()
-          : existing.name,
-      lastUsedAt: Date.now(),
-    };
-    return this.issueAndPersist(device);
-  }
-
-  private issueAndPersist(device: DeviceRecord): EnrollResult {
-    const now = Date.now();
-    const accessToken = DeviceAuthStore.generateAccessToken();
-    const access: AccessTokenRecord = {
-      id: `tok_${generateId(16)}`,
-      tokenHash: tokenHash(accessToken),
-      deviceId: device.id,
-      scope: device.scope,
-      createdAt: now,
-      expiresAt: now + ACCESS_TOKEN_TTL_MS,
-      lastUsedAt: now,
-    };
-    this.configStore.mutate((config) => ({
-      authDevices: (config.authDevices ?? []).map((item) =>
-        item.id === device.id ? device : item,
-      ),
-      authAccessTokens: this.unexpiredAccessTokens(
-        [...(config.authAccessTokens ?? []), access],
-        now,
-      ),
-    }));
-    const refreshChallenge = this.issueChallenge(device.id);
-    if (!refreshChallenge) throw new Error("failed to issue refresh challenge");
-    return {
-      deviceId: device.id,
-      accessToken,
-      expiresAt: access.expiresAt,
-      refreshChallenge,
-    };
-  }
-
-  isMigrationFinalized(): boolean {
-    return this.configStore.getConfig().authMigrationMode === "finalized";
-  }
-
-  setMigrationFinalized(finalized: boolean): void {
-    this.configStore.updateConfig({ authMigrationMode: finalized ? "finalized" : "compat" });
-  }
-
   issueChallenge(deviceId: string): Challenge | null {
     const device = (this.configStore.getConfig().authDevices ?? []).find(
       (item) => item.id === deviceId,
@@ -474,32 +379,11 @@ export class DeviceAuthStore {
     };
   }
 
-  commitLegacyRevocation(deviceId: string): boolean {
-    let changed = false;
-    this.configStore.mutate((config) => {
-      const target = (config.authDevices ?? []).find((device) => device.id === deviceId);
-      if (!target?.legacyTokenHash) return {};
-      const hash = target.legacyTokenHash;
-      changed = true;
-      return {
-        authDeviceTokens: (config.authDeviceTokens ?? []).filter(
-          (token) => tokenHash(token) !== hash,
-        ),
-        authDevices: (config.authDevices ?? []).map((device) =>
-          device.id === deviceId ? { ...device, legacyTokenHash: undefined } : device,
-        ),
-      };
-    });
-    return changed;
-  }
-
   revokeDevice(deviceId: string): boolean {
-    this.migrateLegacyRecords();
     let changed = false;
     this.configStore.mutate((config) => {
       const target = (config.authDevices ?? []).find((device) => device.id === deviceId);
       if (!target || target.revokedAt !== undefined) return {};
-      const hash = target.legacyTokenHash;
       changed = true;
       return {
         authDevices: (config.authDevices ?? []).map((device) =>
@@ -508,28 +392,12 @@ export class DeviceAuthStore {
         authAccessTokens: (config.authAccessTokens ?? []).filter(
           (item) => item.deviceId !== deviceId,
         ),
-        ...(hash
-          ? {
-              authDeviceTokens: (config.authDeviceTokens ?? []).filter(
-                (token) => tokenHash(token) !== hash,
-              ),
-            }
-          : {}),
       };
     });
     return changed;
   }
 
   listDevices(): DeviceRecord[] {
-    this.migrateLegacyRecords();
     return this.configStore.getConfig().authDevices ?? [];
-  }
-
-  deviceIdForLegacyToken(candidate: string): string | undefined {
-    this.migrateLegacyRecords();
-    const hash = tokenHash(candidate);
-    return (this.configStore.getConfig().authDevices ?? []).find(
-      (device) => device.legacyTokenHash === hash,
-    )?.id;
   }
 }

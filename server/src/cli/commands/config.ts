@@ -50,7 +50,7 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   "autoTitle.model": { type: "string", desc: "Auto-title model" },
   asr: { type: "json", desc: "ASR config JSON object" },
   "asr.backend": { type: "string", desc: "STT backend: http" },
-  "asr.provider": { type: "string", desc: "STT provider: http, openai-codex, or xai" },
+  "asr.provider": { type: "string", desc: "STT provider: http or xai" },
   "asr.sttEndpoint": { type: "string", desc: "STT backend base URL" },
   "asr.sttModel": { type: "string", desc: "STT model id" },
   images: { type: "json", desc: "Image attachment preprocessing config JSON object" },

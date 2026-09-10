@@ -1,11 +1,9 @@
 /**
- * Live integration test proving that targeted device revocation and migration
- * finalization immediately terminate already-authenticated WebSockets while
- * leaving unrelated devices connected.
+ * Device revocation closes matching WebSockets and leaves unrelated devices
+ * connected. Owner rotation closes every authenticated device WebSocket.
  */
 import { generateKeyPairSync } from "node:crypto";
 import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -146,24 +144,6 @@ function localRequest(
   });
 }
 
-function networkGet(path: string, token: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const req = httpsRequest(
-      `${baseUrl}${path}`,
-      {
-        rejectUnauthorized: false,
-        headers: { Authorization: `Bearer ${token}` },
-      },
-      (res) => {
-        res.resume();
-        res.on("end", () => resolve(res.statusCode ?? 0));
-      },
-    );
-    req.on("error", reject);
-    req.end();
-  });
-}
-
 async function connectStream(token: string): Promise<WsProbe> {
   const wsUrl = `${baseUrl.replace(/^https:/, "wss:")}/app/events/stream`;
   const probe = new WsProbe(
@@ -178,7 +158,7 @@ async function connectStream(token: string): Promise<WsProbe> {
   return probe;
 }
 
-describe("authenticated WebSocket termination on revoke/finalize", { timeout: 30_000 }, () => {
+describe("authenticated WebSocket termination on revoke/rotate", { timeout: 30_000 }, () => {
   it("revoking a device closes only that device's sockets and leaves another device connected", async () => {
     const deviceA = enroll(storage);
     const deviceB = enroll(storage);
@@ -197,9 +177,8 @@ describe("authenticated WebSocket termination on revoke/finalize", { timeout: 30
     expect(wsB.hasFrame("app_events_connected")).toBe(true);
   });
 
-  it("rejects leftover dt_ on ordinary WebSocket upgrades even before finalization", async () => {
-    const legacyToken = "dt_ws_finalize_legacy";
-    storage.updateConfig({ authDeviceTokens: [legacyToken] });
+  it("rejects leftover dt_ on ordinary WebSocket upgrades", async () => {
+    const legacyToken = "dt_ws_obsolete";
     const device = enroll(storage);
 
     const wsUrl = `${baseUrl.replace(/^https:/, "wss:")}/app/events/stream`;
@@ -214,55 +193,6 @@ describe("authenticated WebSocket termination on revoke/finalize", { timeout: 30
 
     const deviceWs = await connectStream(device.token);
     expect(deviceWs.ws.readyState).toBe(WebSocket.OPEN);
-  });
-
-  it("finalization does not close sockets authenticated after the cutover", async () => {
-    const legacyToken = "dt_ws_post_finalize_legacy";
-    storage.updateConfig({ authDeviceTokens: [legacyToken] });
-    await localRequest("/auth/finalize", "POST");
-
-    // A legacy dt_ can no longer upgrade at all after finalization.
-    const wsUrl = `${baseUrl.replace(/^https:/, "wss:")}/app/events/stream`;
-    const rejected = new WsProbe(
-      new WebSocket(wsUrl, {
-        headers: { Authorization: `Bearer ${legacyToken}` },
-        rejectUnauthorized: false,
-      }),
-    );
-    probes.push(rejected);
-    await expect(rejected.opened).rejects.toThrow(/401|unexpected|error/);
-  });
-
-  it("revoking a pending dt_ device removes its token without a live ordinary socket", async () => {
-    const token = "dt_ws_pending_revoke";
-    storage.updateConfig({ authDeviceTokens: [token] });
-    const pending = storage.listDevices().find((device) => device.legacyTokenHash);
-    expect(pending).toBeDefined();
-    if (!pending) return;
-
-    const revoke = await localRequest(`/auth/devices/${pending.id}`, "DELETE");
-    expect(revoke.status).toBe(200);
-    expect(storage.getAuthDeviceTokens()).not.toContain(token);
-    expect(await networkGet("/me", token)).toBe(401);
-  });
-
-  it("first replacement at_ use still commits the matching leftover dt_", async () => {
-    const oldToken = "dt_ws_migration_cutoff";
-    const unrelatedToken = "dt_ws_unrelated";
-    storage.updateConfig({ authDeviceTokens: [oldToken, unrelatedToken] });
-
-    const migrated = storage.migrateLegacyDevice(oldToken, {
-      publicKey: makeDeviceKey(),
-      name: "Migrated socket",
-    });
-    expect(migrated).not.toBeNull();
-    if (!migrated) return;
-
-    expect(await networkGet("/me", migrated.accessToken)).toBe(200);
-    expect(storage.getAuthDeviceTokens()).not.toContain(oldToken);
-    expect(storage.getAuthDeviceTokens()).toContain(unrelatedToken);
-    expect(await networkGet("/me", oldToken)).toBe(401);
-    expect(await networkGet("/me", unrelatedToken)).toBe(401);
   });
 
   it("owner-token rotation closes every device network socket and leaves the local UDS usable", async () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -143,6 +144,56 @@ describe("Storage config validation", () => {
     expect(result.warnings).toContain("config: ignored 2 unknown top-level keys");
   });
 
+  it("drops obsolete device tokens, migration mode, and keyless device records on load", () => {
+    const result = Storage.validateConfig(
+      {
+        ...Storage.getDefaultConfig(dir),
+        authDeviceTokens: ["dt_obsolete"],
+        authMigrationMode: "compat",
+        authDevices: [
+          {
+            id: "dev_old",
+            name: "Old phone",
+            scope: "device",
+            createdAt: 1,
+            legacyTokenHash: "sha256:old",
+          },
+        ],
+      },
+      dir,
+      false,
+    );
+    expect(result.valid).toBe(true);
+    expect(result.config).not.toHaveProperty("authDeviceTokens");
+    expect(result.config).not.toHaveProperty("authMigrationMode");
+    expect(result.config?.authDevices).toEqual([]);
+  });
+
+  it("drops old auth metadata without invalidating an existing device-key pairing", () => {
+    const storage = new Storage(dir);
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const enrollment = storage.enrollViaPairing(storage.issuePairingToken(), {
+      publicKey: publicKey.export({ format: "jwk" }),
+      name: "Paired phone",
+    });
+    if (!enrollment) throw new Error("pairing failed");
+    const raw = JSON.parse(readFileSync(storage.getConfigPath(), "utf8"));
+    raw.authDeviceTokens = ["dt_obsolete"];
+    raw.authMigrationMode = "compat";
+    raw.authDevices[0].legacyTokenHash = "sha256:obsolete";
+    writeFileSync(storage.getConfigPath(), JSON.stringify(raw));
+
+    const reopened = new Storage(dir);
+    expect(reopened.validateAccessToken(enrollment.accessToken).ok).toBe(true);
+    expect(reopened.validateAccessToken("dt_obsolete").ok).toBe(false);
+    expect(reopened.listDevices()).toHaveLength(1);
+    expect(reopened.listDevices()[0]).not.toHaveProperty("legacyTokenHash");
+    const persisted = JSON.parse(readFileSync(storage.getConfigPath(), "utf8"));
+    expect(persisted).not.toHaveProperty("authDeviceTokens");
+    expect(persisted).not.toHaveProperty("authMigrationMode");
+    expect(persisted.authDevices[0]).not.toHaveProperty("legacyTokenHash");
+  });
+
   // ── ASR config regression ──
   // The config normalizer silently dropped config.asr because it was missing
   // from the whitelist + had no parsing code. This caused /dictation to 404
@@ -179,31 +230,50 @@ describe("Storage config validation", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
       asr: {
-        provider: "openai-codex",
-        sttModel: "gpt-4o-mini-transcribe",
+        provider: "http",
+        sttModel: "yuwp-model",
       },
     };
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(true);
     expect(result.config?.asr).toEqual({
-      provider: "openai-codex",
-      sttModel: "gpt-4o-mini-transcribe",
+      provider: "http",
+      sttModel: "yuwp-model",
     });
   });
 
-  it("canonicalizes asr.provider openai to openai-codex", () => {
+  it.each(["openai", "openai-codex"])("rejects removed ASR provider %s", (provider) => {
     const result = Storage.validateConfig(
       {
         ...Storage.getDefaultConfig(dir),
-        asr: { provider: "openai" },
+        asr: { provider },
       },
       dir,
       true,
     );
-    expect(result.valid).toBe(true);
-    expect(result.config?.asr).toEqual({ provider: "openai-codex" });
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("config.asr.provider: expected http or xai");
   });
+
+  it.each(["openai", "openai-codex"])(
+    "does not turn removed %s into HTTP dictation on startup",
+    (provider) => {
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify({
+          ...Storage.getDefaultConfig(dir),
+          asr: { provider, sttEndpoint: "https://api.openai.com", sttModel: "old-model" },
+        }),
+      );
+      const storage = new Storage(dir);
+      expect(storage.getConfig().asr).toBeUndefined();
+      // Invalid operator config stays available for explicit correction.
+      expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).asr.provider).toBe(
+        provider,
+      );
+    },
+  );
 
   it("rejects an invalid asr.provider", () => {
     const result = Storage.validateConfig(
@@ -215,7 +285,7 @@ describe("Storage config validation", () => {
       true,
     );
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain("config.asr.provider: expected http, openai-codex, or xai");
+    expect(result.errors).toContain("config.asr.provider: expected http or xai");
   });
 
   it("omits asr when not present in config", () => {

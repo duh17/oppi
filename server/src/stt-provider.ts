@@ -6,7 +6,7 @@
  *
  * StreamingSttProvider talks to any server implementing the stateful
  * session API (see docs/asr.md). The API was designed alongside
- * any OpenAI-compatible streaming STT endpoint (not tied to a specific backend).
+ * any Yuwp-compatible streaming session endpoint (not tied to a specific backend).
  */
 
 import { createLogger } from "./logger.js";

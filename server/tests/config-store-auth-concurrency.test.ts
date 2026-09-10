@@ -210,7 +210,7 @@ describe("config store auth concurrency", () => {
     expect(new ConfigStore(dataDir).getConfig().token).toBe(rotated);
   });
 
-  it("does not persist invalid or no-op legacy migration and revocation", () => {
+  it("does not persist no-op device listing or revocation", () => {
     const store = new ConfigStore(dataDir);
     const devices = new DeviceAuthStore(store);
     new AuthStore(store).ensurePaired();
@@ -224,40 +224,31 @@ describe("config store auth concurrency", () => {
     const configPath = store.getConfigPath();
     const before = configFingerprint(configPath);
 
-    expect(
-      devices.migrateLegacyDevice("not-a-credential", {
-        publicKey: {},
-        name: "Attacker",
-      }),
-    ).toBeNull();
+    expect(devices.listDevices().map((device) => device.id)).toEqual([enrolled.deviceId]);
     expect(configFingerprint(configPath)).toBe(before);
 
-    devices.migrateLegacyRecords();
-    expect(configFingerprint(configPath)).toBe(before);
-
-    expect(devices.commitLegacyRevocation(enrolled.deviceId)).toBe(false);
+    expect(devices.revokeDevice("dev_unknown")).toBe(false);
     expect(configFingerprint(configPath)).toBe(before);
   });
 
-  it("still persists real migration, revocation, and rotation", () => {
+  it("persists pairing, revocation, and rotation", () => {
     const store = new ConfigStore(dataDir);
     const auth = new AuthStore(store);
     const devices = new DeviceAuthStore(store);
     auth.ensurePaired();
     const configPath = store.getConfigPath();
 
-    store.updateConfig({ authDeviceTokens: ["dt_legacy_secret_token"] });
+    const pairingToken = auth.issuePairingToken();
     let fingerprint = configFingerprint(configPath);
-    const migrated = devices.migrateLegacyDevice("dt_legacy_secret_token", {
+    const enrolled = devices.enrollViaPairing(pairingToken, {
       publicKey: devicePublicKey(),
       name: "Phone",
     });
-    expect(migrated).not.toBeNull();
-    if (!migrated) throw new Error("migration failed");
+    if (!enrolled) throw new Error("pairing failed");
     expect(configFingerprint(configPath)).not.toBe(fingerprint);
 
     fingerprint = configFingerprint(configPath);
-    expect(devices.commitLegacyRevocation(migrated.deviceId)).toBe(true);
+    expect(devices.revokeDevice(enrolled.deviceId)).toBe(true);
     expect(configFingerprint(configPath)).not.toBe(fingerprint);
 
     fingerprint = configFingerprint(configPath);

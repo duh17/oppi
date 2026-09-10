@@ -130,8 +130,6 @@ function normalizeConfig(
     "token",
     "pairingToken",
     "pairingTokenExpiresAt",
-    "authDeviceTokens",
-    "authMigrationMode",
     "authDevices",
     "authAccessTokens",
     "pushDeviceTokens",
@@ -438,20 +436,6 @@ function normalizeConfig(
     config.pairingTokenExpiresAt = obj.pairingTokenExpiresAt;
   }
 
-  if ("authDeviceTokens" in obj && Array.isArray(obj.authDeviceTokens)) {
-    config.authDeviceTokens = (obj.authDeviceTokens as unknown[]).filter(
-      (t): t is string => typeof t === "string",
-    );
-  }
-
-  const authMigrationMode =
-    obj.authMigrationMode === "compat" || obj.authMigrationMode === "finalized"
-      ? obj.authMigrationMode
-      : undefined;
-  if (authMigrationMode) {
-    config.authMigrationMode = authMigrationMode;
-  }
-
   if ("authDevices" in obj && Array.isArray(obj.authDevices)) {
     config.authDevices = (obj.authDevices as unknown[]).flatMap((value) => {
       if (!isRecord(value)) return [];
@@ -470,21 +454,17 @@ function normalizeConfig(
         typeof value.revokedAt === "number" && Number.isFinite(value.revokedAt)
           ? value.revokedAt
           : undefined;
-      const legacyTokenHash =
-        typeof value.legacyTokenHash === "string" && value.legacyTokenHash.trim().length > 0
-          ? value.legacyTokenHash
-          : undefined;
       const publicKey = normalizeDevicePublicKey(value.publicKey);
+      if (!publicKey) return [];
       return [
         {
           id: value.id,
           name: value.name,
-          ...(publicKey ? { publicKey } : {}),
+          publicKey,
           scope,
           createdAt,
           ...(lastUsedAt !== undefined ? { lastUsedAt } : {}),
           ...(revokedAt !== undefined ? { revokedAt } : {}),
-          ...(legacyTokenHash ? { legacyTokenHash } : {}),
         },
       ];
     });
@@ -587,12 +567,10 @@ function normalizeConfig(
       asrConfig.sttEndpoint = asr.sttEndpoint.trim();
     }
     if ("provider" in asr) {
-      if (asr.provider === "openai" || asr.provider === "openai-codex") {
-        asrConfig.provider = "openai-codex";
-      } else if (asr.provider === "http" || asr.provider === "xai") {
+      if (asr.provider === "http" || asr.provider === "xai") {
         asrConfig.provider = asr.provider;
       } else {
-        errors.push("config.asr.provider: expected http, openai-codex, or xai");
+        errors.push("config.asr.provider: expected http or xai");
         changed = true;
       }
     }
@@ -602,7 +580,8 @@ function normalizeConfig(
       errors.push("config.asr.sttModel: expected string");
       changed = true;
     }
-    if (Object.keys(asrConfig).length > 0) {
+    // An invalid explicit provider must not silently become the HTTP backend.
+    if (Object.keys(asrConfig).length > 0 && (!("provider" in asr) || asrConfig.provider)) {
       config.asr = asrConfig;
     }
   }

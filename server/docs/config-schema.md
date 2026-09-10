@@ -152,9 +152,9 @@ Configures routing for server-side dictation to an external STT backend.
 
 | Setting           | Type   | Default | Description                                                                                                                                                                                |
 | ----------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `asr.provider`    | string | `http`  | STT vendor: `http` (Yuwp session API), `openai-codex`, or `xai`. `openai` is accepted and stored as `openai-codex`. Omitted infers `openai-codex`/`xai` from `api.openai.com` / `api.x.ai`, else Yuwp. |
-| `asr.sttEndpoint` | string | -       | STT backend base URL. Required for Yuwp/`http`. Optional override for OpenAI (`https://api.openai.com`) and xAI (`https://api.x.ai`). A non-empty value, or `provider` `openai-codex`/`xai`, enables server dictation. Oppi does not persist dictation audio locally. Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load. |
-| `asr.sttModel`    | string | -       | Model id. OpenAI defaults to `gpt-4o-mini-transcribe`. Yuwp defaults to the bundled Qwen3 ASR id. xAI's official STT API does not take a model id.                                       |
+| `asr.provider`    | string | `http`  | STT vendor: `http` (Yuwp session API) or `xai`. Omitted infers `xai` from `api.x.ai`, else HTTP/Yuwp. Invalid providers fail validation and disable dictation on startup. |
+| `asr.sttEndpoint` | string | -       | STT backend base URL. Required for Yuwp/`http`. Optional override for xAI (`https://api.x.ai`). A non-empty value with a valid provider, or `provider: xai`, enables server dictation. Oppi does not persist dictation audio locally. Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load. |
+| `asr.sttModel`    | string | -       | HTTP/Yuwp model id; defaults to the bundled Qwen3 ASR id. xAI's official STT API does not take a model id.                                       |
 
 ### Images
 

@@ -53,9 +53,11 @@ final class MacAPIClient: Sendable {
         readLocalConfig(dataDir: dataDir)?.token
     }
 
-    /// Number of paired client device tokens stored in the local server config.
+    /// Number of active device-key pairings stored in the local server config.
     static func pairedClientCount(dataDir: String? = nil) -> Int {
-        readLocalConfig(dataDir: dataDir)?.authDeviceTokens?.count ?? 0
+        readLocalConfig(dataDir: dataDir)?.authDevices?.filter {
+            $0.publicKey != nil && $0.revokedAt == nil
+        }.count ?? 0
     }
 
     /// Whether at least one client device has completed invite pairing.
@@ -205,5 +207,10 @@ final class MacAPIClient: Sendable {
 
 private struct ConfigFile: Decodable {
     let token: String?
-    let authDeviceTokens: [String]?
+    let authDevices: [Device]?
+
+    struct Device: Decodable {
+        let publicKey: DevicePublicKey?
+        let revokedAt: Int64?
+    }
 }

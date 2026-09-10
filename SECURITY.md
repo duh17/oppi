@@ -10,7 +10,7 @@ Oppi supports Pi's standard extension UI API on mobile, including input and conf
 
 A paired phone, or any other authenticated device principal, is the owner. It can read host files, run tools, and drive sessions. Workspace `realpath` confinement keeps paths inside the selected workspace; it is not a secret-file ACL.
 
-Pairing enrolls a per-device P-256 public key and returns a short-lived HTTPS/WSS access token (`at_`, about ten minutes, stored hashed). Ordinary network HTTP and WebSocket calls send that bearer. `/health` is unauthenticated. Pair, migrate, challenge, and refresh are TLS bootstrap routes and do not use a live `at_`.
+Pairing enrolls a per-device P-256 public key and returns a short-lived HTTPS/WSS access token (`at_`, about ten minutes, stored hashed). Ordinary network HTTP and WebSocket calls send that bearer. `/health` is unauthenticated. Pair, challenge, and refresh are TLS bootstrap routes and do not use a live `at_`.
 
 The owner `sk_` credential is accepted only on the owner-local Unix socket. The network listener rejects it.
 
@@ -18,7 +18,7 @@ The server generates an Ed25519 identity key pair on first run. The fingerprint 
 
 Authenticated devices can list and revoke devices. Emergency owner rotation (`oppi token rotate`) stays on the Unix socket and revokes every device.
 
-Leftover `dt_` tokens migrate over HTTPS (`POST /auth/migrate`). Ordinary HTTP/WS reject them.
+Legacy `dt_` tokens are unsupported and rejected by ordinary HTTP/WS. There is no migration endpoint or compatibility mode. Update old clients and re-pair with a device key.
 
 ## Transport
 

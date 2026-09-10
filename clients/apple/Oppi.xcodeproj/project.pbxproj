@@ -1445,7 +1445,6 @@
 		DE8C9F9E1D5318C6D1899978 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 11886E64F29A908EA90575A2 /* PrivacyInfo.xcprivacy */; };
 		DED6161BDA4F22D97AF8700B /* DictationComposerPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29AC76370C9FA792205F4099 /* DictationComposerPolicy.swift */; };
 		DF052C267A979F03D7EF95BD /* MermaidFlowchartConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CEC611424DEB6963E065374 /* MermaidFlowchartConformanceTests.swift */; };
-		DF1E2968255A2737EC975525 /* DeviceAuthMigrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C224D9C483EB6A19819A613 /* DeviceAuthMigrationService.swift */; };
 		DF326CECDEEFEB75EF6D8DAB /* TimelineReducerStreamingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD0B82407A341F0CBA509C3 /* TimelineReducerStreamingTests.swift */; };
 		DFB7216E224A7A9FB4BDDCDD /* TimelineStreamingScrollMatrixSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 692A4747C46B99B0BF61915E /* TimelineStreamingScrollMatrixSupport.swift */; };
 		DFC3F1DA65F3CC0ECC873E9A /* MathNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25711154EFC224B8FE7389BE /* MathNode.swift */; };
@@ -1913,7 +1912,6 @@
 		1B54697FAD1437E32B1DDC17 /* ToolRowPlanBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowPlanBuilder.swift; sourceTree = "<group>"; };
 		1B654E5ACCE8CDBA55EAC875 /* PastableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PastableTextView.swift; sourceTree = "<group>"; };
 		1B6DF6118CCD51A710EFA8FC /* MacSessionSearchPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionSearchPresentation.swift; sourceTree = "<group>"; };
-		1C224D9C483EB6A19819A613 /* DeviceAuthMigrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthMigrationService.swift; sourceTree = "<group>"; };
 		1C2526925920C92F7FEF2A86 /* MarkdownTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextTests.swift; sourceTree = "<group>"; };
 		1C2F15E704F4BD87418BEAA4 /* DeviceAuthIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthIntegrationTests.swift; sourceTree = "<group>"; };
 		1C7B840A895CE9C0F1817DF0 /* WebSocketRecoveryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketRecoveryPolicy.swift; sourceTree = "<group>"; };
@@ -3803,7 +3801,6 @@
 				038F861AF855883E9D36C289 /* ClientLogUploadService.swift */,
 				C44B3063E520673FC4B91517 /* ComposerDraftEnvironment.swift */,
 				B6DCE4CEDCA850A77014A125 /* ConnectionCoordinator.swift */,
-				1C224D9C483EB6A19819A613 /* DeviceAuthMigrationService.swift */,
 				8DF59844CC02911865351D62 /* DeviceKeyProvider.swift */,
 				6B53D6492D9B3BF02D02814E /* DeviceKeyStore.swift */,
 				7921C79E6D33144A0E46D8D6 /* DeviceResourceSampler.swift */,
@@ -7275,7 +7272,6 @@
 				51EDAE22D5D84E667F2413C0 /* DelimitedTableRenderView.swift in Sources */,
 				5EC8DF14FCC7A36CF0E8C59A /* DeltaCoalescer+Telemetry.swift in Sources */,
 				61F56F7CCF885BDEA2060E62 /* DeltaCoalescer.swift in Sources */,
-				DF1E2968255A2737EC975525 /* DeviceAuthMigrationService.swift in Sources */,
 				E500CD1D488AD9572BD73352 /* DeviceAuthPairTypes.swift in Sources */,
 				4B4EC8E539A0FA24F410C6B0 /* DeviceAuthSession.swift in Sources */,
 				B1E919704A6909DD99CB8320 /* DeviceCredential.swift in Sources */,

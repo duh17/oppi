@@ -105,13 +105,12 @@ beforeAll(async () => {
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "disabled" },
-    authDeviceTokens: [deviceToken],
   });
   ownerToken = storage.ensurePaired();
-  const enrolled = storage.enrollViaPairing(
-    storage.issuePairingToken(),
-    { publicKey: devicePublicKey(), name: "Plaintext negative test" },
-  );
+  const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
+    publicKey: devicePublicKey(),
+    name: "Plaintext negative test",
+  });
   if (!enrolled) throw new Error("enrollment failed");
   accessToken = enrolled.accessToken;
 
@@ -133,17 +132,12 @@ describe("plaintext network device-auth cutoff", () => {
     expect(await localRequest("/me", ownerToken)).toBe(200);
   });
 
-  it("rejects pair, migrate, challenge, and refresh before route dispatch", async () => {
+  it("rejects pair, challenge, and refresh before route dispatch", async () => {
     const pairingToken = storage.issuePairingToken();
     const requests = [
       networkRequest("/pair", {
         method: "POST",
         body: { pairingToken, devicePublicKey: devicePublicKey() },
-      }),
-      networkRequest("/auth/migrate", {
-        method: "POST",
-        token: deviceToken,
-        body: { devicePublicKey: devicePublicKey() },
       }),
       networkRequest("/auth/challenge", {
         method: "POST",

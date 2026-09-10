@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,11 +18,6 @@ import type { DevicePublicKey } from "../src/types.js";
 
 let dataDir: string;
 let storage: Storage;
-
-function configFingerprint(configPath: string): string {
-  const stat = statSync(configPath);
-  return `${stat.ino}:${stat.mtimeNs}:${stat.size}`;
-}
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-device-auth-"));
@@ -292,136 +287,6 @@ describe("per-device revocation", () => {
     });
     expect(storage.validateAccessToken(second.accessToken).ok).toBe(true);
     expect(storage.revokeDevice(first.deviceId)).toBe(false); // idempotent
-  });
-});
-
-describe("legacy dt_ migration", () => {
-  function seedLegacyDevice(token: string) {
-    storage.updateConfig({ authDeviceTokens: [token] });
-  }
-
-  it("atomically upgrades a legacy dt_ to a device key, idempotently", () => {
-    const legacyToken = "dt_legacy_secret_token";
-    seedLegacyDevice(legacyToken);
-    const key = makeDeviceKey();
-
-    const first = storage.migrateLegacyDevice(legacyToken, {
-      publicKey: key.publicKeyJwk,
-      name: "Migrated iPhone",
-    });
-    expect(first).not.toBeNull();
-    if (!first) return;
-    expect(first.deviceId).toMatch(/^dev_/);
-    expect(first.accessToken).toMatch(/^at_/);
-
-    const devices = storage.listDevices();
-    const migrated = devices.find((d) => d.id === first.deviceId);
-    expect(migrated?.publicKey).toEqual(key.publicKeyJwk);
-    expect(migrated?.legacyTokenHash).toBeTruthy();
-    // Legacy token still usable until the access token is proven.
-    expect(storage.getAuthDeviceTokens()).toContain(legacyToken);
-
-    // Idempotent: same dt_ returns the same device id.
-    const second = storage.migrateLegacyDevice(legacyToken, {
-      publicKey: key.publicKeyJwk,
-      name: "Migrated iPhone",
-    });
-    expect(second?.deviceId).toBe(first.deviceId);
-    expect(storage.listDevices().filter((d) => d.publicKey)).toHaveLength(1);
-    expect(storage.validateAccessToken(first.accessToken).ok).toBe(true);
-    expect(storage.validateAccessToken(second!.accessToken).ok).toBe(true);
-  });
-
-  it("rejects a second migrate with a different key and leaves the first enrollment intact", () => {
-    const legacyToken = "dt_legacy_secret_token";
-    seedLegacyDevice(legacyToken);
-    const firstKey = makeDeviceKey();
-    const first = storage.migrateLegacyDevice(legacyToken, {
-      publicKey: firstKey.publicKeyJwk,
-      name: "Migrated iPhone",
-    });
-    expect(first).not.toBeNull();
-    if (!first) return;
-
-    const second = storage.migrateLegacyDevice(legacyToken, {
-      publicKey: makeDeviceKey().publicKeyJwk,
-      name: "Attacker",
-    });
-    expect(second).toBeNull();
-
-    const devices = storage.listDevices().filter((d) => d.publicKey);
-    expect(devices).toHaveLength(1);
-    expect(devices[0]?.id).toBe(first.deviceId);
-    expect(devices[0]?.publicKey).toEqual(firstKey.publicKeyJwk);
-    expect(storage.validateAccessToken(first.accessToken)).toMatchObject({
-      ok: true,
-      deviceId: first.deviceId,
-      scope: "device",
-    });
-  });
-
-  it("commits legacy revocation only after the replacement access token is used", () => {
-    const legacyToken = "dt_legacy_secret_token";
-    seedLegacyDevice(legacyToken);
-    const key = makeDeviceKey();
-    const migrated = storage.migrateLegacyDevice(legacyToken, {
-      publicKey: key.publicKeyJwk,
-      name: "Migrated iPhone",
-    });
-    if (!migrated) throw new Error("migration failed");
-
-    expect(storage.getAuthDeviceTokens()).toContain(legacyToken);
-
-    // First authenticated use commits the revocation.
-    expect(storage.validateAccessToken(migrated.accessToken).ok).toBe(true);
-    storage.commitLegacyRevocation(migrated.deviceId);
-    expect(storage.getAuthDeviceTokens()).not.toContain(legacyToken);
-
-    // Legacy token no longer usable after commit.
-    const postCommit = storage.migrateLegacyDevice(legacyToken, {
-      publicKey: makeDeviceKey().publicKeyJwk,
-      name: "Attacker",
-    });
-    expect(postCommit).toBeNull();
-  });
-
-  it("rejects migration once finalized", () => {
-    const legacyToken = "dt_legacy_secret_token";
-    seedLegacyDevice(legacyToken);
-    storage.setMigrationFinalized(true);
-
-    const result = storage.migrateLegacyDevice(legacyToken, {
-      publicKey: makeDeviceKey().publicKeyJwk,
-      name: "Late device",
-    });
-    expect(result).toBeNull();
-    expect(storage.isMigrationFinalized()).toBe(true);
-  });
-
-  it("rejects migration with an unknown legacy token", () => {
-    const configPath = storage.getConfigPath();
-    const before = configFingerprint(configPath);
-    const result = storage.migrateLegacyDevice("dt_not_a_real_token", {
-      publicKey: makeDeviceKey().publicKeyJwk,
-      name: "Unknown",
-    });
-    expect(result).toBeNull();
-    expect(configFingerprint(configPath)).toBe(before);
-  });
-
-  it("does not persist no-op legacy migration or revocation", () => {
-    const enrolled = enroll();
-    const configPath = storage.getConfigPath();
-    const before = configFingerprint(configPath);
-
-    expect(
-      storage.migrateLegacyDevice("not-a-credential", {
-        publicKey: {},
-        name: "Attacker",
-      }),
-    ).toBeNull();
-    expect(storage.commitLegacyRevocation(enrolled.deviceId)).toBe(false);
-    expect(configFingerprint(configPath)).toBe(before);
   });
 });
 

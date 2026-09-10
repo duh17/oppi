@@ -34,9 +34,7 @@ export interface RouteContext {
   piCliVersion?: string;
   /** Close upgraded sockets owned by a newly revoked device. */
   onDeviceRevoked?: (deviceId: string) => void;
-  /** Close legacy `dt_` sockets when the migration window finalizes. */
-  onMigrationFinalized?: (finalized: boolean) => void;
-  /** Close every network device/access/legacy socket when the owner token rotates. */
+  /** Close every network device socket when the owner token rotates. */
   onOwnerTokenRotated?: () => void;
   /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */
   stopWorkspaceVm?: (workspaceId: string) => void | Promise<void>;

@@ -158,7 +158,7 @@ describe("XaiSttProvider", () => {
     await expect(stopPromise).resolves.toEqual({ text: "hello world final" });
   });
 
-  it("keeps earlier words when a later xAI utterance is not cumulative", async () => {
+  it("accumulates partial utterances but replaces them with authoritative done text", async () => {
     const sockets: FakeSttSocket[] = [];
     const provider = makeProvider(sockets);
     const tokens: Array<{ text: string; snap?: boolean }> = [];
@@ -204,11 +204,26 @@ describe("XaiSttProvider", () => {
     await flush();
     sockets[0]?.emitJson({ type: "transcript.done", text: "testing now" });
     await expect(stopPromise).resolves.toEqual({
-      text: "hello world this is a test testing now",
+      text: "testing now",
     });
   });
 
-  it("stitches non-cumulative chunk finals and ignores a restated last chunk on done", async () => {
+  it.each(["Hello, corrected world.", "Completely rewritten."])(
+    "replaces committed and active partials with corrected final %j",
+    async (text) => {
+      const sockets: FakeSttSocket[] = [];
+      const provider = makeProvider(sockets);
+      await provider.start();
+      sockets[0]?.emitJson({ type: "transcript.partial", text: "hello wrong", is_final: true });
+      sockets[0]?.emitJson({ type: "transcript.partial", text: "unfinished", is_final: false });
+      const stopped = provider.stop();
+      await flush();
+      sockets[0]?.emitJson({ type: "transcript.done", text });
+      await expect(stopped).resolves.toEqual({ text });
+    },
+  );
+
+  it("stitches non-cumulative chunk finals and retains them on empty done", async () => {
     const sockets: FakeSttSocket[] = [];
     const provider = makeProvider(sockets);
     const tokens: string[] = [];

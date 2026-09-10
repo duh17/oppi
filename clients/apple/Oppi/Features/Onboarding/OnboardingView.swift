@@ -382,11 +382,6 @@ enum InviteBootstrapService {
             if let deviceCredential = pairResult.deviceCredential {
                 effective = credentials.withDeviceCredential(deviceCredential)
                 bootstrapToken = deviceCredential.accessToken
-            } else if let deviceToken = pairResult.deviceToken, !deviceToken.isEmpty {
-                // Older server still issued a dt_. Keep the pairing usable until
-                // this app later migrates on a device-key-capable server.
-                effective = credentials.withAuthToken(deviceToken)
-                bootstrapToken = deviceToken
             } else {
                 throw InviteBootstrapError.message("Server returned an invalid pairing response. Request a fresh invite and try again.")
             }

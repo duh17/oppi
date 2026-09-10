@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSttProvider, resolveSttBearerToken } from "../src/create-stt-provider.js";
-import { OpenAiSttProvider } from "../src/openai-stt-provider.js";
+import { resolveAsrProvider, type DictationConfig } from "../src/dictation-types.js";
 import { StreamingSttProvider } from "../src/stt-provider.js";
 import { XaiSttProvider } from "../src/xai-stt-provider.js";
 
@@ -14,14 +14,24 @@ describe("createSttProvider", () => {
     expect(provider.name).toBe("streaming-127.0.0.1");
   });
 
-  it("selects OpenAI transcriptions for asr.provider openai-codex", () => {
-    const provider = createSttProvider(
-      { provider: "openai-codex", sttModel: "gpt-4o-mini-transcribe" },
-      { resolveApiKey: () => "sk-test" },
-    );
-    expect(provider).toBeInstanceOf(OpenAiSttProvider);
-    expect(provider.name).toBe("openai-codex");
-  });
+  it.each(["openai", "openai-codex"])(
+    "rejects removed provider %s without auth or HTTP fallback",
+    (provider) => {
+      let authCalls = 0;
+      expect(() =>
+        createSttProvider(
+          { provider, sttEndpoint: "https://api.openai.com", sttModel: "test" } as DictationConfig,
+          {
+            resolveApiKey: () => {
+              authCalls++;
+              return "unused";
+            },
+          },
+        ),
+      ).toThrow("STT provider must be http or xai");
+      expect(authCalls).toBe(0);
+    },
+  );
 
   it("selects xAI for asr.provider xai", () => {
     const provider = createSttProvider(
@@ -33,39 +43,33 @@ describe("createSttProvider", () => {
   });
 
   it("prefers ModelRuntime.getAuth bearers, including OAuth access tokens", async () => {
+    const seen: string[] = [];
     await expect(
       resolveSttBearerToken("xai", {
-        getAuth: async () => ({ auth: { apiKey: "oauth-access" } }),
+        getAuth: async (providerId) => {
+          seen.push(providerId);
+          return { auth: { apiKey: "oauth-access" } };
+        },
         fallback: () => "should-not-use",
       }),
     ).resolves.toBe("oauth-access");
-    await expect(
-      resolveSttBearerToken("openai-codex", {
-        getAuth: async () => ({ auth: { apiKey: "codex-token" } }),
-        fallback: () => "should-not-use",
-      }),
-    ).resolves.toBe("codex-token");
+    expect(seen).toEqual(["xai"]);
   });
 
-  it("asks Pi auth for openai-codex, not a separate openai STT provider id", async () => {
-    const seen: string[] = [];
+  it("uses the credential fallback when Pi auth is unavailable", async () => {
     await expect(
-      resolveSttBearerToken("openai-codex", {
-        getAuth: async (providerId) => {
-          seen.push(providerId);
-          return { auth: { apiKey: "codex-token" } };
+      resolveSttBearerToken("xai", {
+        getAuth: async () => {
+          throw new Error("unavailable");
         },
-        fallback: () => undefined,
+        fallback: () => "xai-key",
       }),
-    ).resolves.toBe("codex-token");
-    expect(seen).toEqual(["openai-codex"]);
+    ).resolves.toBe("xai-key");
   });
 
-  it("infers OpenAI from api.openai.com even without asr.provider", () => {
-    const provider = createSttProvider(
-      { sttEndpoint: "https://api.openai.com", sttModel: "gpt-4o-mini-transcribe" },
-      { resolveApiKey: () => "sk-test" },
-    );
-    expect(provider).toBeInstanceOf(OpenAiSttProvider);
+  it("only infers xAI from a vendor hostname; other endpoints use the HTTP session contract", () => {
+    expect(resolveAsrProvider({ sttEndpoint: "https://api.x.ai" })).toBe("xai");
+    expect(resolveAsrProvider({ sttEndpoint: "https://api.openai.com" })).toBe("http");
+    expect(resolveAsrProvider({ provider: "http", sttEndpoint: "https://api.x.ai" })).toBe("http");
   });
 });

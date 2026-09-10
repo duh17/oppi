@@ -107,7 +107,7 @@ public actor DeviceAuthSession {
         return fallback
     }
 
-    /// Leftover/static bearers without an expiry stay usable (mixed-update `dt_`).
+    /// Static bearers without expiry metadata still require server authentication.
     /// A known-expired `at_` must not open a socket.
     public static func leftoverIsUsable(
         token: String,

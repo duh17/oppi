@@ -286,15 +286,30 @@ describe("identity module", () => {
     expect(revokeRes.statusCode).toBe(200);
   });
 
-  it("keeps rotate, finalize, and compat on the local socket", async () => {
+  it.each(["/auth/migrate", "/auth/finalize", "/auth/compat"])(
+    "does not dispatch deleted %s",
+    async (path) => {
+      const dispatch = createIdentityRoutes({ storage: {} } as RouteContext, createRouteHelpers());
+      expect(
+        await dispatch({
+          method: "POST",
+          path,
+          url: new URL(`https://paired.example${path}`),
+          req: makeRequest() as never,
+          res: makeResponse() as never,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("keeps rotate on the local socket", async () => {
     const rotateToken = vi.fn();
-    const setMigrationFinalized = vi.fn();
     const ctx = {
-      storage: { rotateToken, setMigrationFinalized },
+      storage: { rotateToken },
     } as unknown as RouteContext;
     const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
 
-    for (const path of ["/auth/rotate", "/auth/finalize", "/auth/compat"]) {
+    for (const path of ["/auth/rotate"]) {
       const res = makeResponse();
       await dispatch({
         method: "POST",
@@ -306,7 +321,6 @@ describe("identity module", () => {
       expect(res.statusCode).toBe(403);
     }
     expect(rotateToken).not.toHaveBeenCalled();
-    expect(setMigrationFinalized).not.toHaveBeenCalled();
   });
 
   it("includes uploadProtocol in GET /server/info", async () => {
@@ -473,7 +487,7 @@ describe("identity module", () => {
   });
 });
 
-describe("identity migrate persistence", () => {
+describe("deleted auth route persistence", () => {
   let dataDir: string;
   let storage: Storage;
 
@@ -481,7 +495,7 @@ describe("identity migrate persistence", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("does not write config for invalid POST /auth/migrate", async () => {
+  it("does not dispatch or write config for POST /auth/migrate", async () => {
     dataDir = mkdtempSync(join(tmpdir(), "oppi-identity-migrate-"));
     storage = new Storage(dataDir);
     storage.ensurePaired();
@@ -489,7 +503,10 @@ describe("identity migrate persistence", () => {
     const before = statSync(configPath);
     const fingerprint = `${before.ino}:${before.mtimeNs}:${before.size}`;
 
-    const dispatch = createIdentityRoutes({ storage } as unknown as RouteContext, createRouteHelpers());
+    const dispatch = createIdentityRoutes(
+      { storage } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
     const req = makeRequest({ devicePublicKey: {} });
     req.headers = { authorization: "Bearer not-a-credential" };
     const res = makeResponse();
@@ -501,8 +518,7 @@ describe("identity migrate persistence", () => {
       res: res as never,
     });
 
-    expect(handled).toBe(true);
-    expect(res.statusCode).toBe(401);
+    expect(handled).toBe(false);
     const after = statSync(configPath);
     expect(`${after.ino}:${after.mtimeNs}:${after.size}`).toBe(fingerprint);
   });

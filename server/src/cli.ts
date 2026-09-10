@@ -626,16 +626,16 @@ async function cmdDevices(
           createdAt: number;
           lastUsedAt?: number;
           revokedAt?: number;
-          keyEnrolled: boolean;
         }>;
       }>(connection, "/auth/devices");
       const devices = data.devices ?? [];
       console.log(c.bold(`  Devices (${devices.length})`));
       for (const device of devices) {
         const state = device.revokedAt !== undefined ? "revoked" : "active";
-        const proof = device.keyEnrolled ? "device-key" : "legacy";
         const lastUsed = device.lastUsedAt ? new Date(device.lastUsedAt).toISOString() : "never";
-        console.log(`  - ${device.id}  ${device.name}  [${state}, ${proof}]  lastUsed=${lastUsed}`);
+        console.log(
+          `  - ${device.id}  ${device.name}  [${state}, device-key]  lastUsed=${lastUsed}`,
+        );
       }
       console.log("");
       return;
@@ -671,67 +671,6 @@ async function cmdDevices(
 
   console.log(c.red(`  Unknown devices action: ${mode}`));
   console.log(c.dim("  Usage: oppi devices list | oppi devices revoke <id>"));
-  console.log("");
-  process.exit(1);
-}
-
-/** Operator-facing dt_ migration copy. Ordinary HTTP/WS always rejects dt_. */
-export function formatAuthMigrationCopy(opts: { kind: "status" | "updated"; finalized: boolean }): {
-  headline: string;
-  warning?: string;
-} {
-  if (opts.kind === "status") {
-    return {
-      headline: opts.finalized
-        ? "  Legacy device-token migration: finalized (migration disabled; ordinary HTTP/WS always rejects dt_)"
-        : "  Legacy device-token migration: compat (/auth/migrate only; ordinary HTTP/WS always rejects dt_)",
-    };
-  }
-  if (opts.finalized) {
-    return {
-      headline: "  ✓ Finalized device-key migration. /auth/migrate is now disabled.",
-      warning:
-        "  Devices still holding dt_ need to update and migrate before finalization, or re-pair after.",
-    };
-  }
-  return {
-    headline:
-      "  ✓ Restored dt_ compatibility for /auth/migrate only. Ordinary HTTP/WS still rejects dt_.",
-  };
-}
-
-async function cmdAuth(connection: CliConnectionConfig, action: string | undefined): Promise<void> {
-  const mode = action || "status";
-
-  if (mode === "status") {
-    const finalized = connection.getConfig().authMigrationMode === "finalized";
-    console.log(c.bold(formatAuthMigrationCopy({ kind: "status", finalized }).headline));
-    console.log("");
-    return;
-  }
-
-  if (mode === "finalize" || mode === "compat") {
-    const finalized = mode === "finalize";
-    try {
-      await localApiRequest(connection, finalized ? "/auth/finalize" : "/auth/compat", {
-        method: "POST",
-      });
-    } catch (error) {
-      console.log(c.red(`  Error: could not update migration mode: ${safeErrorMessage(error)}`));
-      console.log("");
-      process.exit(1);
-    }
-    const copy = formatAuthMigrationCopy({ kind: "updated", finalized });
-    console.log(c.green(copy.headline));
-    if (copy.warning) {
-      console.log(c.yellow(copy.warning));
-    }
-    console.log("");
-    return;
-  }
-
-  console.log(c.red(`  Unknown auth action: ${mode}`));
-  console.log(c.dim("  Usage: oppi auth status | oppi auth finalize | oppi auth compat"));
   console.log("");
   process.exit(1);
 }
@@ -1134,10 +1073,6 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
 
     case "devices":
       await cmdDevices(connection, positional[0], positional[1]);
-      break;
-
-    case "auth":
-      await cmdAuth(connection, positional[0]);
       break;
 
     case "config":

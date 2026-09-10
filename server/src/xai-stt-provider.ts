@@ -326,7 +326,8 @@ export class XaiSttProvider implements SttProvider {
     }
     if (type === "transcript.done") {
       const incoming = typeof event.text === "string" ? event.text.trim() : "";
-      const text = incoming.length > 0 ? joinXaiTranscript(this.lastText, incoming) : this.lastText;
+      // done owns the full take, including corrections to earlier partials.
+      const text = incoming.length > 0 ? incoming : this.lastText;
       this.committed = text;
       this.volatile = "";
       this.lastText = text;

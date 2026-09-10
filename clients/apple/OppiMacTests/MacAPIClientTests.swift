@@ -65,6 +65,30 @@ struct MacAPIClientTests {
         #expect(MacAPIClient.readOwnerToken(dataDir: dir) == nil)
     }
 
+    @Test func pairedClientCountUsesActiveDeviceKeysNotObsoleteTokens() throws {
+        let dir = try writeTempConfig(#"{"authDeviceTokens":["dt_old","dt_other"],"authDevices":[{"publicKey":{"kty":"EC","crv":"P-256","x":"x","y":"y"}},{"publicKey":{"kty":"EC","crv":"P-256","x":"x","y":"y"},"revokedAt":1},{}]}"#)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        #expect(MacAPIClient.pairedClientCount(dataDir: dir) == 1)
+        #expect(MacAPIClient.hasPairedClients(dataDir: dir))
+    }
+
+    @Test func sharedPairingResponseAcceptsDeviceKeysAndRejectsOldTokens() throws {
+        let data = Data(#"{"deviceId":"dev_phone","accessToken":"at_paired","expiresAt":123456,"refreshChallenge":{"nonce":"next","audience":"oppi:refresh:v1","expiresAt":123000}}"#.utf8)
+        let response = try JSONDecoder().decode(PairDeviceResponse.self, from: data)
+        #expect(response.deviceCredential?.accessToken == "at_paired")
+        #expect(response.deviceCredential?.refreshChallenge?.nonce == "next")
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(PairDeviceResponse.self, from: Data(#"{"deviceToken":"dt_old"}"#.utf8))
+        }
+    }
+
+    @Test func obsoleteTokensDoNotCountAsPairedClients() throws {
+        let dir = try writeTempConfig(#"{"authDeviceTokens":["dt_old"]}"#)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        #expect(MacAPIClient.pairedClientCount(dataDir: dir) == 0)
+        #expect(!MacAPIClient.hasPairedClients(dataDir: dir))
+    }
+
     // MARK: - parseServerInfo — uptime formatting
 
     @Test("uptime formatting",

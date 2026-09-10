@@ -30,17 +30,16 @@ oppi config validate
 oppi server restart   # or restart `oppi serve`
 ```
 
-OpenAI or xAI/Grok, using existing Pi/Oppi provider auth (same as models: `pi auth`, Settings login, or `OPENAI_API_KEY` / `XAI_API_KEY`):
+xAI/Grok, using existing Pi/Oppi provider auth (same as models: `pi auth`, Settings login, or `XAI_API_KEY`):
 
 ```bash
-oppi config set asr.provider openai-codex
-# or: oppi config set asr.provider xai
+oppi config set asr.provider xai
 oppi config validate
 oppi server restart
 ```
 
-- Set `asr.provider` to `openai-codex` or `xai`, or set a non-empty `asr.sttEndpoint`, to enable server dictation. Unset those to disable.
-- OpenAI is batch-on-stop (no live `dictation_result` ticks). xAI streams real partials over WebSocket. See [Dictation / ASR](../server/docs/asr.md).
+- Set `asr.provider` to `xai`, or set a non-empty Yuwp-compatible `asr.sttEndpoint`, to enable server dictation. Unset those to disable.
+- Yuwp and xAI stream real partials. OpenAI batch dictation is not supported; replace old `openai` / `openai-codex` ASR config with Yuwp/http or xAI. Invalid provider config disables dictation on startup. Codex LLM/auth/quota behavior is unchanged. See [Dictation / ASR](../server/docs/asr.md).
 - Leftover `asr.backend: pi-extension` and `asr.extension` values are ignored on load.
 - The Apple app learns dictation availability from the server identity payload after pairing.
 
@@ -92,8 +91,8 @@ Provider API keys use `pi auth`, not Oppi config.
 | `port` / `host`                         | Listen address (restart)                                            |
 | `tls.mode`                              | `disabled`, `self-signed`, `tailscale`, `manual` (restart)          |
 | `asr.sttEndpoint`                       | HTTP/Yuwp dictation STT base URL (restart)                          |
-| `asr.provider`                          | `http`, `openai-codex`, or `xai` (restart)                          |
-| `asr.sttModel`                          | STT model id (restart; OpenAI)                                      |
+| `asr.provider`                          | `http` or `xai` (restart)                          |
+| `asr.sttModel`                          | HTTP/Yuwp STT model id (restart)                                      |
 | `runtimeEnv.<NAME>`                     | Host runtime env, including TTS URLs (restart)                      |
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
 | `images.autoResize`                     | Client image preprocessing preference                               |

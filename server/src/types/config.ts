@@ -27,9 +27,6 @@ export interface UploadStoreConfig {
 /** Coarse capability scope for an authenticated credential. */
 export type DeviceScope = "device" | "admin" | "mirror";
 
-/** `dt_` compatibility window state. */
-export type AuthMigrationMode = "compat" | "finalized";
-
 /** Canonical P-256 device public key (JWK, RFC 7517 §6). */
 export interface DevicePublicKey {
   kty: "EC";
@@ -42,14 +39,11 @@ export interface DevicePublicKey {
 export interface DeviceRecord {
   id: string;
   name: string;
-  /** Absent for a legacy `dt_` record that has not yet migrated to key proof. */
-  publicKey?: DevicePublicKey;
+  publicKey: DevicePublicKey;
   scope: DeviceScope;
   createdAt: number;
   lastUsedAt?: number;
   revokedAt?: number;
-  /** SHA-256 of the legacy `dt_` token pending revocation after migration commit. */
-  legacyTokenHash?: string;
 }
 
 /** Short-lived access token stored hashed at rest. The server is the only verifier. */
@@ -97,11 +91,7 @@ export interface ServerConfig {
   // One-time pairing token bootstrap state
   pairingToken?: string;
   pairingTokenExpiresAt?: number;
-  // Device auth state (issued during pairing)
-  authDeviceTokens?: string[];
-
-  // Device-key auth state (new model). Additive and backward compatible.
-  authMigrationMode?: AuthMigrationMode;
+  // Device-key auth state (issued during pairing)
   authDevices?: DeviceRecord[];
   authAccessTokens?: AccessTokenRecord[];
   // Push notification state (written by iOS client registration)
@@ -125,9 +115,9 @@ export interface ServerConfig {
     /** Explicit backend. Omitted with a non-empty sttEndpoint means "http". */
     backend?: "http";
     /** STT vendor. Omitted means infer from sttEndpoint, else Yuwp/http. */
-    provider?: "http" | "openai-codex" | "xai";
+    provider?: "http" | "xai";
     sttEndpoint?: string;
-    /** Model id for vendors that require one (OpenAI). */
+    /** Model id for the HTTP/Yuwp backend. */
     sttModel?: string;
   };
 

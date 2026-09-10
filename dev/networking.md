@@ -10,7 +10,7 @@ Oppi's supported remote transport is authenticated HTTPS/WSS. Automatic Apple ro
 | Tailscale HTTPS/WSS | Supported | Remote access through Tailscale |
 
 
-Device authentication uses a per-device P-256 signing key, short-lived HTTPS access token, single-use refresh challenge, and HTTP/WSS token refresh. The owner `sk_` credential is accepted only on the Unix socket. Existing `dt_` credentials migrate transparently over HTTPS; revocation removes the token and its binding and closes matching live WebSockets.
+Device authentication uses a per-device P-256 signing key, short-lived HTTPS access token, single-use refresh challenge, and HTTP/WSS token refresh. The owner `sk_` credential is accepted only on the Unix socket. Legacy `dt_` credentials are rejected; old clients must update and re-pair. Device revocation removes its access tokens and closes matching live WebSockets. No automatic credential migration runs on either side.
 
 Older persisted connections without an HTTPS endpoint are unsupported and must be paired again over HTTPS/Tailscale. They never fall back to plaintext.
 

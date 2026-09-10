@@ -122,7 +122,6 @@ export class Storage {
       this.iconAssetStore.has(assetId),
     );
     this.migrateLegacyWorkspaceSessions();
-    this.deviceAuthStore.migrateLegacyRecords();
     // Reconcile only after Agent current/version history, workspaces, and
     // immutable session launch snapshots are all available.
     this.cleanupUnreferencedIconAssets(undefined, {
@@ -311,13 +310,6 @@ export class Storage {
     return this.deviceAuthStore.enrollViaPairing(candidate, deviceInput);
   }
 
-  migrateLegacyDevice(
-    candidate: string,
-    deviceInput: { publicKey: unknown; name?: unknown },
-  ): EnrollResult | null {
-    return this.deviceAuthStore.migrateLegacyDevice(candidate, deviceInput);
-  }
-
   issueChallenge(deviceId: string): Challenge | null {
     return this.deviceAuthStore.issueChallenge(deviceId);
   }
@@ -330,10 +322,6 @@ export class Storage {
     return this.deviceAuthStore.validateAccessToken(candidate);
   }
 
-  commitLegacyRevocation(deviceId: string): boolean {
-    return this.deviceAuthStore.commitLegacyRevocation(deviceId);
-  }
-
   revokeDevice(deviceId: string): boolean {
     return this.deviceAuthStore.revokeDevice(deviceId);
   }
@@ -342,24 +330,8 @@ export class Storage {
     return this.deviceAuthStore.listDevices();
   }
 
-  deviceIdForLegacyToken(candidate: string): string | undefined {
-    return this.deviceAuthStore.deviceIdForLegacyToken(candidate);
-  }
-
-  isMigrationFinalized(): boolean {
-    return this.deviceAuthStore.isMigrationFinalized();
-  }
-
-  setMigrationFinalized(finalized: boolean): void {
-    this.deviceAuthStore.setMigrationFinalized(finalized);
-  }
-
   getOwnerName(): string {
     return this.authStore.getOwnerName();
-  }
-
-  getAuthDeviceTokens(): string[] {
-    return this.authStore.getAuthDeviceTokens();
   }
 
   getPushDeviceTokens(): string[] {

@@ -289,25 +289,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(PairDeviceResponse.self, from: data)
     }
 
-    /// Migrate a legacy `dt_` token to a device-key credential (idempotent).
-    /// Authenticated by the legacy token itself; the server revokes it only after
-    /// the replacement access token proves usable on a normal call.
-    func migrateDevice(
-        deviceName: String?,
-        devicePublicKey: DevicePublicKey
-    ) async throws -> PairDeviceResponse {
-        let (data, response) = try await request(
-            "POST",
-            path: "/auth/migrate",
-            body: MigrateDeviceRequest(
-                devicePublicKey: devicePublicKey,
-                deviceName: deviceName
-            )
-        )
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(PairDeviceResponse.self, from: data)
-    }
-
     /// Get authenticated user info.
     func me() async throws -> User {
         let data = try await get("/me")

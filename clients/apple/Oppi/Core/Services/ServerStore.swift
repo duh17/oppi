@@ -20,7 +20,7 @@ final class ServerStore {
     /// Add a new paired server, or update an existing one's credentials
     /// (re-pair). Non-throwing UI convenience: a Keychain write failure is
     /// logged. Use `persistServer(_:)` when the caller must fail safely on a
-    /// persistence failure (device-key migration).
+    /// persistence failure (for example, a credential refresh).
     func addOrUpdate(
         _ server: PairedServer,
         replacingStoredDeviceCredential: Bool = false
@@ -59,10 +59,8 @@ final class ServerStore {
         }
 
         try save(toSave, replacingStoredDeviceCredential: replacingStoredDeviceCredential)
-        // Keychain may keep a replacement at_ when the incoming writer still
-        // carries leftover dt_. Adopt that merged record so live memory cannot
-        // restore a revoked token after migrate. A user-initiated pair skips
-        // that merge so a fresh dt_ is not pinned to a stored at_.
+        // Adopt Keychain's merged credential so a stale writer cannot restore
+        // older auth in memory. An explicit re-pair may replace the stored identity.
         let persisted = KeychainService.loadServer(id: toSave.id) ?? toSave
 
         if let idx = servers.firstIndex(where: { $0.id == persisted.id }) {

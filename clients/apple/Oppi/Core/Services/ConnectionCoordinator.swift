@@ -84,7 +84,6 @@ final class ConnectionCoordinator {
     var _initialLANEndpointForTesting: (@MainActor (String) async -> LANDiscoveredEndpoint?)?
     var _serverInfoBootstrapForTesting: ServerConnectionInfoBootstrap?
     var _apiClientFactoryForTesting: ServerConnectionAPIClientFactory?
-    var _migrateDeviceIfNeededForTesting: (@MainActor (PairedServer, Bool) async -> PairedServer)?
     #endif
 
     private let lanDiscovery = LANDiscovery()
@@ -202,25 +201,13 @@ final class ConnectionCoordinator {
                     forceReconfigure: true
                 )
             }
-            if !forceReconfigure,
-               latestServer.deviceCredential == nil,
-               latestServer.token.hasPrefix("dt_") {
-                // After an in-flight leftover prepare finishes, try once more
-                // to bind a replacement at_ that arrived while we waited.
-                // Do not force migrate or reconfigure: a failed leftover POST
-                // must stay negatively cached, and the connection only rebinds
-                // when this retry actually produces a replacement.
-                finishConnectionPreparation(serverId: serverId, id: preparation.id)
-                return await ensureConnectionReady(for: latestServer)
-            }
             return prepared
         }
         let latestServer = serverStore.server(for: serverId) ?? server
         if !forceReconfigure, let existing = connections[serverId] {
             if existing.hasSameTransportIdentity(as: latestServer.credentials) {
                 existing.applyPersistedSameRouteCredentials(latestServer.credentials)
-                if existing.hasViableConfiguredTransport,
-                   latestServer.deviceCredential != nil || !latestServer.token.hasPrefix("dt_") {
+                if existing.hasViableConfiguredTransport {
                     return existing
                 }
             }
@@ -229,11 +216,10 @@ final class ConnectionCoordinator {
         preparingServerIds.insert(serverId)
         let task = Task<ServerConnection?, Never> { @MainActor [weak self] in
             guard let self else { return nil }
-            let migrated = await self.migrateLegacyDeviceIfNeeded(
-                self.serverStore.server(for: serverId) ?? latestServer,
-                force: forceReconfigure
+            return await self.prepareConnection(
+                for: self.serverStore.server(for: serverId) ?? latestServer,
+                forceReconfigure: forceReconfigure
             )
-            return await self.prepareConnection(for: migrated, forceReconfigure: forceReconfigure)
         }
         let preparationID = UUID()
         connectionPreparationTasks[serverId] = ConnectionPreparation(
@@ -332,38 +318,6 @@ final class ConnectionCoordinator {
         connections[serverId] = connection
         logger.warning("Created ready connection for \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
         return connection
-    }
-
-    /// Migrate a leftover `dt_` paired server to a device-key credential before
-    /// network use, including when a live connection already exists. The store
-    /// is updated so later connections skip the one-time migration. Failure
-    /// leaves the leftover token usable (compat window).
-    private func migrateLegacyDeviceIfNeeded(
-        _ server: PairedServer,
-        force: Bool = false
-    ) async -> PairedServer {
-        #if DEBUG
-        if let migrate = _migrateDeviceIfNeededForTesting {
-            return await migrate(server, force)
-        }
-        #endif
-        return await deviceAuthMigrationService().migrateIfNeeded(server, force: force)
-    }
-
-    private var cachedDeviceAuthMigrationService: DeviceAuthMigrationService?
-
-    private func deviceAuthMigrationService() -> DeviceAuthMigrationService {
-        if let cachedDeviceAuthMigrationService {
-            return cachedDeviceAuthMigrationService
-        }
-        let service = DeviceAuthMigrationService(persist: { [weak self] migrated in
-            guard let self else {
-                throw KeychainCredentialMergeError.itemNotFound
-            }
-            try self.serverStore.persistServer(migrated)
-        })
-        cachedDeviceAuthMigrationService = service
-        return service
     }
 
     private func initialLANEndpoint(for server: PairedServer) async -> LANDiscoveredEndpoint? {

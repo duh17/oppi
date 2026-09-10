@@ -37,7 +37,6 @@ export class AuthStore {
       token,
       pairingToken: undefined,
       pairingTokenExpiresAt: undefined,
-      authDeviceTokens: [],
       authDevices: (config.authDevices ?? []).map((device) => ({ ...device, revokedAt })),
       authAccessTokens: [],
       pushDeviceTokens: [],
@@ -57,10 +56,6 @@ export class AuthStore {
 
   getOwnerName(): string {
     return hostname().split(".")[0] || "owner";
-  }
-
-  getAuthDeviceTokens(): string[] {
-    return this.configStore.getConfig().authDeviceTokens || [];
   }
 
   getPushDeviceTokens(): string[] {

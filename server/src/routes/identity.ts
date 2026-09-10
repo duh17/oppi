@@ -119,7 +119,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
 
     // Pairing issues short-lived at_ credentials bound to a device P-256 key.
-    // Leftover dt_ tokens are migration-only; pre-migration clients must update.
+    // Old clients without device-key support must update and re-pair.
     if (body.devicePublicKey === undefined) {
       helpers.error(res, 400, "devicePublicKey required");
       return;
@@ -294,45 +294,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
 
   // ─── Device-key auth routes ───
 
-  async function handleAuthMigrate(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const authorization = req.headers.authorization;
-    const legacyToken = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
-    if (!legacyToken) {
-      helpers.error(res, 400, "legacy device token required");
-      return;
-    }
-
-    const parsed = await parseBootstrapBody<{ devicePublicKey?: unknown; deviceName?: string }>(
-      req,
-    );
-    if (!parsed.ok) {
-      helpers.error(res, parsed.status, parsed.error);
-      return;
-    }
-    const body = parsed.body;
-    if (!body.devicePublicKey) {
-      helpers.error(res, 400, "devicePublicKey required");
-      return;
-    }
-
-    const enrollment = ctx.storage.migrateLegacyDevice(legacyToken, {
-      publicKey: body.devicePublicKey,
-      name: body.deviceName,
-    });
-    if (!enrollment) {
-      helpers.error(res, 401, "Invalid or unsupported legacy device token");
-      return;
-    }
-
-    log.info("auth.device_migrated", { device: enrollment.deviceId });
-    helpers.json(res, {
-      deviceId: enrollment.deviceId,
-      accessToken: enrollment.accessToken,
-      expiresAt: enrollment.expiresAt,
-      refreshChallenge: enrollment.refreshChallenge,
-    });
-  }
-
   async function handleAuthChallenge(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const source = pairingSourceKey(req);
     const now = Date.now();
@@ -429,21 +390,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { ok: true });
   }
 
-  function handleAuthFinalize(req: IncomingMessage, res: ServerResponse, finalized: boolean): void {
-    if (!isLocalRequest(req)) {
-      helpers.error(res, 403, "Local admin only");
-      return;
-    }
-    ctx.storage.setMigrationFinalized(finalized);
-    ctx.onMigrationFinalized?.(finalized);
-    if (finalized) {
-      log.warn("auth.migration_finalized", {});
-    } else {
-      log.warn("auth.migration_compat_restored", {});
-    }
-    helpers.json(res, { ok: true, finalized });
-  }
-
   function handleAuthRotate(req: IncomingMessage, res: ServerResponse): void {
     if (!isLocalRequest(req)) {
       helpers.error(res, 403, "Local admin only");
@@ -463,10 +409,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       await handlePair(req, res);
       return true;
     }
-    if (path === "/auth/migrate" && method === "POST") {
-      await handleAuthMigrate(req, res);
-      return true;
-    }
     if (path === "/auth/challenge" && method === "POST") {
       await handleAuthChallenge(req, res);
       return true;
@@ -482,14 +424,6 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     const deviceRevokeMatch = path.match(/^\/auth\/devices\/([^/]+)$/);
     if (deviceRevokeMatch && method === "DELETE") {
       handleRevokeDevice(req, res, decodeURIComponent(deviceRevokeMatch[1]));
-      return true;
-    }
-    if (path === "/auth/finalize" && method === "POST") {
-      handleAuthFinalize(req, res, true);
-      return true;
-    }
-    if (path === "/auth/compat" && method === "POST") {
-      handleAuthFinalize(req, res, false);
       return true;
     }
     if (path === "/auth/rotate" && method === "POST") {
