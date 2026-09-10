@@ -986,8 +986,10 @@ final class AuthenticatedMediaPlaybackSession {
     private let asset: AVURLAsset
     private var timeControlObservation: NSKeyValueObservation?
     private var bufferEmptyObservation: NSKeyValueObservation?
+    private var muteObservation: NSKeyValueObservation?
     private var hasStartedPlaying = false
     private var lastStallLogAt: TimeInterval = 0
+    private var lastUnmutedVolume: Float = MediaPlaybackMutePolicy.defaultUnmutedVolume
 
     init(source: AuthenticatedMediaSource) {
         loader = AuthenticatedMediaResourceLoader(source: source)
@@ -1007,6 +1009,11 @@ final class AuthenticatedMediaPlaybackSession {
         // Custom resource-loader assets should not wait to minimize stalling;
         // AVPlayer cannot see the real network buffer behind oppi-media://.
         player.automaticallyWaitsToMinimizeStalling = false
+        // Dictation leaves playAndRecord + HFP selected after deactivate.
+        // AVKit mute/volume then bind to call audio, so AirPods can keep
+        // playing while the chrome shows muted.
+        MediaPlaybackAudioSession.prepareSharedSession()
+        observeMute()
         observeStalls(kind: MediaPlaybackTelemetry.mediaKind(
             mimeType: source.contentTypeHint,
             sourceFileExtension: source.sourceFileExtension
@@ -1026,9 +1033,33 @@ final class AuthenticatedMediaPlaybackSession {
         }
     }
 
+    private func observeMute() {
+        applyMuteOutput(isMuted: player.isMuted, currentVolume: player.volume)
+        muteObservation = player.observe(\.isMuted, options: [.new]) { [weak self] player, _ in
+            let isMuted = player.isMuted
+            let volume = player.volume
+            Task { @MainActor in
+                self?.applyMuteOutput(isMuted: isMuted, currentVolume: volume)
+            }
+        }
+    }
+
+    private func applyMuteOutput(isMuted: Bool, currentVolume: Float) {
+        let applied = MediaPlaybackMutePolicy.appliedVolume(
+            isMuted: isMuted,
+            currentVolume: currentVolume,
+            lastUnmutedVolume: lastUnmutedVolume
+        )
+        lastUnmutedVolume = applied.lastUnmutedVolume
+        if player.volume != applied.volume {
+            player.volume = applied.volume
+        }
+    }
+
     private func handleTimeControlChange(_ status: AVPlayer.TimeControlStatus, kind: String) {
         if status == .playing {
             hasStartedPlaying = true
+            MediaPlaybackAudioSession.prepareSharedSession()
             return
         }
         guard hasStartedPlaying, status == .waitingToPlayAtSpecifiedRate else { return }
@@ -1082,6 +1113,8 @@ final class AuthenticatedMediaPlaybackSession {
         timeControlObservation = nil
         bufferEmptyObservation?.invalidate()
         bufferEmptyObservation = nil
+        muteObservation?.invalidate()
+        muteObservation = nil
         Self.discardItem(player)
         asset.resourceLoader.setDelegate(nil, queue: nil)
         loader.cancelAll()
@@ -1155,6 +1188,65 @@ enum MediaPlaybackTeardownPolicy {
             isFullScreen: isFullScreen,
             isPictureInPicture: isPictureInPicture
         ).shouldTeardown
+    }
+}
+
+/// Video playback must own the media route. Dictation leaves `.playAndRecord`
+/// plus HFP selected after `setActive(false)`, and AVKit then binds mute and
+/// volume to call audio instead of AirPods media volume.
+enum MediaPlaybackAudioSession {
+    static let category: AVAudioSession.Category = .playback
+    static let mode: AVAudioSession.Mode = .default
+    static let options = AVAudioSession.CategoryOptions()
+
+    static func needsPlaybackCategory(_ current: AVAudioSession.Category) -> Bool {
+        current != category
+    }
+
+    static func prepare(
+        currentCategory: AVAudioSession.Category,
+        setCategory: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions) throws -> Void
+    ) throws {
+        guard needsPlaybackCategory(currentCategory) else { return }
+        try setCategory(category, mode, options)
+    }
+
+    @MainActor
+    static func prepareSharedSession() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try prepare(currentCategory: session.category) { category, mode, options in
+                try session.setCategory(category, mode: mode, options: options)
+            }
+        } catch {
+            ClientLog.warning(
+                "MediaPlayback",
+                "Could not configure playback audio session",
+                metadata: ["error": error.localizedDescription]
+            )
+        }
+    }
+}
+
+/// `AVPlayer.isMuted` can leave Bluetooth output audible. Zero volume when
+/// muted, and restore the previous volume on unmute unless AVKit already did.
+enum MediaPlaybackMutePolicy {
+    static let defaultUnmutedVolume: Float = 1
+
+    static func appliedVolume(
+        isMuted: Bool,
+        currentVolume: Float,
+        lastUnmutedVolume: Float
+    ) -> (volume: Float, lastUnmutedVolume: Float) {
+        if isMuted {
+            let preserved = currentVolume > 0 ? currentVolume : lastUnmutedVolume
+            return (0, preserved > 0 ? preserved : defaultUnmutedVolume)
+        }
+        if currentVolume > 0 {
+            return (currentVolume, currentVolume)
+        }
+        let restored = lastUnmutedVolume > 0 ? lastUnmutedVolume : defaultUnmutedVolume
+        return (restored, restored)
     }
 }
 

@@ -385,6 +385,7 @@
 		39EC03A5EF58A6C6820B0290 /* MermaidGitGraphRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1641221B2836B1AA655BF0E0 /* MermaidGitGraphRenderer.swift */; };
 		39F2EB1C195BB80ABC16192C /* MermaidGanttConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49D1C856DB31CB6335C6EB8E /* MermaidGanttConformanceTests.swift */; };
 		3A206E5ED7ED9486258281A8 /* OppiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10DAFC602A678F0A1BACE53 /* OppiApp.swift */; };
+		3A2CC2DC8D07E60CBAD35E82 /* AuthenticatedMediaPlaybackAudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0FBF368ACE89E38B2CDCB6 /* AuthenticatedMediaPlaybackAudioTests.swift */; };
 		3A3ABC2CB2AB59D0D4EF4DB6 /* MermaidJourneyRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94F97095846D9C1AD24928AC /* MermaidJourneyRenderer.swift */; };
 		3AAF0578F2F44DD11FB1F6BF /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B99EC6904A0849335BAC3D /* AppDelegate.swift */; };
 		3AFF1B16E99759C34404DA4C /* ServerConnectionTypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68FFE421F8D984376C30215 /* ServerConnectionTypesTests.swift */; };
@@ -2999,6 +3000,7 @@
 		E9DBFC8E9ACC8BBC5E33CC4F /* FullScreenCodeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenCodeViewController.swift; sourceTree = "<group>"; };
 		E9F377714437609AE551467E /* SlashCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommand.swift; sourceTree = "<group>"; };
 		EA07D5EEE1CC96D407F5D26F /* AgentManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentManagementView.swift; sourceTree = "<group>"; };
+		EA0FBF368ACE89E38B2CDCB6 /* AuthenticatedMediaPlaybackAudioTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedMediaPlaybackAudioTests.swift; sourceTree = "<group>"; };
 		EA30C639ED076263555275E4 /* ThemeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeStore.swift; sourceTree = "<group>"; };
 		EA3C4BE705997C695DFCCD81 /* MacAppKeybindingHelp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAppKeybindingHelp.swift; sourceTree = "<group>"; };
 		EA690C1C82924FF70447ED2D /* MacCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCatalogTests.swift; sourceTree = "<group>"; };
@@ -4024,6 +4026,7 @@
 			isa = PBXGroup;
 			children = (
 				DDA06873C098CE2A7FC21C7A /* AuthenticatedMediaLoaderBoundaryTests.swift */,
+				EA0FBF368ACE89E38B2CDCB6 /* AuthenticatedMediaPlaybackAudioTests.swift */,
 				122B575B9965E0C27160F370 /* AuthenticatedMediaPlaybackProbeTests.swift */,
 				CCE8110F4D7B8F371A869FF0 /* DocumentRenderCacheTests.swift */,
 				A76EB73E672BC7C02C98FD57 /* MarkdownInlineAudioTests.swift */,
@@ -6761,6 +6764,7 @@
 				8E82A785A80BC3C117EE9643 /* AudioPlayerSeekTests.swift in Sources */,
 				86A72170AE2F195904B6B01E /* AudioPlayerSkipTests.swift in Sources */,
 				F1EDDF6F097B44FDB4E1CBDC /* AuthenticatedMediaLoaderBoundaryTests.swift in Sources */,
+				3A2CC2DC8D07E60CBAD35E82 /* AuthenticatedMediaPlaybackAudioTests.swift in Sources */,
 				8C4AF8F7A1DE91ECEC8D3501 /* AuthenticatedMediaPlaybackProbeTests.swift in Sources */,
 				8885D8E42BC436B48F5C8AD6 /* AuthenticatedRangeHTTPServer.swift in Sources */,
 				7BC2CF416A45D6BE510A9C6C /* BashEmbeddedLanguageDetectorTests.swift in Sources */,
