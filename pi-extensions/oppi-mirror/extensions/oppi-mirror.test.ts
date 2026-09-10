@@ -1907,6 +1907,100 @@ describe("oppi mirror log rotation", () => {
     }
   });
 
+  it.each([
+    ["custom-2020.log", false],
+    ["custom-2020-01.log", false],
+    ["custom-+002020-01-01.log", false],
+    ["custom-2020-1-01.log", false],
+    ["custom-2020-01-1.log", false],
+    ["custom-20200101.log", false],
+    ["custom-2020-00-01.log", false],
+    ["custom-2020-13-01.log", false],
+    ["custom-2020-01-00.log", false],
+    ["custom-2020-01-32.log", false],
+    ["custom-2025-02-29.log", false],
+    ["custom-2024-02-30.log", false],
+    ["custom-2020-04-31.log", false],
+    ["custom-1900-02-29.log", false],
+    ["custom-not-a-date.log", false],
+    ["custom-2020-01-01.log.bak", false],
+    ["other-2020-01-01.log", false],
+    ["extra-custom-2020-01-01.log", false],
+    ["custom.log", false],
+    ["custom-2026-03-12.log", false],
+    ["custom-2026-03-26.log", false],
+    ["custom-2020-01-01.log", true],
+    ["custom-2024-02-29.log", true],
+    ["custom-2000-02-29.log", true],
+  ])("only prunes exact valid expired daily names: %s (pruned=%s)", (name, pruned) => {
+    const logDir = makeLogDir();
+    const candidatePath = join(logDir, name);
+    vi.stubEnv("OPPI_MIRROR_LOG_PATH", join(logDir, "custom.log"));
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      writeFileSync(candidatePath, "preserve unless expired daily log\n");
+      writeMirrorLog("info", "unit_test_exact_daily_name", {});
+      expect(existsSync(candidatePath)).toBe(!pruned);
+      if (!pruned) {
+        expect(readFileSync(candidatePath, "utf8")).toBe(
+          "preserve unless expired daily log\n",
+        );
+      }
+      expect(existsSync(join(logDir, "custom-2026-03-25.log"))).toBe(true);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["custom", "custom-2020-01-01.log", "custom-2026-03-25.log"],
+    ["custom.jsonl", "custom-2020-01-01.jsonl", "custom-2026-03-25.jsonl"],
+    ["custom[1].log", "custom[1]-2020-01-01.log", "custom[1]-2026-03-25.log"],
+  ])("prunes only daily files generated from base %s", (base, oldName, todayName) => {
+    const logDir = makeLogDir();
+    vi.stubEnv("OPPI_MIRROR_LOG_PATH", join(logDir, base));
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    try {
+      writeFileSync(join(logDir, base), "legacy\n");
+      writeFileSync(join(logDir, oldName), "expired\n");
+      writeFileSync(join(logDir, "custom1-2020-01-01.log"), "unrelated\n");
+      writeMirrorLog("info", "unit_test_base_pruning", {});
+      expect(readdirSync(logDir).sort()).toEqual(
+        [base, todayName, "custom1-2020-01-01.log"].sort(),
+      );
+      expect(readFileSync(join(logDir, base), "utf8")).toBe("legacy\n");
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the exact 14-day boundary and still logs when an expired entry cannot be unlinked", () => {
+    const logDir = makeLogDir();
+    vi.stubEnv("OPPI_MIRROR_LOG_PATH", join(logDir, "custom.log"));
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-03-25T00:00:00.000Z"));
+
+    try {
+      mkdirSync(join(logDir, "custom-2020-01-01.log"));
+      writeFileSync(join(logDir, "custom-2026-03-10.log"), "expired\n");
+      writeFileSync(join(logDir, "custom-2026-03-11.log"), "boundary\n");
+      expect(() => writeMirrorLog("info", "unit_test_best_effort", {})).not.toThrow();
+      expect(readdirSync(logDir).sort()).toEqual([
+        "custom-2020-01-01.log",
+        "custom-2026-03-11.log",
+        "custom-2026-03-25.log",
+      ]);
+      expect(JSON.parse(readFileSync(join(logDir, "custom-2026-03-25.log"), "utf8")))
+        .toMatchObject({ event: "unit_test_best_effort" });
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
   it("date-stamps OPPI_MIRROR_LOG_PATH as a base file path", () => {
     const logDir = makeLogDir();
     const overridePath = join(logDir, "custom.log");

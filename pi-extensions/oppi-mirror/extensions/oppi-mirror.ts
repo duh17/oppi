@@ -365,8 +365,15 @@ function pruneOldMirrorLogFiles(
       suffix.length === 0
         ? entry.slice(prefix.length)
         : entry.slice(prefix.length, -suffix.length);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) continue;
     const fileDate = Date.parse(`${datePart}T00:00:00.000Z`);
-    if (Number.isNaN(fileDate) || fileDate >= cutoffMs) continue;
+    // Date.parse accepts partial dates and normalizes impossible calendar days.
+    // Only prune the exact UTC daily names, never unrelated parseable files.
+    if (
+      Number.isNaN(fileDate) ||
+      new Date(fileDate).toISOString().slice(0, 10) !== datePart ||
+      fileDate >= cutoffMs
+    ) continue;
     try {
       unlinkSync(join(dir, entry));
     } catch {
