@@ -334,6 +334,76 @@ struct VoiceInputAudioRoutePlannerTests {
         #expect(plan.preferredDataSourceName == testCase.expectedDataSourceName)
         #expect(plan.preferredPolarPattern == testCase.expectedPolarPattern)
     }
+
+    @Test func stalePreferredInputResetsWhenUIDIsMissing() {
+        let mic = VoiceInputAudioRouteInput.builtInMic(uid: "mic", sources: [])
+        #expect(
+            VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
+                preferredUID: "airpods",
+                availableInputs: [mic]
+            )
+        )
+        #expect(
+            !VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
+                preferredUID: "mic",
+                availableInputs: [mic]
+            )
+        )
+        #expect(
+            !VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
+                preferredUID: nil,
+                availableInputs: [mic]
+            )
+        )
+    }
+
+    @Test func excludingBluetoothHFPFallsBackToBuiltInMic() {
+        let inputs = [
+            VoiceInputAudioRouteInput.bluetoothHFP(uid: "airpods"),
+            VoiceInputAudioRouteInput.builtInMic(
+                uid: "mic",
+                sources: [
+                    .init(
+                        name: "Front",
+                        orientation: .front,
+                        supportedPolarPatterns: [.cardioid]
+                    ),
+                ]
+            ),
+        ]
+        let plan = VoiceInputAudioRoutePlanner.plan(
+            availableInputs: VoiceInputAudioRoutePlanner.excludingBluetoothHFP(inputs),
+            bluetoothHighQualityRecordingAvailable: false
+        )
+        #expect(plan.preferredInputUID == "mic")
+        #expect(plan.preferredDataSourceName == "Front")
+        #expect(plan.preferredPolarPattern == .cardioid)
+    }
+
+    @Test func stalePreferredInputIsClearedBeforeActivate() {
+        let mic = VoiceInputAudioRouteInput.builtInMic(uid: "mic", sources: [])
+        #expect(
+            VoiceInputAudioRoutePlanner.activateActions(
+                preferredUID: "airpods",
+                availableInputs: [mic],
+                firstActivateSucceeded: true
+            ) == ["resetPreferredInput", "setActive"]
+        )
+        #expect(
+            VoiceInputAudioRoutePlanner.activateActions(
+                preferredUID: "airpods",
+                availableInputs: [mic],
+                firstActivateSucceeded: false
+            ) == ["resetPreferredInput", "setActive", "resetPreferredInput", "retrySetActive"]
+        )
+        #expect(
+            VoiceInputAudioRoutePlanner.activateActions(
+                preferredUID: "mic",
+                availableInputs: [mic],
+                firstActivateSucceeded: true
+            ) == ["setActive"]
+        )
+    }
 }
 
 private extension VoiceInputAudioRouteInput {

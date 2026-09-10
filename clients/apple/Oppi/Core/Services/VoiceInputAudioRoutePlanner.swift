@@ -78,6 +78,42 @@ enum VoiceInputAudioRoutePlanner {
         }
         return availableInputs.first
     }
+
+    /// Stale `preferredInput` (disconnected AirPods) can make the next
+    /// `setActive` / engine start use an invalid format.
+    static func shouldResetPreferredInput(
+        preferredUID: String?,
+        availableInputs: [VoiceInputAudioRouteInput]
+    ) -> Bool {
+        guard let preferredUID else { return false }
+        return !availableInputs.contains { $0.uid == preferredUID }
+    }
+
+    static func excludingBluetoothHFP(
+        _ inputs: [VoiceInputAudioRouteInput]
+    ) -> [VoiceInputAudioRouteInput] {
+        inputs.filter { $0.portType != .bluetoothHFP }
+    }
+
+    static func activateActions(
+        preferredUID: String?,
+        availableInputs: [VoiceInputAudioRouteInput],
+        firstActivateSucceeded: Bool
+    ) -> [String] {
+        var steps: [String] = []
+        if shouldResetPreferredInput(
+            preferredUID: preferredUID,
+            availableInputs: availableInputs
+        ) {
+            steps.append("resetPreferredInput")
+        }
+        steps.append("setActive")
+        if !firstActivateSucceeded {
+            steps.append("resetPreferredInput")
+            steps.append("retrySetActive")
+        }
+        return steps
+    }
 }
 
 extension VoiceInputAudioRouteInput {

@@ -589,6 +589,9 @@ final class VoiceInputManager {
 
     private var composerOwner: VoiceComposerOwner?
     private var composerGeneration = 0
+    #if os(iOS)
+    nonisolated(unsafe) private var audioRouteChangeObserver: (any NSObjectProtocol)?
+    #endif
 
     // MARK: - Init
 
@@ -609,6 +612,17 @@ final class VoiceInputManager {
         self.sessionMonitor = sessionMonitor
         self.systemAccess = systemAccess
         loadPreferences()
+        #if os(iOS)
+        observeAudioRouteChanges()
+        #endif
+    }
+
+    deinit {
+        #if os(iOS)
+        if let audioRouteChangeObserver {
+            NotificationCenter.default.removeObserver(audioRouteChangeObserver)
+        }
+        #endif
     }
 
     /// Reload persisted voice settings.
@@ -1113,25 +1127,21 @@ final class VoiceInputManager {
         }
         logger.info("Cancelling recording")
 
-        if state == .preparingModel {
-            // Invalidate any in-flight start operation so stale async work
-            // cannot flip us back into recording after cancel.
-            clearActiveStartIdentity()
-            if let activeEngine {
-                try? provider(for: activeEngine).cancelPreparation()
-            }
+        if state == .preparingModel, let activeEngine {
+            try? provider(for: activeEngine).cancelPreparation()
         }
 
-        await sessionMonitor.cancel()
-
-        deactivateAudioSession()
-        teardownSession()
-        endPlaybackCaptureInterruptionIfNeeded()
+        if let requestID = activeStartRequestID {
+            let stillOwns = await cleanupFailedStart(for: requestID)
+            guard stillOwns else { return }
+        } else {
+            await sessionMonitor.cancel()
+            deactivateAudioSession()
+            teardownSession()
+            endPlaybackCaptureInterruptionIfNeeded()
+        }
 
         emitDictationCancelTelemetry()
-
-        finalizedTranscript = ""
-        volatileTranscript = ""
         operationInFlight = false
         state = .idle
     }
@@ -1285,6 +1295,55 @@ final class VoiceInputManager {
     private func deactivateAudioSession() {
         systemAccess.deactivateAudioSession()
     }
+
+    #if os(iOS)
+    private func observeAudioRouteChanges() {
+        guard audioRouteChangeObserver == nil else { return }
+        audioRouteChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            let previous = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey]
+                as? AVAudioSessionRouteDescription
+            let previousHadBluetooth = previous.map(Self.routeHasBluetooth(_:)) ?? false
+            Task { @MainActor in
+                self?.handleLostBluetoothRoute(
+                    rawReason: rawReason,
+                    previousHadBluetooth: previousHadBluetooth
+                )
+            }
+        }
+    }
+
+    private func handleLostBluetoothRoute(rawReason: UInt?, previousHadBluetooth: Bool) {
+        let reason = rawReason.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+        guard Self.shouldAbandonCaptureForRouteChange(
+            reason: reason,
+            previousHadBluetooth: previousHadBluetooth
+        ) else {
+            return
+        }
+        logger.warning("Bluetooth audio route lost; abandoning dictation if active")
+        guard state == .recording || state == .preparingModel else { return }
+        Task { await self.cancelRecording() }
+    }
+
+    nonisolated static func routeHasBluetooth(_ route: AVAudioSessionRouteDescription) -> Bool {
+        let ports = route.inputs + route.outputs
+        return ports.contains {
+            $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP
+        }
+    }
+
+    nonisolated static func shouldAbandonCaptureForRouteChange(
+        reason: AVAudioSession.RouteChangeReason?,
+        previousHadBluetooth: Bool
+    ) -> Bool {
+        reason == .oldDeviceUnavailable && previousHadBluetooth
+    }
+    #endif
 
     private func applySessionEvent(
         _ event: VoiceSessionEvent,

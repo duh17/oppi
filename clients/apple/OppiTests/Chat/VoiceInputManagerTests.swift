@@ -510,6 +510,29 @@ struct VoiceInputManagerTests {
         #endif
     }
 
+    @Test func bluetoothRouteLossAbandonsActiveCapture() {
+        #if os(iOS)
+        #expect(
+            VoiceInputManager.shouldAbandonCaptureForRouteChange(
+                reason: .oldDeviceUnavailable,
+                previousHadBluetooth: true
+            )
+        )
+        #expect(
+            !VoiceInputManager.shouldAbandonCaptureForRouteChange(
+                reason: .oldDeviceUnavailable,
+                previousHadBluetooth: false
+            )
+        )
+        #expect(
+            !VoiceInputManager.shouldAbandonCaptureForRouteChange(
+                reason: .newDeviceAvailable,
+                previousHadBluetooth: true
+            )
+        )
+        #endif
+    }
+
     @Test func startRecordingStopsActivePlaybackBeforeAudioSessionActivationAndCapture() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }

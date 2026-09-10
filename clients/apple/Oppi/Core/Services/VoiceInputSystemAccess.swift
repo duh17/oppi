@@ -60,18 +60,32 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
             mode: Self.recordingMode,
             options: Self.recordingCategoryOptions
         )
-        try session.setActive(true, options: .notifyOthersOnDeactivation)
         let bluetoothHighQualityRecordingAvailable: Bool
         if #available(iOS 26.0, *) {
             bluetoothHighQualityRecordingAvailable = true
         } else {
             bluetoothHighQualityRecordingAvailable = false
         }
-        let plan = VoiceInputAudioRoutePlanner.plan(
-            availableInputs: (session.availableInputs ?? []).map(VoiceInputAudioRouteInput.init),
+        var availableInputs = (session.availableInputs ?? []).map(VoiceInputAudioRouteInput.init)
+        try Self.activateClearingStalePreferredInput(
+            session,
+            availableInputs: &availableInputs
+        )
+        var plan = VoiceInputAudioRoutePlanner.plan(
+            availableInputs: availableInputs,
             bluetoothHighQualityRecordingAvailable: bluetoothHighQualityRecordingAvailable
         )
         Self.apply(plan, to: session)
+        if plan.preferredInputUID != nil,
+           session.currentRoute.inputs.contains(where: { $0.portType == .bluetoothHFP }) == false,
+           availableInputs.contains(where: { $0.portType == .bluetoothHFP }) {
+            logger.warning("Bluetooth HFP did not become the input route; falling back to built-in mic")
+            plan = VoiceInputAudioRoutePlanner.plan(
+                availableInputs: VoiceInputAudioRoutePlanner.excludingBluetoothHFP(availableInputs),
+                bluetoothHighQualityRecordingAvailable: bluetoothHighQualityRecordingAvailable
+            )
+            Self.apply(plan, to: session)
+        }
         #endif
     }
 
@@ -85,7 +99,40 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     }
 
     #if os(iOS)
-    // setPreferredInput after setCategory, mode, and setActive.
+    /// Reset a disconnected preferred port before `setActive`, then retry once
+    /// if activation still fails.
+    private static func activateClearingStalePreferredInput(
+        _ session: AVAudioSession,
+        availableInputs: inout [VoiceInputAudioRouteInput]
+    ) throws {
+        func refreshAvailableInputs() {
+            availableInputs = (session.availableInputs ?? []).map(VoiceInputAudioRouteInput.init)
+        }
+        func clearStalePreferredInputIfNeeded() {
+            guard VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
+                preferredUID: session.preferredInput?.uid,
+                availableInputs: availableInputs
+            ) else { return }
+            try? session.setPreferredInput(nil)
+            refreshAvailableInputs()
+        }
+
+        clearStalePreferredInputIfNeeded()
+        do {
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            logger.warning(
+                "setActive failed: \(error.localizedDescription, privacy: .public); clearing preferred input and retrying"
+            )
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            refreshAvailableInputs()
+            clearStalePreferredInputIfNeeded()
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        }
+        refreshAvailableInputs()
+        clearStalePreferredInputIfNeeded()
+    }
+
     // setPreferredPolarPattern, then setPreferredDataSource.
     private static func apply(_ plan: VoiceInputAudioRoutePlan, to session: AVAudioSession) {
         guard let uid = plan.preferredInputUID else { return }
