@@ -1,6 +1,9 @@
 @preconcurrency import AVFoundation
 import Foundation
+import OSLog
 import Speech
+
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "VoiceInput")
 
 @MainActor
 protocol VoiceInputSystemAccessing {
@@ -18,8 +21,13 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
 
     #if os(iOS)
     static let recordingCategory: AVAudioSession.Category = .record
-    static let recordingMode: AVAudioSession.Mode = .measurement
-    static let recordingCategoryOptions: AVAudioSession.CategoryOptions = []
+    static let recordingMode: AVAudioSession.Mode = .default
+    static let recordingCategoryOptions: AVAudioSession.CategoryOptions = VoiceInputAudioRoutePlanner.plan(
+        availableInputs: [],
+        bluetoothHighQualityRecordingAvailable: {
+            if #available(iOS 26.0, *) { true } else { false }
+        }()
+    ).options
     #endif
 
     var hasPermissions: Bool {
@@ -53,6 +61,17 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
             options: Self.recordingCategoryOptions
         )
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+        let bluetoothHighQualityRecordingAvailable: Bool
+        if #available(iOS 26.0, *) {
+            bluetoothHighQualityRecordingAvailable = true
+        } else {
+            bluetoothHighQualityRecordingAvailable = false
+        }
+        let plan = VoiceInputAudioRoutePlanner.plan(
+            availableInputs: (session.availableInputs ?? []).map(VoiceInputAudioRouteInput.init),
+            bluetoothHighQualityRecordingAvailable: bluetoothHighQualityRecordingAvailable
+        )
+        Self.apply(plan, to: session)
         #endif
     }
 
@@ -64,6 +83,50 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
         )
         #endif
     }
+
+    #if os(iOS)
+    // setPreferredInput after setCategory, mode, and setActive.
+    // setPreferredPolarPattern, then setPreferredDataSource.
+    private static func apply(_ plan: VoiceInputAudioRoutePlan, to session: AVAudioSession) {
+        guard let uid = plan.preferredInputUID else { return }
+        guard let port = session.availableInputs?.first(where: { $0.uid == uid }) else {
+            logger.warning("Preferred input \(uid, privacy: .public) is not in availableInputs")
+            return
+        }
+        do {
+            try session.setPreferredInput(port)
+        } catch {
+            logger.warning("setPreferredInput failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        guard let dataSourceName = plan.preferredDataSourceName else { return }
+        let resolvedPort = session.preferredInput ?? port
+        guard let dataSource = resolvedPort.dataSources?.first(where: {
+            $0.dataSourceName == dataSourceName
+        }) else {
+            logger.warning(
+                "Preferred data source \(dataSourceName, privacy: .public) is not available"
+            )
+            return
+        }
+        if let polar = plan.preferredPolarPattern {
+            do {
+                try dataSource.setPreferredPolarPattern(polar)
+            } catch {
+                logger.warning(
+                    "setPreferredPolarPattern failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+        do {
+            try resolvedPort.setPreferredDataSource(dataSource)
+        } catch {
+            logger.warning(
+                "setPreferredDataSource failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+    #endif
 
     nonisolated private static func requestMicPermission() async -> Bool {
         await withCheckedContinuation { continuation in

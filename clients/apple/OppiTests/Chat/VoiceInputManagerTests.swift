@@ -493,14 +493,20 @@ struct VoiceInputManagerTests {
 
     // MARK: - Orchestration
 
-    @Test func recordingAudioSessionPolicyUsesMeasurementAndBuiltInRouting() {
+    @Test func recordingAudioSessionPolicyUsesDefaultModeAndBluetoothHFP() {
         #if os(iOS)
         #expect(VoiceInputSystemAccess.recordingCategory == .record)
-        #expect(VoiceInputSystemAccess.recordingMode == .measurement)
+        #expect(VoiceInputSystemAccess.recordingMode == .default)
         let options = VoiceInputSystemAccess.recordingCategoryOptions
-        #expect(!options.contains(.allowBluetoothHFP))
+        #expect(options.contains(.allowBluetoothHFP))
         #expect(!options.contains(.allowBluetoothA2DP))
         #expect(!options.contains(.defaultToSpeaker))
+        if #available(iOS 26.2, *) {
+            #expect(!options.contains(.farFieldInput))
+        }
+        if #available(iOS 26.0, *) {
+            #expect(options.contains(.bluetoothHighQualityRecording))
+        }
         #endif
     }
 
