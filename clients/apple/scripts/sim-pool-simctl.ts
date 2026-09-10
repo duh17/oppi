@@ -119,6 +119,13 @@ export function findMatchingPoolDevice(
   return { mismatches };
 }
 
+export function shouldSkipPoolSlot(found: {
+  match?: SimulatorDevice;
+  mismatches: SimulatorDevice[];
+}): boolean {
+  return found.match == null && found.mismatches.length > 0;
+}
+
 export function deviceState(devices: SimulatorDevice[], udid: string): string | undefined {
   return devices.find((device) => device.udid === udid)?.state;
 }

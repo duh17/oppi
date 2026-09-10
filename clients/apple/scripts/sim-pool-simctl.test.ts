@@ -5,6 +5,7 @@ import {
   parseDevicesJson,
   resultBundlePathForAttempt,
   selectIosRuntime,
+  shouldSkipPoolSlot,
 } from "./sim-pool-simctl";
 
 describe("sim-pool-simctl", () => {
@@ -69,6 +70,8 @@ describe("sim-pool-simctl", () => {
     );
     expect(mismatch.match).toBeUndefined();
     expect(mismatch.mismatches.map((device) => device.udid).sort()).toEqual(["U1", "U2"]);
+    expect(shouldSkipPoolSlot(match)).toBe(false);
+    expect(shouldSkipPoolSlot(mismatch)).toBe(true);
   });
 
   test("latest-stable skips beta runtimes", () => {

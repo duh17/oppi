@@ -231,7 +231,68 @@ describe("sim-pool CLI", () => {
       encoding: "utf8",
     });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Refusing to delete");
+    expect(result.stderr).toMatch(/runtime\/device mismatch|Refusing to delete/);
+    const calls = existsSync(join(fake, "xcrun.calls")) ? readFileSync(join(fake, "xcrun.calls"), "utf8") : "";
+    expect(calls).not.toContain("delete");
+  });
+
+  test("run skips a runtime-mismatched slot and uses a matching sibling", () => {
+    const root = tempDir("mixed-runtime");
+    const fake = join(root, "fake");
+    const bin = join(root, "bin");
+    mkdirSync(fake, { recursive: true });
+    mkdirSync(join(root, "home"), { recursive: true });
+    initCheckout(root);
+    writeFileSync(
+      join(fake, "devices.json"),
+      `{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+      {
+        "udid": "UDID-POOL-0",
+        "name": "Oppi-Pool-0",
+        "state": "Booted",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
+      {
+        "udid": "UDID-POOL-1",
+        "name": "Oppi-Pool-1",
+        "state": "Booted",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+      }
+    ]
+  }
+}`,
+    );
+    writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+    writeFakeXcrun(bin, fake);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOME: join(root, "home"),
+      OPPI_ROOT: root,
+      OPPI_SIM_POOL_LOCK_DIR: join(root, "locks"),
+      OPPI_SIM_POOL_COUNT: "2",
+      OPPI_SIM_POOL_WAIT: "0",
+      OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_BOOT_TIMEOUT: "1",
+      OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
+    };
+    delete env.PIOS_ROOT;
+    const result = spawnSync(
+      "bun",
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
+    );
+    expect(result.status).toBe(0);
+    const args = readFileSync(join(fake, "xcodebuild.args"), "utf8");
+    expect(args).toContain("id=UDID-POOL-1");
+    expect(args).not.toContain("UDID-POOL-0");
   });
 
   test("in-flight slot is not reused by a second run", () => {
@@ -256,7 +317,7 @@ describe("sim-pool CLI", () => {
       encoding: "utf8",
     });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/busy or quarantined|in-flight/);
+    expect(result.stderr).toMatch(/busy or quarantined|busy, quarantined|in-flight/);
   });
 
   test("TERM during xcodebuild fails the run and frees the slot once the child group is idle", async () => {

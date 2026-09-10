@@ -31,6 +31,7 @@ import {
   parseRuntimesJson,
   poolDeviceName,
   selectIosRuntime,
+  shouldSkipPoolSlot,
   type SimulatorDevice,
 } from "./sim-pool-simctl";
 import {
@@ -650,13 +651,19 @@ async function acquireRunSlot(
 ): Promise<OwnedSlot> {
   const deadline = Date.now() + config.waitSeconds * 1000;
   let announced = false;
+  const runtime = await resolveRuntime(session, config);
   while (true) {
     if (session.canceled) {
       die("canceled while waiting for a simulator slot");
     }
+    const devices = await listDevices(session, config);
     for (const slot of slotNumbers(config)) {
       if (session.canceled) {
         die("canceled while waiting for a simulator slot");
+      }
+      const found = findMatchingPoolDevice(devices, slot, runtime, config.deviceType);
+      if (shouldSkipPoolSlot(found)) {
+        continue;
       }
       const result = tryAcquireSlot({ lockDir: config.lockDir, slot, argv });
       if (result.ok) {
@@ -665,7 +672,7 @@ async function acquireRunSlot(
     }
     if (Date.now() >= deadline) {
       die(
-        `all ${config.count} simulator slots (slots ${poolSlotRange(config)}) are busy or quarantined (waited ${config.waitSeconds}s)`,
+        `all ${config.count} simulator slots (slots ${poolSlotRange(config)}) are busy, quarantined, or runtime/device mismatch (waited ${config.waitSeconds}s)`,
       );
     }
     if (!announced) {
