@@ -518,9 +518,9 @@ struct VoiceInputManagerTests {
 
     // MARK: - Orchestration
 
-    @Test func recordingAudioSessionPolicyUsesDefaultModeAndBluetoothHFP() {
+    @Test func recordingAudioSessionPolicySupportsBidirectionalBluetoothHFP() {
         #if os(iOS)
-        #expect(VoiceInputSystemAccess.recordingCategory == .record)
+        #expect(VoiceInputSystemAccess.recordingCategory == .playAndRecord)
         #expect(VoiceInputSystemAccess.recordingMode == .default)
         let options = VoiceInputSystemAccess.recordingCategoryOptions
         #expect(options.contains(.allowBluetoothHFP))

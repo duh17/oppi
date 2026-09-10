@@ -27,8 +27,8 @@ enum VoiceInputAudioRoutePlanner {
     static func plan(
         availableInputs: [VoiceInputAudioRouteInput]
     ) -> VoiceInputAudioRoutePlan {
-        // The SDK documents high-quality Bluetooth recording for categories
-        // supporting both input and output. Dictation is input-only (.record).
+        // Use standard HFP with a bidirectional category: selecting its input
+        // also routes output to the headset, even though we only consume input.
         let options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
 
         // HFP, then wired headset, then built-in only when it is the sole port type.
@@ -57,7 +57,7 @@ enum VoiceInputAudioRoutePlanner {
         }
 
         return VoiceInputAudioRoutePlan(
-            category: .record,
+            category: .playAndRecord,
             mode: .default,
             options: options,
             preferredInputUID: preferredInput?.uid,

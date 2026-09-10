@@ -21,7 +21,9 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     static let live = Self()
 
     #if os(iOS)
-    static let recordingCategory: AVAudioSession.Category = .record
+    // HFP couples input and output. Record-only produced a valid 24 kHz
+    // AirPods input but a 0 Hz output and AURemoteIO start failure on device.
+    static let recordingCategory: AVAudioSession.Category = .playAndRecord
     static let recordingMode: AVAudioSession.Mode = .default
     static let recordingCategoryOptions: AVAudioSession.CategoryOptions = VoiceInputAudioRoutePlanner.plan(
         availableInputs: []
@@ -63,8 +65,8 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
         let session = AVAudioSession.sharedInstance()
         let usedBuiltInFallback = try Self.configureAndActivate(
             preferBuiltIn: preferBuiltIn,
-            setCategory: { mode, options in
-                try session.setCategory(Self.recordingCategory, mode: mode, options: options)
+            setCategory: { category, mode, options in
+                try session.setCategory(category, mode: mode, options: options)
             },
             setActive: { active, options in try session.setActive(active, options: options) }
         )
@@ -121,11 +123,15 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     /// Returns true when the caller must prefer the built-in microphone.
     static func configureAndActivate(
         preferBuiltIn: Bool = false,
-        setCategory: (AVAudioSession.Mode, AVAudioSession.CategoryOptions) throws -> Void,
+        setCategory: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions) throws -> Void,
         setActive: (Bool, AVAudioSession.SetActiveOptions) throws -> Void
     ) throws -> Bool {
         do {
-            try setCategory(preferBuiltIn ? .measurement : recordingMode, preferBuiltIn ? [] : recordingCategoryOptions)
+            try setCategory(
+                preferBuiltIn ? .record : recordingCategory,
+                preferBuiltIn ? .measurement : recordingMode,
+                preferBuiltIn ? [] : recordingCategoryOptions
+            )
             // notifyOthersOnDeactivation is only valid with active=false.
             try setActive(true, [])
             return preferBuiltIn
@@ -136,7 +142,7 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
                 "Dictation audio configuration failed (\(failure.domain, privacy: .public)/\(failure.code)); retrying without Bluetooth"
             )
             try? setActive(false, .notifyOthersOnDeactivation)
-            try setCategory(.measurement, [])
+            try setCategory(.record, .measurement, [])
             try setActive(true, [])
             return true
         }

@@ -38,6 +38,8 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     /// Pending audio stream, transferred to the drain task on start.
     private var pendingAudioStream: AsyncStream<Data>?
     private var audioEngine: AVAudioEngine?
+    /// Actual route/formats observed after this engine started, not a requested preference.
+    private var captureMetadata: [String: String]?
     private var stopped = false
     private struct TranscriptUpdate: Equatable {
         let text: String
@@ -161,6 +163,8 @@ final class OppiDictationSession: VoiceTranscriptionSession {
             audioContinuation: audioContinuation
         )
         self.audioEngine = engine
+        captureMetadata = DictationAudioEngineHelper.captureMetadata(engine: engine)
+        ClientLog.info("VoiceInput", "Dictation audio engine started", metadata: captureMetadata ?? [:])
 
         // Drain level stream in the background (inherits MainActor from class)
         Task { [weak self] in
@@ -185,6 +189,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         let transport = self.transport
         let readinessTask = self.readinessTask
         let eventContinuation = self.eventContinuation
+        let captureMetadata = self.captureMetadata
 
         audioDrainTask = Task {
             // Block until server is ready (or fails)
@@ -210,10 +215,18 @@ final class OppiDictationSession: VoiceTranscriptionSession {
             // Server is ready — pipe all audio (buffered + live) as binary frames.
             // Surface send failures instead of swallowing them so the manager can
             // stop recording and show a real error when the WS drops mid-dictation.
+            var loggedFirstAudio = false
             for await chunk in audioStream {
                 guard !Task.isCancelled else { break }
                 do {
                     try await transport.sendDictationAudio(chunk)
+                    if !loggedFirstAudio, !chunk.isEmpty, var metadata = captureMetadata {
+                        loggedFirstAudio = true
+                        metadata["pcm_bytes"] = String(chunk.count)
+                        // One log per capture, outside the real-time tap. The route
+                        // snapshot belongs to this engine, even if upload was delayed.
+                        ClientLog.info("VoiceInput", "Dictation first PCM chunk sent", metadata: metadata)
+                    }
                 } catch is CancellationError {
                     return
                 } catch {
@@ -463,9 +476,14 @@ enum DictationAudioEngineHelper {
         }
 
         engine.prepare()
+        ClientLog.info("VoiceInput", "Dictation audio engine starting", metadata: captureMetadata(engine: engine))
         do {
             try engine.start()
         } catch {
+            var metadata = captureMetadata(engine: engine)
+            metadata["error_domain"] = (error as NSError).domain
+            metadata["error_code"] = String((error as NSError).code)
+            ClientLog.error("VoiceInput", "Dictation audio engine start failed", metadata: metadata)
             // The session doesn't own this engine until we return. Tear down
             // partial capture here so a fallback can acquire the microphone.
             inputNode.removeTap(onBus: 0)
@@ -474,6 +492,26 @@ enum DictationAudioEngineHelper {
             throw error
         }
         return (engine, levelStream)
+    }
+
+    /// Port types only: never upload Bluetooth names or hardware identifiers.
+    static func captureMetadata(engine: AVAudioEngine) -> [String: String] {
+        let input = engine.inputNode.inputFormat(forBus: 0)
+        let output = engine.outputNode.outputFormat(forBus: 0)
+        var metadata = [
+            "input_hz": String(input.sampleRate),
+            "input_channels": String(input.channelCount),
+            "output_hz": String(output.sampleRate),
+            "output_channels": String(output.channelCount),
+        ]
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        metadata["category"] = session.category.rawValue
+        metadata["mode"] = session.mode.rawValue
+        metadata["input_ports"] = session.currentRoute.inputs.map { $0.portType.rawValue }.joined(separator: ",")
+        metadata["output_ports"] = session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+        #endif
+        return metadata
     }
 }
 

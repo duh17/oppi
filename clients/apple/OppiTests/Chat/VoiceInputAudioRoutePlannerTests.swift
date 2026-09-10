@@ -62,10 +62,9 @@ struct VoiceInputAudioRoutePlannerTests {
     ])
     func planMatchesSelectionContract(_ testCase: PlannerCase) {
         let plan = VoiceInputAudioRoutePlanner.plan(availableInputs: testCase.inputs)
-        #expect(plan.category == .record)
+        #expect(plan.category == .playAndRecord)
         #expect(plan.mode == .default)
-        // High-quality Bluetooth is documented for input+output categories, not
-        // input-only .record. No AirPods-specific option may break built-in capture.
+        // Keep standard HFP; high-quality Bluetooth is a separate capability.
         #expect(plan.options == [.allowBluetoothHFP])
         #expect(plan.preferredInputUID == testCase.uid)
         #expect(plan.preferredDataSourceName == testCase.source)
@@ -92,7 +91,8 @@ struct VoiceInputAudioRoutePlannerTests {
         var categories: [AVAudioSession.CategoryOptions] = []
         var activations: [Bool] = []
         let fallback = try VoiceInputSystemAccess.configureAndActivate(
-            setCategory: { mode, options in
+            setCategory: { category, mode, options in
+                #expect(category == .playAndRecord)
                 #expect(mode == .default)
                 categories.append(options)
             },
@@ -111,7 +111,8 @@ struct VoiceInputAudioRoutePlannerTests {
         var categoryCount = 0
         let fallback = try VoiceInputSystemAccess.configureAndActivate(
             preferBuiltIn: true,
-            setCategory: { mode, options in
+            setCategory: { category, mode, options in
+                #expect(category == .record)
                 categoryCount += 1
                 #expect(mode == .measurement)
                 #expect(options.isEmpty)
@@ -135,7 +136,8 @@ struct VoiceInputAudioRoutePlannerTests {
         var categories: [AVAudioSession.CategoryOptions] = []
         var activationAttempts = 0
         let fallback = try VoiceInputSystemAccess.configureAndActivate(
-            setCategory: { mode, options in
+            setCategory: { category, mode, options in
+                #expect(category == (options.isEmpty ? .record : .playAndRecord))
                 #expect(mode == (options.isEmpty ? .measurement : .default))
                 categories.append(options)
                 events.append(options.isEmpty ? "builtInCategory" : "bluetoothCategory")
@@ -162,7 +164,8 @@ struct VoiceInputAudioRoutePlannerTests {
         var categories: [AVAudioSession.CategoryOptions] = []
         #expect(throws: TestVoiceError.self) {
             try VoiceInputSystemAccess.configureAndActivate(
-                setCategory: { mode, options in
+                setCategory: { category, mode, options in
+                    #expect(category == (options.isEmpty ? .record : .playAndRecord))
                     #expect(mode == (options.isEmpty ? .measurement : .default))
                     categories.append(options)
                     if failCategory { throw TestVoiceError("no category") }
