@@ -1157,6 +1157,25 @@ struct ToolExpandedSurfaceHostTests {
         #expect(layoutReflowed, "Tool timeline did not keep SVG attachment rows separated after async decode")
     }
 
+    @Test func svgPaintReadinessRejectsBlankHostAndBackgroundOnlyFrames() {
+        let size = CGSize(width: 360, height: 210)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        for background in [
+            UIColor.white,
+            UIColor(red: 250.0 / 255, green: 249.0 / 255, blue: 246.0 / 255, alpha: 1),
+        ] {
+            let blank = renderer.image { context in
+                background.setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+            }
+            #expect(countBrightBackgroundPixelsNearHorizontalEdges(in: blank) > 5_000)
+            #expect(countNonBackgroundPixels(in: blank, minYFraction: 0.78, maxYFraction: 0.98) == 0)
+            #expect(!hasPaintedSVGContent(in: blank))
+        }
+    }
+
     @Test func brentSVGPreviewSnapshotFillsWidthAndShowsLowerAxis() async throws {
         let outputDirectory = try snapshotOutputDirectory("svg-regression")
         let outputURL = outputDirectory.appendingPathComponent("brent-svg-preview.png")
@@ -1596,7 +1615,7 @@ struct ToolExpandedSurfaceHostTests {
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(timeoutMs))
         var latest = capture()
         while ContinuousClock.now < deadline {
-            if hasBrightSVGBackgroundPixels(in: latest) {
+            if hasPaintedSVGContent(in: latest) {
                 return latest
             }
             try? await Task.sleep(for: .milliseconds(pollMs))
@@ -1605,16 +1624,13 @@ struct ToolExpandedSurfaceHostTests {
         return latest
     }
 
-    private func hasBrightSVGBackgroundPixels(in image: UIImage) -> Bool {
-        guard let raster = rasterize(image) else { return false }
-        var count = 0
-        for y in 0..<raster.height {
-            for x in 0..<raster.width where raster.pixel(x: x, y: y).isBrightSVGBackground {
-                count += 1
-                if count > 100 { return true }
-            }
-        }
-        return false
+    private func hasPaintedSVGContent(in image: UIImage) -> Bool {
+        // A light-mode host is already bright before WebKit paints. Wait for
+        // the same width and lower-axis evidence asserted by both callers,
+        // not the host background or a partially painted SVG. A clipped chart
+        // still exhausts the existing deadline and fails the pixel assertions.
+        countBrightBackgroundPixelsNearHorizontalEdges(in: image) > 5_000
+            && countNonBackgroundPixels(in: image, minYFraction: 0.78, maxYFraction: 0.98) > 300
     }
 
     private func countNonBackgroundPixels(

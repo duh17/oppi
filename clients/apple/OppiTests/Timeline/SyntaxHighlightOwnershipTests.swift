@@ -221,12 +221,20 @@ struct SyntaxHighlightOwnershipTests {
         }
         ```
         """
-        let body = NativeFullScreenMarkdownBody(
-            content: content,
-            palette: ThemeID.dark.palette,
-            reviewCommentSelectionRouter: nil,
-            reviewCommentSourceContext: nil
-        )
+        // Emulate a neighboring theme test at the reader's capture boundary.
+        // Restore synchronously: no global override may survive an await.
+        let body: NativeFullScreenMarkdownBody = {
+            let originalTheme = ThemeRuntimeState.currentThemeID()
+            ThemeRuntimeState.setThemeID(.light)
+            defer { ThemeRuntimeState.setThemeID(originalTheme) }
+            return NativeFullScreenMarkdownBody(
+                content: content,
+                themeID: .dark,
+                palette: ThemeID.dark.palette,
+                reviewCommentSelectionRouter: nil,
+                reviewCommentSourceContext: nil
+            )
+        }()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.addSubview(body)
         body.frame = window.bounds
