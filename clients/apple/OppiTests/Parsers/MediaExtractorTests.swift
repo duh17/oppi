@@ -109,6 +109,15 @@ struct MediaMimeTypeTests {
         #expect(abs((ratio ?? 0) - (720.0 / 420.0)) < 0.0001)
     }
 
+    @Test func recognizesHeicAndHeifAsImages() {
+        #expect(MediaMimeType.imageMimeType(forPathExtension: "heic") == "image/heic")
+        #expect(MediaMimeType.imageMimeType(forPathExtension: "HEIF") == "image/heif")
+        #expect(MediaMimeType.isSupportedImageMimeType("image/heic"))
+        #expect(MediaMimeType.isSupportedImageMimeType("image/heif"))
+        #expect(MediaMimeType.safeImageMimeType("image/heic") == "image/heic")
+        #expect(MediaMimeType.safeImageMimeType("image/heif") == "image/heif")
+    }
+
     @Test func rejectsTruncatedJPEGPrefixesAsIncompleteImageData() {
         let completeJPEG = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0xFF, 0xD9])
         let truncatedJPEG = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])

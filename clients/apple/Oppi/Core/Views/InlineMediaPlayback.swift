@@ -312,7 +312,7 @@ enum MediaMimeType {
         switch normalized(mimeType) {
         case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp",
              "image/bmp", "image/tiff", "image/svg+xml", "image/x-icon",
-             "image/vnd.microsoft.icon":
+             "image/vnd.microsoft.icon", "image/heic", "image/heif":
             return true
         default:
             return false
@@ -334,6 +334,8 @@ enum MediaMimeType {
         case "tif", "tiff": return "image/tiff"
         case "svg": return "image/svg+xml"
         case "ico": return "image/x-icon"
+        case "heic": return "image/heic"
+        case "heif": return "image/heif"
         default: return nil
         }
     }

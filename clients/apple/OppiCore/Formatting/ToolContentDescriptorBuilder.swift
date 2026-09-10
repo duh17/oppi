@@ -826,7 +826,7 @@ enum ToolContentDescriptorBuilder {
         switch normalized {
         case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp",
              "image/bmp", "image/tiff", "image/svg+xml", "image/x-icon",
-             "image/vnd.microsoft.icon":
+             "image/vnd.microsoft.icon", "image/heic", "image/heif":
             return normalized
         default:
             return "image/png"

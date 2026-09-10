@@ -41,6 +41,8 @@ describe("ALLOWED_EXTENSIONS", () => {
       ".tiff",
       ".ico",
       ".svg",
+      ".heic",
+      ".heif",
     ]) {
       expect(ALLOWED_EXTENSIONS.has(ext), `should allow ${ext}`).toBe(true);
     }
@@ -275,6 +277,8 @@ describe("getContentType", () => {
     expect(getContentType(".jpg", "photo.jpg")).toBe("image/jpeg");
     expect(getContentType(".gif", "anim.gif")).toBe("image/gif");
     expect(getContentType(".webp", "photo.webp")).toBe("image/webp");
+    expect(getContentType(".heic", "IMG_0001.HEIC")).toBe("image/heic");
+    expect(getContentType(".heif", "photo.heif")).toBe("image/heif");
     expect(getContentType(".svg", "icon.svg")).toBe("image/svg+xml");
   });
 

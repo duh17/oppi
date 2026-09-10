@@ -216,6 +216,23 @@ struct MacWorkspaceFileBrowserTests {
         #expect(MacToolDocumentColumnPaint.surface(for: video) == .media)
     }
 
+    @Test func heicBinaryFilesAreImagesNotGenericText() {
+        // ISO BMFF `ftyp` prefix plus invalid UTF-8 so the descriptor stays binary.
+        let data = Data([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0xFF, 0xFE])
+        let descriptor = FileViewerDescriptorBuilder.descriptor(
+            path: "IMG_0001.HEIC",
+            data: data
+        )
+
+        guard case .status(let message) = descriptor else {
+            Issue.record("Expected image status for binary HEIC, got \(descriptor)")
+            return
+        }
+        #expect(message.contains("is an image"))
+        #expect(FileViewerDescriptorBuilder.needsFileBytes(path: "IMG_0001.HEIC"))
+        #expect(FileType.detect(from: "photo.heif") == .image)
+    }
+
     @Test func fileBrowserReloadsDirectoryListingForTheSelectedWorktree() throws {
         let browser = try source(named: "OppiMac/Views/MacWorkspaceFileBrowserView.swift")
         let shell = try source(named: "OppiMac/Views/MacWorkspaceShellViews.swift")

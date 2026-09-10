@@ -1871,6 +1871,8 @@ struct NonTextWikiLinkIconTests {
 
     @Test(arguments: [
         ("[[photo.png]]", "photo.png"),
+        ("[[photo.heic]]", "photo.heic"),
+        ("[[photo.heif]]", "photo.heif"),
         ("[[song.mp3]]", "song.mp3"),
         ("[[clip.mp4]]", "clip.mp4"),
         ("[[doc.pdf]]", "doc.pdf"),
@@ -3335,6 +3337,34 @@ struct AssistantMarkdownInlineImageRenderingTests {
 @Suite("Markdown bang embed unification")
 struct MarkdownBangEmbedUnificationTests {
     private let baseURL = URL(string: "https://server.example.com")! // swiftlint:disable:this force_unwrapping
+
+    @Test func wikiBangHeicEmbedsLikeMarkdownBang() throws {
+        let wiki = FlatSegment.build(
+            from: parseCommonMark("![[docs/IMG_0001.HEIC]]"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+        let markdown = FlatSegment.build(
+            from: parseCommonMark("![a](docs/IMG_0001.HEIC)"),
+            serverID: "server-a",
+            workspaceID: "workspace-a",
+            sessionID: "session-a",
+            serverBaseURL: baseURL
+        )
+
+        guard case .image(_, let wikiURL) = wiki.first else {
+            Issue.record("Expected wiki bang HEIC image, got \(wiki)")
+            return
+        }
+        guard case .image(_, let markdownURL) = markdown.first else {
+            Issue.record("Expected markdown bang HEIC image, got \(markdown)")
+            return
+        }
+        #expect(WorkspaceFileURL.parse(wikiURL)?.filePath == "docs/IMG_0001.HEIC")
+        #expect(WorkspaceFileURL.parse(markdownURL)?.filePath == "docs/IMG_0001.HEIC")
+    }
 
     @Test func wikiBangImageEmbedsLikeMarkdownBang() throws {
         let wiki = FlatSegment.build(

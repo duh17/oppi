@@ -1542,7 +1542,7 @@ private enum RemoteMarkdownImageFetcher {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue(
-            "image/avif,image/webp,image/png,image/jpeg,image/gif,image/svg+xml;q=0.9,*/*;q=0.1",
+            "image/avif,image/heic,image/heif,image/webp,image/png,image/jpeg,image/gif,image/svg+xml;q=0.9,*/*;q=0.1",
             forHTTPHeaderField: "Accept"
         )
 
@@ -1605,5 +1605,7 @@ private enum RemoteMarkdownImageFetcher {
             || mimeType == "image/webp"
             || mimeType == "image/svg+xml"
             || mimeType == "image/avif"
+            || mimeType == "image/heic"
+            || mimeType == "image/heif"
     }
 }

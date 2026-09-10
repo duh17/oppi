@@ -369,6 +369,30 @@ struct ToolContentDescriptorTests {
         #expect(presentation.copyOutputText == "Generated image")
     }
 
+    @Test("generic image tool preserves HEIC mime type")
+    func genericImagePreservesHeicMimeType() {
+        let presentation = build(
+            tool: "imagen",
+            details: .object([
+                "image": .object([
+                    "kind": .string("image"),
+                    "id": .string("att-heic-1"),
+                    "mimeType": .string("image/heic"),
+                    "fileName": .string("IMG_0001.HEIC"),
+                ]),
+            ]),
+            fullOutput: "iPhone photo"
+        )
+
+        guard case .media(let media) = presentation.content else {
+            Issue.record("Expected .media, got \(String(describing: presentation.content))")
+            return
+        }
+        #expect(media.filePath == "IMG_0001.HEIC")
+        #expect(media.attachments.first?.id == "att-heic-1")
+        #expect(media.attachments.first?.mimeType == "image/heic")
+    }
+
     // MARK: - Terminal precedence
 
     @Test("terminal format wins over markdown and diff heuristics")

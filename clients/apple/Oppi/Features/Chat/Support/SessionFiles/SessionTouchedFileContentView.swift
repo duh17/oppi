@@ -344,7 +344,7 @@ struct SessionTouchedFileContentView: View {
             guard isCurrentFile(requestedPath) else { return }
 
             let ext = (requestedPath as NSString).pathExtension.lowercased()
-            let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tif", "tiff"]
+            let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tif", "tiff", "heic", "heif"]
 
             if imageExts.contains(ext) {
                 phase = .image(data)

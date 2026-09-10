@@ -47,6 +47,9 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "scan.tiff") == .image)
         #expect(FileType.detect(from: "favicon.ico") == .image)
         #expect(FileType.detect(from: "icon.svg") == .image)
+        #expect(FileType.detect(from: "IMG_0001.HEIC") == .image)
+        #expect(FileType.detect(from: "photo.heic") == .image)
+        #expect(FileType.detect(from: "photo.heif") == .image)
         #expect(FileType.detect(from: "logo.png").previewCategory == .image)
     }
 
@@ -344,6 +347,8 @@ struct FilePreviewCategoryTests {
 
     @Test func mediaAndBinaryFilesKeepTheirCategories() {
         #expect(FileType.detect(from: "photo.png").previewCategory == .image)
+        #expect(FileType.detect(from: "photo.heic").previewCategory == .image)
+        #expect(FileType.detect(from: "photo.heif").previewCategory == .image)
         #expect(FileType.detect(from: "voice.m4a").previewCategory == .audio)
         #expect(FileType.detect(from: "clip.mp4").previewCategory == .video)
         #expect(FileType.detect(from: "doc.pdf").previewCategory == .pdf)

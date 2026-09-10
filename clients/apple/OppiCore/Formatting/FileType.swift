@@ -89,7 +89,8 @@ enum FileType: Equatable {
             return .csv
         case "tsv":
             return .tsv
-        case "jpg", "jpeg", "png", "gif", "webp", "ico", "bmp", "tif", "tiff":
+        case "jpg", "jpeg", "png", "gif", "webp", "ico", "bmp", "tif", "tiff",
+             "heic", "heif":
             return .image
         case "svg":
             return .image

@@ -14,6 +14,8 @@ export const ALLOWED_EXTENSIONS = new Set([
   ".tiff",
   ".ico",
   ".svg",
+  ".heic",
+  ".heif",
 ]);
 
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
