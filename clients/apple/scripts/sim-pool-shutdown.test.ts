@@ -262,6 +262,11 @@ describe("sim-pool shutdown-idle", () => {
     const result = shutdown(lockDir, fake, bin);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("UDID-POOL-0");
+    const reuse = tryAcquireSlot({ lockDir, slot: 0, argv: ["run"] });
+    expect(reuse.ok).toBe(true);
+    if (reuse.ok) {
+      releaseReusable(reuse.owned);
+    }
   });
 
   test("skips non-Booted recheck", () => {
@@ -461,8 +466,13 @@ exit 127
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve) => child.once("exit", (value) => resolve(value)));
     expect(code).not.toBe(0);
+    const state = readSlotState(lockDir, 0);
+    expect(state === "unreadable" ? undefined : state?.pgids.length).toBeGreaterThan(0);
     const second = tryAcquireSlot({ lockDir, slot: 0, argv: ["run"] });
-    expect(second.ok).toBe(false);
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      releaseReusable(second.owned);
+    }
   });
 
   test("contender cannot acquire while shutdown-idle still holds the slot", async () => {
@@ -636,7 +646,7 @@ esac
     expect(exitCode).toBe(0);
   });
 
-  test("TERM during locked recheck does not spawn shutdown and does not publish reusable", async () => {
+  test("TERM during locked recheck does not spawn shutdown and does not permanently quarantine", async () => {
     const root = tempDir("recheck-term");
     const fake = join(root, "fake");
     const bin = join(root, "bin");
@@ -706,8 +716,13 @@ esac
     const code = await new Promise<number | null>((resolve) => child.once("exit", (value) => resolve(value)));
     expect(code).not.toBe(0);
     expect(existsSync(join(fake, "shutdown.log"))).toBe(false);
+    const state = readSlotState(lockDir, 0);
+    expect(state === "unreadable" ? undefined : state?.pgids.length).toBeGreaterThan(0);
     const reuse = tryAcquireSlot({ lockDir, slot: 0, argv: ["run"] });
-    expect(reuse.ok).toBe(false);
+    expect(reuse.ok).toBe(true);
+    if (reuse.ok) {
+      releaseReusable(reuse.owned);
+    }
   });
 
   test("failed process-group query after shutdown does not publish reusable", async () => {
@@ -784,8 +799,12 @@ exec /usr/bin/pgrep "$@"
     expect(result.status).not.toBe(0);
     const state = readSlotState(lockDir, 0);
     expect(state === "unreadable" ? undefined : state?.status).not.toBe("reusable");
+    expect(state === "unreadable" ? undefined : state?.pgids.length).toBeGreaterThan(0);
     const reuse = tryAcquireSlot({ lockDir, slot: 0, argv: ["run"] });
-    expect(reuse.ok).toBe(false);
+    expect(reuse.ok).toBe(true);
+    if (reuse.ok) {
+      releaseReusable(reuse.owned);
+    }
   });
 
   test("TERM during shutdown with a live descendant does not publish reusable", async () => {

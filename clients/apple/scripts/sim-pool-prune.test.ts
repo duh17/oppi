@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tryAcquireSlot } from "./sim-pool-lock";
+import { releaseReusable, tryAcquireSlot } from "./sim-pool-lock";
 
 const cli = join(import.meta.dir, "sim-pool.ts");
 const temps: string[] = [];
@@ -167,6 +168,28 @@ describe("sim-pool prune-cache", () => {
     });
     expect(result.status).not.toBe(0);
     expect(existsSync(join(build, "pool-0", "x"))).toBe(true);
+  });
+
+  test("failed delete does not permanently quarantine the slot", () => {
+    const root = tempDir("fail-del");
+    const lockDir = join(root, "locks");
+    const build = initCheckout(root);
+    const pool = join(build, "pool-0");
+    mkdirSync(pool, { recursive: true });
+    writeFileSync(join(pool, "x"), "cache");
+    chmodSync(pool, 0o555);
+    try {
+      const result = prune(root, lockDir, ["--apply"]);
+      expect(result.status).not.toBe(0);
+      expect(existsSync(join(pool, "x"))).toBe(true);
+      const reuse = tryAcquireSlot({ lockDir, slot: 0, argv: ["run"] });
+      expect(reuse.ok).toBe(true);
+      if (reuse.ok) {
+        releaseReusable(reuse.owned);
+      }
+    } finally {
+      chmodSync(pool, 0o755);
+    }
   });
 
   test("symlinked cleanup root is refused", () => {

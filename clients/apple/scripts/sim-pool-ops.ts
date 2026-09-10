@@ -1468,7 +1468,9 @@ export function commandPruneCache(config: PoolConfig, args: string[]): number {
         releaseReusable(acquired.owned);
       } catch {
         log(`[sim-pool] prune-cache: failed to delete ${path}`);
-        releaseUncertain(acquired.owned, "prune delete failed");
+        // In-process rm has no child group to record. A proven-empty group must
+        // not leave the slot permanently uncertain; CLI still fails.
+        releaseReusable(acquired.owned);
         status = 1;
       }
       continue;
@@ -1542,35 +1544,44 @@ export async function commandShutdownIdle(config: PoolConfig): Promise<number> {
         }
         continue;
       }
+      const slotOwner = acquired.owned;
+      session.onSpawned = (child) => {
+        recordOwnedPgid(slotOwner, child.pgid);
+      };
       let released = false;
       const finishSlot = (kind: "reusable" | "uncertain", note?: string): void => {
         if (released) {
           return;
         }
         released = true;
+        session.onSpawned = undefined;
         if (kind === "uncertain") {
-          releaseUncertain(acquired.owned, note ?? "shutdown-idle did not prove quiescence");
+          releaseUncertain(slotOwner, note ?? "shutdown-idle did not prove quiescence");
         } else {
-          releaseReusable(acquired.owned);
+          releaseReusable(slotOwner);
         }
       };
       try {
         if (session.canceled) {
-          finishSlot("uncertain", "canceled before shutdown mutation");
+          finishSlot("reusable");
           status = session.cancelExitCode();
           break;
         }
         const recheck = await runXcrun(session, ["simctl", "list", "devices", "-j"]);
-        if (session.canceled) {
-          finishSlot("uncertain", "canceled during locked recheck");
-          status = session.cancelExitCode();
-          break;
-        }
         if (!recheck.stop.quiescent) {
           log(`[sim-pool] shutdown-idle: recheck did not prove quiescence for ${device.udid}`);
           finishSlot("uncertain", recheck.stop.note ?? "recheck did not prove quiescence");
           status = 1;
+          if (session.canceled) {
+            status = session.cancelExitCode();
+            break;
+          }
           continue;
+        }
+        if (session.canceled) {
+          finishSlot("reusable");
+          status = session.cancelExitCode();
+          break;
         }
         if (recheck.code !== 0) {
           log(`[sim-pool] shutdown-idle: failed to recheck ${device.udid}`);
@@ -1596,7 +1607,7 @@ export async function commandShutdownIdle(config: PoolConfig): Promise<number> {
           continue;
         }
         if (session.canceled) {
-          finishSlot("uncertain", "canceled before simctl shutdown");
+          finishSlot("reusable");
           status = session.cancelExitCode();
           break;
         }
@@ -1606,11 +1617,15 @@ export async function commandShutdownIdle(config: PoolConfig): Promise<number> {
           log(`[sim-pool] shutdown-idle: shutdown did not prove quiescence for ${device.udid}`);
           finishSlot("uncertain", shutdown.stop.note ?? "shutdown did not prove quiescence");
           status = 1;
+          if (session.canceled) {
+            status = session.cancelExitCode();
+            break;
+          }
           continue;
         }
         if (shutdown.code !== 0) {
           log(`[sim-pool] shutdown-idle: failed to shut down ${device.udid}`);
-          finishSlot("uncertain", "simctl shutdown failed");
+          finishSlot("reusable");
           status = 1;
           continue;
         }
@@ -1621,11 +1636,19 @@ export async function commandShutdownIdle(config: PoolConfig): Promise<number> {
         }
         finishSlot("reusable");
       } catch (error) {
-        finishSlot("uncertain", error instanceof Error ? error.message : String(error));
+        if (slotOwner.pgids.length > 0) {
+          finishSlot("uncertain", error instanceof Error ? error.message : String(error));
+        } else {
+          finishSlot("reusable");
+        }
         throw error;
       } finally {
         if (!released) {
-          finishSlot("uncertain", "shutdown-idle released without completion");
+          if (slotOwner.pgids.length > 0) {
+            finishSlot("uncertain", "shutdown-idle released without completion");
+          } else {
+            finishSlot("reusable");
+          }
         }
       }
     }
@@ -1726,9 +1749,10 @@ disabled unless OPPI_SIM_POOL_INDEX_STORE=1 or the command already sets
 COMPILER_INDEX_STORE_ENABLE. Ordinary run does not delete unavailable
 simulators or CoreSimulator device caches.
 
-shutdown-idle acquires each slot with flock. Existing live, legacy, in-flight,
-and uncertain slots are skipped. Booted is rechecked as device state, not
-idleness. Killing xcrun does not mean CoreSimulator finished.
+shutdown-idle acquires each slot with flock and records child process groups.
+Existing live, legacy, and in-flight slots are skipped. uncertain is reclaimed
+only when recorded groups exist and are idle. Booted is rechecked as device
+state, not idleness. Killing xcrun does not mean CoreSimulator finished.
 
 prune-cache dry-runs this checkout's numeric pool-* dirs, derived-data-*, and
 one-off mac-* experiment dirs. --apply deletes pool-* only after acquiring the
