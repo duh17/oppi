@@ -272,8 +272,11 @@ struct VoiceLocaleStabilityTests {
         try await manager.startRecording(keyboardLanguage: "zh-Hans", source: "test")
         #expect(manager.activeLanguageLabel == "中")
 
-        // Tap 2: while recording — state guard should reject
-        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        // Tap 2: while recording — overlapping start throws captureBusy and must not change language
+        do {
+            try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+            Issue.record("overlapping start succeeded; expected VoiceInputError.captureBusy")
+        } catch VoiceInputError.captureBusy {}
         #expect(manager.activeLanguageLabel == "中",
                 "Second start during recording must not change language")
         #expect(manager.state == .recording)

@@ -220,7 +220,7 @@ struct FileBrowserContentView: View {
         if ProcessInfo.processInfo.environment["OPPI_FILE_MOTION_MARKER"] == "1" {
             Text(currentFilePath)
                 .font(.system(.title2, design: .monospaced).weight(.bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.themeOnBlue)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
                 .background(fileMotionDebugMarkerColor)

@@ -100,10 +100,10 @@ private struct FileBrowserMotionReduceMotionReadout: View {
     var body: some View {
         Text(reduceMotion ? "reduce-motion-on" : "reduce-motion-off")
             .font(.caption2.monospaced())
-            .foregroundStyle(.white)
+            .foregroundStyle(.themeOnBlue)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .background(.black)
+            .background(.themeBlue)
             .accessibilityIdentifier("file.motion.reduceMotion")
             .accessibilityValue(reduceMotion ? "on" : "off")
             .accessibilityLabel(reduceMotion ? "reduce-motion-on" : "reduce-motion-off")
