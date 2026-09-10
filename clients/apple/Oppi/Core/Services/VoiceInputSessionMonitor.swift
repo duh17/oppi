@@ -5,6 +5,9 @@ final class VoiceInputSessionMonitor {
     private var activeSession: (any VoiceTranscriptionSession)?
     private var resultsTask: Task<Void, Never>?
     private var audioLevelTask: Task<Void, Never>?
+    // Session.cancel() may return immediately on its second call even while the
+    // first is draining hardware. Every retiring caller must await that drain.
+    private var cancellations: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     func bind(
         session: any VoiceTranscriptionSession,
@@ -67,7 +70,7 @@ final class VoiceInputSessionMonitor {
 
         retiringResultsTask?.cancel()
         if let retiringSession {
-            await retiringSession.cancel()
+            await cancellationTask(for: retiringSession).value
         }
         retiringAudioLevelTask?.cancel()
         clearIfCurrent(session: retiringSession)
@@ -91,9 +94,18 @@ final class VoiceInputSessionMonitor {
         audioLevelTask?.cancel()
         audioLevelTask = nil
         guard let session else { return }
-        Task {
+        _ = cancellationTask(for: session)
+    }
+
+    private func cancellationTask(for session: any VoiceTranscriptionSession) -> Task<Void, Never> {
+        let id = ObjectIdentifier(session)
+        if let task = cancellations[id] { return task }
+        let task = Task { @MainActor in
             await session.cancel()
+            cancellations[id] = nil
         }
+        cancellations[id] = task
+        return task
     }
 
     nonisolated private static func firstTranscriptResultType(for event: VoiceSessionEvent) -> String? {

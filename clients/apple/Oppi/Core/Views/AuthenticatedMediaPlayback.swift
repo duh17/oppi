@@ -978,6 +978,47 @@ enum MediaPlaybackTelemetry {
     }
 }
 
+/// AVKit (including PiP) controls the player directly, not just our SwiftUI
+/// buttons. Admit every transport start on the capture owner's actor before
+/// AVPlayer sees it. Keep KVO below as a safety net for system-driven changes.
+private final class CaptureAwareMediaPlayer: AVPlayer {
+    override nonisolated func play() {
+        admitPlayback { super.play() }
+    }
+
+    override nonisolated func playImmediately(atRate rate: Float) {
+        guard rate != 0 else { super.playImmediately(atRate: rate); return }
+        admitPlayback { super.playImmediately(atRate: rate) }
+    }
+
+    override nonisolated var rate: Float {
+        get { super.rate }
+        set {
+            guard newValue != 0 else { super.rate = 0; return }
+            admitPlayback { super.rate = newValue }
+        }
+    }
+
+    override nonisolated func setRate(_ rate: Float, time: CMTime, atHostTime hostTime: CMTime) {
+        guard rate != 0 else { super.setRate(rate, time: time, atHostTime: hostTime); return }
+        admitPlayback { super.setRate(rate, time: time, atHostTime: hostTime) }
+    }
+
+    nonisolated private func admitPlayback(_ request: @escaping @MainActor @Sendable () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                if MediaPlaybackAudioSession.prepareSharedSession() { request() }
+            }
+        } else {
+            // AVPlayer permits background transport calls. Hop rather than
+            // synchronously blocking an AVFoundation thread on the main queue.
+            Task { @MainActor in
+                if MediaPlaybackAudioSession.prepareSharedSession() { request() }
+            }
+        }
+    }
+}
+
 @MainActor
 final class AuthenticatedMediaPlaybackSession {
     let player: AVPlayer
@@ -987,6 +1028,7 @@ final class AuthenticatedMediaPlaybackSession {
     private var timeControlObservation: NSKeyValueObservation?
     private var bufferEmptyObservation: NSKeyValueObservation?
     private var muteObservation: NSKeyValueObservation?
+    private var captureAcquisitionObserver: UUID?
     private var hasStartedPlaying = false
     private var lastStallLogAt: TimeInterval = 0
     private var lastUnmutedVolume: Float = MediaPlaybackMutePolicy.defaultUnmutedVolume
@@ -1005,7 +1047,10 @@ final class AuthenticatedMediaPlaybackSession {
                 "hasProtectedContent",
             ]
         )
-        player = AVPlayer(playerItem: item)
+        player = CaptureAwareMediaPlayer(playerItem: item)
+        captureAcquisitionObserver = VoiceInputManager.shared.observeCaptureAcquisition { [weak player] in
+            player?.pause()
+        }
         // Custom resource-loader assets should not wait to minimize stalling;
         // AVPlayer cannot see the real network buffer behind oppi-media://.
         player.automaticallyWaitsToMinimizeStalling = false
@@ -1112,6 +1157,10 @@ final class AuthenticatedMediaPlaybackSession {
     }
 
     func teardown() {
+        if let captureAcquisitionObserver {
+            VoiceInputManager.shared.removeCaptureAcquisitionObserver(captureAcquisitionObserver)
+            self.captureAcquisitionObserver = nil
+        }
         timeControlObservation?.invalidate()
         timeControlObservation = nil
         bufferEmptyObservation?.invalidate()
@@ -1124,6 +1173,11 @@ final class AuthenticatedMediaPlaybackSession {
     }
 
     deinit {
+        if let captureAcquisitionObserver {
+            Task { @MainActor in
+                VoiceInputManager.shared.removeCaptureAcquisitionObserver(captureAcquisitionObserver)
+            }
+        }
         Self.discardItem(player)
         loader.cancelAll()
     }

@@ -197,6 +197,13 @@ struct ExpandedComposerView: View {
                         .background(.themeBgDark)
                 }
 
+                ComposerShared.captureFailureNotice(manager: voiceInputManager, owner: .expandedComposer) {
+                    if let manager = voiceInputManager {
+                        micButton(manager: manager, isRetry: true)
+                    }
+                }
+                .padding(.horizontal, 16)
+
                 FullSizeTextView(
                     text: textFieldBinding,
                     keyboardLanguage: $keyboardLanguage,
@@ -303,6 +310,12 @@ struct ExpandedComposerView: View {
         .onChange(of: photoSelection) { _, items in
             ComposerShared.loadSelectedPhotos(items, into: $pendingAttachments)
             photoSelection = []
+        }
+        .onChange(of: voiceInputManager?.currentComposerCaptureFailure, initial: true) { _, _ in
+            ComposerShared.discardFailedTake(
+                manager: voiceInputManager, owner: .expandedComposer,
+                text: $text, textBeforeRecording: $textBeforeRecording, suppressKeyboard: $suppressKeyboard
+            )
         }
         .onChange(of: voiceInputManager?.transcriptPresentationRevision) { _, _ in
             guard let prefix = textBeforeRecording, let manager = voiceInputManager else { return }
@@ -449,7 +462,7 @@ struct ExpandedComposerView: View {
 
     // MARK: - Mic Button
 
-    private func micButton(manager: VoiceInputManager) -> some View {
+    private func micButton(manager: VoiceInputManager, isRetry: Bool = false) -> some View {
         let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .expandedComposer)
 
         return Button {
@@ -489,11 +502,15 @@ struct ExpandedComposerView: View {
                 }
             }
         } label: {
-            MicButtonLabel(
-                presentation: presentation,
-                accentColor: accentColor,
-                diameter: 32
-            )
+            if isRetry {
+                Text("Retry dictation").font(.subheadline.weight(.semibold))
+            } else {
+                MicButtonLabel(
+                    presentation: presentation,
+                    accentColor: accentColor,
+                    diameter: 32
+                )
+            }
         }
         .buttonStyle(.plain)
         .disabled(!presentation.isEnabled)

@@ -369,6 +369,11 @@ struct ChatInputBar<ActionRow: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            ComposerShared.captureFailureNotice(manager: voiceInputManager, owner: .inlineComposer) {
+                if let manager = voiceInputManager {
+                    inlineMicButton(manager: manager, isRetry: true)
+                }
+            }
             composerCapsule
         }
         .padding(.horizontal, appliesOuterPadding ? 16 : 0)
@@ -419,6 +424,12 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .task(id: externalDictationRequestID) {
             await startExternalDictationIfRequested()
+        }
+        .onChange(of: voiceInputManager?.currentComposerCaptureFailure, initial: true) { _, _ in
+            ComposerShared.discardFailedTake(
+                manager: voiceInputManager, owner: .inlineComposer,
+                text: $text, textBeforeRecording: $textBeforeRecording, suppressKeyboard: $suppressKeyboard
+            )
         }
         .onChange(of: voiceInputManager?.state) { _, _ in
             if ComposerShared.shouldSuppressKeyboardForActiveVoiceInput(
@@ -819,7 +830,7 @@ struct ChatInputBar<ActionRow: View>: View {
     /// Compact mic toggle inside the capsule, left of the text field.
     /// Tap to start recording, tap again to stop. Works in any state
     /// (idle or busy) so you can mix typing and dictation freely.
-    private func inlineMicButton(manager: VoiceInputManager) -> some View {
+    private func inlineMicButton(manager: VoiceInputManager, isRetry: Bool = false) -> some View {
         let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
 
         return Button {
@@ -864,11 +875,15 @@ struct ChatInputBar<ActionRow: View>: View {
                 }
             }
         } label: {
-            MicButtonLabel(
-                presentation: presentation,
-                accentColor: accentColor,
-                diameter: actionVisualDiameter
-            )
+            if isRetry {
+                Text("Retry dictation").font(.subheadline.weight(.semibold))
+            } else {
+                MicButtonLabel(
+                    presentation: presentation,
+                    accentColor: accentColor,
+                    diameter: actionVisualDiameter
+                )
+            }
         }
         .buttonStyle(.plain)
         .disabled(!presentation.isEnabled)

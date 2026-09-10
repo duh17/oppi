@@ -63,6 +63,12 @@ struct VoiceCaptureTakeIdentity: Equatable, Sendable {
     let composerGeneration: Int
 }
 
+struct VoiceCaptureFailure: Equatable, Sendable {
+    let take: VoiceCaptureTakeIdentity
+    let source: String
+    let message: String
+}
+
 @MainActor @Observable
 final class VoiceInputManager {
 
@@ -446,7 +452,32 @@ final class VoiceInputManager {
 
     // MARK: - Published State
 
-    private(set) var state: State = .idle
+    private(set) var state: State = .idle {
+        didSet {
+            if ownsCaptureAudioSession {
+                // Synchronous main-actor delivery: existing AVKit/PiP players
+                // pause before startup can acquire/configure the capture route.
+                for pause in captureAcquisitionObservers.values { pause() }
+            }
+        }
+    }
+    private(set) var captureFailure: VoiceCaptureFailure?
+    var currentComposerCaptureFailure: VoiceCaptureFailure? {
+        guard captureFailure?.take.composerGeneration == composerGeneration else { return nil }
+        return captureFailure
+    }
+    @ObservationIgnored private var captureAcquisitionObservers: [UUID: @MainActor () -> Void] = [:]
+
+    func observeCaptureAcquisition(_ pause: @escaping @MainActor () -> Void) -> UUID {
+        let id = UUID()
+        captureAcquisitionObservers[id] = pause
+        if ownsCaptureAudioSession { pause() }
+        return id
+    }
+
+    func removeCaptureAcquisitionObserver(_ id: UUID) {
+        captureAcquisitionObservers[id] = nil
+    }
     private(set) var finalizedTranscript = ""
     private(set) var volatileTranscript = ""
     /// Monotonic revision for composer presentation updates.
@@ -913,6 +944,7 @@ final class VoiceInputManager {
             throw VoiceInputError.captureBusy
         }
 
+        captureFailure = nil
         nextStartRequestID += 1
         let requestID = nextStartRequestID
         activeStartRequestID = requestID
@@ -1153,15 +1185,16 @@ final class VoiceInputManager {
             try? provider(for: activeEngine).cancelPreparation()
         }
 
-        if let requestID = activeStartRequestID {
-            let stillOwns = await cleanupFailedStart(for: requestID)
-            guard stillOwns else { return }
-        } else {
-            await sessionMonitor.cancel()
-            deactivateAudioSession()
-            teardownSession()
-            endPlaybackCaptureInterruptionIfNeeded()
-        }
+        // Retire first, but do not release admission until the shared hardware
+        // drain finishes. A competing startup/stream cleanup must lose ownership.
+        let generation = nextStartRequestID
+        clearActiveStartIdentity()
+        state = .processing
+        await sessionMonitor.cancel()
+        guard nextStartRequestID == generation, state == .processing else { return }
+        deactivateAudioSession()
+        teardownSession()
+        endPlaybackCaptureInterruptionIfNeeded()
 
         emitDictationCancelTelemetry()
         operationInFlight = false
@@ -1391,6 +1424,9 @@ final class VoiceInputManager {
         // Invalidate startup before the first suspension: its completion must
         // neither announce recording nor retry on the built-in mic. Keep the
         // capture state occupied until cancellation releases the hardware.
+        let failedTake = currentCaptureTakeIdentity()
+        let failedSource = activeRecordingSource
+        let failureGeneration = nextStartRequestID
         state = .processing
         clearActiveStartIdentity()
         if let activeEngine {
@@ -1403,13 +1439,18 @@ final class VoiceInputManager {
             )
         }
         await sessionMonitor.cancel()
+        guard nextStartRequestID == failureGeneration, state == .processing else { return }
         deactivateAudioSession()
         teardownSession()
         endPlaybackCaptureInterruptionIfNeeded()
         operationInFlight = false
+        let message = "Bluetooth microphone disconnected. This take was discarded. Your earlier draft was kept. Reconnect or use the built-in microphone, then retry."
+        if let failedTake, let failedSource {
+            captureFailure = VoiceCaptureFailure(take: failedTake, source: failedSource, message: message)
+        }
         // Do not auto-dismiss: the interrupted take was not successfully
         // recovered or finalized. The existing mic action accepts .error retry.
-        state = .error("Bluetooth microphone disconnected. This take was discarded. Reconnect or use the built-in microphone, then try dictation again.")
+        state = .error(message)
     }
 
     nonisolated static func routeHasBluetooth(_ route: AVAudioSessionRouteDescription) -> Bool {
@@ -1534,10 +1575,11 @@ final class VoiceInputManager {
         return true
     }
 
-    private func handleSessionStreamError(
+    func handleSessionStreamError(
         _ error: Error,
         annotation: VoiceMetricAnnotation
     ) async {
+        guard let requestID = activeStartRequestID else { return }
         logger.error("Results stream error: \(error.localizedDescription, privacy: .public)")
         recordDictationCountMetric(
             .dictationError,
@@ -1551,6 +1593,9 @@ final class VoiceInputManager {
         )
 
         await sessionMonitor.cancel()
+        // Route loss retires this request before awaiting the same drain. It
+        // alone publishes the take failure; late stream cleanup owns nothing.
+        guard activeStartRequestID == requestID else { return }
         deactivateAudioSession()
         teardownSession()
         endPlaybackCaptureInterruptionIfNeeded()

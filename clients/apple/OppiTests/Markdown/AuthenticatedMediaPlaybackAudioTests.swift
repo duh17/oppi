@@ -71,6 +71,64 @@ struct AuthenticatedMediaPlaybackAudioTests {
         #expect(audio.category == .playback)
     }
 
+    @Test("capture acquisition pauses progressing authenticated media and blocks native play admission")
+    func capturePausesProgressAndRejectsPlayBeforeRateChanges() async throws {
+        let manager = VoiceInputManager.shared
+        let previousState = manager.state
+        let audio = AVAudioSession.sharedInstance()
+        let previousCategory = audio.category
+        let previousMode = audio.mode
+        let previousOptions = audio.categoryOptions
+        let session = AuthenticatedMediaPlaybackSession(source: dummyMediaSource())
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("capture-media-\(UUID()).wav")
+        defer {
+            session.teardown()
+            manager._testState = previousState
+            try? audio.setCategory(previousCategory, mode: previousMode, options: previousOptions)
+            try? FileManager.default.removeItem(at: url)
+        }
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 160_000))
+        buffer.frameLength = buffer.frameCapacity
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            try file.write(from: buffer)
+        }
+        manager._testState = .idle
+        let player = session.player
+        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        player.play()
+        let progressed = await waitUntil(timeout: .seconds(2)) {
+            player.timeControlStatus == .playing && player.currentTime().seconds > 0.05
+        }
+        #expect(progressed, "Fixture must actually play before capture begins")
+        manager._testState = .preparingModel
+        #expect(player.rate == 0, "Acquisition must pause existing inline/fullscreen/PiP playback synchronously")
+        #expect(player.timeControlStatus == .paused)
+        try audio.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
+        for state: VoiceInputManager.State in [.preparingModel, .recording, .processing] {
+            manager._testState = state
+            player.play()
+            #expect(player.rate == 0, "play() must be rejected before AVPlayer starts")
+            player.playImmediately(atRate: 1)
+            #expect(player.rate == 0)
+            player.rate = 1
+            #expect(player.rate == 0, "Native transport rate requests must also be gated")
+            player.setRate(1, time: .invalid, atHostTime: .invalid)
+            #expect(player.rate == 0)
+            #expect(audio.category == .playAndRecord)
+        }
+        let pausedTime = player.currentTime()
+        manager._testState = .idle
+        #expect(player.rate == 0, "Capture release must not auto-resume media")
+        player.play()
+        let resumed = await waitUntil(timeout: .seconds(2)) {
+            player.timeControlStatus == .playing && player.currentTime() > pausedTime + CMTime(seconds: 0.05, preferredTimescale: 600)
+        }
+        #expect(resumed, "Explicit play should progress again after capture releases ownership")
+        #expect(audio.category == .playback)
+    }
+
     @Test("muted output is silent and unmute restores the previous volume")
     func mutePolicyZerosVolumeAndRestoresPrevious() {
         let muted = MediaPlaybackMutePolicy.appliedVolume(

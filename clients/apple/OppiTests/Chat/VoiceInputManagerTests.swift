@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import SwiftUI
 import Testing
+import Vision
 @testable import Oppi
 
 /// Tests for VoiceInputManager state machine correctness.
@@ -590,6 +591,187 @@ struct VoiceInputManagerTests {
         let retry = MockVoiceSession()
         provider.makeSessionHandler = { _, _ in retry }
         try await manager.startRecording(keyboardLanguage: "en-US", source: "retry")
+        #expect(manager.state == .recording)
+        await manager.cancelRecording()
+    }
+
+    @Test func routeLossDiscardsPreviewFromBothComposerPresentations() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "inline_mic_tap")
+        session.yieldEvent(.partialTranscript("discard these words"))
+        let received = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.currentTranscript == "discard these words" }
+        }
+        #expect(received)
+        let prefix = "Keep draft "
+        let preview = prefix + manager.currentTranscript
+        await manager.handleLostBluetoothRoute(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true
+        )
+        for owner: ComposerShared.VoiceInputOwner in [.inlineComposer, .expandedComposer] {
+            #expect(ComposerShared.currentComposerText(
+                storedText: preview, textBeforeRecording: prefix, manager: manager, owner: owner
+            ) == prefix, "The visible editor must discard the failed take, not just the manager transcript")
+        }
+        #expect(ComposerShared.captureFailure(manager, owner: .inlineComposer) != nil)
+        _ = manager.beginStandaloneComposer(serverId: "different-composer", credentials: nil, connection: nil)
+        #expect(ComposerShared.captureFailure(manager, owner: .inlineComposer) == nil,
+                "A failed take must not surface in a later composer's generation")
+    }
+
+    @Test func streamErrorCancellationCannotReleaseRouteLossEarlyOrDestroyRetry() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let access = MockVoiceInputSystemAccess()
+        let old = MockVoiceSession()
+        let entered = AsyncGate()
+        let resume = AsyncGate()
+        old.cancelHandler = { await entered.open(); await resume.wait() }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in old }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "old")
+        let streamError = Task {
+            await manager.handleSessionStreamError(
+                TestVoiceError("late stream failure"),
+                annotation: VoiceMetricAnnotation(engine: "dictation", locale: "en-US", source: "old")
+            )
+        }
+        await entered.wait()
+        let loss = Task {
+            await manager.handleLostBluetoothRoute(
+                rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+                previousHadBluetooth: true
+            )
+        }
+        // The route callback sets processing before its first await. This gate
+        // distinguishes cancellation-started from cancellation-completed.
+        let retired = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.currentCaptureTakeIdentity() == nil }
+        }
+        #expect(retired)
+        #expect(manager.state == .processing, "Retry must wait for the first hardware cancellation to finish")
+        #expect(access.deactivateAudioSessionCallCount == 0)
+        await resume.open()
+        await loss.value
+        if case .error(let message) = manager.state {
+            #expect(message.contains("Bluetooth microphone disconnected"))
+        } else {
+            Issue.record("The route-loss error must win over competing stream cleanup")
+        }
+        let retry = MockVoiceSession()
+        provider.makeSessionHandler = { _, _ in retry }
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "retry")
+        await streamError.value
+        #expect(manager.state == .recording)
+        #expect(manager.activeRecordingSource == "retry")
+        #expect(retry.cancelCallCount == 0)
+        #expect(access.deactivateAudioSessionCallCount == 1)
+        await manager.cancelRecording()
+    }
+
+    @Test(arguments: [false, true])
+    func mountedComposerShowsPersistentRouteFailureAndRollsBackEditor(expanded: Bool) async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        let draft = CaptureFailureTestDraft()
+        let text = Binding(get: { draft.text }, set: { draft.text = $0 })
+        let prefix = Binding(get: { draft.prefix }, set: { draft.prefix = $0 })
+        let root: AnyView
+        if expanded {
+            root = AnyView(ExpandedComposerView(
+                text: text, textBeforeRecording: prefix, pendingAttachments: .constant([]),
+                pendingRepoPointers: .constant([]), isBusy: false, busyStreamingBehavior: .steer,
+                slashCommands: [], fileSuggestions: [], onFileSuggestionQuery: nil,
+                session: nil, thinkingLevel: .off, voiceInputManager: manager,
+                onSend: {}, onModelTap: {}, onThinkingSelect: { _ in }
+            ))
+        } else {
+            root = AnyView(ChatInputBar(
+                text: text, textBeforeRecording: prefix, pendingAttachments: .constant([]),
+                pendingRepoPointers: .constant([]), isBusy: false, busyStreamingBehavior: .constant(.steer),
+                isSending: false, sendProgressText: nil, isStopping: false,
+                voiceInputManager: manager, showForceStop: false, isForceStopInFlight: false,
+                slashCommands: [], fileSuggestions: [], onFileSuggestionQuery: nil,
+                onSend: {}, onStop: {}, onForceStop: {}, onExpand: {},
+                externalFocusRequestID: 0, appliesOuterPadding: true, actionRow: { EmptyView() }
+            ))
+        }
+        let host = UIHostingController(rootView: root.environment(\.dynamicTypeSize, .accessibility1))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        host.view.layoutIfNeeded()
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "inline_mic_tap")
+        session.yieldEvent(.partialTranscript("discard these words"))
+        let previewed = await waitForTestCondition(timeoutMs: 1000) {
+            await MainActor.run { draft.text.contains("discard these words") }
+        }
+        #expect(previewed)
+        await manager.handleLostBluetoothRoute(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true
+        )
+        let restored = await waitForTestCondition(timeoutMs: 1000) {
+            await MainActor.run { draft.text == "Keep draft " && draft.prefix == nil }
+        }
+        #expect(restored, "The mounted composer's observer must commit draft rollback")
+        host.view.layoutIfNeeded()
+        let editors = captureFailureSubviews(host.view).compactMap { $0 as? UITextView }
+        #expect(editors.contains { $0.text == "Keep draft " }, "Visible UIKit editor must match the retained draft")
+        let failure = try #require(ComposerShared.captureFailure(manager, owner: .inlineComposer))
+        #expect(failure.message.contains("discarded"))
+        #expect(failure.message.contains("earlier draft was kept"))
+        let screenshot = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        let artifact = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/logs/p1-route-failure-\(expanded ? "expanded" : "inline").png")
+        try screenshot.pngData()?.write(to: artifact)
+        let image = try #require(screenshot.cgImage)
+        let recognize = VNRecognizeTextRequest()
+        recognize.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: image).perform([recognize])
+        let visibleText = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        #expect(visibleText.contains("Dictation stopped"), "Failure title must actually render: \(visibleText)")
+        #expect(visibleText.contains("take was discarded"), "Visible failure must explain transcript disposition")
+        #expect(visibleText.contains("earlier draft was kept"))
+        #expect(visibleText.contains("Retry dictation"), "Recovery action must actually render")
+        #expect(ComposerShared.captureFailure(manager, owner: .askCard) == nil)
+        // Later typing must not be rolled back by the other presentation.
+        draft.text = "Keep draft and new typing"
+        ComposerShared.discardFailedTake(
+            manager: manager, owner: .expandedComposer, text: text, textBeforeRecording: prefix,
+            suppressKeyboard: .constant(false)
+        )
+        #expect(draft.text == "Keep draft and new typing")
+        #expect(ComposerShared.captureFailure(manager, owner: .expandedComposer) == failure)
+        let retry = MockVoiceSession()
+        provider.makeSessionHandler = { _, _ in retry }
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "expanded_mic_tap")
+        #expect(manager.captureFailure == nil)
         #expect(manager.state == .recording)
         await manager.cancelRecording()
     }
@@ -1781,7 +1963,7 @@ struct VoiceInputManagerTests {
         await manager.cancelRecording()
     }
 
-    @Test func failedStartCleanupAwaitDoesNotEraseNewerStartOwnership() async throws {
+    @Test func failedStartCancellationDrainsBeforeNewPreparingTake() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -1826,7 +2008,13 @@ struct VoiceInputManagerTests {
         #expect(manager.state == .preparingModel)
         #expect(sessionA.cancelCallCount == 1)
 
-        await manager.cancelRecording(matching: identityA)
+        let cancelA = Task { await manager.cancelRecording(matching: identityA) }
+        #expect(await waitForMainActorCondition { manager.state == .processing })
+        #expect(manager.ownsCaptureAudioSession)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 0)
+        await cancelHold.open()
+        await cancelA.value
+        await startA.value
         #expect(manager.state == .idle)
         #expect(manager.currentCaptureTakeIdentity() == nil)
         #expect(!manager._testOperationInFlight)
@@ -1843,9 +2031,6 @@ struct VoiceInputManagerTests {
         #expect(identityB != identityA)
         #expect(manager._testOperationInFlight)
 
-        await cancelHold.open()
-        await startA.value
-
         #expect(manager.state == .preparingModel)
         #expect(manager.currentCaptureTakeIdentity() == identityB)
         #expect(manager._testOperationInFlight)
@@ -1861,7 +2046,7 @@ struct VoiceInputManagerTests {
         await manager.cancelRecording()
     }
 
-    @Test func failedStartCleanupAwaitDoesNotWipeNewerBoundSession() async throws {
+    @Test func failedStartCancellationDrainsBeforeNewRecordingTake() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -1895,7 +2080,13 @@ struct VoiceInputManagerTests {
         #expect(manager.state == .preparingModel)
         #expect(sessionA.cancelCallCount == 1)
 
-        await manager.cancelRecording(matching: identityA)
+        let cancelA = Task { await manager.cancelRecording(matching: identityA) }
+        #expect(await waitForMainActorCondition { manager.state == .processing })
+        #expect(manager.ownsCaptureAudioSession)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 0)
+        await cancelHold.open()
+        await cancelA.value
+        await startA.value
         #expect(manager.state == .idle)
         #expect(manager.currentCaptureTakeIdentity() == nil)
         #expect(!manager._testOperationInFlight)
@@ -1908,9 +2099,6 @@ struct VoiceInputManagerTests {
         let identityB = manager.currentCaptureTakeIdentity()
         #expect(identityB != nil)
         #expect(identityB != identityA)
-
-        await cancelHold.open()
-        await startA.value
 
         #expect(manager.state == .recording)
         #expect(manager.currentCaptureTakeIdentity() == identityB)
@@ -1930,4 +2118,15 @@ struct VoiceInputManagerTests {
     private func resetVoicePreferences() {
         AppPreferences.Voice.setEngineMode(.onDevice)
     }
+}
+
+@MainActor @Observable
+private final class CaptureFailureTestDraft {
+    var text = "Keep draft "
+    var prefix: String? = "Keep draft "
+}
+
+@MainActor
+private func captureFailureSubviews(_ root: UIView) -> [UIView] {
+    [root] + root.subviews.flatMap { captureFailureSubviews($0) }
 }
