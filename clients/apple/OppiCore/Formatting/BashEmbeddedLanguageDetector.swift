@@ -306,19 +306,4 @@ enum BashEmbeddedLanguageDetector {
         // Also check for the heredoc marker name itself as a language hint
         return nil
     }
-
-    // MARK: - Convenience
-
-    // periphery:ignore
-    /// Returns the detected embedded language, if any.
-    static func embeddedLanguage(in command: String) -> SyntaxLanguage? {
-        let segments = detect(command)
-        return segments.first(where: {
-            if case .embeddedCode = $0.kind { return true }
-            return false
-        }).flatMap {
-            if case .embeddedCode(let lang) = $0.kind { return lang }
-            return nil
-        }
-    }
 }

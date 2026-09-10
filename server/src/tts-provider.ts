@@ -2,8 +2,8 @@
  * Shared audio presentation contract for Oppi extensions.
  *
  * Extensions can stream generic audio events with `createAudioStreamEmitter(...)`
- * and return final attachment-backed audio cards with
- * `createAudioPresentationDetails(...)`.
+ * and return final attachment-backed audio cards with a literal
+ * `kind: "audio_presentation"` object.
  *
  * Provider-specific auth, transport, and synthesis details stay inside the
  * extension itself.
@@ -111,22 +111,5 @@ export function createAudioStreamEmitter(options: {
       id: streamId,
       ...event,
     });
-  };
-}
-
-export function createAudioPresentationDetails<
-  TExtra extends Record<string, unknown> = Record<string, never>,
->(input: {
-  audio: AudioAttachment;
-  text?: string;
-  playbackBehavior?: AudioPlaybackBehavior;
-  extra?: TExtra;
-}): AudioPresentation & TExtra {
-  return {
-    kind: "audio_presentation",
-    audio: input.audio,
-    ...(input.text ? { text: input.text } : {}),
-    ...(input.playbackBehavior ? { playbackBehavior: input.playbackBehavior } : {}),
-    ...(input.extra ?? ({} as TExtra)),
   };
 }

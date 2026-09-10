@@ -205,17 +205,24 @@ struct BashEmbeddedLanguageDetectorTests {
         #expect(segments[1].kind == .embeddedCode(.ruby))
     }
 
-    // MARK: - Convenience
+    // MARK: - detect() language presence
 
-    @Test func embeddedLanguageConvenience() {
-        #expect(BashEmbeddedLanguageDetector.embeddedLanguage(in: "ls -la") == nil)
+    @Test func detectFindsNoEmbeddedLanguageInPlainShell() {
+        let segments = BashEmbeddedLanguageDetector.detect("ls -la")
+        #expect(segments.allSatisfy { $0.kind == .shell })
+    }
 
+    @Test func detectFindsJavaScriptInNodeHeredoc() {
         let nodeCmd = """
         node - <<'NODE'
         const x = 1;
         NODE
         """
-        #expect(BashEmbeddedLanguageDetector.embeddedLanguage(in: nodeCmd) == .javascript)
+        let languages = BashEmbeddedLanguageDetector.detect(nodeCmd).compactMap { segment -> SyntaxLanguage? in
+            if case .embeddedCode(let language) = segment.kind { return language }
+            return nil
+        }
+        #expect(languages == [.javascript])
     }
 
     // MARK: - Edge cases

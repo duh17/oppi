@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createAudioPresentationDetails, createAudioStreamEmitter } from "../src/tts-provider.js";
+import { createAudioStreamEmitter, type AudioPresentation } from "../src/tts-provider.js";
 
 describe("tts-provider helpers", () => {
-  it("builds generic audio presentation details", () => {
-    const details = createAudioPresentationDetails({
+  it("pins a literal audio_presentation object", () => {
+    const details: AudioPresentation = {
+      kind: "audio_presentation",
       audio: {
         kind: "audio",
         mimeType: "audio/wav",
@@ -13,19 +14,18 @@ describe("tts-provider helpers", () => {
       },
       text: "hello there",
       playbackBehavior: "tapToPlay",
-      extra: { source: "test" },
-    });
+    };
 
-    expect(details).toMatchObject({
+    expect(details).toEqual({
       kind: "audio_presentation",
       audio: {
         kind: "audio",
         mimeType: "audio/wav",
         path: "/tmp/reply.wav",
+        durationSeconds: 1.2,
       },
       text: "hello there",
       playbackBehavior: "tapToPlay",
-      source: "test",
     });
   });
 
