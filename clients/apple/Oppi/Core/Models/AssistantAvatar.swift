@@ -5,8 +5,6 @@ import UIKit
 enum AssistantAvatar: Equatable, Sendable {
     /// Official Pi logo mark from pi.dev.
     case officialPi
-    /// Classic π text character.
-    case piText
     /// Game of Life grid forming π — unique per session.
     case golGrid
     /// User-chosen emoji character.
@@ -19,7 +17,6 @@ enum AssistantAvatar: Equatable, Sendable {
     var displayName: String {
         switch self {
         case .officialPi: return "Official Pi"
-        case .piText: return "Classic π"
         case .golGrid: return "Grid π"
         case .emoji(let char): return char
         case .genmoji: return "Genmoji"
@@ -28,7 +25,7 @@ enum AssistantAvatar: Equatable, Sendable {
 
     var accessibilityDescription: String {
         switch self {
-        case .officialPi, .piText, .golGrid:
+        case .officialPi, .golGrid:
             return displayName
         case .emoji(let value):
             return "Emoji \(value)"
@@ -41,8 +38,6 @@ enum AssistantAvatar: Equatable, Sendable {
         switch self {
         case .officialPi:
             return "Official Pi logo"
-        case .piText:
-            return "Monospaced assistant glyph"
         case .golGrid:
             return "Game of Life grid with spark cells"
         case .emoji, .genmoji:
@@ -54,8 +49,6 @@ enum AssistantAvatar: Equatable, Sendable {
         switch self {
         case .officialPi:
             return "officialPi"
-        case .piText:
-            return "piText"
         case .golGrid:
             return "golGrid"
         case .emoji(let char):
@@ -68,7 +61,7 @@ enum AssistantAvatar: Equatable, Sendable {
     }
 
     /// Built-in choices for the picker (not including user-set emoji/genmoji).
-    static let builtinCases: [AssistantAvatar] = [.officialPi, .piText, .golGrid]
+    static let builtinCases: [AssistantAvatar] = [.officialPi, .golGrid]
 
     enum PersistenceError: LocalizedError, Equatable {
         case invalidEmoji
@@ -189,7 +182,7 @@ final class AssistantAvatarPersistence {
         self.defaults = defaults
         read = {
             Source(
-                type: defaults.string(forKey: Self.typeKey) ?? "piText",
+                type: defaults.string(forKey: Self.typeKey) ?? "officialPi",
                 emoji: defaults.string(forKey: Self.emojiKey),
                 genmojiData: defaults.data(forKey: Self.genmojiKey),
                 genmojiDescription: defaults.string(forKey: Self.genmojiDescriptionKey)
@@ -251,8 +244,6 @@ final class AssistantAvatarPersistence {
         switch preparedValue.avatar {
         case .officialPi:
             persistBuiltin("officialPi", defaults: defaults)
-        case .piText:
-            persistBuiltin("piText", defaults: defaults)
         case .golGrid:
             persistBuiltin("golGrid", defaults: defaults)
         case .emoji(let emoji):
@@ -273,12 +264,13 @@ final class AssistantAvatarPersistence {
         case "officialPi":
             return cache(avatar: .officialPi, image: nil)
         case "piText":
-            return cache(avatar: .piText, image: nil)
+            // Retired Classic avatar: migrate the stored choice on first load.
+            return normalizeToOfficialPi()
         case "golGrid":
             return cache(avatar: .golGrid, image: nil)
         case "emoji":
             guard case .emoji(let emoji) = AgentIconValue.classify(source.emoji) else {
-                return normalizeToPiText()
+                return normalizeToOfficialPi()
             }
             return cache(avatar: .emoji(emoji), image: nil)
         case "genmoji":
@@ -288,14 +280,14 @@ final class AssistantAvatarPersistence {
                   data.count <= Self.maximumGenmojiBytes,
                   let contentDescription = validGenmojiDescription(source.genmojiDescription),
                   let decoded = decode(data) else {
-                return normalizeToPiText()
+                return normalizeToOfficialPi()
             }
             return cache(
                 avatar: .genmoji(data: data, contentDescription: contentDescription),
                 image: decoded
             )
         default:
-            return normalizeToPiText()
+            return normalizeToOfficialPi()
         }
     }
 
@@ -316,16 +308,16 @@ final class AssistantAvatarPersistence {
         return AssistantAvatarSnapshot(avatar: avatar, cacheIdentifier: identity, image: image)
     }
 
-    private func normalizeToPiText() -> AssistantAvatarSnapshot {
+    private func normalizeToOfficialPi() -> AssistantAvatarSnapshot {
         if let defaults {
-            persistBuiltin("piText", defaults: defaults)
+            persistBuiltin("officialPi", defaults: defaults)
         }
-        return cache(avatar: .piText, image: nil)
+        return cache(avatar: .officialPi, image: nil)
     }
 
     private func prepared(_ avatar: AssistantAvatar) throws -> (avatar: AssistantAvatar, image: UIImage?) {
         switch avatar {
-        case .officialPi, .piText, .golGrid:
+        case .officialPi, .golGrid:
             return (avatar, nil)
         case .emoji(let rawValue):
             guard case .emoji(let emoji) = AgentIconValue.classify(rawValue) else {

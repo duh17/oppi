@@ -15,8 +15,6 @@ enum AssistantAvatarRenderer {
             return renderOfficialPi(size: size, themeID: themeID ?? ThemeRuntimeState.currentThemeID())
         case .golGrid:
             return renderGrid(sessionId: sessionId, size: size)
-        case .piText:
-            return renderText("π", size: size)
         case .emoji(let char):
             return renderEmoji(char, size: size)
         case .genmoji(let data, _):
@@ -29,7 +27,7 @@ enum AssistantAvatarRenderer {
             if let decoded = try? IconAssetCache.decodeRemoteHEIF(data: data, size: decodeSize) {
                 return decoded.image
             }
-            return renderText("π", size: size)
+            return renderOfficialPi(size: size, themeID: themeID ?? ThemeRuntimeState.currentThemeID())
         }
     }
 
@@ -103,23 +101,6 @@ enum AssistantAvatarRenderer {
         }
     }
 
-    private static func renderText(_ text: String, size: CGFloat) -> UIImage {
-        let palette = ThemeRuntimeState.currentPalette()
-        let font = UIFont.monospacedSystemFont(ofSize: size * 0.55, weight: .semibold)
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-        return renderer.image { _ in
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: UIColor(palette.purple),
-            ]
-            let nsText = text as NSString
-            let textSize = nsText.size(withAttributes: attrs)
-            let x = (size - textSize.width) / 2
-            let y = (size - textSize.height) / 2
-            nsText.draw(at: CGPoint(x: x, y: y), withAttributes: attrs)
-        }
-    }
-
     private static func renderEmoji(_ emoji: String, size: CGFloat) -> UIImage {
         let font = UIFont.systemFont(ofSize: size * 0.7)
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
@@ -139,7 +120,6 @@ enum AssistantAvatarRenderer {
 ///
 /// Supports all `AssistantAvatar` types:
 /// - `.officialPi` → official Pi logo mark
-/// - `.piText` → rendered π character
 /// - `.golGrid` → Game of Life grid, unique per session
 /// - `.emoji` → rendered emoji character
 /// - `.genmoji` → bounded ImageIO/CGImage raster fallback

@@ -3,18 +3,16 @@ import Foundation
 /// UIKit-free assistant avatar preference shared by Apple clients.
 ///
 /// Keys match iOS `AssistantAvatar` persistence. Mac paints SwiftUI/AppKit and
-/// does not decode Genmoji; a stored Genmoji type reads as classic π without
+/// does not decode Genmoji; a stored Genmoji type reads as Official Pi without
 /// rewriting the blob.
 enum AssistantAvatarPreference: Equatable, Sendable {
     case officialPi
-    case piText
     case golGrid
     case emoji(String)
 
     var displayName: String {
         switch self {
         case .officialPi: return "Official Pi"
-        case .piText: return "Classic π"
         case .golGrid: return "Grid π"
         case .emoji(let char): return char
         }
@@ -22,7 +20,7 @@ enum AssistantAvatarPreference: Equatable, Sendable {
 
     var accessibilityDescription: String {
         switch self {
-        case .officialPi, .piText, .golGrid:
+        case .officialPi, .golGrid:
             return displayName
         case .emoji(let value):
             return "Emoji \(value)"
@@ -33,8 +31,6 @@ enum AssistantAvatarPreference: Equatable, Sendable {
         switch self {
         case .officialPi:
             return "Official Pi logo"
-        case .piText:
-            return "Monospaced assistant glyph"
         case .golGrid:
             return "Game of Life grid with spark cells"
         case .emoji:
@@ -43,7 +39,7 @@ enum AssistantAvatarPreference: Equatable, Sendable {
     }
 
     /// Built-in choices for the picker (not including user-set emoji).
-    static let builtinCases: [AssistantAvatarPreference] = [.officialPi, .piText, .golGrid]
+    static let builtinCases: [AssistantAvatarPreference] = [.officialPi, .golGrid]
 
     enum PersistenceError: LocalizedError, Equatable {
         case invalidEmoji
@@ -103,32 +99,33 @@ struct AssistantAvatarPreferenceStore {
     }
 
     private func load() -> AssistantAvatarPreference {
-        let type = defaults.string(forKey: AssistantAvatarPreference.typeKey) ?? "piText"
+        let type = defaults.string(forKey: AssistantAvatarPreference.typeKey) ?? "officialPi"
         switch type {
         case "officialPi":
             return .officialPi
         case "piText":
-            return .piText
+            // Retired Classic avatar: migrate the stored choice on first load.
+            return normalizeToOfficialPi()
         case "golGrid":
             return .golGrid
         case "emoji":
             guard case .emoji(let emoji) = AgentIconValue.classify(
                 defaults.string(forKey: AssistantAvatarPreference.emojiKey)
             ) else {
-                return normalizeToPiText()
+                return normalizeToOfficialPi()
             }
             return .emoji(emoji)
         case "genmoji":
             // Mac does not paint Genmoji. Leave the stored blob intact.
-            return .piText
+            return .officialPi
         default:
-            return normalizeToPiText()
+            return normalizeToOfficialPi()
         }
     }
 
     private func prepare(_ avatar: AssistantAvatarPreference) throws -> AssistantAvatarPreference {
         switch avatar {
-        case .officialPi, .piText, .golGrid:
+        case .officialPi, .golGrid:
             return avatar
         case .emoji(let rawValue):
             guard case .emoji(let emoji) = AgentIconValue.classify(rawValue) else {
@@ -142,8 +139,6 @@ struct AssistantAvatarPreferenceStore {
         switch avatar {
         case .officialPi:
             persistBuiltin("officialPi")
-        case .piText:
-            persistBuiltin("piText")
         case .golGrid:
             persistBuiltin("golGrid")
         case .emoji(let emoji):
@@ -164,8 +159,8 @@ struct AssistantAvatarPreferenceStore {
         defaults.removeObject(forKey: AssistantAvatarPreference.genmojiDescriptionKey)
     }
 
-    private func normalizeToPiText() -> AssistantAvatarPreference {
-        persistBuiltin("piText")
-        return .piText
+    private func normalizeToOfficialPi() -> AssistantAvatarPreference {
+        persistBuiltin("officialPi")
+        return .officialPi
     }
 }

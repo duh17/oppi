@@ -75,7 +75,7 @@ struct AssistantTimelineRowContentViewTests {
         let persistence = AssistantAvatarPersistence(
             read: {
                 readCount += 1
-                return .init(type: "piText", emoji: nil, genmojiData: nil, genmojiDescription: nil)
+                return .init(type: "officialPi", emoji: nil, genmojiData: nil, genmojiDescription: nil)
             },
             fingerprint: { _ in
                 fingerprintCount += 1
@@ -124,7 +124,7 @@ struct AssistantTimelineRowContentViewTests {
         var globalAvatarProviderCount = 0
         badge.assistantAvatarProvider = {
             globalAvatarProviderCount += 1
-            return AssistantAvatarSnapshot(avatar: .piText)
+            return AssistantAvatarSnapshot(avatar: .officialPi)
         }
         badge.configure(
             sessionId: "saved-agent-avatar-notification",

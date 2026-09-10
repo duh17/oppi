@@ -8,7 +8,7 @@ struct AvatarPickerView: View {
         UnifiedIconPickerView(
             purpose: .assistant,
             savedValue: avatar,
-            defaultValue: .piText,
+            defaultValue: .officialPi,
             builtinOptions: [
                 IconPickerOption(
                     id: "officialPi",
@@ -63,7 +63,7 @@ struct AvatarPickerView: View {
         switch avatar {
         case .emoji(let emoji): return .emoji(emoji)
         case .genmoji(_, let contentDescription): return .genmoji(contentDescription)
-        case .officialPi, .piText, .golGrid: return nil
+        case .officialPi, .golGrid: return nil
         }
     }
 }

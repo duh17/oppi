@@ -15,7 +15,7 @@ struct ChatEmptyState: View {
         self.agentId = agentId
         self.agentIcon = agentIcon
         let presentation = AssistantIdentityPresentation.resolve(agentId: agentId, agentIcon: agentIcon)
-        _avatar = State(initialValue: presentation == .globalAvatar ? AssistantAvatar.current : .piText)
+        _avatar = State(initialValue: presentation == .globalAvatar ? AssistantAvatar.current : .officialPi)
     }
 
     var body: some View {

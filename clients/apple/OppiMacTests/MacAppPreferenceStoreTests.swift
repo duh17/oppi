@@ -447,13 +447,11 @@ struct MacAppSettingsPreferenceControlTests {
     @Test func avatarPickerOffersBuiltinsAndEmojiWithoutGenmoji() {
         #expect(MacAssistantAvatarKind.allCases == [
             .officialPi,
-            .piText,
             .golGrid,
             .emoji,
         ])
         #expect(MacAssistantAvatarKind.allCases.map(\.title) == [
             "Official Pi",
-            "Classic π",
             "Grid π",
             "Emoji",
         ])
@@ -526,11 +524,9 @@ struct AssistantAvatarPreferenceTests {
     @Test func builtinCasesMatchIOS() {
         #expect(AssistantAvatarPreference.builtinCases == [
             .officialPi,
-            .piText,
             .golGrid,
         ])
         #expect(AssistantAvatarPreference.officialPi.displayName == "Official Pi")
-        #expect(AssistantAvatarPreference.piText.displayName == "Classic π")
         #expect(AssistantAvatarPreference.golGrid.displayName == "Grid π")
     }
 
@@ -555,25 +551,48 @@ struct AssistantAvatarPreferenceTests {
         #expect(UserDefaults.standard.string(forKey: AssistantAvatarPreference.typeKey) == "emoji")
         #expect(UserDefaults.standard.string(forKey: AssistantAvatarPreference.emojiKey) == "🦊")
 
-        try AssistantAvatarPreference.setCurrent(.piText)
-        #expect(AssistantAvatarPreference.current == .piText)
+    }
+
+    @Test func unsetPreferenceDefaultsToOfficialPi() throws {
+        let suiteName = "AssistantAvatarPreferenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        #expect(AssistantAvatarPreferenceStore(defaults: defaults).current == .officialPi)
+    }
+
+    @Test func legacyPiTextMigratesToOfficialPiAndClearsStalePayloads() throws {
+        let suiteName = "AssistantAvatarPreferenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        defaults.set("piText", forKey: AssistantAvatarPreference.typeKey)
+        defaults.set("🦊", forKey: AssistantAvatarPreference.emojiKey)
+        defaults.set(Data([0x01]), forKey: AssistantAvatarPreference.genmojiKey)
+        defaults.set("Stale glyph", forKey: AssistantAvatarPreference.genmojiDescriptionKey)
+
+        let store = AssistantAvatarPreferenceStore(defaults: defaults)
+        #expect(store.current == .officialPi)
+        #expect(defaults.string(forKey: AssistantAvatarPreference.typeKey) == "officialPi")
+        #expect(defaults.object(forKey: AssistantAvatarPreference.emojiKey) == nil)
+        #expect(defaults.object(forKey: AssistantAvatarPreference.genmojiKey) == nil)
+        #expect(defaults.object(forKey: AssistantAvatarPreference.genmojiDescriptionKey) == nil)
+        #expect(store.current == .officialPi)
     }
 
     @Test func rejectsInvalidEmojiWithoutWriting() throws {
         let suiteName = "AssistantAvatarPreferenceTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-        defaults.set("piText", forKey: AssistantAvatarPreference.typeKey)
+        defaults.set("officialPi", forKey: AssistantAvatarPreference.typeKey)
 
         let store = AssistantAvatarPreferenceStore(defaults: defaults)
         #expect(throws: AssistantAvatarPreference.PersistenceError.invalidEmoji) {
             try store.setCurrent(.emoji("plain text"))
         }
-        #expect(store.current == .piText)
-        #expect(defaults.string(forKey: AssistantAvatarPreference.typeKey) == "piText")
+        #expect(store.current == .officialPi)
+        #expect(defaults.string(forKey: AssistantAvatarPreference.typeKey) == "officialPi")
     }
 
-    @Test func storedGenmojiReadsAsPiTextWithoutRewriting() throws {
+    @Test func storedGenmojiReadsAsOfficialPiWithoutRewriting() throws {
         let suiteName = "AssistantAvatarPreferenceTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
@@ -582,21 +601,32 @@ struct AssistantAvatarPreferenceTests {
         defaults.set("Pink square", forKey: AssistantAvatarPreference.genmojiDescriptionKey)
 
         let store = AssistantAvatarPreferenceStore(defaults: defaults)
-        #expect(store.current == .piText)
+        #expect(store.current == .officialPi)
         #expect(defaults.string(forKey: AssistantAvatarPreference.typeKey) == "genmoji")
         #expect(defaults.data(forKey: AssistantAvatarPreference.genmojiKey) == Data([0x00, 0x01]))
+        #expect(defaults.string(forKey: AssistantAvatarPreference.genmojiDescriptionKey) == "Pink square")
     }
 
-    @Test func malformedPersistedEmojiNormalizesToPiText() throws {
-        let suiteName = "AssistantAvatarPreferenceTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
-        defaults.set("emoji", forKey: AssistantAvatarPreference.typeKey)
-        defaults.set("plain text", forKey: AssistantAvatarPreference.emojiKey)
+    @Test func malformedPersistedValuesNormalizeToOfficialPi() throws {
+        let cases: [(type: String, emoji: String?)] = [
+            ("emoji", nil),
+            ("emoji", ""),
+            ("emoji", "plain text"),
+            ("emoji", "🤖🦊"),
+            ("emoji", "🤖-"),
+            ("totally-unknown", "🤖"),
+        ]
+        for fixture in cases {
+            let suiteName = "AssistantAvatarPreferenceTests.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suiteName))
+            defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+            defaults.set(fixture.type, forKey: AssistantAvatarPreference.typeKey)
+            defaults.set(fixture.emoji, forKey: AssistantAvatarPreference.emojiKey)
 
-        let store = AssistantAvatarPreferenceStore(defaults: defaults)
-        #expect(store.current == .piText)
-        #expect(defaults.string(forKey: AssistantAvatarPreference.typeKey) == "piText")
+            let store = AssistantAvatarPreferenceStore(defaults: defaults)
+            #expect(store.current == .officialPi)
+            #expect(defaults.string(forKey: AssistantAvatarPreference.typeKey) == "officialPi")
+        }
     }
 }
 

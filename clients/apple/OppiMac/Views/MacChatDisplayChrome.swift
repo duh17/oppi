@@ -12,10 +12,6 @@ struct MacAssistantAvatarView: View {
             switch avatar {
             case .officialPi:
                 MacOfficialPiMark(color: theme.text.primary)
-            case .piText:
-                Text("π")
-                    .font(.system(size: size * 0.55, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(theme.accent.purple)
             case .golGrid:
                 MacAssistantGridIcon(
                     sessionId: sessionId,

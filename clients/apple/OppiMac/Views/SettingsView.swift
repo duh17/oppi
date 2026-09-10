@@ -163,7 +163,6 @@ enum MacAppSettingsPreferenceControl: String, CaseIterable, Identifiable {
 /// Built-in plus emoji avatar kinds. Mac does not offer Genmoji.
 enum MacAssistantAvatarKind: String, CaseIterable, Identifiable {
     case officialPi
-    case piText
     case golGrid
     case emoji
 
@@ -172,7 +171,6 @@ enum MacAssistantAvatarKind: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .officialPi: return AssistantAvatarPreference.officialPi.displayName
-        case .piText: return AssistantAvatarPreference.piText.displayName
         case .golGrid: return AssistantAvatarPreference.golGrid.displayName
         case .emoji: return "Emoji"
         }
@@ -181,7 +179,6 @@ enum MacAssistantAvatarKind: String, CaseIterable, Identifiable {
     init(avatar: AssistantAvatarPreference) {
         switch avatar {
         case .officialPi: self = .officialPi
-        case .piText: self = .piText
         case .golGrid: self = .golGrid
         case .emoji: self = .emoji
         }
@@ -722,8 +719,6 @@ struct AppSettingsView: View {
         switch kind {
         case .officialPi:
             persistAvatar(.officialPi)
-        case .piText:
-            persistAvatar(.piText)
         case .golGrid:
             persistAvatar(.golGrid)
         case .emoji:

@@ -186,7 +186,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
             "Agent session row did not expose its saved-Agent identity"
         )
         XCTAssertTrue(
-            ordinarySession.label.contains("Classic π"),
+            ordinarySession.label.contains("Official Pi"),
             "Ordinary session row must expose the selected assistant avatar identity"
         )
         saveScreenshot(name: "agent-icons-emoji-session-identities")
@@ -271,7 +271,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
         let savedAvatar = app.descendants(matching: .any)["assistant.avatarProof.saved"]
         XCTAssertTrue(savedAvatar.waitForExistence(timeout: 5), "Saved assistant avatar proof was not visible")
-        XCTAssertTrue(savedAvatar.label.contains("Classic π"))
+        XCTAssertTrue(savedAvatar.label.contains("Official Pi"))
 
         app.buttons["assistant.avatarProof.open"].tap()
         let pickerList = app.collectionViews["assistant.avatarPicker.list"]
@@ -292,7 +292,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         XCTAssertTrue(cancel.isHittable, "Assistant picker Cancel must remain reachable")
         cancel.tap()
         XCTAssertTrue(savedAvatar.waitForExistence(timeout: 3), "Cancel did not dismiss assistant picker")
-        XCTAssertTrue(savedAvatar.label.contains("Classic π"), "Cancel must preserve the saved assistant avatar")
+        XCTAssertTrue(savedAvatar.label.contains("Official Pi"), "Cancel must preserve the saved assistant avatar")
         saveScreenshot(name: "assistant-avatar-invalid-cancel")
     }
 

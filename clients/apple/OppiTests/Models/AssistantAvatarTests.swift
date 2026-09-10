@@ -10,26 +10,23 @@ import UniformTypeIdentifiers
 @MainActor
 struct AssistantAvatarTests {
 
-    @Test("builtin cases include the official Pi logo, piText, and golGrid")
+    @Test("builtins offer only Official Pi and Grid π")
     func builtinCases() {
-        #expect(AssistantAvatar.builtinCases.contains(.officialPi))
-        #expect(AssistantAvatar.builtinCases.contains(.piText))
-        #expect(AssistantAvatar.builtinCases.contains(.golGrid))
-        #expect(AssistantAvatar.builtinCases.count == 3)
+        #expect(AssistantAvatar.builtinCases == [.officialPi, .golGrid])
     }
 
     @Test("display names")
     func displayNames() {
         #expect(AssistantAvatar.officialPi.displayName == "Official Pi")
-        #expect(AssistantAvatar.piText.displayName == "Classic π")
         #expect(AssistantAvatar.golGrid.displayName == "Grid π")
         #expect(AssistantAvatar.emoji("🤖").displayName == "🤖")
         #expect(AssistantAvatar.emoji("🧠").displayName == "🧠")
     }
 
-    @Test("malformed persisted emoji and unknown types normalize to classic pi")
-    func malformedPersistedValuesNormalizeToPiText() throws {
+    @Test("malformed persisted emoji and unknown types normalize to Official Pi")
+    func malformedPersistedValuesNormalizeToOfficialPi() throws {
         let cases: [(type: String, emoji: String?)] = [
+            ("emoji", nil),
             ("emoji", ""),
             ("emoji", "plain text"),
             ("emoji", "🤖🦊"),
@@ -47,8 +44,8 @@ struct AssistantAvatarTests {
             }
 
             let persistence = AssistantAvatarPersistence(defaults: defaults)
-            #expect(persistence.current == .piText)
-            #expect(defaults.string(forKey: "assistantAvatarType") == "piText")
+            #expect(persistence.current == .officialPi)
+            #expect(defaults.string(forKey: "assistantAvatarType") == "officialPi")
         }
     }
 
@@ -56,7 +53,6 @@ struct AssistantAvatarTests {
     func validPersistedValuesArePreserved() throws {
         let cases: [(type: String, emoji: String?, expected: AssistantAvatar)] = [
             ("officialPi", nil, .officialPi),
-            ("piText", nil, .piText),
             ("golGrid", nil, .golGrid),
             ("emoji", "🦊", .emoji("🦊")),
         ]
@@ -74,13 +70,13 @@ struct AssistantAvatarTests {
         }
     }
 
-    @Test("default is piText")
+    @Test("default is Official Pi")
     func defaultAvatar() {
         // Clear any stored preference
         UserDefaults.standard.removeObject(forKey: "assistantAvatarType")
         AssistantAvatar.reloadAfterExternalChange()
         let avatar = AssistantAvatar.current
-        #expect(avatar == .piText)
+        #expect(avatar == .officialPi)
     }
 
     @Test("persistence round-trip for officialPi announces the change")
@@ -95,7 +91,7 @@ struct AssistantAvatarTests {
             }
             defer {
                 NotificationCenter.default.removeObserver(observer)
-                try? AssistantAvatar.setCurrent(.piText)
+                clearPersistedAvatar()
             }
 
             do {
@@ -137,10 +133,44 @@ struct AssistantAvatarTests {
         #expect(margin.alpha < 0.01)
     }
 
-    @Test("persistence round-trip for piText")
-    func persistPiText() throws {
-        try AssistantAvatar.setCurrent(.piText)
-        #expect(AssistantAvatar.current == .piText)
+    @Test("invalid draft Genmoji renders Official Pi in the requested theme")
+    func invalidDraftGenmojiRendersOfficialPi() throws {
+        for themeID in [ThemeID.dark, .light] {
+            let fallback = AssistantAvatarRenderer.render(
+                avatar: .genmoji(data: Data([0xFF]), contentDescription: "Bad data"),
+                sessionId: "invalid-draft",
+                size: 64,
+                themeID: themeID
+            )
+            let official = AssistantAvatarRenderer.render(
+                avatar: .officialPi,
+                sessionId: "invalid-draft",
+                size: 64,
+                themeID: themeID
+            )
+            let matchesOfficial = try #require(fallback.pngData()) == #require(official.pngData())
+            #expect(matchesOfficial)
+        }
+    }
+
+    @Test("legacy piText migrates to Official Pi and clears stale payloads")
+    func legacyPiTextMigratesToOfficialPi() throws {
+        let suiteName = "AssistantAvatarTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        defaults.set("piText", forKey: "assistantAvatarType")
+        defaults.set("🦊", forKey: "assistantAvatarEmoji")
+        defaults.set(Data([0x01]), forKey: "assistantAvatarGenmoji")
+        defaults.set("Stale glyph", forKey: "assistantAvatarGenmojiDescription")
+
+        let persistence = AssistantAvatarPersistence(defaults: defaults)
+        #expect(persistence.current == .officialPi)
+        #expect(defaults.string(forKey: "assistantAvatarType") == "officialPi")
+        #expect(defaults.object(forKey: "assistantAvatarEmoji") == nil)
+        #expect(defaults.object(forKey: "assistantAvatarGenmoji") == nil)
+        #expect(defaults.object(forKey: "assistantAvatarGenmojiDescription") == nil)
+        persistence.invalidate()
+        #expect(persistence.current == .officialPi)
     }
 
     @Test("persistence round-trip for golGrid")
@@ -148,7 +178,7 @@ struct AssistantAvatarTests {
         try AssistantAvatar.setCurrent(.golGrid)
         #expect(AssistantAvatar.current == .golGrid)
         // Restore default
-        try AssistantAvatar.setCurrent(.piText)
+        try AssistantAvatar.setCurrent(.officialPi)
     }
 
     @Test("persistence round-trip for emoji")
@@ -157,7 +187,7 @@ struct AssistantAvatarTests {
         let restored = AssistantAvatar.current
         #expect(restored == .emoji("🦊"))
         // Restore default
-        try AssistantAvatar.setCurrent(.piText)
+        try AssistantAvatar.setCurrent(.officialPi)
     }
 
     @Test("persisted Genmoji decodes once and shares its cached image")
@@ -183,10 +213,10 @@ struct AssistantAvatarTests {
         #expect(persistence.image(for: first) === decodedImage)
         #expect(persistence.image(for: second) === decodedImage)
 
-        try persistence.setCurrent(.piText)
-        #expect(persistence.current == .piText)
+        try persistence.setCurrent(.officialPi)
+        #expect(persistence.current == .officialPi)
         #expect(decodeCount == 1)
-        #expect(persistence.image(for: .piText) == nil)
+        #expect(persistence.image(for: .officialPi) == nil)
     }
 
     @Test("cached persisted snapshot keeps ordinary row updates off persistence")
@@ -253,8 +283,8 @@ struct AssistantAvatarTests {
         #expect(persistence.image(for: prepared) === decodedImage)
     }
 
-    @Test("corrupt persisted Genmoji falls back to visible pi text")
-    func corruptPersistedGenmojiFallsBackToPiText() {
+    @Test("corrupt persisted Genmoji normalizes to Official Pi")
+    func corruptPersistedGenmojiFallsBackToOfficialPi() {
         let defaults = UserDefaults.standard
         defaults.set("genmoji", forKey: "assistantAvatarType")
         defaults.set(Data([0x00, 0x01, 0x02]), forKey: "assistantAvatarGenmoji")
@@ -262,11 +292,14 @@ struct AssistantAvatarTests {
         defer { clearPersistedAvatar() }
         AssistantAvatar.reloadAfterExternalChange()
 
-        #expect(AssistantAvatar.current == .piText)
+        #expect(AssistantAvatar.current == .officialPi)
+        #expect(defaults.string(forKey: "assistantAvatarType") == "officialPi")
+        #expect(defaults.object(forKey: "assistantAvatarGenmoji") == nil)
+        #expect(defaults.object(forKey: "assistantAvatarGenmojiDescription") == nil)
     }
 
     @Test("historical local image record without a description falls back conservatively")
-    func historicalLocalImageWithoutDescriptionFallsBackToPiText() throws {
+    func historicalLocalImageWithoutDescriptionFallsBackToOfficialPi() throws {
         let defaults = UserDefaults.standard
         defaults.set("genmoji", forKey: "assistantAvatarType")
         defaults.set(try genericHEICFixture(), forKey: "assistantAvatarGenmoji")
@@ -274,7 +307,8 @@ struct AssistantAvatarTests {
         defer { clearPersistedAvatar() }
         AssistantAvatar.reloadAfterExternalChange()
 
-        #expect(AssistantAvatar.current == .piText)
+        #expect(AssistantAvatar.current == .officialPi)
+        #expect(defaults.string(forKey: "assistantAvatarType") == "officialPi")
     }
 
     @Test("historical local image record preserves its persisted content description")
@@ -331,8 +365,8 @@ struct AssistantAvatarTests {
     @Test("persistence rejection leaves the mounted binding consistent")
     func rejectedPersistenceDoesNotMutateBinding() throws {
         defer { clearPersistedAvatar() }
-        try AssistantAvatar.setCurrent(.piText)
-        var mountedAvatar = AssistantAvatar.piText
+        try AssistantAvatar.setCurrent(.officialPi)
+        var mountedAvatar = AssistantAvatar.officialPi
         let binding = Binding(
             get: { mountedAvatar },
             set: { mountedAvatar = $0 }
@@ -345,17 +379,17 @@ struct AssistantAvatarTests {
             )
         }
 
-        #expect(mountedAvatar == .piText)
-        #expect(AssistantAvatar.current == .piText)
+        #expect(mountedAvatar == .officialPi)
+        #expect(AssistantAvatar.current == .officialPi)
     }
 
     @Test("mounted session identity label refreshes after assistant avatar notification")
     func mountedSessionIdentityLabelRefreshes() throws {
         defer { clearPersistedAvatar() }
-        try AssistantAvatar.setCurrent(.piText)
+        try AssistantAvatar.setCurrent(.officialPi)
         let view = SessionGridBadgeView()
         view.sessionId = "mounted-row"
-        #expect(view.accessibilityLabel == "Classic π")
+        #expect(view.accessibilityLabel == "Official Pi")
 
         try AssistantAvatar.setCurrent(.emoji("🦊"))
 
@@ -366,13 +400,12 @@ struct AssistantAvatarTests {
     func emojiEquality() {
         #expect(AssistantAvatar.emoji("🤖") == .emoji("🤖"))
         #expect(AssistantAvatar.emoji("🤖") != .emoji("🧠"))
-        #expect(AssistantAvatar.emoji("🤖") != .piText)
+        #expect(AssistantAvatar.emoji("🤖") != .officialPi)
     }
 
     @Test("cache identifiers distinguish emoji values")
     func cacheIdentifiers() {
         #expect(AssistantAvatar.officialPi.cacheIdentifier == "officialPi")
-        #expect(AssistantAvatar.piText.cacheIdentifier == "piText")
         #expect(AssistantAvatar.golGrid.cacheIdentifier == "golGrid")
         #expect(AssistantAvatar.emoji("🤖").cacheIdentifier != AssistantAvatar.emoji("🧠").cacheIdentifier)
     }

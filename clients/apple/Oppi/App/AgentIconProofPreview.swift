@@ -452,7 +452,7 @@ struct AgentManagementPiProofPreview: View {
 }
 
 struct AssistantAvatarPickerProofPreview: View {
-    @State private var avatar: AssistantAvatar = .piText
+    @State private var avatar: AssistantAvatar = .officialPi
     @State private var isShowingPicker = false
 
     var body: some View {
