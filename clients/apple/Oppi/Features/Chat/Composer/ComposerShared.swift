@@ -575,6 +575,9 @@ enum ComposerShared {
             guard manager.isActiveRecordingSource(owner.rawValue), manager.isRecording || manager.isPreparing else {
                 textBeforeRecording?.wrappedValue = nil
                 suppressKeyboard.wrappedValue = false
+                if case .error(let message) = manager.state {
+                    throw VoiceInputError.internalError(message)
+                }
                 throw CancellationError()
             }
             return prefix

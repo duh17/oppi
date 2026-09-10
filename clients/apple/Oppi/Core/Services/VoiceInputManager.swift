@@ -899,13 +899,18 @@ final class VoiceInputManager {
     /// Pass `keyboardLanguage` from the text view's `textInputMode?.primaryLanguage`
     /// to match the user's active keyboard. Falls back to device locale when nil.
     func startRecording(keyboardLanguage: String? = nil, source: String = "unknown") async throws {
-        guard state == .idle else {
-            logger.warning("Cannot start: state is \(String(describing: self.state))")
-            return
-        }
         guard !operationInFlight else {
             logger.warning("Cannot start: operation already in flight")
-            return
+            throw VoiceInputError.captureBusy
+        }
+        switch state {
+        case .idle, .error:
+            // A failed take has already been torn down. The visible mic offers
+            // retry immediately; don't silently reject it during the error timer.
+            break
+        default:
+            logger.warning("Cannot start: state is \(String(describing: self.state))")
+            throw VoiceInputError.captureBusy
         }
 
         nextStartRequestID += 1
@@ -962,8 +967,9 @@ final class VoiceInputManager {
                     scheduleErrorReset()
                 } else {
                     ownsOperation = false
+                    throw CancellationError()
                 }
-                return
+                throw VoiceInputError.microphonePermissionDenied
             }
         }
 
@@ -981,10 +987,10 @@ final class VoiceInputManager {
             serverConnection: frozenTake.connection,
             serverDictationTarget: frozenTake.target
         )
-        let provider = try provider(for: engine)
         var modelPathTag = "warm_cache"
 
         do {
+            let provider = try provider(for: engine)
             try validateServerDictationAvailabilityIfNeeded(for: engine, take: frozenTake)
             try ensureStartRequestActive(requestID)
 
@@ -1030,6 +1036,14 @@ final class VoiceInputManager {
             let totalMs = startTime.elapsedMs()
             let userFacingMessage = userFacingErrorMessage(for: error)
             let errorKind = Self.metricErrorKind(for: error)
+            let failure = error as NSError
+            ClientLog.error("VoiceInput", "Dictation start failed", metadata: [
+                "phase": "setup",
+                "engine": engine.logName,
+                "source": source,
+                "errorDomain": failure.domain,
+                "errorCode": String(failure.code),
+            ])
             recordVoiceMetric(
                 .voiceSetupMs,
                 valueMs: totalMs,

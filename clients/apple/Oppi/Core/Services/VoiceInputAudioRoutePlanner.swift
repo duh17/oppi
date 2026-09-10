@@ -25,13 +25,11 @@ struct VoiceInputAudioRoutePlan: Equatable {
 
 enum VoiceInputAudioRoutePlanner {
     static func plan(
-        availableInputs: [VoiceInputAudioRouteInput],
-        bluetoothHighQualityRecordingAvailable: Bool
+        availableInputs: [VoiceInputAudioRouteInput]
     ) -> VoiceInputAudioRoutePlan {
-        var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
-        if bluetoothHighQualityRecordingAvailable {
-            options.insert(.bluetoothHighQualityRecording)
-        }
+        // The SDK documents high-quality Bluetooth recording for categories
+        // supporting both input and output. Dictation is input-only (.record).
+        let options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
 
         // HFP, then wired headset, then built-in only when it is the sole port type.
         // Polar / data-source only for builtInMic. Front toward the user beats a
@@ -95,25 +93,6 @@ enum VoiceInputAudioRoutePlanner {
         inputs.filter { $0.portType != .bluetoothHFP }
     }
 
-    static func activateActions(
-        preferredUID: String?,
-        availableInputs: [VoiceInputAudioRouteInput],
-        firstActivateSucceeded: Bool
-    ) -> [String] {
-        var steps: [String] = []
-        if shouldResetPreferredInput(
-            preferredUID: preferredUID,
-            availableInputs: availableInputs
-        ) {
-            steps.append("resetPreferredInput")
-        }
-        steps.append("setActive")
-        if !firstActivateSucceeded {
-            steps.append("resetPreferredInput")
-            steps.append("retrySetActive")
-        }
-        return steps
-    }
 }
 
 extension VoiceInputAudioRouteInput {

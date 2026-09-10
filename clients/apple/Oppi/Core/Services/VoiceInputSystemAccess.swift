@@ -23,10 +23,7 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     static let recordingCategory: AVAudioSession.Category = .record
     static let recordingMode: AVAudioSession.Mode = .default
     static let recordingCategoryOptions: AVAudioSession.CategoryOptions = VoiceInputAudioRoutePlanner.plan(
-        availableInputs: [],
-        bluetoothHighQualityRecordingAvailable: {
-            if #available(iOS 26.0, *) { true } else { false }
-        }()
+        availableInputs: []
     ).options
     #endif
 
@@ -55,34 +52,33 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     func activateAudioSession() throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(
-            Self.recordingCategory,
-            mode: Self.recordingMode,
-            options: Self.recordingCategoryOptions
+        let usedBuiltInFallback = try Self.configureAndActivate(
+            setCategory: { options in
+                try session.setCategory(Self.recordingCategory, mode: Self.recordingMode, options: options)
+            },
+            setActive: { active, options in try session.setActive(active, options: options) }
         )
-        let bluetoothHighQualityRecordingAvailable: Bool
-        if #available(iOS 26.0, *) {
-            bluetoothHighQualityRecordingAvailable = true
-        } else {
-            bluetoothHighQualityRecordingAvailable = false
-        }
+        // Apple requires category + mode + activation before preferred-input
+        // changes. Re-read ports now, not from the previous playback session.
         var availableInputs = (session.availableInputs ?? []).map(VoiceInputAudioRouteInput.init)
-        try Self.activateClearingStalePreferredInput(
-            session,
-            availableInputs: &availableInputs
-        )
-        var plan = VoiceInputAudioRoutePlanner.plan(
-            availableInputs: availableInputs,
-            bluetoothHighQualityRecordingAvailable: bluetoothHighQualityRecordingAvailable
-        )
+        if usedBuiltInFallback || VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
+            preferredUID: session.preferredInput?.uid,
+            availableInputs: availableInputs
+        ) {
+            try? session.setPreferredInput(nil)
+            availableInputs = (session.availableInputs ?? []).map(VoiceInputAudioRouteInput.init)
+        }
+        if usedBuiltInFallback {
+            availableInputs = availableInputs.filter { $0.portType == .builtInMic }
+        }
+        var plan = VoiceInputAudioRoutePlanner.plan(availableInputs: availableInputs)
         Self.apply(plan, to: session)
         if plan.preferredInputUID != nil,
            session.currentRoute.inputs.contains(where: { $0.portType == .bluetoothHFP }) == false,
            availableInputs.contains(where: { $0.portType == .bluetoothHFP }) {
             logger.warning("Bluetooth HFP did not become the input route; falling back to built-in mic")
             plan = VoiceInputAudioRoutePlanner.plan(
-                availableInputs: VoiceInputAudioRoutePlanner.excludingBluetoothHFP(availableInputs),
-                bluetoothHighQualityRecordingAvailable: bluetoothHighQualityRecordingAvailable
+                availableInputs: VoiceInputAudioRoutePlanner.excludingBluetoothHFP(availableInputs)
             )
             Self.apply(plan, to: session)
         }
@@ -99,38 +95,29 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     }
 
     #if os(iOS)
-    /// Reset a disconnected preferred port before `setActive`, then retry once
-    /// if activation still fails.
-    private static func activateClearingStalePreferredInput(
-        _ session: AVAudioSession,
-        availableInputs: inout [VoiceInputAudioRouteInput]
-    ) throws {
-        func refreshAvailableInputs() {
-            availableInputs = (session.availableInputs ?? []).map(VoiceInputAudioRouteInput.init)
-        }
-        func clearStalePreferredInputIfNeeded() {
-            guard VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
-                preferredUID: session.preferredInput?.uid,
-                availableInputs: availableInputs
-            ) else { return }
-            try? session.setPreferredInput(nil)
-            refreshAvailableInputs()
-        }
-
-        clearStalePreferredInputIfNeeded()
+    /// The real configuration/activation sequence, with closures only at the
+    /// hardware boundary so tests can reject category or activation separately.
+    /// Bluetooth is optional: retry once with no Bluetooth category options.
+    /// Returns true when the caller must prefer the built-in microphone.
+    static func configureAndActivate(
+        setCategory: (AVAudioSession.CategoryOptions) throws -> Void,
+        setActive: (Bool, AVAudioSession.SetActiveOptions) throws -> Void
+    ) throws -> Bool {
         do {
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            try setCategory(recordingCategoryOptions)
+            // notifyOthersOnDeactivation is only valid with active=false.
+            try setActive(true, [])
+            return false
         } catch {
+            let failure = error as NSError
             logger.warning(
-                "setActive failed: \(error.localizedDescription, privacy: .public); clearing preferred input and retrying"
+                "Dictation audio configuration failed (\(failure.domain, privacy: .public)/\(failure.code)); retrying without Bluetooth"
             )
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
-            refreshAvailableInputs()
-            clearStalePreferredInputIfNeeded()
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            try? setActive(false, .notifyOthersOnDeactivation)
+            try setCategory([])
+            try setActive(true, [])
+            return true
         }
-        refreshAvailableInputs()
-        clearStalePreferredInputIfNeeded()
     }
 
     // setPreferredPolarPattern, then setPreferredDataSource.

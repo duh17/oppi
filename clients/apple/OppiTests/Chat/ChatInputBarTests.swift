@@ -151,6 +151,38 @@ struct ChatInputBarTests {
         #expect(textBeforeRecording == nil)
     }
 
+    @Test("Mic permission failure is not disguised as cancellation")
+    func microphoneDenialSurfacesStartErrorAndRestoresTyping() async {
+        let systemAccess = MockVoiceInputSystemAccess()
+        systemAccess.hasMicPermission = false
+        systemAccess.requestMicPermissionResult = false
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.onDevice)
+        var prefix: String?
+        var suppressed = false
+        var focus = 0
+        await #expect(throws: VoiceInputError.self) {
+            try await ComposerShared.startVoiceInput(
+                manager: manager,
+                keyboardLanguage: "en-US",
+                owner: .inlineComposer,
+                baseText: "draft",
+                textBeforeRecording: Binding(get: { prefix }, set: { prefix = $0 }),
+                suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
+                focusRequestID: Binding(get: { focus }, set: { focus = $0 })
+            )
+        }
+        #expect(manager.state == .error("Microphone permission denied"))
+        #expect(!manager._testOperationInFlight)
+        #expect(prefix == nil)
+        #expect(!suppressed)
+        #expect(provider.prepareSessionCallCount == 0)
+    }
+
     @Test("ComposerShared commits final dictation text before submit")
     func finishOwnedVoiceInputBeforeSubmitCommitsFinalTranscript() async throws {
         AppPreferences.Voice.setEngineMode(.onDevice)

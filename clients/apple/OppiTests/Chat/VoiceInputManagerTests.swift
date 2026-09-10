@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import SwiftUI
 import Testing
 @testable import Oppi
 
@@ -11,6 +12,51 @@ import Testing
 @Suite("VoiceInputManager")
 @MainActor
 struct VoiceInputManagerTests {
+
+    @Test func composerMicRetriesImmediatelyAfterAudioActivationFailure() async throws {
+        let systemAccess = MockVoiceInputSystemAccess()
+        systemAccess.activateAudioSessionError = TestVoiceError("Audio activation failed")
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: systemAccess
+        )
+        manager.setEngineMode(.onDevice)
+        var prefix: String?
+        var suppressed = false
+        var focus = 0
+        func tapMic() async throws {
+            try await ComposerShared.startVoiceInput(
+                manager: manager,
+                keyboardLanguage: "en-US",
+                owner: .inlineComposer,
+                baseText: "Keep draft",
+                textBeforeRecording: Binding(get: { prefix }, set: { prefix = $0 }),
+                suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
+                focusRequestID: Binding(get: { focus }, set: { focus = $0 })
+            )
+        }
+
+        await #expect(throws: TestVoiceError.self) { try await tapMic() }
+        #expect(manager.state == .error("Audio activation failed"))
+        #expect(!manager._testOperationInFlight)
+        #expect(prefix == nil)
+        #expect(!suppressed)
+        #expect(session.startCallCount == 0)
+
+        systemAccess.activateAudioSessionError = nil
+        try await tapMic()
+        #expect(manager.state == .recording)
+        #expect(manager.isActiveRecordingSource("inline_mic_tap"))
+        #expect(systemAccess.activateAudioSessionCallCount == 2)
+        #expect(session.startCallCount == 1)
+        #expect(prefix == "Keep draft ")
+        #expect(suppressed)
+        #expect(focus == 2)
+        await manager.cancelRecording()
+    }
 
     // MARK: - Initial State
 
@@ -31,28 +77,13 @@ struct VoiceInputManagerTests {
 
     // MARK: - State Guards
 
-    @Test func startRecordingRejectsNonIdleState() async throws {
+    @Test func startRecordingRejectsActiveStateWithExplicitError() async {
         let manager = VoiceInputManager()
-
-        // Simulate preparing state
-        manager._testState = .preparingModel
-        try await manager.startRecording()
-        #expect(manager.state == .preparingModel, "Should not change state when not idle")
-
-        // Simulate recording state
-        manager._testState = .recording
-        try await manager.startRecording()
-        #expect(manager.state == .recording, "Should not change state when recording")
-
-        // Simulate processing state
-        manager._testState = .processing
-        try await manager.startRecording()
-        #expect(manager.state == .processing, "Should not change state when processing")
-
-        // Simulate error state
-        manager._testState = .error("test")
-        try await manager.startRecording()
-        #expect(manager.state == .error("test"), "Should not change state when in error")
+        for state: VoiceInputManager.State in [.preparingModel, .recording, .processing] {
+            manager._testState = state
+            await #expect(throws: VoiceInputError.self) { try await manager.startRecording() }
+            #expect(manager.state == state)
+        }
     }
 
     @Test func startRecordingRejectsWhenOperationInFlight() async throws {
@@ -60,7 +91,7 @@ struct VoiceInputManagerTests {
 
         // State is idle but operation lock is held
         manager._testOperationInFlight = true
-        try await manager.startRecording()
+        await #expect(throws: VoiceInputError.self) { try await manager.startRecording() }
         #expect(manager.state == .idle, "Should not proceed when operation is in flight")
     }
 
@@ -283,25 +314,19 @@ struct VoiceInputManagerTests {
         // Lock is held (e.g., stop just completed but defer hasn't cleared it)
         manager._testOperationInFlight = true
 
-        // State is idle but lock prevents start
-        try await manager.startRecording()
+        // State is idle but lock prevents start, explicitly rather than silently.
+        await #expect(throws: VoiceInputError.self) { try await manager.startRecording() }
         // Should still be idle — start was rejected
         #expect(manager.state == .idle)
     }
 
-    /// Verifies that after an error, the state eventually resets to idle.
-    @Test func errorStateResetsToIdle() async {
+    @Test func errorRetryDoesNotBypassOperationLock() async {
         let manager = VoiceInputManager()
         manager._testState = .error("test error")
-
-        // Error state should not allow start
-        try? await manager.startRecording()
+        manager._testOperationInFlight = true
+        await #expect(throws: VoiceInputError.self) { try await manager.startRecording() }
         #expect(manager.state == .error("test error"))
-
-        // After reset
-        manager._testState = .idle
-        #expect(manager.state == .idle)
-        #expect(!manager.isRecording)
+        #expect(manager._testOperationInFlight)
     }
 
     // MARK: - State Transitions
@@ -505,7 +530,7 @@ struct VoiceInputManagerTests {
             #expect(!options.contains(.farFieldInput))
         }
         if #available(iOS 26.0, *) {
-            #expect(options.contains(.bluetoothHighQualityRecording))
+            #expect(!options.contains(.bluetoothHighQualityRecording))
         }
         #endif
     }

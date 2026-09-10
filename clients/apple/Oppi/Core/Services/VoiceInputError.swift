@@ -1,6 +1,8 @@
 import Foundation
 
 enum VoiceInputError: LocalizedError {
+    case captureBusy
+    case microphonePermissionDenied
     case localeNotSupported(String)
     case serverNotConnected
     case serverAsrUnavailable
@@ -23,13 +25,17 @@ enum VoiceInputError: LocalizedError {
             "decode"
         case .serverNotConnected, .serverAsrUnavailable:
             "misconfigured"
-        case .localeNotSupported, .internalError:
+        case .captureBusy, .microphonePermissionDenied, .localeNotSupported, .internalError:
             "other"
         }
     }
 
     var errorDescription: String? {
         switch self {
+        case .captureBusy:
+            "Voice input is already busy. Stop the current recording and try again."
+        case .microphonePermissionDenied:
+            "Microphone permission denied"
         case .localeNotSupported(let locale):
             "Speech recognition not supported for \(locale)"
         case .serverNotConnected:

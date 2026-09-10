@@ -110,6 +110,7 @@ struct ChatInputBar<ActionRow: View>: View {
     /// When true, the keyboard is hidden while the cursor remains visible.
     /// Used during voice recording to show cursor without keyboard.
     @State private var suppressKeyboard = false
+    @State private var voiceInputStartError: String?
 
     /// Prevents double-submit while final dictation text is being committed.
     @State private var isFinishingVoiceBeforeSend = false
@@ -339,6 +340,14 @@ struct ChatInputBar<ActionRow: View>: View {
         }
         .padding(.horizontal, appliesOuterPadding ? 16 : 0)
         .padding(.bottom, appliesOuterPadding ? 8 : 0)
+        .alert("Couldn't Start Dictation", isPresented: Binding(
+            get: { voiceInputStartError != nil },
+            set: { if !$0 { voiceInputStartError = nil } }
+        )) {
+            Button("OK", role: .cancel) { voiceInputStartError = nil }
+        } message: {
+            Text(voiceInputStartError ?? "Please try again.")
+        }
         // Opening Photos resigns text focus, which can remove the inline action row.
         // Keep its presenter on the stable composer root instead of the attach button.
         .photosPicker(
@@ -815,7 +824,10 @@ struct ChatInputBar<ActionRow: View>: View {
                                 try await onPrepareVoiceInput?(manager)
                             }
                         )
+                    } catch is CancellationError {
+                        // An intentional cancellation isn't a capture failure.
                     } catch {
+                        voiceInputStartError = error.localizedDescription
                     }
                 case .ignore:
                     break
@@ -896,7 +908,7 @@ struct ChatInputBar<ActionRow: View>: View {
         guard externalDictationRequestID > 0 else { return }
         guard let manager = voiceInputManager else { return }
         guard ComposerShared.canControlVoiceInput(manager, owner: .inboxComposer) else { return }
-        guard manager.state == .idle else { return }
+        guard ComposerShared.micTapAction(for: manager.state) == .start else { return }
         do {
             try await ComposerShared.startVoiceInput(
                 manager: manager,
@@ -910,7 +922,11 @@ struct ChatInputBar<ActionRow: View>: View {
                     try await onPrepareVoiceInput?(manager)
                 }
             )
-        } catch {}
+        } catch is CancellationError {
+            // The external request can be cancelled when its composer disappears.
+        } catch {
+            voiceInputStartError = error.localizedDescription
+        }
     }
 
     private func dismissKeyboard() {

@@ -9,421 +9,144 @@ struct VoiceInputAudioRoutePlannerTests {
     struct PlannerCase: CustomTestStringConvertible {
         let name: String
         let inputs: [VoiceInputAudioRouteInput]
-        let bluetoothHighQualityRecordingAvailable: Bool
-        let expectedUID: String?
-        let expectedDataSourceName: String?
-        let expectedPolarPattern: AVAudioSession.PolarPattern?
-        let expectBluetoothHighQualityRecording: Bool
-
+        let uid: String?
+        var source: String?
+        var polar: AVAudioSession.PolarPattern?
         var testDescription: String { name }
     }
 
+    private static let frontCardioid = VoiceInputAudioRouteDataSource(
+        name: "Front", orientation: .front, supportedPolarPatterns: [.cardioid]
+    )
+    private static let frontOmni = VoiceInputAudioRouteDataSource(
+        name: "Front", orientation: .front, supportedPolarPatterns: [.omnidirectional]
+    )
+    private static let backCardioid = VoiceInputAudioRouteDataSource(
+        name: "Back", orientation: .back, supportedPolarPatterns: [.cardioid]
+    )
+    private static let mic = input("mic", .builtInMic)
+    private static let airpods = input("airpods", .bluetoothHFP)
+    private static let headset = input("headset", .headsetMic)
+
+    private static func input(
+        _ uid: String,
+        _ port: AVAudioSession.Port,
+        _ sources: [VoiceInputAudioRouteDataSource] = []
+    ) -> VoiceInputAudioRouteInput {
+        .init(uid: uid, portType: port, dataSources: sources)
+    }
+
     @Test(arguments: [
-        PlannerCase(
-            name: "empty inputs request no preferred port",
-            inputs: [],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: nil,
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "built-in front cardioid prefers front and cardioid",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                    ]
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "mic",
-            expectedDataSourceName: "Front",
-            expectedPolarPattern: .cardioid,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "front without cardioid prefers front and omits polar",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.omnidirectional]
-                        ),
-                    ]
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "mic",
-            expectedDataSourceName: "Front",
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "non-front cardioid is used when front has none",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Back",
-                            orientation: .back,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                    ]
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "mic",
-            expectedDataSourceName: "Back",
-            expectedPolarPattern: .cardioid,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "front cardioid wins over another cardioid",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Back",
-                            orientation: .back,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.cardioid, .omnidirectional]
-                        ),
-                    ]
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "mic",
-            expectedDataSourceName: "Front",
-            expectedPolarPattern: .cardioid,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "front without cardioid beats non-front cardioid",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.omnidirectional]
-                        ),
-                        .init(
-                            name: "Back",
-                            orientation: .back,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                    ]
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "mic",
-            expectedDataSourceName: "Front",
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "no polar when cardioid is unsupported and there is no front",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Bottom",
-                            orientation: .bottom,
-                            supportedPolarPatterns: [.omnidirectional]
-                        ),
-                    ]
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "mic",
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "wired headset beats built-in mic",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                    ]
-                ),
-                VoiceInputAudioRouteInput(
-                    uid: "headset",
-                    portType: .headsetMic,
-                    dataSources: []
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "headset",
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "bluetoothHFP beats wired headset",
-            inputs: [
-                VoiceInputAudioRouteInput(
-                    uid: "headset",
-                    portType: .headsetMic,
-                    dataSources: []
-                ),
-                .bluetoothHFP(uid: "airpods"),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "airpods",
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "external USB input is not overridden by built-in mic",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                    ]
-                ),
-                VoiceInputAudioRouteInput(
-                    uid: "usb",
-                    portType: .usbAudio,
-                    dataSources: []
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: nil,
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "first bluetoothHFP wins over built-in mic",
-            inputs: [
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                    ]
-                ),
-                .bluetoothHFP(uid: "airpods"),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "airpods",
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "bluetoothHFP still wins when it is listed first",
-            inputs: [
-                .bluetoothHFP(uid: "airpods"),
-                .builtInMic(uid: "mic", sources: []),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "airpods",
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "first bluetoothHFP wins among multiple HFP ports",
-            inputs: [
-                .bluetoothHFP(uid: "airpods-1"),
-                .bluetoothHFP(uid: "airpods-2"),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "airpods-1",
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "bluetoothHFP does not request data source or polar",
-            inputs: [
-                VoiceInputAudioRouteInput(
-                    uid: "airpods",
-                    portType: .bluetoothHFP,
-                    dataSources: [
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                    ]
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: false,
-            expectedUID: "airpods",
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: false
-        ),
-        PlannerCase(
-            name: "high-quality recording option does not change input selection",
-            inputs: [
-                .bluetoothHFP(uid: "airpods"),
-                .builtInMic(
-                    uid: "mic",
-                    sources: [
-                        .init(
-                            name: "Front",
-                            orientation: .front,
-                            supportedPolarPatterns: [.cardioid]
-                        ),
-                    ]
-                ),
-            ],
-            bluetoothHighQualityRecordingAvailable: true,
-            expectedUID: "airpods",
-            expectedDataSourceName: nil,
-            expectedPolarPattern: nil,
-            expectBluetoothHighQualityRecording: true
-        ),
+        PlannerCase(name: "no input", inputs: [], uid: nil),
+        PlannerCase(name: "front cardioid", inputs: [input("mic", .builtInMic, [frontCardioid])],
+                    uid: "mic", source: "Front", polar: .cardioid),
+        PlannerCase(name: "front omni", inputs: [input("mic", .builtInMic, [frontOmni])],
+                    uid: "mic", source: "Front"),
+        PlannerCase(name: "non-front cardioid", inputs: [input("mic", .builtInMic, [backCardioid])],
+                    uid: "mic", source: "Back", polar: .cardioid),
+        PlannerCase(name: "front cardioid wins", inputs: [input("mic", .builtInMic, [backCardioid, frontCardioid])],
+                    uid: "mic", source: "Front", polar: .cardioid),
+        PlannerCase(name: "front omni beats back cardioid", inputs: [input("mic", .builtInMic, [frontOmni, backCardioid])],
+                    uid: "mic", source: "Front"),
+        PlannerCase(name: "no directional source", inputs: [input("mic", .builtInMic, [
+            .init(name: "Bottom", orientation: .bottom, supportedPolarPatterns: [.omnidirectional]),
+        ])], uid: "mic"),
+        PlannerCase(name: "wired headset", inputs: [mic, headset], uid: "headset"),
+        PlannerCase(name: "HFP beats headset", inputs: [headset, airpods], uid: "airpods"),
+        PlannerCase(name: "USB isn't overridden", inputs: [mic, input("usb", .usbAudio)], uid: nil),
+        PlannerCase(name: "HFP listed last", inputs: [mic, airpods], uid: "airpods"),
+        PlannerCase(name: "HFP listed first", inputs: [airpods, mic], uid: "airpods"),
+        PlannerCase(name: "first HFP wins", inputs: [airpods, input("other", .bluetoothHFP)], uid: "airpods"),
+        PlannerCase(name: "HFP ignores polar patterns", inputs: [input("airpods", .bluetoothHFP, [frontCardioid])],
+                    uid: "airpods"),
     ])
     func planMatchesSelectionContract(_ testCase: PlannerCase) {
-        let plan = VoiceInputAudioRoutePlanner.plan(
-            availableInputs: testCase.inputs,
-            bluetoothHighQualityRecordingAvailable: testCase.bluetoothHighQualityRecordingAvailable
-        )
-
+        let plan = VoiceInputAudioRoutePlanner.plan(availableInputs: testCase.inputs)
         #expect(plan.category == .record)
         #expect(plan.mode == .default)
-        #expect(plan.options.contains(.allowBluetoothHFP))
-        #expect(!plan.options.contains(.allowBluetoothA2DP))
-        #expect(!plan.options.contains(.defaultToSpeaker))
-        if #available(iOS 26.2, *) {
-            #expect(!plan.options.contains(.farFieldInput))
-        }
-        #expect(
-            plan.options.contains(.bluetoothHighQualityRecording)
-                == testCase.expectBluetoothHighQualityRecording
-        )
-        #expect(plan.preferredInputUID == testCase.expectedUID)
-        #expect(plan.preferredDataSourceName == testCase.expectedDataSourceName)
-        #expect(plan.preferredPolarPattern == testCase.expectedPolarPattern)
+        // High-quality Bluetooth is documented for input+output categories, not
+        // input-only .record. No AirPods-specific option may break built-in capture.
+        #expect(plan.options == [.allowBluetoothHFP])
+        #expect(plan.preferredInputUID == testCase.uid)
+        #expect(plan.preferredDataSourceName == testCase.source)
+        #expect(plan.preferredPolarPattern == testCase.polar)
     }
 
     @Test func stalePreferredInputResetsWhenUIDIsMissing() {
-        let mic = VoiceInputAudioRouteInput.builtInMic(uid: "mic", sources: [])
-        #expect(
-            VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
-                preferredUID: "airpods",
-                availableInputs: [mic]
-            )
-        )
-        #expect(
-            !VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
-                preferredUID: "mic",
-                availableInputs: [mic]
-            )
-        )
-        #expect(
-            !VoiceInputAudioRoutePlanner.shouldResetPreferredInput(
-                preferredUID: nil,
-                availableInputs: [mic]
-            )
-        )
+        #expect(VoiceInputAudioRoutePlanner.shouldResetPreferredInput(preferredUID: "airpods", availableInputs: [Self.mic]))
+        #expect(!VoiceInputAudioRoutePlanner.shouldResetPreferredInput(preferredUID: "mic", availableInputs: [Self.mic]))
+        #expect(!VoiceInputAudioRoutePlanner.shouldResetPreferredInput(preferredUID: nil, availableInputs: [Self.mic]))
     }
 
     @Test func excludingBluetoothHFPFallsBackToBuiltInMic() {
-        let inputs = [
-            VoiceInputAudioRouteInput.bluetoothHFP(uid: "airpods"),
-            VoiceInputAudioRouteInput.builtInMic(
-                uid: "mic",
-                sources: [
-                    .init(
-                        name: "Front",
-                        orientation: .front,
-                        supportedPolarPatterns: [.cardioid]
-                    ),
-                ]
-            ),
-        ]
+        let inputs = [Self.airpods, Self.input("mic", .builtInMic, [Self.frontCardioid])]
         let plan = VoiceInputAudioRoutePlanner.plan(
-            availableInputs: VoiceInputAudioRoutePlanner.excludingBluetoothHFP(inputs),
-            bluetoothHighQualityRecordingAvailable: false
+            availableInputs: VoiceInputAudioRoutePlanner.excludingBluetoothHFP(inputs)
         )
         #expect(plan.preferredInputUID == "mic")
         #expect(plan.preferredDataSourceName == "Front")
         #expect(plan.preferredPolarPattern == .cardioid)
     }
 
-    @Test func stalePreferredInputIsClearedBeforeActivate() {
-        let mic = VoiceInputAudioRouteInput.builtInMic(uid: "mic", sources: [])
-        #expect(
-            VoiceInputAudioRoutePlanner.activateActions(
-                preferredUID: "airpods",
-                availableInputs: [mic],
-                firstActivateSucceeded: true
-            ) == ["resetPreferredInput", "setActive"]
+    @Test @MainActor func activationUsesOnlyActivationOptions() throws {
+        var categories: [AVAudioSession.CategoryOptions] = []
+        var activations: [Bool] = []
+        let fallback = try VoiceInputSystemAccess.configureAndActivate(
+            setCategory: { categories.append($0) },
+            setActive: { active, options in
+                activations.append(active)
+                #expect(options.isEmpty)
+            }
         )
-        #expect(
-            VoiceInputAudioRoutePlanner.activateActions(
-                preferredUID: "airpods",
-                availableInputs: [mic],
-                firstActivateSucceeded: false
-            ) == ["resetPreferredInput", "setActive", "resetPreferredInput", "retrySetActive"]
-        )
-        #expect(
-            VoiceInputAudioRoutePlanner.activateActions(
-                preferredUID: "mic",
-                availableInputs: [mic],
-                firstActivateSucceeded: true
-            ) == ["setActive"]
-        )
-    }
-}
-
-private extension VoiceInputAudioRouteInput {
-    static func builtInMic(
-        uid: String,
-        sources: [VoiceInputAudioRouteDataSource]
-    ) -> VoiceInputAudioRouteInput {
-        VoiceInputAudioRouteInput(
-            uid: uid,
-            portType: .builtInMic,
-            dataSources: sources
-        )
+        #expect(!fallback)
+        #expect(categories == [[.allowBluetoothHFP]])
+        #expect(activations == [true])
     }
 
-    static func bluetoothHFP(uid: String) -> VoiceInputAudioRouteInput {
-        VoiceInputAudioRouteInput(
-            uid: uid,
-            portType: .bluetoothHFP,
-            dataSources: []
+    // These exercise the production sequence, not a disconnected list of action
+    // names. setCategory itself can throw before we ever get to setActive.
+    @Test(arguments: [true, false]) @MainActor
+    func bluetoothConfigurationFailureRetriesWithoutBluetooth(failCategory: Bool) throws {
+        var events: [String] = []
+        var categories: [AVAudioSession.CategoryOptions] = []
+        var activationAttempts = 0
+        let fallback = try VoiceInputSystemAccess.configureAndActivate(
+            setCategory: { options in
+                categories.append(options)
+                events.append(options.isEmpty ? "builtInCategory" : "bluetoothCategory")
+                if failCategory && !options.isEmpty { throw TestVoiceError("category rejected") }
+            },
+            setActive: { active, options in
+                #expect(options == (active ? [] : .notifyOthersOnDeactivation))
+                events.append(active ? "activate" : "deactivate")
+                if active {
+                    activationAttempts += 1
+                    if !failCategory && activationAttempts == 1 { throw TestVoiceError("activation rejected") }
+                }
+            }
         )
+        #expect(fallback)
+        #expect(categories == [[.allowBluetoothHFP], []])
+        #expect(events == (failCategory
+            ? ["bluetoothCategory", "deactivate", "builtInCategory", "activate"]
+            : ["bluetoothCategory", "activate", "deactivate", "builtInCategory", "activate"]))
+    }
+
+    @Test(arguments: [true, false]) @MainActor
+    func failedBuiltInFallbackRethrowsInsteadOfReportingCaptureStarted(failCategory: Bool) {
+        var categories: [AVAudioSession.CategoryOptions] = []
+        #expect(throws: TestVoiceError.self) {
+            try VoiceInputSystemAccess.configureAndActivate(
+                setCategory: { options in
+                    categories.append(options)
+                    if failCategory { throw TestVoiceError("no category") }
+                },
+                setActive: { active, _ in
+                    if active { throw TestVoiceError("no input") }
+                }
+            )
+        }
+        #expect(categories == [[.allowBluetoothHFP], []])
     }
 }
 #endif
