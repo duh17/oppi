@@ -132,7 +132,7 @@ struct SessionInboxComposeChromeTests {
         #expect(!start.contains("worktreeId: nil"))
     }
 
-    @Test func sessionListsKeepFolderOnlyLeadingCapsuleWithoutBottomSearch() throws {
+    @Test func sessionListsKeepFolderOnlyTrailingCapsuleWithoutBottomSearch() throws {
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
         let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
@@ -170,30 +170,30 @@ struct SessionInboxComposeChromeTests {
         #expect(!button.contains(".hidden("))
     }
 
-    @Test func expandsTrailingCapsuleOnPhoneAndCompactPadWhenIdle() {
+    @Test func expandsMessageCapsuleOnPhoneAndCompactPadWhenIdle() {
         #expect(
-            SessionInboxComposeChrome.expandsTrailingCapsule(
+            SessionInboxComposeChrome.expandsMessageCapsule(
                 horizontalSizeClass: .compact,
                 idiom: .phone,
                 hasActivePlayback: false
             )
         )
         #expect(
-            SessionInboxComposeChrome.expandsTrailingCapsule(
+            SessionInboxComposeChrome.expandsMessageCapsule(
                 horizontalSizeClass: .regular,
                 idiom: .phone,
                 hasActivePlayback: false
             )
         )
         #expect(
-            SessionInboxComposeChrome.expandsTrailingCapsule(
+            SessionInboxComposeChrome.expandsMessageCapsule(
                 horizontalSizeClass: .compact,
                 idiom: .pad,
                 hasActivePlayback: false
             )
         )
         #expect(
-            SessionInboxComposeChrome.expandsTrailingCapsule(
+            SessionInboxComposeChrome.expandsMessageCapsule(
                 horizontalSizeClass: nil,
                 idiom: .phone,
                 hasActivePlayback: false
@@ -201,9 +201,9 @@ struct SessionInboxComposeChromeTests {
         )
     }
 
-    @Test func doesNotExpandTrailingCapsuleOnRegularPad() {
+    @Test func doesNotExpandMessageCapsuleOnRegularPad() {
         #expect(
-            !SessionInboxComposeChrome.expandsTrailingCapsule(
+            !SessionInboxComposeChrome.expandsMessageCapsule(
                 horizontalSizeClass: .regular,
                 idiom: .pad,
                 hasActivePlayback: false
@@ -211,23 +211,23 @@ struct SessionInboxComposeChromeTests {
         )
     }
 
-    @Test func doesNotExpandTrailingCapsuleWhileNowPlayingOwnsTheBar() {
+    @Test func doesNotExpandMessageCapsuleWhileNowPlayingOwnsTheBar() {
         #expect(
-            !SessionInboxComposeChrome.expandsTrailingCapsule(
+            !SessionInboxComposeChrome.expandsMessageCapsule(
                 horizontalSizeClass: .compact,
                 idiom: .phone,
                 hasActivePlayback: true
             )
         )
         #expect(
-            !SessionInboxComposeChrome.expandsTrailingCapsule(
+            !SessionInboxComposeChrome.expandsMessageCapsule(
                 horizontalSizeClass: .compact,
                 idiom: .pad,
                 hasActivePlayback: true
             )
         )
         #expect(
-            !SessionInboxComposeChrome.expandsTrailingCapsule(
+            !SessionInboxComposeChrome.expandsMessageCapsule(
                 horizontalSizeClass: .regular,
                 idiom: .pad,
                 hasActivePlayback: true
@@ -235,54 +235,54 @@ struct SessionInboxComposeChromeTests {
         )
     }
 
-    @Test func trailingCapsuleMinWidthUsesReserveAndFloorWhenExpanded() {
-        let reserve = SessionInboxComposeChrome.trailingCapsuleFolderReserve
-        let floor = SessionInboxComposeChrome.trailingCapsuleMinWidthFloor
+    @Test func messageCapsuleMinWidthUsesReserveAndFloorWhenExpanded() {
+        let reserve = SessionInboxComposeChrome.messageCapsuleFolderReserve
+        let floor = SessionInboxComposeChrome.messageCapsuleMinWidthFloor
 
         #expect(reserve > 0)
         #expect(floor > 0)
         #expect(
-            SessionInboxComposeChrome.trailingCapsuleMinWidth(
+            SessionInboxComposeChrome.messageCapsuleMinWidth(
                 screenWidth: 393,
                 expands: true
             ) == max(floor, 393 - reserve)
         )
         #expect(
-            SessionInboxComposeChrome.trailingCapsuleMinWidth(
+            SessionInboxComposeChrome.messageCapsuleMinWidth(
                 screenWidth: 320,
                 expands: true
             ) == max(floor, 320 - reserve)
         )
         #expect(
-            SessionInboxComposeChrome.trailingCapsuleMinWidth(
+            SessionInboxComposeChrome.messageCapsuleMinWidth(
                 screenWidth: floor + reserve - 40,
                 expands: true
             ) == floor
         )
         #expect(
-            SessionInboxComposeChrome.trailingCapsuleMinWidth(
+            SessionInboxComposeChrome.messageCapsuleMinWidth(
                 screenWidth: 0,
                 expands: true
             ) == floor
         )
     }
 
-    @Test func trailingCapsuleMinWidthIsNilWhenNotExpanded() {
+    @Test func messageCapsuleMinWidthIsNilWhenNotExpanded() {
         #expect(
-            SessionInboxComposeChrome.trailingCapsuleMinWidth(
+            SessionInboxComposeChrome.messageCapsuleMinWidth(
                 screenWidth: 393,
                 expands: false
             ) == nil
         )
         #expect(
-            SessionInboxComposeChrome.trailingCapsuleMinWidth(
+            SessionInboxComposeChrome.messageCapsuleMinWidth(
                 screenWidth: 1024,
                 expands: false
             ) == nil
         )
     }
 
-    @Test func bothSessionListToolbarsUseSharedTrailingCapsulePolicy() throws {
+    @Test func bothSessionListToolbarsUseSharedMessageCapsulePolicy() throws {
         let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
@@ -297,10 +297,10 @@ struct SessionInboxComposeChromeTests {
             end: "private func startQuickSession(dictate: Bool)"
         )
 
-        #expect(chrome.contains("static func expandsTrailingCapsule("))
-        #expect(chrome.contains("static func trailingCapsuleMinWidth("))
-        #expect(chrome.contains("trailingCapsuleFolderReserve"))
-        #expect(chrome.contains("trailingCapsuleMinWidthFloor"))
+        #expect(chrome.contains("static func expandsMessageCapsule("))
+        #expect(chrome.contains("static func messageCapsuleMinWidth("))
+        #expect(chrome.contains("messageCapsuleFolderReserve"))
+        #expect(chrome.contains("messageCapsuleMinWidthFloor"))
         #expect(chrome.contains("horizontalSizeClass == .regular && idiom == .pad"))
         #expect(chrome.contains("width: minWidth"))
         #expect(!chrome.contains("Spacer(minLength:"))
@@ -313,6 +313,52 @@ struct SessionInboxComposeChromeTests {
         #expect(workspace.contains("ToolbarSpacer(.flexible, placement: .bottomBar)"))
         #expect(!inbox.contains("ToolbarSpacer(.fixed, placement: .bottomBar)"))
         #expect(!workspace.contains("ToolbarSpacer(.fixed, placement: .bottomBar)"))
+    }
+
+    @Test func bothSessionListToolbarsPutMessageLeadingAndFolderTrailing() throws {
+        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
+        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
+        let preview = try appleSource("Oppi/App/ScreenshotPreviewView.swift")
+        let inboxToolbar = try sourceSlice(
+            inbox,
+            start: "private var toolbarContent: some ToolbarContent {",
+            end: "private func serverSwitcher"
+        )
+        let workspaceToolbar = try sourceSlice(
+            workspace,
+            start: "if !isNavigatingDeeperInWorkspaceStack {",
+            end: "private func startQuickSession(dictate: Bool)"
+        )
+        let inboxCompose = try #require(inboxToolbar.range(of: "compactQuickSessionBar"))
+        let inboxFolder = try #require(inboxToolbar.range(of: "inboxFolderButton"))
+        let workspaceCompose = try #require(workspaceToolbar.range(of: "compactQuickSessionBar"))
+        let workspaceFolder = try #require(workspaceToolbar.range(of: "workspaceFilesToolbarItem"))
+        let previewCompose = try #require(preview.range(of: "SessionInboxCompactComposeBar("))
+        let previewFolder = try #require(preview.range(of: "SessionInboxFolderToolbarButton("))
+
+        #expect(inboxCompose.lowerBound < inboxFolder.lowerBound)
+        #expect(workspaceCompose.lowerBound < workspaceFolder.lowerBound)
+        #expect(previewCompose.lowerBound < previewFolder.lowerBound)
+    }
+
+    @Test func compactComposeBarPlacesMicLeadingLikeChatInput() throws {
+        let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
+        let bar = try sourceSlice(
+            chrome,
+            start: "struct SessionInboxCompactComposeBar: View {",
+            end: "struct SessionInboxFolderToolbarButton: View {"
+        )
+        let expanded = try sourceSlice(bar, start: "if let minWidth {", end: "} else {")
+        let compact = try sourceSlice(bar, start: "} else {", end: ".accessibilityLabel(\"Start Quick Session\")")
+        let expandedMic = try #require(expanded.range(of: "dictationMic"))
+        let expandedLabel = try #require(expanded.range(of: "placeholderLabel"))
+        let compactMic = try #require(compact.range(of: "dictationMic"))
+        let compactLabel = try #require(compact.range(of: "placeholderLabel"))
+
+        #expect(expandedMic.lowerBound < expandedLabel.lowerBound)
+        #expect(compactMic.lowerBound < compactLabel.lowerBound)
+        #expect(bar.contains(".padding(.leading, showsDictation ? 0 : 16)"))
+        #expect(bar.contains(".padding(.trailing, 16)"))
     }
 }
 

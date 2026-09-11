@@ -4,24 +4,25 @@ import UIKit
 #endif
 
 /// Session-list bottom chrome shared by All Sessions and workspace lists.
-/// The leading capsule is folder only. Search lives in the navigation-bar
-/// drawer and reveals by pulling the list. The trailing Quick Session control
-/// is one toolbar capsule — placeholder plus an optional trailing mic — using
-/// the same system glass. Tapping the capsule presents Quick Session; tapping
-/// the mic starts dictation there. Workspace lists keep Incognito on a context menu.
+/// Search lives in the navigation-bar drawer and reveals by pulling the list.
+/// The leading Quick Session control is one toolbar capsule — optional leading
+/// mic plus placeholder — matching the chat composer. Tapping the capsule
+/// presents Quick Session; tapping the mic starts dictation there. The trailing
+/// capsule is folder only so Files opens from the same side the browser pushes.
+/// Workspace lists keep Incognito on a context menu.
 enum SessionInboxComposeChrome {
     static let compactBarPlaceholder = "Message"
     static let compactBarMicWidth: CGFloat = 44
     static let compactBarHitHeight: CGFloat = 44
-    /// Leading folder capsule plus bar gutters. The trailing Message capsule
-    /// uses the rest of the screen so it covers the last session-row title.
-    static let trailingCapsuleFolderReserve: CGFloat = 120
+    /// Trailing folder capsule plus bar gutters. The leading Message capsule
+    /// uses the rest of the screen so it covers the session-row title.
+    static let messageCapsuleFolderReserve: CGFloat = 120
     /// Narrowest expanded Message capsule on compact splits.
-    static let trailingCapsuleMinWidthFloor: CGFloat = 180
+    static let messageCapsuleMinWidthFloor: CGFloat = 180
 
-    /// Grow the trailing capsule on iPhone and compact iPad. Keep it intrinsic
+    /// Grow the Message capsule on iPhone and compact iPad. Keep it intrinsic
     /// on regular-width iPad, and while now-playing shares the bottom bar.
-    static func expandsTrailingCapsule(
+    static func expandsMessageCapsule(
         horizontalSizeClass: UserInterfaceSizeClass?,
         idiom: UIUserInterfaceIdiom,
         hasActivePlayback: Bool
@@ -31,15 +32,15 @@ enum SessionInboxComposeChrome {
         return true
     }
 
-    /// Finite min width so the capsule grows left over the title line without
+    /// Finite min width so the leading capsule covers the title line without
     /// stretching regular iPad to the remaining bar width.
-    static func trailingCapsuleMinWidth(
+    static func messageCapsuleMinWidth(
         screenWidth: CGFloat,
         expands: Bool
     ) -> CGFloat? {
         guard expands else { return nil }
-        guard screenWidth > 0 else { return trailingCapsuleMinWidthFloor }
-        return max(trailingCapsuleMinWidthFloor, screenWidth - trailingCapsuleFolderReserve)
+        guard screenWidth > 0 else { return messageCapsuleMinWidthFloor }
+        return max(messageCapsuleMinWidthFloor, screenWidth - messageCapsuleFolderReserve)
     }
 
     /// Mic is a one-tap path into Quick Session. Hide it when now-playing
@@ -51,7 +52,7 @@ enum SessionInboxComposeChrome {
         voiceInputEnabled && !hasActivePlayback
     }
 
-    /// Folder stays in the leading capsule on both lists. Enabled whenever a
+    /// Folder stays in the trailing capsule on both lists. Enabled whenever a
     /// server is connected. Workspace lists open workspace files; All Sessions
     /// opens the connected server's home directory.
     static func canOpenFiles(hasServer: Bool) -> Bool {
@@ -80,12 +81,12 @@ struct SessionInboxCompactComposeBar: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        let expands = SessionInboxComposeChrome.expandsTrailingCapsule(
+        let expands = SessionInboxComposeChrome.expandsMessageCapsule(
             horizontalSizeClass: horizontalSizeClass,
             idiom: UIDevice.current.userInterfaceIdiom,
             hasActivePlayback: hasActivePlayback
         )
-        let minWidth = SessionInboxComposeChrome.trailingCapsuleMinWidth(
+        let minWidth = SessionInboxComposeChrome.messageCapsuleMinWidth(
             screenWidth: columnWidth,
             expands: expands
         )
@@ -96,22 +97,22 @@ struct SessionInboxCompactComposeBar: View {
                 // toolbar item reports an unbounded ideal size and the bar
                 // drops the capsule.
                 HStack(spacing: 0) {
+                    if showsDictation {
+                        dictationMic
+                    }
                     placeholderLabel
                         .frame(
                             width: minWidth - (showsDictation ? SessionInboxComposeChrome.compactBarMicWidth : 0),
                             alignment: .leading
                         )
-                    if showsDictation {
-                        dictationMic
-                    }
                 }
                 .frame(width: minWidth, alignment: .leading)
             } else {
                 HStack(spacing: 8) {
-                    placeholderLabel
                     if showsDictation {
                         dictationMic
                     }
+                    placeholderLabel
                 }
             }
         }
@@ -126,8 +127,8 @@ struct SessionInboxCompactComposeBar: View {
             .font(.subheadline)
             .foregroundStyle(.themeFgDim)
             .lineLimit(1)
-            .padding(.leading, 16)
-            .padding(.trailing, showsDictation ? 0 : 16)
+            .padding(.leading, showsDictation ? 0 : 16)
+            .padding(.trailing, 16)
     }
 
     private var dictationMic: some View {
@@ -161,7 +162,7 @@ private struct SessionInboxIncognitoContextMenu: ViewModifier {
     }
 }
 
-/// Folder control for the leading bottom-bar capsule. Keep this a single
+/// Folder control for the trailing bottom-bar capsule. Keep this a single
 /// toolbar Button — do not wrap it in nested toolbar Buttons or a custom
 /// glass effect.
 struct SessionInboxFolderToolbarButton: View {

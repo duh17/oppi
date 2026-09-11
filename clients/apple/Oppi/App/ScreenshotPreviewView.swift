@@ -4111,19 +4111,19 @@ private struct InboxProviderSetupPreview: View {
             )
             .toolbar {
                 ToolbarItem(placement: .bottomBar) {
-                    SessionInboxFolderToolbarButton(
-                        isEnabled: false,
-                        accessibilityLabel: "Open server files",
-                        onOpen: {}
-                    )
-                }
-                ToolbarSpacer(.flexible, placement: .bottomBar)
-                ToolbarItem(placement: .bottomBar) {
                     SessionInboxCompactComposeBar(
                         showsDictation: true,
                         columnWidth: composeBarColumnWidth,
                         onStart: {},
                         onDictate: {}
+                    )
+                }
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+                ToolbarItem(placement: .bottomBar) {
+                    SessionInboxFolderToolbarButton(
+                        isEnabled: false,
+                        accessibilityLabel: "Open server files",
+                        onOpen: {}
                     )
                 }
             }

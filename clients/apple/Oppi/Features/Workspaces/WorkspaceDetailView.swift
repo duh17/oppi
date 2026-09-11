@@ -615,10 +615,13 @@ struct WorkspaceDetailView: View {
             }
             if !isNavigatingDeeperInWorkspaceStack {
                 ToolbarItem(placement: .bottomBar) {
-                    workspaceFilesToolbarItem
+                    compactQuickSessionBar
                 }
                 if sessionListToolbar.showsNowPlayingPill {
-                    ToolbarSpacer(.flexible, placement: .bottomBar)
+                    ToolbarSpacer(
+                        sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
+                        placement: .bottomBar
+                    )
                     ToolbarItem(placement: .bottomBar) {
                         InAppNowPlayingPill(
                             audioPlayer: connection.audioPlayer,
@@ -627,15 +630,12 @@ struct WorkspaceDetailView: View {
                             onOpen: { presentsNowPlayingPlayer = true }
                         )
                     }
-                    ToolbarSpacer(
-                        sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
-                        placement: .bottomBar
-                    )
+                    ToolbarSpacer(.flexible, placement: .bottomBar)
                 } else {
                     ToolbarSpacer(.flexible, placement: .bottomBar)
                 }
                 ToolbarItem(placement: .bottomBar) {
-                    compactQuickSessionBar
+                    workspaceFilesToolbarItem
                 }
             }
         }

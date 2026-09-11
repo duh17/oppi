@@ -541,10 +541,13 @@ struct SessionInboxView: View {
         }
 
         ToolbarItem(placement: .bottomBar) {
-            inboxFolderButton
+            compactQuickSessionBar
         }
         if sessionListToolbar.showsNowPlayingPill {
-            ToolbarSpacer(.flexible, placement: .bottomBar)
+            ToolbarSpacer(
+                sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
+                placement: .bottomBar
+            )
             ToolbarItem(placement: .bottomBar) {
                 if let player = sessionListAudioPlayer {
                     InAppNowPlayingPill(
@@ -555,16 +558,13 @@ struct SessionInboxView: View {
                     )
                 }
             }
-            ToolbarSpacer(
-                sessionListToolbar.parksNowPlayingNextToCompose ? .fixed : .flexible,
-                placement: .bottomBar
-            )
+            ToolbarSpacer(.flexible, placement: .bottomBar)
         } else {
             ToolbarSpacer(.flexible, placement: .bottomBar)
         }
 
         ToolbarItem(placement: .bottomBar) {
-            compactQuickSessionBar
+            inboxFolderButton
         }
     }
 
