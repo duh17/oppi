@@ -602,6 +602,7 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
             if let testCancel { await testCancel(); return }
 #endif
             await analyzer?.cancelAndFinishNow()
+            return
         }
         // Publish before suspending so callback/Stop callers share one drain.
         analyzerCancellation = cancellation
