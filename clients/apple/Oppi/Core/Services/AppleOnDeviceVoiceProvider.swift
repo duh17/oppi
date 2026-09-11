@@ -16,11 +16,29 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
     private var cachedModelKey: String?
     private var modelReady = false
     private var cachedFormat: AVAudioFormat?
-    private var prewarmTask: Task<AVAudioFormat?, Error>?
+    private struct ReadyModel {
+        let format: AVAudioFormat?
+        let locale: Locale
+    }
+    private var cachedLocale: Locale?
+    private var prewarmTask: Task<ReadyModel, Error>?
     private var prewarmModelKey: String?
+    private var preparationGeneration = 0
+    private let resolveLocale: (VoiceInputManager.TranscriptionEngine, Locale) async throws -> Locale
+    private let prepareModel: (VoiceInputManager.TranscriptionEngine, Locale) async throws -> AVAudioFormat?
 
-    init(engine: VoiceInputManager.TranscriptionEngine) {
+    init(
+        engine: VoiceInputManager.TranscriptionEngine,
+        resolveLocale: @escaping (VoiceInputManager.TranscriptionEngine, Locale) async throws -> Locale = {
+            try await AppleOnDeviceVoiceProvider.resolvedLocale(for: $0, requestedLocale: $1)
+        },
+        prepareModel: @escaping (VoiceInputManager.TranscriptionEngine, Locale) async throws -> AVAudioFormat? = {
+            try await AppleOnDeviceVoiceProvider.warmModel(engine: $0, locale: $1)
+        }
+    ) {
         self.engine = engine
+        self.resolveLocale = resolveLocale
+        self.prepareModel = prepareModel
         switch engine {
         case .modernSpeech:
             id = .appleModernSpeech
@@ -35,86 +53,27 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
         modelReady = false
         cachedFormat = nil
         cachedModelKey = nil
-        prewarmTask?.cancel()
-        prewarmTask = nil
-        prewarmModelKey = nil
+        cachedLocale = nil
+        cancelPreparation()
     }
 
     func cancelPreparation() {
+        preparationGeneration += 1
         prewarmTask?.cancel()
         prewarmTask = nil
         prewarmModelKey = nil
     }
 
     func prewarm(context: VoiceProviderContext) async throws {
-        let locale = try await Self.resolvedLocale(for: engine, requestedLocale: context.locale)
-        let key = Self.modelKey(engine: engine, localeID: locale.identifier(.bcp47))
-
-        if modelReady, cachedModelKey == nil || cachedModelKey == key {
-            return
-        }
-
-        if let inflight = prewarmTask {
-            if prewarmModelKey == key {
-                return
-            }
-            inflight.cancel()
-            prewarmTask = nil
-            prewarmModelKey = nil
-        }
-
-        let task = Task {
-            try await Self.warmModel(engine: engine, locale: locale)
-        }
-        prewarmTask = task
-        prewarmModelKey = key
-
-        do {
-            let format = try await task.value
-            guard prewarmModelKey == key else { return }
-            cachedFormat = format
-            cachedModelKey = key
-            modelReady = true
-        } catch {
-            if prewarmModelKey == key {
-                prewarmTask = nil
-                prewarmModelKey = nil
-            }
-            throw error
-        }
-
-        if prewarmModelKey == key {
-            prewarmTask = nil
-            prewarmModelKey = nil
-        }
+        _ = try await prepareSession(context: context)
     }
 
     func prepareSession(context: VoiceProviderContext) async throws -> VoiceProviderPreparation {
-        let locale = try await Self.resolvedLocale(for: engine, requestedLocale: context.locale)
-        let key = Self.modelKey(engine: engine, localeID: locale.identifier(.bcp47))
-
-        if let inflight = prewarmTask {
-            if prewarmModelKey == key {
-                let format = try await inflight.value
-                cachedFormat = format
-                cachedModelKey = key
-                modelReady = true
-                prewarmTask = nil
-                prewarmModelKey = nil
-                return VoiceProviderPreparation(
-                    audioFormat: format,
-                    transcriptionLocale: locale,
-                    pathTag: "join_prewarm",
-                    setupMetricTags: Self.metricTags(for: engine, locale: locale)
-                )
-            }
-
-            inflight.cancel()
-            prewarmTask = nil
-            prewarmModelKey = nil
-        }
-
+        // Lookup by requested locale before any Speech/XPC call. Successful
+        // preparation includes the resolved locale as well as model/format.
+        let key = Self.modelKey(engine: engine, localeID: context.locale.identifier(.bcp47))
         if modelReady, cachedModelKey == nil || cachedModelKey == key {
+            let locale = cachedLocale ?? context.locale
             return VoiceProviderPreparation(
                 audioFormat: cachedFormat,
                 transcriptionLocale: locale,
@@ -122,31 +81,39 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
                 setupMetricTags: Self.metricTags(for: engine, locale: locale)
             )
         }
-
-        let task = Task {
-            try await Self.warmModel(engine: engine, locale: locale)
-        }
-        prewarmTask = task
-        prewarmModelKey = key
-
-        do {
-            let format = try await task.value
-            guard prewarmModelKey == key else {
-                throw CancellationError()
+        if prewarmTask != nil, prewarmModelKey != key { cancelPreparation() }
+        let path = prewarmTask == nil ? "cold" : "join_prewarm"
+        if prewarmTask == nil {
+            preparationGeneration += 1
+            prewarmModelKey = key
+            prewarmTask = Task {
+                let locale = try await resolveLocale(engine, context.locale)
+                try Task.checkCancellation()
+                return ReadyModel(format: try await prepareModel(engine, locale), locale: locale)
             }
-            cachedFormat = format
+        }
+        guard let task = prewarmTask else { throw CancellationError() }
+        let generation = preparationGeneration
+        do {
+            let ready = try await task.value
+            try Task.checkCancellation()
+            // A same-locale retry may have replaced this task while an older
+            // Speech operation ignored cancellation. Key equality is not identity.
+            guard preparationGeneration == generation else { throw CancellationError() }
+            cachedFormat = ready.format
+            cachedLocale = ready.locale
             cachedModelKey = key
             modelReady = true
             prewarmTask = nil
             prewarmModelKey = nil
             return VoiceProviderPreparation(
-                audioFormat: format,
-                transcriptionLocale: locale,
-                pathTag: "cold",
-                setupMetricTags: Self.metricTags(for: engine, locale: locale)
+                audioFormat: ready.format,
+                transcriptionLocale: ready.locale,
+                pathTag: path,
+                setupMetricTags: Self.metricTags(for: engine, locale: ready.locale)
             )
         } catch {
-            if prewarmModelKey == key {
+            if preparationGeneration == generation {
                 prewarmTask = nil
                 prewarmModelKey = nil
             }
@@ -389,8 +356,6 @@ enum TranscriberModule {
 
 @MainActor
 final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
-    nonisolated static let analyzerInputBufferLimit = 8
-
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
     let audioLevels: AsyncStream<Float>
 
@@ -401,12 +366,15 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     private let audioLevelContinuation: AsyncStream<Float>.Continuation
 
     private var analyzer: SpeechAnalyzer?
-    private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
+    private var inputBuilder: AnalyzerInputBuffer?
     private var audioCapture: (any OnDeviceAudioCapture)?
     private var resultsTask: Task<Void, Never>?
     private var audioLevelTask: Task<Void, Never>?
     private var hasCapturedAudio = false
     private var stopped = false
+    private var isFinalizing = false
+    private var analyzerInputFailed = false
+    private var analyzerCancellation: Task<Void, Never>?
 
     init(
         transcriber: TranscriberModule,
@@ -457,10 +425,10 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
             }
         }
 
-        let (sequence, builder) = Self.makeAnalyzerInputStream()
-        inputBuilder = builder
+        let inputs = makeAnalyzerInputBuffer()
+        inputBuilder = inputs
         try await newAnalyzer.prepareToAnalyze(in: preferredAudioFormat)
-        try await newAnalyzer.start(inputSequence: sequence)
+        try await newAnalyzer.start(inputSequence: inputs)
         startResultsBridge()
         let analyzerStartMs = analyzerStart.elapsedMs()
 
@@ -532,17 +500,40 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     func stop() async {
         guard !stopped else { return }
         stopped = true
+        isFinalizing = true
+        defer { isFinalizing = false }
         audioCapture?.stopAndFinishInput(flush: true)
         audioCapture = nil
         finishAnalyzerInput()
 
         do {
-            try await analyzer?.finalizeAndFinishThroughEndOfInput()
+            // The one-shot failure callback may have completed while recording,
+            // before the manager consumes its error. Stop now owns the drain and
+            // must not await ordinary finalization of that already-failed input.
+            if analyzerInputFailed {
+                await cancelAnalyzer()
+            } else {
+                try await finalizeAnalyzer()
+            }
         } catch {
             appleVoiceProviderLogger.error("Error finalizing on-device session: \(error.localizedDescription)")
         }
 
+        // A failure during finalization may have started cancellation. Keep
+        // capture ownership until it finishes, even if finalization returns first.
+        await analyzerCancellation?.value
+#if DEBUG
+        _testStopPhase = .waitingForResults
+#endif
         await resultsTask?.value
+#if DEBUG
+        _testStopPhase = .finishedResults
+#endif
+        // The callback can publish cancellation while results suspend above.
+        // Join again on MainActor: a nil task cannot suspend before cleanup and
+        // isFinalizing's defer; a later callback therefore cannot start a drain.
+        // A non-nil task is shared for this session and never replaced.
+        await analyzerCancellation?.value
         cleanupAfterStop()
     }
 
@@ -551,27 +542,70 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         stopped = true
         audioCapture?.stopAndFinishInput(flush: false)
         audioCapture = nil
-        finishAnalyzerInput()
+        inputBuilder?.finish(discard: true)
+        inputBuilder = nil
 
         resultsTask?.cancel()
         resultsTask = nil
         audioLevelTask?.cancel()
         audioLevelTask = nil
-        await analyzer?.cancelAndFinishNow()
+        await cancelAnalyzer()
 
         analyzer = nil
         eventContinuation.finish()
         audioLevelContinuation.finish()
     }
 
-    nonisolated static func makeAnalyzerInputStream() -> (
-        stream: AsyncStream<AnalyzerInput>,
-        continuation: AsyncStream<AnalyzerInput>.Continuation
-    ) {
-        AsyncStream.makeStream(
-            of: AnalyzerInput.self,
-            bufferingPolicy: .bufferingOldest(analyzerInputBufferLimit)
-        )
+    private func makeAnalyzerInputBuffer(
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
+    ) -> AnalyzerInputBuffer {
+        AnalyzerInputBuffer(events: eventContinuation, onFailure: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+#if DEBUG
+                await self._testBeforeInputFailure?()
+#endif
+                await self.handleAnalyzerInputFailure()
+#if DEBUG
+                self._testInputFailureHandled = true
+#endif
+            }
+        }, now: now)
+    }
+
+    private func handleAnalyzerInputFailure() async {
+        // Latch on MainActor even while recording: event delivery and Stop can
+        // cross after this callback. Recording still leaves cancellation to the
+        // manager; once Stop owns the drain, either it or this callback cancels.
+        analyzerInputFailed = true
+        guard isFinalizing else { return }
+        await cancelAnalyzer()
+    }
+
+    private func finalizeAnalyzer() async throws {
+#if DEBUG
+        if let _testFinalizeAnalyzer { try await _testFinalizeAnalyzer(); return }
+#endif
+        try await analyzer?.finalizeAndFinishThroughEndOfInput()
+    }
+
+    private func cancelAnalyzer() async {
+        if let analyzerCancellation {
+            await analyzerCancellation.value
+            return
+        }
+#if DEBUG
+        let testCancel = _testCancelAnalyzer
+#endif
+        let cancellation = Task { [analyzer] in
+#if DEBUG
+            if let testCancel { await testCancel(); return }
+#endif
+            await analyzer?.cancelAndFinishNow()
+        }
+        // Publish before suspending so callback/Stop callers share one drain.
+        analyzerCancellation = cancellation
+        await cancellation.value
     }
 
     private func finishAnalyzerInput() {
@@ -580,13 +614,12 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     }
 
     // periphery:ignore - test seam for stop-during-rebuild input lifetime
-    func _testInstallAnalyzerInputStream() -> (
-        stream: AsyncStream<AnalyzerInput>,
-        continuation: AsyncStream<AnalyzerInput>.Continuation
-    ) {
-        let pair = Self.makeAnalyzerInputStream()
-        inputBuilder = pair.continuation
-        return pair
+    func _testInstallAnalyzerInputStream(
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
+    ) -> AnalyzerInputBuffer {
+        let inputs = makeAnalyzerInputBuffer(now: now)
+        inputBuilder = inputs
+        return inputs
     }
 
     // periphery:ignore - exercises the same enqueue boundary as the microphone feed
@@ -596,6 +629,19 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     }
 
 #if DEBUG
+    // Replace only Speech's terminal operations; tests retain the real queue,
+    // failure callback, Stop/cancel ownership and manager event consumer.
+    var _testFinalizeAnalyzer: (@MainActor () async throws -> Void)?
+    var _testCancelAnalyzer: (@MainActor () async -> Void)?
+    private(set) var _testInputFailureHandled = false
+    // Gate callback delivery and the results task independently, without replacing
+    // the queue's failure publication or Stop's ownership/join ordering.
+    var _testBeforeInputFailure: (@MainActor () async -> Void)?
+    enum TestStopPhase { case waitingForResults, finishedResults, cleanedUp }
+    private(set) var _testStopPhase: TestStopPhase?
+
+    func _testInstallResultsTask(_ task: Task<Void, Never>) { resultsTask = task }
+
     // periphery:ignore - a successful analyzer completion must not mask capture failure
     func _testFinishAnalyzerResults() { eventContinuation.finish() }
 
@@ -662,6 +708,9 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
     }
 
     private func cleanupAfterStop() {
+#if DEBUG
+        _testStopPhase = .cleanedUp
+#endif
         analyzer = nil
         inputBuilder = nil
         resultsTask = nil

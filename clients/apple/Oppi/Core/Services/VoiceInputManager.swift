@@ -691,7 +691,9 @@ final class VoiceInputManager {
     func setServerCredentials(_ credentials: ServerCredentials?) {
         serverCredentials = credentials
         if credentials != nil {
-            invalidateModelCache()
+            // Server readiness is credential-bound; Apple model/format readiness
+            // is not. Composer reactivation must not erase on-device prewarming.
+            providerRegistry.provider(for: .serverDictation)?.invalidateCache()
         }
         let host = credentials?.host ?? "none"
         logger.info("Server credentials: \(credentials != nil ? "set" : "cleared") host=\(host)")
@@ -714,9 +716,10 @@ final class VoiceInputManager {
 
     /// Set engine mode directly.
     func setEngineMode(_ mode: EngineMode) {
+        guard engineMode != mode else { return }
         engineMode = mode
         activeEngine = nil
-        invalidateModelCache()
+        providerRegistry.provider(for: .serverDictation)?.invalidateCache()
         logger.info("Engine mode: \(mode.logName)")
     }
 
@@ -864,12 +867,6 @@ final class VoiceInputManager {
         case .remote:
             setEngineMode(.remote)
         }
-    }
-
-    private func invalidateModelCache() {
-        providerRegistry.provider(for: .modernSpeech)?.invalidateCache()
-        providerRegistry.provider(for: .classicDictation)?.invalidateCache()
-        providerRegistry.provider(for: .serverDictation)?.invalidateCache()
     }
 
     // MARK: - Pre-warm
@@ -1257,6 +1254,7 @@ final class VoiceInputManager {
         var transcriberCreateMs: Int = 0
         var analyzerStartMs: Int = 0
         var audioStartMs: Int = 0
+        var audioSessionMs: Int = 0
         var totalMs: Int = 0
         var pathTag: String = "warm_cache"
         var providerTags: [String: String] = [:]
@@ -1266,7 +1264,7 @@ final class VoiceInputManager {
         _ timings: StartupTimings,
         annotation: VoiceMetricAnnotation
     ) {
-        // Build merged tags once for all 5 emissions (deferred — not on hot path)
+        // Build merged tags once (deferred — not on hot path).
         var tags = ["path": timings.pathTag]
         for (k, v) in timings.providerTags { tags[k] = v }
         activeDictationMetricTags = tags
@@ -1277,6 +1275,8 @@ final class VoiceInputManager {
                           annotation: annotation, phase: .transcriberCreate, status: "ok", extraTags: tags)
         recordVoiceMetric(.voiceSetupMs, valueMs: timings.analyzerStartMs,
                           annotation: annotation, phase: .analyzerStart, status: "ok", extraTags: tags)
+        recordVoiceMetric(.voiceSetupMs, valueMs: timings.audioSessionMs,
+                          annotation: annotation, phase: .audioSession, status: "ok", extraTags: tags)
         recordVoiceMetric(.voiceSetupMs, valueMs: timings.audioStartMs,
                           annotation: annotation, phase: .audioStart, status: "ok", extraTags: tags)
         recordVoiceMetric(.voiceSetupMs, valueMs: timings.totalMs,
@@ -1320,7 +1320,9 @@ final class VoiceInputManager {
         try ensureStartRequestActive(requestID)
         bindSessionMonitor(session, metricAnnotation: metricAnnotation)
 
+        let audioSessionStart = ContinuousClock.now
         try setupAudioSession()
+        timings.audioSessionMs = audioSessionStart.elapsedMs()
         let sessionTimings: VoiceSessionStartTimings
         do {
             sessionTimings = try await session.start()
@@ -1844,13 +1846,9 @@ final class VoiceInputManager {
         let take = VoiceCaptureTakeIdentity(requestID: requestID, composerGeneration: generation)
         let stopOwnsDrain = state == .processing
         let wasPreparing = state == .preparingModel
-        let cause: String
-        if case VoiceInputError.captureBufferOverflow = error {
-            cause = "Dictation audio buffer overflow."
-        } else {
-            cause = userFacingErrorMessage(for: error)
-        }
-        let message = "\(cause) This take was discarded. Your earlier draft was kept. Retry dictation."
+        // Converter, analyzer and transport details belong in diagnostics, not
+        // the composer's retry notice. All terminal takes preserve the same draft.
+        let message = "Dictation couldn’t continue. This take was discarded. Your earlier draft was kept. Retry dictation."
         let failure = VoiceCaptureFailure(take: take, source: source, message: message)
         // Retire this take before any suspension. Route recovery, another error,
         // and a late startup completion must not publish competing outcomes.

@@ -3,6 +3,254 @@ import Accelerate
 import Foundation
 import Speech
 
+/// Single-consumer FIFO between the microphone and SpeechAnalyzer. Route rebuilds
+/// replace the producer, not this queue. Never block the tap waiting for ASR, drop
+/// an old/new buffer, or reset the budget on a route change. Eight seconds covers
+/// normal analyzer/route stalls; duration, bytes and count independently cap memory.
+final class AnalyzerInputBuffer: AsyncSequence, @unchecked Sendable {
+    typealias Element = AnalyzerInput
+    static let maxAudioSeconds = 8.0
+    static let maxBytes = 4 * 1_024 * 1_024
+    static let maxBuffers = 2_048
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+        let owner: AnalyzerInputBuffer
+        mutating func next() async -> AnalyzerInput? {
+            let owner = owner
+            return await withTaskCancellationHandler {
+                await withCheckedContinuation { owner.take($0) }
+            } onCancel: {
+                owner.finish(discard: true)
+            }
+        }
+    }
+
+    private struct Entry {
+        let input: AnalyzerInput
+        let seconds: Double
+        let bytes: Int
+        let queuedAt: ContinuousClock.Instant
+    }
+
+    // All state (including finish/failure publication) is serialized by this lock.
+    // No suspension, ASR work, or wait for consumption occurs under it.
+    private let lock = NSLock()
+    private var entries = [Entry?](repeating: nil, count: AnalyzerInputBuffer.maxBuffers)
+    private var head = 0
+    private var count = 0
+    private var bytes = 0
+    private var seconds = 0.0
+    private var peakSeconds = 0.0
+    private var underPressure = false
+    private var recoveries = 0
+    private var closed = false
+    private var failed = false
+    private var deadlineTask: Task<Void, Never>?
+    private var waiter: CheckedContinuation<AnalyzerInput?, Never>?
+    private let events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
+    private let now: @Sendable () -> ContinuousClock.Instant
+    private let diagnostic: @Sendable ([String: String]) -> Void
+    private let onFailure: @Sendable () -> Void
+    private let byteLimit: Int
+
+    init(
+        events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation,
+        byteLimit: Int = AnalyzerInputBuffer.maxBytes,
+        onFailure: @escaping @Sendable () -> Void = {},
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
+        diagnostic: @escaping @Sendable ([String: String]) -> Void = {
+            ClientLog.info("VoiceInput", "Dictation analyzer input pressure", metadata: $0)
+        }
+    ) {
+        self.events = events
+        self.byteLimit = Swift.min(Self.maxBytes, Swift.max(1, byteLimit))
+        self.onFailure = onFailure
+        self.now = now
+        self.diagnostic = diagnostic
+    }
+
+    func makeAsyncIterator() -> AsyncIterator { AsyncIterator(owner: self) }
+
+    @discardableResult
+    func enqueue(_ input: AnalyzerInput) -> Bool {
+        lock.withLock {
+            guard !closed else { return false }
+            // Keep the PCM object alive: on newer Speech runtimes `buffer`
+            // returns a new copy, so pointers read from a temporary are unsafe.
+            let pcm = input.buffer
+            let duration = Double(pcm.frameLength) / pcm.format.sampleRate
+            let size = UnsafeMutableAudioBufferListPointer(pcm.mutableAudioBufferList)
+                .reduce(0) { $0 + Int($1.mDataByteSize) }
+            guard duration.isFinite, duration > 0, size > 0 else { return false }
+            let instant = now()
+            let oldestAge = entries[head].map { $0.queuedAt.duration(to: instant) } ?? .zero
+            let reason: String?
+            if oldestAge >= .seconds(Self.maxAudioSeconds) { reason = "age_limit" }
+            else if seconds + duration > Self.maxAudioSeconds { reason = "audio_limit" }
+            else if size > byteLimit - bytes { reason = "byte_limit" }
+            else if count == Self.maxBuffers { reason = "count_limit" }
+            else { reason = nil }
+            if let reason {
+                report(status: "exhausted", reason: reason)
+                failLocked(VoiceInputError.captureBufferOverflow)
+                return false
+            }
+            do {
+                // Older runtimes retain the supplied PCM. Own its samples before
+                // the engine can recycle the tap buffer (including passthrough).
+                let copy = try Self.copyPCM(pcm)
+                let owned = AnalyzerInput(buffer: copy, bufferStartTime: input.bufferStartTime)
+                if let pending = waiter {
+                    waiter = nil
+                    pending.resume(returning: owned)
+                } else {
+                    entries[(head + count) % Self.maxBuffers] = Entry(
+                        input: owned, seconds: duration, bytes: size, queuedAt: instant
+                    )
+                    count += 1
+                    // One watchdog per input lifetime, not one task/timer per
+                    // tap when a fast consumer briefly empties the FIFO.
+                    if deadlineTask == nil {
+                        deadlineTask = Task.detached { [weak self] in
+                            while !Task.isCancelled {
+                                do { try await Task.sleep(for: .milliseconds(250)) }
+                                catch { return }
+                                guard self?.checkDeadline() == true else { return }
+                            }
+                        }
+                    }
+                    bytes += size
+                    seconds += duration
+                    peakSeconds = Swift.max(peakSeconds, seconds)
+                    if !underPressure, seconds >= 0.5 {
+                        underPressure = true
+                        report(status: "buffering")
+                    }
+                }
+                return true
+            } catch {
+                failLocked(error)
+                return false
+            }
+        }
+    }
+
+    private func take(_ continuation: CheckedContinuation<AnalyzerInput?, Never>) {
+        lock.withLock {
+            if let entry = entries[head] {
+                if entry.queuedAt.duration(to: now()) >= .seconds(Self.maxAudioSeconds) {
+                    report(status: "exhausted", reason: "age_limit")
+                    failLocked(VoiceInputError.captureBufferOverflow)
+                    continuation.resume(returning: nil)
+                    return
+                }
+                entries[head] = nil
+                head = (head + 1) % Self.maxBuffers
+                count -= 1
+                if closed, count == 0 {
+                    deadlineTask?.cancel()
+                    deadlineTask = nil
+                }
+                bytes -= entry.bytes
+                seconds = Swift.max(0, seconds - entry.seconds)
+                if underPressure, seconds < 0.1 {
+                    underPressure = false
+                    recoveries += 1
+                    report(status: "recovered")
+                }
+                continuation.resume(returning: entry.input)
+            } else if closed {
+                continuation.resume(returning: nil)
+            } else {
+                waiter = continuation
+            }
+        }
+    }
+
+    /// Also runs after graceful input finish: Stop must not wait forever for an
+    /// analyzer that stopped asking for queued audio. Closing and draining (or
+    /// cancellation/deinit) retires the single watchdog.
+    @discardableResult
+    func checkDeadline() -> Bool {
+        lock.withLock {
+            guard let oldest = entries[head] else { return !closed }
+            guard oldest.queuedAt.duration(to: now()) < .seconds(Self.maxAudioSeconds) else {
+                report(status: "exhausted", reason: "age_limit")
+                failLocked(VoiceInputError.captureBufferOverflow)
+                return false
+            }
+            return true
+        }
+    }
+
+    func finish(discard: Bool = false) {
+        lock.withLock { finishLocked(discard: discard) }
+    }
+
+    func fail(_ error: Error) {
+        lock.withLock { failLocked(error) }
+    }
+
+    private func failLocked(_ error: Error) {
+        guard !failed else { return }
+        failed = true
+        // Must precede input completion, even during stop/converter flush.
+        events.finish(throwing: error)
+        finishLocked(discard: true)
+        onFailure()
+    }
+
+    private func finishLocked(discard: Bool) {
+        closed = true
+        if discard {
+            entries = [Entry?](repeating: nil, count: Self.maxBuffers)
+            count = 0
+            bytes = 0
+            seconds = 0
+        }
+        if count == 0 {
+            deadlineTask?.cancel()
+            deadlineTask = nil
+        }
+        waiter?.resume(returning: nil)
+        waiter = nil
+    }
+
+    deinit { deadlineTask?.cancel() }
+
+    private func report(status: String, reason: String = "none") {
+        let tags = [
+            "status": status, "reason": reason,
+            "buffered_ms": String(Int(seconds * 1_000)),
+            "buffered_bytes": String(bytes), "buffered_buffers": String(count),
+            "peak_buffered_ms": String(Int(peakSeconds * 1_000)),
+            "recoveries": String(recoveries),
+        ]
+        diagnostic(tags)
+        events.yield(.providerMetricTags([
+            "analyzer_input_peak_ms": tags["peak_buffered_ms"] ?? "0",
+            "analyzer_pressure_recoveries": String(recoveries),
+        ]))
+    }
+
+    private static func copyPCM(_ buffer: AVAudioPCMBuffer) throws -> AVAudioPCMBuffer {
+        guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
+            throw VoiceInputError.internalError("Cannot allocate microphone input buffer")
+        }
+        copy.frameLength = buffer.frameLength
+        let source = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+        let destination = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        for (from, to) in zip(source, destination) {
+            guard let sourceData = from.mData, let destinationData = to.mData,
+                  from.mDataByteSize <= to.mDataByteSize else {
+                throw VoiceInputError.internalError("Cannot copy microphone input buffer")
+            }
+            destinationData.copyMemory(from: sourceData, byteCount: Int(from.mDataByteSize))
+        }
+        return copy
+    }
+}
+
 protocol AnalyzerInputFeeding: AnyObject {
     @discardableResult
     func feed(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime?) -> Bool
@@ -21,7 +269,7 @@ enum AudioEngineHelper {
         let engine: AVAudioEngine
         let audioLevels: AsyncStream<Float>
         private let feed: any AnalyzerInputFeeding
-        private let inputBuilder: AsyncStream<AnalyzerInput>.Continuation
+        private let inputBuilder: AnalyzerInputBuffer
         private let levelContinuation: AsyncStream<Float>.Continuation
         private var didFinish = false
         private var didStop = false
@@ -42,7 +290,7 @@ enum AudioEngineHelper {
             audioLevels: AsyncStream<Float>,
             levelContinuation: AsyncStream<Float>.Continuation,
             feed: any AnalyzerInputFeeding,
-            inputBuilder: AsyncStream<AnalyzerInput>.Continuation
+            inputBuilder: AnalyzerInputBuffer
         ) {
             self.engine = engine
             self.audioLevels = audioLevels
@@ -60,7 +308,7 @@ enum AudioEngineHelper {
             if flush {
                 feed.flush()
             }
-            inputBuilder.finish()
+            inputBuilder.finish(discard: !flush)
         }
 
         deinit {
@@ -75,7 +323,7 @@ enum AudioEngineHelper {
     }
 
     static func startEngine(
-        inputBuilder: AsyncStream<AnalyzerInput>.Continuation,
+        inputBuilder: AnalyzerInputBuffer,
         targetFormat: AVAudioFormat?,
         events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     ) throws -> RunningCapture {
@@ -153,7 +401,7 @@ enum AudioEngineHelper {
     static func flushPendingAnalyzerInputs(
         converter: AVAudioConverter?,
         targetFormat: AVAudioFormat?,
-        into inputBuilder: AsyncStream<AnalyzerInput>.Continuation,
+        into inputBuilder: AnalyzerInputBuffer,
         events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     ) {
         guard let converter, let targetFormat else { return }
@@ -189,7 +437,7 @@ enum AudioEngineHelper {
     @available(iOS 27, *)
     static func flushPendingAnalyzerInputs(
         converter: AnalyzerInputConverter,
-        into inputBuilder: AsyncStream<AnalyzerInput>.Continuation,
+        into inputBuilder: AnalyzerInputBuffer,
         events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     ) {
         do {
@@ -201,6 +449,21 @@ enum AudioEngineHelper {
         }
     }
 #endif
+
+    static func failCaptureConversion(
+        _ error: Error,
+        into inputBuilder: AnalyzerInputBuffer,
+        events _: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation,
+        flushing: Bool = false
+    ) {
+        inputBuilder.fail(error)
+        var metadata = DictationAudioEngineHelper.sessionRouteMetadata()
+        metadata["error_domain"] = (error as NSError).domain
+        metadata["error_code"] = String((error as NSError).code)
+        ClientLog.error("VoiceInput", flushing
+            ? "Microphone audio converter flush failed"
+            : "Microphone audio conversion failed", metadata: metadata)
+    }
 
     static func failCaptureConversion<Element: Sendable>(
         _ error: Error,
@@ -260,7 +523,7 @@ enum AudioEngineHelper {
     private static func makeFeed(
         inputFormat: AVAudioFormat,
         targetFormat: AVAudioFormat?,
-        inputBuilder: AsyncStream<AnalyzerInput>.Continuation,
+        inputBuilder: AnalyzerInputBuffer,
         events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     ) throws -> any AnalyzerInputFeeding {
 #if compiler(>=6.4)
@@ -284,7 +547,7 @@ enum AudioEngineHelper {
     private static func makeLegacyFeed(
         inputFormat: AVAudioFormat,
         targetFormat: AVAudioFormat?,
-        inputBuilder: AsyncStream<AnalyzerInput>.Continuation,
+        inputBuilder: AnalyzerInputBuffer,
         events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     ) throws -> any AnalyzerInputFeeding {
         guard let targetFormat, inputFormat != targetFormat else {
@@ -303,11 +566,11 @@ enum AudioEngineHelper {
     }
 
     private final class PassthroughFeed: AnalyzerInputFeeding {
-        private let inputBuilder: AsyncStream<AnalyzerInput>.Continuation
+        private let inputBuilder: AnalyzerInputBuffer
         private let events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
 
         init(
-            inputBuilder: AsyncStream<AnalyzerInput>.Continuation,
+            inputBuilder: AnalyzerInputBuffer,
             events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
         ) {
             self.inputBuilder = inputBuilder
@@ -326,14 +589,14 @@ enum AudioEngineHelper {
         private let inputFormat: AVAudioFormat
         private let targetFormat: AVAudioFormat
         private let allocateBuffer: (AVAudioFormat, AVAudioFrameCount) -> AVAudioPCMBuffer?
-        private let inputBuilder: AsyncStream<AnalyzerInput>.Continuation
+        private let inputBuilder: AnalyzerInputBuffer
         private let events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
 
         init(
             converter: AVAudioConverter,
             inputFormat: AVAudioFormat,
             targetFormat: AVAudioFormat,
-            inputBuilder: AsyncStream<AnalyzerInput>.Continuation,
+            inputBuilder: AnalyzerInputBuffer,
             events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation,
             allocateBuffer: @escaping (AVAudioFormat, AVAudioFrameCount) -> AVAudioPCMBuffer? = {
                 AVAudioPCMBuffer(pcmFormat: $0, frameCapacity: $1)
@@ -376,12 +639,12 @@ enum AudioEngineHelper {
     @available(iOS 27, *)
     private final class SpeechConverterFeed: AnalyzerInputFeeding {
         private let converter: AnalyzerInputConverter
-        private let inputBuilder: AsyncStream<AnalyzerInput>.Continuation
+        private let inputBuilder: AnalyzerInputBuffer
         private let events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
 
         init(
             converter: AnalyzerInputConverter,
-            inputBuilder: AsyncStream<AnalyzerInput>.Continuation,
+            inputBuilder: AnalyzerInputBuffer,
             events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
         ) {
             self.converter = converter
@@ -417,6 +680,14 @@ enum AudioEngineHelper {
 
     static var captureOverflowError: VoiceInputError {
         .captureBufferOverflow
+    }
+
+    static func enqueueCaptureInput(
+        _ input: AnalyzerInput,
+        into inputBuilder: AnalyzerInputBuffer,
+        events _: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
+    ) -> Bool {
+        inputBuilder.enqueue(input)
     }
 
     static func enqueueCaptureInput<Element: Sendable>(

@@ -9,15 +9,7 @@ import Vision
 enum TestCaptureFailureKind: CaseIterable, Sendable {
     case overflow, analyzer, transport, converterFlush, converterStatus
 
-    var messageFragment: String {
-        switch self {
-        case .overflow: "overflow"
-        case .analyzer: "Analyzer failed"
-        case .transport: URLError(.networkConnectionLost).localizedDescription
-        case .converterFlush: "Injected converter flush failure"
-        case .converterStatus: "converter"
-        }
-    }
+    var messageFragment: String { "Dictation couldn’t continue" }
 
     @MainActor
     func finish(_ session: MockVoiceSession) async throws {
@@ -34,16 +26,16 @@ enum TestCaptureFailureKind: CaseIterable, Sendable {
             ))
             let converter = try #require(TestFailingFlushConverter(from: format, to: format))
             converter.reportsNSError = self == .converterFlush
-            let inputs = AsyncStream<AnalyzerInput>.makeStream()
             let events = AsyncThrowingStream<VoiceSessionEvent, Error>.makeStream()
+            let inputs = AnalyzerInputBuffer(events: events.continuation)
             AudioEngineHelper.flushPendingAnalyzerInputs(
                 converter: converter, targetFormat: format,
-                into: inputs.continuation, events: events.continuation
+                into: inputs, events: events.continuation
             )
             #expect(converter.flushCallCount == 1)
             // Mirror a completed analyzer. Flush must have failed this stream
             // before successful finalization can close it.
-            inputs.continuation.finish()
+            inputs.finish()
             events.continuation.finish()
             do {
                 for try await _ in events.stream {}
@@ -260,6 +252,120 @@ struct VoiceInputManagerTests {
     }
 
     // MARK: - Prewarm
+
+    @Test func composerRefreshDoesNotInvalidateOnDevicePreparation() {
+        let manager = VoiceInputManager()
+        manager._testModelReady = true
+        manager.loadPreferences()
+        #expect(manager._testModelReady, "Reloading unchanged preferences must keep preparation warm")
+        manager.setServerCredentials(ServerCredentials(host: "example.test", port: 443, token: "test", name: "test"))
+        #expect(manager._testModelReady, "Server credentials do not affect Apple model or format")
+    }
+
+    @Test func subsequentComposerActivationUsesWarmTelemetryAndStillConfiguresCurrentRoute() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        var resolutions = 0
+        var modelPreparations = 0
+        let apple = AppleOnDeviceVoiceProvider(engine: .modernSpeech, resolveLocale: { _, locale in
+            resolutions += 1
+            return locale
+        }, prepareModel: { _, _ in modelPreparations += 1; return nil })
+        let provider = CachedAppleTestProvider(apple: apple)
+        let access = MockVoiceInputSystemAccess()
+        let playback = MockVoicePlaybackInterrupter()
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            routeResolver: VoiceInputRouteResolver(isAvailable: { _, _ in true }),
+            systemAccess: access
+        )
+        manager.setPlaybackInterrupter(playback)
+        var totals: [[String: String]] = []
+        var routePhases = 0
+        VoiceInputTelemetry._recordMetricForTesting = { metric, _, _, tags in
+            if metric == .dictationSetupMs { totals.append(tags) }
+            if metric == .voiceSetupMs, tags["phase"] == "audio_session" { routePhases += 1 }
+        }
+        defer { VoiceInputTelemetry._recordMetricForTesting = nil }
+        let credentials = ServerCredentials(host: "example.test", port: 443, token: "test", name: "test")
+        for take in 0..<2 {
+            manager.loadPreferences()
+            _ = manager.activateConversationComposer(
+                serverId: "server", sessionId: "session", credentials: credentials, connection: nil
+            )
+            playback.isPlaybackActiveForCapture = take == 1
+            try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+            #expect(manager.isRecording)
+            #expect(access.lastInAppPlaybackActive == (take == 1))
+            #expect(manager.captureFailure == nil)
+            await manager.cancelRecording()
+        }
+        #expect(resolutions == 1 && modelPreparations == 1)
+        #expect(totals.map { $0["path"] } == ["cold", "warm_cache"])
+        #expect(totals.allSatisfy { $0["provider_id"] == "apple_modern_speech" })
+        #expect(routePhases == 2)
+        #expect(access.activateAudioSessionCallCount == 2)
+        #expect(access.activateBuiltInAudioSessionCallCount == 0)
+        let paths = totals.compactMap { $0["path"] }
+        print("Activation evidence: paths=\(paths) locale_resolutions=\(resolutions) model_preparations=\(modelPreparations) current_route_activations=\(access.activateAudioSessionCallCount)")
+    }
+
+    @Test func routeTransitionAnalyzerBackpressureRecoversWithoutDiscardingTake() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = BufferedAnalyzerTestSession()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            routeResolver: VoiceInputRouteResolver(isAvailable: { _, _ in true }),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        var failures = 0
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test", onCaptureFailure: { failures += 1 })
+        // The consumer pauses across both sides of a route rebuild. More than
+        // eight tap buffers remain ordered in the SAME live analyzer queue.
+        try session.enqueueBuffers(96)
+        await manager.handleAudioRouteChange(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true, routeInputChanged: true
+        )
+        #expect(session.rebuilds == 1)
+        #expect(manager.isRecording && manager.captureFailure == nil && failures == 0)
+        var iterator = session.inputs.makeAsyncIterator()
+        for _ in 0..<96 { #expect(await iterator.next() != nil) }
+        try session.enqueueBuffers(1)
+        #expect(await iterator.next() != nil)
+        await manager.stopRecording()
+        #expect(manager.state == .idle && manager.captureFailure == nil && failures == 0)
+    }
+
+    @Test func sustainedAnalyzerBackpressureFailsManagerWithNeutralNotice() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = BufferedAnalyzerTestSession()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            routeResolver: VoiceInputRouteResolver(isAvailable: { _, _ in true }),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        var draft = "earlier draft"
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test", onCaptureFailure: {
+            draft = "earlier draft"
+        })
+        draft += " incomplete take"
+        try session.enqueueBuffers(422)
+        #expect(await waitForMainActorCondition { !manager.ownsCaptureAudioSession })
+        #expect(draft == "earlier draft")
+        let failure = try #require(manager.captureFailure)
+        #expect(failure.message.contains("Dictation couldn’t continue"))
+        #expect(!failure.message.lowercased().contains("overflow"))
+        #expect(!failure.message.lowercased().contains("buffer"))
+        #expect(failure.message.contains("Your earlier draft was kept"))
+        #expect(await manager.stopRecording() == "")
+    }
 
     @Test func prewarmGuardsWhenAlreadyReady() async {
         let manager = VoiceInputManager()
@@ -1127,7 +1233,8 @@ struct VoiceInputManagerTests {
         await loss.value
         #expect(await waitForMainActorCondition { !manager.ownsCaptureAudioSession })
         if case .error(let message) = manager.state {
-            #expect(message.contains("late stream failure"))
+            #expect(message.contains("Dictation couldn’t continue"))
+            #expect(!message.contains("late stream failure"))
         } else {
             Issue.record("The first terminal failure must survive competing route cleanup")
         }
@@ -1347,7 +1454,8 @@ struct VoiceInputManagerTests {
         #expect(manager.currentTranscript.isEmpty)
         #expect(manager.captureFailure != nil)
         if case .error(let message) = manager.state {
-            #expect(message.contains("Dictation connection lost"))
+            #expect(message.contains("Dictation couldn’t continue"))
+            #expect(!message.contains("Dictation connection lost"))
             #expect(message.contains("discarded"))
         } else { Issue.record("Fatal Stop must leave a persistent error") }
         #expect(!manager.ownsCaptureAudioSession)
@@ -1475,6 +1583,10 @@ struct VoiceInputManagerTests {
         )
         #expect(draft.text == "Keep draft and new typing")
         #expect(ComposerShared.captureFailure(manager, owner: .expandedComposer) == failure)
+        // Rollback is synchronous; capture cancellation is not. OCR/layout can
+        // keep MainActor busy, so wait for the drain rather than retrying merely
+        // because the earlier draft and error notice have already rendered.
+        #expect(await waitForMainActorCondition { !manager.ownsCaptureAudioSession })
         let retry = MockVoiceSession()
         provider.makeSessionHandler = { _, _ in retry }
         try await manager.startRecording(keyboardLanguage: "en-US", source: "expanded_mic_tap")
@@ -1975,7 +2087,7 @@ struct VoiceInputManagerTests {
 
         #expect(await waitForMainActorCondition {
             if case .error(let message) = manager.state {
-                return message.contains("stream blew up") && message.contains("This take was discarded")
+                return message.contains("Dictation couldn’t continue") && message.contains("This take was discarded")
             }
             return false
         })
@@ -2921,6 +3033,58 @@ struct VoiceInputManagerTests {
     private func resetVoicePreferences() {
         AppPreferences.Voice.setEngineMode(.onDevice)
     }
+}
+
+/// Real Apple preparation policy with only the hardware session replaced.
+@MainActor
+private final class CachedAppleTestProvider: VoiceTranscriptionProvider {
+    let apple: AppleOnDeviceVoiceProvider
+    var id: VoiceProviderID { apple.id }
+    var engine: VoiceInputManager.TranscriptionEngine { apple.engine }
+    init(apple: AppleOnDeviceVoiceProvider) { self.apple = apple }
+    func invalidateCache() { apple.invalidateCache() }
+    func cancelPreparation() { apple.cancelPreparation() }
+    func prewarm(context: VoiceProviderContext) async throws { try await apple.prewarm(context: context) }
+    func prepareSession(context: VoiceProviderContext) async throws -> VoiceProviderPreparation {
+        try await apple.prepareSession(context: context)
+    }
+    func makeSession(context: VoiceProviderContext, preparation: VoiceProviderPreparation) throws -> any VoiceTranscriptionSession {
+        MockVoiceSession()
+    }
+}
+
+/// Real queue/event boundary and manager route orchestration, without microphone/ASR hardware.
+@MainActor
+private final class BufferedAnalyzerTestSession: VoiceTranscriptionSession {
+    let events: AsyncThrowingStream<VoiceSessionEvent, Error>
+    let audioLevels: AsyncStream<Float>
+    let inputs: AnalyzerInputBuffer
+    let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
+    let levelContinuation: AsyncStream<Float>.Continuation
+    var rebuilds = 0
+    init() {
+        let eventPair = AsyncThrowingStream<VoiceSessionEvent, Error>.makeStream()
+        events = eventPair.stream
+        eventContinuation = eventPair.continuation
+        inputs = AnalyzerInputBuffer(events: eventPair.continuation)
+        (audioLevels, levelContinuation) = AsyncStream<Float>.makeStream()
+    }
+    func enqueueBuffers(_ count: Int) throws {
+        let format = try #require(AVAudioFormat(
+            commonFormat: .pcmFormatInt16, sampleRate: 48_000, channels: 1, interleaved: false
+        ))
+        let pcm = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_024))
+        pcm.frameLength = 1_024
+        for _ in 0..<count {
+            if inputs.enqueue(AnalyzerInput(buffer: pcm)) { levelContinuation.yield(0) }
+        }
+    }
+    func start() async throws -> VoiceSessionStartTimings {
+        VoiceSessionStartTimings(analyzerStartMs: 0, audioStartMs: 0)
+    }
+    func rebuildAudioCapture() async throws { rebuilds += 1; levelContinuation.yield(0) }
+    func stop() async { inputs.finish(); eventContinuation.finish(); levelContinuation.finish() }
+    func cancel() async { inputs.finish(discard: true); eventContinuation.finish(); levelContinuation.finish() }
 }
 
 @MainActor @Observable

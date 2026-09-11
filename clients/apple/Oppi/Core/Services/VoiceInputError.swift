@@ -41,7 +41,7 @@ enum VoiceInputError: LocalizedError {
         case .audioCaptureUnavailable:
             "The microphone did not deliver audio. Please try dictation again."
         case .captureBufferOverflow:
-            "Dictation audio buffer overflow. Please try again."
+            "Dictation couldn’t continue. Please try again."
         case .microphonePermissionDenied:
             "Microphone permission denied"
         case .localeNotSupported(let locale):

@@ -1302,7 +1302,7 @@ struct OppiDictationSessionAudioDrainTests {
         #expect(!session._enqueuePCMForTesting(Data([3])))
         await session.cancel()
         let error = await consumeStreamError(from: session.events)
-        #expect(error?.localizedDescription == "Dictation audio buffer overflow. Please try again.")
+        #expect(error?.localizedDescription == "Dictation couldn’t continue. Please try again.")
     }
 
     @Test func preReadyByteBudgetOverflowFailsWithoutSendingTruncatedAudio() async {
@@ -1324,7 +1324,7 @@ struct OppiDictationSessionAudioDrainTests {
         #expect(session._enqueuePCMForTesting(Data(repeating: 1, count: OppiDictationSession.preReadyPCMByteLimit)))
         #expect(session._enqueuePCMForTesting(Data([2])))
         let error = await consumeStreamError(from: session.events)
-        #expect(error?.localizedDescription == "Dictation audio buffer overflow. Please try again.")
+        #expect(error?.localizedDescription == "Dictation couldn’t continue. Please try again.")
         #expect(!session._enqueuePCMForTesting(Data([3])))
         readyContinuation.yield(())
         readyContinuation.finish()

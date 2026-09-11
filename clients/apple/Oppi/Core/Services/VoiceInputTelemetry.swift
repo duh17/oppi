@@ -6,6 +6,7 @@ enum VoiceMetricPhase: String, Sendable {
     case transcriberCreate = "transcriber_create"
     case analyzerStart = "analyzer_start"
     case audioStart = "audio_start"
+    case audioSession = "audio_session"
     case total
     case firstResult = "first_result"
 }
