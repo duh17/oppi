@@ -8,9 +8,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Voic
 ///
 /// Prefers Apple's general-purpose `SpeechTranscriber` and falls back to
 /// `DictationTranscriber` when the newer model is unavailable for the current
-/// device or locale. `SpeechTranscriber` uses the final transcription preset
-/// (no live volatile/fast results). The dictation fallback still streams
-/// progressive long-dictation results.
+/// device or locale. Both engines stream progressive results. `SpeechTranscriber`
+/// keeps volatile partials and omits `fastResults` so long takes keep full context.
 ///
 /// **Language detection:** By default, follows the active keyboard language
 /// at mic-tap time (Chinese keyboard → Chinese model, English keyboard →

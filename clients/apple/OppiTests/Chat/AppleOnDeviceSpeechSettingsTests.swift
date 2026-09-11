@@ -5,12 +5,14 @@ import Testing
 
 @Suite("AppleOnDeviceSpeechSettings")
 struct AppleOnDeviceSpeechSettingsTests {
-    @Test func speechTranscriberUsesFinalTranscriptionPreset() {
+    @Test func speechTranscriberStreamsVolatilesWithoutFastResults() {
         let preset = AppleOnDeviceSpeechSettings.speechPreset
 
-        #expect(preset == .transcription)
+        #expect(preset.reportingOptions.contains(.volatileResults))
         #expect(!preset.reportingOptions.contains(.fastResults))
-        #expect(!preset.reportingOptions.contains(.volatileResults))
+        #expect(!preset.reportingOptions.contains(.alternativeTranscriptions))
+        #expect(preset.transcriptionOptions.isEmpty)
+        #expect(preset.attributeOptions.isEmpty)
     }
 
     @Test func dictationFallbackUsesLiveLongPreset() {
