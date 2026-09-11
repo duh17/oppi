@@ -190,11 +190,12 @@ describe("sim-pool CLI", () => {
     expect(calls).not.toContain("delete unavailable");
   });
 
-  test("mismatch device fails without deleting", () => {
+  test("mismatch device is replaced under the slot lock", () => {
     const root = tempDir("mismatch");
     const fake = join(root, "fake");
     const bin = join(root, "bin");
     mkdirSync(fake, { recursive: true });
+    mkdirSync(join(root, "home"), { recursive: true });
     initCheckout(root);
     writeFileSync(
       join(fake, "devices.json"),
@@ -223,18 +224,23 @@ describe("sim-pool CLI", () => {
       OPPI_SIM_POOL_COUNT: "1",
       OPPI_SIM_POOL_WAIT: "0",
       OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_BOOT_TIMEOUT: "1",
+      OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
       OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
     };
-    mkdirSync(join(root, "home"), { recursive: true });
+    delete env.PIOS_ROOT;
     const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "Oppi", "build"], {
       cwd: join(root, "clients", "apple"),
       env,
       encoding: "utf8",
     });
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/runtime\/device mismatch|Refusing to delete/);
-    const calls = existsSync(join(fake, "xcrun.calls")) ? readFileSync(join(fake, "xcrun.calls"), "utf8") : "";
-    expect(calls).not.toContain("delete");
+    expect(result.status).toBe(0);
+    const args = readFileSync(join(fake, "xcodebuild.args"), "utf8");
+    expect(args).toContain("id=UDID-CREATED");
+    const calls = readFileSync(join(fake, "xcrun.calls"), "utf8");
+    expect(calls).toContain("delete UDID-POOL-0");
+    expect(calls).toContain("create Oppi-Pool-0");
+    expect(calls).not.toContain("delete unavailable");
   });
 
   test("run skips a runtime-mismatched slot and uses a matching sibling", () => {
@@ -294,6 +300,76 @@ describe("sim-pool CLI", () => {
     const args = readFileSync(join(fake, "xcodebuild.args"), "utf8");
     expect(args).toContain("id=UDID-POOL-1");
     expect(args).not.toContain("UDID-POOL-0");
+    const calls = readFileSync(join(fake, "xcrun.calls"), "utf8");
+    expect(calls).not.toContain("delete UDID-POOL-0");
+  });
+
+  test("run replaces a mismatched slot when the matching sibling is busy", () => {
+    const root = tempDir("repair-busy-match");
+    const fake = join(root, "fake");
+    const bin = join(root, "bin");
+    mkdirSync(fake, { recursive: true });
+    mkdirSync(join(root, "home"), { recursive: true });
+    mkdirSync(join(root, "locks"), { recursive: true });
+    initCheckout(root);
+    const held = tryAcquireSlot({ lockDir: join(root, "locks"), slot: 1, argv: ["run"] });
+    expect(held.ok).toBe(true);
+    writeFileSync(
+      join(fake, "devices.json"),
+      `{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+      {
+        "udid": "UDID-POOL-0",
+        "name": "Oppi-Pool-0",
+        "state": "Booted",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-18-5": [
+      {
+        "udid": "UDID-POOL-1",
+        "name": "Oppi-Pool-1",
+        "state": "Booted",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+      }
+    ]
+  }
+}`,
+    );
+    writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+    writeFakeXcrun(bin, fake);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOME: join(root, "home"),
+      OPPI_ROOT: root,
+      OPPI_SIM_POOL_LOCK_DIR: join(root, "locks"),
+      OPPI_SIM_POOL_COUNT: "2",
+      OPPI_SIM_POOL_WAIT: "0",
+      OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_BOOT_TIMEOUT: "1",
+      OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
+    };
+    delete env.PIOS_ROOT;
+    const result = spawnSync(
+      "bun",
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"],
+      { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
+    );
+    expect(result.status).toBe(0);
+    const args = readFileSync(join(fake, "xcodebuild.args"), "utf8");
+    expect(args).toContain("id=UDID-CREATED");
+    expect(args).not.toContain("UDID-POOL-1");
+    const calls = readFileSync(join(fake, "xcrun.calls"), "utf8");
+    expect(calls).toContain("delete UDID-POOL-0");
+    expect(calls).toContain("create Oppi-Pool-0");
+    if (held.ok) {
+      releaseReusable(held.owned);
+    }
   });
 
   test("in-flight slot is not reused by a second run", () => {

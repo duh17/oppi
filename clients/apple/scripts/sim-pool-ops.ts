@@ -31,8 +31,8 @@ import {
   parseDevicesJson,
   parseRuntimesJson,
   poolDeviceName,
+  preferredAcquireSlots,
   selectIosRuntime,
-  shouldSkipPoolSlot,
   type SimulatorDevice,
 } from "./sim-pool-simctl";
 import {
@@ -576,13 +576,12 @@ export async function ensureSim(session: CommandSession, config: PoolConfig, slo
   if (found.match) {
     return found.match.udid;
   }
-  if (found.mismatches.length > 0) {
-    const details = found.mismatches
-      .map((device) => `${device.udid} runtime=${device.runtime} device=${device.deviceTypeIdentifier}`)
-      .join("; ");
-    die(
-      `${poolDeviceName(slot)} exists but does not match runtime=${runtime} device=${config.deviceType} (${details}). Refusing to delete it.`,
+  for (const device of found.mismatches) {
+    log(
+      `[sim-pool] Replacing ${poolDeviceName(slot)} ${device.udid} (runtime=${device.runtime} device=${device.deviceTypeIdentifier}) to match runtime=${runtime} device=${config.deviceType}`,
     );
+    await runSimctl(session, ["shutdown", device.udid], "simctl shutdown");
+    await runSimctl(session, ["delete", device.udid], "simctl delete");
   }
   log(`[sim-pool] Creating simulator: ${poolDeviceName(slot)}`);
   const created = requireQuiescent(
@@ -760,13 +759,14 @@ async function acquireRunSlot(
       die("canceled while waiting for a simulator slot");
     }
     const devices = await listDevices(session, config);
-    for (const slot of slotNumbers(config)) {
+    for (const slot of preferredAcquireSlots(
+      slotNumbers(config),
+      devices,
+      runtime,
+      config.deviceType,
+    )) {
       if (session.canceled) {
         die("canceled while waiting for a simulator slot");
-      }
-      const found = findMatchingPoolDevice(devices, slot, runtime, config.deviceType);
-      if (shouldSkipPoolSlot(found)) {
-        continue;
       }
       const result = tryAcquireSlot({ lockDir: config.lockDir, slot, argv });
       if (result.ok) {
@@ -775,7 +775,7 @@ async function acquireRunSlot(
     }
     if (Date.now() >= deadline) {
       die(
-        `all ${config.count} simulator slots (slots ${poolSlotRange(config)}) are busy, quarantined, or runtime/device mismatch (waited ${config.waitSeconds}s)`,
+        `all ${config.count} simulator slots (slots ${poolSlotRange(config)}) are busy or quarantined (waited ${config.waitSeconds}s)`,
       );
     }
     if (!announced) {

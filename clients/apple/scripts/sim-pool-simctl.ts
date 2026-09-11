@@ -126,6 +126,25 @@ export function shouldSkipPoolSlot(found: {
   return found.match == null && found.mismatches.length > 0;
 }
 
+export function preferredAcquireSlots(
+  slots: number[],
+  devices: SimulatorDevice[],
+  runtime: string,
+  deviceType: string,
+): number[] {
+  const preferred: number[] = [];
+  const fallback: number[] = [];
+  for (const slot of slots) {
+    const found = findMatchingPoolDevice(devices, slot, runtime, deviceType);
+    if (found.match) {
+      preferred.push(slot);
+    } else {
+      fallback.push(slot);
+    }
+  }
+  return [...preferred, ...fallback];
+}
+
 export function deviceState(devices: SimulatorDevice[], udid: string): string | undefined {
   return devices.find((device) => device.udid === udid)?.state;
 }

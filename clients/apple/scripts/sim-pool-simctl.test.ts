@@ -3,6 +3,7 @@ import {
   buildAttemptCommand,
   findMatchingPoolDevice,
   parseDevicesJson,
+  preferredAcquireSlots,
   resultBundlePathForAttempt,
   selectIosRuntime,
   shouldSkipPoolSlot,
@@ -72,6 +73,39 @@ describe("sim-pool-simctl", () => {
     expect(mismatch.mismatches.map((device) => device.udid).sort()).toEqual(["U1", "U2"]);
     expect(shouldSkipPoolSlot(match)).toBe(false);
     expect(shouldSkipPoolSlot(mismatch)).toBe(true);
+  });
+
+  test("acquire prefers a matching slot before a runtime mismatch", () => {
+    const devices = parseDevicesJson(`{
+      "devices": {
+        "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+          {
+            "udid": "U0",
+            "name": "Oppi-Pool-0",
+            "state": "Booted",
+            "isAvailable": true,
+            "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+          }
+        ],
+        "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+          {
+            "udid": "U1",
+            "name": "Oppi-Pool-1",
+            "state": "Booted",
+            "isAvailable": true,
+            "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+          }
+        ]
+      }
+    }`);
+    expect(
+      preferredAcquireSlots(
+        [0, 1],
+        devices,
+        "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+        "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+      ),
+    ).toEqual([1, 0]);
   });
 
   test("latest-stable skips beta runtimes", () => {
