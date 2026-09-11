@@ -362,6 +362,18 @@ enum ToolTimelineRowPresentationHelpers {
     /// Cleared after the async block fires.
     private static var pendingCoalescedInvalidations: Set<ObjectIdentifier> = []
 
+    /// Forced/coalesced invalidations that arrived while the enclosing
+    /// collection view was already inside `layoutSubviews`. UIKit aborts if
+    /// `invalidateLayout()` runs in that window (Build 49 chat-timeline
+    /// SIGABRT from prepared markdown images).
+    private struct PendingAfterLayoutInvalidation {
+        weak var sourceView: UIView?
+        var allowDetachedAnchorInvalidation: Bool
+        var preserveCurrentViewport: Bool
+    }
+
+    private static var pendingAfterLayoutInvalidations: [ObjectIdentifier: PendingAfterLayoutInvalidation] = [:]
+
     private static func scheduleCoalescedInvalidation(for collectionView: UICollectionView) {
         let identifier = ObjectIdentifier(collectionView)
         guard pendingCoalescedInvalidations.insert(identifier).inserted else {
@@ -372,6 +384,69 @@ enum ToolTimelineRowPresentationHelpers {
             pendingCoalescedInvalidations.remove(identifier)
             guard let collectionView else { return }
             invalidateCollectionViewLayout(collectionView)
+        }
+    }
+
+    private static func collectionViewIsPerformingLayout(
+        _ collectionView: UICollectionView
+    ) -> Bool {
+        (collectionView as? AnchoredCollectionView)?.isPerformingLayout == true
+    }
+
+    private static func scheduleInvalidationAfterCurrentLayout(
+        for collectionView: UICollectionView,
+        allowDetachedAnchorInvalidation: Bool,
+        preservingViewportAround sourceView: UIView?,
+        preserveCurrentViewport: Bool
+    ) {
+        let identifier = ObjectIdentifier(collectionView)
+        if var existing = pendingAfterLayoutInvalidations[identifier] {
+            existing.allowDetachedAnchorInvalidation =
+                existing.allowDetachedAnchorInvalidation || allowDetachedAnchorInvalidation
+            existing.preserveCurrentViewport =
+                existing.preserveCurrentViewport || preserveCurrentViewport
+            if existing.sourceView == nil {
+                existing.sourceView = sourceView
+            }
+            pendingAfterLayoutInvalidations[identifier] = existing
+            return
+        }
+
+        pendingAfterLayoutInvalidations[identifier] = PendingAfterLayoutInvalidation(
+            sourceView: sourceView,
+            allowDetachedAnchorInvalidation: allowDetachedAnchorInvalidation,
+            preserveCurrentViewport: preserveCurrentViewport
+        )
+        DispatchQueue.main.async { [weak collectionView] in
+            guard let pending = pendingAfterLayoutInvalidations.removeValue(
+                forKey: identifier
+            ) else {
+                return
+            }
+            guard let collectionView else { return }
+            if collectionViewIsPerformingLayout(collectionView) {
+                scheduleInvalidationAfterCurrentLayout(
+                    for: collectionView,
+                    allowDetachedAnchorInvalidation: pending.allowDetachedAnchorInvalidation,
+                    preservingViewportAround: pending.sourceView,
+                    preserveCurrentViewport: pending.preserveCurrentViewport
+                )
+                return
+            }
+            if isUserInteracting(with: collectionView) {
+                if pending.allowDetachedAnchorInvalidation {
+                    scheduleForcedInvalidationWhenInteractionEnds(for: collectionView)
+                } else {
+                    scheduleInvalidationWhenInteractionEnds(for: collectionView)
+                }
+                return
+            }
+            invalidateCollectionViewLayout(
+                collectionView,
+                allowDetachedAnchorInvalidation: pending.allowDetachedAnchorInvalidation,
+                preservingViewportAround: pending.sourceView,
+                preserveCurrentViewport: pending.preserveCurrentViewport
+            )
         }
     }
 
@@ -569,6 +644,16 @@ enum ToolTimelineRowPresentationHelpers {
                anchoredCV.isDetachedFromBottom && anchoredCV.detachedAnchorIsActive {
                 return
             }
+        }
+
+        if collectionViewIsPerformingLayout(collectionView) {
+            scheduleInvalidationAfterCurrentLayout(
+                for: collectionView,
+                allowDetachedAnchorInvalidation: allowDetachedAnchorInvalidation,
+                preservingViewportAround: sourceView,
+                preserveCurrentViewport: preserveCurrentViewport
+            )
+            return
         }
 
         guard beginSynchronousLayoutInvalidation(for: collectionView) else { return }

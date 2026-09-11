@@ -56,6 +56,12 @@ final class AnchoredCollectionView: UICollectionView {
     /// `scrollViewDidScroll` fallback covers the passive detached case.
     var isDetachedFromBottom = false
 
+    /// True while this view is inside `layoutSubviews`, including nested
+    /// `layoutIfNeeded` re-entry. Media self-sizing must not call
+    /// `invalidateLayout()` in that window — UIKit aborts.
+    private var layoutSubviewsDepth = 0
+    var isPerformingLayout: Bool { layoutSubviewsDepth > 0 }
+
     // MARK: - Expand/collapse anchoring
 
     /// When set, this index path is used as the anchor instead of the first
@@ -377,6 +383,9 @@ final class AnchoredCollectionView: UICollectionView {
     #endif
 
     override func layoutSubviews() {
+        layoutSubviewsDepth += 1
+        defer { layoutSubviewsDepth -= 1 }
+
         if isApplyingAnchorCorrection {
             super.layoutSubviews()
             return
