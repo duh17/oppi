@@ -43,6 +43,9 @@ enum ComposerShared {
         let accessibilityValue: String
 
         var isBusy: Bool { isPreparing || isProcessing }
+        /// Commit listening chrome on tap. Preparing is not a spinner; the ring
+        /// stays flat until first PCM. Success haptic still waits for recording.
+        var showsListeningChrome: Bool { isRecording || isPreparing }
         var isEnabled: Bool { !isProcessing && !isBlockedByOtherOwner }
         var accessibilityLabel: String {
             if isRecording { return "Stop recording" }
@@ -618,11 +621,13 @@ enum ComposerShared {
         suppressKeyboard: Binding<Bool>,
         focusRequestID: Binding<Int>,
         prepare: (() async throws -> Void)? = nil,
+        playTapHaptic: () -> Void = { AppHaptics.dictationTapAccepted() },
         playActivationHaptic: () -> Void = { AppHaptics.dictationActivated() }
     ) async throws -> String {
         // Admission precedes binding writes: a tap during cancellation drain
         // must not replace the failed take's rollback or a retry's prefix.
         let startupID = try manager.beginComposerStartup()
+        playTapHaptic()
         let prefix = dictationPrefix(for: baseText)
         textBeforeRecording?.wrappedValue = prefix
         suppressKeyboard.wrappedValue = true

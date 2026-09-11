@@ -61,8 +61,8 @@ final class MicButtonChromeView: UIControl {
         animated: Bool = true
     ) {
         apply(
-            isRecording: presentation.isRecording,
-            isProcessing: presentation.isBusy,
+            isRecording: presentation.showsListeningChrome,
+            isProcessing: presentation.isProcessing,
             audioLevel: presentation.audioLevel,
             languageLabel: presentation.languageLabel,
             accentColor: accentColor,

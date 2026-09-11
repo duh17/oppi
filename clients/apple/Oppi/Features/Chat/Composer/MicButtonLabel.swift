@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Mic button label with three states:
 /// - **Idle:** mic icon on neutral background
-/// - **Recording:** language label with audio-reactive border
+/// - **Listening:** language label; ring stays flat until first PCM
 /// - **Processing:** spinner
 struct MicButtonLabel: View {
     enum EngineBadge: Equatable, Sendable {
@@ -43,8 +43,8 @@ struct MicButtonLabel: View {
         diameter: CGFloat
     ) {
         self.init(
-            isRecording: presentation.isRecording,
-            isProcessing: presentation.isBusy,
+            isRecording: presentation.showsListeningChrome,
+            isProcessing: presentation.isProcessing,
             audioLevel: presentation.audioLevel,
             languageLabel: presentation.languageLabel,
             accentColor: accentColor,

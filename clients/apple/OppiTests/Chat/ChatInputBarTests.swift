@@ -564,6 +564,52 @@ struct ChatInputBarTests {
         #expect(!presentation.isBlockedByOtherOwner)
     }
 
+    @Test("Preparing dictation shows listening chrome without a spinner or fake waveform")
+    func preparingDictationShowsListeningChrome() {
+        let manager = VoiceInputManager()
+        manager._testState = .preparingModel
+        manager._testActiveRecordingSource = ComposerShared.VoiceInputOwner.inlineComposer.rawValue
+
+        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
+
+        #expect(presentation.isPreparing)
+        #expect(presentation.showsListeningChrome)
+        #expect(!presentation.isRecording)
+        #expect(!presentation.isProcessing)
+        #expect(presentation.audioLevel == 0)
+        #expect(presentation.accessibilityLabel == "Cancel voice input")
+    }
+
+    @Test("Dictation tap haptic fires before capture; activation haptic still waits for recording")
+    func dictationTapHapticFiresBeforeCapture() async throws {
+        let access = MockVoiceInputSystemAccess()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        manager.setEngineMode(.onDevice)
+        var taps = 0
+        var activations = 0
+        var tapsBeforeStart = 0
+        provider.makeSessionHandler = { _, _ in
+            tapsBeforeStart = taps
+            return MockVoiceSession()
+        }
+        try await ComposerShared.startVoiceInput(
+            manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer, baseText: "",
+            suppressKeyboard: .constant(false), focusRequestID: .constant(0),
+            playTapHaptic: { taps += 1 },
+            playActivationHaptic: {
+                #expect(manager.isRecording)
+                activations += 1
+            }
+        )
+        #expect(taps == 1)
+        #expect(tapsBeforeStart == 1)
+        #expect(activations == 1)
+        await manager.cancelRecording()
+    }
+
     @Test("Expanded composer mirrors live and settled inline transcript presentation")
     func expandedComposerMirrorsInlineTranscriptPresentation() async throws {
         AppPreferences.Voice.setEngineMode(.onDevice)

@@ -1013,6 +1013,7 @@ final class VoiceInputManager {
         let startTime = ContinuousClock.now
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
+        activeLanguageLabel = Self.languageLabel(for: locale)
         let engine = await effectiveEngine(for: locale)
         guard activeStartRequestID == requestID, state == .preparingModel else {
             ownsOperation = false

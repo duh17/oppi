@@ -12,6 +12,11 @@ enum AppHaptics {
         impact(style: .light, intensity: 0.45)
     }
 
+    /// Immediate acknowledgement that the mic tap was accepted.
+    static func dictationTapAccepted() {
+        impact(style: .light, intensity: 0.5)
+    }
+
     /// Use the same confirmation as saving a comment, once capture is ready.
     static func dictationActivated() {
         guard AppPreferences.Interaction.isHapticFeedbackEnabled else { return }
