@@ -158,6 +158,7 @@ struct SessionInboxView: View {
     @State private var providerSetupState: ProviderSetupState = .unknown
     @State private var isSearchPresented = false
     @State private var presentsNowPlayingPlayer = false
+    @State private var composeBarColumnWidth: CGFloat = 0
 
     init(onOpenSidebar: (() -> Void)? = nil) {
         self.onOpenSidebar = onOpenSidebar
@@ -362,6 +363,7 @@ struct SessionInboxView: View {
             refreshSearch()
         }
         .toolbar { toolbarContent }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { composeBarColumnWidth = $0 }
         .refreshable {
             async let refresh: () = refreshVisibleServer()
             async let providers: () = loadProviderSetupState()
@@ -966,6 +968,8 @@ struct SessionInboxView: View {
                 voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
                 hasActivePlayback: sessionListHasActivePlayback
             ),
+            hasActivePlayback: sessionListHasActivePlayback,
+            columnWidth: composeBarColumnWidth,
             onIncognito: inboxIncognitoAction,
             onStart: {
                 startQuickSession(dictate: false)

@@ -124,6 +124,7 @@ struct WorkspaceDetailView: View {
     @State private var sessionSearchText = ""
     @State private var isSearchPresented = false
     @State private var presentsNowPlayingPlayer = false
+    @State private var composeBarColumnWidth: CGFloat = 0
     @State private var searchStore = SessionSearchStore()
     @State private var expandedStoppedGroupIDs: Set<String> = []
     @State private var collapsedStoppedGroupIDs: Set<String> = []
@@ -533,6 +534,7 @@ struct WorkspaceDetailView: View {
         .accessibilityIdentifier("workspace.sessionList")
         .listStyle(.insetGrouped)
         .themedListSurface()
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { composeBarColumnWidth = $0 }
         .contentMargins(.top, contextBarHeight, for: .scrollContent)
         .overlay {
             if contextBarExpanded {
@@ -840,6 +842,8 @@ struct WorkspaceDetailView: View {
                 voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
                 hasActivePlayback: connection.audioPlayer.hasActivePlayback
             ),
+            hasActivePlayback: connection.audioPlayer.hasActivePlayback,
+            columnWidth: composeBarColumnWidth,
             onIncognito: {
                 Task { await createSession(ephemeral: true) }
             },

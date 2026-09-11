@@ -4076,6 +4076,7 @@ private struct InboxProviderSetupPreview: View {
 
     let showsSessions: Bool
     @State private var searchText = ""
+    @State private var composeBarColumnWidth: CGFloat = 0
 
     var body: some View {
         NavigationStack {
@@ -4120,12 +4121,14 @@ private struct InboxProviderSetupPreview: View {
                 ToolbarItem(placement: .bottomBar) {
                     SessionInboxCompactComposeBar(
                         showsDictation: true,
+                        columnWidth: composeBarColumnWidth,
                         onStart: {},
                         onDictate: {}
                     )
                 }
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { composeBarColumnWidth = $0 }
         .accessibilityIdentifier(
             ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
         )
