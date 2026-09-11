@@ -561,6 +561,10 @@ extension OppiDictationSession {
 /// so it is safe to call from the real-time audio callback.
 enum DictationAudioEngineHelper {
     static let pcmBufferLimit = 32
+    /// Fallback wait if first PCM is not latched after yielding MainActor.
+    /// 50ms buckets sat on the 350ms warm dictation setup SLO.
+    static let firstAudioPollInterval: Duration = .milliseconds(10)
+    static let firstAudioPollAttempts = 100
 
     @MainActor
     static func startWithFirstAudio(
@@ -580,12 +584,17 @@ enum DictationAudioEngineHelper {
             guard !isCancelled() else { throw CancellationError() }
             do {
                 try start()
-                for _ in 0..<20 {
+                // engine.start() blocks MainActor; the RT tap can queue first
+                // PCM before the level latch runs. Yield so already-delivered
+                // audio can complete without a poll bucket.
+                if hasAudio() { return }
+                await Task.yield()
+                for _ in 0..<firstAudioPollAttempts {
                     try Task.checkCancellation()
                     guard !isCancelled() else { throw CancellationError() }
                     guard isRunning() else { break }
                     if hasAudio() { return }
-                    try await sleep(.milliseconds(50))
+                    try await sleep(firstAudioPollInterval)
                 }
                 throw VoiceInputError.audioCaptureUnavailable
             } catch {

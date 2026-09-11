@@ -1211,6 +1211,25 @@ struct DictationCaptureStartupTests {
         #expect(waits > 0)
     }
 
+    @Test func alreadyLatchedPCMDoesNotPoll() async throws {
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: {}, hasAudio: { true }, isRunning: { true },
+            stop: { Issue.record("Healthy capture must not stop") },
+            isCancelled: { false },
+            sleep: { _ in Issue.record("Latched first PCM must not wait") }
+        )
+    }
+
+    @Test func firstAudioPollStaysShortEnoughForWarmEnablement() async throws {
+        var intervals: [Duration] = []
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: {}, hasAudio: { !intervals.isEmpty }, isRunning: { true },
+            stop: { Issue.record("Healthy capture must not stop") },
+            isCancelled: { false }, sleep: { intervals.append($0) }
+        )
+        #expect(intervals == [.milliseconds(10)])
+    }
+
     @Test func cancellationDuringReadinessStopsWithoutRetry() async {
         var cancelled = false
         var starts = 0
