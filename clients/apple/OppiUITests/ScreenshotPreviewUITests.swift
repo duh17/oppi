@@ -469,18 +469,18 @@ final class ScreenshotPreviewUITests: XCTestCase {
         saveScreenshot(name: "workspace-edit-skills")
     }
 
-    func testWhatsNewBuild48LightScreenshot() throws {
+    func testWhatsNewBuild49LightScreenshot() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(screen: "whats-new-build48-light", reduceMotion: true)
-        assertWhatsNewBuild48Content()
-        saveScreenshot(name: "whats-new-build48-light")
+        launchPreview(screen: "whats-new-build49-light", reduceMotion: true)
+        assertWhatsNewBuild49Content()
+        saveScreenshot(name: "whats-new-build49-light")
     }
 
-    func testWhatsNewBuild48DarkScreenshot() throws {
+    func testWhatsNewBuild49DarkScreenshot() throws {
         XCUIDevice.shared.orientation = .portrait
-        launchPreview(screen: "whats-new-build48-dark", reduceMotion: true)
-        assertWhatsNewBuild48Content()
-        saveScreenshot(name: "whats-new-build48-dark")
+        launchPreview(screen: "whats-new-build49-dark", reduceMotion: true)
+        assertWhatsNewBuild49Content()
+        saveScreenshot(name: "whats-new-build49-dark")
     }
 
     func testModelProvidersQuotaInlinePreview() throws {
@@ -1444,7 +1444,7 @@ final class ScreenshotPreviewUITests: XCTestCase {
         )
     }
 
-    private func assertWhatsNewBuild48Content() {
+    private func assertWhatsNewBuild49Content() {
         // The launch arguments request reduced motion; this extra settle makes
         // the artifact safe even on simulators that ignore that preference.
         sleep(1)
@@ -1458,24 +1458,24 @@ final class ScreenshotPreviewUITests: XCTestCase {
 
         let expectedFeatures = [
             (
-                id: "audio-player",
-                title: "Audio player",
-                description: "Play Oppi-backed audio from Files or a chat embed. Lyrics appear when a sidecar exists."
+                id: "syntax-and-documents",
+                title: "Syntax highlighting for more languages",
+                description: "Tree-sitter adds richer source colors. CSV and TSV files open as tables, and HEIC and HEIF files open as images."
             ),
             (
-                id: "host-pill",
-                title: "Usage and Server Settings",
-                description: "The host pill opens Usage, Model Providers, and Server Settings for this server."
+                id: "improved-dictation",
+                title: "Improved dictation",
+                description: "On-device dictation shows live text, supports AirPods, and no longer interrupts other audio."
             ),
             (
-                id: "markdown-file-links",
-                title: "Markdown file links",
-                description: "README-style [label](path) links open in the document viewer."
+                id: "review-comments",
+                title: "Polished review comments",
+                description: "Review comments stay close in the chat timeline and full-screen document views, with cleaner controls."
             ),
             (
-                id: "commit-new-session",
-                title: "New Session from a commit",
-                description: "Starting from a commit attaches that commit, not every changed file."
+                id: "session-controls",
+                title: "Simpler session controls",
+                description: "Session lists put Message and dictation on the left, like the composer, and Files on the right. The unused prompt swipe is gone."
             ),
         ]
 

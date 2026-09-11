@@ -78,35 +78,35 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Build 48 · Changes since Build 47
+    /// Build 49 · Changes since Build 48
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "audio-player",
-            icon: "waveform",
-            iconColor: .themeCyan,
-            title: String(localized: "Audio player"),
-            description: String(localized: "Play Oppi-backed audio from Files or a chat embed. Lyrics appear when a sidecar exists.")
-        ),
-        WhatsNewFeature(
-            id: "host-pill",
-            icon: "server.rack",
-            iconColor: .themePurple,
-            title: String(localized: "Usage and Server Settings"),
-            description: String(localized: "The host pill opens Usage, Model Providers, and Server Settings for this server.")
-        ),
-        WhatsNewFeature(
-            id: "markdown-file-links",
-            icon: "link",
+            id: "syntax-and-documents",
+            icon: "chevron.left.forwardslash.chevron.right",
             iconColor: .themeBlue,
-            title: String(localized: "Markdown file links"),
-            description: String(localized: "README-style [label](path) links open in the document viewer.")
+            title: String(localized: "Syntax highlighting for more languages"),
+            description: String(localized: "Tree-sitter adds richer source colors. CSV and TSV files open as tables, and HEIC and HEIF files open as images.")
         ),
         WhatsNewFeature(
-            id: "commit-new-session",
-            icon: "plus.square.on.square",
+            id: "improved-dictation",
+            icon: "waveform.badge.microphone",
             iconColor: .themeGreen,
-            title: String(localized: "New Session from a commit"),
-            description: String(localized: "Starting from a commit attaches that commit, not every changed file.")
+            title: String(localized: "Improved dictation"),
+            description: String(localized: "On-device dictation shows live text, supports AirPods, and no longer interrupts other audio.")
+        ),
+        WhatsNewFeature(
+            id: "review-comments",
+            icon: "text.bubble",
+            iconColor: .themePurple,
+            title: String(localized: "Polished review comments"),
+            description: String(localized: "Review comments stay close in the chat timeline and full-screen document views, with cleaner controls.")
+        ),
+        WhatsNewFeature(
+            id: "session-controls",
+            icon: "rectangle.grid.1x2",
+            iconColor: .themeOrange,
+            title: String(localized: "Simpler session controls"),
+            description: String(localized: "Session lists put Message and dictation on the left, like the composer, and Files on the right. The unused prompt swipe is gone.")
         ),
     ]
 

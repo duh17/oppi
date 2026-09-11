@@ -38,6 +38,47 @@ Example:
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-09-11
+
+Target: iOS `1.1.2` build `49`, `oppi-server@0.49.0`, and `oppi-mirror@0.49.0`.
+
+### Added
+
+- **Client/Server:** Completed text writes, including empty files, open through the current session file reader instead of a tool-output sheet. Relative control-file reads require the matching 0.49.0 server.
+- **Client:** Session lists put Message (with a leading mic, matching the composer) on the left and Files on the right. On iPhone and compact width, Message is long enough to cover session titles. Regular iPad stays compact.
+- **Client:** Review comments stay available from the chat timeline and full-screen document views, with a tighter pill and drawer.
+- **Client:** CSV and TSV files render as fitted read-only tables, with source mode still available.
+- **Client:** HEIC and HEIF workspace files open as images.
+- **Client:** Tree-sitter syntax highlighting now covers JavaScript, TypeScript, Python, Go, Rust, Java, C-family languages, YAML, TOML, and more.
+- **Client:** Wrapped JSON code blocks can be pretty-printed.
+- **Client:** Dictation supports AirPods and keeps YouTube and in-app playback going. Brief analyzer backpressure no longer fails the take; sustained overflow fails closed and can be retried. On-device transcription streams SpeechTranscriber volatile partials without fastResults (iOS 26) and uses the iOS 27 speech audio converter, with speech models kept ready between takes. A disconnected-microphone take is discarded and can be retried.
+- **Client/Server:** Server dictation can stream through xAI using existing xAI provider credentials.
+- **Server:** `oppi session wait` defaults to four minutes and returns the last busy snapshot when it times out. Session list and search accept relative ages.
+
+### Changed
+
+- **Compatibility:** Build 49 requires `oppi-server@0.49.0` and `oppi-mirror@0.49.0`.
+- **Client:** Dictation selects an AirPods or speaker-facing microphone, waits less for first live PCM before reporting ready, shows listening chrome on tap, and gives haptic confirmation when capture begins.
+- **Client:** Official Pi is the default Pi-agent mark. Stored Classic π migrates on load. Grid π stays selectable.
+- **Client:** Server Status reports the embedded Pi SDK and the installed Pi TUI version independently.
+- **Mirror:** Terminal diagnostics rotate into UTC daily files, retain 14 days, and delete only exact valid daily filenames.
+
+### Fixed
+
+- **Client:** Ask answers submit once and remain retryable after a delivery failure.
+- **Client:** Outline jumps keep the selected row, keep the first row below the navigation bar, and resume live-tail following after returning to the bottom.
+- **Client:** Oppi-backed inline images load without an extra tap. Inline video keeps playback controls and authenticated range playback.
+- **Client:** Workspace delete is reachable again from Server Settings and Edit Workspace, with confirmation.
+- **Client:** Shared and exported files keep their original names.
+- **Client:** Timeline file pills no longer crash when no audio player is mounted.
+
+### Removed
+
+- **Client/Server:** Removed unused authentication compatibility code. If pairing fails after an upgrade, update the server and re-pair.
+- **Server:** Removed OpenAI batch dictation. Yuwp-compatible HTTP streaming and xAI remain; OpenAI Codex model access, login, and quota reporting are unchanged.
+- **Client:** Removed the unused session-list prompt swipe.
+- **Client:** Removed Classic π as a Pi-agent avatar.
+
 ## [0.48.0] - 2026-09-04
 
 Target: iOS `1.1.2` build `48`, `oppi-server@0.48.0` with bundled Pi runtime `0.85.0`, and `oppi-mirror@0.48.0`.
