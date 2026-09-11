@@ -110,6 +110,9 @@ protocol VoiceTranscriptionSession: AnyObject {
     var audioLevels: AsyncStream<Float> { get }
 
     func start() async throws -> VoiceSessionStartTimings
+    /// Rebuild the microphone graph onto the current route without finishing
+    /// the transcription session. Used when Bluetooth/built-in handoff kills the engine.
+    func rebuildAudioCapture() async throws
     func stop() async
     func cancel() async
 }

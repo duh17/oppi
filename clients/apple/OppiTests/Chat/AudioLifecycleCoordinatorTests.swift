@@ -130,16 +130,218 @@ struct AudioLifecycleCoordinatorTests {
         #expect(!AudioPlayerService.ownsPlaybackAudioSession(category: .playAndRecord))
     }
 
-    @Test func audioPlayerAutoplayIsSuppressedDuringCapture() {
+    @Test func audioPlayerKeepsCurrentPlaybackButSuppressesNewAutoplayDuringCapture() {
         let player = AudioPlayerService()
+        player._startPCMStreamForTesting(id: "voice-current")
 
         #expect(player.shouldAutoplayAudioMessage(itemID: "voice-1", playbackBehavior: .playNow))
+        #expect(player.isPlaybackActiveForCapture)
 
         player.beginCaptureInterruption()
+        #expect(player.playingItemID == "audio-stream-voice-current")
+        #expect(player.hasActivePlayback)
         #expect(!player.shouldAutoplayAudioMessage(itemID: "voice-2", playbackBehavior: .playNow))
+
+        let audioSession = AVAudioSession.sharedInstance()
+        let previousCategory = audioSession.category
+        let previousMode = audioSession.mode
+        let previousOptions = audioSession.categoryOptions
+        defer {
+            player.stop()
+            try? audioSession.setCategory(previousCategory, mode: previousMode, options: previousOptions)
+        }
+        try? audioSession.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers])
 
         player.endCaptureInterruption()
         #expect(player.shouldAutoplayAudioMessage(itemID: "voice-3", playbackBehavior: .playNow))
+        #expect(player.playingItemID == "audio-stream-voice-current")
+        #expect(audioSession.category == .playback)
+    }
+
+    @Test func pausedPlaybackItemDoesNotReassertExclusiveSessionAfterCapture() {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "voice-paused", loading: nil)
+        player._setPausedForTesting(true)
+        #expect(player.hasActivePlayback)
+        #expect(!player.isPlaybackActiveForCapture)
+
+        let audioSession = AVAudioSession.sharedInstance()
+        let previousCategory = audioSession.category
+        let previousMode = audioSession.mode
+        let previousOptions = audioSession.categoryOptions
+        defer {
+            player.stop()
+            try? audioSession.setCategory(previousCategory, mode: previousMode, options: previousOptions)
+        }
+        try? audioSession.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers])
+
+        player.beginCaptureInterruption()
+        player.endCaptureInterruption()
+
+        #expect(audioSession.category == .playAndRecord)
+    }
+
+    @Test(arguments: ["data", "file", "pcm"], [false, true])
+    func pausedPlaybackResumeReclaimsRoutingOnlyAfterCaptureRelease(path: String, captureReleased: Bool) throws {
+        let player = AudioPlayerService()
+        let audioSession = AVAudioSession.sharedInstance()
+        let previousCategory = audioSession.category
+        let previousMode = audioSession.mode
+        let previousOptions = audioSession.categoryOptions
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("resume-\(UUID()).wav")
+        defer {
+            player.stop()
+            try? audioSession.setCategory(previousCategory, mode: previousMode, options: previousOptions)
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        switch path {
+        case "data":
+            player.toggleDataPlayback(data: Self.makeSilentWAV(frames: 240_000), itemID: "retained-data")
+        case "file":
+            try Self.makeSilentWAV(frames: 240_000).write(to: fileURL)
+            player.toggleFilePlayback(fileURL: fileURL, itemID: "retained-file")
+        default:
+            player._startPCMStreamForTesting(id: "retained-pcm")
+        }
+        let retainedItem = try #require(player.playingItemID)
+        player.pause()
+        #expect(player.isPaused)
+        player.beginCaptureInterruption()
+        let captureOptions: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .mixWithOthers, .duckOthers]
+        try audioSession.setCategory(.playAndRecord, mode: .default, options: captureOptions)
+        try audioSession.setActive(true)
+        if captureReleased {
+            player.endCaptureInterruption()
+            // Mirrors the manager releasing an inactive/paused playback owner.
+            try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        #expect(audioSession.category == .playAndRecord, "Paused release must not restore playback prematurely")
+
+        player.resume()
+
+        #expect(player.playingItemID == retainedItem)
+        #expect(!player.isPaused)
+        #expect(audioSession.category == (captureReleased ? .playback : .playAndRecord))
+        #expect(audioSession.categoryOptions == (captureReleased ? [] : captureOptions))
+        if !captureReleased { player.endCaptureInterruption() }
+    }
+
+    @Test func currentPCMStreamIsNotSuppressedWhenCaptureBegins() {
+        #expect(!AudioPlayerService.shouldSuppressAudioStreamDuringCapture(
+            captureActive: true,
+            incomingStreamID: "stream-current",
+            activeStreamID: "stream-current"
+        ))
+        #expect(AudioPlayerService.shouldSuppressAudioStreamDuringCapture(
+            captureActive: true,
+            incomingStreamID: "stream-late",
+            activeStreamID: "stream-current"
+        ))
+        #expect(!AudioPlayerService.shouldSuppressAudioStreamDuringCapture(
+            captureActive: false,
+            incomingStreamID: "stream-late",
+            activeStreamID: "stream-current"
+        ))
+    }
+
+    @Test func pcmPlaybackRebuildKeepsStreamIdentityAfterConfigurationChange() {
+        let player = AudioPlayerService()
+        player._startPCMStreamForTesting(id: "stream-recover")
+        defer { player.stop() }
+        let initialGeneration = player._streamEngineGenerationForTesting
+
+        player._rebuildPCMStreamForTesting()
+
+        #expect(player._streamEngineGenerationForTesting > initialGeneration)
+        #expect(player.playingItemID == "audio-stream-stream-recover")
+        #expect(player.hasActivePlayback)
+    }
+
+    @Test func pcmConfigurationCompletionCannotDiscardUnplayedPendingBuffer() {
+        let player = AudioPlayerService()
+        player._startPCMStreamForTesting(id: "stream-recover-pending")
+        defer { player.stop() }
+        let generation = player._streamEngineGenerationForTesting
+        let token = player._appendUnscheduledPCMBufferForTesting()
+
+        player._beginPCMConfigurationChangeForTesting(generation: generation)
+        player._completePCMBufferForTesting(
+            token: token,
+            streamID: "stream-recover-pending",
+            generation: generation
+        )
+        #expect(player._pendingPCMBufferCountForTesting == 1)
+
+        player._finishPCMConfigurationChangeForTesting(
+            generation: generation,
+            engineIsRunning: false
+        )
+        #expect(player._pendingPCMBufferCountForTesting == 1)
+        #expect(player.playingItemID == "audio-stream-stream-recover-pending")
+    }
+
+    @Test func pcmCompletionBeforeConfigurationNotificationRetainsRealPendingAudio() throws {
+        let player = AudioPlayerService()
+        player._startPCMStreamForTesting(id: "completion-first")
+        defer { player.stop() }
+        player.pause()
+        let generation = player._streamEngineGenerationForTesting
+        let samples = Data([0x00, 0x40, 0x00, 0xC0])
+        let token = try #require(player._schedulePCMForTesting(samples))
+
+        player._completePCMBufferForTesting(
+            token: token, streamID: "completion-first", generation: generation,
+            engineIsRunning: false
+        )
+        #expect(player._pendingPCMBufferCountForTesting == 1)
+        // Once invalidated, neither a later completion nor a running snapshot can
+        // rehabilitate this generation's stop-driven callbacks.
+        player._completePCMBufferForTesting(
+            token: token, streamID: "completion-first", generation: generation
+        )
+        player._beginPCMConfigurationChangeForTesting(generation: generation)
+        player._finishPCMConfigurationChangeForTesting(generation: generation, engineIsRunning: true)
+        #expect(player._pendingPCMSamplesForTesting == [[0.5, -0.5]])
+        #expect(player._streamEngineGenerationForTesting > generation)
+
+        // Late callbacks from the replaced graph cannot consume the rescheduled copy.
+        player._completePCMBufferForTesting(
+            token: token, streamID: "completion-first", generation: generation
+        )
+        #expect(player._pendingPCMBufferCountForTesting == 1)
+    }
+
+    @Test func pcmArrivingOnStoppedGraphIsRetainedForRecovery() throws {
+        let player = AudioPlayerService()
+        player._startPCMStreamForTesting(id: "chunk-before-notification")
+        defer { player.stop() }
+        player.pause()
+        let generation = player._streamEngineGenerationForTesting
+        player._stopPCMEngineForTesting()
+        _ = try #require(player._schedulePCMForTesting(Data([0x00, 0x40])))
+        #expect(player._pendingPCMSamplesForTesting == [[0.5]])
+        player._finishPCMConfigurationChangeForTesting(generation: generation, engineIsRunning: false)
+        #expect(player._streamEngineGenerationForTesting > generation)
+        #expect(player._pendingPCMSamplesForTesting == [[0.5]])
+    }
+
+    @Test func pcmConsumedCallbackCannotRetireAudioBeforePlayback() throws {
+        let player = AudioPlayerService()
+        player._startPCMStreamForTesting(id: "consumed-not-played")
+        defer { player.stop() }
+        player.pause()
+        let token = try #require(player._schedulePCMForTesting(Data([0x00, 0x40])))
+        let generation = player._streamEngineGenerationForTesting
+        player._completePCMBufferForTesting(
+            token: token, streamID: "consumed-not-played", generation: generation,
+            callbackType: .dataConsumed
+        )
+        #expect(player._pendingPCMSamplesForTesting == [[0.5]])
+        player._completePCMBufferForTesting(
+            token: token, streamID: "consumed-not-played", generation: generation,
+            callbackType: .dataPlayedBack
+        )
+        #expect(player._pendingPCMBufferCountForTesting == 0)
     }
 
     @Test func audioPlayerUsesSessionReplyModeOverrideForAutoplay() {
@@ -265,6 +467,159 @@ struct AudioLifecycleCoordinatorTests {
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
 
         try AudioEngineHelper.validateInputFormat(format)
+    }
+
+    @Test(arguments: ["data", "file", "pcm"], [(false, false), (false, true), (true, false), (true, true)])
+    func otherServersPlaybackSurvivesCaptureWithoutStealingItsRoute(
+        path: String, paused: (atStart: Bool, atRelease: Bool)
+    ) async throws {
+        let playerA = AudioPlayerService()
+        let playerB = AudioPlayerService()
+        let audioSession = AVAudioSession.sharedInstance()
+        let previousCategory = audioSession.category
+        let previousMode = audioSession.mode
+        let previousOptions = audioSession.categoryOptions
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("other-server-\(UUID()).wav")
+        defer {
+            playerA.stop()
+            playerB.stop()
+            try? audioSession.setCategory(previousCategory, mode: previousMode, options: previousOptions)
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+        switch path {
+        case "data":
+            playerA.toggleDataPlayback(data: Self.makeSilentWAV(frames: 240_000), itemID: "server-a-data")
+        case "file":
+            try Self.makeSilentWAV(frames: 240_000).write(to: fileURL)
+            playerA.toggleFilePlayback(fileURL: fileURL, itemID: "server-a-file")
+        default:
+            playerA._startPCMStreamForTesting(id: "server-a-pcm")
+        }
+        let retainedItem = try #require(playerA.playingItemID)
+        #expect(playerA.isPlaybackActiveForCapture)
+        #expect(!playerB.hasActivePlayback)
+        if paused.atStart { playerA.pause() }
+
+        let access = MockVoiceInputSystemAccess()
+        let captureOptions = VoiceInputAudioRoutePlanner.plan(availableInputs: [], preserveA2DPOutput: true).options
+        access.onActivateAudioSession = {
+            try? audioSession.setCategory(.playAndRecord, mode: .default, options: captureOptions)
+            try? audioSession.setActive(true)
+        }
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        manager.setEngineMode(.onDevice)
+        // Quick Session targets server B while server A still owns playback.
+        manager.setPlaybackInterrupter(playerB)
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        #expect(access.lastInAppPlaybackActive == !paused.atStart)
+        #expect(VoiceInputSystemAccess.shouldPreserveA2DPOutput(
+            hasA2DPOutput: true, externalAudioPlaying: false,
+            inAppPlaybackActive: access.lastInAppPlaybackActive
+        ) == !paused.atStart)
+        #expect(playerA.playingItemID == retainedItem)
+        #expect(!playerA.shouldAutoplayAudioMessage(itemID: "late-a", playbackBehavior: .playNow))
+        #expect(!playerB.shouldAutoplayAudioMessage(itemID: "late-b", playbackBehavior: .playNow))
+        // An unowned release must not remove B's capture protection.
+        playerA.endCaptureInterruption()
+        playerA.pause()
+        playerA.resume()
+        #expect(!playerA.isPaused)
+        #expect(audioSession.category == .playAndRecord)
+        #expect(audioSession.categoryOptions == captureOptions)
+        if paused.atRelease { playerA.pause() }
+        // Rebinding cannot strand the original selected player's suppression.
+        manager.setPlaybackInterrupter(playerA)
+
+        await manager.cancelRecording()
+
+        #expect(playerA.playingItemID == retainedItem)
+        #expect(!playerB.hasActivePlayback)
+        #expect(playerA.shouldAutoplayAudioMessage(itemID: "after-a", playbackBehavior: .playNow))
+        #expect(playerB.shouldAutoplayAudioMessage(itemID: "after-b", playbackBehavior: .playNow))
+        #expect(audioSession.category == (paused.atRelease ? .playAndRecord : .playback))
+        // Paused media cannot block notifyOthersOnDeactivation / external resume.
+        #expect(access.deactivateAudioSessionCallCount == (paused.atRelease ? 1 : 0))
+        if paused.atRelease {
+            playerA.resume()
+            #expect(audioSession.category == .playback)
+            #expect(audioSession.categoryOptions.isEmpty)
+        }
+    }
+
+    @Test func captureWithoutSelectedPlayerProtectsNewPlayersAndDoesNotRetainDepartedServers() async throws {
+        let audioSession = AVAudioSession.sharedInstance()
+        let previousCategory = audioSession.category
+        let previousMode = audioSession.mode
+        let previousOptions = audioSession.categoryOptions
+        var playerA: AudioPlayerService? = AudioPlayerService()
+        weak var departedPlayerA = playerA
+        defer {
+            playerA?.stop()
+            try? audioSession.setCategory(previousCategory, mode: previousMode, options: previousOptions)
+        }
+        playerA?.toggleDataPlayback(data: Self.makeSilentWAV(frames: 240_000), itemID: "departing-server")
+        #expect(playerA?.isPlaybackActiveForCapture == true)
+
+        let access = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        manager.setEngineMode(.onDevice)
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        #expect(access.lastInAppPlaybackActive)
+        let captureOptions: AVAudioSession.CategoryOptions = [.mixWithOthers, .duckOthers]
+        try audioSession.setCategory(.playAndRecord, mode: .default, options: captureOptions)
+
+        var playerB: AudioPlayerService? = AudioPlayerService()
+        weak var departedPlayerB = playerB
+        #expect(playerB?.shouldAutoplayAudioMessage(itemID: "new-server", playbackBehavior: .playNow) == false)
+        playerB?.toggleDataPlayback(data: Self.makeSilentWAV(), itemID: "blocked-start")
+        #expect(playerB?.hasActivePlayback == false)
+        manager.setPlaybackInterrupter(playerB)
+        playerB = nil
+        #expect(departedPlayerB == nil)
+        // Stop the real progress timer via ordinary pause before dropping the
+        // server. The process playback pointer must not keep its player alive.
+        playerA?.pause()
+        playerA = nil
+        #expect(departedPlayerA == nil)
+
+        let survivingPlayer = AudioPlayerService()
+        #expect(!survivingPlayer.shouldAutoplayAudioMessage(itemID: "still-blocked", playbackBehavior: .playNow))
+        #expect(audioSession.category == .playAndRecord)
+        await manager.cancelRecording()
+        #expect(access.deactivateAudioSessionCallCount == 1)
+        #expect(audioSession.category == .playAndRecord)
+        #expect(survivingPlayer.shouldAutoplayAudioMessage(itemID: "released", playbackBehavior: .playNow))
+    }
+
+    @Test func captureClaimsAreIdentityScopedAndWeak() {
+        let playerA = AudioPlayerService()
+        let playerB = AudioPlayerService()
+        playerA.beginCaptureInterruption()
+        playerB.beginCaptureInterruption()
+        playerA.endCaptureInterruption()
+        playerA.endCaptureInterruption()
+        #expect(!playerA.shouldAutoplayAudioMessage(itemID: "a", playbackBehavior: .playNow))
+        playerB.endCaptureInterruption()
+        #expect(playerA.shouldAutoplayAudioMessage(itemID: "a", playbackBehavior: .playNow))
+
+        var departedPlayer: AudioPlayerService? = AudioPlayerService()
+        weak var weakPlayer = departedPlayer
+        departedPlayer?.beginCaptureInterruption()
+        #expect(!playerA.shouldAutoplayAudioMessage(itemID: "a", playbackBehavior: .playNow))
+        departedPlayer = nil
+        #expect(weakPlayer == nil)
+        #expect(playerA.shouldAutoplayAudioMessage(itemID: "a", playbackBehavior: .playNow))
     }
 
     private static func makeSilentWAV(sampleRate: Int = 24_000, frames: Int = 2_400) -> Data {

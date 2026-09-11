@@ -23,15 +23,15 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
         return requestMicPermissionResult
     }
 
-    func activateAudioSession() throws {
+    func activateAudioSession(inAppPlaybackActive _: Bool) throws {
         activateAudioSessionCallCount += 1
         if let activateAudioSessionError {
             throw activateAudioSessionError
         }
     }
 
-    func activateBuiltInAudioSession() throws {
-        try activateAudioSession()
+    func activateBuiltInAudioSession(inAppPlaybackActive: Bool) throws {
+        try activateAudioSession(inAppPlaybackActive: inAppPlaybackActive)
     }
 
     func deactivateAudioSession() {
@@ -125,6 +125,8 @@ final class MockVoiceSession: VoiceTranscriptionSession {
     var startCallCount = 0
     var stopCallCount = 0
     var cancelCallCount = 0
+    var rebuildAudioCaptureCallCount = 0
+    var rebuildAudioCaptureError: Error? = VoiceInputError.audioCaptureUnavailable
 
     init() {
         let eventPair = AsyncThrowingStream.makeStream(of: VoiceSessionEvent.self, throwing: Error.self)
@@ -142,6 +144,13 @@ final class MockVoiceSession: VoiceTranscriptionSession {
             throw startError
         }
         return startTimings
+    }
+
+    func rebuildAudioCapture() async throws {
+        rebuildAudioCaptureCallCount += 1
+        if let rebuildAudioCaptureError {
+            throw rebuildAudioCaptureError
+        }
     }
 
     func stop() async {

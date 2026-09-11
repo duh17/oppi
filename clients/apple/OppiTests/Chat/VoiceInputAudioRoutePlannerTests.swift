@@ -64,11 +64,45 @@ struct VoiceInputAudioRoutePlannerTests {
         let plan = VoiceInputAudioRoutePlanner.plan(availableInputs: testCase.inputs)
         #expect(plan.category == .playAndRecord)
         #expect(plan.mode == .default)
-        // Keep standard HFP; high-quality Bluetooth is a separate capability.
-        #expect(plan.options == [.allowBluetoothHFP])
+        // Keep standard HFP while allowing existing background audio to duck,
+        // rather than deactivating it when capture starts.
+        #expect(plan.options == [.allowBluetoothHFP, .mixWithOthers, .duckOthers])
         #expect(plan.preferredInputUID == testCase.uid)
         #expect(plan.preferredDataSourceName == testCase.source)
         #expect(plan.preferredPolarPattern == testCase.polar)
+    }
+
+    @Test func activeA2DPUsesPhoneMicWithoutOfferingHigherPriorityHFP() {
+        let plan = VoiceInputAudioRoutePlanner.plan(
+            availableInputs: [Self.airpods, Self.mic],
+            preserveA2DPOutput: true
+        )
+
+        #expect(plan.category == .playAndRecord)
+        #expect(plan.mode == .default)
+        #expect(plan.options == [.allowBluetoothA2DP, .mixWithOthers, .duckOthers])
+        #expect(!plan.options.contains(.allowBluetoothHFP))
+        #expect(plan.preferredInputUID == "mic")
+    }
+
+    @Test(arguments: [
+        (hasA2DP: true, external: false, inApp: false, expected: false),
+        (hasA2DP: true, external: true, inApp: false, expected: true),
+        (hasA2DP: true, external: false, inApp: true, expected: true),
+        (hasA2DP: false, external: true, inApp: true, expected: false),
+    ])
+    @MainActor
+    func a2dpIsPreservedOnlyForActiveMedia(
+        hasA2DP: Bool,
+        external: Bool,
+        inApp: Bool,
+        expected: Bool
+    ) {
+        #expect(VoiceInputSystemAccess.shouldPreserveA2DPOutput(
+            hasA2DPOutput: hasA2DP,
+            externalAudioPlaying: external,
+            inAppPlaybackActive: inApp
+        ) == expected)
     }
 
     @Test func stalePreferredInputResetsWhenUIDIsMissing() {
@@ -102,20 +136,38 @@ struct VoiceInputAudioRoutePlannerTests {
             }
         )
         #expect(!fallback)
-        #expect(categories == [[.allowBluetoothHFP]])
+        #expect(categories == [[.allowBluetoothHFP, .mixWithOthers, .duckOthers]])
         #expect(activations == [true])
     }
 
-    @Test @MainActor func captureFallbackStartsDirectlyWithMeasurementAndNoBluetooth() throws {
+    @Test @MainActor func activationPreservesCurrentA2DPAndExcludesHFP() throws {
+        var optionsSeen: AVAudioSession.CategoryOptions = []
+        let fallback = try VoiceInputSystemAccess.configureAndActivate(
+            preserveA2DPOutput: true,
+            setCategory: { category, mode, options in
+                #expect(category == .playAndRecord)
+                #expect(mode == .default)
+                optionsSeen = options
+            },
+            setActive: { active, options in
+                #expect(active)
+                #expect(options.isEmpty)
+            }
+        )
+        #expect(!fallback)
+        #expect(optionsSeen == [.allowBluetoothA2DP, .mixWithOthers, .duckOthers])
+    }
+
+    @Test @MainActor func captureFallbackKeepsMixingWithBuiltInMeasurement() throws {
         var activationCount = 0
         var categoryCount = 0
         let fallback = try VoiceInputSystemAccess.configureAndActivate(
             preferBuiltIn: true,
             setCategory: { category, mode, options in
-                #expect(category == .record)
+                #expect(category == .playAndRecord)
                 categoryCount += 1
                 #expect(mode == .measurement)
-                #expect(options.isEmpty)
+                #expect(options == [.mixWithOthers, .duckOthers])
             },
             setActive: { active, options in
                 activationCount += 1
@@ -163,11 +215,12 @@ struct VoiceInputAudioRoutePlannerTests {
         var activationAttempts = 0
         let fallback = try VoiceInputSystemAccess.configureAndActivate(
             setCategory: { category, mode, options in
-                #expect(category == (options.isEmpty ? .record : .playAndRecord))
-                #expect(mode == (options.isEmpty ? .measurement : .default))
+                let usesBluetooth = options.contains(.allowBluetoothHFP)
+                #expect(category == .playAndRecord)
+                #expect(mode == (usesBluetooth ? .default : .measurement))
                 categories.append(options)
-                events.append(options.isEmpty ? "builtInCategory" : "bluetoothCategory")
-                if failCategory && !options.isEmpty { throw TestVoiceError("category rejected") }
+                events.append(usesBluetooth ? "bluetoothCategory" : "builtInCategory")
+                if failCategory && usesBluetooth { throw TestVoiceError("category rejected") }
             },
             setActive: { active, options in
                 #expect(options == (active ? [] : .notifyOthersOnDeactivation))
@@ -179,10 +232,13 @@ struct VoiceInputAudioRoutePlannerTests {
             }
         )
         #expect(fallback)
-        #expect(categories == [[.allowBluetoothHFP], []])
+        #expect(categories == [
+            [.allowBluetoothHFP, .mixWithOthers, .duckOthers],
+            [.mixWithOthers, .duckOthers],
+        ])
         #expect(events == (failCategory
-            ? ["bluetoothCategory", "deactivate", "builtInCategory", "activate"]
-            : ["bluetoothCategory", "activate", "deactivate", "builtInCategory", "activate"]))
+            ? ["bluetoothCategory", "builtInCategory", "activate"]
+            : ["bluetoothCategory", "activate", "builtInCategory", "activate"]))
     }
 
     @Test(arguments: [true, false]) @MainActor
@@ -191,8 +247,8 @@ struct VoiceInputAudioRoutePlannerTests {
         #expect(throws: TestVoiceError.self) {
             try VoiceInputSystemAccess.configureAndActivate(
                 setCategory: { category, mode, options in
-                    #expect(category == (options.isEmpty ? .record : .playAndRecord))
-                    #expect(mode == (options.isEmpty ? .measurement : .default))
+                    #expect(category == .playAndRecord)
+                    #expect(mode == (options.contains(.allowBluetoothHFP) ? .default : .measurement))
                     categories.append(options)
                     if failCategory { throw TestVoiceError("no category") }
                 },
@@ -201,7 +257,10 @@ struct VoiceInputAudioRoutePlannerTests {
                 }
             )
         }
-        #expect(categories == [[.allowBluetoothHFP], []])
+        #expect(categories == [
+            [.allowBluetoothHFP, .mixWithOthers, .duckOthers],
+            [.mixWithOthers, .duckOthers],
+        ])
     }
 }
 #endif

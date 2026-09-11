@@ -121,13 +121,17 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
     /// Uses a continuation that the routing task resolves when it sees `.dictationReady`.
     private var readyContinuation: CheckedContinuation<DictationProviderInfo?, Error>?
     private var readyTimeoutTask: Task<Void, Never>?
+    private var routingFailure: Error?
 
     private func waitForReady(timeout: Duration) async throws -> DictationProviderInfo? {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<DictationProviderInfo?, Error>) in
+        try Task.checkCancellation()
+        if let routingFailure { throw routingFailure }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<DictationProviderInfo?, Error>) in
             readyContinuation = continuation
 
             readyTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(for: timeout)
+                do { try await Task.sleep(for: timeout) }
+                catch { return }
                 guard let self, let cont = self.readyContinuation else { return }
                 self.readyContinuation = nil
                 cont.resume(throwing: VoiceInputError.remoteRequestTimedOut)
@@ -138,9 +142,10 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
     /// Start a task that consumes dictation messages from the active transport
     /// and forwards them to the per-recording stream + resolves readiness.
     private func startDictationRouting(messages: AsyncStream<ServerMessage>) {
+        routingFailure = nil
         dictationRouteTask = Task { [weak self] in
             for await message in messages {
-                guard let self else { break }
+                guard !Task.isCancelled, let self else { break }
 
                 // Resolve readiness if waiting
                 if case .dictationReady(let provider, _) = message {
@@ -174,6 +179,19 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
                     activeRecordingMessages = nil
                 }
             }
+            // Cancellation belongs to stopDictationRouting (possibly an older
+            // take). Only a live route may terminate its recording on upstream EOF.
+            guard !Task.isCancelled, let self else { return }
+            let error = VoiceInputError.internalError("Dictation connection lost")
+            routingFailure = error
+            readyTimeoutTask?.cancel()
+            readyTimeoutTask = nil
+            if let cont = readyContinuation {
+                readyContinuation = nil
+                cont.resume(throwing: error)
+            }
+            activeRecordingContinuation?.finish()
+            activeRecordingContinuation = nil
         }
     }
 

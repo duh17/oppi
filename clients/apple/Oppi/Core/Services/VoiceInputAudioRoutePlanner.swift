@@ -25,18 +25,28 @@ struct VoiceInputAudioRoutePlan: Equatable {
 
 enum VoiceInputAudioRoutePlanner {
     static func plan(
-        availableInputs: [VoiceInputAudioRouteInput]
+        availableInputs: [VoiceInputAudioRouteInput],
+        preserveA2DPOutput: Bool = false
     ) -> VoiceInputAudioRoutePlan {
-        // Use standard HFP with a bidirectional category: selecting its input
-        // also routes output to the headset, even though we only consume input.
-        let options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
+        // Activating without mixing interrupts background media. Duck it instead.
+        // HFP outranks A2DP when both options are offered, so an already-active
+        // A2DP route deliberately excludes HFP and records with the phone mic.
+        let options: AVAudioSession.CategoryOptions = if preserveA2DPOutput {
+            [.allowBluetoothA2DP, .mixWithOthers, .duckOthers]
+        } else {
+            [.allowBluetoothHFP, .mixWithOthers, .duckOthers]
+        }
 
-        // HFP, then wired headset, then built-in only when it is the sole port type.
+        // Outside active A2DP playback, HFP remains the preferred dictation mic.
         // Polar / data-source only for builtInMic. Front toward the user beats a
         // non-front cardioid (back cardioid aims away from the speaker).
-        let preferredInput = availableInputs.first { $0.portType == .bluetoothHFP }
-            ?? availableInputs.first { $0.portType == .headsetMic }
-            ?? Self.builtInMicIfSolePort(in: availableInputs)
+        let preferredInput = if preserveA2DPOutput {
+            availableInputs.first { $0.portType == .builtInMic }
+        } else {
+            availableInputs.first { $0.portType == .bluetoothHFP }
+                ?? availableInputs.first { $0.portType == .headsetMic }
+                ?? Self.builtInMicIfSolePort(in: availableInputs)
+        }
 
         var preferredDataSourceName: String?
         var preferredPolarPattern: AVAudioSession.PolarPattern?
@@ -93,6 +103,15 @@ enum VoiceInputAudioRoutePlanner {
         inputs.filter { $0.portType != .bluetoothHFP }
     }
 
+    static func builtInFallbackOptions(
+        preserveA2DPOutput: Bool
+    ) -> AVAudioSession.CategoryOptions {
+        var options: AVAudioSession.CategoryOptions = [.mixWithOthers, .duckOthers]
+        if preserveA2DPOutput {
+            options.insert(.allowBluetoothA2DP)
+        }
+        return options
+    }
 }
 
 extension VoiceInputAudioRouteInput {

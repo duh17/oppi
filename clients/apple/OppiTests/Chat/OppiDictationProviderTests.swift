@@ -5,7 +5,7 @@ import Testing
 @testable import Oppi
 
 @MainActor
-private final class TestDictationTransport: DictationTransport {
+final class TestDictationTransport: DictationTransport {
     var sentMessages: [ClientMessage] = []
     var sentAudio: [Data] = []
     var closeCount = 0
@@ -36,6 +36,28 @@ private func installTestDictationTransport(
 ) -> TestDictationTransport {
     provider._makeDictationTransportForTesting = { (transport, messages) }
     return transport
+}
+
+/// Substitute only the microphone startup; Stop, events, PCM drain and cleanup
+/// are the real OppiDictationSession, including an indefinitely open receive side.
+@MainActor
+final class TestPCMDictationSession: VoiceTranscriptionSession {
+    let session: OppiDictationSession
+    var events: AsyncThrowingStream<VoiceSessionEvent, Error> { session.events }
+    var audioLevels: AsyncStream<Float> { session.audioLevels }
+
+    init(_ session: OppiDictationSession) { self.session = session }
+
+    func start() async throws -> VoiceSessionStartTimings {
+        session._installPCMInputForTesting()
+        session._startMessageListenerForTesting()
+        session._startAudioDrainTaskForTesting()
+        return VoiceSessionStartTimings(analyzerStartMs: 0, audioStartMs: 0)
+    }
+
+    func stop() async { await session.stop() }
+    func cancel() async { await session.cancel() }
+    func rebuildAudioCapture() async throws { try await session.rebuildAudioCapture() }
 }
 
 // MARK: - Dictation ServerMessage Decoding
@@ -205,6 +227,19 @@ struct PCMConversionTests {
             #expect(int16Ptr[1] == Int16.max)   // max positive
             #expect(int16Ptr[2] == -Int16.max)  // max negative
             #expect(int16Ptr[3] == Int16(0.5 * Float(Int16.max)))  // mid positive
+        }
+    }
+
+    @Test func closedOrBackpressuredPCMStreamStopsDeliveryHeartbeat() {
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: Data.self,
+            bufferingPolicy: .bufferingOldest(1)
+        )
+        let events = AsyncThrowingStream<VoiceSessionEvent, Error>.makeStream()
+        withExtendedLifetime(stream) {
+            #expect(AudioEngineHelper.enqueueCaptureInput(Data([1]), into: continuation, events: events.continuation))
+            #expect(!AudioEngineHelper.enqueueCaptureInput(Data([2]), into: continuation, events: events.continuation))
+            #expect(!AudioEngineHelper.enqueueCaptureInput(Data([3]), into: continuation, events: events.continuation))
         }
     }
 
@@ -491,8 +526,8 @@ private struct MockSystemAccess: VoiceInputSystemAccessing {
     var hasMicPermission: Bool { hasPermissions }
     func requestPermissions() async -> Bool { hasPermissions }
     func requestMicPermission() async -> Bool { hasPermissions }
-    func activateAudioSession() throws {}
-    func activateBuiltInAudioSession() throws {}
+    func activateAudioSession(inAppPlaybackActive _: Bool) throws {}
+    func activateBuiltInAudioSession(inAppPlaybackActive _: Bool) throws {}
     func deactivateAudioSession() {}
 }
 
@@ -697,6 +732,39 @@ struct OppiDictationProviderLifecycleTests {
         await second.cancel()
         provider.cancelPreparation()
         #expect(secondTransport.closeCount == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func upstreamEndFinishesRecordingAndReadiness(beforeReady: Bool) async throws {
+        let (context, _) = Self.makeContextWithConnection()
+        let provider = OppiDictationProvider()
+        let incoming = AsyncStream<ServerMessage>.makeStream()
+        let transport = installTestDictationTransport(on: provider, messages: incoming.stream)
+        let preparation = try await provider.prepareSession(context: context)
+        let session = try #require(
+            provider.makeSession(context: context, preparation: preparation) as? OppiDictationSession
+        )
+        session._installPCMInputForTesting()
+        session._startMessageListenerForTesting()
+        session._startAudioDrainTaskForTesting()
+        #expect(await waitForMainActorCondition { !transport.sentMessages.isEmpty })
+        if !beforeReady {
+            incoming.continuation.yield(.dictationReady(provider: nil))
+            #expect(session._enqueuePCMForTesting(Data([1])))
+            #expect(await waitForMainActorCondition { !transport.sentAudio.isEmpty })
+        }
+        var failed = false
+        let events = Task {
+            do { for try await _ in session.events {} }
+            catch { failed = true }
+        }
+        incoming.continuation.finish()
+        let didFail = await waitForMainActorCondition { failed }
+        #expect(didFail, "Transport EOF must terminate the recording, not leave readiness/final waiting")
+        // Cleanup after the assertion is not the source of the failure signal.
+        events.cancel()
+        await session.cancel()
+        provider.cancelPreparation()
     }
 
     @Test func makeSessionThrowsWhenConnectionMissing() async throws {
@@ -1035,6 +1103,77 @@ struct OppiDictationSessionMessageListenerTests {
 @Suite("Dictation first-audio startup")
 @MainActor
 struct DictationCaptureStartupTests {
+    @Test(arguments: TestOrdinaryConversionFailure.allCases, [false, true])
+    func ordinaryConversionFailureCannotRecoverOrBecomeSuccessfulStop(
+        failureKind: TestOrdinaryConversionFailure, feedAfterFailure: Bool
+    ) async throws {
+        let transport = TestDictationTransport()
+        let incoming = AsyncStream<ServerMessage>.makeStream()
+        // Healthy Stop would settle normally. Failed capture must win over this final.
+        transport.onSendDictation = { message in
+            if case .dictationStop = message { incoming.continuation.yield(.dictationFinal(text: "incomplete")) }
+        }
+        let session = OppiDictationSession(
+            transport: transport, readinessTask: Task { nil }, messages: incoming.stream
+        )
+        session._installPCMInputForTesting()
+        session._startMessageListenerForTesting()
+        session._startAudioDrainTaskForTesting()
+        let source = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let target = try #require(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let converter = try #require(TestOrdinaryConverter(from: source, to: target))
+        converter.failure = failureKind
+        var failAllocation = failureKind == .allocation
+        func feed(_ buffer: AVAudioPCMBuffer) -> Bool {
+            session._feedCaptureBufferForTesting(buffer, converter: converter) { format, capacity in
+                failAllocation ? nil : AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity)
+            }
+        }
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: source, frameCapacity: 128))
+        buffer.frameLength = 128
+        #expect(!feed(buffer))
+        converter.failure = nil
+        failAllocation = false
+        if feedAfterFailure { #expect(!feed(buffer)) }
+        await session.stop()
+        var failure: Error?
+        do { for try await _ in session.events {} }
+        catch { failure = error }
+        #expect(failure != nil, "A final response must not hide ordinary capture loss")
+        if failureKind == .nsError {
+            #expect((failure as NSError?)?.domain == "TestOrdinaryConverter")
+        }
+        #expect(transport.sentAudio.isEmpty)
+        #expect(transport.closeCount == 1)
+    }
+
+    @Test func bufferedConversionWithoutOutputCanDeliverTheNextBuffer() async throws {
+        let audio = AsyncStream<DictationAudioInput>.makeStream()
+        let events = AsyncThrowingStream<VoiceSessionEvent, Error>.makeStream()
+        let source = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let target = try #require(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let converter = try #require(TestOrdinaryConverter(from: source, to: target))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: source, frameCapacity: 128))
+        buffer.frameLength = 128
+        converter.buffered = true
+        #expect(DictationAudioEngineHelper.feedCaptureBuffer(
+            buffer, converter: converter, inputFormat: source, targetFormat: target,
+            into: audio.continuation, events: events.continuation
+        ) == nil)
+        converter.buffered = false
+        #expect(DictationAudioEngineHelper.feedCaptureBuffer(
+            buffer, converter: converter, inputFormat: source, targetFormat: target,
+            into: audio.continuation, events: events.continuation
+        ) != nil)
+        audio.continuation.finish()
+        events.continuation.finish()
+        do { for try await _ in events.stream {} }
+        catch { Issue.record("Buffered/no-output is not a converter failure: \(error)") }
+        var delivered = 0
+        for await _ in audio.stream { delivered += 1 }
+        #expect(delivered == 1)
+    }
+
     @Test func stoppedEngineIsRebuiltBeforeSuccess() async throws {
         var starts = 0
         var stops = 0
@@ -1115,6 +1254,120 @@ struct DictationCaptureStartupTests {
 @Suite("OppiDictationSession audio drain")
 @MainActor
 struct OppiDictationSessionAudioDrainTests {
+
+    @Test func delayedReadinessPreservesBeginningAndEveryPCMChunk() async {
+        let transport = TestDictationTransport()
+        var sent: [Data] = []
+        transport.onSendAudio = { sent.append($0) }
+        let (ready, readyContinuation) = AsyncStream<Void>.makeStream()
+        let (messages, _) = AsyncStream<ServerMessage>.makeStream()
+        let session = OppiDictationSession(
+            transport: transport,
+            readinessTask: Task {
+                for await _ in ready { break }
+                return nil
+            },
+            messages: messages
+        )
+        session._installPCMInputForTesting()
+        session._startAudioDrainTaskForTesting()
+        // Roughly nine seconds at a 48kHz / 1024-frame tap: inside the 10s
+        // readiness budget, but far beyond the old 32-chunk queue.
+        let chunks = (0..<420).map { Data(repeating: UInt8($0 % 251), count: 682) }
+        for chunk in chunks {
+            #expect(session._enqueuePCMForTesting(chunk))
+            await Task.yield()
+        }
+        #expect(sent.isEmpty)
+        readyContinuation.yield(())
+        readyContinuation.finish()
+        await session._waitForAudioDrainForTesting()
+        #expect(sent == chunks)
+        await session.cancel()
+    }
+
+    @Test func transientPCMOverflowCannotResumeAndReportSuccessfulTake() async {
+        let transport = TestDictationTransport()
+        let (messages, _) = AsyncStream<ServerMessage>.makeStream()
+        let session = OppiDictationSession(
+            transport: transport, readinessTask: Task { nil }, messages: messages
+        )
+        session._installPCMInputForTesting()
+        for _ in 0..<DictationAudioEngineHelper.pcmBufferLimit {
+            #expect(session._enqueuePCMForTesting(Data([1])))
+        }
+        #expect(!session._enqueuePCMForTesting(Data([2])))
+        session._startAudioDrainTaskForTesting()
+        await session._waitForAudioDrainForTesting()
+        #expect(!session._enqueuePCMForTesting(Data([3])))
+        await session.cancel()
+        let error = await consumeStreamError(from: session.events)
+        #expect(error?.localizedDescription == "Dictation audio buffer overflow. Please try again.")
+    }
+
+    @Test func preReadyByteBudgetOverflowFailsWithoutSendingTruncatedAudio() async {
+        let transport = TestDictationTransport()
+        var sent: [Data] = []
+        transport.onSendAudio = { sent.append($0) }
+        let (ready, readyContinuation) = AsyncStream<Void>.makeStream()
+        let (messages, _) = AsyncStream<ServerMessage>.makeStream()
+        let session = OppiDictationSession(
+            transport: transport,
+            readinessTask: Task {
+                for await _ in ready { break }
+                return nil
+            }, messages: messages
+        )
+        session._installPCMInputForTesting()
+        session._startAudioDrainTaskForTesting()
+        // Only two queue slots; fail the separate lossless pre-ready byte budget.
+        #expect(session._enqueuePCMForTesting(Data(repeating: 1, count: OppiDictationSession.preReadyPCMByteLimit)))
+        #expect(session._enqueuePCMForTesting(Data([2])))
+        let error = await consumeStreamError(from: session.events)
+        #expect(error?.localizedDescription == "Dictation audio buffer overflow. Please try again.")
+        #expect(!session._enqueuePCMForTesting(Data([3])))
+        readyContinuation.yield(())
+        readyContinuation.finish()
+        await session._waitForAudioDrainForTesting()
+        #expect(sent.isEmpty)
+        await session.cancel()
+    }
+
+    @Test func stopBeforeReadinessFlushesAllAudioBeforeDictationStop() async {
+        let transport = TestDictationTransport()
+        var sent: [Data] = []
+        var stopSent = false
+        let (ready, readyContinuation) = AsyncStream<Void>.makeStream()
+        let (messages, messageContinuation) = AsyncStream<ServerMessage>.makeStream()
+        transport.onSendAudio = { sent.append($0) }
+        transport.onSendDictation = { message in
+            if case .dictationStop = message {
+                stopSent = true
+                #expect(sent == [Data([1]), Data([2])])
+                messageContinuation.yield(.dictationFinal(text: "done"))
+            }
+        }
+        let session = OppiDictationSession(
+            transport: transport,
+            readinessTask: Task {
+                for await _ in ready { break }
+                return nil
+            }, messages: messages
+        )
+        session._installPCMInputForTesting()
+        session._startAudioDrainTaskForTesting()
+        session._startMessageListenerForTesting()
+        #expect(session._enqueuePCMForTesting(Data([1])))
+        #expect(session._enqueuePCMForTesting(Data([2])))
+        let stopTask = Task { await session.stop() }
+        await Task.yield()
+        #expect(sent.isEmpty)
+        #expect(!stopSent)
+        readyContinuation.yield(())
+        readyContinuation.finish()
+        await stopTask.value
+        #expect(stopSent)
+    }
 
     @Test func readinessFailureSurfacesErrorToEventStream() async {
         let transport = TestDictationTransport()

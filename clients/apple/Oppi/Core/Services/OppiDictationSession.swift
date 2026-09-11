@@ -5,6 +5,12 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "DictationSession")
 
+/// Readiness shares the PCM drain's ordering lane; only that drain sends audio.
+enum DictationAudioInput: Sendable {
+    case pcm(Data)
+    case ready(DictationProviderInfo?)
+}
+
 /// Voice transcription session that streams raw PCM audio over a dictation transport
 /// and receives full transcript replacements from the server.
 ///
@@ -16,7 +22,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Dict
 ///   when needed, then completes the stream
 ///
 /// **Optimistic recording:** Audio capture starts immediately on `start()`. A background
-/// drain task blocks on `readinessTask` (WS `dictation_ready`) before forwarding audio,
+/// drain task retains PCM losslessly until `readinessTask` (WS `dictation_ready`) resolves,
 /// so the UI shows `.recording` with live waveform while the network round-trip completes.
 @MainActor
 final class OppiDictationSession: VoiceTranscriptionSession {
@@ -31,18 +37,23 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     private let eventContinuation: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     private let audioLevelContinuation: AsyncStream<Float>.Continuation
     private var messageListenTask: Task<Void, Never>?
-    /// Drains the audio stream to the WS, waiting for readiness first.
+    /// Consumes immediately, retaining pre-ready PCM before sending on the WS.
     private var audioDrainTask: Task<Void, Never>?
-    /// Feeds raw PCM chunks from the audio tap into the drain task.
-    private var audioContinuation: AsyncStream<Data>.Continuation?
-    /// Pending audio stream, transferred to the drain task on start.
-    private var pendingAudioStream: AsyncStream<Data>?
+    private var audioReadinessTask: Task<Void, Never>?
+    /// Both tap PCM and readiness enter the same serial drain.
+    private var audioContinuation: AsyncStream<DictationAudioInput>.Continuation?
+    private var pendingAudioStream: AsyncStream<DictationAudioInput>?
+    /// 16 seconds of 16kHz mono Int16, covering the provider's 10s ready timeout
+    /// plus scheduling slack. Crossing either queue bound fails the whole take.
+    nonisolated static let preReadyPCMByteLimit = 512 * 1024
     private var audioEngine: AVAudioEngine?
     private var audioLevelTask: Task<Void, Never>?
     private var hasCapturedAudio = false
     /// Actual route/formats observed after this engine started, not a requested preference.
     private var captureMetadata: [String: String]?
     private var stopped = false
+    private var readinessResolved = false
+    private var terminalError: Error?
     private struct TranscriptUpdate: Equatable {
         let text: String
         let snap: Bool
@@ -71,6 +82,13 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         let (audioLevels, audioLevelContinuation) = AsyncStream.makeStream(of: Float.self)
         self.audioLevels = audioLevels
         self.audioLevelContinuation = audioLevelContinuation
+
+        // Capture/converter failures can originate on the audio thread. Events
+        // remain the first terminal publisher; wake Stop's receive-side wait too.
+        eventContinuation.onTermination = { [weak self] termination in
+            guard case .finished(let error) = termination, let error else { return }
+            Task { @MainActor [weak self] in self?.failSession(error) }
+        }
     }
 
     func start() async throws -> VoiceSessionStartTimings {
@@ -85,7 +103,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         try await startAudioCapture()
         let audioStartMs = audioStart.elapsedMs()
 
-        // Begin draining audio to WS in background (blocks on readinessTask first)
+        // Consume tap audio immediately; readiness gates sending, not capture.
         startAudioDrainTask()
 
         return VoiceSessionStartTimings(
@@ -94,31 +112,45 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         )
     }
 
+    func rebuildAudioCapture() async throws {
+        guard !stopped, audioContinuation != nil else {
+            throw VoiceInputError.audioCaptureUnavailable
+        }
+        stopAudioEngine()
+        try await startAudioCapture(replacingStream: false)
+        if let audioEngine {
+            captureMetadata = DictationAudioEngineHelper.captureMetadata(engine: audioEngine)
+            ClientLog.info("VoiceInput", "Dictation audio engine rebuilt", metadata: captureMetadata ?? [:])
+        }
+    }
+
     func stop() async {
         guard !stopped else { return }
         stopped = true
+        defer { cleanup() }
 
         stopAudioEngine()
-        // Close the audio stream so the drain task's for-await loop exits naturally
-        audioContinuation?.finish()
-        audioContinuation = nil
-
-        // Wait for the drain task to flush all buffered audio before signalling stop.
-        // This ensures no audio is lost if the WS was still connecting.
+        // Readiness closes the drain after its marker when Stop arrives first.
+        // A terminal failure can also close it immediately, without waiting for
+        // a readiness task or receive stream that can no longer deliver a final.
+        if readinessResolved || audioReadinessTask == nil || terminalError != nil {
+            audioContinuation?.finish()
+        }
         await audioDrainTask?.value
         audioDrainTask = nil
+        guard terminalError == nil else { return }
 
-        // Send stop, wait for final transcript
+        // Only a healthy take can request and await a final transcript.
         do {
             try await transport.sendDictation(.dictationStop)
             logger.info("Sent dictation_stop, waiting for final")
         } catch {
             logger.error("Failed to send dictation_stop: \(error.localizedDescription, privacy: .public)")
+            failSession(Self.surfacedDisconnectError(for: error))
         }
 
-        // Wait for the message listener to finish (it completes on dictation_final or error)
+        // Failure cancels this listener, but Stop remains the sole cleanup owner.
         await messageListenTask?.value
-        cleanup()
     }
 
     func cancel() async {
@@ -131,6 +163,8 @@ final class OppiDictationSession: VoiceTranscriptionSession {
 
         // Cancel background setup and drain — no audio to flush on cancel
         readinessTask.cancel()
+        audioReadinessTask?.cancel()
+        audioReadinessTask = nil
         audioDrainTask?.cancel()
         audioDrainTask = nil
 
@@ -156,13 +190,14 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     /// PCM chunks are yielded into `pendingAudioStream` via `audioContinuation`.
     /// `AsyncStream.Continuation.yield()` is thread-safe and safe to call
     /// directly from the RT audio thread without dispatch indirection.
-    private func startAudioCapture() async throws {
+    private func startAudioCapture(replacingStream: Bool = true) async throws {
         try await DictationAudioEngineHelper.startWithFirstAudio(
-            start: { try self.startCaptureAttempt() },
+            start: { try self.startCaptureAttempt(replacingStream: replacingStream) },
             hasAudio: { self.hasCapturedAudio },
             isRunning: { self.audioEngine?.isRunning == true },
             stop: {
                 self.stopAudioEngine()
+                guard replacingStream else { return }
                 self.audioContinuation?.finish()
                 self.audioContinuation = nil
                 self.pendingAudioStream = nil
@@ -176,14 +211,20 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         logger.info("Audio capture delivering PCM (16kHz, 16-bit, mono)")
     }
 
-    private func startCaptureAttempt() throws {
+    private func startCaptureAttempt(replacingStream: Bool) throws {
         hasCapturedAudio = false
-        let (audioStream, audioContinuation) = AsyncStream<Data>.makeStream()
-        self.audioContinuation = audioContinuation
-        self.pendingAudioStream = audioStream
+        if replacingStream || audioContinuation == nil {
+            let (audioStream, audioContinuation) = Self.makeAudioInputStream()
+            self.audioContinuation = audioContinuation
+            self.pendingAudioStream = audioStream
+        }
+        guard let audioContinuation else {
+            throw VoiceInputError.internalError("Dictation audio stream missing")
+        }
 
         let (engine, levelStream) = try DictationAudioEngineHelper.startEngine(
-            audioContinuation: audioContinuation
+            audioContinuation: audioContinuation,
+            events: eventContinuation
         )
         self.audioEngine = engine
 
@@ -198,14 +239,18 @@ final class OppiDictationSession: VoiceTranscriptionSession {
 
     }
 
-    /// Starts a background task that:
-    /// 1. Waits for `dictation_ready` (via readinessTask)
-    /// 2. Forwards all buffered + subsequent PCM chunks to the WS
-    ///
-    /// If WS setup fails, the event stream is finished with the error
-    /// so `VoiceInputManager` transitions to `.error` state.
+    nonisolated private static func makeAudioInputStream() -> (
+        stream: AsyncStream<DictationAudioInput>,
+        continuation: AsyncStream<DictationAudioInput>.Continuation
+    ) {
+        AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(DictationAudioEngineHelper.pcmBufferLimit))
+    }
+
+    /// Read PCM immediately so waiting for dictation_ready cannot look like a
+    /// dead microphone. A bounded pre-ready backlog retains the beginning of the
+    /// take; overflow is a terminal error, never a transient missing heartbeat.
     private func startAudioDrainTask() {
-        guard let audioStream = pendingAudioStream else { return }
+        guard let audioStream = pendingAudioStream, let audioContinuation else { return }
         pendingAudioStream = nil
 
         let transport = self.transport
@@ -213,49 +258,73 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         let eventContinuation = self.eventContinuation
         let captureMetadata = self.captureMetadata
 
-        audioDrainTask = Task {
-            // Block until server is ready (or fails)
+        audioReadinessTask = Task { [weak self] in
             do {
                 let info = try await readinessTask.value
-                // Emit provider metadata so VoiceInputManager can update metric tags
-                // with the actual stt_backend and model (unknown at setup time).
-                if let info {
-                    eventContinuation.yield(.providerMetricTags([
-                        "stt_backend": info.sttProvider,
-                        "model": info.sttModel,
-                    ]))
-                }
+                try Task.checkCancellation()
+                guard let self else { return }
+                readinessResolved = true
+                _ = AudioEngineHelper.enqueueCaptureInput(
+                    DictationAudioInput.ready(info), into: audioContinuation, events: eventContinuation
+                )
+                if stopped { audioContinuation.finish() }
             } catch is CancellationError {
-                // Cancelled by cancel() — clean exit, no error to surface
-                return
+                audioContinuation.finish()
             } catch {
                 logger.error("Dictation setup failed: \(error.localizedDescription, privacy: .public)")
-                eventContinuation.finish(throwing: error)
-                return
+                self?.failSession(error)
+            }
+        }
+
+        audioDrainTask = Task { [weak self] in
+            var ready = false
+            var preReadyChunks: [Data] = []
+            var preReadyBytes = 0
+            var loggedFirstAudio = false
+
+            @MainActor func send(_ chunk: Data) async throws {
+                try Task.checkCancellation()
+                try await transport.sendDictationAudio(chunk)
+                if !loggedFirstAudio, !chunk.isEmpty, var metadata = captureMetadata {
+                    loggedFirstAudio = true
+                    metadata["pcm_bytes"] = String(chunk.count)
+                    // The route snapshot belongs to this capture even if upload was delayed.
+                    ClientLog.info("VoiceInput", "Dictation first PCM chunk sent", metadata: metadata)
+                }
             }
 
-            // Server is ready — pipe all audio (buffered + live) as binary frames.
-            // Surface send failures instead of swallowing them so the manager can
-            // stop recording and show a real error when the WS drops mid-dictation.
-            var loggedFirstAudio = false
-            for await chunk in audioStream {
-                guard !Task.isCancelled else { break }
-                do {
-                    try await transport.sendDictationAudio(chunk)
-                    if !loggedFirstAudio, !chunk.isEmpty, var metadata = captureMetadata {
-                        loggedFirstAudio = true
-                        metadata["pcm_bytes"] = String(chunk.count)
-                        // One log per capture, outside the real-time tap. The route
-                        // snapshot belongs to this engine, even if upload was delayed.
-                        ClientLog.info("VoiceInput", "Dictation first PCM chunk sent", metadata: metadata)
+            do {
+                for await input in audioStream {
+                    try Task.checkCancellation()
+                    switch input {
+                    case .ready(let info):
+                        ready = true
+                        if let info {
+                            eventContinuation.yield(.providerMetricTags([
+                                "stt_backend": info.sttProvider,
+                                "model": info.sttModel,
+                            ]))
+                        }
+                        for chunk in preReadyChunks { try await send(chunk) }
+                        preReadyChunks.removeAll()
+                        preReadyBytes = 0
+                    case .pcm(let chunk):
+                        if ready {
+                            try await send(chunk)
+                        } else {
+                            guard chunk.count <= Self.preReadyPCMByteLimit - preReadyBytes else {
+                                throw AudioEngineHelper.captureOverflowError
+                            }
+                            preReadyChunks.append(chunk)
+                            preReadyBytes += chunk.count
+                        }
                     }
-                } catch is CancellationError {
-                    return
-                } catch {
-                    logger.error("Failed to send dictation audio: \(error.localizedDescription, privacy: .public)")
-                    eventContinuation.finish(throwing: Self.surfacedDisconnectError(for: error))
-                    return
                 }
+            } catch is CancellationError {
+                return
+            } catch {
+                logger.error("Dictation audio drain failed: \(error.localizedDescription, privacy: .public)")
+                self?.failSession(Self.surfacedDisconnectError(for: error))
             }
         }
     }
@@ -326,9 +395,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
                 case .dictationError(let error, let fatal):
                     logger.error("Dictation error (fatal=\(fatal)): \(error, privacy: .public)")
                     if fatal {
-                        eventContinuation.finish(
-                            throwing: VoiceInputError.internalError("Server error: \(error)")
-                        )
+                        failSession(VoiceInputError.internalError("Server error: \(error)"))
                         return
                     }
 
@@ -344,7 +411,7 @@ final class OppiDictationSession: VoiceTranscriptionSession {
 
             // Stream ended without dictation_final (WS dropped, provider routing ended, etc.).
             logger.error("Dictation message stream ended before final transcript")
-            self.eventContinuation.finish(throwing: Self.disconnectError())
+            self.failSession(Self.disconnectError())
         }
     }
 
@@ -390,7 +457,22 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         return error
     }
 
+    private func failSession(_ error: Error) {
+        guard terminalError == nil else { return }
+        terminalError = error
+        eventContinuation.finish(throwing: error)
+        audioContinuation?.finish()
+        readinessTask.cancel()
+        audioReadinessTask?.cancel()
+        audioDrainTask?.cancel()
+        messageListenTask?.cancel()
+        // Do not clean up here or call cancel(): Stop may already own teardown.
+        // Cancelling its impossible waits lets that same owner release hardware.
+    }
+
     private func cleanup() {
+        audioReadinessTask?.cancel()
+        audioReadinessTask = nil
         audioDrainTask = nil
         audioContinuation = nil
         pendingAudioStream = nil
@@ -411,7 +493,53 @@ extension OppiDictationSession {
 
     // periphery:ignore - used by OppiDictationProviderTests via @testable import
     func _setPendingAudioStreamForTesting(_ stream: AsyncStream<Data>) {
-        pendingAudioStream = stream
+        _installPCMInputForTesting()
+        guard let audioContinuation else { return }
+        let events = eventContinuation
+        let feeder = Task { [weak self] in
+            for await chunk in stream {
+                guard AudioEngineHelper.enqueueCaptureInput(
+                    DictationAudioInput.pcm(chunk), into: audioContinuation, events: events
+                ) else { return }
+            }
+            await self?.audioReadinessTask?.value
+            audioContinuation.finish()
+        }
+        audioContinuation.onTermination = { _ in feeder.cancel() }
+    }
+
+    // periphery:ignore - uses the production queue and enqueue boundary, without microphone hardware
+    func _installPCMInputForTesting() {
+        let pair = Self.makeAudioInputStream()
+        audioContinuation = pair.continuation
+        pendingAudioStream = pair.stream
+    }
+
+    // periphery:ignore - exercises tap delivery and its heartbeat
+    func _enqueuePCMForTesting(_ data: Data) -> Bool {
+        guard let audioContinuation else { return false }
+        return AudioEngineHelper.enqueueCaptureInput(
+            DictationAudioInput.pcm(data), into: audioContinuation, events: eventContinuation
+        )
+    }
+
+    // periphery:ignore - production tap conversion and terminal publisher, without microphone hardware
+    func _feedCaptureBufferForTesting(
+        _ buffer: AVAudioPCMBuffer, converter: AVAudioConverter,
+        allocateBuffer: (AVAudioFormat, AVAudioFrameCount) -> AVAudioPCMBuffer?
+    ) -> Bool {
+        guard let audioContinuation else { return false }
+        return DictationAudioEngineHelper.feedCaptureBuffer(
+            buffer, converter: converter, inputFormat: converter.inputFormat, targetFormat: converter.outputFormat,
+            into: audioContinuation, events: eventContinuation, allocateBuffer: allocateBuffer
+        ) != nil
+    }
+
+    // periphery:ignore - deterministic drain barrier
+    func _waitForAudioDrainForTesting() async {
+        await audioReadinessTask?.value
+        audioContinuation?.finish()
+        await audioDrainTask?.value
     }
 
     // periphery:ignore - used by OppiDictationProviderTests via @testable import
@@ -432,6 +560,8 @@ extension OppiDictationSession {
 /// `AsyncStream.Continuation.yield()` is thread-safe and does not create Tasks,
 /// so it is safe to call from the real-time audio callback.
 enum DictationAudioEngineHelper {
+    static let pcmBufferLimit = 32
+
     @MainActor
     static func startWithFirstAudio(
         start: () throws -> Void,
@@ -474,7 +604,8 @@ enum DictationAudioEngineHelper {
     }
 
     static func startEngine(
-        audioContinuation: AsyncStream<Data>.Continuation
+        audioContinuation: AsyncStream<DictationAudioInput>.Continuation,
+        events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation
     ) throws -> (AVAudioEngine, AsyncStream<Float>) {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
@@ -503,29 +634,11 @@ enum DictationAudioEngineHelper {
         let (levelStream, levelContinuation) = AsyncStream<Float>.makeStream()
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
-            let outputBuffer: AVAudioPCMBuffer
-            if let converter {
-                let frameCapacity = AVAudioFrameCount(
-                    Double(buffer.frameLength) * targetFormat.sampleRate / inputFormat.sampleRate
-                )
-                guard let converted = AVAudioPCMBuffer(
-                    pcmFormat: targetFormat,
-                    frameCapacity: frameCapacity
-                ) else { return }
+            guard let outputBuffer = feedCaptureBuffer(
+                buffer, converter: converter, inputFormat: inputFormat, targetFormat: targetFormat,
+                into: audioContinuation, events: events
+            ) else { return }
 
-                var error: NSError?
-                converter.convert(to: converted, error: &error) { _, outStatus in
-                    outStatus.pointee = .haveData
-                    return buffer
-                }
-                if error != nil { return }
-                outputBuffer = converted
-            } else {
-                outputBuffer = buffer
-            }
-
-            guard outputBuffer.frameLength > 0 else { return }
-            // Audio level — AsyncStream.Continuation.yield() is thread-safe
             if let channelData = outputBuffer.floatChannelData?[0] {
                 let frameLength = UInt(outputBuffer.frameLength)
                 var rms: Float = 0
@@ -533,12 +646,6 @@ enum DictationAudioEngineHelper {
                 let level = min(1.0, rms * 25.0)
                 levelContinuation.yield(level)
             }
-
-            // Yield PCM chunk to the audio stream — the drain task forwards
-            // to WS once dictation_ready is received
-            let pcmData = OppiDictationSession.convertToInt16PCM(buffer: outputBuffer)
-            guard !pcmData.isEmpty else { return }
-            audioContinuation.yield(pcmData)
         }
 
         engine.prepare()
@@ -560,7 +667,61 @@ enum DictationAudioEngineHelper {
         return (engine, levelStream)
     }
 
+    /// Returns only successfully queued PCM for the tap's delivery heartbeat.
+    static func feedCaptureBuffer(
+        _ buffer: AVAudioPCMBuffer,
+        converter: AVAudioConverter?,
+        inputFormat: AVAudioFormat,
+        targetFormat: AVAudioFormat,
+        into audioContinuation: AsyncStream<DictationAudioInput>.Continuation,
+        events: AsyncThrowingStream<VoiceSessionEvent, Error>.Continuation,
+        allocateBuffer: (AVAudioFormat, AVAudioFrameCount) -> AVAudioPCMBuffer? = {
+            AVAudioPCMBuffer(pcmFormat: $0, frameCapacity: $1)
+        }
+    ) -> AVAudioPCMBuffer? {
+        do {
+            let outputBuffer: AVAudioPCMBuffer
+            if let converter {
+                guard let converted = try AudioEngineHelper.convertCaptureBuffer(
+                    buffer, converter: converter, inputFormat: inputFormat,
+                    targetFormat: targetFormat, allocateBuffer: allocateBuffer
+                ) else { return nil }
+                outputBuffer = converted
+            } else {
+                outputBuffer = buffer
+            }
+            guard outputBuffer.frameLength > 0 else { return nil }
+            let pcmData = OppiDictationSession.convertToInt16PCM(buffer: outputBuffer)
+            guard !pcmData.isEmpty else {
+                throw VoiceInputError.internalError("Microphone PCM data unavailable")
+            }
+            // A queued PCM chunk is real capture, including before readiness.
+            guard AudioEngineHelper.enqueueCaptureInput(
+                DictationAudioInput.pcm(pcmData), into: audioContinuation, events: events
+            ) else { return nil }
+            return outputBuffer
+        } catch {
+            AudioEngineHelper.failCaptureConversion(error, into: audioContinuation, events: events)
+            return nil
+        }
+    }
+
     /// Port types only: never upload Bluetooth names or hardware identifiers.
+    static func sessionRouteMetadata() -> [String: String] {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        return [
+            "category": session.category.rawValue,
+            "mode": session.mode.rawValue,
+            "session_hz": String(session.sampleRate),
+            "input_ports": session.currentRoute.inputs.map { $0.portType.rawValue }.joined(separator: ","),
+            "output_ports": session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ","),
+        ]
+        #else
+        return [:]
+        #endif
+    }
+
     static func captureMetadata(engine: AVAudioEngine) -> [String: String] {
         let input = engine.inputNode.inputFormat(forBus: 0)
         // Do not access outputNode for diagnostics: it is created on demand

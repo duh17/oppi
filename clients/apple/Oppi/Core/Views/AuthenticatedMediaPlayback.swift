@@ -1028,7 +1028,7 @@ final class AuthenticatedMediaPlaybackSession {
     private var timeControlObservation: NSKeyValueObservation?
     private var bufferEmptyObservation: NSKeyValueObservation?
     private var muteObservation: NSKeyValueObservation?
-    private var captureAcquisitionObserver: UUID?
+    private var captureReleaseObserver: UUID?
     private var hasStartedPlaying = false
     private var lastStallLogAt: TimeInterval = 0
     private var lastUnmutedVolume: Float = MediaPlaybackMutePolicy.defaultUnmutedVolume
@@ -1048,9 +1048,19 @@ final class AuthenticatedMediaPlaybackSession {
             ]
         )
         player = CaptureAwareMediaPlayer(playerItem: item)
-        captureAcquisitionObserver = VoiceInputManager.shared.observeCaptureAcquisition { [weak player] in
-            player?.pause()
-        }
+        captureReleaseObserver = VoiceInputManager.shared.observeCaptureRelease(
+            isPlaybackActive: { [weak player] in
+                guard let player else { return false }
+                return AudioPlayerService.isMediaPlaybackActive(
+                    rate: player.rate,
+                    timeControlStatus: player.timeControlStatus
+                )
+            },
+            restorePlaybackSession: { [weak player] in
+                guard let player else { return false }
+                return MediaPlaybackAudioSession.restoreSharedSessionAfterCapture(for: player)
+            }
+        )
         // Custom resource-loader assets should not wait to minimize stalling;
         // AVPlayer cannot see the real network buffer behind oppi-media://.
         player.automaticallyWaitsToMinimizeStalling = false
@@ -1157,9 +1167,9 @@ final class AuthenticatedMediaPlaybackSession {
     }
 
     func teardown() {
-        if let captureAcquisitionObserver {
-            VoiceInputManager.shared.removeCaptureAcquisitionObserver(captureAcquisitionObserver)
-            self.captureAcquisitionObserver = nil
+        if let captureReleaseObserver {
+            VoiceInputManager.shared.removeCaptureReleaseObserver(captureReleaseObserver)
+            self.captureReleaseObserver = nil
         }
         timeControlObservation?.invalidate()
         timeControlObservation = nil
@@ -1173,9 +1183,9 @@ final class AuthenticatedMediaPlaybackSession {
     }
 
     deinit {
-        if let captureAcquisitionObserver {
+        if let captureReleaseObserver {
             Task { @MainActor in
-                VoiceInputManager.shared.removeCaptureAcquisitionObserver(captureAcquisitionObserver)
+                VoiceInputManager.shared.removeCaptureReleaseObserver(captureReleaseObserver)
             }
         }
         Self.discardItem(player)
@@ -1271,11 +1281,29 @@ enum MediaPlaybackAudioSession {
     @MainActor
     @discardableResult
     static func prepareSharedSession() -> Bool {
-        guard !VoiceInputManager.shared.ownsCaptureAudioSession else { return false }
+        // Playback may continue on the mixed play-and-record route. During
+        // capture, admission succeeds without replacing the microphone session.
+        guard !VoiceInputManager.shared.ownsCaptureAudioSession else { return true }
+        return configureSharedPlaybackSession(activate: false)
+    }
+
+    static func restoreSharedSessionAfterCapture(for player: AVPlayer) -> Bool {
+        guard player.rate != 0
+                || player.timeControlStatus == .playing
+                || player.timeControlStatus == .waitingToPlayAtSpecifiedRate else {
+            return false
+        }
+        return configureSharedPlaybackSession(activate: true)
+    }
+
+    private static func configureSharedPlaybackSession(activate: Bool) -> Bool {
         let session = AVAudioSession.sharedInstance()
         do {
             try prepare(currentCategory: session.category) { category, mode, options in
                 try session.setCategory(category, mode: mode, options: options)
+            }
+            if activate {
+                try session.setActive(true)
             }
             return true
         } catch {

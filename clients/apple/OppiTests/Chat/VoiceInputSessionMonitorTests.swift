@@ -109,6 +109,31 @@ struct VoiceInputSessionMonitorTests {
         #expect(callbacks[0].1 == "final")
     }
 
+    @Test func rebuildDelegatesToBoundSessionAndPropagatesFailure() async throws {
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = nil
+        let monitor = VoiceInputSessionMonitor()
+        bindMonitor(monitor, session: session)
+
+        try await monitor.rebuildAudioCapture()
+        #expect(session.rebuildAudioCaptureCallCount == 1)
+
+        session.rebuildAudioCaptureError = VoiceInputError.audioCaptureUnavailable
+        await #expect(throws: VoiceInputError.self) {
+            try await monitor.rebuildAudioCapture()
+        }
+        #expect(session.rebuildAudioCaptureCallCount == 2)
+        await monitor.cancel()
+    }
+
+    @Test func rebuildWithoutBoundSessionFailsClosed() async {
+        let monitor = VoiceInputSessionMonitor()
+
+        await #expect(throws: VoiceInputError.self) {
+            try await monitor.rebuildAudioCapture()
+        }
+    }
+
     @Test func stopAwaitsSessionStopAndStopsForwarding() async {
         let session = TestVoiceSession()
         let monitor = VoiceInputSessionMonitor()
@@ -407,6 +432,8 @@ private final class TestVoiceSession: VoiceTranscriptionSession {
     func start() async throws -> VoiceSessionStartTimings {
         .init(analyzerStartMs: 0, audioStartMs: 0)
     }
+
+    func rebuildAudioCapture() async throws {}
 
     func stop() async {
         await stopCounter.increment()

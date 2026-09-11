@@ -39,7 +39,10 @@ protocol VoicePlaybackInterrupter: AnyObject {
 /// streaming chunks for the whole capture window.
 @MainActor
 protocol VoicePlaybackCaptureCoordinating: AnyObject {
+    /// Item ownership can outlive audible playback (paused/loading UI).
     var hasActivePlayback: Bool { get }
+    /// True only while audio is playing or waiting with nonzero playback intent.
+    var isPlaybackActiveForCapture: Bool { get }
     func beginCaptureInterruption()
     func endCaptureInterruption()
 }
@@ -452,22 +455,18 @@ final class VoiceInputManager {
 
     // MARK: - Published State
 
-    private(set) var state: State = .idle {
-        didSet {
-            if ownsCaptureAudioSession {
-                // Synchronous main-actor delivery: existing AVKit/PiP players
-                // pause before startup can acquire/configure the capture route.
-                for pause in captureAcquisitionObservers.values { pause() }
-            }
-        }
-    }
+    private(set) var state: State = .idle
     private(set) var captureFailure: VoiceCaptureFailure?
     var currentComposerCaptureFailure: VoiceCaptureFailure? {
         guard captureFailure?.take.composerGeneration == composerGeneration else { return nil }
         return captureFailure
     }
-    @ObservationIgnored private var captureAcquisitionObservers: [UUID: @MainActor () -> Void] = [:]
     @ObservationIgnored private var captureFailureHandler: (@MainActor () -> Void)?
+    private struct CaptureReleaseObserver {
+        let isPlaybackActive: @MainActor () -> Bool
+        let restorePlaybackSession: @MainActor () -> Bool
+    }
+    @ObservationIgnored private var captureReleaseObservers: [UUID: CaptureReleaseObserver] = [:]
     @ObservationIgnored private(set) var composerStartupID: UUID?
 
     /// A composer attempt starts before its async preparation. Keep its identity
@@ -479,16 +478,22 @@ final class VoiceInputManager {
         return id
     }
 
-    func observeCaptureAcquisition(_ pause: @escaping @MainActor () -> Void) -> UUID {
+    func observeCaptureRelease(
+        isPlaybackActive: @escaping @MainActor () -> Bool,
+        restorePlaybackSession: @escaping @MainActor () -> Bool
+    ) -> UUID {
         let id = UUID()
-        captureAcquisitionObservers[id] = pause
-        if ownsCaptureAudioSession { pause() }
+        captureReleaseObservers[id] = CaptureReleaseObserver(
+            isPlaybackActive: isPlaybackActive,
+            restorePlaybackSession: restorePlaybackSession
+        )
         return id
     }
 
-    func removeCaptureAcquisitionObserver(_ id: UUID) {
-        captureAcquisitionObservers[id] = nil
+    func removeCaptureReleaseObserver(_ id: UUID) {
+        captureReleaseObservers[id] = nil
     }
+
     private(set) var finalizedTranscript = ""
     private(set) var volatileTranscript = ""
     /// Monotonic revision for composer presentation updates.
@@ -588,6 +593,7 @@ final class VoiceInputManager {
     private let sessionMonitor: VoiceInputSessionMonitor
     private let systemAccess: any VoiceInputSystemAccessing
     private weak var playbackCoordinator: (any VoicePlaybackCaptureCoordinating)?
+    private weak var interruptedPlaybackCoordinator: (any VoicePlaybackCaptureCoordinating)?
     private var playbackCaptureInterruptionActive = false
 
     /// Drives character-by-character text reveal for server dictation updates.
@@ -615,8 +621,16 @@ final class VoiceInputManager {
     private var recordingStart: ContinuousClock.Instant?
     private var resultUpdateCount = 0
     private var replaceTranscriptState = ReplaceTranscriptState()
+    private var lastCaptureAudioAt: ContinuousClock.Instant?
+    private var captureHealthTask: Task<Void, Never>?
+    private var activeCaptureRebuildID: UUID?
+    private var pendingCaptureRebuild = false
+    private var captureStallRebuildsThisTake = 0
+    private var captureRecoveryAudioBeganAt: ContinuousClock.Instant?
 
     private static let correctionHighlightDuration: Duration = .milliseconds(600)
+    private static let captureStallTimeoutMs = 1_500
+    private static let maxCaptureRebuildsPerTake = 2
 
     // MARK: - Server Configuration
 
@@ -985,6 +999,10 @@ final class VoiceInputManager {
 
         finalizedTranscript = ""
         volatileTranscript = ""
+        captureStallRebuildsThisTake = 0
+        captureRecoveryAudioBeganAt = nil
+        pendingCaptureRebuild = false
+        activeCaptureRebuildID = nil
         activeMetricAnnotation = nil
         activeDictationMetricTags = [:]
         dictationSessionStart = nil
@@ -1063,6 +1081,9 @@ final class VoiceInputManager {
             )
 
             state = .recording
+            #if os(iOS)
+            startCaptureHealthWatch()
+            #endif
 
             // Emit telemetry AFTER state transition — off the critical path
             emitStartupTelemetry(timings, annotation: metricAnnotation)
@@ -1161,6 +1182,7 @@ final class VoiceInputManager {
         operationInFlight = true
         defer { operationInFlight = false }
 
+        let stoppingTake = currentCaptureTakeIdentity()
         state = .processing
         typewriterAnimator.commitCurrentAnimation()
         logger.info("Stopping recording")
@@ -1170,6 +1192,16 @@ final class VoiceInputManager {
         let audioDurationMs = recordingStart?.elapsedMs() ?? 0
 
         await sessionMonitor.stop()
+
+        // The results callback latches every fatal error synchronously, including
+        // converter flush failure inside stop(). Stop alone owns this drain; never
+        // publish incomplete text or overwrite the failed take with success.
+        if let failure = captureFailure, failure.take == stoppingTake {
+            teardownSession()
+            releaseAudioSessionAfterCapture()
+            state = .error(failure.message)
+            return ""
+        }
 
         let finalizeMs = finalizeStart.elapsedMs()
         let sessionMs = dictationSessionStart?.elapsedMs() ?? finalizeMs
@@ -1183,9 +1215,8 @@ final class VoiceInputManager {
 
         let result = currentTranscript
 
-        deactivateAudioSession()
         teardownSession()
-        endPlaybackCaptureInterruptionIfNeeded()
+        releaseAudioSessionAfterCapture()
         state = .idle
         logger.info("Stopped. Transcript length: \(result.count) chars")
         return result
@@ -1210,9 +1241,8 @@ final class VoiceInputManager {
         state = .processing
         await sessionMonitor.cancel()
         guard nextStartRequestID == generation, state == .processing else { return }
-        deactivateAudioSession()
         teardownSession()
-        endPlaybackCaptureInterruptionIfNeeded()
+        releaseAudioSessionAfterCapture()
 
         emitDictationCancelTelemetry()
         operationInFlight = false
@@ -1314,8 +1344,11 @@ final class VoiceInputManager {
             ])
             await sessionMonitor.cancel()
             try ensureStartRequestActive(requestID)
-            deactivateAudioSession()
-            try systemAccess.activateBuiltInAudioSession()
+            // The failed engine has released hardware. Reconfigure the still-active
+            // mixed session directly so surviving playback is not deactivated.
+            try systemAccess.activateBuiltInAudioSession(
+                inAppPlaybackActive: hasActiveInAppPlayback
+            )
             // Preferred-input/data-source changes can reconfigure hardware.
             // Build the new engine only after the reset's settling interval.
             try await Task.sleep(for: .milliseconds(250))
@@ -1342,6 +1375,10 @@ final class VoiceInputManager {
         timings.audioStartMs = sessionTimings.audioStartMs
         timings.totalMs = startTime.elapsedMs()
         recordingStart = ContinuousClock.now
+        lastCaptureAudioAt = recordingStart
+        for (key, value) in DictationAudioEngineHelper.sessionRouteMetadata() {
+            timings.providerTags[key] = value
+        }
 
         return timings
     }
@@ -1355,7 +1392,14 @@ final class VoiceInputManager {
             session: session,
             recordingStartTime: ContinuousClock.now,
             onAudioLevel: { [weak self] level in
-                self?.audioLevel = level
+                guard let self else { return }
+                self.audioLevel = level
+                self.lastCaptureAudioAt = .now
+                if let recoveryStart = self.captureRecoveryAudioBeganAt,
+                   recoveryStart.elapsedMs() >= Self.captureStallTimeoutMs {
+                    self.captureStallRebuildsThisTake = 0
+                    self.captureRecoveryAudioBeganAt = nil
+                }
             },
             onEvent: { [weak self] event in
                 self?.applySessionEvent(event, annotation: metricAnnotation)
@@ -1380,11 +1424,11 @@ final class VoiceInputManager {
                 logger.error("Voice latency: first result in \(latencyMs)ms (type: \(resultType))")
             },
             onError: { [weak self] error in
-                guard let self else { return }
-                Task { @MainActor [weak self] in
-                    guard let self, self.activeStartRequestID == requestID else { return }
-                    await self.handleSessionStreamError(error, annotation: metricAnnotation)
-                }
+                guard let self, self.activeStartRequestID == requestID else { return }
+                // Must run before the monitor's results task completes, for
+                // analyzer/transport errors as well as overflow. An async latch
+                // lets Stop publish incomplete text before it observes failure.
+                self.failCaptureForSessionError(error, annotation: metricAnnotation)
             }
         )
     }
@@ -1401,7 +1445,9 @@ final class VoiceInputManager {
     }
 
     private func setupAudioSession() throws {
-        try systemAccess.activateAudioSession()
+        try systemAccess.activateAudioSession(
+            inAppPlaybackActive: hasActiveInAppPlayback
+        )
     }
 
     private func deactivateAudioSession() {
@@ -1419,39 +1465,183 @@ final class VoiceInputManager {
             let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             let previous = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey]
                 as? AVAudioSessionRouteDescription
-            let previousHadBluetooth = previous.map(Self.routeHasBluetooth(_:)) ?? false
+            let previousHadBluetooth = previous?.inputs.contains {
+                $0.portType == .bluetoothHFP
+            } == true
+            let previousInputUIDs = Set(previous?.inputs.map(\.uid) ?? [])
+            let currentInputUIDs = Set(AVAudioSession.sharedInstance().currentRoute.inputs.map(\.uid))
+            let routeInputChanged = previousInputUIDs != currentInputUIDs
             Task { @MainActor in
-                await self?.handleLostBluetoothRoute(
+                await self?.handleAudioRouteChange(
                     rawReason: rawReason,
-                    previousHadBluetooth: previousHadBluetooth
+                    previousHadBluetooth: previousHadBluetooth,
+                    routeInputChanged: routeInputChanged
                 )
             }
         }
     }
 
     func handleLostBluetoothRoute(rawReason: UInt?, previousHadBluetooth: Bool) async {
-        let reason = rawReason.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
-        guard Self.shouldAbandonCaptureForRouteChange(
-            reason: reason,
+        await handleAudioRouteChange(
+            rawReason: rawReason,
             previousHadBluetooth: previousHadBluetooth
-        ) else {
+        )
+    }
+
+    func handleAudioRouteChange(
+        rawReason: UInt?,
+        previousHadBluetooth: Bool,
+        routeInputChanged: Bool = true
+    ) async {
+        let reason = rawReason.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+        var metadata = DictationAudioEngineHelper.sessionRouteMetadata()
+        metadata["reason"] = reason.map { String($0.rawValue) } ?? "nil"
+        metadata["previous_had_bluetooth"] = previousHadBluetooth ? "1" : "0"
+        metadata["state"] = String(describing: state)
+        ClientLog.info("VoiceInput", "Audio route changed", metadata: metadata)
+
+        guard Self.shouldHandleCaptureRouteChange(reason: reason) else { return }
+        guard Self.shouldRebuildCaptureForRouteChange(
+            reason: reason,
+            routeInputChanged: routeInputChanged
+        ) else { return }
+        guard state == .recording || state == .preparingModel else { return }
+
+        // Category/preferred-input setup emits expected configuration changes
+        // before the first engine owns capture. Ignore those; only a real lost
+        // Bluetooth microphone can invalidate startup.
+        if state == .preparingModel, activeCaptureRebuildID == nil {
+            guard reason == .oldDeviceUnavailable, previousHadBluetooth else { return }
+            await failActiveCaptureForDeadPipeline(
+                previousHadBluetooth: previousHadBluetooth,
+                reason: reason,
+                errorKind: "bluetooth_route_lost"
+            )
             return
         }
+
+        await rebuildOrFailActiveCapture(
+            previousHadBluetooth: previousHadBluetooth,
+            reason: reason,
+            trigger: "route_change"
+        )
+    }
+
+    private func rebuildOrFailActiveCapture(
+        previousHadBluetooth: Bool,
+        reason: AVAudioSession.RouteChangeReason?,
+        trigger: String
+    ) async {
+        guard state == .recording else { return }
+        let takeID = activeStartRequestID
+        let generation = nextStartRequestID
+        guard takeID != nil else { return }
+        guard activeCaptureRebuildID == nil else {
+            pendingCaptureRebuild = true
+            return
+        }
+        let rebuildID = UUID()
+        activeCaptureRebuildID = rebuildID
+        defer {
+            if activeCaptureRebuildID == rebuildID {
+                activeCaptureRebuildID = nil
+                if pendingCaptureRebuild,
+                   activeStartRequestID == takeID,
+                   nextStartRequestID == generation,
+                   state == .recording {
+                    pendingCaptureRebuild = false
+                    Task { @MainActor [weak self] in
+                        await self?.rebuildOrFailActiveCapture(
+                            previousHadBluetooth: previousHadBluetooth,
+                            reason: reason,
+                            trigger: "queued_route_change"
+                        )
+                    }
+                }
+            }
+        }
+
+        if trigger == "stall" {
+            captureStallRebuildsThisTake += 1
+        }
+        var metadata = DictationAudioEngineHelper.sessionRouteMetadata()
+        metadata["trigger"] = trigger
+        metadata["rebuild_attempt"] = String(captureStallRebuildsThisTake)
+        metadata["reason"] = reason.map { String($0.rawValue) } ?? "nil"
+
+        guard trigger != "stall" || captureStallRebuildsThisTake <= Self.maxCaptureRebuildsPerTake else {
+            ClientLog.error("VoiceInput", "Capture rebuild budget exhausted", metadata: metadata)
+            await failActiveCaptureForDeadPipeline(
+                previousHadBluetooth: previousHadBluetooth,
+                reason: reason,
+                errorKind: "capture_pipeline_dead"
+            )
+            return
+        }
+
+        do {
+            // Do not re-run setupAudioSession here: category selection could
+            // overwrite a newly settling route or replace active A2DP with HFP.
+            // The OS already changed the route; wait, then rebuild the engine.
+            try await Task.sleep(for: .milliseconds(250))
+            guard activeStartRequestID == takeID, nextStartRequestID == generation else { return }
+            guard state == .recording else { return }
+            try await sessionMonitor.rebuildAudioCapture()
+            guard activeStartRequestID == takeID, nextStartRequestID == generation else { return }
+            lastCaptureAudioAt = .now
+            if trigger == "stall" {
+                captureRecoveryAudioBeganAt = .now
+            }
+            state = .recording
+            metadata.merge(DictationAudioEngineHelper.sessionRouteMetadata()) { _, new in new }
+            metadata["status"] = "ok"
+            ClientLog.info("VoiceInput", "Capture rebuilt onto current microphone", metadata: metadata)
+            for (key, value) in DictationAudioEngineHelper.sessionRouteMetadata() {
+                activeDictationMetricTags[key] = value
+            }
+            startCaptureHealthWatch()
+        } catch is CancellationError {
+            guard activeStartRequestID == takeID, nextStartRequestID == generation else { return }
+            await failActiveCaptureForDeadPipeline(
+                previousHadBluetooth: previousHadBluetooth,
+                reason: reason,
+                errorKind: "capture_pipeline_dead"
+            )
+        } catch {
+            guard activeStartRequestID == takeID, nextStartRequestID == generation else { return }
+            guard state == .recording else { return }
+            metadata["status"] = "error"
+            metadata["error_domain"] = (error as NSError).domain
+            metadata["error_code"] = String((error as NSError).code)
+            ClientLog.error("VoiceInput", "Capture rebuild failed", metadata: metadata)
+            await failActiveCaptureForDeadPipeline(
+                previousHadBluetooth: previousHadBluetooth,
+                reason: reason,
+                errorKind: trigger == "stall" ? "capture_pipeline_dead" : "bluetooth_route_lost"
+            )
+        }
+    }
+
+    private func failActiveCaptureForDeadPipeline(
+        previousHadBluetooth: Bool,
+        reason: AVAudioSession.RouteChangeReason?,
+        errorKind: String
+    ) async {
         guard state == .recording || state == .preparingModel else { return }
-        logger.warning("Bluetooth audio route lost; failing the interrupted take")
-        // Invalidate startup before the first suspension: its completion must
-        // neither announce recording nor retry on the built-in mic. Keep the
-        // capture state occupied until cancellation releases the hardware.
+        logger.warning("Dictation capture pipeline dead; failing the take (\(errorKind, privacy: .public))")
         let failedTake = currentCaptureTakeIdentity()
         let failedSource = activeRecordingSource
         let failureGeneration = nextStartRequestID
         state = .processing
         clearActiveStartIdentity()
-        let message = "Bluetooth microphone disconnected. This take was discarded. Your earlier draft was kept. Reconnect or use the built-in microphone, then retry."
+        let message: String
+        if reason == .oldDeviceUnavailable, previousHadBluetooth {
+            message = "Bluetooth microphone disconnected. This take was discarded. Your earlier draft was kept. Reconnect or use the built-in microphone, then retry."
+        } else {
+            message = "The microphone route changed and dictation could not keep recording. This take was discarded. Your earlier draft was kept. Retry dictation."
+        }
         if let failedTake, let failedSource {
             captureFailure = VoiceCaptureFailure(take: failedTake, source: failedSource, message: message)
-            // SwiftUI onChange is deferred. Commit the editor's rollback now,
-            // before hardware cancellation suspends and Send can run.
             captureFailureHandler?()
             captureFailureHandler = nil
         }
@@ -1461,24 +1651,59 @@ final class VoiceInputManager {
         if let annotation = activeMetricAnnotation {
             recordDictationCountMetric(
                 .dictationError, value: 1, annotation: annotation, status: "error",
-                extraTags: ["phase": "capture", "error_kind": "bluetooth_route_lost"]
+                extraTags: ["phase": "capture", "error_kind": errorKind]
             )
         }
         await sessionMonitor.cancel()
         guard nextStartRequestID == failureGeneration, state == .processing else { return }
-        deactivateAudioSession()
         teardownSession()
-        endPlaybackCaptureInterruptionIfNeeded()
+        releaseAudioSessionAfterCapture()
         operationInFlight = false
-        // Do not auto-dismiss: the interrupted take was not successfully
-        // recovered or finalized. The existing mic action accepts .error retry.
         state = .error(message)
     }
 
-    nonisolated static func routeHasBluetooth(_ route: AVAudioSessionRouteDescription) -> Bool {
-        let ports = route.inputs + route.outputs
-        return ports.contains {
-            $0.portType == .bluetoothHFP || $0.portType == .bluetoothA2DP
+    private func startCaptureHealthWatch() {
+        captureHealthTask?.cancel()
+        lastCaptureAudioAt = .now
+        captureHealthTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .milliseconds(250))
+                } catch {
+                    return
+                }
+                guard let self, self.state == .recording else { return }
+                guard self.activeCaptureRebuildID == nil else { continue }
+                guard let last = self.lastCaptureAudioAt else { continue }
+                let stalledMs = last.elapsedMs()
+                guard stalledMs >= Self.captureStallTimeoutMs else { continue }
+                var metadata = DictationAudioEngineHelper.sessionRouteMetadata()
+                metadata["stall_ms"] = String(stalledMs)
+                ClientLog.warning("VoiceInput", "Capture audio stalled; rebuilding microphone", metadata: metadata)
+                await self.rebuildOrFailActiveCapture(
+                    previousHadBluetooth: false,
+                    reason: nil,
+                    trigger: "stall"
+                )
+            }
+        }
+    }
+
+    private func stopCaptureHealthWatch() {
+        captureHealthTask?.cancel()
+        captureHealthTask = nil
+        lastCaptureAudioAt = nil
+    }
+
+    nonisolated static func shouldRebuildCaptureForRouteChange(
+        reason: AVAudioSession.RouteChangeReason?,
+        routeInputChanged: Bool
+    ) -> Bool {
+        switch reason {
+        case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange, .override:
+            routeInputChanged
+        default:
+            false
         }
     }
 
@@ -1486,7 +1711,18 @@ final class VoiceInputManager {
         reason: AVAudioSession.RouteChangeReason?,
         previousHadBluetooth: Bool
     ) -> Bool {
-        reason == .oldDeviceUnavailable && previousHadBluetooth
+        shouldHandleCaptureRouteChange(reason: reason) && previousHadBluetooth && reason == .oldDeviceUnavailable
+    }
+
+    nonisolated static func shouldHandleCaptureRouteChange(
+        reason: AVAudioSession.RouteChangeReason?
+    ) -> Bool {
+        switch reason {
+        case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange, .override:
+            true
+        default:
+            false
+        }
     }
     #endif
 
@@ -1567,6 +1803,9 @@ final class VoiceInputManager {
 
     private func teardownSession() {
         captureFailureHandler = nil
+        #if os(iOS)
+        stopCaptureHealthWatch()
+        #endif
         typewriterAnimator.reset()
         sessionMonitor.teardown()
         finalizedTranscript = ""
@@ -1592,38 +1831,63 @@ final class VoiceInputManager {
         guard activeStartRequestID == requestID else { return false }
         await sessionMonitor.cancel()
         guard activeStartRequestID == requestID else { return false }
-        deactivateAudioSession()
         teardownSession()
-        endPlaybackCaptureInterruptionIfNeeded()
+        releaseAudioSessionAfterCapture()
         return true
     }
 
-    func handleSessionStreamError(
-        _ error: Error,
-        annotation: VoiceMetricAnnotation
-    ) async {
-        guard let requestID = activeStartRequestID else { return }
-        logger.error("Results stream error: \(error.localizedDescription, privacy: .public)")
+    private func failCaptureForSessionError(_ error: Error, annotation: VoiceMetricAnnotation) {
+        // The public dismiss identity intentionally excludes `.processing`;
+        // fatal errors must still identify the take while Stop is finalizing it.
+        guard let requestID = activeStartRequestID, let generation = activeStartComposerGeneration,
+              let source = activeRecordingSource, captureFailure == nil else { return }
+        let take = VoiceCaptureTakeIdentity(requestID: requestID, composerGeneration: generation)
+        let stopOwnsDrain = state == .processing
+        let wasPreparing = state == .preparingModel
+        let cause: String
+        if case VoiceInputError.captureBufferOverflow = error {
+            cause = "Dictation audio buffer overflow."
+        } else {
+            cause = userFacingErrorMessage(for: error)
+        }
+        let message = "\(cause) This take was discarded. Your earlier draft was kept. Retry dictation."
+        let failure = VoiceCaptureFailure(take: take, source: source, message: message)
+        // Retire this take before any suspension. Route recovery, another error,
+        // and a late startup completion must not publish competing outcomes.
+        clearActiveStartIdentity()
+        state = .processing
+        captureFailure = failure
+        let rollback = captureFailureHandler
+        captureFailureHandler = nil
+        rollback?()
+        if wasPreparing, let activeEngine {
+            try? provider(for: activeEngine).cancelPreparation()
+        }
         recordDictationCountMetric(
-            .dictationError,
-            value: 1,
-            annotation: annotation,
-            status: "error",
-            extraTags: [
-                "phase": "stream",
-                "error_kind": Self.metricErrorKind(for: error),
-            ]
+            .dictationError, value: 1, annotation: annotation, status: "error",
+            extraTags: ["phase": "capture", "error_kind": Self.metricErrorKind(for: error)]
         )
+        var metadata = DictationAudioEngineHelper.sessionRouteMetadata()
+        metadata["engine"] = annotation.engine
+        metadata["source"] = source
+        metadata["during_stop"] = String(stopOwnsDrain)
+        metadata["error_kind"] = Self.metricErrorKind(for: error)
+        metadata["error_domain"] = (error as NSError).domain
+        metadata["error_code"] = String((error as NSError).code)
+        ClientLog.error("VoiceInput", "Dictation take discarded after fatal session error", metadata: metadata)
 
-        await sessionMonitor.cancel()
-        // Route loss retires this request before awaiting the same drain. It
-        // alone publishes the take failure; late stream cleanup owns nothing.
-        guard activeStartRequestID == requestID else { return }
-        deactivateAudioSession()
-        teardownSession()
-        endPlaybackCaptureInterruptionIfNeeded()
-        state = .error(userFacingErrorMessage(for: error))
-        scheduleErrorReset()
+        // Cancelling a session already finalizing is not a second drain: its
+        // cancel() may be a no-op. Keep ownership until stop() actually returns.
+        guard !stopOwnsDrain else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.sessionMonitor.cancel()
+            guard self.nextStartRequestID == take.requestID, self.state == .processing else { return }
+            self.teardownSession()
+            self.releaseAudioSessionAfterCapture()
+            self.operationInFlight = false
+            self.state = .error(failure.message)
+        }
     }
 
     private func scheduleErrorReset() {
@@ -1640,19 +1904,51 @@ final class VoiceInputManager {
 
     // MARK: - Helpers
 
+    private var hasActiveInAppPlayback: Bool {
+        if AudioPlayerService.isProcessPlaybackActiveForCapture { return true }
+        if playbackCoordinator?.isPlaybackActiveForCapture == true { return true }
+        return captureReleaseObservers.values.contains { $0.isPlaybackActive() }
+    }
+
     private func beginPlaybackCaptureInterruptionIfNeeded() {
-        guard !playbackCaptureInterruptionActive, let playbackCoordinator else { return }
-        if playbackCoordinator.hasActivePlayback {
-            logger.info("Stopping active audio playback before voice recording")
+        guard !playbackCaptureInterruptionActive else { return }
+        if hasActiveInAppPlayback {
+            logger.info("Keeping active audio playback on mixed voice-capture session")
         }
-        playbackCoordinator.beginCaptureInterruption()
+        // The selected server need not own playback. Hold a process claim even
+        // without a bound player, and release the same optional coordinator if
+        // the visible composer changes server while capture is winding down.
+        AudioPlayerService.beginProcessCaptureInterruption(owner: self)
+        interruptedPlaybackCoordinator = playbackCoordinator
+        interruptedPlaybackCoordinator?.beginCaptureInterruption()
         playbackCaptureInterruptionActive = true
     }
 
-    private func endPlaybackCaptureInterruptionIfNeeded() {
-        guard playbackCaptureInterruptionActive else { return }
-        playbackCoordinator?.endCaptureInterruption()
-        playbackCaptureInterruptionActive = false
+    private func endPlaybackCaptureInterruptionIfNeeded() -> Bool {
+        var playbackOwnsSession = false
+        if playbackCaptureInterruptionActive {
+            interruptedPlaybackCoordinator?.endCaptureInterruption()
+            playbackOwnsSession = interruptedPlaybackCoordinator?.isPlaybackActiveForCapture == true
+            interruptedPlaybackCoordinator = nil
+            playbackOwnsSession = AudioPlayerService.endProcessCaptureInterruption(owner: self) || playbackOwnsSession
+            playbackCaptureInterruptionActive = false
+        }
+        playbackOwnsSession = restoreCaptureReleaseObservers() || playbackOwnsSession
+        return playbackOwnsSession
+    }
+
+    private func restoreCaptureReleaseObservers() -> Bool {
+        var restored = false
+        for observer in captureReleaseObservers.values where observer.isPlaybackActive() {
+            restored = observer.restorePlaybackSession() || restored
+        }
+        return restored
+    }
+
+    private func releaseAudioSessionAfterCapture() {
+        if !endPlaybackCaptureInterruptionIfNeeded() {
+            deactivateAudioSession()
+        }
     }
 
     private func markTranscriptPresentationChanged() {
@@ -1997,6 +2293,20 @@ extension VoiceInputManager {
     var _testComposerOwner: VoiceComposerOwner? {
         composerOwner
     }
+
+    func _testRestoreCaptureReleaseObservers() -> Bool {
+        restoreCaptureReleaseObservers()
+    }
+
+    #if os(iOS)
+    func _testRebuildActiveCapture(trigger: String = "stall") async {
+        await rebuildOrFailActiveCapture(
+            previousHadBluetooth: false,
+            reason: nil,
+            trigger: trigger
+        )
+    }
+    #endif
 
     // periphery:ignore - used by VoiceInputManagerTests via @testable import
     var _testModelReady: Bool {

@@ -389,6 +389,8 @@ enum TranscriberModule {
 
 @MainActor
 final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
+    nonisolated static let analyzerInputBufferLimit = 8
+
     let events: AsyncThrowingStream<VoiceSessionEvent, Error>
     let audioLevels: AsyncStream<Float>
 
@@ -455,7 +457,7 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
             }
         }
 
-        let (sequence, builder) = AsyncStream.makeStream(of: AnalyzerInput.self)
+        let (sequence, builder) = Self.makeAnalyzerInputStream()
         inputBuilder = builder
         try await newAnalyzer.prepareToAnalyze(in: preferredAudioFormat)
         try await newAnalyzer.start(inputSequence: sequence)
@@ -469,7 +471,8 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         try await startAudioCapture {
             try AudioEngineHelper.startEngine(
                 inputBuilder: inputBuilder,
-                targetFormat: self.preferredAudioFormat
+                targetFormat: self.preferredAudioFormat,
+                events: self.eventContinuation
             )
         }
         let audioStartMs = audioStart.elapsedMs()
@@ -478,6 +481,27 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
             analyzerStartMs: analyzerStartMs,
             audioStartMs: audioStartMs
         )
+    }
+
+    func rebuildAudioCapture() async throws {
+        guard !stopped, analyzer != nil, inputBuilder != nil else {
+            throw VoiceInputError.audioCaptureUnavailable
+        }
+        audioLevelTask?.cancel()
+        audioLevelTask = nil
+        audioCapture?.stop()
+        audioCapture = nil
+        hasCapturedAudio = false
+        guard let inputBuilder else {
+            throw VoiceInputError.internalError("Input builder not initialized")
+        }
+        try await startAudioCapture {
+            try AudioEngineHelper.startEngine(
+                inputBuilder: inputBuilder,
+                targetFormat: self.preferredAudioFormat,
+                events: self.eventContinuation
+            )
+        }
     }
 
     func startAudioCapture(
@@ -510,6 +534,7 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         stopped = true
         audioCapture?.stopAndFinishInput(flush: true)
         audioCapture = nil
+        finishAnalyzerInput()
 
         do {
             try await analyzer?.finalizeAndFinishThroughEndOfInput()
@@ -526,6 +551,7 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         stopped = true
         audioCapture?.stopAndFinishInput(flush: false)
         audioCapture = nil
+        finishAnalyzerInput()
 
         resultsTask?.cancel()
         resultsTask = nil
@@ -534,11 +560,57 @@ final class AppleOnDeviceVoiceSession: VoiceTranscriptionSession {
         await analyzer?.cancelAndFinishNow()
 
         analyzer = nil
-        inputBuilder?.finish()
-        inputBuilder = nil
         eventContinuation.finish()
         audioLevelContinuation.finish()
     }
+
+    nonisolated static func makeAnalyzerInputStream() -> (
+        stream: AsyncStream<AnalyzerInput>,
+        continuation: AsyncStream<AnalyzerInput>.Continuation
+    ) {
+        AsyncStream.makeStream(
+            of: AnalyzerInput.self,
+            bufferingPolicy: .bufferingOldest(analyzerInputBufferLimit)
+        )
+    }
+
+    private func finishAnalyzerInput() {
+        inputBuilder?.finish()
+        inputBuilder = nil
+    }
+
+    // periphery:ignore - test seam for stop-during-rebuild input lifetime
+    func _testInstallAnalyzerInputStream() -> (
+        stream: AsyncStream<AnalyzerInput>,
+        continuation: AsyncStream<AnalyzerInput>.Continuation
+    ) {
+        let pair = Self.makeAnalyzerInputStream()
+        inputBuilder = pair.continuation
+        return pair
+    }
+
+    // periphery:ignore - exercises the same enqueue boundary as the microphone feed
+    func _testEnqueueAnalyzerInput(_ input: AnalyzerInput) -> Bool {
+        guard let inputBuilder else { return false }
+        return AudioEngineHelper.enqueueCaptureInput(input, into: inputBuilder, events: eventContinuation)
+    }
+
+#if DEBUG
+    // periphery:ignore - a successful analyzer completion must not mask capture failure
+    func _testFinishAnalyzerResults() { eventContinuation.finish() }
+
+    // periphery:ignore - inject the converter/allocator, retaining the real session terminal publisher
+    func _testMakeLegacyFeed(
+        converter: AVAudioConverter,
+        allocateBuffer: @escaping (AVAudioFormat, AVAudioFrameCount) -> AVAudioPCMBuffer?
+    ) throws -> any AnalyzerInputFeeding {
+        guard let inputBuilder else { throw VoiceInputError.audioCaptureUnavailable }
+        return AudioEngineHelper.LegacyConverterFeed(
+            converter: converter, inputFormat: converter.inputFormat, targetFormat: converter.outputFormat,
+            inputBuilder: inputBuilder, events: eventContinuation, allocateBuffer: allocateBuffer
+        )
+    }
+#endif
 
     private func startResultsBridge() {
         resultsTask?.cancel()

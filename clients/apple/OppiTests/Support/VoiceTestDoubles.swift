@@ -14,6 +14,7 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
     var activateBuiltInAudioSessionCallCount = 0
     var deactivateAudioSessionCallCount = 0
     var activateAudioSessionError: Error?
+    var lastInAppPlaybackActive = false
     var onActivateAudioSession: (() -> Void)?
 
     func requestPermissions() async -> Bool {
@@ -29,17 +30,18 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
         return requestMicPermissionResult
     }
 
-    func activateAudioSession() throws {
+    func activateAudioSession(inAppPlaybackActive: Bool) throws {
         activateAudioSessionCallCount += 1
+        lastInAppPlaybackActive = inAppPlaybackActive
         onActivateAudioSession?()
         if let activateAudioSessionError {
             throw activateAudioSessionError
         }
     }
 
-    func activateBuiltInAudioSession() throws {
+    func activateBuiltInAudioSession(inAppPlaybackActive: Bool) throws {
         activateBuiltInAudioSessionCallCount += 1
-        try activateAudioSession()
+        try activateAudioSession(inAppPlaybackActive: inAppPlaybackActive)
     }
 
     func deactivateAudioSession() {
@@ -133,6 +135,10 @@ final class MockVoiceSession: VoiceTranscriptionSession {
     var startCallCount = 0
     var stopCallCount = 0
     var cancelCallCount = 0
+    var rebuildAudioCaptureCallCount = 0
+    /// Default fails so existing Bluetooth-loss tests still abandon the take.
+    var rebuildAudioCaptureError: Error? = VoiceInputError.audioCaptureUnavailable
+    var rebuildAudioCaptureHandler: (@MainActor () async -> Void)?
     /// Custom stop handler. When set, called instead of default immediate finish.
     var startHandler: (@MainActor () async -> Void)?
     var stopHandler: (@MainActor () async -> Void)?
@@ -157,6 +163,14 @@ final class MockVoiceSession: VoiceTranscriptionSession {
             throw startError
         }
         return startTimings
+    }
+
+    func rebuildAudioCapture() async throws {
+        rebuildAudioCaptureCallCount += 1
+        await rebuildAudioCaptureHandler?()
+        if let rebuildAudioCaptureError {
+            throw rebuildAudioCaptureError
+        }
     }
 
     func stop() async {
@@ -223,6 +237,7 @@ actor AsyncGate {
 @MainActor
 final class MockVoicePlaybackInterrupter: VoicePlaybackCaptureCoordinating {
     var hasActivePlayback = false
+    var isPlaybackActiveForCapture = false
     var stopCallCount = 0
     var beginCaptureInterruptionCallCount = 0
     var endCaptureInterruptionCallCount = 0
@@ -230,9 +245,6 @@ final class MockVoicePlaybackInterrupter: VoicePlaybackCaptureCoordinating {
 
     func beginCaptureInterruption() {
         beginCaptureInterruptionCallCount += 1
-        if hasActivePlayback {
-            stop()
-        }
     }
 
     func endCaptureInterruption() {

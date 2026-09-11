@@ -51,6 +51,13 @@ final class VoiceInputSessionMonitor {
         }
     }
 
+    func rebuildAudioCapture() async throws {
+        guard let session = activeSession else {
+            throw VoiceInputError.audioCaptureUnavailable
+        }
+        try await session.rebuildAudioCapture()
+    }
+
     func stop() async {
         let retiringSession = activeSession
         let retiringResultsTask = resultsTask

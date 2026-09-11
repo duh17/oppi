@@ -1,9 +1,59 @@
 import AVFoundation
 import Foundation
+import Speech
 import SwiftUI
 import Testing
 import Vision
 @testable import Oppi
+
+enum TestCaptureFailureKind: CaseIterable, Sendable {
+    case overflow, analyzer, transport, converterFlush, converterStatus
+
+    var messageFragment: String {
+        switch self {
+        case .overflow: "overflow"
+        case .analyzer: "Analyzer failed"
+        case .transport: URLError(.networkConnectionLost).localizedDescription
+        case .converterFlush: "Injected converter flush failure"
+        case .converterStatus: "converter"
+        }
+    }
+
+    @MainActor
+    func finish(_ session: MockVoiceSession) async throws {
+        switch self {
+        case .overflow:
+            session.finishEvents(throwing: AudioEngineHelper.captureOverflowError)
+        case .analyzer:
+            session.finishEvents(throwing: TestVoiceError("Analyzer failed"))
+        case .transport:
+            session.finishEvents(throwing: URLError(.networkConnectionLost))
+        case .converterFlush, .converterStatus:
+            let format = try #require(AVAudioFormat(
+                commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: false
+            ))
+            let converter = try #require(TestFailingFlushConverter(from: format, to: format))
+            converter.reportsNSError = self == .converterFlush
+            let inputs = AsyncStream<AnalyzerInput>.makeStream()
+            let events = AsyncThrowingStream<VoiceSessionEvent, Error>.makeStream()
+            AudioEngineHelper.flushPendingAnalyzerInputs(
+                converter: converter, targetFormat: format,
+                into: inputs.continuation, events: events.continuation
+            )
+            #expect(converter.flushCallCount == 1)
+            // Mirror a completed analyzer. Flush must have failed this stream
+            // before successful finalization can close it.
+            inputs.continuation.finish()
+            events.continuation.finish()
+            do {
+                for try await _ in events.stream {}
+                session.finishEvents()
+            } catch {
+                session.finishEvents(throwing: error)
+            }
+        }
+    }
+}
 
 /// Tests for VoiceInputManager state machine correctness.
 ///
@@ -525,6 +575,8 @@ struct VoiceInputManagerTests {
         #expect(VoiceInputSystemAccess.recordingMode == .default)
         let options = VoiceInputSystemAccess.recordingCategoryOptions
         #expect(options.contains(.allowBluetoothHFP))
+        #expect(options.contains(.mixWithOthers))
+        #expect(options.contains(.duckOthers))
         #expect(!options.contains(.allowBluetoothA2DP))
         #expect(!options.contains(.defaultToSpeaker))
         if #available(iOS 26.2, *) {
@@ -556,7 +608,288 @@ struct VoiceInputManagerTests {
                 previousHadBluetooth: true
             )
         )
+        #expect(VoiceInputManager.shouldHandleCaptureRouteChange(reason: .oldDeviceUnavailable))
+        #expect(VoiceInputManager.shouldHandleCaptureRouteChange(reason: .newDeviceAvailable))
+        #expect(VoiceInputManager.shouldHandleCaptureRouteChange(reason: .routeConfigurationChange))
+        #expect(!VoiceInputManager.shouldHandleCaptureRouteChange(reason: .categoryChange))
+        #expect(VoiceInputManager.shouldRebuildCaptureForRouteChange(
+            reason: .routeConfigurationChange,
+            routeInputChanged: true
+        ))
+        #expect(!VoiceInputManager.shouldRebuildCaptureForRouteChange(
+            reason: .routeConfigurationChange,
+            routeInputChanged: false
+        ))
+        #expect(!VoiceInputManager.shouldRebuildCaptureForRouteChange(
+            reason: .newDeviceAvailable,
+            routeInputChanged: false
+        ))
         #endif
+    }
+
+    @Test func recordingRouteChangeRebuildsCaptureAndKeepsTake() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let access = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = nil
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: access
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        session.yieldEvent(.partialTranscript("keep these words"))
+        let received = await waitForTestCondition(timeoutMs: 500) {
+            await MainActor.run { manager.currentTranscript == "keep these words" }
+        }
+        #expect(received)
+        let activationsAtStart = access.activateAudioSessionCallCount
+        await manager.handleAudioRouteChange(
+            rawReason: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue,
+            previousHadBluetooth: false
+        )
+        #expect(manager.state == .recording)
+        #expect(session.rebuildAudioCaptureCallCount == 1)
+        #expect(session.cancelCallCount == 0)
+        #expect(manager.currentTranscript == "keep these words")
+        #expect(manager.captureFailure == nil)
+        #expect(access.activateBuiltInAudioSessionCallCount == 0)
+        #expect(access.activateAudioSessionCallCount == activationsAtStart)
+        await manager.cancelRecording()
+    }
+
+    @Test func unchangedRouteConfigurationDoesNotRebuildHealthyCapture() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = nil
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        await manager.handleAudioRouteChange(
+            rawReason: AVAudioSession.RouteChangeReason.routeConfigurationChange.rawValue,
+            previousHadBluetooth: false,
+            routeInputChanged: false
+        )
+
+        #expect(manager.state == .recording)
+        #expect(session.rebuildAudioCaptureCallCount == 0)
+        await manager.cancelRecording()
+    }
+
+    @Test func repeatedHealthyRouteChangesDoNotExhaustDeadPipelineRecovery() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = nil
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        for reason: AVAudioSession.RouteChangeReason in [
+            .newDeviceAvailable, .routeConfigurationChange, .override,
+        ] {
+            await manager.handleAudioRouteChange(rawReason: reason.rawValue, previousHadBluetooth: false)
+        }
+
+        #expect(manager.state == .recording)
+        #expect(session.rebuildAudioCaptureCallCount == 3)
+        #expect(session.cancelCallCount == 0)
+        await manager.cancelRecording()
+    }
+
+    @Test func routeNotificationsSerializeCaptureRebuilds() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = nil
+        let firstRebuildEntered = AsyncGate()
+        let releaseFirstRebuild = AsyncGate()
+        var activeRebuilds = 0
+        var maximumActiveRebuilds = 0
+        session.rebuildAudioCaptureHandler = {
+            activeRebuilds += 1
+            maximumActiveRebuilds = max(maximumActiveRebuilds, activeRebuilds)
+            if session.rebuildAudioCaptureCallCount == 1 {
+                await firstRebuildEntered.open()
+                await releaseFirstRebuild.wait()
+            }
+            activeRebuilds -= 1
+        }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        let first = Task {
+            await manager.handleAudioRouteChange(
+                rawReason: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue,
+                previousHadBluetooth: false
+            )
+        }
+        await firstRebuildEntered.wait()
+        await manager.handleAudioRouteChange(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: false
+        )
+        await manager.handleAudioRouteChange(
+            rawReason: AVAudioSession.RouteChangeReason.override.rawValue,
+            previousHadBluetooth: false
+        )
+        #expect(session.rebuildAudioCaptureCallCount == 1)
+
+        await releaseFirstRebuild.open()
+        await first.value
+        #expect(await waitForMainActorCondition { session.rebuildAudioCaptureCallCount == 2 })
+        #expect(maximumActiveRebuilds == 1)
+        #expect(manager.state == .recording)
+        await manager.cancelRecording()
+    }
+
+    @Test func stopDuringCaptureRebuildCannotPublishADeadRecordingState() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = nil
+        let rebuildEntered = AsyncGate()
+        let releaseRebuild = AsyncGate()
+        session.rebuildAudioCaptureHandler = {
+            await rebuildEntered.open()
+            await releaseRebuild.wait()
+        }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        let rebuild = Task {
+            await manager.handleAudioRouteChange(
+                rawReason: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue,
+                previousHadBluetooth: false
+            )
+        }
+        await rebuildEntered.wait()
+        let stop = Task { await manager.stopRecording() }
+        _ = await stop.value
+        await releaseRebuild.open()
+        await rebuild.value
+
+        #expect(manager.state == .idle)
+        #expect(session.stopCallCount == 1)
+        #expect(session.cancelCallCount == 0)
+        #expect(!manager.ownsCaptureAudioSession)
+    }
+
+    @Test func activeTakeRebuildCancellationFailsClosed() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = CancellationError()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        await manager.handleAudioRouteChange(
+            rawReason: AVAudioSession.RouteChangeReason.routeConfigurationChange.rawValue,
+            previousHadBluetooth: true
+        )
+        if case .error = manager.state {} else {
+            Issue.record("A cancelled rebuild has no proven live engine and must fail closed")
+        }
+        #expect(manager.captureFailure != nil)
+        #expect(session.cancelCallCount == 1)
+        #expect(!manager.ownsCaptureAudioSession)
+    }
+
+    @Test func bluetoothDisconnectRebuildsThenFailsIfCaptureStaysDead() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = VoiceInputError.audioCaptureUnavailable
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        await manager.handleLostBluetoothRoute(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: true
+        )
+        #expect(session.rebuildAudioCaptureCallCount == 1)
+        if case .error(let message) = manager.state {
+            #expect(message.contains("discarded"))
+        } else {
+            Issue.record("Dead pipeline after rebuild must fail, got \(manager.state)")
+        }
+        #expect(session.cancelCallCount == 1)
+    }
+
+    @Test func stalledCaptureRebuildsWithoutAbandoningTake() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = nil
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+        await manager._testRebuildActiveCapture(trigger: "stall")
+        #expect(manager.state == .recording)
+        #expect(session.rebuildAudioCaptureCallCount == 1)
+        #expect(session.cancelCallCount == 0)
+        await manager.cancelRecording()
+    }
+
+    @Test func repeatedDeadPipelineFailsClosedInsteadOfLeavingRecordingChrome() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.rebuildAudioCaptureError = nil
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        await manager._testRebuildActiveCapture(trigger: "stall")
+        await manager._testRebuildActiveCapture(trigger: "stall")
+        await manager._testRebuildActiveCapture(trigger: "stall")
+
+        if case .error(let message) = manager.state {
+            #expect(message.contains("could not keep recording"))
+        } else {
+            Issue.record("Exhausted dead-pipeline recovery must leave recording chrome: \(manager.state)")
+        }
+        #expect(session.rebuildAudioCaptureCallCount == 2)
+        #expect(session.cancelCallCount == 1)
+        #expect(!manager.ownsCaptureAudioSession)
     }
 
     @Test func bluetoothRouteLossSurfacesFailureAndAllowsExplicitRetry() async throws {
@@ -760,7 +1093,7 @@ struct VoiceInputManagerTests {
         await manager.cancelRecording()
     }
 
-    @Test func streamErrorCancellationCannotReleaseRouteLossEarlyOrDestroyRetry() async throws {
+    @Test func firstStreamFailureOwnsDrainDespiteRouteLossAndRetry() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
         let access = MockVoiceInputSystemAccess()
@@ -774,12 +1107,7 @@ struct VoiceInputManagerTests {
             providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
         )
         try await manager.startRecording(keyboardLanguage: "en-US", source: "old")
-        let streamError = Task {
-            await manager.handleSessionStreamError(
-                TestVoiceError("late stream failure"),
-                annotation: VoiceMetricAnnotation(engine: "dictation", locale: "en-US", source: "old")
-            )
-        }
+        old.finishEvents(throwing: TestVoiceError("late stream failure"))
         await entered.wait()
         let loss = Task {
             await manager.handleLostBluetoothRoute(
@@ -787,8 +1115,8 @@ struct VoiceInputManagerTests {
                 previousHadBluetooth: true
             )
         }
-        // The route callback sets processing before its first await. This gate
-        // distinguishes cancellation-started from cancellation-completed.
+        // The first fatal event retires the take before cancellation suspends.
+        // A later route callback cannot take over that terminal outcome.
         let retired = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run { manager.currentCaptureTakeIdentity() == nil }
         }
@@ -797,15 +1125,15 @@ struct VoiceInputManagerTests {
         #expect(access.deactivateAudioSessionCallCount == 0)
         await resume.open()
         await loss.value
+        #expect(await waitForMainActorCondition { !manager.ownsCaptureAudioSession })
         if case .error(let message) = manager.state {
-            #expect(message.contains("Bluetooth microphone disconnected"))
+            #expect(message.contains("late stream failure"))
         } else {
-            Issue.record("The route-loss error must win over competing stream cleanup")
+            Issue.record("The first terminal failure must survive competing route cleanup")
         }
         let retry = MockVoiceSession()
         provider.makeSessionHandler = { _, _ in retry }
         try await manager.startRecording(keyboardLanguage: "en-US", source: "retry")
-        await streamError.value
         #expect(manager.state == .recording)
         #expect(manager.activeRecordingSource == "retry")
         #expect(retry.cancelCallCount == 0)
@@ -813,8 +1141,242 @@ struct VoiceInputManagerTests {
         await manager.cancelRecording()
     }
 
+    @Test(arguments: [TestCaptureFailureKind.overflow, .analyzer, .transport])
+    func captureFailureRollsBackComposerBeforeCancellationFinishes(failureKind: TestCaptureFailureKind) async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        let cancellationEntered = AsyncGate()
+        let releaseCancellation = AsyncGate()
+        session.cancelHandler = { await cancellationEntered.open(); await releaseCancellation.wait() }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let access = MockVoiceInputSystemAccess()
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        var draft = "Keep exact draft"
+        var prefix: String?
+        var suppressed = false
+        var focusID = 0
+        var rollbackCount = 0
+        let text = Binding(get: { draft }, set: {
+            draft = $0
+            if $0 == "Keep exact draft" { rollbackCount += 1 }
+        })
+        _ = try await ComposerShared.startVoiceInput(
+            manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
+            baseText: draft, text: text,
+            textBeforeRecording: Binding(get: { prefix }, set: { prefix = $0 }),
+            suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
+            focusRequestID: Binding(get: { focusID }, set: { focusID = $0 }),
+            playActivationHaptic: {}
+        )
+        let take = manager.currentCaptureTakeIdentity()
+        session.yieldEvent(.partialTranscript("incomplete words"))
+        #expect(await waitForMainActorCondition { manager.currentTranscript == "incomplete words" })
+        draft = (prefix ?? "") + manager.currentTranscript
+        try await failureKind.finish(session)
+        await cancellationEntered.wait()
+
+        #expect(manager.captureFailure?.take == take)
+        #expect(ComposerShared.captureFailure(manager, owner: .expandedComposer) != nil)
+        #expect(draft == "Keep exact draft")
+        #expect(prefix == nil)
+        #expect(!suppressed)
+        #expect(rollbackCount == 1)
+        #expect(manager.state == .processing)
+        #expect(await manager.stopRecording() == "")
+        await manager.cancelRecording()
+        #expect(manager.state == .processing, "Stop and Cancel cannot release a failed take's drain")
+        #expect(session.stopCallCount == 0)
+        #expect(access.deactivateAudioSessionCallCount == 0)
+        await releaseCancellation.open()
+        #expect(await waitForMainActorCondition { !manager.ownsCaptureAudioSession })
+        #expect(session.cancelCallCount == 1)
+        #expect(access.deactivateAudioSessionCallCount == 1)
+        #expect(rollbackCount == 1)
+        if case .error(let message) = manager.state {
+            #expect(message.contains(failureKind.messageFragment))
+            #expect(message.contains("discarded"))
+        } else {
+            Issue.record("Fatal capture errors must remain a failed take, not idle")
+        }
+        let retry = MockVoiceSession()
+        provider.makeSessionHandler = { _, _ in retry }
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "inline_mic_tap")
+        #expect(manager.captureFailure == nil)
+        await manager.cancelRecording()
+    }
+
+    @Test(arguments: TestCaptureFailureKind.allCases, [(false, false), (false, true), (true, false), (true, true)])
+    func failureDuringStopCannotReturnOrCommitIncompleteTranscript(
+        failureKind: TestCaptureFailureKind, finalization: (Bool, Bool)
+    ) async throws {
+        let (composerStop, suspendFlush) = finalization
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        let flushFailed = AsyncGate()
+        let releaseFlush = AsyncGate()
+        session.stopHandler = {
+            session.yieldEvent(.replaceFinalTranscript("incomplete final", snap: true))
+            do {
+                try await failureKind.finish(session)
+            } catch {
+                Issue.record(error)
+                session.finishEvents()
+            }
+            await flushFailed.open()
+            if suspendFlush { await releaseFlush.wait() }
+        }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let access = MockVoiceInputSystemAccess()
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        var draft = "Keep exact draft"
+        var prefix: String?
+        var rollbackCount = 0
+        let text = Binding(get: { draft }, set: {
+            draft = $0
+            if $0 == "Keep exact draft" { rollbackCount += 1 }
+        })
+        let prefixBinding = Binding(get: { prefix }, set: { prefix = $0 })
+        _ = try await ComposerShared.startVoiceInput(
+            manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
+            baseText: draft, text: text, textBeforeRecording: prefixBinding,
+            suppressKeyboard: .constant(false), focusRequestID: .constant(0), playActivationHaptic: {}
+        )
+        session.yieldEvent(.partialTranscript("incomplete preview"))
+        #expect(await waitForMainActorCondition { manager.currentTranscript == "incomplete preview" })
+        draft = (prefix ?? "") + manager.currentTranscript
+        let stop = Task {
+            if composerStop {
+                await ComposerShared.stopVoiceInput(manager: manager, text: text, textBeforeRecording: prefixBinding)
+                return ""
+            }
+            return await manager.stopRecording()
+        }
+        await flushFailed.wait()
+        if suspendFlush {
+            #expect(await waitForMainActorCondition { manager.captureFailure != nil })
+            #expect(draft == "Keep exact draft", "Rollback must not wait for analyzer finalization")
+            #expect(manager.state == .processing)
+            await manager.cancelRecording()
+            #expect(await manager.stopRecording() == "")
+            #expect(access.deactivateAudioSessionCallCount == 0)
+            await releaseFlush.open()
+        }
+        #expect(await stop.value == "")
+        #expect(draft == "Keep exact draft")
+        #expect(prefix == nil)
+        #expect(rollbackCount == 1)
+        #expect(manager.currentTranscript.isEmpty)
+        #expect(manager.captureFailure != nil)
+        #expect(ComposerShared.captureFailure(manager, owner: .inlineComposer) != nil)
+        if case .error(let message) = manager.state {
+            #expect(message.contains(failureKind.messageFragment))
+        } else {
+            Issue.record("Stop must preserve the terminal session error")
+        }
+        #expect(session.stopCallCount == 1)
+        #expect(session.cancelCallCount == 0, "Stop owns the flush; error publication must not start a competing cancel")
+        #expect(access.deactivateAudioSessionCallCount == 1)
+        #expect(!manager.ownsCaptureAudioSession)
+    }
+
     @Test(arguments: [false, true])
-    func mountedComposerShowsPersistentRouteFailureAndRollsBackEditor(expanded: Bool) async throws {
+    func realTransportFailureDuringStopReturnsWithoutIncomingFinalAndAllowsRetry(failPCM: Bool) async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let transport = TestDictationTransport()
+        let incoming = AsyncStream<ServerMessage>.makeStream()
+        let session = OppiDictationSession(
+            transport: transport, readinessTask: Task { nil }, messages: incoming.stream
+        )
+        let sendEntered = AsyncGate()
+        let failSend = AsyncGate()
+        transport.onSendAudio = { _ in
+            await sendEntered.open()
+            if failPCM {
+                await failSend.wait()
+                throw WebSocketError.notConnected
+            }
+        }
+        transport.onSendDictation = { message in
+            if case .dictationStop = message { throw WebSocketError.notConnected }
+        }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in TestPCMDictationSession(session) }
+        let access = MockVoiceInputSystemAccess()
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]), systemAccess: access
+        )
+        var draft = "Keep exact draft"
+        var prefix: String?
+        let text = Binding(get: { draft }, set: { draft = $0 })
+        let prefixBinding = Binding(get: { prefix }, set: { prefix = $0 })
+        _ = try await ComposerShared.startVoiceInput(
+            manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
+            baseText: draft, text: text, textBeforeRecording: prefixBinding,
+            suppressKeyboard: .constant(false), focusRequestID: .constant(0), playActivationHaptic: {}
+        )
+        incoming.continuation.yield(.dictationResult(text: "incomplete preview", snap: false))
+        #expect(await waitForMainActorCondition { manager.currentTranscript == "incomplete preview" })
+        draft = (prefix ?? "") + manager.currentTranscript
+        #expect(session._enqueuePCMForTesting(Data([1, 2])))
+        await sendEntered.wait()
+        var returned = false
+        let stop = Task {
+            let result = await manager.stopRecording()
+            returned = true
+            return result
+        }
+        if failPCM {
+            #expect(await waitForMainActorCondition { manager.state == .processing })
+        }
+        await failSend.open() // Release a failed send, never a finalization gate.
+        let didReturn = await waitForMainActorCondition { returned }
+        #expect(didReturn, "Stop must return while incoming messages remain open forever")
+        guard didReturn else { stop.cancel(); return }
+        #expect(await stop.value == "")
+        #expect(draft == "Keep exact draft")
+        #expect(prefix == nil)
+        #expect(manager.currentTranscript.isEmpty)
+        #expect(manager.captureFailure != nil)
+        if case .error(let message) = manager.state {
+            #expect(message.contains("Dictation connection lost"))
+            #expect(message.contains("discarded"))
+        } else { Issue.record("Fatal Stop must leave a persistent error") }
+        #expect(!manager.ownsCaptureAudioSession)
+        #expect(!manager._testOperationInFlight)
+        #expect(access.deactivateAudioSessionCallCount == 1)
+        #expect(transport.closeCount == 1)
+        #expect(!session._enqueuePCMForTesting(Data([3])))
+        await session.cancel()
+        await session.stop()
+        #expect(transport.closeCount == 1, "Stop is the exactly-once cleanup owner")
+        let retryTransport = TestDictationTransport()
+        let retryIncoming = AsyncStream<ServerMessage>.makeStream()
+        let retry = OppiDictationSession(
+            transport: retryTransport, readinessTask: Task { nil }, messages: retryIncoming.stream
+        )
+        provider.makeSessionHandler = { _, _ in TestPCMDictationSession(retry) }
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "inline_mic_tap")
+        #expect(manager.state == .recording)
+        #expect(manager.captureFailure == nil)
+        #expect(manager.ownsCaptureAudioSession)
+        #expect(retry._enqueuePCMForTesting(Data([4])))
+        #expect(await waitForMainActorCondition { retryTransport.sentAudio == [Data([4])] })
+        await manager.cancelRecording()
+        #expect(retryTransport.closeCount == 1)
+        withExtendedLifetime((incoming.continuation, retryIncoming.continuation)) {}
+    }
+
+    @Test(arguments: [false, true], ["route", "overflow", "overflow_stop", "analyzer", "transport_stop"])
+    func mountedComposerShowsPersistentCaptureFailureAndRollsBackEditor(expanded: Bool, failureKind: String) async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
         let session = MockVoiceSession()
@@ -861,10 +1423,23 @@ struct VoiceInputManagerTests {
             await MainActor.run { draft.text.contains("discard these words") }
         }
         #expect(previewed)
-        await manager.handleLostBluetoothRoute(
-            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
-            previousHadBluetooth: true
-        )
+        switch failureKind {
+        case "overflow":
+            session.finishEvents(throwing: AudioEngineHelper.captureOverflowError)
+        case "overflow_stop":
+            session.stopHandler = { session.finishEvents(throwing: AudioEngineHelper.captureOverflowError) }
+            #expect(await manager.stopRecording() == "")
+        case "analyzer":
+            session.finishEvents(throwing: TestVoiceError("Analyzer failed"))
+        case "transport_stop":
+            session.stopHandler = { session.finishEvents(throwing: URLError(.networkConnectionLost)) }
+            #expect(await manager.stopRecording() == "")
+        default:
+            await manager.handleLostBluetoothRoute(
+                rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+                previousHadBluetooth: true
+            )
+        }
         let restored = await waitForTestCondition(timeoutMs: 1000) {
             await MainActor.run { draft.text == "Keep draft " && draft.prefix == nil }
         }
@@ -880,7 +1455,7 @@ struct VoiceInputManagerTests {
         }
         let artifact = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".build/logs/p1-route-failure-\(expanded ? "expanded" : "inline").png")
+            .appendingPathComponent(".build/logs/p1-\(failureKind)-failure-\(expanded ? "expanded" : "inline").png")
         try screenshot.pngData()?.write(to: artifact)
         let image = try #require(screenshot.cgImage)
         let recognize = VNRecognizeTextRequest()
@@ -905,6 +1480,41 @@ struct VoiceInputManagerTests {
         try await manager.startRecording(keyboardLanguage: "en-US", source: "expanded_mic_tap")
         #expect(manager.captureFailure == nil)
         #expect(manager.state == .recording)
+        await manager.cancelRecording()
+    }
+
+    @Test func expectedRouteConfigurationDuringStartupDoesNotCancelCapture() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        let entered = AsyncGate()
+        let resume = AsyncGate()
+        session.startHandler = { await entered.open(); await resume.wait() }
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        let start = Task { try await manager.startRecording(keyboardLanguage: "en-US", source: "test") }
+        await entered.wait()
+
+        await manager.handleAudioRouteChange(
+            rawReason: AVAudioSession.RouteChangeReason.routeConfigurationChange.rawValue,
+            previousHadBluetooth: false
+        )
+        // Replacing an idle A2DP output with HFP is self-inflicted setup, not a
+        // lost Bluetooth microphone.
+        await manager.handleAudioRouteChange(
+            rawReason: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+            previousHadBluetooth: false
+        )
+        await resume.open()
+        try await start.value
+
+        #expect(manager.state == .recording)
+        #expect(session.cancelCallCount == 0)
+        #expect(session.rebuildAudioCaptureCallCount == 0)
         await manager.cancelRecording()
     }
 
@@ -1006,7 +1616,7 @@ struct VoiceInputManagerTests {
         await manager.cancelRecording()
     }
 
-    @Test func startRecordingStopsActivePlaybackBeforeAudioSessionActivationAndCapture() async throws {
+    @Test func startRecordingKeepsActivePlaybackWhileActivatingMixedCapture() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }
 
@@ -1016,6 +1626,7 @@ struct VoiceInputManagerTests {
 
         let playback = MockVoicePlaybackInterrupter()
         playback.hasActivePlayback = true
+        playback.isPlaybackActiveForCapture = true
         playback.onStop = { events.append("stopPlayback") }
 
         let session = MockVoiceSession()
@@ -1033,8 +1644,11 @@ struct VoiceInputManagerTests {
         try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
 
         #expect(manager.state == .recording)
-        #expect(playback.stopCallCount == 1)
-        #expect(events == ["stopPlayback", "activate", "startCapture"])
+        #expect(playback.stopCallCount == 0)
+        #expect(playback.hasActivePlayback)
+        #expect(systemAccess.lastInAppPlaybackActive)
+        #expect(events == ["activate", "startCapture"])
+        await manager.cancelRecording()
     }
 
     @Test func startRecordingDoesNotStopIdlePlaybackInterrupter() async throws {
@@ -1059,8 +1673,58 @@ struct VoiceInputManagerTests {
 
         #expect(manager.state == .recording)
         #expect(playback.stopCallCount == 0)
+        #expect(!systemAccess.lastInAppPlaybackActive)
         #expect(systemAccess.activateAudioSessionCallCount == 1)
         #expect(session.startCallCount == 1)
+    }
+
+    @Test func pausedPlaybackItemDoesNotForcePhoneMicRouting() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let playback = MockVoicePlaybackInterrupter()
+        playback.hasActivePlayback = true
+        playback.isPlaybackActiveForCapture = false
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: systemAccess
+        )
+        manager.setPlaybackInterrupter(playback)
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        #expect(!systemAccess.lastInAppPlaybackActive)
+        await manager.cancelRecording()
+        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
+    }
+
+    @Test func standaloneAuthenticatedPlaybackContributesToCaptureRouting() async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+
+        let systemAccess = MockVoiceInputSystemAccess()
+        let session = MockVoiceSession()
+        let provider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            systemAccess: systemAccess
+        )
+        let observer = manager.observeCaptureRelease(
+            isPlaybackActive: { true },
+            restorePlaybackSession: { true }
+        )
+        defer { manager.removeCaptureReleaseObserver(observer) }
+
+        try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+
+        #expect(systemAccess.lastInAppPlaybackActive)
+        await manager.cancelRecording()
+        #expect(systemAccess.deactivateAudioSessionCallCount == 0)
     }
 
     @Test func activeRecordingSourceTracksCurrentOwner() async throws {
@@ -1114,6 +1778,8 @@ struct VoiceInputManagerTests {
 
         let systemAccess = MockVoiceInputSystemAccess()
         let playback = MockVoicePlaybackInterrupter()
+        playback.hasActivePlayback = true
+        playback.isPlaybackActiveForCapture = true
         let session = MockVoiceSession()
         let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
         classicProvider.makeSessionHandler = { _, _ in session }
@@ -1134,6 +1800,9 @@ struct VoiceInputManagerTests {
 
         #expect(manager.state == .idle)
         #expect(playback.endCaptureInterruptionCallCount == 1)
+        #expect(playback.hasActivePlayback)
+        #expect(playback.stopCallCount == 0)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 0)
     }
 
     @Test func startRecordingProcessesSessionLifecycle() async throws {
@@ -1305,14 +1974,16 @@ struct VoiceInputManagerTests {
         session.finishEvents(throwing: TestVoiceError("stream blew up"))
 
         #expect(await waitForMainActorCondition {
-            if case .error("stream blew up") = manager.state {
-                return true
+            if case .error(let message) = manager.state {
+                return message.contains("stream blew up") && message.contains("This take was discarded")
             }
             return false
         })
         #expect(systemAccess.deactivateAudioSessionCallCount == 1)
         #expect(manager.currentTranscript.isEmpty)
         #expect(manager.activeEngine == nil)
+        #expect(manager.captureFailure?.source == "test")
+        #expect(manager.captureFailure?.message.contains("earlier draft was kept") == true)
     }
 
     @Test func startRecordingFailureCleansUpAudioSessionAndRethrows() async {
@@ -1336,7 +2007,7 @@ struct VoiceInputManagerTests {
         }
 
         #expect(systemAccess.activateAudioSessionCallCount == 2)
-        #expect(systemAccess.deactivateAudioSessionCallCount == 2)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
         #expect(manager.activeEngine == nil)
         #expect(manager.activeLanguageLabel == nil)
         #expect(manager.audioLevel == 0)
@@ -1381,7 +2052,7 @@ struct VoiceInputManagerTests {
         #expect(firstSession.cancelCallCount == 1)
         #expect(secondSession.startCallCount == 1)
         #expect(systemAccess.activateAudioSessionCallCount == 2)
-        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 0)
         await manager.cancelRecording()
     }
 
@@ -1464,7 +2135,7 @@ struct VoiceInputManagerTests {
         #expect(firstSession.cancelCallCount == 1)
         #expect(secondSession.startCallCount == 1)
         #expect(systemAccess.activateAudioSessionCallCount == 2)
-        #expect(systemAccess.deactivateAudioSessionCallCount == 1)
+        #expect(systemAccess.deactivateAudioSessionCallCount == 0)
     }
 
     /// Remote mode without server dictation available fails clearly instead of falling back.

@@ -48,7 +48,7 @@ struct AuthenticatedMediaPlaybackAudioTests {
         #expect(audio.categoryOptions.contains(.allowBluetoothHFP))
     }
 
-    @Test("playback preparation cannot take the route while dictation is active")
+    @Test("playback admission keeps the mixed capture route while dictation is active")
     func playbackPreparationRespectsCaptureOwner() throws {
         let manager = VoiceInputManager.shared
         let previousState = manager.state
@@ -62,8 +62,8 @@ struct AuthenticatedMediaPlaybackAudioTests {
         }
         for state: VoiceInputManager.State in [.preparingModel, .recording, .processing] {
             manager._testState = state
-            try audio.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
-            #expect(!MediaPlaybackAudioSession.prepareSharedSession())
+            try audio.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .duckOthers])
+            #expect(MediaPlaybackAudioSession.prepareSharedSession())
             #expect(audio.category == .playAndRecord)
         }
         manager._testState = .idle
@@ -71,8 +71,8 @@ struct AuthenticatedMediaPlaybackAudioTests {
         #expect(audio.category == .playback)
     }
 
-    @Test("capture acquisition pauses progressing authenticated media and blocks native play admission")
-    func capturePausesProgressAndRejectsPlayBeforeRateChanges() async throws {
+    @Test("capture acquisition keeps authenticated media progressing on the mixed route")
+    func captureKeepsAuthenticatedMediaPlaying() async throws {
         let manager = VoiceInputManager.shared
         let previousState = manager.state
         let audio = AVAudioSession.sharedInstance()
@@ -102,31 +102,24 @@ struct AuthenticatedMediaPlaybackAudioTests {
             player.timeControlStatus == .playing && player.currentTime().seconds > 0.05
         }
         #expect(progressed, "Fixture must actually play before capture begins")
+        let captureStartTime = player.currentTime()
+
         manager._testState = .preparingModel
-        #expect(player.rate == 0, "Acquisition must pause existing inline/fullscreen/PiP playback synchronously")
-        #expect(player.timeControlStatus == .paused)
-        try audio.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
-        for state: VoiceInputManager.State in [.preparingModel, .recording, .processing] {
-            manager._testState = state
-            player.play()
-            #expect(player.rate == 0, "play() must be rejected before AVPlayer starts")
-            player.playImmediately(atRate: 1)
-            #expect(player.rate == 0)
-            player.rate = 1
-            #expect(player.rate == 0, "Native transport rate requests must also be gated")
-            player.setRate(1, time: .invalid, atHostTime: .invalid)
-            #expect(player.rate == 0)
-            #expect(audio.category == .playAndRecord)
+        try audio.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .duckOthers])
+        let keptPlaying = await waitUntil(timeout: .seconds(2)) {
+            player.timeControlStatus == .playing
+                && player.currentTime() > captureStartTime + CMTime(seconds: 0.05, preferredTimescale: 600)
         }
-        let pausedTime = player.currentTime()
-        manager._testState = .idle
-        #expect(player.rate == 0, "Capture release must not auto-resume media")
+        #expect(keptPlaying, "Starting capture must not pause Oppi authenticated media")
+        #expect(audio.category == .playAndRecord)
+
+        manager._testState = .recording
         player.play()
-        let resumed = await waitUntil(timeout: .seconds(2)) {
-            player.timeControlStatus == .playing && player.currentTime() > pausedTime + CMTime(seconds: 0.05, preferredTimescale: 600)
-        }
-        #expect(resumed, "Explicit play should progress again after capture releases ownership")
-        #expect(audio.category == .playback)
+        #expect(audio.category == .playAndRecord, "Playback admission must not replace the capture route")
+
+        #expect(manager._testRestoreCaptureReleaseObservers())
+        #expect(audio.category == .playback, "Capture release must restore the surviving media route")
+        #expect(player.timeControlStatus == .playing)
     }
 
     @Test("muted output is silent and unmute restores the previous volume")

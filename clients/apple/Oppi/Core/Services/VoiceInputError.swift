@@ -3,6 +3,7 @@ import Foundation
 enum VoiceInputError: LocalizedError {
     case captureBusy
     case audioCaptureUnavailable
+    case captureBufferOverflow
     case microphonePermissionDenied
     case localeNotSupported(String)
     case serverNotConnected
@@ -16,6 +17,8 @@ enum VoiceInputError: LocalizedError {
 
     var telemetryCategory: String {
         switch self {
+        case .captureBufferOverflow:
+            "capture_buffer_overflow"
         case .remoteRequestTimedOut:
             "timeout"
         case .remoteNetwork:
@@ -37,6 +40,8 @@ enum VoiceInputError: LocalizedError {
             "Voice input is already busy. Stop the current recording and try again."
         case .audioCaptureUnavailable:
             "The microphone did not deliver audio. Please try dictation again."
+        case .captureBufferOverflow:
+            "Dictation audio buffer overflow. Please try again."
         case .microphonePermissionDenied:
             "Microphone permission denied"
         case .localeNotSupported(let locale):

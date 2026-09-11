@@ -11,8 +11,8 @@ protocol VoiceInputSystemAccessing {
     var hasMicPermission: Bool { get }
     func requestPermissions() async -> Bool
     func requestMicPermission() async -> Bool
-    func activateAudioSession() throws
-    func activateBuiltInAudioSession() throws
+    func activateAudioSession(inAppPlaybackActive: Bool) throws
+    func activateBuiltInAudioSession(inAppPlaybackActive: Bool) throws
     func deactivateAudioSession()
 }
 
@@ -52,19 +52,27 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
         await Self.requestMicPermission()
     }
 
-    func activateAudioSession() throws {
-        try activateAudioSession(preferBuiltIn: false)
+    func activateAudioSession(inAppPlaybackActive: Bool) throws {
+        try activateAudioSession(preferBuiltIn: false, inAppPlaybackActive: inAppPlaybackActive)
     }
 
-    func activateBuiltInAudioSession() throws {
-        try activateAudioSession(preferBuiltIn: true)
+    func activateBuiltInAudioSession(inAppPlaybackActive: Bool) throws {
+        try activateAudioSession(preferBuiltIn: true, inAppPlaybackActive: inAppPlaybackActive)
     }
 
-    private func activateAudioSession(preferBuiltIn: Bool) throws {
+    private func activateAudioSession(preferBuiltIn: Bool, inAppPlaybackActive: Bool) throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
+        // Snapshot before changing category: once HFP is offered it outranks A2DP,
+        // erasing the signal that media was already playing through AirPods.
+        let preserveA2DPOutput = Self.shouldPreserveA2DPOutput(
+            hasA2DPOutput: session.currentRoute.outputs.contains { $0.portType == .bluetoothA2DP },
+            externalAudioPlaying: session.isOtherAudioPlaying,
+            inAppPlaybackActive: inAppPlaybackActive
+        )
         let usedBuiltInFallback = try Self.configureAndActivate(
             preferBuiltIn: preferBuiltIn,
+            preserveA2DPOutput: preserveA2DPOutput,
             setCategory: { category, mode, options in
                 try session.setCategory(category, mode: mode, options: options)
             },
@@ -94,17 +102,19 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
             }
             return
         }
-        var plan = VoiceInputAudioRoutePlanner.plan(availableInputs: availableInputs)
+        let plan = VoiceInputAudioRoutePlanner.plan(
+            availableInputs: availableInputs,
+            preserveA2DPOutput: preserveA2DPOutput
+        )
         Self.apply(plan, to: session)
-        if plan.preferredInputUID != nil,
-           session.currentRoute.inputs.contains(where: { $0.portType == .bluetoothHFP }) == false,
-           availableInputs.contains(where: { $0.portType == .bluetoothHFP }) {
-            logger.warning("Bluetooth HFP did not become the input route; falling back to built-in mic")
-            plan = VoiceInputAudioRoutePlanner.plan(
-                availableInputs: VoiceInputAudioRoutePlanner.excludingBluetoothHFP(availableInputs)
-            )
-            Self.apply(plan, to: session)
-        }
+        ClientLog.info("VoiceInput", "Dictation audio session activated", metadata: [
+            "preserve_a2dp": preserveA2DPOutput ? "1" : "0",
+            "preferred_input_port": plan.preferredInputUID.flatMap { uid in
+                availableInputs.first(where: { $0.uid == uid })?.portType.rawValue
+            } ?? "system",
+            "input_ports": session.currentRoute.inputs.map { $0.portType.rawValue }.joined(separator: ","),
+            "output_ports": session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ","),
+        ])
         #endif
     }
 
@@ -118,12 +128,21 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
     }
 
     #if os(iOS)
+    static func shouldPreserveA2DPOutput(
+        hasA2DPOutput: Bool,
+        externalAudioPlaying: Bool,
+        inAppPlaybackActive: Bool
+    ) -> Bool {
+        hasA2DPOutput && (externalAudioPlaying || inAppPlaybackActive)
+    }
+
     /// The real configuration/activation sequence, with closures only at the
     /// hardware boundary so tests can reject category or activation separately.
     /// Bluetooth is optional: retry once with no Bluetooth category options.
     /// Returns true when the caller must prefer the built-in microphone.
     static func configureAndActivate(
         preferBuiltIn: Bool = false,
+        preserveA2DPOutput: Bool = false,
         setCategory: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions) throws -> Void,
         setActive: (Bool, AVAudioSession.SetActiveOptions) throws -> Void,
         setAllowHaptics: (Bool) throws -> Void = { _ in }
@@ -136,11 +155,18 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
         } catch {
             logger.warning("Could not enable recording haptics: \(error.localizedDescription, privacy: .public)")
         }
+        let plannedOptions = VoiceInputAudioRoutePlanner.plan(
+            availableInputs: [],
+            preserveA2DPOutput: preserveA2DPOutput
+        ).options
+        let fallbackOptions = VoiceInputAudioRoutePlanner.builtInFallbackOptions(
+            preserveA2DPOutput: preserveA2DPOutput
+        )
         do {
             try setCategory(
-                preferBuiltIn ? .record : recordingCategory,
+                recordingCategory,
                 preferBuiltIn ? .measurement : recordingMode,
-                preferBuiltIn ? [] : recordingCategoryOptions
+                preferBuiltIn ? fallbackOptions : plannedOptions
             )
             // notifyOthersOnDeactivation is only valid with active=false.
             try setActive(true, [])
@@ -149,10 +175,12 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
             guard !preferBuiltIn else { throw error }
             let failure = error as NSError
             logger.warning(
-                "Dictation audio configuration failed (\(failure.domain, privacy: .public)/\(failure.code)); retrying without Bluetooth"
+                "Dictation audio configuration failed (\(failure.domain, privacy: .public)/\(failure.code)); retrying without HFP"
             )
-            try? setActive(false, .notifyOthersOnDeactivation)
-            try setCategory(.record, .measurement, [])
+            // Do not deactivate between attempts. Capture may be joining a
+            // session that already has mixed playback; deactivation would stop
+            // that surviving player before the built-in retry.
+            try setCategory(recordingCategory, .measurement, fallbackOptions)
             try setActive(true, [])
             return true
         }

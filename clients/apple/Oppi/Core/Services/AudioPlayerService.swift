@@ -22,7 +22,21 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     nonisolated static let previousLoadingItemIDUserInfoKey = "previousLoadingItemID"
     nonisolated static let loadingItemIDUserInfoKey = "loadingItemID"
 
-    private static var activePlaybackOwner: AudioPlayerService?
+    private static weak var activePlaybackOwner: AudioPlayerService?
+    // ServerConnection owns each player, but AVAudioSession is process-wide.
+    // Weak, identity-scoped claims cover every player (including newly created
+    // ones) without retaining departed servers or letting unrelated release
+    // calls remove another capture owner's protection.
+    private struct CaptureInterruptionOwner {
+        weak var owner: AnyObject?
+    }
+    private static var captureInterruptionOwners: [ObjectIdentifier: CaptureInterruptionOwner] = [:]
+    private static var hasCaptureInterruption: Bool {
+        // Keep weak boxes in Swift: NSHashTable.allObjects would retain its
+        // snapshot's players until an unrelated autorelease-pool drain.
+        captureInterruptionOwners = captureInterruptionOwners.filter { $0.value.owner != nil }
+        return !captureInterruptionOwners.isEmpty
+    }
     private static var remoteCommandTargetsInstalled = false
     struct SessionContext: Equatable {
         let sessionID: String
@@ -93,6 +107,25 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         playingItemID != nil || loadingItemID != nil || streamID != nil
     }
 
+    var isPlaybackActiveForCapture: Bool {
+        if player?.isPlaying == true { return true }
+        if let mediaPlayer = mediaPlaybackSession?.player,
+           Self.isMediaPlaybackActive(
+               rate: mediaPlayer.rate,
+               timeControlStatus: mediaPlayer.timeControlStatus
+           ) {
+            return true
+        }
+        return streamID != nil && !isPaused && streamNode?.isPlaying == true
+    }
+
+    nonisolated static func isMediaPlaybackActive(
+        rate: Float,
+        timeControlStatus: AVPlayer.TimeControlStatus
+    ) -> Bool {
+        rate != 0 || timeControlStatus == .playing || timeControlStatus == .waitingToPlayAtSpecifiedRate
+    }
+
     /// Session whose current PCM stream still depends on live focused-session delivery.
     /// Buffered/local playback stays active after this becomes nil.
     var activeLiveTransportSessionID: String? {
@@ -120,8 +153,20 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private var streamSessionID: String?
     private var suppressedAudioStreamIDs: Set<String> = []
     private var autoPlayedVoiceReplyItemIDs: Set<String> = []
-    private var playbackSuppressedForCapture = false
-    private var streamPendingBuffers = 0
+    private var playbackSuppressedForCapture: Bool {
+        Self.hasCaptureInterruption
+    }
+    private struct PendingStreamBuffer {
+        let token: UUID
+        let buffer: AVAudioPCMBuffer
+    }
+    private var streamPendingBuffers: [PendingStreamBuffer] = []
+    private var streamEngineGeneration = 0
+    private var streamConfigurationObserver: NSObjectProtocol?
+    private var streamRebuildScheduled = false
+    private var streamConfigurationChangePending = false
+    private var streamGenerationInvalidated = false
+    private var streamCompletionsDuringConfigurationChange: Set<UUID> = []
     private var streamReceivedDone = false
     private var progressTimer: Timer?
     private var mediaTimeObserver: Any?
@@ -247,13 +292,49 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
     }
 
+    static var isProcessPlaybackActiveForCapture: Bool {
+        activePlaybackOwner?.isPlaybackActiveForCapture == true
+    }
+
+    static func beginProcessCaptureInterruption(owner: AnyObject) {
+        // Keep existing playback on the mixed capture session; suppress only
+        // new autoplay, and keep every retained player's resume capture-safe.
+        _ = hasCaptureInterruption // prune departed owners before adding a claim
+        captureInterruptionOwners[ObjectIdentifier(owner)] = CaptureInterruptionOwner(owner: owner)
+    }
+
+    @discardableResult
+    static func endProcessCaptureInterruption(owner: AnyObject) -> Bool {
+        let id = ObjectIdentifier(owner)
+        guard captureInterruptionOwners[id]?.owner === owner else { return false }
+        captureInterruptionOwners[id] = nil
+        // A different capture still owns routing. Do not restore or deactivate.
+        guard !hasCaptureInterruption else { return true }
+        return activePlaybackOwner?.restorePlaybackSessionAfterCapture() ?? false
+    }
+
     func beginCaptureInterruption() {
-        playbackSuppressedForCapture = true
-        stop()
+        Self.beginProcessCaptureInterruption(owner: self)
     }
 
     func endCaptureInterruption() {
-        playbackSuppressedForCapture = false
+        Self.endProcessCaptureInterruption(owner: self)
+    }
+
+    private func restorePlaybackSessionAfterCapture() -> Bool {
+        guard isPlaybackActiveForCapture else { return false }
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .default)
+            try audioSession.setActive(true)
+            return true
+        } catch {
+            ClientLog.warning("AudioPlayer", "Could not restore playback session after dictation", metadata: [
+                "error_domain": (error as NSError).domain,
+                "error_code": String((error as NSError).code),
+            ])
+            return false
+        }
     }
 
     func stop() {
@@ -297,10 +378,30 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     func resume() {
         guard playingItemID != nil, isPaused else { return }
+        // A paused item does not reclaim playback when dictation releases its
+        // session. Category/options survive deactivation, so explicit resume
+        // must restore them before either a retained player or PCM graph runs.
+        // While capture owns the session, leave its mixed routing untouched.
+        if !playbackSuppressedForCapture {
+            do {
+                let audioSession = AVAudioSession.sharedInstance()
+                try audioSession.setCategory(.playback, mode: .default)
+                try audioSession.setActive(true)
+            } catch {
+                recordVoicePlaybackError(source: "resume", phase: "activate", error: error)
+                ClientLog.warning("AudioPlayer", "Could not activate playback session on resume", metadata: [
+                    "error_domain": (error as NSError).domain,
+                    "error_code": String((error as NSError).code),
+                ])
+                return
+            }
+        }
         player?.play()
         mediaPlaybackSession?.player.play()
-        streamNode?.play()
         isPaused = false
+        if streamNode != nil, ensureStreamEngineIsRunning() {
+            streamNode?.play()
+        }
         startProgressUpdates()
         publishProgress()
         updateNowPlayingInfo(
@@ -386,7 +487,11 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return
         }
 
-        if playbackSuppressedForCapture {
+        if Self.shouldSuppressAudioStreamDuringCapture(
+            captureActive: playbackSuppressedForCapture,
+            incomingStreamID: stream.id,
+            activeStreamID: streamID
+        ) {
             suppressedAudioStreamIDs.insert(stream.id)
             if stream.event == .done || stream.event == .error {
                 suppressedAudioStreamIDs.remove(stream.id)
@@ -653,8 +758,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             streamFormat = format
             streamID = id
             streamSessionID = sessionId ?? sessionContext?.sessionID
-            streamPendingBuffers = 0
+            streamPendingBuffers = []
             streamReceivedDone = false
+            streamEngineGeneration &+= 1
+            observeStreamConfigurationChanges(engine)
             beginNowPlayingItem(title: Self.nowPlayingFallbackTitle)
             markVoiceReplyAutoplayed(itemID: id)
             activePlaybackContext = sessionContext
@@ -680,7 +787,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             streamSessionID = sessionId ?? sessionContext?.sessionID
         }
 
-        guard let node = streamNode,
+        guard streamNode != nil,
               let format = streamFormat,
               let base64 = stream.audioBase64,
               let data = Data(base64Encoded: base64),
@@ -700,21 +807,41 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return
         }
 
-        streamPendingBuffers += 1
-        node.scheduleBuffer(buffer) { [weak self, id = stream.id] in
-            Task { @MainActor in
-                guard let self, self.streamID == id else { return }
-                self.streamPendingBuffers = max(0, self.streamPendingBuffers - 1)
-                self.finishAudioStreamIfDrained(id: id)
-            }
-        }
+        _ = enqueueStreamPCM(buffer, streamID: stream.id)
+    }
+
+    private func enqueueStreamPCM(_ buffer: AVAudioPCMBuffer, streamID: String) -> UUID {
+        let pending = PendingStreamBuffer(token: UUID(), buffer: buffer)
+        streamPendingBuffers.append(pending)
+        // A new chunk or resume can beat the configuration notification too.
+        // Keep it for rescheduling; never play a node on a stopped graph.
+        guard let node = streamNode, ensureStreamEngineIsRunning() else { return pending.token }
+        scheduleStreamBuffer(pending, on: node, streamID: streamID, generation: streamEngineGeneration)
         if Self.shouldStartStreamNode(isPaused: isPaused, isNodePlaying: node.isPlaying) {
             node.play()
         }
+        return pending.token
+    }
+
+    private func ensureStreamEngineIsRunning() -> Bool {
+        guard streamEngine?.isRunning == true, !streamGenerationInvalidated else {
+            streamGenerationInvalidated = true
+            beginStreamConfigurationChange(generation: streamEngineGeneration)
+            return false
+        }
+        return true
     }
 
     nonisolated static func shouldStartStreamNode(isPaused: Bool, isNodePlaying: Bool) -> Bool {
         !isPaused && !isNodePlaying
+    }
+
+    nonisolated static func shouldSuppressAudioStreamDuringCapture(
+        captureActive: Bool,
+        incomingStreamID: String,
+        activeStreamID: String?
+    ) -> Bool {
+        captureActive && incomingStreamID != activeStreamID
     }
 
     private func recordVoicePlaybackStart(source: String, mode: String, durationMs: Int64) {
@@ -768,12 +895,164 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         return buffer
     }
 
+    private func scheduleStreamBuffer(
+        _ pending: PendingStreamBuffer,
+        on node: AVAudioPlayerNode,
+        streamID: String,
+        generation: Int
+    ) {
+        // The default overload means dataConsumed and may fire before rendering.
+        // Even dataPlayedBack fires on stop. Inspect the graph on MainActor, not
+        // inside this callback: stop can hold AVFoundation locks while calling it.
+        // Only this owner restarts a graph, and every restart changes generation.
+        node.scheduleBuffer(pending.buffer, completionCallbackType: .dataPlayedBack) {
+            [weak self, token = pending.token] callbackType in
+            Task { @MainActor in
+                guard let self, self.streamEngineGeneration == generation else { return }
+                self.handleStreamBufferCompletion(
+                    token: token,
+                    streamID: streamID,
+                    generation: generation,
+                    callbackType: callbackType,
+                    engineIsRunning: self.streamEngine?.isRunning == true
+                )
+            }
+        }
+    }
+
+    private func handleStreamBufferCompletion(
+        token: UUID, streamID: String, generation: Int,
+        callbackType: AVAudioPlayerNodeCompletionCallbackType,
+        engineIsRunning: Bool
+    ) {
+        guard self.streamID == streamID, streamEngineGeneration == generation else { return }
+        guard callbackType == .dataPlayedBack else { return }
+        // A stopped graph invalidates this entire generation. Never retire these
+        // samples, even if the configuration notification has not arrived yet.
+        guard engineIsRunning, !streamGenerationInvalidated else {
+            streamGenerationInvalidated = true
+            beginStreamConfigurationChange(generation: generation)
+            return
+        }
+        if streamConfigurationChangePending {
+            streamCompletionsDuringConfigurationChange.insert(token)
+            return
+        }
+        streamPendingBuffers.removeAll { $0.token == token }
+        finishAudioStreamIfDrained(id: streamID)
+    }
+
+    private func observeStreamConfigurationChanges(_ engine: AVAudioEngine) {
+        if let streamConfigurationObserver {
+            NotificationCenter.default.removeObserver(streamConfigurationObserver)
+        }
+        let observedGeneration = streamEngineGeneration
+        streamConfigurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            guard Thread.isMainThread else { return }
+            MainActor.assumeIsolated {
+                self?.beginStreamConfigurationChange(generation: observedGeneration)
+            }
+        }
+    }
+
+    private func beginStreamConfigurationChange(generation: Int) {
+        guard streamEngineGeneration == generation else { return }
+        streamConfigurationChangePending = true
+        scheduleStreamEngineRebuild(generation: generation)
+    }
+
+    private func scheduleStreamEngineRebuild(generation: Int) {
+        guard !streamRebuildScheduled else { return }
+        streamRebuildScheduled = true
+        Task { @MainActor [weak self] in
+            // Rebuild after the AVFoundation notification callback and any
+            // stop-driven buffer completions have returned to the main actor.
+            await Task.yield()
+            guard let self else { return }
+            self.finishStreamConfigurationChange(
+                generation: generation,
+                engineIsRunning: self.streamEngine?.isRunning == true
+            )
+        }
+    }
+
+    private func finishStreamConfigurationChange(generation: Int, engineIsRunning: Bool) {
+        guard streamEngineGeneration == generation else { return }
+        streamRebuildScheduled = false
+        streamConfigurationChangePending = false
+        let completedTokens = streamCompletionsDuringConfigurationChange
+        streamCompletionsDuringConfigurationChange.removeAll()
+        if engineIsRunning && !streamGenerationInvalidated {
+            streamPendingBuffers.removeAll { completedTokens.contains($0.token) }
+            if let id = streamID { finishAudioStreamIfDrained(id: id) }
+        } else {
+            // Keep every pending buffer: stop-driven completions do not prove
+            // playback, and the replacement graph must reschedule them.
+            rebuildCurrentAudioStreamEngine()
+        }
+    }
+
+    private func rebuildCurrentAudioStreamEngine() {
+        guard let id = streamID, let format = streamFormat else { return }
+        streamEngineGeneration &+= 1
+        let generation = streamEngineGeneration
+        streamConfigurationChangePending = false
+        streamGenerationInvalidated = false
+        streamCompletionsDuringConfigurationChange.removeAll()
+        streamNode?.stop()
+        streamEngine?.stop()
+        if let streamConfigurationObserver {
+            NotificationCenter.default.removeObserver(streamConfigurationObserver)
+            self.streamConfigurationObserver = nil
+        }
+
+        do {
+            let engine = AVAudioEngine()
+            let node = AVAudioPlayerNode()
+            engine.attach(node)
+            engine.connect(node, to: engine.mainMixerNode, format: format)
+            try engine.start()
+            streamEngine = engine
+            streamNode = node
+            observeStreamConfigurationChanges(engine)
+            for pending in streamPendingBuffers {
+                scheduleStreamBuffer(pending, on: node, streamID: id, generation: generation)
+            }
+            if !isPaused {
+                node.play()
+            }
+            ClientLog.info("AudioPlayer", "Rebuilt PCM playback after audio configuration change", metadata: [
+                "stream_id": id,
+                "pending_buffers": String(streamPendingBuffers.count),
+            ])
+        } catch {
+            ClientLog.error("AudioPlayer", "PCM playback rebuild failed", metadata: [
+                "error_domain": (error as NSError).domain,
+                "error_code": String((error as NSError).code),
+            ])
+            stopAudioStream(clearState: true)
+        }
+    }
+
     private func finishAudioStreamIfDrained(id: String) {
-        guard streamID == id, streamReceivedDone, streamPendingBuffers == 0 else { return }
+        guard streamID == id, streamReceivedDone, streamPendingBuffers.isEmpty else { return }
         stopAudioStream(clearState: true)
     }
 
     private func stopAudioStream(clearState: Bool) {
+        streamEngineGeneration &+= 1
+        streamRebuildScheduled = false
+        streamConfigurationChangePending = false
+        streamGenerationInvalidated = false
+        streamCompletionsDuringConfigurationChange.removeAll()
+        if let streamConfigurationObserver {
+            NotificationCenter.default.removeObserver(streamConfigurationObserver)
+            self.streamConfigurationObserver = nil
+        }
         streamNode?.stop()
         streamEngine?.stop()
         streamEngine = nil
@@ -781,7 +1060,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         streamFormat = nil
         streamID = nil
         streamSessionID = nil
-        streamPendingBuffers = 0
+        streamPendingBuffers = []
         streamReceivedDone = false
         if clearState {
             deactivatePlaybackAudioSessionIfPossible()
@@ -841,6 +1120,81 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     func _setNowPlayingItemTitleForTesting(_ title: String?) {
         nowPlayingItemTitle = title
     }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    func _startPCMStreamForTesting(id: String = "test-stream") {
+        startAudioStream(id: id, sessionId: nil, sampleRate: 24_000, channels: 1)
+    }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    func _rebuildPCMStreamForTesting() {
+        rebuildCurrentAudioStreamEngine()
+    }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    func _appendUnscheduledPCMBufferForTesting() -> UUID {
+        guard let format = streamFormat,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1) else {
+            preconditionFailure("PCM test stream is not active")
+        }
+        buffer.frameLength = 1
+        let pending = PendingStreamBuffer(token: UUID(), buffer: buffer)
+        streamPendingBuffers.append(pending)
+        return pending.token
+    }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    func _beginPCMConfigurationChangeForTesting(generation: Int) {
+        beginStreamConfigurationChange(generation: generation)
+    }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    func _completePCMBufferForTesting(
+        token: UUID, streamID: String, generation: Int,
+        callbackType: AVAudioPlayerNodeCompletionCallbackType = .dataPlayedBack,
+        engineIsRunning: Bool = true
+    ) {
+        handleStreamBufferCompletion(
+            token: token, streamID: streamID, generation: generation,
+            callbackType: callbackType, engineIsRunning: engineIsRunning
+        )
+    }
+
+    // periphery:ignore - schedules real PCM through the production path without autoplay preferences
+    func _schedulePCMForTesting(_ data: Data) -> UUID? {
+        guard streamNode != nil, let format = streamFormat, let id = streamID,
+              let buffer = pcm16LEBuffer(data: data, format: format) else { return nil }
+        return enqueueStreamPCM(buffer, streamID: id)
+    }
+
+    // periphery:ignore - simulates a hardware-stopped graph before its notification arrives
+    func _stopPCMEngineForTesting() {
+        streamEngine?.stop()
+    }
+
+    // periphery:ignore - proves recovery retains samples, not just a token
+    var _pendingPCMSamplesForTesting: [[Float]] {
+        streamPendingBuffers.map { pending in
+            guard let samples = pending.buffer.floatChannelData?[0] else { return [] }
+            return Array(UnsafeBufferPointer(start: samples, count: Int(pending.buffer.frameLength)))
+        }
+    }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    func _finishPCMConfigurationChangeForTesting(generation: Int, engineIsRunning: Bool) {
+        finishStreamConfigurationChange(generation: generation, engineIsRunning: engineIsRunning)
+    }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    func _setPausedForTesting(_ paused: Bool) {
+        isPaused = paused
+    }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    var _streamEngineGenerationForTesting: Int { streamEngineGeneration }
+
+    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    var _pendingPCMBufferCountForTesting: Int { streamPendingBuffers.count }
 
     // periphery:ignore - test seam used by websocket/audio lifecycle tests
     func _setLiveTransportPlaybackForTesting(sessionID: String?, streamID: String = "test-stream", receivedDone: Bool = false) {
