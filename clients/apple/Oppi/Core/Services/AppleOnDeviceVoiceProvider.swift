@@ -192,7 +192,7 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
                 "stt_backend": "apple_speech",
                 "model": "SpeechTranscriber",
                 "transport": "local",
-                "live_preview": "1",
+                "live_preview": "0",
                 "transcription_locale": locale.identifier(.bcp47),
             ]
         case .classicDictation:
@@ -329,7 +329,7 @@ enum OnDeviceDictationAnalysisContext {
 }
 
 enum AppleOnDeviceSpeechSettings {
-    static let speechPreset = SpeechTranscriber.Preset.progressiveTranscription
+    static let speechPreset = SpeechTranscriber.Preset.transcription
     static let dictationPreset = DictationTranscriber.Preset.progressiveLongDictation
     /// One live analysis session at a time (`VoiceInputManager.shared`).
     /// Models stay loaded for the process so consecutive takes do not reload.

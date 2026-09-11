@@ -5,12 +5,12 @@ import Testing
 
 @Suite("AppleOnDeviceSpeechSettings")
 struct AppleOnDeviceSpeechSettingsTests {
-    @Test func speechTranscriberUsesLiveProgressivePreset() {
+    @Test func speechTranscriberUsesFinalTranscriptionPreset() {
         let preset = AppleOnDeviceSpeechSettings.speechPreset
 
-        #expect(preset == .progressiveTranscription)
-        #expect(preset.reportingOptions.contains(.volatileResults))
-        #expect(preset.reportingOptions.contains(.fastResults))
+        #expect(preset == .transcription)
+        #expect(!preset.reportingOptions.contains(.fastResults))
+        #expect(!preset.reportingOptions.contains(.volatileResults))
     }
 
     @Test func dictationFallbackUsesLiveLongPreset() {
