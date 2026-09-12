@@ -145,7 +145,8 @@ Full-screen document viewers show a **Viewing Options** button near the bottom-r
 | Diffs | Text Size slider, Reset View |
 | Terminal output | Text Size slider, Wrap Text, Reset View |
 | HTML | Text Size slider, Reset View |
-| Org, LaTeX, and Mermaid rendered documents | Text Size slider, Spacing where text-based, Reset View |
+| Org and LaTeX rendered documents | Text Size slider, Spacing where text-based, Reset View |
+| Mermaid diagrams | None on the rendered diagram. Source uses code Viewing Options. |
 | CSV and TSV tables | Text Size slider, Reset View. Source mode keeps the original file bytes. |
 | GeoJSON and TopoJSON maps | None on the rendered map. Source JSON uses code Viewing Options. |
 

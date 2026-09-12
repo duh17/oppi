@@ -1686,10 +1686,10 @@ final class FullScreenCodeViewController: UIViewController {
             return .html
         case .orgMode:
             return .markdown
-        case .latex, .mermaid, .delimitedTable:
+        case .latex, .delimitedTable:
             return .renderedDocument
-        case .geoJSON:
-            // MapKit ignores reader preferences; Source JSON uses `.code`.
+        case .mermaid, .geoJSON:
+            // Rendered maps/diagrams ignore reader preferences; Source uses `.code`.
             return nil
         case .liveSource(let snapshot, _):
             return readerFamily(for: bodyContent(for: snapshot))

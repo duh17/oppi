@@ -1678,6 +1678,33 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(scaledPointSize > initialPointSize)
     }
 
+    @Test func mermaidDiagramHidesViewingOptionsUntilSource() throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }
+
+        let controller = makeController(
+            content: .mermaid(content: "graph TD\n    A-->B", filePath: "flow.mmd")
+        )
+
+        #expect(controller.floatingViewingOptionsButtonFrameForTesting == nil)
+
+        controller.toggleSourceForTesting()
+        controller.view.layoutIfNeeded()
+
+        let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
+        #expect(buttonFrame.midX > controller.view.bounds.midX)
+        #expect(buttonFrame.midY > controller.view.bounds.midY)
+
+        let codeView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("graph TD")
+        })
+        let initialPointSize = try #require(codeView.font?.pointSize)
+        controller.setReaderTextScaleForTesting(1.25)
+        controller.view.layoutIfNeeded()
+        let scaledPointSize = try #require(codeView.font?.pointSize)
+        #expect(scaledPointSize > initialPointSize)
+    }
+
     @Test func fullscreenThemeNotificationPreservesCodeViewportAndSelection() throws {
         let originalThemeID = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(originalThemeID) }
