@@ -1163,6 +1163,7 @@ final class AppNavigation {
         case .agents: "agents"
         case .skills: "skills"
         case .extensions: "extensions"
+        case .desktopStill: "desktop_still"
         case .manageServers: "manage_servers"
         case .appSettings: "app_settings"
         }

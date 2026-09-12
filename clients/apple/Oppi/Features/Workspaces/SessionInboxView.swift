@@ -61,6 +61,7 @@ struct WorkspaceSidebarPrimaryUtilityItem: Equatable {
     let accessibilityLabel: String
     let accessibilityIdentifier: String
     let minimumHitHeight: CGFloat
+    let accessibilityHint: String?
 }
 
 enum WorkspaceSidebarPrimaryUtilities {
@@ -71,7 +72,8 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "person.crop.circle",
             accessibilityLabel: "Agents",
             accessibilityIdentifier: "workspace.agents.open",
-            minimumHitHeight: 44
+            minimumHitHeight: 44,
+            accessibilityHint: nil
         ),
         .init(
             target: .schedules,
@@ -79,7 +81,8 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "clock",
             accessibilityLabel: "Schedules",
             accessibilityIdentifier: "workspace.schedules.open",
-            minimumHitHeight: 44
+            minimumHitHeight: 44,
+            accessibilityHint: nil
         ),
         .init(
             target: .skills,
@@ -87,7 +90,8 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "sparkles.rectangle.stack",
             accessibilityLabel: "Open Skills",
             accessibilityIdentifier: "workspace.skills.open",
-            minimumHitHeight: 44
+            minimumHitHeight: 44,
+            accessibilityHint: nil
         ),
         .init(
             target: .extensions,
@@ -95,9 +99,27 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "shippingbox",
             accessibilityLabel: "Open Extensions",
             accessibilityIdentifier: "workspace.extensions.open",
-            minimumHitHeight: 44
+            minimumHitHeight: 44,
+            accessibilityHint: nil
         ),
     ]
+
+    static let desktopStill = WorkspaceSidebarPrimaryUtilityItem(
+        target: .desktopStill,
+        title: "Mac Still",
+        systemImage: "macwindow",
+        accessibilityLabel: "Mac Still",
+        accessibilityIdentifier: "workspace.desktopStill.open",
+        minimumHitHeight: 44,
+        accessibilityHint: "Inspect the current Mac still"
+    )
+
+    static func items(for idiom: UIUserInterfaceIdiom) -> [WorkspaceSidebarPrimaryUtilityItem] {
+        if idiom == .phone {
+            return items + [desktopStill]
+        }
+        return items
+    }
 }
 
 /// Inbox-local search and stopped-group expansion belong to the visible host.
@@ -451,6 +473,8 @@ struct SessionInboxView: View {
                     ServerSkillsView()
                 case .extensions:
                     ServerExtensionsView()
+                case .desktopStill:
+                    DesktopCurrentStillViewerView()
                 case .manageServers:
                     ServerView()
                 case .appSettings:
@@ -1427,7 +1451,8 @@ struct WorkspaceSidebarView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(spacing: 2) {
                     ForEach(
-                        WorkspaceSidebarPrimaryUtilities.items.filter { $0.target.isReleaseEnabled },
+                        WorkspaceSidebarPrimaryUtilities.items(for: UIDevice.current.userInterfaceIdiom)
+                            .filter { $0.target.isReleaseEnabled },
                         id: \.target
                     ) { item in
                         sidebarUtilityRow(item)
@@ -1612,7 +1637,8 @@ struct WorkspaceSidebarView: View {
             systemImage: item.systemImage,
             accessibilityLabel: item.accessibilityLabel,
             accessibilityIdentifier: item.accessibilityIdentifier,
-            minimumHitHeight: item.minimumHitHeight
+            minimumHitHeight: item.minimumHitHeight,
+            accessibilityHint: item.accessibilityHint
         )
     }
 
@@ -1622,7 +1648,8 @@ struct WorkspaceSidebarView: View {
         systemImage: String,
         accessibilityLabel: String? = nil,
         accessibilityIdentifier: String? = nil,
-        minimumHitHeight: CGFloat = 44
+        minimumHitHeight: CGFloat = 44,
+        accessibilityHint: String? = nil
     ) -> some View {
         let isSelected = navigation.workspaceNavigationPresentation == .split
             && navigation.splitDetailTarget == .utility(target)
@@ -1656,7 +1683,7 @@ struct WorkspaceSidebarView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel ?? title)
-        .accessibilityHint("Opens \(title.lowercased()) management")
+        .accessibilityHint(accessibilityHint ?? "Opens \(title.lowercased()) management")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier(
             accessibilityIdentifier
