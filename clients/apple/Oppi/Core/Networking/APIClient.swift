@@ -3,6 +3,99 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "APIClient")
 
+struct DesktopCurrentStill: Sendable, Equatable {
+    let captureID: UUID
+    let surfaceWindowID: UInt32
+    let surfaceTitle: String
+    let capturedAt: Date
+    let width: Int
+    let height: Int
+    let caption: String
+    let pngData: Data
+}
+
+enum DesktopCurrentStillHeaders {
+    static let captureID = "X-Oppi-Capture-ID"
+    static let surfaceWindowID = "X-Oppi-Surface-Window-ID"
+    static let surfaceTitle = "X-Oppi-Surface-Title"
+    static let capturedAt = "X-Oppi-Captured-At"
+    static let width = "X-Oppi-Width"
+    static let height = "X-Oppi-Height"
+    static let caption = "X-Oppi-Caption"
+    static let stillCaption = "Still—not live"
+
+    /// Companion and Oppi server write UTF-8 header bytes; URLSession may expose ISO-Latin-1.
+    static func utf8Value(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(trimmed.utf16.count)
+        for unit in trimmed.utf16 {
+            guard unit <= 0xFF else { return trimmed }
+            bytes.append(UInt8(unit))
+        }
+        return String(bytes: bytes, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? trimmed
+    }
+}
+
+enum DesktopCurrentStillParser {
+    static func parse(data: Data, response: URLResponse) throws -> DesktopCurrentStill {
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        let contentType = http.value(forHTTPHeaderField: "Content-Type")?
+            .split(separator: ";", maxSplits: 1).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let cacheControl = http.value(forHTTPHeaderField: "Cache-Control")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard contentType == "image/png", cacheControl == "no-store" else {
+            throw APIError.invalidResponse
+        }
+        guard data.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else {
+            throw APIError.invalidResponse
+        }
+        guard
+            let captureRaw = http.value(forHTTPHeaderField: DesktopCurrentStillHeaders.captureID),
+            let captureID = UUID(uuidString: DesktopCurrentStillHeaders.utf8Value(captureRaw)),
+            let windowRaw = http.value(forHTTPHeaderField: DesktopCurrentStillHeaders.surfaceWindowID),
+            let windowID = UInt32(DesktopCurrentStillHeaders.utf8Value(windowRaw)),
+            let titleRaw = http.value(forHTTPHeaderField: DesktopCurrentStillHeaders.surfaceTitle),
+            let capturedRaw = http.value(forHTTPHeaderField: DesktopCurrentStillHeaders.capturedAt),
+            let capturedAt = parseCapturedAt(DesktopCurrentStillHeaders.utf8Value(capturedRaw)),
+            let widthRaw = http.value(forHTTPHeaderField: DesktopCurrentStillHeaders.width),
+            let width = Int(DesktopCurrentStillHeaders.utf8Value(widthRaw)), width >= 1,
+            let heightRaw = http.value(forHTTPHeaderField: DesktopCurrentStillHeaders.height),
+            let height = Int(DesktopCurrentStillHeaders.utf8Value(heightRaw)), height >= 1,
+            let captionRaw = http.value(forHTTPHeaderField: DesktopCurrentStillHeaders.caption),
+            DesktopCurrentStillHeaders.utf8Value(captionRaw) == DesktopCurrentStillHeaders.stillCaption
+        else {
+            throw APIError.invalidResponse
+        }
+        let title = DesktopCurrentStillHeaders.utf8Value(titleRaw)
+        guard !title.isEmpty else { throw APIError.invalidResponse }
+        return DesktopCurrentStill(
+            captureID: captureID,
+            surfaceWindowID: windowID,
+            surfaceTitle: title,
+            capturedAt: capturedAt,
+            width: width,
+            height: height,
+            caption: DesktopCurrentStillHeaders.stillCaption,
+            pngData: data
+        )
+    }
+
+    private static func parseCapturedAt(_ raw: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: raw) { return date }
+        let basic = ISO8601DateFormatter()
+        basic.formatOptions = [.withInternetDateTime]
+        return basic.date(from: raw)
+    }
+}
+
 enum HostRawFileHeaders {
     static let resolvedPathField = "X-Oppi-Resolved-Path"
 
@@ -1998,6 +2091,19 @@ actor APIClient: ClientLogUploading {
         guard let failure = APIClientAvailabilityFailure(error: error) else { return }
         guard let availabilityObserver else { return }
         Task { await availabilityObserver(failure) }
+    }
+
+    func getDesktopCurrentStill() async throws -> DesktopCurrentStill {
+        let (data, response) = try await performAuthorized {
+            var req = try URLRequest(
+                url: self.makeURL(path: "/desktop/stills/current"),
+                cachePolicy: .reloadIgnoringLocalCacheData
+            )
+            req.httpMethod = "GET"
+            return req
+        }
+        try checkStatus(response, data: data)
+        return try DesktopCurrentStillParser.parse(data: data, response: response)
     }
 
     func get(_ path: String) async throws -> Data {

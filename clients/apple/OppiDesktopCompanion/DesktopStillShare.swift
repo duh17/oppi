@@ -22,20 +22,23 @@ enum DesktopStillShareFetchFailure: Error, Equatable, Sendable {
 }
 
 /// Default-off share gate. Local presence is not a view grant.
+/// Local share and remote view are independent; fetch never recaptures.
 final class DesktopStillShareGate: @unchecked Sendable {
     private let lock = NSLock()
-    private var shared: DesktopSharedStill?
+    private var local: DesktopSharedStill?
+    private var remote: DesktopSharedStill?
+    private var remoteGranted = false
 
     func publish(_ still: DesktopSharedStill?) {
         lock.lock()
-        shared = still
+        local = still
         lock.unlock()
     }
 
     func current() -> DesktopSharedStill? {
         lock.lock()
         defer { lock.unlock() }
-        return shared
+        return local
     }
 
     func fetch(captureID: UUID) -> Result<DesktopSharedStill, DesktopStillShareFetchFailure> {
@@ -46,6 +49,25 @@ final class DesktopStillShareGate: @unchecked Sendable {
             return .failure(.staleCaptureID)
         }
         return .success(shared)
+    }
+
+    func setRemoteView(granted: Bool, still: DesktopSharedStill?) {
+        lock.lock()
+        remoteGranted = granted
+        remote = still
+        lock.unlock()
+    }
+
+    func fetchCurrent() -> Result<DesktopSharedStill, DesktopStillShareFetchFailure> {
+        lock.lock()
+        defer { lock.unlock() }
+        guard remoteGranted else {
+            return .failure(.sharingDisabled)
+        }
+        guard let remote else {
+            return .failure(.staleCaptureID)
+        }
+        return .success(remote)
     }
 }
 

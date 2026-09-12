@@ -211,6 +211,11 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
             return
         }
 
+        if request.path == "/still/current" {
+            writeStillFetch(fd: clientFD, result: shareGate.fetchCurrent())
+            return
+        }
+
         guard let captureID = stillCaptureID(from: request.path) else {
             writeResponse(
                 fd: clientFD,
@@ -223,10 +228,17 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
             return
         }
 
-        switch shareGate.fetch(captureID: captureID) {
+        writeStillFetch(fd: clientFD, result: shareGate.fetch(captureID: captureID))
+    }
+
+    private func writeStillFetch(
+        fd: Int32,
+        result: Result<DesktopSharedStill, DesktopStillShareFetchFailure>
+    ) {
+        switch result {
         case .failure(.sharingDisabled):
             writeResponse(
-                fd: clientFD,
+                fd: fd,
                 status: 403,
                 reason: "Forbidden",
                 contentType: "text/plain; charset=utf-8",
@@ -235,7 +247,7 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
             )
         case .failure(.staleCaptureID):
             writeResponse(
-                fd: clientFD,
+                fd: fd,
                 status: 404,
                 reason: "Not Found",
                 contentType: "text/plain; charset=utf-8",
@@ -244,7 +256,7 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
             )
         case .success(let still):
             writeResponse(
-                fd: clientFD,
+                fd: fd,
                 status: 200,
                 reason: "OK",
                 contentType: "image/png",

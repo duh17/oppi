@@ -65,6 +65,7 @@ const sessionOperationIds = [
   "headControlSessionAttachment",
   "getIconAsset",
   "headIconAsset",
+  "getDesktopCurrentStill",
   "sendControlSessionCommand",
   "openControlSessionStream",
   "getWorkspaceSession",

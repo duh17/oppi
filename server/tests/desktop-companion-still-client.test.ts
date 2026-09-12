@@ -304,6 +304,102 @@ describe("desktop companion owner-socket still client", () => {
     );
   });
 
+  it("fetches the current still only when remote view is on", async () => {
+    const companion = await listenCompanion();
+    const still = companion.shareRemote();
+    const client = new DesktopCompanionStillClient({ runtimeRoot: companion.runtimeRoot });
+
+    const fetched = await client.fetchCurrentStill();
+
+    expect(fetched.captureId.toLowerCase()).toBe(still.captureId.toLowerCase());
+    expect(fetched.surface).toEqual({ windowId: 91, title: "Notes" });
+    expect(fetched.capturedAt).toBe(still.capturedAt);
+    expect(fetched.width).toBe(1);
+    expect(fetched.height).toBe(1);
+    expect(fetched.caption).toBe(STILL_CAPTION);
+    expect(fetched.png.equals(PNG_1X1)).toBe(true);
+    expect(companion.captureCount).toBe(0);
+    expect(companion.requests).toEqual([
+      expect.objectContaining({
+        method: "GET",
+        url: "/still/current",
+        authorization: undefined,
+      }),
+    ]);
+    expect(pngFiles(companion.runtimeRoot)).toEqual([]);
+  });
+
+  it("does not expose current when local share is on and remote view is off", async () => {
+    const companion = await listenCompanion();
+    const still = companion.share();
+    const client = new DesktopCompanionStillClient({ runtimeRoot: companion.runtimeRoot });
+
+    await expect(client.fetchStill(still.captureId)).resolves.toMatchObject({
+      captureId: still.captureId,
+    });
+    await expectStillError(client.fetchCurrentStill(), "sharing_disabled");
+    expect(companion.captureCount).toBe(0);
+    expect(companion.requests.map((request) => request.url)).toEqual([
+      `/still/${still.captureId}`,
+      "/still/current",
+    ]);
+  });
+
+  it("does not expose by-id fetch when remote view is on and local share is off", async () => {
+    const companion = await listenCompanion();
+    const still = companion.shareRemote();
+    const client = new DesktopCompanionStillClient({ runtimeRoot: companion.runtimeRoot });
+
+    await expect(client.fetchCurrentStill()).resolves.toMatchObject({
+      captureId: still.captureId,
+    });
+    await expectStillError(client.fetchStill(still.captureId), "sharing_disabled");
+    expect(companion.captureCount).toBe(0);
+  });
+
+  it("rejects current still with 404 when remote view is on but none exists", async () => {
+    const companion = await listenCompanion();
+    companion.enableRemoteView();
+    const client = new DesktopCompanionStillClient({ runtimeRoot: companion.runtimeRoot });
+
+    await expectStillError(client.fetchCurrentStill(), "stale_capture");
+    expect(companion.captureCount).toBe(0);
+  });
+
+  it("blocks subsequent current fetches after remote-off", async () => {
+    const companion = await listenCompanion();
+    companion.shareRemote();
+    const client = new DesktopCompanionStillClient({ runtimeRoot: companion.runtimeRoot });
+
+    await expect(client.fetchCurrentStill()).resolves.toMatchObject({ caption: STILL_CAPTION });
+    companion.revokeRemote();
+    await expectStillError(client.fetchCurrentStill(), "sharing_disabled");
+    expect(companion.captureCount).toBe(0);
+  });
+
+  it("GET /still/current does not recapture", async () => {
+    const companion = await listenCompanion();
+    companion.shareRemote();
+    companion.captureCount = 1;
+    const client = new DesktopCompanionStillClient({ runtimeRoot: companion.runtimeRoot });
+
+    await client.fetchCurrentStill();
+    await client.fetchCurrentStill();
+
+    expect(companion.captureCount).toBe(1);
+    expect(companion.requests.map((request) => request.url)).toEqual([
+      "/still/current",
+      "/still/current",
+    ]);
+  });
+
+  it("maps a down companion to unavailable for current still", async () => {
+    const runtimeRoot = makeTempDir();
+    const client = new DesktopCompanionStillClient({ runtimeRoot, timeoutMs: 200 });
+    await expectStillError(client.fetchCurrentStill(), "companion_unavailable");
+    expect(existsSync(client.socketPath)).toBe(false);
+  });
+
   it("keeps the owner-socket fence in source", () => {
     const source = readFileSync(
       fileURLToPath(new URL("../src/desktop-companion-still-client.ts", import.meta.url)),
@@ -344,6 +440,7 @@ class FakeCompanion {
   requests: Array<{ method?: string; url?: string; authorization?: string }> = [];
   shared: SharedStill | undefined;
   sharingEnabled = false;
+  remoteViewEnabled = false;
   override?: (request: ParsedRequest, socket: Socket) => boolean | Promise<boolean>;
   readonly socketPath: string;
 
@@ -370,8 +467,24 @@ class FakeCompanion {
     return still;
   }
 
+  shareRemote(overrides: Partial<SharedStill> = {}): SharedStill {
+    const still =
+      overrides.captureId || !this.shared ? makeStill(overrides) : { ...this.shared, ...overrides };
+    this.shared = still;
+    this.remoteViewEnabled = true;
+    return still;
+  }
+
+  enableRemoteView(): void {
+    this.remoteViewEnabled = true;
+  }
+
   revoke(): void {
     this.sharingEnabled = false;
+  }
+
+  revokeRemote(): void {
+    this.remoteViewEnabled = false;
   }
 
   waitForRequest(): Promise<void> {
@@ -443,6 +556,34 @@ class FakeCompanion {
         { Allow: "GET", "Content-Type": "text/plain; charset=utf-8" },
         Buffer.from("method not allowed\n"),
       );
+      socket.end();
+      return;
+    }
+
+    if (request.url === "/still/current") {
+      if (!this.remoteViewEnabled) {
+        writeHttp(
+          socket,
+          403,
+          "Forbidden",
+          { "Content-Type": "text/plain; charset=utf-8" },
+          Buffer.from("remote view disabled\n"),
+        );
+        socket.end();
+        return;
+      }
+      if (!this.shared) {
+        writeHttp(
+          socket,
+          404,
+          "Not Found",
+          { "Content-Type": "text/plain; charset=utf-8" },
+          Buffer.from("no current still\n"),
+        );
+        socket.end();
+        return;
+      }
+      writeStill(socket, this.shared);
       socket.end();
       return;
     }

@@ -78,6 +78,23 @@ struct DesktopCaptureView: View {
                 Text("Off by default. Local owner presence is not a view grant.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle(
+                    "Allow paired devices to view this still",
+                    isOn: Binding(
+                        get: { session.isRemoteViewEnabled },
+                        set: { enabled in
+                            if enabled {
+                                session.enableRemoteView()
+                            } else {
+                                session.revokeRemoteView()
+                            }
+                        }
+                    )
+                )
+                .accessibilityIdentifier("remote-view-toggle")
+                Text("Off by default. Local share is not remote permission. Still—not live.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         } else {
             ContentUnavailableView(
@@ -107,6 +124,11 @@ struct DesktopCaptureCommands: Commands {
                 .disabled(!session.canEnableLocalShare)
             Button("Revoke Local Share", action: session.revokeLocalShare)
                 .disabled(!session.canRevokeLocalShare)
+            Divider()
+            Button("Allow Paired Devices", action: session.enableRemoteView)
+                .disabled(!session.canEnableRemoteView)
+            Button("Revoke Paired View", action: session.revokeRemoteView)
+                .disabled(!session.canRevokeRemoteView)
         }
     }
 }

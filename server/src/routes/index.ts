@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import type { RequestPrincipal } from "../request-principal.js";
 import { createRouteHelpers } from "./http.js";
 import type { RouteContext, RouteDispatcher } from "./types.js";
 import { createIdentityRoutes } from "./identity.js";
@@ -17,6 +18,7 @@ import { createProviderAuthRoutes } from "./provider-auth.js";
 import { createScheduleRoutes } from "./schedules.js";
 import { createE2EUIHarnessRoutes } from "./e2e-ui-harness.js";
 import { createServerResourceRoutes } from "./server-resources.js";
+import { createDesktopStillRoutes } from "./desktop-stills.js";
 
 export type { RouteContext } from "./types.js";
 
@@ -41,6 +43,7 @@ export class RouteHandler {
       createProviderAuthRoutes(this.ctx, this.helpers),
       createScheduleRoutes(this.ctx, this.helpers),
       createE2EUIHarnessRoutes(this.ctx, this.helpers),
+      createDesktopStillRoutes(this.ctx, this.helpers),
     ];
   }
 
@@ -54,9 +57,10 @@ export class RouteHandler {
     url: URL,
     req: IncomingMessage,
     res: ServerResponse,
+    principal?: RequestPrincipal,
   ): Promise<void> {
     for (const dispatch of this.dispatchers) {
-      if (await dispatch({ method, path, url, req, res })) {
+      if (await dispatch({ method, path, url, req, res, principal })) {
         return;
       }
     }

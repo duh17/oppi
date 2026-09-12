@@ -208,6 +208,58 @@ struct DesktopOwnerSocketStillFetchTests {
         harness.tearDownRuntime()
     }
 
+    @Test func currentStillRequiresRemoteViewAndIgnoresLocalShare() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        let still = harness.captureStill()
+        let captures = harness.fake.captureCount
+
+        let off = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/still/current")
+        #expect(off.statusCode == 403)
+        #expect(!off.body.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+
+        harness.session.enableLocalShare()
+        let localOnly = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/still/current")
+        #expect(localOnly.statusCode == 403)
+        let byID = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/still/\(still.captureID.uuidString)"
+        )
+        #expect(byID.statusCode == 200)
+
+        harness.session.revokeLocalShare()
+        harness.session.enableRemoteView()
+        let remote = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/still/current")
+        #expect(remote.statusCode == 200)
+        #expect(remote.headers["cache-control"] == "no-store")
+        #expect(remote.headers["content-type"] == "image/png")
+        #expect(remote.headers["x-oppi-caption"] == "Still—not live")
+        #expect(remote.headers["x-oppi-capture-id"] == still.captureID.uuidString)
+        #expect(remote.body.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        let remoteByID = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/still/\(still.captureID.uuidString)"
+        )
+        #expect(remoteByID.statusCode == 403)
+        #expect(harness.fake.captureCount == captures)
+        #expect(harness.runtimePNGFiles().isEmpty)
+
+        harness.session.revokeRemoteView()
+        let afterRevoke = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/still/current")
+        #expect(afterRevoke.statusCode == 403)
+    }
+
+    @Test func currentStillReturns404WhenRemoteViewIsOnButNoneExists() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        harness.session.shareGate.setRemoteView(granted: true, still: nil)
+
+        let response = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/still/current")
+        #expect(response.statusCode == 404)
+        #expect(!response.body.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        #expect(harness.fake.captureCount == 0)
+    }
+
     @Test func captureServiceFencesStayCaptureOnly() throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

@@ -288,6 +288,105 @@ struct DesktopCaptureSessionTests {
         #expect(session.shareGate.current() == nil)
         #expect(session.shareGate.fetch(captureID: first.captureID) == .failure(.sharingDisabled))
     }
+
+    @Test func remoteViewDefaultsOffAndDoesNotCapture() {
+        let (session, fake) = makeHarness()
+        #expect(!session.isRemoteViewEnabled)
+        #expect(session.shareGate.fetchCurrent() == .failure(.sharingDisabled))
+
+        session.enableRemoteView()
+
+        #expect(!session.isRemoteViewEnabled)
+        #expect(fake.captureCount == 0)
+        #expect(session.shareGate.fetchCurrent() == .failure(.sharingDisabled))
+    }
+
+    @Test func enablingRemoteViewDoesNotEnableLocalShare() throws {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 87, title: "Notes")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        let still = makeStill(surface: surface)
+        fake.completePending(.success(still))
+        let captures = fake.captureCount
+
+        session.enableRemoteView()
+
+        #expect(session.isRemoteViewEnabled)
+        #expect(!session.isLocalShareEnabled)
+        #expect(session.shareGate.current() == nil)
+        #expect(session.shareGate.fetch(captureID: still.captureID) == .failure(.sharingDisabled))
+        let remote = try session.shareGate.fetchCurrent().get()
+        #expect(remote.captureID == still.captureID)
+        #expect(remote.caption == "Still—not live")
+        #expect(fake.captureCount == captures)
+    }
+
+    @Test func enablingLocalShareDoesNotEnableRemoteView() {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 88, title: "Mail")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        fake.completePending(.success(makeStill(surface: surface)))
+
+        session.enableLocalShare()
+
+        #expect(session.isLocalShareEnabled)
+        #expect(!session.isRemoteViewEnabled)
+        #expect(session.shareGate.fetchCurrent() == .failure(.sharingDisabled))
+    }
+
+    @Test func clearRevokesRemoteView() {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 89, title: "Terminal")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        fake.completePending(.success(makeStill(surface: surface)))
+        session.enableRemoteView()
+        #expect(session.isRemoteViewEnabled)
+
+        session.clear()
+
+        #expect(!session.isRemoteViewEnabled)
+        #expect(session.shareGate.fetchCurrent() == .failure(.sharingDisabled))
+        #expect(session.still == nil)
+    }
+
+    @Test func revokeRemoteViewDropsFetchabilityWithoutClearingStill() {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 90, title: "Safari")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        let still = makeStill(surface: surface)
+        fake.completePending(.success(still))
+        session.enableRemoteView()
+
+        session.revokeRemoteView()
+
+        #expect(session.still?.captureID == still.captureID)
+        #expect(!session.isRemoteViewEnabled)
+        #expect(session.shareGate.fetchCurrent() == .failure(.sharingDisabled))
+        #expect(fake.captureCount == 1)
+    }
+
+    @Test func newCaptureRevokesRemoteViewWithoutAllowingRecall() throws {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 91, title: "Preview")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        let first = makeStill(surface: surface)
+        fake.completePending(.success(first))
+        session.enableRemoteView()
+        #expect(try session.shareGate.fetchCurrent().get().captureID == first.captureID)
+
+        session.captureOnce()
+        let second = makeStill(surface: surface)
+        fake.completePending(.success(second))
+
+        #expect(session.still?.captureID == second.captureID)
+        #expect(!session.isRemoteViewEnabled)
+        #expect(session.shareGate.fetchCurrent() == .failure(.sharingDisabled))
+    }
 }
 
 @MainActor

@@ -12,6 +12,7 @@ final class DesktopCaptureSession {
     private(set) var isCaptureInFlight = false
     private(set) var isPickerPresented = false
     private(set) var isLocalShareEnabled = false
+    private(set) var isRemoteViewEnabled = false
 
     let shareGate: DesktopStillShareGate
 
@@ -24,6 +25,8 @@ final class DesktopCaptureSession {
     var canCancel: Bool { isCaptureInFlight }
     var canEnableLocalShare: Bool { still != nil && !isLocalShareEnabled }
     var canRevokeLocalShare: Bool { isLocalShareEnabled }
+    var canEnableRemoteView: Bool { still != nil && !isRemoteViewEnabled }
+    var canRevokeRemoteView: Bool { isRemoteViewEnabled }
     var sharedCaptureID: UUID? { isLocalShareEnabled ? still?.captureID : nil }
 
     private let service: any DesktopCaptureServicing
@@ -82,7 +85,7 @@ final class DesktopCaptureSession {
 
     func clear() {
         invalidatePendingCapture()
-        revokeLocalShare()
+        revokeAllGrants()
         still = nil
         failure = nil
     }
@@ -110,6 +113,35 @@ final class DesktopCaptureSession {
         shareGate.publish(nil)
     }
 
+    func enableRemoteView() {
+        guard let still else { return }
+        guard let pngData = DesktopStillPNG.encode(still.image) else { return }
+        isRemoteViewEnabled = true
+        shareGate.setRemoteView(
+            granted: true,
+            still: DesktopSharedStill(
+                captureID: still.captureID,
+                surfaceID: still.surfaceID,
+                surfaceTitle: selection?.title ?? "Window",
+                capturedAt: still.capturedAt,
+                width: still.image.width,
+                height: still.image.height,
+                pngData: pngData,
+                caption: DesktopCaptureCopy.stillCaption
+            )
+        )
+    }
+
+    func revokeRemoteView() {
+        isRemoteViewEnabled = false
+        shareGate.setRemoteView(granted: false, still: nil)
+    }
+
+    private func revokeAllGrants() {
+        revokeLocalShare()
+        revokeRemoteView()
+    }
+
     func refreshAvailability() {
         availability = service.currentAvailability()
     }
@@ -121,7 +153,7 @@ final class DesktopCaptureSession {
 
     private func applyUserSelection(_ surface: CaptureSurface) {
         invalidatePendingCapture()
-        revokeLocalShare()
+        revokeAllGrants()
         still = nil
         selection = surface
         failure = nil
@@ -139,12 +171,12 @@ final class DesktopCaptureSession {
         switch result {
         case .success(let captured):
             guard selection?.surfaceID == expectedSurfaceID, captured.surfaceID == expectedSurfaceID else {
-                revokeLocalShare()
+                revokeAllGrants()
                 still = nil
                 failure = .surfaceSubstitutionRejected
                 return
             }
-            revokeLocalShare()
+            revokeAllGrants()
             still = captured
             failure = nil
         case .failure(let error):
@@ -166,7 +198,7 @@ extension DesktopCaptureSession: DesktopCaptureServiceDelegate {
         }
         // Unsolicited different surface: never present it as the selection or a new still.
         invalidatePendingCapture()
-        revokeLocalShare()
+        revokeAllGrants()
         still = nil
         failure = .surfaceSubstitutionRejected
     }
@@ -185,7 +217,7 @@ extension DesktopCaptureSession: DesktopCaptureServiceDelegate {
         guard selection?.surfaceID == surface.surfaceID else { return }
         isPickerPresented = false
         invalidatePendingCapture()
-        revokeLocalShare()
+        revokeAllGrants()
         still = nil
         selection = nil
         failure = .unavailable

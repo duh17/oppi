@@ -88,6 +88,7 @@ import {
   type LocalApiSocketBinding,
 } from "./local-api-socket.js";
 import { DesktopCompanionStillClient } from "./desktop-companion-still-client.js";
+import type { RequestPrincipal } from "./request-principal.js";
 import {
   isLocalRequest,
   isSecureNetworkRequest,
@@ -166,9 +167,7 @@ const WS_SHUTDOWN_GRACE_MS = 500;
 const MIN_UPLOAD_GC_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_UPLOAD_GC_INTERVAL_MS = 60 * 60 * 1000;
 
-type SocketPrincipal =
-  | { kind: "owner" }
-  | { kind: "device"; deviceId: string; tokenClass: "at_"; expiresAt?: number };
+type SocketPrincipal = RequestPrincipal;
 
 const log = createLogger({ base: { component: "server" } });
 
@@ -510,11 +509,22 @@ export class Server {
   private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
   private scheduleRunner!: AgentScheduleRunner;
-  /** Owner-socket still fetch. Not a public HTTP route. */
-  private readonly _desktopCompanionStillClient = new DesktopCompanionStillClient();
+  /** Companion owner-socket still fetch. Paired HTTPS current-still only. */
+  private readonly desktopCompanionStillClient: Pick<
+    DesktopCompanionStillClient,
+    "fetchCurrentStill"
+  >;
 
-  constructor(storage: Storage, apnsConfig?: APNsConfig) {
+  constructor(
+    storage: Storage,
+    apnsConfig?: APNsConfig,
+    options?: {
+      desktopCompanionStillClient?: Pick<DesktopCompanionStillClient, "fetchCurrentStill">;
+    },
+  ) {
     this.storage = storage;
+    this.desktopCompanionStillClient =
+      options?.desktopCompanionStillClient ?? new DesktopCompanionStillClient();
     this.piExecutable = resolvePiExecutable();
 
     const dataDir = storage.getDataDir();
@@ -840,6 +850,7 @@ export class Server {
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
+      desktopCompanionStillClient: this.desktopCompanionStillClient,
     });
   }
 
@@ -1415,7 +1426,7 @@ export class Server {
     await this.ensureSkillsInitialized();
 
     try {
-      await this.routes.dispatch(method, path, url, req, res);
+      await this.routes.dispatch(method, path, url, req, res, authResult.principal);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Internal error";
       log.error("http.request.failed", {

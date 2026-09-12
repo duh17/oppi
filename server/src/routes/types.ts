@@ -10,6 +10,8 @@ import type { ProviderAuthManager } from "../provider-auth/provider-auth-manager
 import type { ProviderQuotasStatus } from "../provider-quota.js";
 import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
+import type { DesktopCompanionStill } from "../desktop-companion-still-client.js";
+import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
 
 /** Services needed by route handlers — injected by Server. */
@@ -38,6 +40,10 @@ export interface RouteContext {
   onOwnerTokenRotated?: () => void;
   /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */
   stopWorkspaceVm?: (workspaceId: string) => void | Promise<void>;
+  /** Companion current-still fetch. Never starts a capture. */
+  desktopCompanionStillClient?: {
+    fetchCurrentStill: (options?: { signal?: AbortSignal }) => Promise<DesktopCompanionStill>;
+  };
 }
 
 export interface RouteHelpers {
@@ -53,6 +59,7 @@ export interface RouteDispatchRequest {
   url: URL;
   req: IncomingMessage;
   res: ServerResponse;
+  principal?: RequestPrincipal;
 }
 
 export type RouteDispatcher = (request: RouteDispatchRequest) => Promise<boolean>;

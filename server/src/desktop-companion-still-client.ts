@@ -96,7 +96,19 @@ export class DesktopCompanionStillClient {
         "invalid_capture_id",
       );
     }
-    throwIfAborted(options.signal);
+    return this.fetchFromCompanion(`/still/${captureId}`, captureId, options.signal);
+  }
+
+  async fetchCurrentStill(options: { signal?: AbortSignal } = {}): Promise<DesktopCompanionStill> {
+    return this.fetchFromCompanion("/still/current", undefined, options.signal);
+  }
+
+  private async fetchFromCompanion(
+    path: string,
+    expectedCaptureId: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<DesktopCompanionStill> {
+    throwIfAborted(signal);
     if (this.inFlight >= this.maxConcurrent) {
       throw new DesktopCompanionStillError(
         "Desktop still fetch is already in flight",
@@ -105,15 +117,16 @@ export class DesktopCompanionStillClient {
     }
     this.inFlight += 1;
     try {
-      throwIfAborted(options.signal);
-      return await this.requestStill(captureId, options.signal);
+      throwIfAborted(signal);
+      return await this.requestStill(path, expectedCaptureId, signal);
     } finally {
       this.inFlight -= 1;
     }
   }
 
   private requestStill(
-    captureId: string,
+    path: string,
+    expectedCaptureId: string | undefined,
     callerSignal: AbortSignal | undefined,
   ): Promise<DesktopCompanionStill> {
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
@@ -162,13 +175,13 @@ export class DesktopCompanionStillClient {
         req = httpRequest(
           {
             socketPath: this.socketPath,
-            path: `/still/${captureId}`,
+            path,
             method: "GET",
             agent: false as const,
             signal,
           },
           (res) =>
-            this.handleResponse(res, captureId, callerSignal, succeed, fail, () => {
+            this.handleResponse(res, expectedCaptureId, callerSignal, succeed, fail, () => {
               sawResponse = true;
             }),
         );
@@ -182,7 +195,7 @@ export class DesktopCompanionStillClient {
 
   private handleResponse(
     res: IncomingMessage,
-    captureId: string,
+    expectedCaptureId: string | undefined,
     callerSignal: AbortSignal | undefined,
     succeed: (still: DesktopCompanionStill) => void,
     fail: (error: Error) => void,
@@ -275,7 +288,9 @@ export class DesktopCompanionStillClient {
         return;
       }
       try {
-        succeed(parseStill(captureId, res.headers, Buffer.concat(chunks, total), this.maxBytes));
+        succeed(
+          parseStill(expectedCaptureId, res.headers, Buffer.concat(chunks, total), this.maxBytes),
+        );
       } catch (error: unknown) {
         fail(
           error instanceof DesktopCompanionStillError
@@ -291,7 +306,7 @@ export class DesktopCompanionStillClient {
 }
 
 function parseStill(
-  requestedCaptureId: string,
+  requestedCaptureId: string | undefined,
   headers: IncomingHttpHeaders,
   png: Buffer,
   maxBytes: number,
@@ -316,7 +331,8 @@ function parseStill(
   if (
     !captureId ||
     !isUuid(captureId) ||
-    captureId.toLowerCase() !== requestedCaptureId.toLowerCase()
+    (requestedCaptureId !== undefined &&
+      captureId.toLowerCase() !== requestedCaptureId.toLowerCase())
   ) {
     throw new DesktopCompanionStillError("Desktop still response is malformed", "malformed_still");
   }
