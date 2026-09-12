@@ -11,6 +11,9 @@ final class DesktopCaptureSession {
     private(set) var availability: CaptureAvailability = .ready
     private(set) var isCaptureInFlight = false
     private(set) var isPickerPresented = false
+    private(set) var isLocalShareEnabled = false
+
+    let shareGate: DesktopStillShareGate
 
     var stillLabel: String? { still == nil ? nil : Self.stillCaption }
     var isLivePreview: Bool { false }
@@ -19,14 +22,21 @@ final class DesktopCaptureSession {
     }
     var canClear: Bool { still != nil || isCaptureInFlight }
     var canCancel: Bool { isCaptureInFlight }
+    var canEnableLocalShare: Bool { still != nil && !isLocalShareEnabled }
+    var canRevokeLocalShare: Bool { isLocalShareEnabled }
+    var sharedCaptureID: UUID? { isLocalShareEnabled ? still?.captureID : nil }
 
     private let service: any DesktopCaptureServicing
     /// Token for the single outstanding capture. Late callbacks with a stale token are discarded.
     private var inFlightToken: UInt64 = 0
     private var nextTokenValue: UInt64 = 1
 
-    init(service: any DesktopCaptureServicing) {
+    init(
+        service: any DesktopCaptureServicing,
+        shareGate: DesktopStillShareGate = DesktopStillShareGate()
+    ) {
         self.service = service
+        self.shareGate = shareGate
         self.service.delegate = self
     }
 
@@ -72,8 +82,32 @@ final class DesktopCaptureSession {
 
     func clear() {
         invalidatePendingCapture()
+        revokeLocalShare()
         still = nil
         failure = nil
+    }
+
+    func enableLocalShare() {
+        guard let still else { return }
+        guard let pngData = DesktopStillPNG.encode(still.image) else { return }
+        isLocalShareEnabled = true
+        shareGate.publish(
+            DesktopSharedStill(
+                captureID: still.captureID,
+                surfaceID: still.surfaceID,
+                surfaceTitle: selection?.title ?? "Window",
+                capturedAt: still.capturedAt,
+                width: still.image.width,
+                height: still.image.height,
+                pngData: pngData,
+                caption: DesktopCaptureCopy.stillCaption
+            )
+        )
+    }
+
+    func revokeLocalShare() {
+        isLocalShareEnabled = false
+        shareGate.publish(nil)
     }
 
     func refreshAvailability() {
@@ -87,6 +121,7 @@ final class DesktopCaptureSession {
 
     private func applyUserSelection(_ surface: CaptureSurface) {
         invalidatePendingCapture()
+        revokeLocalShare()
         still = nil
         selection = surface
         failure = nil
@@ -104,10 +139,12 @@ final class DesktopCaptureSession {
         switch result {
         case .success(let captured):
             guard selection?.surfaceID == expectedSurfaceID, captured.surfaceID == expectedSurfaceID else {
+                revokeLocalShare()
                 still = nil
                 failure = .surfaceSubstitutionRejected
                 return
             }
+            revokeLocalShare()
             still = captured
             failure = nil
         case .failure(let error):
@@ -129,6 +166,7 @@ extension DesktopCaptureSession: DesktopCaptureServiceDelegate {
         }
         // Unsolicited different surface: never present it as the selection or a new still.
         invalidatePendingCapture()
+        revokeLocalShare()
         still = nil
         failure = .surfaceSubstitutionRejected
     }
@@ -147,6 +185,7 @@ extension DesktopCaptureSession: DesktopCaptureServiceDelegate {
         guard selection?.surfaceID == surface.surfaceID else { return }
         isPickerPresented = false
         invalidatePendingCapture()
+        revokeLocalShare()
         still = nil
         selection = nil
         failure = .unavailable

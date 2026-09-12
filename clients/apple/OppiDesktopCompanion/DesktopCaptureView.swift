@@ -61,6 +61,23 @@ struct DesktopCaptureView: View {
                     .scaledToFit()
                     .frame(maxHeight: 280)
                     .accessibilityLabel(Text(DesktopCaptureCopy.stillCaption))
+                Toggle(
+                    "Share current still locally",
+                    isOn: Binding(
+                        get: { session.isLocalShareEnabled },
+                        set: { enabled in
+                            if enabled {
+                                session.enableLocalShare()
+                            } else {
+                                session.revokeLocalShare()
+                            }
+                        }
+                    )
+                )
+                .accessibilityIdentifier("local-share-toggle")
+                Text("Off by default. Local owner presence is not a view grant.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         } else {
             ContentUnavailableView(
@@ -85,6 +102,11 @@ struct DesktopCaptureCommands: Commands {
                 .disabled(!session.canCancel)
             Button("Clear", action: session.clear)
                 .disabled(!session.canClear)
+            Divider()
+            Button("Share Still Locally", action: session.enableLocalShare)
+                .disabled(!session.canEnableLocalShare)
+            Button("Revoke Local Share", action: session.revokeLocalShare)
+                .disabled(!session.canRevokeLocalShare)
         }
     }
 }

@@ -177,6 +177,117 @@ struct DesktopCaptureSessionTests {
         #expect(!session.isLivePreview)
         #expect(!session.isCaptureInFlight)
     }
+
+    @Test func localShareDefaultsOffAndDoesNotCapture() {
+        let (session, fake) = makeHarness()
+        #expect(!session.isLocalShareEnabled)
+        #expect(session.sharedCaptureID == nil)
+        #expect(session.shareGate.current() == nil)
+
+        session.enableLocalShare()
+
+        #expect(!session.isLocalShareEnabled)
+        #expect(fake.captureCount == 0)
+        #expect(session.shareGate.current() == nil)
+    }
+
+    @Test func enablingLocalSharePublishesCurrentCaptureIDWithoutCapturing() throws {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 81, title: "Notes")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        let still = makeStill(surface: surface)
+        fake.completePending(.success(still))
+        let captures = fake.captureCount
+
+        session.enableLocalShare()
+
+        #expect(session.isLocalShareEnabled)
+        #expect(session.sharedCaptureID == still.captureID)
+        let shared = try #require(session.shareGate.current())
+        #expect(shared.captureID == still.captureID)
+        #expect(shared.surfaceID == surface.surfaceID)
+        #expect(shared.surfaceTitle == "Notes")
+        #expect(shared.capturedAt == still.capturedAt)
+        #expect(shared.width == 1)
+        #expect(shared.height == 1)
+        #expect(shared.caption == "Still—not live")
+        #expect(shared.pngData.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        #expect(fake.captureCount == captures)
+    }
+
+    @Test func clearRevokesLocalShare() {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 82, title: "Terminal")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        fake.completePending(.success(makeStill(surface: surface)))
+        session.enableLocalShare()
+        #expect(session.isLocalShareEnabled)
+
+        session.clear()
+
+        #expect(!session.isLocalShareEnabled)
+        #expect(session.sharedCaptureID == nil)
+        #expect(session.shareGate.current() == nil)
+        #expect(session.still == nil)
+    }
+
+    @Test func reselectionRevokesLocalShare() {
+        let (session, fake) = makeHarness()
+        let first = makeSurface(windowID: 83, title: "Code")
+        let second = makeSurface(windowID: 84, title: "Preview")
+        pickWindow(session, fake, first)
+        session.captureOnce()
+        fake.completePending(.success(makeStill(surface: first)))
+        session.enableLocalShare()
+        #expect(session.isLocalShareEnabled)
+
+        pickWindow(session, fake, second)
+
+        #expect(session.selection == second)
+        #expect(session.still == nil)
+        #expect(!session.isLocalShareEnabled)
+        #expect(session.shareGate.current() == nil)
+    }
+
+    @Test func revokeLocalShareDropsFetchabilityWithoutClearingStill() {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 85, title: "Mail")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        let still = makeStill(surface: surface)
+        fake.completePending(.success(still))
+        session.enableLocalShare()
+
+        session.revokeLocalShare()
+
+        #expect(session.still?.captureID == still.captureID)
+        #expect(!session.isLocalShareEnabled)
+        #expect(session.sharedCaptureID == nil)
+        #expect(session.shareGate.current() == nil)
+        #expect(fake.captureCount == 1)
+    }
+
+    @Test func newCaptureRevokesPreviousShareWithoutAllowingRecall() {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 86, title: "Safari")
+        pickWindow(session, fake, surface)
+        session.captureOnce()
+        let first = makeStill(surface: surface)
+        fake.completePending(.success(first))
+        session.enableLocalShare()
+        #expect(session.shareGate.current()?.captureID == first.captureID)
+
+        session.captureOnce()
+        let second = makeStill(surface: surface)
+        fake.completePending(.success(second))
+
+        #expect(session.still?.captureID == second.captureID)
+        #expect(!session.isLocalShareEnabled)
+        #expect(session.shareGate.current() == nil)
+        #expect(session.shareGate.fetch(captureID: first.captureID) == .failure(.sharingDisabled))
+    }
 }
 
 @MainActor
