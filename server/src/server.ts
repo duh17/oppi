@@ -87,6 +87,7 @@ import {
   localApiSocketPath,
   type LocalApiSocketBinding,
 } from "./local-api-socket.js";
+import { DesktopCompanionStillClient } from "./desktop-companion-still-client.js";
 import {
   isLocalRequest,
   isSecureNetworkRequest,
@@ -509,6 +510,8 @@ export class Server {
   private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
   private scheduleRunner!: AgentScheduleRunner;
+  /** Owner-socket still fetch. Not a public HTTP route. */
+  private readonly _desktopCompanionStillClient = new DesktopCompanionStillClient();
 
   constructor(storage: Storage, apnsConfig?: APNsConfig) {
     this.storage = storage;
