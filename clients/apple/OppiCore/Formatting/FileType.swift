@@ -22,6 +22,8 @@ enum FileType: Equatable {
     case graphviz
     case csv
     case tsv
+    case geojson
+    case topojson
 
     /// Detect from file path extension (or well-known filenames), with
     /// optional shebang fallback for extensionless scripts.
@@ -89,6 +91,10 @@ enum FileType: Equatable {
             return .csv
         case "tsv":
             return .tsv
+        case "geojson":
+            return .geojson
+        case "topojson":
+            return .topojson
         case "jpg", "jpeg", "png", "gif", "webp", "ico", "bmp", "tif", "tiff",
              "heic", "heif":
             return .image
@@ -108,7 +114,12 @@ enum FileType: Equatable {
             return .binary
         default:
             let lang = SyntaxLanguage.detect(ext)
-            if lang == .json { return .json }
+            if lang == .json {
+                if let geographic = GeographicJSONSniffer.fileType(from: content) {
+                    return geographic
+                }
+                return .json
+            }
             if lang != .unknown { return .code(language: lang) }
             return .plain
         }
@@ -175,6 +186,8 @@ enum FileType: Equatable {
         case .graphviz: return "Graphviz"
         case .csv: return "CSV"
         case .tsv: return "TSV"
+        case .geojson: return "GeoJSON"
+        case .topojson: return "TopoJSON"
         }
     }
 
@@ -198,6 +211,8 @@ enum FileType: Equatable {
             return .mermaid
         case .graphviz:
             return .dot
+        case .geojson, .topojson:
+            return .json
         case .markdown, .image, .audio, .video, .pdf, .binary, .plain, .csv, .tsv:
             return nil
         }
@@ -227,7 +242,8 @@ extension FileType {
         case .pdf:
             return .pdf
         case .markdown, .html, .code, .json, .plain,
-             .latex, .orgMode, .mermaid, .graphviz, .csv, .tsv:
+             .latex, .orgMode, .mermaid, .graphviz, .csv, .tsv,
+             .geojson, .topojson:
             return .text
         case .binary:
             return .binary

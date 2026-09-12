@@ -2,7 +2,7 @@
 
 Oppi renders text and document output in native full-screen viewers on iPhone and iPad. Use them to read, review, copy, share, and select. They do not modify the underlying file, tool output, session transcript, or agent context.
 
-This page covers full-screen viewers for markdown, code, source text, diffs, terminal output, HTML, and rendered document formats such as Org, LaTeX, Mermaid, and Graphviz. Media viewers such as images, audio, video players, and PDFs use their own controls.
+This page covers full-screen viewers for markdown, code, source text, diffs, terminal output, HTML, and rendered document formats such as Org, LaTeX, Mermaid, Graphviz, GeoJSON, and TopoJSON. Media viewers such as images, audio, video players, and PDFs use their own controls.
 
 ## Workspace wiki links
 
@@ -57,7 +57,7 @@ Git tracking does not decide whether an exact link can open. Tracked files and s
 - Source and structured text: `[[server/src/file-serving-policy.ts|File-serving policy]]` and `[[package.json|Package metadata]]`
 - Images: `[[docs/images/app-icon.png|Oppi app icon]]`
 - Audio and video: recognized files such as `.mp3`, `.wav`, `.m4a`, `.mp4`, `.mov`, and `.m3u8`
-- Other recognized documents: HTML, CSS, XML, CSV, and PDF files
+- Other recognized documents: HTML, CSS, XML, CSV, GeoJSON, TopoJSON, and PDF files
 
 Oppi selects a document or media viewer from the detected file type. An unknown binary file can be served within the file limits below, but it does not guarantee a native preview.
 
@@ -112,6 +112,7 @@ Inline Markdown video uses bang-embed syntax. `![]()` and `![[]]` both embed an 
 - When pointing the user to a relevant file the owner can open, use a real relative, absolute, or `~` wiki link such as `[[path/to/file.ext|Short label]]` or `[[/tmp/notes.md|Debug log]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
 - When the image or SVG itself should appear inline, use `![Short description](path/to/image.png)` or `![[path/to/image.png]]`. When a real Oppi-backed video should play inline, use `![[path/to/video.mp4]]` or `![Video](path/to/video.mp4)`. Keep `[[path/to/video.mp4|Video]]` for file navigation. When a real Oppi-backed audio file should play inline, use `![[path/to/clip.m4a]]` or `![Clip](path/to/clip.m4a)`; keep `[[path/to/clip.m4a]]` as a file link that opens the full-screen player.
 - Fenced `mermaid` blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban. Other Mermaid types show an unsupported placeholder.
+- Fenced `geojson` and `topojson` blocks render as an interactive map with a JSON source toggle.
 - LaTeX renders inline, display, and fenced `latex` blocks.
 - Reuse a real existing path; never fabricate a path or expose secrets. Sandbox sessions should keep using sandbox-visible paths.
 ````
@@ -146,6 +147,7 @@ Full-screen document viewers show a **Viewing Options** button near the bottom-r
 | HTML | Text Size slider, Reset View |
 | Org, LaTeX, and Mermaid rendered documents | Text Size slider, Spacing where text-based, Reset View |
 | CSV and TSV tables | Text Size slider, Reset View. Source mode keeps the original file bytes. |
+| GeoJSON and TopoJSON maps | None on the rendered map. Source JSON uses code Viewing Options. |
 
 Options affect only the current viewer family. Changing terminal wrapping does not change markdown spacing, and changing markdown text size does not change code text size.
 
@@ -201,6 +203,7 @@ Some document types have a separate source/render toggle in the toolbar:
 - HTML: Preview / Source
 - HTML diffs: Diff / Render when renderable content is available
 - LaTeX, Org, and Mermaid: Rendered / Source
+- GeoJSON and TopoJSON: Rendered / Source
 
 Viewing Options apply to the mode currently on screen. Source mode uses code/source reader behavior. Rendered mode uses document reader behavior.
 
@@ -225,6 +228,10 @@ Fenced `mermaid` blocks and `.mmd` / `.mermaid` files render these types:
 - kanban
 
 Unknown types show an unsupported placeholder.
+
+## GeoJSON and TopoJSON
+
+`.geojson` / `.topojson` files and fenced `geojson` / `topojson` blocks open the document viewer with Rendered = MapKit map and Source = JSON. `.json` files whose root `type` is `FeatureCollection`, `GeometryCollection`, or `Topology` use the same viewer. Ordinary JSON such as `package.json` stays a JSON listing. Invalid or unsupported input keeps the source JSON and shows a short failure reason instead of an empty map.
 
 ## Native rendering and HTML
 

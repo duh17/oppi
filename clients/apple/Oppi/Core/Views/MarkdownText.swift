@@ -350,6 +350,8 @@ enum FlatSegment: Sendable {
     /// A mermaid diagram code block. The applier decides whether to render
     /// the diagram or show as a code block based on streaming state.
     case mermaidDiagram(code: String)
+    /// A GeoJSON/TopoJSON fence. Closed fences render a map; open fences stay code.
+    case geoJSONMap(code: String, kind: GeoJSONViewerPlan.Kind)
     /// A LaTeX math code block. Rendered as a formula when the fence is
     /// closed, or as a syntax-highlighted code block while streaming.
     case latexBlock(code: String)
@@ -518,6 +520,18 @@ enum FlatSegment: Sendable {
         }
 
         func appendCodeSegment(language: String?, code: String, lineRange: ClosedRange<Int>?) {
+            if let lang = language {
+                switch lang.lowercased() {
+                case "geojson":
+                    appendSegment(.geoJSONMap(code: code, kind: .geojson), lineRange: lineRange)
+                    return
+                case "topojson":
+                    appendSegment(.geoJSONMap(code: code, kind: .topojson), lineRange: lineRange)
+                    return
+                default:
+                    break
+                }
+            }
             if let lang = language, SyntaxLanguage.detect(lang) == .mermaid {
                 appendSegment(.mermaidDiagram(code: code), lineRange: lineRange)
             } else if let lang = language, SyntaxLanguage.detect(lang) == .latex {
@@ -700,7 +714,7 @@ enum FlatSegment: Sendable {
                                     emittedAnyRenderable = true
                                 case .text(let attributed):
                                     appendItemText(attributed)
-                                case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .latexBlock:
+                                case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .geoJSONMap, .latexBlock:
                                     break
                                 }
                             }
@@ -769,7 +783,7 @@ enum FlatSegment: Sendable {
                         case .audio(let embed):
                             flushPendingText()
                             appendSegment(.audio(embed), lineRange: lineRange)
-                        case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .latexBlock:
+                        case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .geoJSONMap, .latexBlock:
                             break
                         }
                     }
@@ -844,7 +858,7 @@ enum FlatSegment: Sendable {
                                         Self.applyingQuoteChrome(to: attributed, palette: palette),
                                         lineRange: lineRange
                                     )
-                                case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .latexBlock:
+                                case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .geoJSONMap, .latexBlock:
                                     break
                                 }
                             }

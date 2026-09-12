@@ -269,6 +269,8 @@ final class AssistantMarkdownSegmentApplier {
     private var audioViews: [Int: NativeMarkdownAudioView] = [:]
     /// References to mermaid diagram views for in-place updates.
     private var mermaidViews: [Int: NativeMermaidBlockView] = [:]
+    /// References to GeoJSON/TopoJSON map views for in-place updates.
+    private var geoJSONViews: [Int: NativeGeoJSONBlockView] = [:]
     /// References to LaTeX block views for in-place updates.
     private var latexViews: [Int: NativeLatexBlockView] = [:]
     private var sourceLineRanges: [ClosedRange<Int>?] = []
@@ -417,6 +419,7 @@ final class AssistantMarkdownSegmentApplier {
         videoViews.removeAll()
         audioViews.removeAll()
         mermaidViews.removeAll()
+        geoJSONViews.removeAll()
         latexViews.removeAll()
         renderedSegmentSignatures = []
         renderedBuildContext = nil
@@ -756,6 +759,32 @@ final class AssistantMarkdownSegmentApplier {
             stackView.addArrangedSubview(mermaidView)
             mermaidViews[index] = mermaidView
 
+        case .geoJSONMap(let code, let kind):
+            let mapView = NativeGeoJSONBlockView()
+            let isOpen = isOpenStreamingCodeFence(
+                at: index,
+                segmentCount: segmentCount,
+                isStreaming: config.isStreaming,
+                hasUnclosedCodeFence: hasUnclosedCodeFence
+            )
+            mapView.configureReviewCommentSelection(
+                router: config.reviewCommentSelectionRouter,
+                sourceContext: assistantCodeBlockSourceContext(
+                    language: kind == .topojson ? "topojson" : "geojson",
+                    config: config,
+                    lineRange: sourceLineRange(at: index)
+                )
+            )
+            applyGeoJSON(
+                mapView,
+                code: code,
+                kind: kind,
+                isOpen: isOpen,
+                palette: palette
+            )
+            stackView.addArrangedSubview(mapView)
+            geoJSONViews[index] = mapView
+
         case .latexBlock(let code):
             let latexView = NativeLatexBlockView()
             let isOpen = isOpenStreamingCodeFence(
@@ -858,6 +887,7 @@ final class AssistantMarkdownSegmentApplier {
             videoViews.removeValue(forKey: index)
             audioViews.removeValue(forKey: index)
             mermaidViews.removeValue(forKey: index)
+            geoJSONViews.removeValue(forKey: index)
             latexViews.removeValue(forKey: index)
         }
 
@@ -1030,6 +1060,28 @@ final class AssistantMarkdownSegmentApplier {
                     worktreeID: config.worktreeId,
                     sidecarProvider: makeTimedTextSidecar
                 )
+
+            case .geoJSONMap(let code, let kind):
+                if let mapView = geoJSONViews[index] {
+                    let isOpen = config.isStreaming
+                        && index == segments.count - 1
+                        && hasUnclosedCodeFence
+                    mapView.configureReviewCommentSelection(
+                        router: config.reviewCommentSelectionRouter,
+                        sourceContext: assistantCodeBlockSourceContext(
+                            language: kind == .topojson ? "topojson" : "geojson",
+                            config: config,
+                            lineRange: sourceLineRange(at: index)
+                        )
+                    )
+                    applyGeoJSON(
+                        mapView,
+                        code: code,
+                        kind: kind,
+                        isOpen: isOpen,
+                        palette: palette
+                    )
+                }
 
             case .mermaidDiagram(let code):
                 if let mermaidView = mermaidViews[index] {
@@ -1373,6 +1425,25 @@ final class AssistantMarkdownSegmentApplier {
         return hr
     }
 
+    private func applyGeoJSON(
+        _ mapView: NativeGeoJSONBlockView,
+        code: String,
+        kind: GeoJSONViewerPlan.Kind,
+        isOpen: Bool,
+        palette: ThemePalette
+    ) {
+        if isOpen {
+            mapView.applyAsCode(
+                language: kind == .topojson ? "topojson" : "geojson",
+                code: code,
+                palette: palette,
+                isOpen: true
+            )
+            return
+        }
+        mapView.applyAsMap(code: code, kind: kind, palette: palette)
+    }
+
     private func applyMermaid(
         _ mermaidView: NativeMermaidBlockView,
         code: String,
@@ -1511,12 +1582,13 @@ private enum SegmentSignature: Equatable {
     case video(reference: ResourceReference)
     case audio(reference: ResourceReference)
     case mermaidDiagram
+    case geoJSONMap
     case latexBlock
 
     /// Streaming tail whose rendered content can change when a later block appears.
     var isMutableStreamingTail: Bool {
         switch self {
-        case .text, .codeBlock, .mermaidDiagram, .latexBlock:
+        case .text, .codeBlock, .mermaidDiagram, .geoJSONMap, .latexBlock:
             true
         case .table, .thematicBreak, .image, .video, .audio:
             false
@@ -1541,6 +1613,8 @@ private enum SegmentSignature: Equatable {
             self = .audio(reference: embed.reference)
         case .mermaidDiagram:
             self = .mermaidDiagram
+        case .geoJSONMap:
+            self = .geoJSONMap
         case .latexBlock:
             self = .latexBlock
         }

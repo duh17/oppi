@@ -1647,6 +1647,37 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(scaledPointSize > initialPointSize)
     }
 
+    @Test func geoJSONMapHidesViewingOptionsUntilSourceJSON() throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }
+
+        let rainier = """
+        {"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Mount Rainier"},"geometry":{"type":"Point","coordinates":[-121.7603,46.8523]}}]}
+        """
+        let controller = makeController(
+            content: .geoJSON(content: rainier, filePath: "mount-rainier.geojson")
+        )
+
+        #expect(controller.installedBodyViewForTesting is GeoJSONMapView)
+        #expect(controller.floatingViewingOptionsButtonFrameForTesting == nil)
+
+        controller.toggleSourceForTesting()
+        controller.view.layoutIfNeeded()
+
+        let buttonFrame = try #require(controller.floatingViewingOptionsButtonFrameForTesting)
+        #expect(buttonFrame.midX > controller.view.bounds.midX)
+        #expect(buttonFrame.midY > controller.view.bounds.midY)
+
+        let codeView = try #require(timelineAllTextViews(in: controller.view).first {
+            timelineRenderedText(of: $0).contains("Mount Rainier")
+        })
+        let initialPointSize = try #require(codeView.font?.pointSize)
+        controller.setReaderTextScaleForTesting(1.25)
+        controller.view.layoutIfNeeded()
+        let scaledPointSize = try #require(codeView.font?.pointSize)
+        #expect(scaledPointSize > initialPointSize)
+    }
+
     @Test func fullscreenThemeNotificationPreservesCodeViewportAndSelection() throws {
         let originalThemeID = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(originalThemeID) }

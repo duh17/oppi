@@ -21,6 +21,7 @@ struct ToolRowViewportPolicy {
         case status
         case text
         case delimitedTable
+        case geoJSON
     }
 
     enum HeightBehavior: Equatable {
@@ -204,6 +205,8 @@ struct ToolRowViewportPolicy {
             return .text
         case .delimitedTable:
             return .delimitedTable
+        case .geoJSON:
+            return .geoJSON
         }
     }
 
@@ -213,6 +216,17 @@ struct ToolRowViewportPolicy {
         viewportMode: .text,
         heightBehavior: .compactMeasured(
             minHeight: 1,
+            maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
+        ),
+        constraintPriority: .required
+    )
+
+    static let geoJSON = ToolRowViewportPolicy(
+        contentKind: .geoJSON,
+        surface: .hostedView,
+        viewportMode: .text,
+        heightBehavior: .compactMeasured(
+            minHeight: 180,
             maxHeight: ToolTimelineRowContentView.maxOutputViewportHeight
         ),
         constraintPriority: .required

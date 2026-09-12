@@ -1259,6 +1259,98 @@ struct ToolPresentationBuilderTests {
         #expect(writeTSVPath == "splits.tsv")
     }
 
+    @Test("read/write GeoJSON and sniffed JSON FeatureCollection expand as map")
+    func geoJSONToolRowsUseMapViewer() {
+        let park = """
+        {"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Park"},"geometry":{"type":"Point","coordinates":[-122.3,47.6]}}]}
+        """
+        let places = park
+
+        let readPark = ToolPresentationBuilder.build(
+            itemID: "read-park", tool: "read",
+            argsSummary: "path: park.geojson",
+            outputPreview: park,
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("park.geojson")],
+                expanded: ["read-park"],
+                fullOutput: park
+            )
+        )
+        let writePark = ToolPresentationBuilder.build(
+            itemID: "write-park", tool: "write",
+            argsSummary: "path: park.geojson",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("park.geojson"),
+                    "content": .string(park),
+                ],
+                expanded: ["write-park"],
+                fullOutput: "ok"
+            )
+        )
+        let readPlaces = ToolPresentationBuilder.build(
+            itemID: "read-places", tool: "read",
+            argsSummary: "path: places.json",
+            outputPreview: places,
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: ["path": .string("places.json")],
+                expanded: ["read-places"],
+                fullOutput: places
+            )
+        )
+        let writePlaces = ToolPresentationBuilder.build(
+            itemID: "write-places", tool: "write",
+            argsSummary: "path: places.json",
+            outputPreview: "",
+            isError: false, isDone: true,
+            context: emptyContext(
+                args: [
+                    "path": .string("places.json"),
+                    "content": .string(places),
+                ],
+                expanded: ["write-places"],
+                fullOutput: "ok"
+            )
+        )
+
+        #expect(modeName(readPark.expandedContent) == "geoJSON")
+        #expect(modeName(writePark.expandedContent) == "geoJSON")
+        #expect(modeName(readPlaces.expandedContent) == "geoJSON")
+        #expect(modeName(writePlaces.expandedContent) == "geoJSON")
+
+        guard case .geoJSON(let readParkText, let readParkPath) = readPark.expandedContent else {
+            Issue.record("Expected read park.geojson map")
+            return
+        }
+        #expect(readParkText == park)
+        #expect(readParkPath == "park.geojson")
+
+        guard case .geoJSON(let writeParkText, let writeParkPath) = writePark.expandedContent else {
+            Issue.record("Expected write park.geojson map")
+            return
+        }
+        #expect(writeParkText == park)
+        #expect(writeParkPath == "park.geojson")
+
+        guard case .geoJSON(let readPlacesText, let readPlacesPath) = readPlaces.expandedContent else {
+            Issue.record("Expected sniffed places.json FeatureCollection map")
+            return
+        }
+        #expect(readPlacesText == places)
+        #expect(readPlacesPath == "places.json")
+
+        guard case .geoJSON(let writePlacesText, let writePlacesPath) = writePlaces.expandedContent else {
+            Issue.record("Expected write places.json FeatureCollection map")
+            return
+        }
+        #expect(writePlacesText == places)
+        #expect(writePlacesPath == "places.json")
+    }
+
     // MARK: - Extension tools
 
     @Test("extension collapsed uses segments when available")
@@ -2506,6 +2598,8 @@ private func modeName(_ content: ToolPresentationBuilder.ToolExpandedContent?) -
         return "text"
     case .delimitedTable:
         return "delimitedTable"
+    case .geoJSON:
+        return "geoJSON"
     case nil:
         return "nil"
     }

@@ -1958,6 +1958,7 @@ private func route(_ content: ToolPresentationBuilder.ToolExpandedContent) -> Ro
     case .readMedia, .audioMessage: return .readMedia
     case .status, .text:          return .text
     case .delimitedTable:         return .readMedia
+    case .geoJSON:                return .readMedia
     }
 }
 

@@ -253,8 +253,12 @@ struct FileIcon: Equatable, Sendable {
             return Self(symbolName: "paintbrush.fill", tint: .blue)
 
         // JSON
-        case "json", "jsonl", "geojson", "jsonc":
+        case "json", "jsonl", "jsonc":
             return Self(symbolName: "curlybraces", tint: .yellow)
+
+        // Maps
+        case "geojson", "topojson":
+            return Self(symbolName: "map", tint: .cyan)
 
         // Tables
         case "csv", "tsv":

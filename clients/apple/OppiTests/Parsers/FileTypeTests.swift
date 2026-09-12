@@ -38,6 +38,17 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "config.json") == .json)
     }
 
+    @Test func jsonBytesSniffFeatureCollectionGeometryCollectionAndTopology() {
+        let collection = #"{"type":"FeatureCollection","features":[]}"#
+        let geometries = #"{"type":"GeometryCollection","geometries":[]}"#
+        let topology = #"{"type":"Topology","objects":{},"arcs":[]}"#
+        #expect(FileType.detect(from: "places.json", content: collection) == .geojson)
+        #expect(FileType.detect(from: "places.json", content: geometries) == .geojson)
+        #expect(FileType.detect(from: "places.json", content: topology) == .topojson)
+        #expect(FileType.detect(from: "places.json") == .json)
+        #expect(FileType.detect(from: "package.json", content: #"{"name":"oppi"}"#) == .json)
+    }
+
     @Test func detectImage() {
         #expect(FileType.detect(from: "logo.png") == .image)
         #expect(FileType.detect(from: "photo.jpg") == .image)
@@ -156,6 +167,8 @@ struct FileTypeTests {
         #expect(FileType.plain.displayLabel == "Text")
         #expect(FileType.csv.displayLabel == "CSV")
         #expect(FileType.tsv.displayLabel == "TSV")
+        #expect(FileType.geojson.displayLabel == "GeoJSON")
+        #expect(FileType.topojson.displayLabel == "TopoJSON")
         #expect(FileType.code(language: .swift).displayLabel == "Swift")
     }
 
@@ -327,6 +340,8 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "notes.org").syntaxLanguage == .orgMode)
         #expect(FileType.detect(from: "export.csv").syntaxLanguage == nil)
         #expect(FileType.detect(from: "export.tsv").syntaxLanguage == nil)
+        #expect(FileType.detect(from: "park.geojson").syntaxLanguage == .json)
+        #expect(FileType.detect(from: "arcs.topojson").syntaxLanguage == .json)
         #expect(FileType.latex.syntaxLanguage == .latex)
         #expect(FileType.mermaid.syntaxLanguage == .mermaid)
         #expect(FileType.html.syntaxLanguage == .html)
@@ -343,6 +358,8 @@ struct FilePreviewCategoryTests {
         #expect(FileType.detect(from: "diagram.mmd").previewCategory == .text)
         #expect(FileType.detect(from: "export.csv").previewCategory == .text)
         #expect(FileType.detect(from: "export.tsv").previewCategory == .text)
+        #expect(FileType.detect(from: "park.geojson").previewCategory == .text)
+        #expect(FileType.detect(from: "arcs.topojson").previewCategory == .text)
     }
 
     @Test func mediaAndBinaryFilesKeepTheirCategories() {

@@ -195,6 +195,7 @@ struct IncrementalParseCorrectnessTests {
             case .video: return .text
             case .audio: return .text
             case .mermaidDiagram: return .codeBlock(language: "mermaid")
+            case .geoJSONMap: return .codeBlock(language: "geojson")
             case .latexBlock: return .codeBlock(language: "latex")
             }
         }

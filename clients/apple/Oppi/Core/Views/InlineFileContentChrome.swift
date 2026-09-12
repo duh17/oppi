@@ -121,6 +121,8 @@ private extension FullScreenCodeContent {
             return InlineReviewCommentSourceInfo(surface: .fullScreenCode, filePath: filePath, languageHint: "mermaid")
         case .delimitedTable(_, let filePath):
             return InlineReviewCommentSourceInfo(surface: .fullScreenSource, filePath: filePath, languageHint: nil)
+        case .geoJSON(_, let filePath):
+            return InlineReviewCommentSourceInfo(surface: .fullScreenSource, filePath: filePath, languageHint: "json")
         case .markdown, .html, .diff, .thinking, .terminal, .liveSource:
             return nil
         }

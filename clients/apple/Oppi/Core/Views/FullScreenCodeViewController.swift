@@ -649,6 +649,7 @@ final class FullScreenCodeViewController: UIViewController {
              .mermaid(let text, _),
              .graphviz(let text, _),
              .delimitedTable(let text, _),
+             .geoJSON(let text, _),
              .thinking(let text, _),
              .terminal(let text, _, _):
             textAndFirstLine = (text, 1)
@@ -1303,6 +1304,13 @@ final class FullScreenCodeViewController: UIViewController {
             view.applyReaderPreferences(readerPreferences(for: content))
             view.accessibilityIdentifier = "full-screen.delimited-table.body"
             return view
+        case .geoJSON(let text, let filePath):
+            let view = GeoJSONMapView(
+                plan: GeoJSONViewerPlan.resolved(path: filePath, text: text)
+            )
+            view.applyReaderPreferences(readerPreferences(for: content))
+            view.accessibilityIdentifier = "full-screen.geojson.body"
+            return view
         }
     }
 
@@ -1637,6 +1645,9 @@ final class FullScreenCodeViewController: UIViewController {
             if case .delimitedTable(let text, let filePath) = content {
                 return .plainText(content: text, filePath: filePath)
             }
+            if case .geoJSON(let text, let filePath) = content {
+                return .code(content: text, language: "json", filePath: filePath, startLine: 1)
+            }
         }
         return content
     }
@@ -1650,7 +1661,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .diff(let document):
             guard Self.isHTMLFilePath(document.filePath) else { return nil }
             return showSource ? String(localized: "Diff") : String(localized: "Render")
-        case .latex, .orgMode, .mermaid:
+        case .latex, .orgMode, .mermaid, .geoJSON:
             return showSource ? String(localized: "Rendered") : String(localized: "Source")
         case .delimitedTable:
             return showSource ? String(localized: "Table") : String(localized: "Source")
@@ -1677,6 +1688,9 @@ final class FullScreenCodeViewController: UIViewController {
             return .markdown
         case .latex, .mermaid, .delimitedTable:
             return .renderedDocument
+        case .geoJSON:
+            // MapKit ignores reader preferences; Source JSON uses `.code`.
+            return nil
         case .liveSource(let snapshot, _):
             return readerFamily(for: bodyContent(for: snapshot))
         }
@@ -1855,7 +1869,8 @@ final class FullScreenCodeViewController: UIViewController {
         case .liveSource(let snapshot, _):
             return copyText(for: semanticContent(for: snapshot))
         case .latex(let text, _), .orgMode(let text, _),
-             .mermaid(let text, _), .graphviz(let text, _), .delimitedTable(let text, _):
+             .mermaid(let text, _), .graphviz(let text, _), .delimitedTable(let text, _),
+             .geoJSON(let text, _):
             return text
         }
     }
@@ -1987,6 +2002,7 @@ final class FullScreenCodeViewController: UIViewController {
         case .html(let text, let filePath): return .html(text, fileName: filePath)
         case .graphviz(let text, let filePath): return .code(text, language: "dot", fileName: filePath)
         case .delimitedTable(let text, let filePath): return .plainText(text, fileName: filePath)
+        case .geoJSON(let text, let filePath): return .json(text, fileName: filePath)
         case .code(let text, let lang, let filePath, _): return .code(text, language: lang, fileName: filePath)
         case .plainText(let text, let filePath): return .plainText(text, fileName: filePath)
         case .thinking(let text, let stream):

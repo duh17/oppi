@@ -3233,6 +3233,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             // the real raster before the user reaches the item.
             let lineCount = CGFloat(countNewlines(code) + 1)
             return min(400, max(120, lineCount * 24 + 44))
+        case .geoJSONMap:
+            return 220
         case .latexBlock(let code):
             // TeX parsing plus CoreGraphics layout is too expensive for
             // first paint. Estimate from source lines; real rasters are
@@ -3814,6 +3816,7 @@ extension NativeFullScreenMarkdownBody {
             case .video: "video"
             case .audio: "audio"
             case .mermaidDiagram: "mermaid"
+            case .geoJSONMap: "geojson"
             case .latexBlock: "latex"
             }
         }

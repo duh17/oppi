@@ -71,7 +71,20 @@ enum ToolContentDescriptorBuilder {
         let normalizedTool = ToolCallFormatting.normalized(tool)
         let output = context.fullOutput.isEmpty ? outputPreview : context.fullOutput
         let outputTrimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fileMetadata = fileMetadata(args: context.args, argsSummary: argsSummary)
+        let writeContent = ToolCallFormatting.writeContent(from: context.args)
+        let sniffContent: String? = switch normalizedTool {
+        case "read":
+            outputTrimmed.isEmpty ? nil : outputTrimmed
+        case "write":
+            writeContent
+        default:
+            nil
+        }
+        let fileMetadata = fileMetadata(
+            args: context.args,
+            argsSummary: argsSummary,
+            content: sniffContent
+        )
         let mediaAttachments = mediaAttachments(from: context.details)
         var copyOutput: String? = outputTrimmed.isEmpty ? nil : outputTrimmed
         var copyCommand: String?
@@ -107,7 +120,6 @@ enum ToolContentDescriptorBuilder {
             }
 
         case "write":
-            let writeContent = ToolCallFormatting.writeContent(from: context.args)
             if let writeContent, !writeContent.isEmpty {
                 copyOutput = writeContent
                 content = fileDescriptor(
@@ -253,10 +265,11 @@ enum ToolContentDescriptorBuilder {
 
     static func fileMetadata(
         args: [String: JSONValue]?,
-        argsSummary: String
+        argsSummary: String,
+        content: String? = nil
     ) -> FileMetadata {
         let filePath = resolvedFilePath(args: args, argsSummary: argsSummary)
-        let fileType = filePath.map { FileType.detect(from: $0) }
+        let fileType = filePath.map { FileType.detect(from: $0, content: content) }
         return FileMetadata(
             filePath: filePath,
             fileType: fileType,
@@ -517,16 +530,24 @@ enum ToolContentDescriptorBuilder {
         startLine: Int,
         attachments: [ToolContentMediaAttachment]
     ) -> ToolContentDescriptor {
-        .file(
+        let fileType = sniffedFileType(path: metadata.filePath, text: text, fallback: metadata.fileType)
+        return .file(
             ToolContentDescriptor.File(
                 text: text,
                 filePath: metadata.filePath,
-                fileType: metadata.fileType,
-                language: metadata.language,
+                fileType: fileType,
+                language: fileType?.syntaxLanguage ?? metadata.language,
                 startLine: startLine,
                 attachments: attachments
             )
         )
+    }
+
+    private static func sniffedFileType(path: String?, text: String, fallback: FileType?) -> FileType? {
+        if let path {
+            return FileType.detect(from: path, content: text)
+        }
+        return GeographicJSONSniffer.fileType(from: text) ?? fallback
     }
 
     private static func markdownDescriptor(text: String, filePath: String?) -> ToolContentDescriptor.Markdown {

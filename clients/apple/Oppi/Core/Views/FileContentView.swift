@@ -111,6 +111,8 @@ struct FileContentView: View {
             PlainTextView(content: content, startLine: startLine, presentation: presentation, filePath: filePath)
         case .csv, .tsv:
             DelimitedTableFileView(content: content, filePath: filePath, presentation: presentation)
+        case .geojson, .topojson:
+            GeoJSONFileView(content: content, filePath: filePath, presentation: presentation)
 
         // Document renderers — source view until native renderers land
         case .latex:

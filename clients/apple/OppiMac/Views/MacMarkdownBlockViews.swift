@@ -95,7 +95,7 @@ enum MacMarkdownBlockWidthPaint: Sendable {
     static func role(for block: MarkdownBlock) -> Role {
         guard case .codeBlock(let language, let code) = block else { return .prose }
         switch MacMarkdownPaintDispatch.codeBlockKind(language: language, code: code) {
-        case .mermaidDiagram, .latexFormula:
+        case .mermaidDiagram, .geoJSONMap, .latexFormula:
             return .graphical
         default:
             return .prose
@@ -382,6 +382,15 @@ struct MacMarkdownBlockView: View {
         switch MacMarkdownPaintDispatch.codeBlockKind(language: language, code: code) {
         case .mermaidDiagram(let diagram):
             MacMermaidDiagramView(code: diagram)
+        case .geoJSONMap(let mapCode, let kind):
+            MacGeoJSONPreviewView(
+                plan: GeoJSONViewerPlan.resolved(
+                    path: kind == .topojson ? "inline.topojson" : "inline.geojson",
+                    text: mapCode
+                ),
+                fillsColumn: false
+            )
+            .frame(minHeight: 180, maxHeight: 280)
         case .latexFormula(let formula):
             MacLatexFormulaView(code: formula)
         case .codeListing(let listingLanguage, let listing):

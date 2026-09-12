@@ -63,6 +63,19 @@ enum MacToolDocumentColumnPaint {
         }
     }
 
+    static func fileUsesGeoJSONPreview(_ file: ToolContentDescriptor.File) -> Bool {
+        let path = file.filePath ?? ""
+        if GeoJSONViewerPlan.opening(path: path, text: file.text) != nil {
+            return true
+        }
+        switch file.fileType {
+        case .geojson, .topojson:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func fileUsesPDFPreview(_ file: ToolContentDescriptor.File) -> Bool {
         if file.fileType == .pdf {
             return true
@@ -675,6 +688,17 @@ private struct MacToolDocumentFileView: View {
             text: file.text
         ) {
             MacDelimitedTablePreviewView(
+                plan: plan,
+                fillsColumn: true,
+                filePath: file.filePath
+            )
+            .padding(12)
+        } else if let plan = GeoJSONViewerPlan.opening(
+            fileType: file.fileType ?? .plain,
+            path: file.filePath,
+            text: file.text
+        ) {
+            MacGeoJSONPreviewView(
                 plan: plan,
                 fillsColumn: true,
                 filePath: file.filePath

@@ -384,6 +384,8 @@ enum ToolPresentationBuilder {
         case markdown(text: String, filePath: String? = nil)
         /// Rendered CSV/TSV table in the expanded tool row (full-screen keeps Table/Source).
         case delimitedTable(text: String, filePath: String?)
+        /// Rendered GeoJSON/TopoJSON map in the expanded tool row (full-screen keeps Rendered/Source).
+        case geoJSON(text: String, filePath: String?)
         /// Media renderer for images/audio in read output
         case readMedia(output: String, filePath: String?, startLine: Int, attachments: [ToolMediaAttachment])
         /// Audio message card with server-owned session attachment replay.
@@ -531,7 +533,8 @@ enum ToolPresentationBuilder {
         startLine: Int,
         attachments: [ToolMediaAttachment]
     ) -> ToolExpandedContent {
-        switch metadata.fileType {
+        let fileType = resolvedExpandedFileType(metadata: metadata, text: text)
+        switch fileType {
         case .markdown:
             return .markdown(text: text, filePath: metadata.filePath)
         case .orgMode:
@@ -545,7 +548,19 @@ enum ToolPresentationBuilder {
             )
         case .csv, .tsv:
             return .delimitedTable(text: text, filePath: metadata.filePath)
-        case .html, .plain, .code, .json, .pdf, .binary,
+        case .geojson, .topojson:
+            return .geoJSON(text: text, filePath: metadata.filePath)
+        case .json:
+            if GeographicJSONSniffer.fileType(from: text) != nil {
+                return .geoJSON(text: text, filePath: metadata.filePath)
+            }
+            return .code(
+                text: text,
+                language: metadata.language,
+                startLine: startLine,
+                filePath: metadata.filePath
+            )
+        case .html, .plain, .code, .pdf, .binary,
              .latex, .mermaid, .graphviz, .none:
             return .code(
                 text: text,
@@ -554,6 +569,17 @@ enum ToolPresentationBuilder {
                 filePath: metadata.filePath
             )
         }
+    }
+
+    /// Prefer file bytes so `places.json` FeatureCollection/Topology becomes a map.
+    private static func resolvedExpandedFileType(
+        metadata: FilePresentationMetadata,
+        text: String
+    ) -> FileType? {
+        if let path = metadata.filePath {
+            return FileType.detect(from: path, content: text)
+        }
+        return GeographicJSONSniffer.fileType(from: text) ?? metadata.fileType
     }
 
     static func shouldWarnInlineMediaForToolOutput(

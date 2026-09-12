@@ -68,6 +68,8 @@ struct FullScreenMarkdownStressCorpusTests {
             switch segment {
             case .mermaidDiagram:
                 mermaid += 1
+            case .geoJSONMap:
+                break
             case .latexBlock:
                 latex += 1
             case .table:
@@ -305,6 +307,8 @@ struct FullScreenMarkdownStressCorpusTests {
                     visible.contains { timelineFirstView(ofType: NativeMarkdownAudioView.self, in: $0) != nil },
                     "audio item \(item) not visible as NativeMarkdownAudioView"
                 )
+            case .geoJSONMap:
+                break
             case .mermaidDiagram:
                 let mermaid = visible.compactMap { timelineFirstView(ofType: NativeMermaidBlockView.self, in: $0) }
                 #expect(!mermaid.isEmpty, "mermaid item \(item) not visible")

@@ -11,6 +11,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
         case status
         case text
         case delimitedTable
+        case geoJSON
     }
 
     let mode: ExpandedMode
@@ -45,7 +46,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
                 allowsHorizontalScroll: isDone
             )
 
-        case .markdown, .delimitedTable:
+        case .markdown, .delimitedTable, .geoJSON:
             return Self(
                 mode: mode,
                 enablesTapCopyGesture: true,
@@ -76,7 +77,7 @@ struct ToolTimelineRowInteractionPolicy: Equatable {
 
     private static func supportsFullScreenPreview(mode: ExpandedMode) -> Bool {
         switch mode {
-        case .diff, .code, .markdown, .bash, .text, .delimitedTable:
+        case .diff, .code, .markdown, .bash, .text, .delimitedTable, .geoJSON:
             return true
         case .readMedia, .audioMessage, .status:
             return false
@@ -105,6 +106,8 @@ private extension ToolTimelineRowInteractionPolicy.ExpandedMode {
             self = .text
         case .delimitedTable:
             self = .delimitedTable
+        case .geoJSON:
+            self = .geoJSON
         }
     }
 }

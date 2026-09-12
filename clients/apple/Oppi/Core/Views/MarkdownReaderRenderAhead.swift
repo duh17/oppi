@@ -20,6 +20,7 @@ struct MarkdownReaderSegmentID: Hashable, Sendable {
         case video
         case audio
         case mermaid
+        case geoJSON
         case latex
     }
 }
@@ -35,6 +36,7 @@ extension FlatSegment {
         case .video: .video
         case .audio: .audio
         case .mermaidDiagram: .mermaid
+        case .geoJSONMap: .geoJSON
         case .latexBlock: .latex
         }
     }

@@ -44,7 +44,7 @@ describe("Oppi documentation prompt hint", () => {
     expect(guide).toContain("Other Mermaid types show an unsupported placeholder");
     expect(guide).not.toContain("```mermaid");
     expect(guide).toContain("fenced latex blocks");
-    expect(guide).toContain("images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, Graphviz");
+    expect(guide).toContain("images, audio, video, PDF, HTML, Org, LaTeX, Mermaid, Graphviz, GeoJSON, TopoJSON");
     expect(guide).toContain("![[path/to/video.mp4]]");
     expect(guide).toContain("[[path/to/video.mp4]] stays a file link");
     expect(guide).toContain("![[path/to/clip.m4a]]");

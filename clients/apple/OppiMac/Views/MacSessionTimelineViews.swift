@@ -1502,6 +1502,18 @@ private struct ToolTimelineBubble: View {
             )
             .frame(maxHeight: isExpanded ? 360 : 180)
             .clipped()
+        } else if let plan = GeoJSONViewerPlan.opening(
+            fileType: file.fileType ?? .plain,
+            path: file.filePath,
+            text: file.text
+        ) {
+            MacGeoJSONPreviewView(
+                plan: plan,
+                fillsColumn: false,
+                filePath: file.filePath
+            )
+            .frame(maxHeight: isExpanded ? 360 : 180)
+            .clipped()
         } else if let kind = MacMarkupPreviewKind.from(file: file) {
             MacMarkupSourcePreviewView(source: file.text, kind: kind, fillsColumn: false)
                 .frame(maxHeight: isExpanded ? 360 : 180)

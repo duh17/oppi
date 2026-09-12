@@ -87,6 +87,17 @@ final class RenderableDocumentView: UIView {
                 sourceLanguage: nil
             )
         }
+
+        static func geoJSON(kind: GeoJSONViewerPlan.Kind) -> Config {
+            Config(
+                iconName: "map",
+                iconColor: { UIColor($0.cyan) },
+                label: kind.fileType.displayLabel,
+                sourceToggleLabels: (rendered: "Rendered", source: "Source"),
+                sourceToggleIcon: "map",
+                sourceLanguage: SyntaxLanguage.json.displayName
+            )
+        }
     }
 
     // MARK: - Properties

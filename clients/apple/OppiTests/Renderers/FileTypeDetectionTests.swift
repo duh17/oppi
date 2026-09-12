@@ -62,6 +62,38 @@ struct FileTypeDetectionTests {
         #expect(FileType.detect(from: "notes.TSV") == .tsv)
     }
 
+    // MARK: - GeoJSON / TopoJSON
+
+    @Test func detectGeojsonExtension() {
+        #expect(FileType.detect(from: "park.geojson") == .geojson)
+        #expect(FileType.detect(from: "PARK.GEOJSON") == .geojson)
+    }
+
+    @Test func detectTopojsonExtension() {
+        #expect(FileType.detect(from: "counties.topojson") == .topojson)
+    }
+
+    @Test func jsonBytesSniffGeographicCollections() {
+        #expect(
+            FileType.detect(
+                from: "places.json",
+                content: #"{"type":"FeatureCollection","features":[]}"#
+            ) == .geojson
+        )
+        #expect(
+            FileType.detect(
+                from: "places.json",
+                content: #"{"type":"GeometryCollection","geometries":[]}"#
+            ) == .geojson
+        )
+        #expect(
+            FileType.detect(
+                from: "places.json",
+                content: #"{"type":"Topology","objects":{},"arcs":[]}"#
+            ) == .topojson
+        )
+    }
+
     // MARK: - Display Labels
 
     @Test func displayLabels() {
@@ -71,6 +103,8 @@ struct FileTypeDetectionTests {
         #expect(FileType.graphviz.displayLabel == "Graphviz")
         #expect(FileType.csv.displayLabel == "CSV")
         #expect(FileType.tsv.displayLabel == "TSV")
+        #expect(FileType.geojson.displayLabel == "GeoJSON")
+        #expect(FileType.topojson.displayLabel == "TopoJSON")
     }
 
     // MARK: - SyntaxLanguage Detection

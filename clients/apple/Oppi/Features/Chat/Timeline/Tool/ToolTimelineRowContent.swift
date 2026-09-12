@@ -944,6 +944,26 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         expandedReadMediaViewportHeightConstraint = heightConstraint
     }
 
+    private func installExpandedGeoJSONView(text: String, filePath: String?) {
+        let plan = GeoJSONViewerPlan.resolved(path: filePath, text: text)
+        if let existing = expandedReadMediaContentView as? GeoJSONMapView,
+           existing.displays(plan) {
+            return
+        }
+
+        clearExpandedReadMediaView()
+        let view = GeoJSONMapView(plan: plan)
+        view.accessibilityIdentifier = "chat.timeline.row.\(currentConfiguration.itemID).geojson"
+        installExpandedEmbeddedView(view)
+        expandedReadMediaViewportHeightConstraint?.isActive = false
+        let heightConstraint = expandedReadMediaContainer.heightAnchor.constraint(
+            equalTo: expandedScrollView.frameLayoutGuide.heightAnchor
+        )
+        heightConstraint.priority = .required
+        heightConstraint.isActive = true
+        expandedReadMediaViewportHeightConstraint = heightConstraint
+    }
+
     private func installExpandedEmbeddedView(
         _ view: UIView,
         invalidatesOuterLayout: Bool = true
@@ -1658,7 +1678,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         switch content {
         case .audioMessage(let text, let attachmentId, _, _, _):
             return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentId.isEmpty
-        case .bash, .diff, .code, .markdown, .delimitedTable, .readMedia, .status, .text:
+        case .bash, .diff, .code, .markdown, .delimitedTable, .geoJSON, .readMedia, .status, .text:
             return true
         }
     }
@@ -1971,6 +1991,25 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 invalidateLayout: true,
                 installAction: .delimitedTable(text: text, filePath: filePath)
             )
+
+        case .geoJSON(let text, let filePath):
+            var hasher = Hasher()
+            hasher.combine(text)
+            hasher.combine(filePath ?? "")
+            hasher.combine(ThemeRuntimeState.currentThemeID())
+            return ExpandedRenderOutput(
+                renderSignature: hasher.finalize(),
+                renderedText: text,
+                shouldAutoFollow: false,
+                viewportPolicy: viewportPolicy,
+                verticalLock: false,
+                scrollBehavior: .preserve,
+                lineBreakMode: .byWordWrapping,
+                horizontalScroll: false,
+                deferredHighlight: nil,
+                invalidateLayout: true,
+                installAction: .geoJSON(text: text, filePath: filePath)
+            )
         }
     }
 
@@ -2011,6 +2050,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             )
         case .delimitedTable(let text, let filePath):
             installExpandedDelimitedTableView(text: text, filePath: filePath)
+        case .geoJSON(let text, let filePath):
+            installExpandedGeoJSONView(text: text, filePath: filePath)
         }
 
         switch output.surface {
@@ -2471,6 +2512,12 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             )
 
         case .delimitedTable(_, let filePath):
+            return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
+                surface: .fullScreenSource,
+                filePath: filePath
+            )
+
+        case .geoJSON(_, let filePath):
             return reviewCommentSelectionContext.sourceContextIgnoringSurfaceOverride(
                 surface: .fullScreenSource,
                 filePath: filePath

@@ -72,6 +72,43 @@ struct FlatSegmentBuildTests {
         }
     }
 
+    @Test func geojsonFenceProducesMapSegment() {
+        let code = "{\"type\":\"Point\",\"coordinates\":[-121.7603,46.8523]}"
+        let blocks: [MarkdownBlock] = [.codeBlock(language: "geojson", code: code)]
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(segments.count == 1)
+        if case .geoJSONMap(let mapped, let kind) = segments[0] {
+            #expect(mapped == code)
+            #expect(kind == .geojson)
+        } else {
+            Issue.record("Expected .geoJSONMap segment, got \(segments[0])")
+        }
+    }
+
+    @Test func topojsonFenceProducesMapSegment() {
+        let code = "{\"type\":\"Topology\",\"objects\":{},\"arcs\":[]}"
+        let blocks: [MarkdownBlock] = [.codeBlock(language: "topojson", code: code)]
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(segments.count == 1)
+        if case .geoJSONMap(let mapped, let kind) = segments[0] {
+            #expect(mapped == code)
+            #expect(kind == .topojson)
+        } else {
+            Issue.record("Expected .geoJSONMap for topojson, got \(segments[0])")
+        }
+    }
+
+    @Test func jsonFenceStaysCodeNotAMap() {
+        let blocks: [MarkdownBlock] = [.codeBlock(language: "json", code: "{\"type\":\"FeatureCollection\"}")]
+        let segments = FlatSegment.build(from: blocks, themeID: .dark)
+        #expect(segments.count == 1)
+        if case .codeBlock(let lang, _) = segments[0] {
+            #expect(lang == "json")
+        } else {
+            Issue.record("Expected .codeBlock for json fence, got \(segments[0])")
+        }
+    }
+
     @Test func nonMermaidCodeBlockStaysAsCodeBlock() {
         let blocks: [MarkdownBlock] = [.codeBlock(language: "python", code: "print('hi')")]
         let segments = FlatSegment.build(from: blocks, themeID: .dark)

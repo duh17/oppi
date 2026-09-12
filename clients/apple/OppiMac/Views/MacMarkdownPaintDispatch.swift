@@ -4,6 +4,7 @@ import Foundation
 /// this only classifies already-parsed `MarkdownBlock` / `MarkdownInline` nodes.
 enum MacMarkdownPaintKind: Equatable, Sendable {
     case mermaidDiagram(code: String)
+    case geoJSONMap(code: String, kind: GeoJSONViewerPlan.Kind)
     case latexFormula(code: String)
     case codeListing(language: String?, code: String)
     case image(alt: String, source: String?, workspaceID: String?, sessionID: String?)
@@ -91,7 +92,7 @@ enum MacMarkdownPaintDispatch {
             sourceDirectory: sourceDirectory
         ).contains { kind in
             switch kind {
-            case .mermaidDiagram, .codeListing, .image, .video, .audio, .latexFormula, .table, .html, .svg:
+            case .mermaidDiagram, .geoJSONMap, .codeListing, .image, .video, .audio, .latexFormula, .table, .html, .svg:
                 return true
             case .prose:
                 return false
@@ -182,6 +183,14 @@ enum MacMarkdownPaintDispatch {
     static func codeBlockKind(language: String?, code: String) -> MacMarkdownPaintKind {
         guard let language, !language.isEmpty else {
             return .codeListing(language: language, code: code)
+        }
+        switch language.lowercased() {
+        case "geojson":
+            return .geoJSONMap(code: code, kind: .geojson)
+        case "topojson":
+            return .geoJSONMap(code: code, kind: .topojson)
+        default:
+            break
         }
         switch SyntaxLanguage.detect(language) {
         case .mermaid:

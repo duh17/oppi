@@ -108,6 +108,7 @@ enum FileShareService {
             case .latex: return .latex(text, fileName: fileName)
             case .orgMode: return .orgMode(text, fileName: fileName)
             case .mermaid: return .mermaid(text, fileName: fileName)
+            case .geojson, .topojson: return .json(text, fileName: fileName)
             case .graphviz: return .code(text, language: "dot", fileName: fileName)
             case .code(let lang): return .code(text, language: lang.displayName, fileName: fileName)
             case .plain: return .plainText(text, fileName: fileName)

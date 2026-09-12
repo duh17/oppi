@@ -1745,6 +1745,8 @@ struct ChatTimelinePreparationRunwayTests {
                 "audio"
             case .mermaidDiagram(let code):
                 "mermaid:\(code)"
+            case .geoJSONMap(let code, let kind):
+                "geojson:\(kind):\(code)"
             case .latexBlock(let code):
                 "latex:\(code)"
             }

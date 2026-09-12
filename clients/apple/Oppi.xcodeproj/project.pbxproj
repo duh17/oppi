@@ -12,6 +12,7 @@
 		005AE2A1D959A081F8FE0721 /* UIHarnessExpandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EE1E8610B8699DBE3EBD242 /* UIHarnessExpandTests.swift */; };
 		00799A324D2F692949854D13 /* ScrollStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC3A1311FC05C15CFAC8136 /* ScrollStabilityTests.swift */; };
 		009ACBADE9705F95023AB904 /* GuidedControlSessionComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9287F5E9C65CF8ADA77EE4B5 /* GuidedControlSessionComposer.swift */; };
+		00F01893108B16B7B922FA6C /* GeoJSONMapModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6291D75ECEC830843EA51883 /* GeoJSONMapModel.swift */; };
 		00F959E8E8B58296BC265078 /* OrgNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 713CA047C458F5A24327E215 /* OrgNode.swift */; };
 		012856EBB235175720D54A71 /* MermaidERRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABF7269A97D1DCF8EEDE7094 /* MermaidERRenderer.swift */; };
 		013EAD264D2E7732EBF7E119 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 087BC24310DCDE08F7568EA3 /* OnboardingView.swift */; };
@@ -281,6 +282,7 @@
 		2936EAB114CE09A936A5BB1D /* ProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A9E443B9369A8BC1D64A280 /* ProcessRunner.swift */; };
 		297EA6F003652F6BAF18CE61 /* VoiceInputManager+LocaleSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018F72CE9E2860A2A97D7DDC /* VoiceInputManager+LocaleSupport.swift */; };
 		297F8F21EAADB851E652965D /* CascadiaCode-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D277EA46947AD8CF33855744 /* CascadiaCode-Bold.ttf */; };
+		297FE1E2FEA94ABD8AED1202 /* GeoJSONFileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDDE9E9ECEFB4BCCCBB69468 /* GeoJSONFileView.swift */; };
 		2992AEC062F95672B38D6C3F /* SYNTAX-HIGHLIGHTING.md in Resources */ = {isa = PBXBuildFile; fileRef = 3D88E6941A0BE9E3A1030545 /* SYNTAX-HIGHLIGHTING.md */; };
 		29B330AC0595C607167B1835 /* AudioLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBF480164E5D7F4E1E3504A7 /* AudioLyrics.swift */; };
 		29C6A11AFBCCF95E38AA5768 /* WorkspaceReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEF35BE07CADBFD0BA554CB6 /* WorkspaceReview.swift */; };
@@ -334,6 +336,8 @@
 		32B03D2332F17B7998BB01F2 /* HardwareKeybindingAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31DE355F34A1CF649D66BB56 /* HardwareKeybindingAdapter.swift */; };
 		32D84C25E0C48D8F746F2B01 /* MermaidTimelineConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D78558A65FC1311AE52B46FB /* MermaidTimelineConformanceTests.swift */; };
 		333590C7FE319DCD992D8631 /* OrgParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B03E13EB1486F5CFBB693C6 /* OrgParser.swift */; };
+		3352846503E545FA4BCD0763 /* MacGeoJSONPreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C34BEFF6590B326715747A5 /* MacGeoJSONPreviewTests.swift */; };
+		341458CFAF12DF1F84EC1B19 /* GeoJSONDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C635485169C4B5F90D22E4EA /* GeoJSONDocumentTests.swift */; };
 		3420EE0776CF31C558F50609 /* ExtensionNativeMarkdownSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38079C013A567DD846E84749 /* ExtensionNativeMarkdownSupport.swift */; };
 		342432E3CD8BB32538386DB2 /* ToolRowPlanContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D9184A5D6C0C1646FAC5E0 /* ToolRowPlanContractTests.swift */; };
 		3425EB826354F400DD8FA024 /* FileBrowserHostHomeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AD3AD655356B7266A3581D3 /* FileBrowserHostHomeTests.swift */; };
@@ -385,6 +389,7 @@
 		3A206E5ED7ED9486258281A8 /* OppiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10DAFC602A678F0A1BACE53 /* OppiApp.swift */; };
 		3A2CC2DC8D07E60CBAD35E82 /* AuthenticatedMediaPlaybackAudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0FBF368ACE89E38B2CDCB6 /* AuthenticatedMediaPlaybackAudioTests.swift */; };
 		3A3ABC2CB2AB59D0D4EF4DB6 /* MermaidJourneyRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94F97095846D9C1AD24928AC /* MermaidJourneyRenderer.swift */; };
+		3A9840918C918BC88FECF4A4 /* GeoJSONDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F1EEF61493D0E53B9BB03E3 /* GeoJSONDocument.swift */; };
 		3AAF0578F2F44DD11FB1F6BF /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B99EC6904A0849335BAC3D /* AppDelegate.swift */; };
 		3AFF1B16E99759C34404DA4C /* ServerConnectionTypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68FFE421F8D984376C30215 /* ServerConnectionTypesTests.swift */; };
 		3B1BB1EC2B5ACE9B05632F32 /* SpinnerStyleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D430CEE01DE50740BF7C94EC /* SpinnerStyleTests.swift */; };
@@ -870,6 +875,7 @@
 		8519AB9206943102A615B5D9 /* MacWorkspaceWorktreePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3582B8B0D278E55DF6D2351B /* MacWorkspaceWorktreePresentation.swift */; };
 		8550AC6012D30159F06415E3 /* MacSessionFilePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D5A668B2751BD147404D107 /* MacSessionFilePreview.swift */; };
 		856DE7BDA3D911A808594D22 /* DeviceKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41BEBB809604E16A370BD919 /* DeviceKey.swift */; };
+		85725178A7DFDB5BD52D095F /* GeoJSONMapModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6291D75ECEC830843EA51883 /* GeoJSONMapModel.swift */; };
 		8578FCF74A611E8808FA4FDB /* ServerSkillListPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD4CCF57864B54E419000917 /* ServerSkillListPresentation.swift */; };
 		85A6FBF37C07035331053095 /* TestWaiters.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1C37E10063DE9715CA090E3 /* TestWaiters.swift */; };
 		85E45C9A07BE83DD32F564C5 /* ServerConnectionModelCommandsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E32650EFD98AE8E1B704FD6 /* ServerConnectionModelCommandsTests.swift */; };
@@ -929,6 +935,7 @@
 		8E8279F64DA3BB5D707EB35B /* DeviceKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41BEBB809604E16A370BD919 /* DeviceKey.swift */; };
 		8E82A785A80BC3C117EE9643 /* AudioPlayerSeekTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6644D27892D427D076917391 /* AudioPlayerSeekTests.swift */; };
 		8E8AB0B84AAC495D4200715F /* ServerResourcesScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = D68EC1FA1F03FD12342D6452 /* ServerResourcesScreenshotPreview.swift */; };
+		8E9C1FEBED825DBA4C6FA757 /* GeoJSONDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F1EEF61493D0E53B9BB03E3 /* GeoJSONDocument.swift */; };
 		8ECB768708C34A584F00A191 /* ExtensionSurfacePanelChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 464AC7A260868A69E02A91FE /* ExtensionSurfacePanelChromeTests.swift */; };
 		8ED90B2DC0381AEA969BF4A3 /* FileIndexStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9281422D1136DD4ED4E6D6D8 /* FileIndexStore.swift */; };
 		8EECB2E3C97DB150611A4BED /* MacToolDocumentColumn.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDB1A19208522C50E08970C8 /* MacToolDocumentColumn.swift */; };
@@ -1050,6 +1057,7 @@
 		A0D9B74966824F37C3701966 /* ReviewCommentFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108BB8C94EE6FC1E33CB64E9 /* ReviewCommentFormattingTests.swift */; };
 		A0ED96ABA8D35321A17A95A0 /* ServerResourceModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A429C9296CC5E334F6E12068 /* ServerResourceModelTests.swift */; };
 		A0FE54A5BE09BF3E4EB497E3 /* MermaidSequenceRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8BA002B47802CA30233976B /* MermaidSequenceRendererTests.swift */; };
+		A1026FC6B76D630958BC1F31 /* MacGeoJSONPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C35A194A929417DEDA870950 /* MacGeoJSONPreview.swift */; };
 		A11C9BC092692469B2829A89 /* MermaidMindmapRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127CFBFDDD62A73231158924 /* MermaidMindmapRenderer.swift */; };
 		A13B94D7783903030AA5288F /* DocumentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07455A7D1D33D7830E8197C5 /* DocumentRenderer.swift */; };
 		A178500F48D26245D8B7114F /* TimelineScrollConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AF1B0D0BA36107442C46714 /* TimelineScrollConformanceTests.swift */; };
@@ -1254,6 +1262,7 @@
 		C069A00C8D1AD2EF51A46B51 /* FullScreenImageViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E353CD6081B3126767E06A5 /* FullScreenImageViewController.swift */; };
 		C0909E42177D736F610A5552 /* MacScreenAwakeControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B076BE79358DCB57D26B64B3 /* MacScreenAwakeControllerTests.swift */; };
 		C0931CF467341EA0F0ACDCA8 /* MermaidJourneyParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B8D5B1CE933B1C98D0411 /* MermaidJourneyParser.swift */; };
+		C0AAA84B21EDDC64F324C1BF /* GeoJSONMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22BEDBE8594675D3ECA26F0A /* GeoJSONMapView.swift */; };
 		C0BB27F2808CFAAECD6B8DBA /* mixed-markdown-stress-corpus.md in Resources */ = {isa = PBXBuildFile; fileRef = 776FDBD7D6EB1C0D4603C712 /* mixed-markdown-stress-corpus.md */; };
 		C1050B71C1909901682D05C9 /* SessionStreamCatchUpTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41779EE867997F9792471EFC /* SessionStreamCatchUpTracker.swift */; };
 		C107428F2FE8A5DCB1D4C69E /* MacSessionTimelineAutoFollowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2664804AEBE9B60684649418 /* MacSessionTimelineAutoFollowTests.swift */; };
@@ -1445,6 +1454,7 @@
 		DE01DB7BC5F5D4A193BFC14B /* MermaidNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B1ED7BE6519C6D91B2FD15 /* MermaidNode.swift */; };
 		DE187C8891A93C22CF17F923 /* MacSessionShellViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB2EECA5030F8B2E2E2EE8D7 /* MacSessionShellViews.swift */; };
 		DE8C9F9E1D5318C6D1899978 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 11886E64F29A908EA90575A2 /* PrivacyInfo.xcprivacy */; };
+		DEAF4E1B5E36AAF2E67521FF /* NativeGeoJSONBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 326FCAA1D955145A1BE861E2 /* NativeGeoJSONBlockView.swift */; };
 		DED6161BDA4F22D97AF8700B /* DictationComposerPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29AC76370C9FA792205F4099 /* DictationComposerPolicy.swift */; };
 		DF052C267A979F03D7EF95BD /* MermaidFlowchartConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CEC611424DEB6963E065374 /* MermaidFlowchartConformanceTests.swift */; };
 		DF326CECDEEFEB75EF6D8DAB /* TimelineReducerStreamingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD0B82407A341F0CBA509C3 /* TimelineReducerStreamingTests.swift */; };
@@ -1917,6 +1927,7 @@
 		1B6DF6118CCD51A710EFA8FC /* MacSessionSearchPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionSearchPresentation.swift; sourceTree = "<group>"; };
 		1C2526925920C92F7FEF2A86 /* MarkdownTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextTests.swift; sourceTree = "<group>"; };
 		1C2F15E704F4BD87418BEAA4 /* DeviceAuthIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAuthIntegrationTests.swift; sourceTree = "<group>"; };
+		1C34BEFF6590B326715747A5 /* MacGeoJSONPreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacGeoJSONPreviewTests.swift; sourceTree = "<group>"; };
 		1C7B840A895CE9C0F1817DF0 /* WebSocketRecoveryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketRecoveryPolicy.swift; sourceTree = "<group>"; };
 		1CE2448FA9B2217CAEA09AC7 /* KeyboardSuppressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardSuppressionTests.swift; sourceTree = "<group>"; };
 		1D920FA4562860EBED710D56 /* ChatActionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatActionHandler.swift; sourceTree = "<group>"; };
@@ -1935,6 +1946,7 @@
 		221CF6E92CE06F3892EAA6F2 /* ServerMessageEffectsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerMessageEffectsTests.swift; sourceTree = "<group>"; };
 		224165BF117754E9EF33CBD0 /* OnboardingStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingStateTests.swift; sourceTree = "<group>"; };
 		226CC4101913DDB0E2FDE9B3 /* ExtensionSurfaceURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfaceURLTests.swift; sourceTree = "<group>"; };
+		22BEDBE8594675D3ECA26F0A /* GeoJSONMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoJSONMapView.swift; sourceTree = "<group>"; };
 		22CBADB19FF5C739FC72FA85 /* AppIcon.icon */ = {isa = PBXFileReference; path = AppIcon.icon; sourceTree = "<group>"; };
 		22F98E33A192E987510F5570 /* FileIconTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileIconTests.swift; sourceTree = "<group>"; };
 		231ADF9B92A7651922BF7C1D /* ShareQuickSessionPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareQuickSessionPayload.swift; sourceTree = "<group>"; };
@@ -2026,6 +2038,7 @@
 		31BC6D764FFC119A8DD652DD /* AppHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppHaptics.swift; sourceTree = "<group>"; };
 		31C346B7254F9AD0472A019A /* VoiceTimelinePresentationAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTimelinePresentationAdapterTests.swift; sourceTree = "<group>"; };
 		31DE355F34A1CF649D66BB56 /* HardwareKeybindingAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareKeybindingAdapter.swift; sourceTree = "<group>"; };
+		326FCAA1D955145A1BE861E2 /* NativeGeoJSONBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGeoJSONBlockView.swift; sourceTree = "<group>"; };
 		3277D42879F451F1119D4C7B /* ServerSyncState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSyncState.swift; sourceTree = "<group>"; };
 		327944AD5D492A7669B1D041 /* DeltaCoalescer+Telemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DeltaCoalescer+Telemetry.swift"; sourceTree = "<group>"; };
 		32C1DCD6795B5C6E5C5595F3 /* WhatsNewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewView.swift; sourceTree = "<group>"; };
@@ -2276,6 +2289,7 @@
 		61FF062A8C20483AB79BBE57 /* ChatSessionRuntimeTelemetryTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionRuntimeTelemetryTracker.swift; sourceTree = "<group>"; };
 		620673961F94D2666E3D7BEB /* DictationStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationStreamClient.swift; sourceTree = "<group>"; };
 		628DF4C77332B9B1C1F8879F /* BashToolRowViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BashToolRowViewTests.swift; sourceTree = "<group>"; };
+		6291D75ECEC830843EA51883 /* GeoJSONMapModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoJSONMapModel.swift; sourceTree = "<group>"; };
 		62B65456465F2E93C3070661 /* AppIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIdentifiers.swift; sourceTree = "<group>"; };
 		62F659A4E66A248F204ED42E /* ToolEventMapperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolEventMapperTests.swift; sourceTree = "<group>"; };
 		62F6F1FD04D66F074F1954F0 /* PaperMarkupCanvasHostController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaperMarkupCanvasHostController.swift; sourceTree = "<group>"; };
@@ -2340,6 +2354,7 @@
 		6EE1E8610B8699DBE3EBD242 /* UIHarnessExpandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIHarnessExpandTests.swift; sourceTree = "<group>"; };
 		6EFA462E83C1AF4929F888A8 /* WorkspaceStoppedSessionsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStoppedSessionsSection.swift; sourceTree = "<group>"; };
 		6F0D6477E0883037F7333F2D /* ShareSheetQuickSessionE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSheetQuickSessionE2ETests.swift; sourceTree = "<group>"; };
+		6F1EEF61493D0E53B9BB03E3 /* GeoJSONDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoJSONDocument.swift; sourceTree = "<group>"; };
 		6F2CA632DE148695D6776950 /* CodeBlockWrappingHarnessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeBlockWrappingHarnessView.swift; sourceTree = "<group>"; };
 		6F39F71544939CACEB47798D /* GitStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitStatus.swift; sourceTree = "<group>"; };
 		6FAC6584DA592860CDBC370D /* ComposerDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraft.swift; sourceTree = "<group>"; };
@@ -2755,6 +2770,7 @@
 		BBE970BF876A686C51DB91D6 /* JetBrainsMono-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-SemiBold.ttf"; sourceTree = "<group>"; };
 		BCA069FF2800CFB20DFDC09A /* WorkspaceWorktree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWorktree.swift; sourceTree = "<group>"; };
 		BCB8D14CE76E0FADA85E98C8 /* WorkspaceCRUDHappyPathE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceCRUDHappyPathE2ETests.swift; sourceTree = "<group>"; };
+		BDDE9E9ECEFB4BCCCBB69468 /* GeoJSONFileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoJSONFileView.swift; sourceTree = "<group>"; };
 		BDF3FC48464C4933B0A40EAF /* OppiControlWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = OppiControlWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BDF7BB701EFB61B938863972 /* LaTeXFileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaTeXFileView.swift; sourceTree = "<group>"; };
 		BE02A0DA4D10A4291BA38D3C /* ReadMarkdownExpandOverlapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadMarkdownExpandOverlapTests.swift; sourceTree = "<group>"; };
@@ -2782,6 +2798,7 @@
 		C291A96578A5068670D2BC38 /* ToolElapsedTimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolElapsedTimeTests.swift; sourceTree = "<group>"; };
 		C2D67ADB6CCCF099AFBB5D52 /* ChatTimelinePerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelinePerf.swift; sourceTree = "<group>"; };
 		C33441810EF69A9FF55106FA /* MacLocalHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLocalHTTP.swift; sourceTree = "<group>"; };
+		C35A194A929417DEDA870950 /* MacGeoJSONPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacGeoJSONPreview.swift; sourceTree = "<group>"; };
 		C36272C428E9D190E7C187E1 /* FileIndexStore+Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileIndexStore+Environment.swift"; sourceTree = "<group>"; };
 		C39DB271D74102E55C9C60C3 /* DeviceKeyStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceKeyStoreTests.swift; sourceTree = "<group>"; };
 		C3E4708C3677D2364AFE9EFA /* WorkspaceDetailSortTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceDetailSortTests.swift; sourceTree = "<group>"; };
@@ -2802,6 +2819,7 @@
 		C5F458CBB94D31D7470925BE /* InAppNowPlayingChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppNowPlayingChromeTests.swift; sourceTree = "<group>"; };
 		C626ECC16F58F6FE6D214EF9 /* PermissionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsView.swift; sourceTree = "<group>"; };
 		C62CD8BB94F709C09528FB6C /* ToolRowTextRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowTextRenderer.swift; sourceTree = "<group>"; };
+		C635485169C4B5F90D22E4EA /* GeoJSONDocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoJSONDocumentTests.swift; sourceTree = "<group>"; };
 		C66DCC87863AAE07AADFF09F /* FiraCode-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "FiraCode-Regular.ttf"; sourceTree = "<group>"; };
 		C676E4617B85FCAD427A5977 /* VoiceInputAudioRoutePlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputAudioRoutePlanner.swift; sourceTree = "<group>"; };
 		C68AC686D0A54B108872B4CF /* MacFileMentionAutocompleteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacFileMentionAutocompleteTests.swift; sourceTree = "<group>"; };
@@ -3360,6 +3378,7 @@
 				A1C0B572906E01F931C647C4 /* AssistantMarkdownSegmentApplier.swift */,
 				A33BAE1F8B89F619822BFF46 /* AssistantMarkdownSegmentSource.swift */,
 				90ACA06659FCB4108760A9FF /* MarkdownTableColumnLayout.swift */,
+				326FCAA1D955145A1BE861E2 /* NativeGeoJSONBlockView.swift */,
 				4FB9D7D00ACA7539807D5277 /* NativeLatexBlockView.swift */,
 				3146B02DB4E6E5D1B297D04E /* NativeMarkdownAudioView.swift */,
 				FC981D36309C56AF2CE68015 /* NativeMarkdownImageView.swift */,
@@ -3462,6 +3481,7 @@
 				35527FA0A604AA72376EAB4E /* MacDelimitedTablePreview.swift */,
 				9CED3BCA72259B6BE9D5E9CE /* MacExtensionRequestCard.swift */,
 				AEDE8E0D810F10493467F1E1 /* MacExtensionSurfacePanel.swift */,
+				C35A194A929417DEDA870950 /* MacGeoJSONPreview.swift */,
 				822CD50A6E86FDC8931A86FD /* MacHomeSessionList.swift */,
 				8D4B5C724040CE0DDA7DB7FE /* MacHTMLPreview.swift */,
 				76F524753678A8987A370C17 /* MacLatexFormulaView.swift */,
@@ -4607,6 +4627,8 @@
 				ECE520DB6F4C205EA25DDA9F /* FullScreenViewerPresentationPolicy.swift */,
 				6AC119FF0FC7DB47A2F34864 /* GameOfLifeLayer.swift */,
 				6BEE5EF0E13C086BD6094950 /* GameOfLifeUIView.swift */,
+				BDDE9E9ECEFB4BCCCBB69468 /* GeoJSONFileView.swift */,
+				22BEDBE8594675D3ECA26F0A /* GeoJSONMapView.swift */,
 				A8CF98FA20FDCCF83EE37511 /* GraphicalRendererView.swift */,
 				D7B177DC1F020D6C94AE4644 /* HTMLFileView.swift */,
 				571C05E84C22DA55603A7883 /* ImageBlobView.swift */,
@@ -4725,6 +4747,7 @@
 				53E7CE282492FEE4AABCED89 /* DiffSyntaxHighlightOffsetTests.swift */,
 				17F9E5A71CFE1845007FD5E7 /* FileTypeTests.swift */,
 				5C9839B31B27438F781745E0 /* FullScreenCodeHighlighterTests.swift */,
+				C635485169C4B5F90D22E4EA /* GeoJSONDocumentTests.swift */,
 				26839E456B2B562BFC5550F3 /* ImagePreviewSecurityTests.swift */,
 				19C7B9DE35DBC2463800BC78 /* JSONValueTests.swift */,
 				7A89DAE8BB4248CA60C6C77A /* MediaExtractorTests.swift */,
@@ -4901,6 +4924,7 @@
 				6B818EE594819D34B9CD7A4E /* MacExtensionInteractionTests.swift */,
 				F7A95F77D3B3281F77B2CDC8 /* MacExtensionSurfaceTests.swift */,
 				C68AC686D0A54B108872B4CF /* MacFileMentionAutocompleteTests.swift */,
+				1C34BEFF6590B326715747A5 /* MacGeoJSONPreviewTests.swift */,
 				36DFBE68A24D3E10FB66AAA7 /* MacHTMLPreviewTests.swift */,
 				F7942205316D2FA12B7A6B8B /* MacInlineOutputFormatterTests.swift */,
 				23EFA0C1608938F32D214FBF /* MacLocalHTTPTests.swift */,
@@ -5178,6 +5202,8 @@
 				9B9C942896CF173463F3ECA3 /* DiffEngine.swift */,
 				1A1274DDD1127FF0B0D38668 /* FileType.swift */,
 				A7D6B729D5116B4494E8AD96 /* FileViewerPlan.swift */,
+				6F1EEF61493D0E53B9BB03E3 /* GeoJSONDocument.swift */,
+				6291D75ECEC830843EA51883 /* GeoJSONMapModel.swift */,
 				1655388D3EB2ACAD4BD1535B /* JSONPrettyPrinter.swift */,
 				0C3E2292E082C2BDAC152D8A /* MarkdownBlockSerializer.swift */,
 				B9A015298DA3CF5F4B9A1489 /* MarkdownNode.swift */,
@@ -6276,6 +6302,8 @@
 				25B51FDB0064F0B45DFB4D52 /* FontPreferenceStore.swift in Sources */,
 				E6AFB8DE1C64D1E0C821A971 /* FreshnessState.swift in Sources */,
 				53EDEB4F28B2732F05AC95A9 /* FuzzyMatch.swift in Sources */,
+				8E9C1FEBED825DBA4C6FA757 /* GeoJSONDocument.swift in Sources */,
+				85725178A7DFDB5BD52D095F /* GeoJSONMapModel.swift in Sources */,
 				59FB2695AA340D71F5CCBA34 /* GitCommitDetail.swift in Sources */,
 				41B9649E71453065C3E8829A /* GitStatus.swift in Sources */,
 				32A30CFD861C745302D4D8B7 /* GitStatusStore.swift in Sources */,
@@ -6310,6 +6338,7 @@
 				FB0224A1947A9BD6C1DFB5D1 /* MacDictationStreamClient.swift in Sources */,
 				85180E3BD985921FF531F425 /* MacExtensionRequestCard.swift in Sources */,
 				ACF1556F3986C45C49F4CF80 /* MacExtensionSurfacePanel.swift in Sources */,
+				A1026FC6B76D630958BC1F31 /* MacGeoJSONPreview.swift in Sources */,
 				0F1B90718EF24EB5473518B8 /* MacHTMLPreview.swift in Sources */,
 				93BB430F4844F978AF401FD9 /* MacHomeSessionList.swift in Sources */,
 				7261B2A60876E5E4A07363EC /* MacInlineOutputFormatter.swift in Sources */,
@@ -6570,6 +6599,7 @@
 				F9096B2F1C1C31D7BC79A858 /* MacExtensionInteractionTests.swift in Sources */,
 				4991E1C6A5C68C02836887CF /* MacExtensionSurfaceTests.swift in Sources */,
 				FC7E395805F96F3EDADAF044 /* MacFileMentionAutocompleteTests.swift in Sources */,
+				3352846503E545FA4BCD0763 /* MacGeoJSONPreviewTests.swift in Sources */,
 				9ECC162A128B5C3B2E49B6C4 /* MacHTMLPreviewTests.swift in Sources */,
 				69AFD204BE4CF4B6510CAD51 /* MacInlineOutputFormatterTests.swift in Sources */,
 				967D426A45E67C008209127E /* MacLocalHTTPTests.swift in Sources */,
@@ -6845,6 +6875,7 @@
 				1BE74E93485F1E5764F4A45A /* FuzzyMatchTests.swift in Sources */,
 				4409AAEA3163E47AE83B7B38 /* GameOfLifeTests.swift in Sources */,
 				654AA40BE5EAAA72621472F5 /* GeneratedH264Fixture.swift in Sources */,
+				341458CFAF12DF1F84EC1B19 /* GeoJSONDocumentTests.swift in Sources */,
 				4E15EDFA6FC4C072990A0C92 /* GitStatusStoreTests.swift in Sources */,
 				1C0EC3705F9EE6E3AA83BD44 /* GraphLayoutTests.swift in Sources */,
 				679196455572F69DCB554BE1 /* HTMLWebViewReloadTests.swift in Sources */,
@@ -7354,6 +7385,10 @@
 				1D7913CCA707D65AD0B5AF43 /* FuzzyMatch.swift in Sources */,
 				13B1366E44CD9C5EF3975104 /* GameOfLifeLayer.swift in Sources */,
 				0A17A69FCD0894CE480A4EB2 /* GameOfLifeUIView.swift in Sources */,
+				3A9840918C918BC88FECF4A4 /* GeoJSONDocument.swift in Sources */,
+				297FE1E2FEA94ABD8AED1202 /* GeoJSONFileView.swift in Sources */,
+				00F01893108B16B7B922FA6C /* GeoJSONMapModel.swift in Sources */,
+				C0AAA84B21EDDC64F324C1BF /* GeoJSONMapView.swift in Sources */,
 				7F81FDAD8DB7E10ACFA21B1A /* GitCommitDetail.swift in Sources */,
 				EF31D3864A7463AA226E338E /* GitStatus.swift in Sources */,
 				C6DA679F2E8C52793FF36600 /* GitStatusColor.swift in Sources */,
@@ -7465,6 +7500,7 @@
 				D3EFBD435A1A670D87622BBC /* ModelSwitchPolicy.swift in Sources */,
 				51D1CF2245654D61D7B74868 /* NativeAudioPlayerStripView.swift in Sources */,
 				488FF23FCF28AD2CEB8C54CA /* NativeExpandedToolViews.swift in Sources */,
+				DEAF4E1B5E36AAF2E67521FF /* NativeGeoJSONBlockView.swift in Sources */,
 				2F6179025AF4B833BCFA22E8 /* NativeLatexBlockView.swift in Sources */,
 				AB45DE86591196F45F0BD2B5 /* NativeMarkdownAudioView.swift in Sources */,
 				17CFACD261541DCFCB148EF9 /* NativeMarkdownImageView.swift in Sources */,

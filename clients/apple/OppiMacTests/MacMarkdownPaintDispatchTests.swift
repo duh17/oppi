@@ -75,6 +75,38 @@ struct MacMarkdownPaintDispatchTests {
         #expect(!kinds.contains { if case .latexFormula = $0 { return true }; return false })
     }
 
+    @Test func geojsonFenceDispatchesToMapNotCodeListing() throws {
+        let kinds = MacMarkdownPaintDispatch.kinds(from: """
+        ```geojson
+        {"type":"Point","coordinates":[-121.7603,46.8523]}
+        ```
+        """)
+
+        let kind = try #require(kinds.first)
+        guard case .geoJSONMap(let code, let mapKind) = kind else {
+            Issue.record("Expected geojson map, got \(kinds)")
+            return
+        }
+        #expect(mapKind == .geojson)
+        #expect(code.contains("Point"))
+        #expect(!kinds.contains { if case .codeListing = $0 { return true }; return false })
+    }
+
+    @Test func topojsonFenceDispatchesToMap() throws {
+        let kinds = MacMarkdownPaintDispatch.kinds(from: """
+        ```topojson
+        {"type":"Topology","objects":{},"arcs":[]}
+        ```
+        """)
+
+        let kind = try #require(kinds.first)
+        guard case .geoJSONMap(_, let mapKind) = kind else {
+            Issue.record("Expected topojson map, got \(kinds)")
+            return
+        }
+        #expect(mapKind == .topojson)
+    }
+
     @Test func dollarDisplayMathDispatchesToFormulaNotMonospace() throws {
         let kinds = MacMarkdownPaintDispatch.kinds(from: """
         $$
@@ -433,6 +465,18 @@ struct MacMarkdownPaintDispatchTests {
         #expect(
             MacMarkdownPaintDispatch.codeBlockKind(language: "python", code: "print(1)")
                 == .codeListing(language: "python", code: "print(1)")
+        )
+        #expect(
+            MacMarkdownPaintDispatch.codeBlockKind(
+                language: "geojson",
+                code: "{\"type\":\"Point\"}"
+            ) == .geoJSONMap(code: "{\"type\":\"Point\"}", kind: .geojson)
+        )
+        #expect(
+            MacMarkdownPaintDispatch.codeBlockKind(
+                language: "topojson",
+                code: "{\"type\":\"Topology\"}"
+            ) == .geoJSONMap(code: "{\"type\":\"Topology\"}", kind: .topojson)
         )
     }
 
