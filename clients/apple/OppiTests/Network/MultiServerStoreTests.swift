@@ -132,31 +132,6 @@ struct MultiServerStoreTests {
         #expect(store.serverOrder == ["s2"])
     }
 
-    // MARK: - allWorkspaces / allSkills
-
-    @Test func allWorkspacesRespectsServerOrder() {
-        let store = WorkspaceStore()
-        store.serverOrder = ["s2", "s1"]
-        store.workspacesByServer["s1"] = [makeTestWorkspace(id: "w1", name: "From S1")]
-        store.workspacesByServer["s2"] = [makeTestWorkspace(id: "w2", name: "From S2")]
-
-        let all = store.allWorkspaces
-        #expect(all.count == 2)
-        #expect(all[0].name == "From S2")  // s2 is first in order
-        #expect(all[1].name == "From S1")
-    }
-
-    @Test func allSkillsDeduplicatesByName() {
-        let store = WorkspaceStore()
-        store.serverOrder = ["s1", "s2"]
-        store.skillsByServer["s1"] = [makeSkill(name: "fetch"), makeSkill(name: "search")]
-        store.skillsByServer["s2"] = [makeSkill(name: "fetch"), makeSkill(name: "tmux")]
-
-        let all = store.allSkills
-        let names = all.map(\.name)
-        #expect(names == ["fetch", "search", "tmux"])
-    }
-
     // MARK: - Per-server freshness
 
     @Test func perServerFreshnessState() {
@@ -171,33 +146,6 @@ struct MultiServerStoreTests {
 
         store.serverFreshness["s1"]?.markSyncSucceeded()
         #expect(store.freshnessState(forServer: "s1") == .live)
-    }
-
-    @Test func isAllLoadedRequiresAllServers() {
-        let store = WorkspaceStore()
-        store.serverOrder = ["s1", "s2"]
-        store.serverFreshness["s1"] = ServerSyncState()
-        store.serverFreshness["s2"] = ServerSyncState()
-        #expect(!store.isAllLoaded)
-
-        store.serverFreshness["s1"]?.markSyncSucceeded()
-        #expect(!store.isAllLoaded)
-
-        store.serverFreshness["s2"]?.markSyncSucceeded()
-        #expect(store.isAllLoaded)
-    }
-
-    @Test func isAnySyncingTracksAnyServer() {
-        let store = WorkspaceStore()
-        store.serverFreshness["s1"] = ServerSyncState()
-        store.serverFreshness["s2"] = ServerSyncState()
-        #expect(!store.isAnySyncing)
-
-        store.serverFreshness["s1"]?.markSyncStarted()
-        #expect(store.isAnySyncing)
-
-        store.serverFreshness["s1"]?.markSyncSucceeded()
-        #expect(!store.isAnySyncing)
     }
 
     // MARK: - loadAll with mock
@@ -261,11 +209,14 @@ struct MultiServerStoreTests {
         store.serverFreshness[server2.id] = ServerSyncState()
         store.serverFreshness[server2.id]?.markSyncSucceeded()
 
-        #expect(store.allWorkspaces.count == 2)
-        #expect(store.allWorkspaces[0].name == "From Studio")
-        #expect(store.allWorkspaces[1].name == "From Mini")
-        #expect(store.allSkills.count == 2)
-        #expect(store.isAllLoaded)
+        #expect(store.workspacesByServer[server1.id]?.count == 1)
+        #expect(store.workspacesByServer[server1.id]?.first?.name == "From Studio")
+        #expect(store.workspacesByServer[server2.id]?.count == 1)
+        #expect(store.workspacesByServer[server2.id]?.first?.name == "From Mini")
+        #expect(store.skillsByServer[server1.id]?.count == 1)
+        #expect(store.skillsByServer[server2.id]?.count == 1)
+        #expect(store.serverFreshness[server1.id]?.lastSuccessfulSyncAt != nil)
+        #expect(store.serverFreshness[server2.id]?.lastSuccessfulSyncAt != nil)
     }
 
     @Test func loadAllHandlesPartialFailure() async {
@@ -281,8 +232,8 @@ struct MultiServerStoreTests {
 
         #expect(store.freshnessState(forServer: "s1") == .live)
         #expect(store.freshnessState(forServer: "s2") == .offline)
-        #expect(store.allWorkspaces.count == 1)
-        #expect(store.allWorkspaces[0].name == "Survives")
+        #expect(store.workspacesByServer["s1"]?.count == 1)
+        #expect(store.workspacesByServer["s1"]?.first?.name == "Survives")
     }
 
     // MARK: - Cache namespacing

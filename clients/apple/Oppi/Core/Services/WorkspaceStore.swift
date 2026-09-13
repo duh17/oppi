@@ -183,12 +183,6 @@ final class WorkspaceStore {
 
     // MARK: - Cross-server queries
 
-    // periphery:ignore - used by MultiServerStoreTests via @testable import
-    /// All workspaces flattened from all servers, ordered by server sort order.
-    var allWorkspaces: [Workspace] {
-        serverOrder.flatMap { workspacesByServer[$0] ?? [] }
-    }
-
     func workspaceSummaries(forServer serverId: String) -> [String: WorkspaceListSummary] {
         workspaceSummariesByServer[serverId] ?? [:]
     }
@@ -208,27 +202,6 @@ final class WorkspaceStore {
         storedWorkspaceSummariesByServer[key] = summaries
     }
     #endif
-
-    // periphery:ignore - used by MultiServerStoreTests via @testable import
-    /// All skills flattened from all servers (deduplicated by name).
-    var allSkills: [SkillInfo] {
-        var seen = Set<String>()
-        return serverOrder.flatMap { skillsByServer[$0] ?? [] }
-            .filter { seen.insert($0.name).inserted }
-    }
-
-    // periphery:ignore - used by MultiServerStoreTests via @testable import
-    /// Whether ALL servers have successfully synced at least once.
-    var isAllLoaded: Bool {
-        guard !serverOrder.isEmpty else { return false }
-        return serverOrder.allSatisfy { serverFreshness[$0]?.lastSuccessfulSyncAt != nil }
-    }
-
-    // periphery:ignore - used by MultiServerStoreTests via @testable import
-    /// Whether ANY server is currently syncing.
-    var isAnySyncing: Bool {
-        serverFreshness.values.contains { $0.isSyncing }
-    }
 
     // MARK: - Server context
 
@@ -260,11 +233,6 @@ final class WorkspaceStore {
     // MARK: - Freshness (active server compatibility)
 
     // periphery:ignore - used by ServerConnectionTests via @testable import
-    func markSyncStarted() {
-        markSyncStarted(forServer: activeKey)
-    }
-
-    // periphery:ignore - used by ServerConnectionTests via @testable import
     func markSyncSucceeded(at date: Date = Date()) {
         markSyncSucceeded(forServer: activeKey, at: date)
     }
@@ -277,11 +245,6 @@ final class WorkspaceStore {
     // periphery:ignore - store freshness API surface; active-server convenience accessor
     func freshnessState(now: Date = Date(), staleAfter: TimeInterval = 300) -> FreshnessState {
         freshnessState(forServer: activeKey, now: now, staleAfter: staleAfter)
-    }
-
-    // periphery:ignore - used by MultiServerStoreTests via @testable import
-    func freshnessLabel(now: Date = Date()) -> String {
-        freshnessLabel(forServer: activeKey, now: now)
     }
 
     // MARK: - Freshness (per-server)
