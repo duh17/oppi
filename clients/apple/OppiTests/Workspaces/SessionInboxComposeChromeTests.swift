@@ -108,7 +108,7 @@ struct SessionInboxComposeChromeTests {
         let control = try appleSource("Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift")
         #expect(control.contains("VoiceInputManager.shared"))
         #expect(!control.contains("VoiceInputManager()"))
-        let preview = try appleSource("Oppi/App/ScreenshotPreviewView.swift")
+        let preview = try appleSource("Oppi/App/ScreenshotPreviews/InboxProviderSetupPreview.swift")
         #expect(preview.contains("SessionInboxCompactComposeBar"))
         #expect(preview.contains("SessionInboxFolderToolbarButton"))
         #expect(!preview.contains("sharedBackgroundVisibility"))
@@ -136,7 +136,7 @@ struct SessionInboxComposeChromeTests {
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
         let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
-        let preview = try appleSource("Oppi/App/ScreenshotPreviewView.swift")
+        let preview = try appleSource("Oppi/App/ScreenshotPreviews/InboxProviderSetupPreview.swift")
         let nowPlaying = try appleSource("Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
         let drawer = "placement: .navigationBarDrawer(displayMode: .automatic)"
         let bottomSearch = "DefaultToolbarItem(kind: .search, placement: .bottomBar)"
@@ -318,7 +318,7 @@ struct SessionInboxComposeChromeTests {
     @Test func bothSessionListToolbarsPutMessageLeadingAndFolderTrailing() throws {
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        let preview = try appleSource("Oppi/App/ScreenshotPreviewView.swift")
+        let preview = try appleSource("Oppi/App/ScreenshotPreviews/InboxProviderSetupPreview.swift")
         let inboxToolbar = try sourceSlice(
             inbox,
             start: "private var toolbarContent: some ToolbarContent {",

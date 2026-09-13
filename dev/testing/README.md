@@ -360,7 +360,7 @@ To add a scenario:
 
 ### Screenshot preview UI tests
 
-Mock screenshot-preview tests live in `clients/apple/OppiUITests/ScreenshotPreviewUITests.swift` and launch the app with `--screenshot-preview`. They are useful for isolated visual surfaces, not for paired-server workspace behavior.
+Mock screenshot-preview surfaces launch the app with `--screenshot-preview` for isolated visual capture (`ui-validate` and manual QA), not for paired-server workspace behavior.
 
 Post-run UI checks belong here or on a `sim-lab` scenario, not in a new XCUITest. Agent procedure lives in `.pi/skills/oppi-dev/references/local-build.md`. This file owns the launch command and artifact paths.
 
