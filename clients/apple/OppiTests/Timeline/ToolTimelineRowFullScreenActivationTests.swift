@@ -114,12 +114,12 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     @Test("expanded large markdown activation opens full screen")
     func expandedLargeMarkdownActivationOpensFullScreen() throws {
-        let largeMarkdown = (0..<1_200).map { index in
-            """
-            ## Section \(index)
-
-            **Strong text \(index)** with `inline code`.
-            """
+        let denseParagraph = String(
+            repeating: "Dense markdown body with **strong**, *emphasis*, and `inline code`. ",
+            count: 128
+        )
+        let largeMarkdown = (0..<8).map { index in
+            "## Section \(index)\n\n\(denseParagraph)"
         }.joined(separator: "\n\n")
         #expect(largeMarkdown.utf8.count > 64 * 1024)
 

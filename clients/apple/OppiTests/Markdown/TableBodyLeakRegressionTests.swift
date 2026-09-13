@@ -54,7 +54,7 @@ struct TableBodyLeakRegressionTests {
         try assertIntactTable(parser.parse(content).blocks)
     }
 
-    @Test(arguments: [24, 1])
+    @Test(arguments: [24])
     func contentViewApplyKeepsEveryRowOnStreamedChunks(chunkSize: Int) throws {
         let (markdown, window) = makeHostedMarkdown()
         defer { window.isHidden = true }

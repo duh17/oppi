@@ -19,6 +19,28 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
     case readMarkdown
     case readMedia
 
+    /// Default OppiUnitTests families. Remainder families are `.perf` and
+    /// `OPPI_RUN_PERF_TESTS=1` gated because OppiUnitTests.xcscheme does not filter tags.
+    static let unitFamilies: [ToolExpandScrollMatrixCase] = [
+        .writeCode, .readMarkdown, .extensionMarkdown, .readMedia,
+    ]
+
+    static let perfFamilies: [ToolExpandScrollMatrixCase] = [
+        .readCode,
+        .bashOutput,
+        .editDiff,
+        .extensionMutation,
+        .extensionStructured,
+        .extensionLookup,
+        .customText,
+        .voiceStreamingText,
+        .voiceFinalCard,
+    ]
+
+    static var runPerfFamilies: Bool {
+        ProcessInfo.processInfo.environment["OPPI_RUN_PERF_TESTS"] == "1"
+    }
+
     var name: String {
         switch self {
         case .writeCode: return "write-code"
