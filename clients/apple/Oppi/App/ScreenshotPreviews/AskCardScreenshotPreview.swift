@@ -494,6 +494,65 @@ struct AskCardMultiSelectLongOptionsPreview: View {
 }
 
 
+struct AskCardLongUnfocusedComposerPreview: View {
+    @State private var text = ""
+    @State private var textBeforeRecording: String?
+    @State private var attachments: [PendingAttachment] = []
+    @State private var repoPointers: [PendingFileReference] = []
+    @State private var busyBehavior: StreamingBehavior = .steer
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.themeBg
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Long unfocused ask")
+                    .font(.headline)
+                    .foregroundStyle(.themeFg)
+                Text("The card should cap at the expanded native-surface height and scroll instead of covering the chat.")
+                    .font(.caption)
+                    .foregroundStyle(.themeComment)
+                Spacer()
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            ChatInputBar(
+                text: $text,
+                textBeforeRecording: $textBeforeRecording,
+                pendingAttachments: $attachments,
+                pendingRepoPointers: $repoPointers,
+                isBusy: true,
+                busyStreamingBehavior: $busyBehavior,
+                isSending: false,
+                sendProgressText: nil,
+                isStopping: false,
+                showForceStop: false,
+                isForceStopInFlight: false,
+                askRequest: AskCardPreviewFixture.multiSelectLongOptionsRequest,
+                onAskSubmit: { _, _, complete in complete(.completed) },
+                onAskIgnoreAll: { _, complete in complete(.completed) },
+                slashCommands: [],
+                fileSuggestions: [],
+                onFileSuggestionQuery: nil,
+                onSend: {},
+                onStop: {},
+                onForceStop: {},
+                onExpand: {},
+                externalFocusRequestID: 0,
+                appliesOuterPadding: true,
+                alwaysShowActionRow: false
+            ) {
+                Spacer(minLength: 0)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+
 struct AskCardExpandedSheetPreview: View {
     @State private var currentPage = 0
     @State private var answers: [String: AskAnswer] = [:]

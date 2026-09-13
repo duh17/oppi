@@ -709,6 +709,24 @@ struct ChatInputBarTests {
         #expect(maxLines == ComposerInputMetrics.inlineMaxLines)
     }
 
+    @Test("Unfocused inline ask is a capped scrolling viewport, not an unbounded card")
+    func unfocusedInlineAskIsCappedScrollingViewport() throws {
+        let source = try chatInputBarSource()
+        let capsule = try chatInputBarSourceSlice(
+            named: "private var composerCapsule: some View {",
+            until: "private func askCard(request: AskRequest) -> some View {",
+            in: source
+        )
+
+        #expect(capsule.contains("ScrollView(.vertical, showsIndicators: true)"))
+        #expect(capsule.contains("ExtensionNativeSurfaceLayout.expandedMaxHeight"))
+        #expect(capsule.contains("ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard"))
+        #expect(!capsule.contains("NativeSurfaceViewportScrollContainer"))
+        #expect(capsule.components(separatedBy: "askCard(request: askRequest)").count - 1 == 1)
+        #expect(ExtensionNativeSurfaceLayout.expandedMaxHeight == 260)
+        #expect(ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard == 240)
+    }
+
     @Test("Expand affordance reserves only a tight trailing gutter")
     func expandAffordanceUsesTightTrailingGutter() {
         #expect(ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: false) == 0)

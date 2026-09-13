@@ -492,23 +492,22 @@ struct ChatInputBar<ActionRow: View>: View {
 
     private var composerCapsule: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Ask card (inline question from agent). While the keyboard is up,
-            // let a long card scroll instead of allowing it to displace the
-            // text controls and model/thinking pills below the safe area.
+            // Ask card (inline question from agent). Always scroll overflow
+            // inside a capped viewport so a long unfocused ask cannot take
+            // remaining chat height. Keep the shorter keyboard cap so composer
+            // actions stay on-screen. Full height stays on AskCardExpanded.
             if let askRequest {
-                Group {
-                    if isInputFocused && !suppressKeyboard {
-                        ScrollView(.vertical, showsIndicators: true) {
-                            askCard(request: askRequest)
-                        }
-                        .frame(maxHeight: ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard)
-                        .scrollBounceBehavior(.basedOnSize)
-                        .scrollDismissesKeyboard(.never)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    } else {
-                        askCard(request: askRequest)
-                    }
+                ScrollView(.vertical, showsIndicators: true) {
+                    askCard(request: askRequest)
                 }
+                .frame(
+                    maxHeight: isInputFocused && !suppressKeyboard
+                        ? ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard
+                        : ExtensionNativeSurfaceLayout.expandedMaxHeight
+                )
+                .scrollBounceBehavior(.basedOnSize)
+                .scrollDismissesKeyboard(.never)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .id(askRequest.id)
                 .padding(.horizontal, composerHorizontalPadding)
                 .padding(.top, 8)

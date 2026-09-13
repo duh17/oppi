@@ -135,6 +135,8 @@ struct ScreenshotPreviewView: View {
             AskCardPreview()
         case "ask-card-multiselect-long":
             AskCardMultiSelectLongOptionsPreview()
+        case "ask-card-long-unfocused":
+            AskCardLongUnfocusedComposerPreview()
         case "ask-card-expanded-sheet":
             AskCardExpandedSheetPreview()
         case "ask-card-expanded-custom":
