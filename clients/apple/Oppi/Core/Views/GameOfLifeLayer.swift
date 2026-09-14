@@ -42,25 +42,6 @@ final class GameOfLifeLayer: CALayer {
     /// Bit-packed cell grid. Bit i = cell i (row-major). Internal for testing.
     private var bits: UInt64 = 0
 
-    // periphery:ignore
-    /// Compatibility: cells as [Bool] array, derived from bits. Internal for testing.
-    var cells: [Bool] {
-        get {
-            let count = gridSize * gridSize
-            var result = [Bool](repeating: false, count: count)
-            for i in 0..<count {
-                result[i] = (bits >> i) & 1 == 1
-            }
-            return result
-        }
-        set {
-            bits = 0
-            for i in 0..<min(newValue.count, 64) {
-                if newValue[i] { bits |= 1 << i }
-            }
-        }
-    }
-
     /// Age of each cell in ticks (0 = just born this tick). Internal for testing.
     var ages: [UInt8]
 
