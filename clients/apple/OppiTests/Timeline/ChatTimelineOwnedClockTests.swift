@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SwiftUI
 import Testing
 import UIKit
@@ -116,7 +117,6 @@ struct ChatTimelineOwnedClockTests {
         windowed.coordinator.resetOutlineAvailabilityPublishDiagnosticForTesting()
         windowed.coordinator.updateHostChrome(configuration: config, to: windowed.collectionView)
         #expect(!windowed.coordinator.outlineAvailabilityPublishedDuringHostUpdateForTesting)
-        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
         #expect(!availability.isAvailable)
 
         windowed.reducer.processBatch([
@@ -169,12 +169,13 @@ struct ChatTimelineOwnedClockTests {
         )
         reboundConfig.outlineAvailability = availability
         windowed.coordinator.resetOutlineAvailabilityPublishDiagnosticForTesting()
+        let reboundPublication = windowed.coordinator.outlinePublicationCompletionGenerationForTesting
         windowed.coordinator.updateHostChrome(
             configuration: reboundConfig,
             to: windowed.collectionView
         )
         #expect(!windowed.coordinator.outlineAvailabilityPublishedDuringHostUpdateForTesting)
-        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
+        #expect(await waitForOutlinePublication(on: windowed.coordinator, after: reboundPublication))
         #expect(availability.isAvailable)
 
         let emptyRebound = TimelineReducer()
@@ -193,12 +194,13 @@ struct ChatTimelineOwnedClockTests {
         )
         emptyConfig.outlineAvailability = availability
         windowed.coordinator.resetOutlineAvailabilityPublishDiagnosticForTesting()
+        let emptyPublication = windowed.coordinator.outlinePublicationCompletionGenerationForTesting
         windowed.coordinator.updateHostChrome(
             configuration: emptyConfig,
             to: windowed.collectionView
         )
         #expect(!windowed.coordinator.outlineAvailabilityPublishedDuringHostUpdateForTesting)
-        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
+        #expect(await waitForOutlinePublication(on: windowed.coordinator, after: emptyPublication))
         #expect(!availability.isAvailable, "Empty rebind must hide availability before the new reducer receives tokens")
 
         emptyRebound.processBatch([
@@ -210,13 +212,18 @@ struct ChatTimelineOwnedClockTests {
         }
         #expect(emptyThenTokens)
 
+        let staleSourceChanges = windowed.coordinator.ownedSourceChangeCompletionGenerationForTesting
         windowed.reducer.processBatch([
             .textDelta(sessionId: windowed.sessionId, delta: " stale"),
         ])
         rebound.processBatch([
             .textDelta(sessionId: "owned-outline-b", delta: " stale-b"),
         ])
-        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
+        #expect(await waitForOwnedSourceChanges(
+            on: windowed.coordinator,
+            after: staleSourceChanges,
+            count: 2
+        ))
         #expect(availability.isAvailable)
         #expect(windowed.coordinator.currentItemByID.values.contains { item in
             if case .assistantMessage(_, let text, _) = item {
@@ -225,6 +232,169 @@ struct ChatTimelineOwnedClockTests {
             }
             return false
         })
+    }
+
+    @Test func deferredOutlineAvailabilityUsesCurrentReducerEmptiness() async {
+        let windowed = makeWindowedTimelineHarness(sessionId: "owned-outline-current")
+        windowed.coordinator.ownedClock.didScheduleAttachRetry = true
+        let availability = ChatTimelineOutlineAvailability()
+
+        windowed.reducer.processBatch([
+            .agentStart(sessionId: windowed.sessionId),
+            .textDelta(sessionId: windowed.sessionId, delta: "Queued show"),
+        ])
+        var showConfig = makeTimelineConfiguration(
+            items: [],
+            isBusy: true,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            toolSegmentStore: windowed.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true
+        )
+        showConfig.outlineAvailability = availability
+        let showPublication = windowed.coordinator.outlinePublicationCompletionGenerationForTesting
+        windowed.coordinator.updateHostChrome(
+            configuration: showConfig,
+            to: windowed.collectionView
+        )
+        // Apply the newer reducer state synchronously, then prevent its already-armed
+        // observer from masking a stale deferred commit with a second correction.
+        windowed.coordinator.ownedClock.isObserving = false
+        windowed.reducer.reset()
+        windowed.coordinator.applyOwnedProjection()
+        #expect(await waitForOutlinePublication(on: windowed.coordinator, after: showPublication))
+        #expect(!availability.isAvailable, "Queued show must commit the reducer's current empty state")
+
+        availability.isAvailable = true
+        let emptyReducer = TimelineReducer()
+        var hideConfig = makeTimelineConfiguration(
+            items: [],
+            isBusy: true,
+            sessionId: "owned-outline-current-b",
+            reducer: emptyReducer,
+            toolOutputStore: emptyReducer.toolOutputStore,
+            toolArgsStore: emptyReducer.toolArgsStore,
+            toolSegmentStore: emptyReducer.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true
+        )
+        hideConfig.outlineAvailability = availability
+        let hidePublication = windowed.coordinator.outlinePublicationCompletionGenerationForTesting
+        windowed.coordinator.updateHostChrome(
+            configuration: hideConfig,
+            to: windowed.collectionView
+        )
+        windowed.coordinator.ownedClock.isObserving = false
+        emptyReducer.processBatch([
+            .agentStart(sessionId: "owned-outline-current-b"),
+            .textDelta(sessionId: "owned-outline-current-b", delta: "Refilled"),
+        ])
+        windowed.coordinator.applyOwnedProjection()
+        #expect(await waitForOutlinePublication(on: windowed.coordinator, after: hidePublication))
+        #expect(availability.isAvailable, "Queued hide must commit the reducer's current nonempty state")
+    }
+
+    @Test func staleObserverDoesNotRetrackOrApplyReboundReducer() async {
+        let windowed = makeWindowedTimelineHarness(sessionId: "owned-observer-a")
+        windowed.coordinator.ownedClock.isObserving = true
+        windowed.coordinator.ownedClock.didScheduleAttachRetry = true
+        let configA = makeTimelineConfiguration(
+            items: [],
+            isBusy: true,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            toolSegmentStore: windowed.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true
+        )
+        windowed.coordinator.updateHostChrome(configuration: configA, to: windowed.collectionView)
+
+        let reducerB = TimelineReducer()
+        let configB = makeTimelineConfiguration(
+            items: [],
+            isBusy: true,
+            sessionId: "owned-observer-b",
+            reducer: reducerB,
+            toolOutputStore: reducerB.toolOutputStore,
+            toolArgsStore: reducerB.toolArgsStore,
+            toolSegmentStore: reducerB.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true
+        )
+        windowed.coordinator.updateHostChrome(configuration: configB, to: windowed.collectionView)
+
+        ChatTimelinePerf.reset()
+        let staleSourceChange = windowed.coordinator.ownedSourceChangeCompletionGenerationForTesting
+        windowed.reducer.processBatch([
+            .agentStart(sessionId: windowed.sessionId),
+            .textDelta(sessionId: windowed.sessionId, delta: "Stale A"),
+        ])
+        #expect(await waitForOwnedSourceChanges(on: windowed.coordinator, after: staleSourceChange))
+        #expect(ChatTimelinePerf.snapshot().controllerOwnedApplyCount == 0)
+
+        ChatTimelinePerf.reset()
+        let currentSourceChange = windowed.coordinator.ownedSourceChangeCompletionGenerationForTesting
+        reducerB.processBatch([
+            .agentStart(sessionId: "owned-observer-b"),
+            .textDelta(sessionId: "owned-observer-b", delta: "Current B"),
+        ])
+        #expect(await waitForOwnedSourceChanges(on: windowed.coordinator, after: currentSourceChange))
+        #expect(ChatTimelinePerf.snapshot().controllerOwnedApplyCount == 1)
+    }
+
+    @Test func deferredAvailabilityNotifiesOnceOutsideHostUpdate() async {
+        let windowed = makeWindowedTimelineHarness(sessionId: "owned-outline-notification")
+        windowed.coordinator.ownedClock.didScheduleAttachRetry = true
+        windowed.reducer.processBatch([
+            .agentStart(sessionId: windowed.sessionId),
+            .textDelta(sessionId: windowed.sessionId, delta: "Available"),
+        ])
+        let availability = ChatTimelineOutlineAvailability()
+        let notifications = AvailabilityNotificationRecorder()
+        withObservationTracking {
+            _ = availability.isAvailable
+        } onChange: {
+            notifications.record()
+        }
+        var config = makeTimelineConfiguration(
+            items: [],
+            isBusy: true,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            toolSegmentStore: windowed.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true
+        )
+        config.outlineAvailability = availability
+        windowed.coordinator.resetOutlineAvailabilityPublishDiagnosticForTesting()
+        let publication = windowed.coordinator.outlinePublicationCompletionGenerationForTesting
+
+        windowed.coordinator.updateHostChrome(configuration: config, to: windowed.collectionView)
+
+        #expect(notifications.count == 0, "Host update must return before availability publishes")
+        #expect(windowed.coordinator.outlineAvailabilityMutationCountForTesting == 0)
+        #expect(await waitForOutlinePublication(on: windowed.coordinator, after: publication))
+        #expect(notifications.count == 1)
+        #expect(windowed.coordinator.outlineAvailabilityMutationCountForTesting == 1)
+        #expect(!windowed.coordinator.outlineAvailabilityPublishedDuringHostUpdateForTesting)
+        #expect(availability.isAvailable)
     }
 
     @Test func quietProjectionAndSettledEndsLiveOnController() async {
@@ -355,12 +525,55 @@ struct ChatTimelineOwnedClockTests {
         #expect(!windowed.coordinator.isObservingOwnedTimelineForTesting)
 
         ChatTimelinePerf.reset()
+        let sourceChange = windowed.coordinator.ownedSourceChangeCompletionGenerationForTesting
         windowed.reducer.processBatch([
             .agentStart(sessionId: "owned-dismantle"),
             .textDelta(sessionId: "owned-dismantle", delta: "after dismantle"),
         ])
-        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
+        #expect(await waitForOwnedSourceChanges(on: windowed.coordinator, after: sourceChange))
         #expect(ChatTimelinePerf.snapshot().controllerOwnedApplyCount == 0)
+    }
+}
+
+@MainActor
+private func waitForOutlinePublication(
+    on controller: ChatTimelineCollectionHost.Controller,
+    after generation: UInt64
+) async -> Bool {
+    await waitForTimelineCondition(timeoutMs: 1_000) {
+        await MainActor.run {
+            controller.outlinePublicationCompletionGenerationForTesting > generation
+        }
+    }
+}
+
+@MainActor
+private func waitForOwnedSourceChanges(
+    on controller: ChatTimelineCollectionHost.Controller,
+    after generation: UInt64,
+    count: UInt64 = 1
+) async -> Bool {
+    await waitForTimelineCondition(timeoutMs: 1_000) {
+        await MainActor.run {
+            controller.ownedSourceChangeCompletionGenerationForTesting >= generation + count
+        }
+    }
+}
+
+private final class AvailabilityNotificationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedCount = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedCount
+    }
+
+    func record() {
+        lock.lock()
+        recordedCount += 1
+        lock.unlock()
     }
 }
 

@@ -75,6 +75,8 @@ struct ChatViewOutlineColdStateTests {
         }
         #expect(showedA)
         let reducerA = try #require(fixture.reducer)
+        let controllerA = try #require(fixture.timelineController)
+        let rebindPublication = controllerA.outlinePublicationCompletionGenerationForTesting
 
         fixture.rebind(sessionId: sessionB)
         let rebound = await waitForTimelineCondition(timeoutMs: 2_000) {
@@ -90,9 +92,13 @@ struct ChatViewOutlineColdStateTests {
             }
         }
         #expect(rebound, "Clock must bind the new session reducer")
-        if let controller = fixture.timelineController {
-            await controller.waitForOwnedMainQueueToDrainForTesting()
+        let rebindPublished = await waitForTimelineCondition(timeoutMs: 2_000) {
+            await MainActor.run {
+                (fixture.timelineController?.outlinePublicationCompletionGenerationForTesting
+                    ?? rebindPublication) > rebindPublication
+            }
         }
+        #expect(rebindPublished, "Empty B availability publication must complete")
         let hiddenEmptyB = await waitForTimelineCondition(timeoutMs: 2_000) {
             await MainActor.run {
                 fixture.host.view.layoutIfNeeded()
@@ -140,12 +146,19 @@ struct ChatViewOutlineColdStateTests {
         reducerA.processBatch([
             .textDelta(sessionId: sessionA, delta: " stale-a"),
         ])
-        if let controller = fixture.timelineController {
-            await controller.waitForOwnedMainQueueToDrainForTesting()
+        injectAssistantDelta(fixture, text: " current-b-proof")
+        let currentBApplied = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                fixture.host.view.layoutIfNeeded()
+                return timelineHasAssistantText(
+                    fixture,
+                    containing: "\(markerB) live current-b-proof"
+                )
+            }
         }
-        fixture.host.view.layoutIfNeeded()
+        #expect(currentBApplied)
 
-        #expect(timelineHasAssistantText(fixture, containing: "\(markerB) live"))
+        #expect(timelineHasAssistantText(fixture, containing: "\(markerB) live current-b-proof"))
         #expect(!timelineHasAssistantText(fixture, containing: "stale-a"))
         #expect(fixture.outlineIsAvailable)
         #expect(ChatTimelinePerf.snapshot().hostUpdateUIViewCount == hostUpdatesAfterB)

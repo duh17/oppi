@@ -30,6 +30,9 @@ final class ChatTimelineOwnedClockState {
     var isApplyingHostChrome = false
     #if DEBUG
         var outlineAvailabilityPublishedDuringHostUpdate = false
+        var outlineAvailabilityMutationCount: UInt64 = 0
+        var outlinePublicationCompletionGeneration: UInt64 = 0
+        var sourceChangeCompletionGeneration: UInt64 = 0
     #endif
 
     func resetPresentationState() {
@@ -192,22 +195,19 @@ extension ChatTimelineCollectionHost.Controller {
         var outlineAvailabilityPublishedDuringHostUpdateForTesting: Bool {
             ownedClock.outlineAvailabilityPublishedDuringHostUpdate
         }
+        var outlineAvailabilityMutationCountForTesting: UInt64 {
+            ownedClock.outlineAvailabilityMutationCount
+        }
+        var outlinePublicationCompletionGenerationForTesting: UInt64 {
+            ownedClock.outlinePublicationCompletionGeneration
+        }
+        var ownedSourceChangeCompletionGenerationForTesting: UInt64 {
+            ownedClock.sourceChangeCompletionGeneration
+        }
 
         func resetOutlineAvailabilityPublishDiagnosticForTesting() {
             ownedClock.outlineAvailabilityPublishedDuringHostUpdate = false
-        }
-
-        /// Completes after already-scheduled owned-clock `Task`s and one main-queue
-        /// hop, so stale-source and deferred-publish checks wait on delivery rather
-        /// than an arbitrary yield count.
-        func waitForOwnedMainQueueToDrainForTesting() async {
-            await withCheckedContinuation { continuation in
-                Task { @MainActor in
-                    DispatchQueue.main.async {
-                        continuation.resume()
-                    }
-                }
-            }
+            ownedClock.outlineAvailabilityMutationCount = 0
         }
     #endif
 }
@@ -225,6 +225,7 @@ extension ChatTimelineCollectionHost.Controller {
     private func trackOwnedTimelineSources() {
         guard ownedClock.isObserving else { return }
         let configuration = ownedClock.lastConfiguration
+        let observedEpoch = ownedClock.bindEpoch
         withObservationTracking {
             if let reducer = configuration?.reducer {
                 _ = reducer.renderVersion
@@ -241,13 +242,16 @@ extension ChatTimelineCollectionHost.Controller {
             }
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
-                self?.handleOwnedTimelineSourceChange()
+                self?.handleOwnedTimelineSourceChange(observedEpoch: observedEpoch)
             }
         }
     }
 
-    private func handleOwnedTimelineSourceChange() {
-        guard ownedClock.isObserving else { return }
+    private func handleOwnedTimelineSourceChange(observedEpoch: UInt64) {
+        #if DEBUG
+            defer { ownedClock.sourceChangeCompletionGeneration &+= 1 }
+        #endif
+        guard ownedClock.isObserving, ownedClock.bindEpoch == observedEpoch else { return }
         trackOwnedTimelineSources()
         applyOwnedProjection()
     }
@@ -272,30 +276,44 @@ extension ChatTimelineCollectionHost.Controller {
                 MainActor.assumeIsolated {
                     self?.commitOwnedOutlineAvailability(
                         availability: availability,
-                        next: next,
                         epoch: epoch
                     )
                 }
             }
             return
         }
-        #if DEBUG
-            if ownedClock.isApplyingHostChrome {
-                ownedClock.outlineAvailabilityPublishedDuringHostUpdate = true
-            }
-        #endif
-        availability.isAvailable = next
+        setOwnedOutlineAvailability(next, on: availability)
     }
 
     private func commitOwnedOutlineAvailability(
         availability: ChatTimelineOutlineAvailability,
-        next: Bool,
         epoch: UInt64
     ) {
+        #if DEBUG
+            defer { ownedClock.outlinePublicationCompletionGeneration &+= 1 }
+        #endif
         guard ownedClock.bindEpoch == epoch else { return }
-        guard ownedClock.lastConfiguration?.outlineAvailability === availability else { return }
-        guard availability.isAvailable != next else { return }
-        availability.isAvailable = next
+        guard let configuration = ownedClock.lastConfiguration,
+              configuration.outlineAvailability === availability else { return }
+        let current = !configuration.reducer.items.isEmpty
+        guard availability.isAvailable != current else { return }
+        setOwnedOutlineAvailability(current, on: availability)
+    }
+
+    private func setOwnedOutlineAvailability(
+        _ isAvailable: Bool,
+        on availability: ChatTimelineOutlineAvailability
+    ) {
+        #if DEBUG
+            let duringHostUpdate = ownedClock.isApplyingHostChrome
+        #endif
+        availability.isAvailable = isAvailable
+        #if DEBUG
+            ownedClock.outlineAvailabilityMutationCount &+= 1
+            if duringHostUpdate {
+                ownedClock.outlineAvailabilityPublishedDuringHostUpdate = true
+            }
+        #endif
     }
 
     private func ownedProjectionChromeChanged(
