@@ -444,6 +444,8 @@ struct OppiApp: App {
             } else if CodeBlockWrappingHarnessConfig.isEnabled {
                 CodeBlockWrappingHarnessView()
                     .ignoresSafeArea()
+            } else if ChatOutlineColdHarnessConfig.isEnabled {
+                ChatOutlineColdHarnessView()
             } else if NavigationChromeProfileConfig.isEnabled {
                 NavigationChromeProfileHarnessView()
             } else if UIHangHarnessConfig.isEnabled {

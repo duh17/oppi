@@ -10,8 +10,8 @@ import UIKit
 /// accessibility identifiers in this `UIHostingController` host. Dumps show
 /// `UIKitNavigationBar` without `chat.toolbar.outline`. Do not reintroduce a
 /// synthetic `SessionOutlineView` present/onSelect path as a substitute.
-/// Drive toolbar visibility, outline open/current contents, and navigation
-/// with `OppiE2ETests/SessionLifecycleE2ETests`.
+/// Drive the real toolbar, presented Session Outline, and row navigation with
+/// `OppiUITests/ChatOutlineColdStateUITests` (DEBUG ChatView harness, no model).
 @Suite("ChatView outline cold state", .serialized)
 @MainActor
 struct ChatViewOutlineColdStateTests {
@@ -90,9 +90,27 @@ struct ChatViewOutlineColdStateTests {
             }
         }
         #expect(rebound, "Clock must bind the new session reducer")
-        for _ in 0..<20 {
-            await Task.yield()
+        if let controller = fixture.timelineController {
+            await controller.waitForOwnedMainQueueToDrainForTesting()
         }
+        let hiddenEmptyB = await waitForTimelineCondition(timeoutMs: 2_000) {
+            await MainActor.run {
+                fixture.host.view.layoutIfNeeded()
+                guard let controller = fixture.timelineController,
+                      controller.isObservingOwnedTimelineForTesting,
+                      let configuration = controller.ownedClock.lastConfiguration
+                else {
+                    return false
+                }
+                return configuration.sessionId == sessionB
+                    && configuration.reducer !== reducerA
+                    && !fixture.outlineIsAvailable
+            }
+        }
+        #expect(
+            hiddenEmptyB,
+            "Empty B must hide outline availability before B receives tokens"
+        )
 
         let markerB = "session-b-\(UUID().uuidString.prefix(8))"
         injectAssistantDelta(fixture, text: markerB)
@@ -122,8 +140,8 @@ struct ChatViewOutlineColdStateTests {
         reducerA.processBatch([
             .textDelta(sessionId: sessionA, delta: " stale-a"),
         ])
-        for _ in 0..<8 {
-            await Task.yield()
+        if let controller = fixture.timelineController {
+            await controller.waitForOwnedMainQueueToDrainForTesting()
         }
         fixture.host.view.layoutIfNeeded()
 

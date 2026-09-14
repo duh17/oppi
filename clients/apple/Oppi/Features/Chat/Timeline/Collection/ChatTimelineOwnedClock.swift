@@ -24,6 +24,13 @@ final class ChatTimelineOwnedClockState {
     var lastScrollToBottomNonce: UInt = 0
     var lastConfiguration: ChatTimelineCollectionHost.Configuration?
     var emptyOverlayController: UIViewController?
+    /// Bumped on session bind and dismantle so deferred chrome publishes cannot
+    /// land on a stale reducer.
+    var bindEpoch: UInt64 = 0
+    var isApplyingHostChrome = false
+    #if DEBUG
+        var outlineAvailabilityPublishedDuringHostUpdate = false
+    #endif
 
     func resetPresentationState() {
         renderWindow = TimelineRenderWindowPolicy.standardWindow
@@ -56,6 +63,12 @@ extension ChatTimelineCollectionHost.Controller {
             ownedClock.expandedQuietTurnIDs.removeAll()
         }
 
+        ownedClock.isApplyingHostChrome = true
+        defer { ownedClock.isApplyingHostChrome = false }
+
+        if sessionChanged {
+            ownedClock.bindEpoch &+= 1
+        }
         ownedClock.lastConfiguration = configuration
         self.collectionView = collectionView
 
@@ -72,6 +85,7 @@ extension ChatTimelineCollectionHost.Controller {
     }
 
     func stopOwnedTimelineObservation() {
+        ownedClock.bindEpoch &+= 1
         ownedClock.isObserving = false
         ownedClock.didScheduleAttachRetry = false
         collectionView?.backgroundView = nil
@@ -175,6 +189,26 @@ extension ChatTimelineCollectionHost.Controller {
         var isObservingOwnedTimelineForTesting: Bool { ownedClock.isObserving }
         var ownedTimelineRenderWindowForTesting: Int { ownedClock.renderWindow }
         var ownedQuietSettledEndsForTesting: [String: Date] { ownedClock.quietSettledEnds }
+        var outlineAvailabilityPublishedDuringHostUpdateForTesting: Bool {
+            ownedClock.outlineAvailabilityPublishedDuringHostUpdate
+        }
+
+        func resetOutlineAvailabilityPublishDiagnosticForTesting() {
+            ownedClock.outlineAvailabilityPublishedDuringHostUpdate = false
+        }
+
+        /// Completes after already-scheduled owned-clock `Task`s and one main-queue
+        /// hop, so stale-source and deferred-publish checks wait on delivery rather
+        /// than an arbitrary yield count.
+        func waitForOwnedMainQueueToDrainForTesting() async {
+            await withCheckedContinuation { continuation in
+                Task { @MainActor in
+                    DispatchQueue.main.async {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
     #endif
 }
 
@@ -231,6 +265,35 @@ extension ChatTimelineCollectionHost.Controller {
     private func publishOwnedOutlineAvailability(isEmpty: Bool) {
         guard let availability = ownedClock.lastConfiguration?.outlineAvailability else { return }
         let next = !isEmpty
+        guard availability.isAvailable != next else { return }
+        if ownedClock.isApplyingHostChrome {
+            let epoch = ownedClock.bindEpoch
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.commitOwnedOutlineAvailability(
+                        availability: availability,
+                        next: next,
+                        epoch: epoch
+                    )
+                }
+            }
+            return
+        }
+        #if DEBUG
+            if ownedClock.isApplyingHostChrome {
+                ownedClock.outlineAvailabilityPublishedDuringHostUpdate = true
+            }
+        #endif
+        availability.isAvailable = next
+    }
+
+    private func commitOwnedOutlineAvailability(
+        availability: ChatTimelineOutlineAvailability,
+        next: Bool,
+        epoch: UInt64
+    ) {
+        guard ownedClock.bindEpoch == epoch else { return }
+        guard ownedClock.lastConfiguration?.outlineAvailability === availability else { return }
         guard availability.isAvailable != next else { return }
         availability.isAvailable = next
     }

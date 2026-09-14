@@ -113,7 +113,10 @@ struct ChatTimelineOwnedClockTests {
             ownsTimelineProjection: true
         )
         config.outlineAvailability = availability
+        windowed.coordinator.resetOutlineAvailabilityPublishDiagnosticForTesting()
         windowed.coordinator.updateHostChrome(configuration: config, to: windowed.collectionView)
+        #expect(!windowed.coordinator.outlineAvailabilityPublishedDuringHostUpdateForTesting)
+        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
         #expect(!availability.isAvailable)
 
         windowed.reducer.processBatch([
@@ -165,22 +168,60 @@ struct ChatTimelineOwnedClockTests {
             ownsTimelineProjection: true
         )
         reboundConfig.outlineAvailability = availability
+        windowed.coordinator.resetOutlineAvailabilityPublishDiagnosticForTesting()
         windowed.coordinator.updateHostChrome(
             configuration: reboundConfig,
             to: windowed.collectionView
         )
+        #expect(!windowed.coordinator.outlineAvailabilityPublishedDuringHostUpdateForTesting)
+        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
         #expect(availability.isAvailable)
+
+        let emptyRebound = TimelineReducer()
+        var emptyConfig = makeTimelineConfiguration(
+            items: [],
+            isBusy: true,
+            sessionId: "owned-outline-empty",
+            reducer: emptyRebound,
+            toolOutputStore: emptyRebound.toolOutputStore,
+            toolArgsStore: emptyRebound.toolArgsStore,
+            toolSegmentStore: emptyRebound.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true
+        )
+        emptyConfig.outlineAvailability = availability
+        windowed.coordinator.resetOutlineAvailabilityPublishDiagnosticForTesting()
+        windowed.coordinator.updateHostChrome(
+            configuration: emptyConfig,
+            to: windowed.collectionView
+        )
+        #expect(!windowed.coordinator.outlineAvailabilityPublishedDuringHostUpdateForTesting)
+        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
+        #expect(!availability.isAvailable, "Empty rebind must hide availability before the new reducer receives tokens")
+
+        emptyRebound.processBatch([
+            .agentStart(sessionId: "owned-outline-empty"),
+            .textDelta(sessionId: "owned-outline-empty", delta: "Empty then tokens"),
+        ])
+        let emptyThenTokens = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run { availability.isAvailable }
+        }
+        #expect(emptyThenTokens)
 
         windowed.reducer.processBatch([
             .textDelta(sessionId: windowed.sessionId, delta: " stale"),
         ])
-        for _ in 0..<8 {
-            await Task.yield()
-        }
+        rebound.processBatch([
+            .textDelta(sessionId: "owned-outline-b", delta: " stale-b"),
+        ])
+        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
         #expect(availability.isAvailable)
         #expect(windowed.coordinator.currentItemByID.values.contains { item in
             if case .assistantMessage(_, let text, _) = item {
-                return text.contains("Other session") && !text.contains("stale")
+                return text.contains("Empty then tokens")
+                    && !text.contains("stale")
             }
             return false
         })
@@ -318,9 +359,7 @@ struct ChatTimelineOwnedClockTests {
             .agentStart(sessionId: "owned-dismantle"),
             .textDelta(sessionId: "owned-dismantle", delta: "after dismantle"),
         ])
-        for _ in 0..<8 {
-            await Task.yield()
-        }
+        await windowed.coordinator.waitForOwnedMainQueueToDrainForTesting()
         #expect(ChatTimelinePerf.snapshot().controllerOwnedApplyCount == 0)
     }
 }
