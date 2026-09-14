@@ -22,6 +22,11 @@ enum ChatTimelinePerf {
         let hardGuardrailBreachCount: Int
         let failsafeConfigureCount: Int
         let scrollCommandsPerSecond: Int
+        /// SwiftUI `updateUIView` pushes. Streaming should not increment this
+        /// once the collection controller owns the timeline clock.
+        let hostUpdateUIViewCount: Int
+        /// Controller-owned projection applies (observer / chrome rebuild).
+        let controllerOwnedApplyCount: Int
     }
 
     struct IntervalToken {
@@ -64,6 +69,8 @@ enum ChatTimelinePerf {
     private static var cellConfigureMaxMs = 0
     private static var hardGuardrailBreachCount = 0
     private static var failsafeConfigureCount = 0
+    private static var hostUpdateUIViewCount = 0
+    private static var controllerOwnedApplyCount = 0
 
     // MARK: - Jank tracking (chat.jank_pct)
 
@@ -94,6 +101,8 @@ enum ChatTimelinePerf {
         cellConfigureMaxMs = 0
         hardGuardrailBreachCount = 0
         failsafeConfigureCount = 0
+        hostUpdateUIViewCount = 0
+        controllerOwnedApplyCount = 0
         hitchCount = 0
         totalApplyCycles = 0
 
@@ -115,7 +124,9 @@ enum ChatTimelinePerf {
             cellConfigureMaxMs: cellConfigureMaxMs,
             hardGuardrailBreachCount: hardGuardrailBreachCount,
             failsafeConfigureCount: failsafeConfigureCount,
-            scrollCommandsPerSecond: scrollCommandsPerSecond
+            scrollCommandsPerSecond: scrollCommandsPerSecond,
+            hostUpdateUIViewCount: hostUpdateUIViewCount,
+            controllerOwnedApplyCount: controllerOwnedApplyCount
         )
     }
 
@@ -129,6 +140,20 @@ enum ChatTimelinePerf {
 
     private static func resolvedSessionId(_ sessionId: String?) -> String? {
         sessionId ?? activeSessionId
+    }
+
+    /// SwiftUI hosted `updateUIView`. Chrome/insets/session identity may
+    /// increment this; token streaming must not if the UIKit controller owns
+    /// the projection clock.
+    static func recordHostUpdateUIView() {
+        hostUpdateUIViewCount &+= 1
+    }
+
+    /// Reducer-observation or chrome-driven projection apply inside the
+    /// collection controller. Existing `collection.apply` / `collection.layout`
+    /// signposts still fire on the snapshot path.
+    static func recordControllerOwnedApply() {
+        controllerOwnedApplyCount &+= 1
     }
 
     static func beginTimelineApplyCycle(itemCount: Int, changedCount: Int) {

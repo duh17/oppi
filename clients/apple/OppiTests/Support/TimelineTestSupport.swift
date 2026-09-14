@@ -472,7 +472,11 @@ func makeTimelineConfiguration(
     topOverlap: CGFloat = 0,
     bottomOverlap: CGFloat = 0,
     reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
-    workspaceId: String? = "ws-test"
+    workspaceId: String? = "ws-test",
+    ownsTimelineProjection: Bool = false,
+    quietModeEnabled: Bool = false,
+    workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
+    sessionManager: ChatSessionManager? = nil
 ) -> ChatTimelineCollectionHost.Configuration {
     ChatTimelineCollectionHost.Configuration(
         items: items,
@@ -499,7 +503,11 @@ func makeTimelineConfiguration(
         audioPlayer: audioPlayer,
         reviewCommentSelectionRouter: reviewCommentSelectionRouter,
         topOverlap: topOverlap,
-        bottomOverlap: bottomOverlap
+        bottomOverlap: bottomOverlap,
+        ownsTimelineProjection: ownsTimelineProjection,
+        quietModeEnabled: quietModeEnabled,
+        workStripStyle: workStripStyle,
+        sessionManager: sessionManager
     )
 }
 

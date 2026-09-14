@@ -75,13 +75,12 @@ enum ChatTimelineChromeOverlap {
 }
 
 /// Extracted from ChatView so that @State inputText changes (every keystroke)
-/// do NOT trigger a full ForEach re-diff of 200+ items.
+/// do NOT rebuild the timeline host.
 ///
-/// As a separate View struct, this gets its own SwiftUI observation scope.
-/// It only re-evaluates when its own dependencies change (reducer.items,
-/// renderVersion, session status) — NOT when the parent's @State changes.
+/// Streaming is not this view's clock. The collection controller observes
+/// `TimelineReducer` and owns Quiet projection, render window, and settled
+/// ends. `body` must not read `reducer.items` or `renderVersion`.
 struct ChatTimelineView: View {
-    private static let initialRenderWindow = TimelineRenderWindowPolicy.standardWindow
     private static let renderWindowStep = TimelineRenderWindowPolicy.renderWindowStep
 
     let sessionId: String
@@ -111,119 +110,19 @@ struct ChatTimelineView: View {
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
 
-    @State private var renderWindow = Self.initialRenderWindow
-    @State private var scrollCommandNonce = 0
-    @State private var pendingScrollCommand: ChatTimelineScrollCommand?
-    @State private var expandedQuietTurnIDs: Set<String> = []
-    @State private var quietSettledEnds: [String: Date] = [:]
-
     private var showsWorkingIndicator: Bool {
         isBusy && (extensionWorkingState?.visible ?? true)
     }
 
-    private var projection: QuietTimelineProjection {
-        return QuietTimelineProjection.make(
-            items: reducer.items,
-            isQuiet: quietModeEnabled,
-            isBusy: isBusy,
-            expandedTurnIDs: expandedQuietTurnIDs,
-            displayStyle: workStripStyle,
-            toolArgs: { reducer.toolArgsStore.args(for: $0) },
-            settledEnds: quietSettledEnds
-        )
-    }
-
-    private var renderedItems: ArraySlice<ChatItem> {
-        var window = renderWindow
-        // Keep the selected row in the suffix as new events arrive. This must
-        // happen while building the snapshot, not in onChange(items.count):
-        // that callback is too late to prevent one apply from evicting the row.
-        if let command = pendingScrollCommand, command.anchor == .top,
-           let index = reducer.items.firstIndex(where: { $0.id == command.id }) {
-            window = max(window, reducer.items.count - index)
-        }
-        return reducer.items.suffix(window)
-    }
-
-    private var renderedItemIDs: Set<String> {
-        Set(renderedItems.map(\.id))
-    }
-
-    private var visibleRows: [TimelineDisplayRow] {
-        projection.rows(forRenderedItemIDs: renderedItemIDs)
-    }
-
-    private var hiddenCount: Int {
-        max(0, reducer.items.count - renderedItems.count)
-    }
-
-    private var bottomItemID: String? {
-        if showsWorkingIndicator {
-            return ChatTimelineCollectionHost.workingIndicatorID
-        }
-        return visibleRows.last?.id
-    }
-
-    private func syncRenderWindow() {
-        renderWindow = TimelineRenderWindowPolicy.syncedWindow(
-            currentWindow: renderWindow,
-            totalItems: reducer.items.count
-        )
-    }
-
-    private func consumeInitialScrollIfNeeded() {
-        guard scrollController.scrollTargetID == nil else { return }
-        if sessionManager.needsInitialScroll {
-            sessionManager.needsInitialScroll = false
-            scrollController.needsInitialScroll = true
-        }
-        guard scrollController.needsInitialScroll else { return }
-        guard let bottomItemID else { return }
-
-        let availableFullTimelineItemIDs = projection.fullTimelineItemIDs
-        guard let placement = scrollController.initialPlacement(
-            availableFullTimelineItemIDs: availableFullTimelineItemIDs,
-            bottomItemID: bottomItemID
-        ) else {
-            return
-        }
-
-        switch placement {
-        case .bottom(let itemID):
-            issueScrollCommand(id: itemID, anchor: .bottom, animated: false)
-        case .viewport(let restoration):
-            if let itemIndex = availableFullTimelineItemIDs.firstIndex(of: restoration.itemID) {
-                renderWindow = max(renderWindow, availableFullTimelineItemIDs.count - itemIndex)
-            }
-            issueScrollCommand(
-                id: restoration.itemID,
-                anchor: .viewport(relativeY: restoration.relativeY),
-                animated: false
-            )
-        }
-    }
-
     var body: some View {
-        let projection = self.projection
-        let visibleRows = projection.rows(forRenderedItemIDs: renderedItemIDs)
         ChatTimelineCollectionHost(
             configuration: .init(
-                items: visibleRows.compactMap { row in
-                    if case .item(let item) = row { return item }
-                    return nil
-                },
-                displayRows: visibleRows,
-                workLineByID: Dictionary(uniqueKeysWithValues: visibleRows.compactMap { row in
-                    guard case .quietWork(let workLine) = row else { return nil }
-                    return (workLine.id, workLine)
-                }),
-                fullTimelineItemIDs: projection.fullTimelineItemIDs,
-                hiddenCount: hiddenCount,
-                hasOlderServerPage: sessionManager.hasOlderTracePage,
+                items: [],
+                hiddenCount: 0,
                 renderWindowStep: Self.renderWindowStep,
                 isBusy: isBusy,
                 showsWorkingIndicator: showsWorkingIndicator,
-                streamingAssistantID: reducer.streamingAssistantID,
+                streamingAssistantID: nil,
                 sessionId: sessionId,
                 serverId: serverId,
                 workspaceId: workspaceId,
@@ -233,33 +132,7 @@ struct ChatTimelineView: View {
                 onFork: onFork,
                 onOpenCurrentFile: onOpenCurrentFile,
                 onBackSwipe: onBackSwipe,
-                onQuietWorkLineToggle: { turnID in
-                    expandedQuietTurnIDs.formSymmetricDifference([turnID])
-                },
-                onShowEarlier: {
-                    switch TimelineRenderWindowPolicy.showEarlierAction(
-                        currentWindow: renderWindow,
-                        totalItems: reducer.items.count,
-                        step: Self.renderWindowStep,
-                        hasOlderServerPage: sessionManager.hasOlderTracePage
-                    ) {
-                    case .revealLocal(let newWindow):
-                        renderWindow = newWindow
-                    case .fetchOlderPage:
-                        Task { @MainActor in
-                            let didLoadOlder = await sessionManager.loadOlderTracePage(
-                                connection: connection,
-                                sessionStore: connection.sessionStore
-                            )
-                            if didLoadOlder {
-                                renderWindow = min(reducer.items.count, renderWindow + Self.renderWindowStep)
-                            }
-                        }
-                    case .none:
-                        break
-                    }
-                },
-                scrollCommand: pendingScrollCommand,
+                onShowEarlier: {},
                 scrollController: scrollController,
                 reducer: reducer,
                 toolOutputStore: reducer.toolOutputStore,
@@ -275,102 +148,67 @@ struct ChatTimelineView: View {
                 reviewCommentSelectionRouter: reviewCommentSelectionRouter,
                 topOverlap: topOverlap,
                 bottomOverlap: bottomOverlap,
-                onVisibleAudioStripItemIDsChange: onVisibleAudioStripItemIDsChange
+                onVisibleAudioStripItemIDsChange: onVisibleAudioStripItemIDsChange,
+                ownsTimelineProjection: true,
+                quietModeEnabled: quietModeEnabled,
+                workStripStyle: workStripStyle,
+                sessionManager: sessionManager
             )
         )
         .background(.themeBg)
-        .overlay {
-            if reducer.items.isEmpty && !isBusy {
-                ChatEmptyState(
-                    sessionId: sessionId,
-                    agentId: agentId,
-                    agentIcon: agentIcon
-                )
-                    .padding(.top, topOverlap)
-                    .padding(.bottom, bottomOverlap)
-            }
-        }
-        .onAppear {
-            syncRenderWindow()
-            Task { @MainActor in
-                await Task.yield()
-                // Outline jumps own the first layout. Consuming the target
-                // before yield let initial-scroll replace the pending .top.
-                if scrollController.scrollTargetID != nil {
-                    consumeScrollTargetIfNeeded()
-                } else {
-                    consumeInitialScrollIfNeeded()
-                }
-            }
-        }
-        .onChange(of: reducer.items.count) { _, _ in
-            syncRenderWindow()
-            consumeInitialScrollIfNeeded()
-        }
-        .onChange(of: quietModeEnabled) { _, isEnabled in
-            if !isEnabled {
-                expandedQuietTurnIDs.removeAll()
-            }
-            consumeInitialScrollIfNeeded()
-        }
-        .onChange(of: sessionId) { _, _ in
-            expandedQuietTurnIDs.removeAll()
-            quietSettledEnds.removeAll()
-        }
-        .onChange(of: projection) { _, newValue in
-            let next = newValue.settledEnds
-            if next != quietSettledEnds {
-                quietSettledEnds = next
-            }
-        }
-        // Jump-to-bottom button lives in ChatView (above the footer overlay) to avoid
-        // the footer's z-order blocking taps on this overlay.
-        .onChange(of: reducer.renderVersion) { _, _ in
-            scrollController.itemCount = visibleRows.count
-            _ = scrollController.consumeHasNewItems()
-            // Ambient streaming follow is handled inside the collection view
-            // after layout settles. SwiftUI only issues explicit scroll
-            // intents (initial load, jump-to-bottom, navigation) so token/tool
-            // streaming does not fight self-sizing layout with repeated
-            // scrollToItem calls.
-        }
-        .onChange(of: sessionManager.needsInitialScroll) { _, needs in
-            guard needs else { return }
-            consumeInitialScrollIfNeeded()
-        }
-        .onChange(of: scrollController.scrollTargetID) { _, _ in
-            consumeScrollTargetIfNeeded()
-        }
-        .onChange(of: scrollController.scrollToBottomNonce) { _, _ in
-            guard let bottomItemID else { return }
-            issueScrollCommand(id: bottomItemID, anchor: .bottom, animated: true)
-        }
     }
+}
 
-    private func consumeScrollTargetIfNeeded() {
-        guard let targetID = scrollController.scrollTargetID else { return }
-        if !visibleRows.contains(where: { $0.id == targetID }) {
-            if let workLine = projection.rows.compactMap({ row -> QuietTimelineWorkLine? in
-                guard case .quietWork(let workLine) = row,
-                      workLine.sourceItemIDs.contains(targetID) else { return nil }
-                return workLine
-            }).first {
-                expandedQuietTurnIDs.insert(workLine.turnID)
-            }
-            renderWindow = reducer.items.count
-        }
-        scrollController.handleScrollTarget { target in
-            issueScrollCommand(id: target, anchor: .top, animated: false)
-        }
-    }
+/// Empty overlay stays a SwiftUI view, hosted as the collection background so
+/// `ChatTimelineView.body` does not observe `reducer.items`.
+private struct ChatTimelineEmptyOverlay: View {
+    var sessionId: String
+    var agentId: String?
+    var agentIcon: IconChoice?
+    var topOverlap: CGFloat
+    var bottomOverlap: CGFloat
 
-    private func issueScrollCommand(id: String, anchor: ChatTimelineScrollCommand.Anchor, animated: Bool) {
-        scrollCommandNonce &+= 1
-        pendingScrollCommand = ChatTimelineScrollCommand(
-            id: id,
-            anchor: anchor,
-            animated: animated,
-            nonce: scrollCommandNonce
+    var body: some View {
+        ChatEmptyState(
+            sessionId: sessionId,
+            agentId: agentId,
+            agentIcon: agentIcon
         )
+        .padding(.top, topOverlap)
+        .padding(.bottom, bottomOverlap)
+    }
+}
+
+extension ChatTimelineCollectionHost.Controller {
+    func updateOwnedEmptyOverlay(
+        isEmpty: Bool,
+        configuration: ChatTimelineCollectionHost.Configuration,
+        collectionView: UICollectionView
+    ) {
+        let shouldShow = isEmpty && !configuration.isBusy
+        let overlay = ChatTimelineEmptyOverlay(
+            sessionId: configuration.sessionId,
+            agentId: configuration.agentId,
+            agentIcon: configuration.agentIcon,
+            topOverlap: configuration.topOverlap,
+            bottomOverlap: configuration.bottomOverlap
+        )
+        if shouldShow {
+            if let host = ownedClock.emptyOverlayController as? UIHostingController<ChatTimelineEmptyOverlay> {
+                host.rootView = overlay
+                if collectionView.backgroundView !== host.view {
+                    collectionView.backgroundView = host.view
+                }
+            } else {
+                let host = UIHostingController(rootView: overlay)
+                host.view.backgroundColor = .clear
+                host.view.isUserInteractionEnabled = false
+                collectionView.backgroundView = host.view
+                ownedClock.emptyOverlayController = host
+            }
+        } else if ownedClock.emptyOverlayController != nil {
+            collectionView.backgroundView = nil
+            ownedClock.emptyOverlayController = nil
+        }
     }
 }

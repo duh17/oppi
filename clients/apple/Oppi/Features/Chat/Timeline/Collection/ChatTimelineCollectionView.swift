@@ -22,18 +22,18 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     @Environment(\.composerDraftStore) private var composerDraftStore
 
     struct Configuration {
-        let items: [ChatItem]
-        let displayRows: [TimelineDisplayRow]
-        let workLineByID: [String: QuietTimelineWorkLine]
+        var items: [ChatItem]
+        var displayRows: [TimelineDisplayRow]
+        var workLineByID: [String: QuietTimelineWorkLine]
         /// Full timeline order used for absolute navigation ordinals. This is
         /// separate from `items`, which may only contain the rendered suffix.
-        let fullTimelineItemIDs: [String]
-        let hiddenCount: Int
-        let hasOlderServerPage: Bool
+        var fullTimelineItemIDs: [String]
+        var hiddenCount: Int
+        var hasOlderServerPage: Bool
         let renderWindowStep: Int
         let isBusy: Bool
         let showsWorkingIndicator: Bool
-        let streamingAssistantID: String?
+        var streamingAssistantID: String?
         let sessionId: String
         let serverId: String?
         let workspaceId: String?
@@ -43,9 +43,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let onFork: (String) -> Void
         let onOpenCurrentFile: (String) -> Void
         let onBackSwipe: () -> Void
-        let onQuietWorkLineToggle: (String) -> Void
-        let onShowEarlier: () -> Void
-        let scrollCommand: ChatTimelineScrollCommand?
+        var onQuietWorkLineToggle: (String) -> Void
+        var onShowEarlier: () -> Void
+        var scrollCommand: ChatTimelineScrollCommand?
         let scrollController: ChatScrollController
         let reducer: TimelineReducer
         let toolOutputStore: ToolOutputStore
@@ -62,6 +62,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let topOverlap: CGFloat
         let bottomOverlap: CGFloat
         let onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)?
+        /// When true, `updateUIView` pushes chrome only. The controller observes
+        /// `TimelineReducer` and owns projection / render window / quiet state.
+        let ownsTimelineProjection: Bool
+        let quietModeEnabled: Bool
+        let workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle
+        let sessionManager: ChatSessionManager?
 
         init(
             items: [ChatItem],
@@ -101,7 +107,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
             topOverlap: CGFloat = 0,
             bottomOverlap: CGFloat = 0,
-            onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)? = nil
+            onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)? = nil,
+            ownsTimelineProjection: Bool = false,
+            quietModeEnabled: Bool = false,
+            workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
+            sessionManager: ChatSessionManager? = nil
         ) {
             self.items = items
             self.displayRows = displayRows ?? items.map(TimelineDisplayRow.item)
@@ -142,6 +152,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.topOverlap = topOverlap
             self.bottomOverlap = bottomOverlap
             self.onVisibleAudioStripItemIDsChange = onVisibleAudioStripItemIDsChange
+            self.ownsTimelineProjection = ownsTimelineProjection
+            self.quietModeEnabled = quietModeEnabled
+            self.workStripStyle = workStripStyle
+            self.sessionManager = sessionManager
         }
     }
 
@@ -181,11 +195,17 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     }
 
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
+        ChatTimelinePerf.recordHostUpdateUIView()
         context.coordinator.composerDraftStore = composerDraftStore
-        context.coordinator.apply(configuration: configuration, to: collectionView)
+        if configuration.ownsTimelineProjection {
+            context.coordinator.updateHostChrome(configuration: configuration, to: collectionView)
+        } else {
+            context.coordinator.apply(configuration: configuration, to: collectionView)
+        }
     }
 
     static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Controller) {
+        coordinator.stopOwnedTimelineObservation()
         coordinator.stopMarkdownVideoPlayback(in: collectionView)
         coordinator.cancelTimelinePreparation()
     }
@@ -209,6 +229,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
         private let context = ChatTimelineControllerContext()
+        let ownedClock = ChatTimelineOwnedClockState()
 
         var hiddenCount = 0
         var hasOlderServerPage = false
@@ -521,6 +542,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         deinit {
             MainActor.assumeIsolated {
+                ownedClock.isObserving = false
+                ownedClock.emptyOverlayController = nil
                 let observedAudioPlayer = audioPlayer
                 toolOutputLoader.cancelAllWork()
                 preparationRunway.cancelAll()
