@@ -1,6 +1,14 @@
 import Observation
 import UIKit
 
+/// Cold SwiftUI chrome for the outline toolbar button. The owned clock writes
+/// this only when the timeline becomes empty or nonempty, or a session binds.
+@MainActor
+@Observable
+final class ChatTimelineOutlineAvailability {
+    var isAvailable = false
+}
+
 /// Presentation state the collection controller owns so SwiftUI is not the
 /// streaming clock. `ChatTimelineView` still pushes chrome through
 /// `updateUIView`; reducer tokens apply here.
@@ -39,6 +47,7 @@ extension ChatTimelineCollectionHost.Controller {
                 || $0.serverId != configuration.serverId
                 || $0.workspaceId != configuration.workspaceId
                 || $0.routeScope != configuration.routeScope
+                || $0.reducer !== configuration.reducer
         } ?? true
         if sessionChanged {
             ownedClock.resetPresentationState()
@@ -49,6 +58,10 @@ extension ChatTimelineCollectionHost.Controller {
 
         ownedClock.lastConfiguration = configuration
         self.collectionView = collectionView
+
+        if sessionChanged, ownedClock.isObserving {
+            trackOwnedTimelineSources()
+        }
 
         let chromeChanged = ownedProjectionChromeChanged(from: previous, to: configuration)
         if previous == nil || sessionChanged || chromeChanged {
@@ -155,6 +168,7 @@ extension ChatTimelineCollectionHost.Controller {
             configuration: config,
             collectionView: collectionView
         )
+        publishOwnedOutlineAvailability(isEmpty: reducer.items.isEmpty)
     }
 
     #if DEBUG
@@ -212,6 +226,13 @@ extension ChatTimelineCollectionHost.Controller {
             guard let self, self.ownedClock.isObserving else { return }
             self.applyOwnedProjection()
         }
+    }
+
+    private func publishOwnedOutlineAvailability(isEmpty: Bool) {
+        guard let availability = ownedClock.lastConfiguration?.outlineAvailability else { return }
+        let next = !isEmpty
+        guard availability.isAvailable != next else { return }
+        availability.isAvailable = next
     }
 
     private func ownedProjectionChromeChanged(

@@ -68,6 +68,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let quietModeEnabled: Bool
         let workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle
         let sessionManager: ChatSessionManager?
+        var outlineAvailability: ChatTimelineOutlineAvailability?
 
         init(
             items: [ChatItem],
@@ -111,7 +112,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             ownsTimelineProjection: Bool = false,
             quietModeEnabled: Bool = false,
             workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
-            sessionManager: ChatSessionManager? = nil
+            sessionManager: ChatSessionManager? = nil,
+            outlineAvailability: ChatTimelineOutlineAvailability? = nil
         ) {
             self.items = items
             self.displayRows = displayRows ?? items.map(TimelineDisplayRow.item)
@@ -156,6 +158,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.quietModeEnabled = quietModeEnabled
             self.workStripStyle = workStripStyle
             self.sessionManager = sessionManager
+            self.outlineAvailability = outlineAvailability
         }
     }
 

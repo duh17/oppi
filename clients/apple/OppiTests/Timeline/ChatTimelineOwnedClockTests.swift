@@ -96,6 +96,96 @@ struct ChatTimelineOwnedClockTests {
         #expect(snapshot.controllerOwnedApplyCount >= 1)
     }
 
+    @Test func outlineAvailabilityPublishesOnlyOnEmptyTransitionsAndBind() async {
+        let windowed = makeWindowedTimelineHarness(sessionId: "owned-outline")
+        let availability = ChatTimelineOutlineAvailability()
+        var config = makeTimelineConfiguration(
+            items: [],
+            isBusy: true,
+            sessionId: windowed.sessionId,
+            reducer: windowed.reducer,
+            toolOutputStore: windowed.toolOutputStore,
+            toolArgsStore: windowed.toolArgsStore,
+            toolSegmentStore: windowed.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true
+        )
+        config.outlineAvailability = availability
+        windowed.coordinator.updateHostChrome(configuration: config, to: windowed.collectionView)
+        #expect(!availability.isAvailable)
+
+        windowed.reducer.processBatch([
+            .agentStart(sessionId: windowed.sessionId),
+            .textDelta(sessionId: windowed.sessionId, delta: "Hello"),
+        ])
+        let becameAvailable = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run { availability.isAvailable }
+        }
+        #expect(becameAvailable)
+
+        windowed.reducer.processBatch([
+            .textDelta(sessionId: windowed.sessionId, delta: " stream"),
+        ])
+        let keptAvailable = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                windowed.coordinator.currentItemByID.values.contains { item in
+                    if case .assistantMessage(_, let text, _) = item {
+                        return text.contains("Hello stream")
+                    }
+                    return false
+                } && availability.isAvailable
+            }
+        }
+        #expect(keptAvailable)
+
+        windowed.reducer.reset()
+        let becameEmpty = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run { !availability.isAvailable }
+        }
+        #expect(becameEmpty)
+
+        let rebound = TimelineReducer()
+        rebound.processBatch([
+            .agentStart(sessionId: "owned-outline-b"),
+            .textDelta(sessionId: "owned-outline-b", delta: "Other session"),
+        ])
+        var reboundConfig = makeTimelineConfiguration(
+            items: [],
+            isBusy: true,
+            sessionId: "owned-outline-b",
+            reducer: rebound,
+            toolOutputStore: rebound.toolOutputStore,
+            toolArgsStore: rebound.toolArgsStore,
+            toolSegmentStore: rebound.toolSegmentStore,
+            connection: windowed.connection,
+            scrollController: windowed.scrollController,
+            audioPlayer: windowed.audioPlayer,
+            ownsTimelineProjection: true
+        )
+        reboundConfig.outlineAvailability = availability
+        windowed.coordinator.updateHostChrome(
+            configuration: reboundConfig,
+            to: windowed.collectionView
+        )
+        #expect(availability.isAvailable)
+
+        windowed.reducer.processBatch([
+            .textDelta(sessionId: windowed.sessionId, delta: " stale"),
+        ])
+        for _ in 0..<8 {
+            await Task.yield()
+        }
+        #expect(availability.isAvailable)
+        #expect(windowed.coordinator.currentItemByID.values.contains { item in
+            if case .assistantMessage(_, let text, _) = item {
+                return text.contains("Other session") && !text.contains("stale")
+            }
+            return false
+        })
+    }
+
     @Test func quietProjectionAndSettledEndsLiveOnController() async {
         let windowed = makeWindowedTimelineHarness(sessionId: "owned-quiet")
         windowed.reducer.processBatch([

@@ -96,6 +96,7 @@ struct ChatView: View {
     @State private var attachmentPreparationText: String?
 
     @State private var showOutline = false
+    @State private var outlineAvailability = ChatTimelineOutlineAvailability()
     @State private var isFilePanelVisible = false
     @State private var selectedFilePanelTab: ChatFileBrowserPanelTab
     @State private var showModelPicker = false
@@ -523,7 +524,8 @@ struct ChatView: View {
             bottomOverlap: footerHeight,
             onVisibleAudioStripItemIDsChange: { ids in
                 visibleAudioStripItemIDs = ids
-            }
+            },
+            outlineAvailability: outlineAvailability
         )
     }
 
@@ -1358,7 +1360,10 @@ struct ChatView: View {
     @ViewBuilder
     private var chatTrailingToolbarItem: some View {
         HStack(spacing: 2) {
-            if !reducer.items.isEmpty {
+            // Do not read `reducer.items` here. Content-only streaming would
+            // rebuild ChatView and `updateUIView`. The UIKit clock publishes
+            // this boolean on empty/nonempty transitions and session bind.
+            if outlineAvailability.isAvailable {
                 Button { showOutline = true } label: {
                     Image(systemName: "list.bullet")
                         .font(.subheadline)
