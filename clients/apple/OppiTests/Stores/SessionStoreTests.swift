@@ -386,23 +386,6 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.contextTokens == 99)
     }
 
-    @Test func applySummaryPreservesExistingSessionWarnings() {
-        let store = SessionStore()
-        store.switchServer(to: "srv1")
-
-        var initial = makeTestSession(id: "s1", status: .ready)
-        initial.warnings = ["Worktree was removed; continuing on Main checkout."]
-        store.upsert(initial)
-
-        var projected = makeTestSession(id: "s1", status: .busy)
-        projected.warnings = nil
-        #expect(store.applySummary(SessionSummary(from: projected)))
-        #expect(store.session(id: "s1")?.status == .busy)
-        #expect(store.session(id: "s1")?.warnings == [
-            "Worktree was removed; continuing on Main checkout."
-        ])
-    }
-
     @Test func lossyLifecycleSummariesPreserveFocusedChangedFilesAndContextScope() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

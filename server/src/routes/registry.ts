@@ -678,13 +678,6 @@ const rawApiRouteSpecs = [
   },
   {
     method: "POST",
-    path: "/workspaces/{workspaceId}/sessions/{sessionId}/migrate",
-    operationId: "migrateWorkspaceSession",
-    surface: "core",
-    auth: "owner",
-  },
-  {
-    method: "POST",
     path: "/workspaces/{workspaceId}/sessions/{sessionId}/fork",
     operationId: "forkWorkspaceSession",
     surface: "core",

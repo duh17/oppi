@@ -6,24 +6,6 @@ import UIKit
 @Suite("ChatView Lifecycle")
 @MainActor
 struct ChatViewLifecycleTests {
-    @Test func sessionWarningChromeRendersGenericNoticesWithoutBranchingOnText() {
-        #expect(ChatSessionWarningChrome.messages(from: nil).isEmpty)
-        #expect(ChatSessionWarningChrome.messages(from: []).isEmpty)
-        #expect(ChatSessionWarningChrome.messages(from: ["", "  "]).isEmpty)
-        #expect(
-            ChatSessionWarningChrome.messages(from: [
-                "Worktree was removed; continuing on Main checkout.",
-                "  Another notice  ",
-                "Worktree was removed; continuing on Main checkout.",
-            ]) == [
-                "Worktree was removed; continuing on Main checkout.",
-                "Another notice",
-            ]
-        )
-        let arbitrary = ["alpha", "beta"]
-        #expect(ChatSessionWarningChrome.messages(from: arbitrary) == arbitrary)
-    }
-
     @Test func inactiveAndBackgroundPauseTimelinePresentation() {
         #expect(ChatView.shouldPauseTimelinePresentation(for: .inactive))
         #expect(ChatView.shouldPauseTimelinePresentation(for: .background))

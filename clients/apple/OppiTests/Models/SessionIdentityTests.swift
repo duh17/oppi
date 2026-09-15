@@ -91,37 +91,4 @@ struct SessionIdentityTests {
         #expect(summary.session.id == "session-1")
         #expect(encodedSession?["piSessionId"] == nil)
     }
-
-    @Test func decodesAndEncodesSessionWarningsWithoutCopyingThemOntoSummaries() throws {
-        let json = Data("""
-        {
-          "id": "session-1",
-          "workspaceId": "ws-1",
-          "status": "ready",
-          "createdAt": 1000,
-          "lastActivity": 2000,
-          "messageCount": 0,
-          "tokens": { "input": 0, "output": 0 },
-          "cost": 0,
-          "warnings": ["Worktree was removed; continuing on Main checkout.", "Another notice"]
-        }
-        """.utf8)
-
-        let session = try JSONDecoder().decode(Session.self, from: json)
-        let summary = try JSONDecoder().decode(SessionSummary.self, from: json)
-        let encodedSession = try JSONSerialization.jsonObject(
-            with: JSONEncoder().encode(session)
-        ) as? [String: Any]
-        let encodedSummary = try JSONSerialization.jsonObject(
-            with: JSONEncoder().encode(SessionSummary(from: session).session)
-        ) as? [String: Any]
-
-        #expect(session.warnings == [
-            "Worktree was removed; continuing on Main checkout.",
-            "Another notice"
-        ])
-        #expect(summary.session.warnings == nil)
-        #expect(encodedSession?["warnings"] as? [String] == session.warnings)
-        #expect(encodedSummary?["warnings"] == nil)
-    }
 }

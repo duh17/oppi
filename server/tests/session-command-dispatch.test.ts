@@ -638,49 +638,24 @@ describe("session command dispatch and output boundaries", () => {
     log.mockRestore();
   });
 
-  it("allows a session to migrate itself onto Main", async () => {
-    request.mockImplementation(async (_storage, path, options) => {
-      if (path === "/sessions") return { sessions: [{ id: "caller-1", workspaceId: "ws-1" }] };
-      if (path === "/sessions/caller-1") {
-        return { session: { id: "caller-1", workspaceId: "ws-1", worktreeId: "wt_feature" } };
-      }
-      if (path === "/workspaces/ws-1/sessions/caller-1/migrate" && options?.method === "POST") {
-        return {
-          session: {
-            id: "caller-1",
-            status: "ready",
-            worktreeId: "main",
-            warnings: ["Worktree was removed; continuing on Main checkout."],
-          },
-        };
-      }
-      throw new Error(`unexpected path ${path}`);
-    });
-
+  it("rejects session migrate as an unknown command", async () => {
     const { stdout, exitCode } = await captureCliOutput(() =>
-      cmdSession(storage, "migrate", ["caller-1"], { json: "true" }, process.cwd(), {
-        callerSessionId: "caller-1",
-      }),
+      cmdSession(storage, "migrate", ["caller-1"], { json: "true" }),
     );
 
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
     expect(JSON.parse(stdout)).toMatchObject({
-      ok: true,
-      data: {
-        session_id: "caller-1",
-        status: "ready",
-        worktreeId: "main",
-        warnings: ["Worktree was removed; continuing on Main checkout."],
+      ok: false,
+      error: {
+        message: expect.stringContaining(
+          "Usage: oppi session list|get|create|send|abort|wait|read|events|trace|search|inspect|stop|resume|fork|delete|tool-output|trace-page|trace-outline",
+        ),
       },
     });
-    expect(request).toHaveBeenCalledWith(
-      storage,
-      "/workspaces/ws-1/sessions/caller-1/migrate",
-      { method: "POST" },
-    );
+    expect(request).not.toHaveBeenCalled();
   });
 
-  it("keeps resume JSON warnings", async () => {
+  it("prints the live rebind sentence on resume and keeps it off Session JSON", async () => {
     request.mockImplementation(async (_storage, path) => {
       if (path === "/sessions") return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
       if (path === "/sessions/sess-1") {
@@ -688,59 +663,66 @@ describe("session command dispatch and output boundaries", () => {
       }
       if (path === "/workspaces/ws-1/sessions/sess-1/resume") {
         return {
+          rebound: true,
           session: {
             id: "sess-1",
             status: "ready",
             worktreeId: "main",
-            warnings: ["Worktree was removed; continuing on Main checkout."],
           },
         };
       }
       throw new Error(`unexpected path ${path}`);
     });
 
-    const { stdout } = await captureCliOutput(() =>
+    const json = await captureCliOutput(() =>
       cmdSession(storage, "resume", ["sess-1"], { json: "true" }),
     );
-
-    expect(JSON.parse(stdout)).toMatchObject({
+    expect(JSON.parse(json.stdout)).toMatchObject({
       ok: true,
       data: {
         session_id: "sess-1",
         status: "ready",
-        warnings: ["Worktree was removed; continuing on Main checkout."],
+        worktreeId: "main",
+        rebound: true,
       },
     });
+    expect(JSON.parse(json.stdout).data.warnings).toBeUndefined();
+
+    const human = await captureCliOutput(() => cmdSession(storage, "resume", ["sess-1"], {}), {
+      includeHuman: true,
+    });
+    expect(human.humanStdout).toContain("Resuming on Main checkout. The worktree is gone.");
   });
 
-  it("keeps get JSON warnings", async () => {
+  it("does not print a rebind sentence on a second resume already on Main", async () => {
     request.mockImplementation(async (_storage, path) => {
-      if (path === "/sessions") return { sessions: [{ id: "sess-1" }] };
+      if (path === "/sessions") return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
       if (path === "/sessions/sess-1") {
+        return { session: { id: "sess-1", workspaceId: "ws-1", worktreeId: "main" } };
+      }
+      if (path === "/workspaces/ws-1/sessions/sess-1/resume") {
         return {
           session: {
             id: "sess-1",
             status: "ready",
-            warnings: ["Worktree was removed; continuing on Main checkout."],
+            worktreeId: "main",
           },
         };
       }
       throw new Error(`unexpected path ${path}`);
     });
 
-    const { stdout } = await captureCliOutput(() =>
-      cmdSession(storage, "get", ["sess-1"], { json: "true" }),
+    const json = await captureCliOutput(() =>
+      cmdSession(storage, "resume", ["sess-1"], { json: "true" }),
     );
+    expect(JSON.parse(json.stdout).data.rebound).toBeUndefined();
+    expect(JSON.parse(json.stdout).data.warnings).toBeUndefined();
 
-    expect(JSON.parse(stdout)).toMatchObject({
-      ok: true,
-      data: {
-        session: {
-          id: "sess-1",
-          warnings: ["Worktree was removed; continuing on Main checkout."],
-        },
-      },
+    const human = await captureCliOutput(() => cmdSession(storage, "resume", ["sess-1"], {}), {
+      includeHuman: true,
     });
+    expect(human.humanStdout).toContain("resumed sess-1");
+    expect(human.humanStdout).not.toContain("Resuming on Main checkout. The worktree is gone.");
   });
 });
 

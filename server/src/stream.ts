@@ -12,7 +12,11 @@ import type { Storage } from "./storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
-import { SessionLifecycleError, SessionLifecycleService } from "./session-lifecycle-service.js";
+import {
+  SessionLifecycleError,
+  SessionLifecycleService,
+  WORKTREE_REBIND_NOTICE,
+} from "./session-lifecycle-service.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import {
   parseDictationClientMessage,
@@ -497,6 +501,13 @@ export class BoundSessionStreamMux {
       const pendingUIMsgs = this.ctx.sessionRuntimes.getPendingUIRequestMessages(sessionId);
       for (const pendingUIMsg of pendingUIMsgs) {
         sendForSession(pendingUIMsg);
+      }
+      if (openResult.rebound) {
+        sendForSession({
+          type: "cache_miss",
+          id: `worktree-rebind:${sessionId}`,
+          message: WORKTREE_REBIND_NOTICE,
+        });
       }
       const pendingUIDialogCount = pendingUIMsgs.filter(
         (message) => message.type === "extension_ui_request",

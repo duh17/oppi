@@ -97,17 +97,12 @@ export async function cmdSession(
     const callerSessionId = callerContext.callerSessionId ?? callerSessionIdFromEnvironment();
     const rawTargets = sessionTargetsForMode(mode, positional);
     // Exact self-target stays local so managed callers fail before any HTTP call.
-    // `session migrate` is the self-cleanup exception: an idle session may detach itself onto Main.
-    if (mode !== "migrate") {
-      assertNotSelfTargetingSession(rawTargets, callerSessionId);
-    }
+    assertNotSelfTargetingSession(rawTargets, callerSessionId);
     if (mode === "wait" && new Set(rawTargets).size !== rawTargets.length) {
       throw new Error("session ids must be unique");
     }
     const resolvedTargets = await resolveSessionIdTargets(rawTargets, call);
-    if (mode !== "migrate") {
-      assertNotSelfTargetingSession(resolvedTargets, callerSessionId);
-    }
+    assertNotSelfTargetingSession(resolvedTargets, callerSessionId);
     if (callerContext.sandboxScope) {
       await assertSandboxScopeTargets(call, callerContext.sandboxScope, resolvedTargets);
     }
@@ -470,20 +465,20 @@ export async function cmdSession(
         { method: "POST" },
       );
       const session = result.session as Partial<Session> | undefined;
-      output(sessionCommandJson(id, session), () => printSessionNotice(`resumed ${id}`));
-      return;
-    }
-
-    if (mode === "migrate") {
-      const id = requireTarget(resolvedTargets, "session id is required");
-      const workspaceId = await resolveSessionWorkspaceId(id, call);
-      const result = await call<Record<string, unknown>>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/migrate`,
-        { method: "POST" },
-      );
-      const session = result.session as Partial<Session> | undefined;
-      output(sessionCommandJson(id, session), () =>
-        printSessionNotice(`migrated ${id} onto Main checkout`),
+      const rebound = result.rebound === true;
+      output(
+        {
+          session_id: id,
+          status: session?.status ?? "ready",
+          ...(session?.worktreeId ? { worktreeId: session.worktreeId } : {}),
+          ...(rebound ? { rebound: true } : {}),
+        },
+        () => {
+          printSessionNotice(`resumed ${id}`);
+          if (rebound) {
+            printSessionNotice("Resuming on Main checkout. The worktree is gone.");
+          }
+        },
       );
       return;
     }
@@ -507,7 +502,6 @@ export async function cmdSession(
           session_id: session?.id ?? null,
           status: session?.status ?? null,
           ...(session?.name ? { name: session.name } : {}),
-          ...sessionWarningsJson(session),
         },
         () => printSessionNotice(`forked ${id} → ${session?.id ?? "?"}`),
       );
@@ -555,7 +549,7 @@ export async function cmdSession(
     }
 
     throw new Error(
-      "Usage: oppi session list|get|create|send|abort|wait|read|events|trace|search|inspect|stop|resume|migrate|fork|delete|tool-output|trace-page|trace-outline",
+      "Usage: oppi session list|get|create|send|abort|wait|read|events|trace|search|inspect|stop|resume|fork|delete|tool-output|trace-page|trace-outline",
     );
   } catch (err: unknown) {
     if (callerContext.signal?.aborted) throw err;
@@ -684,7 +678,6 @@ const SESSION_FLAGS: Record<string, readonly string[]> = {
   stop: ["json"],
   delete: ["json"],
   resume: ["json"],
-  migrate: ["json"],
   fork: ["entry", "json", "name"],
   "tool-output": ["json"],
   "trace-page": ["around-entry", "cursor", "json", "preview-bytes", "target-events"],
@@ -763,7 +756,6 @@ function sessionTargetsForMode(mode: string, positional: string[]): string[] {
       "stop",
       "delete",
       "resume",
-      "migrate",
       "fork",
       "tool-output",
       "trace-page",
@@ -780,24 +772,6 @@ function requireTarget(targets: string[], message: string): string {
   const value = targets[0];
   if (!value) throw new Error(message);
   return value;
-}
-
-function sessionWarningsJson(session: Partial<Session> | undefined): Record<string, unknown> {
-  return Array.isArray(session?.warnings) && session.warnings.length > 0
-    ? { warnings: session.warnings }
-    : {};
-}
-
-function sessionCommandJson(
-  sessionId: string,
-  session: Partial<Session> | undefined,
-): Record<string, unknown> {
-  return {
-    session_id: sessionId,
-    status: session?.status ?? "ready",
-    ...(session?.worktreeId ? { worktreeId: session.worktreeId } : {}),
-    ...sessionWarningsJson(session),
-  };
 }
 
 function querySuffix(params: URLSearchParams): string {

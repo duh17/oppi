@@ -189,9 +189,6 @@ struct Session: Identifiable, Sendable, Equatable {
     // Privacy / persistence
     var ephemeral: Bool?
 
-    /// Non-fatal session notices from the server. Not part of SessionSummary.
-    var warnings: [String]? = nil
-
     /// Display title: name, first message preview, or session ID prefix.
     var displayTitle: String {
         if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
@@ -364,7 +361,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case name, status, createdAt, lastActivity, lastAgentReplyAt, currentTurnStartedAt
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
-    case thinkingLevel, runtime, mirror, control, launch, agentId, agentIcon, ephemeral, warnings
+    case thinkingLevel, runtime, mirror, control, launch, agentId, agentIcon, ephemeral
     case pendingAskCount
 }
 
@@ -396,7 +393,6 @@ private struct DecodedSessionWireFields {
     let agentId: String?
     let agentIcon: IconChoice?
     let ephemeral: Bool?
-    let warnings: [String]?
 
     init(from container: KeyedDecodingContainer<SessionWireCodingKeys>) throws {
         id = try container.decode(String.self, forKey: .id)
@@ -426,7 +422,6 @@ private struct DecodedSessionWireFields {
         agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
         agentIcon = try container.decodeIfPresent(IconChoice.self, forKey: .agentIcon)
         ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral)
-        warnings = try container.decodeIfPresent([String].self, forKey: .warnings)
     }
 }
 
@@ -460,8 +455,7 @@ private extension DecodedSessionWireFields {
             mirror: mirror,
             control: control,
             launch: presentationLaunch,
-            ephemeral: ephemeral,
-            warnings: warnings
+            ephemeral: ephemeral
         )
     }
 
@@ -527,7 +521,6 @@ extension Session: Codable {
         try c.encodeIfPresent(control, forKey: .control)
         try c.encodeIfPresent(launch, forKey: .launch)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)
-        try c.encodeIfPresent(warnings, forKey: .warnings)
 
         try c.encode(createdAt.timeIntervalSince1970 * 1000, forKey: .createdAt)
         try c.encode(lastActivity.timeIntervalSince1970 * 1000, forKey: .lastActivity)

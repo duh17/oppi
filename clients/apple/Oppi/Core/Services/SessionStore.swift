@@ -816,10 +816,6 @@ final class SessionStore {
             existing: existing.changeStats,
             incoming: incoming.changeStats
         )
-        // Summaries are sparse and omit warnings. Keep the focused-session notice.
-        if merged.warnings == nil || merged.warnings?.isEmpty == true {
-            merged.warnings = existing.warnings
-        }
         return merged
     }
 

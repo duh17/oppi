@@ -209,7 +209,9 @@ describe("session inspect command contract", () => {
             worktreeId: "main",
             status: "stopped",
             model: "test/model",
-            warnings: ["Worktree was removed; continuing on Main checkout."],
+            warnings: [
+              "Configured Agent tool is unavailable and was dropped from this session: foo.",
+            ],
           },
         } as T;
       }
@@ -227,7 +229,9 @@ describe("session inspect command contract", () => {
       summary: {
         sessionId: "session/1",
         worktreeId: "main",
-        warnings: ["Worktree was removed; continuing on Main checkout."],
+        warnings: [
+          "Configured Agent tool is unavailable and was dropped from this session: foo.",
+        ],
       },
     });
   });

@@ -45,8 +45,19 @@ const CONTROL_LAUNCH_LEASE_TTL_MS = 2 * 60_000;
 
 const log = createLogger({ base: { component: "session_lifecycle" } });
 
-export const WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING =
-  "Worktree was removed; continuing on Main checkout.";
+export const WORKTREE_REBIND_NOTICE = "Resuming on Main checkout. The worktree is gone.";
+
+const STALE_WORKTREE_REBIND_WARNINGS = new Set([
+  "Worktree was removed; continuing on Main checkout.",
+  WORKTREE_REBIND_NOTICE,
+]);
+
+function withoutWorktreeRebindNotice(warnings: string[] | undefined): string[] | undefined {
+  if (!warnings || warnings.length === 0) return warnings;
+  const next = warnings.filter((warning) => !STALE_WORKTREE_REBIND_WARNINGS.has(warning));
+  if (next.length === warnings.length) return warnings;
+  return next.length > 0 ? next : undefined;
+}
 
 type WorktreeBindingState =
   | "main"
@@ -55,7 +66,7 @@ type WorktreeBindingState =
   | "main-missing"
   | "inspection-failed";
 
-const MIGRATION_BLOCKING_STATUSES = new Set<Session["status"]>(["busy", "starting", "stopping"]);
+const REBIND_BLOCKING_STATUSES = new Set<Session["status"]>(["busy", "starting", "stopping"]);
 
 export type OpenSessionOwner = "oppi" | "pi-tui";
 
@@ -63,6 +74,7 @@ export interface OpenSessionResult {
   session: Session;
   owner: OpenSessionOwner;
   startedSession: boolean;
+  rebound: boolean;
 }
 
 export interface StopSessionResult {
@@ -430,15 +442,17 @@ export class SessionLifecycleService {
         session: this.deps.ensureSessionContextWindow(active),
         owner: "pi-tui",
         startedSession: false,
+        rebound: binding.rebound,
       };
     }
 
-    if (!binding.migrated && this.deps.sessionRuntimes.isSessionConnected(params.session.id)) {
+    if (!binding.rebound && this.deps.sessionRuntimes.isSessionConnected(params.session.id)) {
       const active = this.deps.sessionRuntimes.getActiveSession(params.session.id);
       return {
         session: active ? this.deps.ensureSessionContextWindow(active) : binding.session,
         owner: "oppi",
         startedSession: false,
+        rebound: false,
       };
     }
 
@@ -447,6 +461,7 @@ export class SessionLifecycleService {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
       startedSession: true,
+      rebound: binding.rebound,
     };
   }
 
@@ -460,6 +475,7 @@ export class SessionLifecycleService {
         session: active ? this.deps.ensureSessionContextWindow(active) : session,
         owner: "oppi",
         startedSession: false,
+        rebound: false,
       };
     }
 
@@ -468,6 +484,7 @@ export class SessionLifecycleService {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
       startedSession: true,
+      rebound: false,
     };
   }
 
@@ -484,16 +501,18 @@ export class SessionLifecycleService {
         session: this.deps.ensureSessionContextWindow(snapshot),
         owner: "pi-tui",
         startedSession: false,
+        rebound: binding.rebound,
       };
     }
 
     const hadActiveSession =
-      !binding.migrated && this.deps.sessionRuntimes.isSessionConnected(params.session.id);
+      !binding.rebound && this.deps.sessionRuntimes.isSessionConnected(params.session.id);
     const started = await this.startManagedSession(binding.session, params.workspace);
     return {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
       startedSession: !hadActiveSession,
+      rebound: binding.rebound,
     };
   }
 
@@ -660,9 +679,6 @@ export class SessionLifecycleService {
     if (latestSource.worktreeId) {
       forkSession.worktreeId = latestSource.worktreeId;
     }
-    if (latestSource.warnings?.includes(WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING)) {
-      forkSession.warnings = [WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING];
-    }
 
     if (latestSource.thinkingLevel) forkSession.thinkingLevel = latestSource.thinkingLevel;
     if (latestSource.contextWindow) forkSession.contextWindow = latestSource.contextWindow;
@@ -703,26 +719,11 @@ export class SessionLifecycleService {
     return { session: this.deps.ensureSessionContextWindow(created) };
   }
 
-  async migrateSessionToMainCheckout(params: {
+  private async persistMainCheckoutRebind(params: {
     session: Session;
     workspace: Workspace;
-  }): Promise<{ session: Session; migrated: boolean }> {
-    if (params.session.runtime === "pi-tui") {
-      throw new SessionLifecycleError("Cannot migrate a terminal-owned session", 409);
-    }
-
-    const binding = this.inspectWorktreeBinding(params.session, params.workspace);
-    if (binding === "main") {
-      return { session: this.hydratedSnapshot(params.session), migrated: false };
-    }
-    if (binding === "inspection-failed") {
-      throw new SessionLifecycleError("Worktree inspection failed", 409);
-    }
-    if (binding === "main-missing") {
-      throw new SessionLifecycleError("Workspace main checkout is unavailable", 409);
-    }
-
-    this.assertSessionIdleForMigration(params.session);
+  }): Promise<{ session: Session; rebound: boolean }> {
+    this.assertSessionIdleForRebind(params.session);
     const wasConnected = this.deps.sessionRuntimes.isSessionConnected(params.session.id);
     if (wasConnected) {
       await this.deps.sessionRuntimes.stopSession(params.session.id);
@@ -736,16 +737,16 @@ export class SessionLifecycleService {
       const { worktreeId: _cleared, ...target } = next.launch.target;
       next.launch = { ...next.launch, target };
     }
-    next.warnings = [
-      ...new Set([...(next.warnings ?? []), WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING]),
-    ];
+    const warnings = withoutWorktreeRebindNotice(next.warnings);
+    if (warnings) next.warnings = warnings;
+    else delete next.warnings;
     this.deps.storage.saveSession(next);
     if (!wasConnected) {
-      return { session: this.hydratedSnapshot(next), migrated: true };
+      return { session: this.hydratedSnapshot(next), rebound: true };
     }
 
     const started = await this.startManagedSession(next, params.workspace);
-    return { session: this.deps.ensureSessionContextWindow(started), migrated: true };
+    return { session: this.deps.ensureSessionContextWindow(started), rebound: true };
   }
 
   async stopSession(session: Session): Promise<StopSessionResult> {
@@ -909,14 +910,14 @@ export class SessionLifecycleService {
     return "available";
   }
 
-  private assertSessionIdleForMigration(session: Session): void {
+  private assertSessionIdleForRebind(session: Session): void {
     const active = this.deps.sessionRuntimes.getActiveSession(session.id);
     if (
-      MIGRATION_BLOCKING_STATUSES.has(session.status) ||
-      (active && MIGRATION_BLOCKING_STATUSES.has(active.status))
+      REBIND_BLOCKING_STATUSES.has(session.status) ||
+      (active && REBIND_BLOCKING_STATUSES.has(active.status))
     ) {
       throw new SessionLifecycleError(
-        "Cannot migrate a session that is busy, starting, or stopping",
+        "Cannot rebind a session that is busy, starting, or stopping",
         409,
       );
     }
@@ -925,10 +926,11 @@ export class SessionLifecycleService {
   private async ensureManagedWorktreeBinding(
     session: Session,
     workspace?: Workspace,
-  ): Promise<{ session: Session; migrated: boolean }> {
+  ): Promise<{ session: Session; rebound: boolean }> {
     const binding = this.inspectWorktreeBinding(session, workspace);
     if (binding === "main" || binding === "available") {
-      return { session, migrated: false };
+      const stripped = this.stripPersistedWorktreeRebindNotice(session);
+      return { session: stripped ?? session, rebound: false };
     }
     if (binding === "inspection-failed") {
       throw new SessionLifecycleError("Worktree inspection failed", 409);
@@ -939,7 +941,19 @@ export class SessionLifecycleService {
     if (binding === "main-missing" || !workspace) {
       throw new SessionLifecycleError("Workspace main checkout is unavailable", 409);
     }
-    return this.migrateSessionToMainCheckout({ session, workspace });
+    return this.persistMainCheckoutRebind({ session, workspace });
+  }
+
+  private stripPersistedWorktreeRebindNotice(session: Session): Session | undefined {
+    const warnings = withoutWorktreeRebindNotice(session.warnings);
+    if (warnings === session.warnings) return undefined;
+    const next: Session = {
+      ...(this.deps.storage.getSession(session.id) ?? session),
+    };
+    if (warnings) next.warnings = warnings;
+    else delete next.warnings;
+    this.deps.storage.saveSession(next);
+    return next;
   }
 
   private prepareMirrorSessionForOpen(session: Session): { owner: OpenSessionOwner } {

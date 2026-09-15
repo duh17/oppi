@@ -242,7 +242,7 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sentOfType("connected", session.id)).toHaveLength(0);
   });
 
-  it("migrates a removed-worktree focused session onto main instead of closing", async () => {
+  it("rebinds a removed-worktree focused session onto main and emits a live cache_miss notice", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-stream-removed-worktree-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-stream-removed-worktree-data-"));
     execFileSync("git", ["init", "--initial-branch=main"], { cwd: root });
@@ -286,10 +286,15 @@ describe("BoundSessionStreamMux", () => {
       expect(ws.closeCode).toBeUndefined();
       expect(ws.sentOfType("stream_connected")).toHaveLength(1);
       expect(sessionMap.get(session.id)?.worktreeId).toBe("main");
-      expect(sessionMap.get(session.id)?.warnings).toEqual([
-        "Worktree was removed; continuing on Main checkout.",
-      ]);
+      expect(sessionMap.get(session.id)?.warnings).toBeUndefined();
       expect(ctx.sessions.startSession).toHaveBeenCalledWith(session.id, workspace);
+      const notices = ws.sentOfType("cache_miss");
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatchObject({
+        type: "cache_miss",
+        id: `worktree-rebind:${session.id}`,
+        message: "Resuming on Main checkout. The worktree is gone.",
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });

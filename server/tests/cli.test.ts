@@ -618,14 +618,6 @@ describe("oppi help", () => {
         expected: ["Usage: oppi session resume <id>", "--json"],
       },
       {
-        args: ["session", "migrate", "--help"],
-        expected: [
-          "Usage: oppi session migrate <id>",
-          "--json",
-          "leaving a worktree",
-        ],
-      },
-      {
         args: ["session", "fork", "--help"],
         expected: ["Usage: oppi session fork <id>", "--entry <entry-id>"],
       },

@@ -50,19 +50,6 @@ struct ExtensionSurfaceSessionLink: Equatable {
     }
 }
 
-enum ChatSessionWarningChrome {
-    static func messages(from warnings: [String]?) -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        for warning in warnings ?? [] {
-            let trimmed = warning.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
-            result.append(trimmed)
-        }
-        return result
-    }
-}
-
 struct ChatView: View {
     enum LocalSlashCommand: Equatable {
         case compact
@@ -1123,33 +1110,6 @@ struct ChatView: View {
                     .overlay {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Color.themeRed.opacity(0.35), lineWidth: 1)
-                    }
-                    .padding(.horizontal, 16)
-                }
-
-                ForEach(ChatSessionWarningChrome.messages(from: session?.warnings), id: \.self) { warning in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.themeYellow)
-                            .padding(.top, 1)
-
-                        Text(warning)
-                            .font(.caption)
-                            .foregroundStyle(.themeFg)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.themeYellow.opacity(0.08))
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.themeYellow.opacity(0.35), lineWidth: 1)
                     }
                     .padding(.horizontal, 16)
                 }
