@@ -71,6 +71,14 @@ function isDomainAvailable(domain: LaunchdDomain): boolean {
     return true;
   } catch (err: unknown) {
     if (isLaunchctlNotFound(err)) return false;
+    // Error 125 means Apple's "Domain does not support specified action."
+    // In a headless session, gui/<uid> often returns 125 instead of 112.
+    // Here, treat it as a reason to try user/<uid> when choosing the domain.
+    // Keep 125 out of isLaunchctlNotFound: that helper also checks whether a job
+    // is loaded, and 125 does not mean the job is missing.
+    // If bootstrap later returns 125 after the GUI check succeeded, stop instead
+    // of trying user/<uid> and risking a second copy.
+    if (launchctlStatus(err) === 125) return false;
     throw err;
   }
 }
@@ -116,7 +124,8 @@ function bootoutLabel(label: string): void {
     try {
       execSync(`launchctl bootout ${domain}/${label} 2>/dev/null`, { stdio: "pipe" });
     } catch {
-      // 125 is domain refused, not absent; callers verify with print.
+      // Error 125 means the domain refused the request, not that the job is absent.
+      // The caller checks with launchctl print.
     }
   }
 }
@@ -126,7 +135,8 @@ function bootoutPlist(path: string): void {
     try {
       execSync(`launchctl bootout ${domain} ${path} 2>/dev/null`, { stdio: "pipe" });
     } catch {
-      // 125 is domain refused, not absent; callers verify with print.
+      // Error 125 means the domain refused the request, not that the job is absent.
+      // The caller checks with launchctl print.
     }
   }
 }
@@ -415,9 +425,10 @@ export function installService(dataDir?: string): {
       });
     } catch (err: unknown) {
       const msg = launchctlMessage(err);
-      // 37 after confirmed unload: kickstart. Kickstart does not reload a still-loaded
-      // old definition; that case is rejected above. 125 after a successful GUI probe
-      // is fail-closed — do not bootstrap user/<uid> as a second copy.
+      // After a confirmed unload, error 37 means kickstart the job. Kickstart cannot
+      // reload an old definition that is still loaded; that case was rejected above.
+      // If bootstrap returns 125 after the GUI check succeeded, stop instead of
+      // trying user/<uid> and risking a second copy.
       if (isAlreadyLoadedError(err)) {
         try {
           execSync(`launchctl kickstart -k ${domain}/${LABEL}`, { stdio: "pipe" });

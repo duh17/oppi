@@ -1219,6 +1219,28 @@ describe("launchctl error classification", () => {
     expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("kickstart"))).toBe(false);
   });
 
+  it("install does not treat service print exit 125 as job absence", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintService(cmd, "gui/501")) {
+        throw execError(`Command failed: ${cmd}`, 125);
+      }
+      if (isPrintService(cmd, "user/501")) {
+        throw new Error("Could not find service");
+      }
+      if (cmd.includes("bootout")) throw error125;
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Failed to load LaunchAgent");
+    expect(result.message).not.toMatch(/not running|not installed/i);
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("bootstrap"))).toBe(false);
+    expect(mockExecSync.mock.calls.some(([cmd]) => String(cmd).includes("kickstart"))).toBe(false);
+  });
+
   it("uninstall does not unlink after an unexpected service print failure", () => {
     mockExistsSync.mockReturnValue(true);
     mockExecSync.mockImplementation((cmd: string) => {
@@ -1289,6 +1311,25 @@ describe("launchctl error classification", () => {
     mockExecSync.mockImplementation((cmd: string) => {
       if (isPrintDomain(cmd, "gui/501")) {
         throw execError(`Command failed: ${cmd}`, 112);
+      }
+      return defaultLaunchctlOutput(cmd);
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(true);
+    const bootstrapCalls = mockExecSync.mock.calls
+      .map(([cmd]) => cmd as string)
+      .filter((cmd) => cmd.includes("bootstrap"));
+    expect(bootstrapCalls).toEqual([
+      "launchctl bootstrap user/501 /Users/testuser/Library/LaunchAgents/dev.chaosdonkey.oppi.plist",
+    ]);
+  });
+
+  it("treats launchctl print exit 125 without stderr text as GUI domain absence", () => {
+    setupValidInstall();
+    mockExecSync.mockImplementation((cmd: string) => {
+      if (isPrintDomain(cmd, "gui/501")) {
+        throw execError(`Command failed: ${cmd}`, 125);
       }
       return defaultLaunchctlOutput(cmd);
     });
