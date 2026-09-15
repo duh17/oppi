@@ -1,4 +1,7 @@
 import CoreGraphics
+import CoreImage
+import CoreMedia
+import CoreVideo
 import Foundation
 import OSLog
 import ScreenCaptureKit
@@ -8,7 +11,9 @@ private let logger = Logger(
     category: "ScreenCapture"
 )
 
-/// ScreenCaptureKit one-shot stills. In-memory `CGImage` only — no stream, disk, or encode.
+/// ScreenCaptureKit stills and explicit local SCStream preview.
+/// Stills stay one-shot in-memory `CGImage` via `SCScreenshotManager`.
+/// Preview uses one SCStream with latest-frame buffering; no disk, encode, or share-gate publish.
 /// Debug tests must inject a fake; they must not instantiate this type.
 @MainActor
 final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServicing {
@@ -17,6 +22,7 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
     private var selectedFilter: SCContentFilter?
     private var selectedSurface: CaptureSurface?
     private var didAddObserver = false
+    private var previewProducer: DesktopSCStreamPreviewProducer?
 
     func presentWindowPicker() {
         let picker = SCContentSharingPicker.shared
@@ -96,11 +102,89 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
         }
     }
 
+    func startLocalPreview(
+        surface: CaptureSurface,
+        generation: UInt64,
+        handler: any DesktopLocalPreviewHandling
+    ) {
+        stopPreviewProducer()
+
+        guard
+            let filter = selectedFilter,
+            let selected = selectedSurface,
+            selected.surfaceID == surface.surfaceID
+        else {
+            handler.localPreviewDidFail(generation: generation, failure: .unavailable)
+            return
+        }
+
+        let windows = filter.includedWindows
+        guard windows.count == 1, let window = windows.first else {
+            handler.localPreviewDidFail(generation: generation, failure: .unavailable)
+            return
+        }
+        guard window.windowID == surface.surfaceID.windowID else {
+            handler.localPreviewDidFail(generation: generation, failure: .surfaceSubstitutionRejected)
+            return
+        }
+
+        let callbacks = DesktopLocalPreviewCallbackBridge(
+            generation: generation,
+            surfaceID: surface.surfaceID,
+            handler: handler,
+            service: self
+        )
+        let producer = DesktopSCStreamPreviewProducer(
+            surface: surface,
+            filter: filter,
+            configuration: Self.makeStreamConfiguration(filter: filter),
+            confirmStart: { callbacks.confirmStart() },
+            deliverFrame: { transferred in callbacks.deliverFrame(transferred) },
+            fail: { failure in callbacks.fail(failure) },
+            stopped: { failure in callbacks.stopped(failure) },
+            surfaceUnavailable: { unavailableSurface in
+                callbacks.surfaceUnavailable(unavailableSurface)
+            }
+        )
+        previewProducer = producer
+        producer.start()
+    }
+
+    func stopLocalPreview(generation: UInt64) {
+        _ = generation
+        stopPreviewProducer()
+    }
+
     func currentAvailability() -> CaptureAvailability {
         if CGPreflightScreenCaptureAccess() {
             return .ready
         }
         return .permissionDenied
+    }
+
+    private func stopPreviewProducer() {
+        let producer = previewProducer
+        previewProducer = nil
+        producer?.invalidateAndStop()
+    }
+
+    private static func makeStreamConfiguration(filter: SCContentFilter) -> SCStreamConfiguration {
+        let configuration = SCStreamConfiguration()
+        let scale = CGFloat(filter.pointPixelScale)
+        let width = Int((filter.contentRect.width * scale).rounded(.up))
+        let height = Int((filter.contentRect.height * scale).rounded(.up))
+        if width > 0 {
+            configuration.width = width
+        }
+        if height > 0 {
+            configuration.height = height
+        }
+        configuration.showsCursor = false
+        configuration.capturesAudio = false
+        configuration.queueDepth = 2
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 15)
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        return configuration
     }
 
     private func handlePickedFilter(_ filter: SCContentFilter) {
@@ -122,7 +206,7 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
         delegate?.desktopCaptureServiceDidSelect(surface)
     }
 
-    nonisolated private static func mapError(_ error: Error) -> DesktopCaptureFailure {
+    nonisolated fileprivate static func mapError(_ error: Error) -> DesktopCaptureFailure {
         let nsError = error as NSError
         guard nsError.domain == SCStreamErrorDomain,
               let code = SCStreamError.Code(rawValue: nsError.code)
@@ -141,6 +225,280 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
         default:
             return .captureFailed
         }
+    }
+}
+
+/// Hops preview callbacks onto the main actor without capturing a MainActor handler in Sendable closures.
+private final class DesktopLocalPreviewCallbackBridge: @unchecked Sendable {
+    let generation: UInt64
+    let surfaceID: CaptureSurfaceID
+    nonisolated(unsafe) weak var handler: (any DesktopLocalPreviewHandling)?
+    nonisolated(unsafe) weak var service: ScreenCaptureKitDesktopCaptureService?
+
+    init(
+        generation: UInt64,
+        surfaceID: CaptureSurfaceID,
+        handler: any DesktopLocalPreviewHandling,
+        service: ScreenCaptureKitDesktopCaptureService
+    ) {
+        self.generation = generation
+        self.surfaceID = surfaceID
+        self.handler = handler
+        self.service = service
+    }
+
+    func confirmStart() {
+        let generation = self.generation
+        Task { @MainActor in
+            self.handler?.localPreviewDidConfirmStart(generation: generation)
+        }
+    }
+
+    /// Must run on the mailbox's existing MainActor hop. Do not enqueue another Task.
+    func deliverFrame(_ transferred: TransferredCGImage) {
+        let generation = self.generation
+        let surfaceID = self.surfaceID
+        let image = transferred.image
+        MainActor.assumeIsolated {
+            self.handler?.localPreviewDidDeliverFrame(
+                DesktopPreviewFrame(
+                    surfaceID: surfaceID,
+                    capturedAt: Date(),
+                    image: image
+                ),
+                generation: generation
+            )
+        }
+    }
+
+    func fail(_ failure: DesktopCaptureFailure) {
+        let generation = self.generation
+        Task { @MainActor in
+            self.handler?.localPreviewDidFail(generation: generation, failure: failure)
+        }
+    }
+
+    func stopped(_ failure: DesktopCaptureFailure?) {
+        let generation = self.generation
+        Task { @MainActor in
+            self.handler?.localPreviewDidStop(generation: generation, failure: failure)
+        }
+    }
+
+    func surfaceUnavailable(_ surface: CaptureSurface) {
+        Task { @MainActor in
+            self.service?.delegate?.desktopCaptureServiceSurfaceBecameUnavailable(surface)
+        }
+    }
+}
+
+/// One SCStream, latest-frame only. Stop/invalidate discards pending and late frames.
+final class DesktopSCStreamPreviewProducer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    private let surface: CaptureSurface
+    private let filter: SCContentFilter
+    private let configuration: SCStreamConfiguration
+    private let captureQueue = DispatchQueue(label: "dev.chenda.OppiDesktopCompanion.local-preview")
+    private let confirmStart: @Sendable () -> Void
+    private let fail: @Sendable (DesktopCaptureFailure) -> Void
+    private let stopped: @Sendable (DesktopCaptureFailure?) -> Void
+    private let surfaceUnavailable: @Sendable (CaptureSurface) -> Void
+    private let mailbox: DesktopLatestFrameMailbox<TransferredCGImage>
+    private let invalidation: PreviewInvalidationState
+    private let ciContext = CIContext(options: [
+        .cacheIntermediates: false,
+        .useSoftwareRenderer: false,
+    ])
+    private let lock = NSLock()
+    private var stream: SCStream?
+    private var invalidated = false
+    private var stopping = false
+
+    init(
+        surface: CaptureSurface,
+        filter: SCContentFilter,
+        configuration: SCStreamConfiguration,
+        confirmStart: @escaping @Sendable () -> Void,
+        deliverFrame: @escaping @Sendable (TransferredCGImage) -> Void,
+        fail: @escaping @Sendable (DesktopCaptureFailure) -> Void,
+        stopped: @escaping @Sendable (DesktopCaptureFailure?) -> Void,
+        surfaceUnavailable: @escaping @Sendable (CaptureSurface) -> Void
+    ) {
+        self.surface = surface
+        self.filter = filter
+        self.configuration = configuration
+        self.confirmStart = confirmStart
+        self.fail = fail
+        self.stopped = stopped
+        self.surfaceUnavailable = surfaceUnavailable
+        let closed = PreviewInvalidationState()
+        self.mailbox = DesktopLatestFrameMailbox<TransferredCGImage>(
+            schedule: { work in
+                Task { @MainActor in
+                    work()
+                }
+            },
+            deliver: { transferred in
+                guard !closed.isInvalidated else { return }
+                deliverFrame(transferred)
+            }
+        )
+        self.invalidation = closed
+        super.init()
+    }
+
+    func start() {
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+        do {
+            try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: captureQueue)
+        } catch {
+            fail(ScreenCaptureKitDesktopCaptureService.mapError(error))
+            return
+        }
+
+        lock.lock()
+        if invalidated {
+            lock.unlock()
+            stream.stopCapture { _ in }
+            return
+        }
+        self.stream = stream
+        lock.unlock()
+
+        stream.startCapture { [weak self] error in
+            self?.handleStart(error)
+        }
+    }
+
+    func invalidateAndStop() {
+        lock.lock()
+        invalidated = true
+        invalidation.invalidate()
+        if stopping {
+            lock.unlock()
+            mailbox.close()
+            return
+        }
+        stopping = true
+        let stream = self.stream
+        self.stream = nil
+        lock.unlock()
+        mailbox.close()
+
+        guard let stream else {
+            stopped(nil)
+            return
+        }
+        stream.stopCapture { [weak self] _ in
+            self?.stopped(nil)
+        }
+    }
+
+    deinit {
+        lock.lock()
+        let stream = self.stream
+        self.stream = nil
+        lock.unlock()
+        stream?.stopCapture(completionHandler: { _ in })
+    }
+
+    private func handleStart(_ error: Error?) {
+        lock.lock()
+        if invalidated {
+            let stream = self.stream
+            self.stream = nil
+            let alreadyStopping = stopping
+            stopping = true
+            lock.unlock()
+            mailbox.close()
+            if let stream {
+                stream.stopCapture { [weak self] _ in
+                    if alreadyStopping { return }
+                    self?.stopped(nil)
+                }
+            } else if !alreadyStopping {
+                stopped(nil)
+            }
+            return
+        }
+        if let error {
+            invalidated = true
+            invalidation.invalidate()
+            stopping = true
+            self.stream = nil
+            lock.unlock()
+            mailbox.close()
+            fail(ScreenCaptureKitDesktopCaptureService.mapError(error))
+            return
+        }
+        lock.unlock()
+        confirmStart()
+    }
+
+    nonisolated func stream(
+        _ stream: SCStream,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of outputType: SCStreamOutputType
+    ) {
+        guard outputType == .screen else { return }
+        lock.lock()
+        let invalid = invalidated
+        lock.unlock()
+        guard !invalid else { return }
+        guard let image = makeCGImage(from: sampleBuffer) else { return }
+        mailbox.offer(TransferredCGImage(image: image))
+    }
+
+    nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
+        lock.lock()
+        if invalidated {
+            let alreadyStopping = stopping
+            stopping = true
+            self.stream = nil
+            lock.unlock()
+            mailbox.close()
+            if !alreadyStopping {
+                stopped(nil)
+            }
+            return
+        }
+        invalidated = true
+        invalidation.invalidate()
+        stopping = true
+        self.stream = nil
+        lock.unlock()
+        mailbox.close()
+
+        let failure = ScreenCaptureKitDesktopCaptureService.mapError(error)
+        if failure == .unavailable {
+            surfaceUnavailable(surface)
+        } else {
+            fail(failure)
+        }
+    }
+
+    private func makeCGImage(from sampleBuffer: CMSampleBuffer) -> CGImage? {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        let extent = image.extent
+        guard extent.width > 0, extent.height > 0 else { return nil }
+        return ciContext.createCGImage(image, from: extent)
+    }
+}
+
+private final class PreviewInvalidationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var invalidated = false
+
+    var isInvalidated: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return invalidated
+    }
+
+    func invalidate() {
+        lock.lock()
+        invalidated = true
+        lock.unlock()
     }
 }
 

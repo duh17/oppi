@@ -3,6 +3,11 @@ import Foundation
 
 enum DesktopCaptureCopy {
     static let stillCaption = "Still—not live"
+    static let localPreviewCaption = "Local live preview—not shared"
+    static let previewStarting = "Starting local preview…"
+    static let previewStopping = "Stopping preview…"
+    static let previewStopped = "Preview stopped"
+    static let previewUnavailable = "Preview unavailable"
 }
 
 /// Identity of a single selected window. Capture never substitutes a different surface.
@@ -31,6 +36,21 @@ enum CaptureAvailability: Equatable, Sendable {
     case permissionDenied
     case unavailable
     case unsupported
+}
+
+enum DesktopLocalPreviewState: Equatable, Sendable {
+    case stopped
+    case starting
+    case live
+    case stopping
+    case unavailable
+}
+
+/// In-memory local preview frame. Never published to the still share gate.
+struct DesktopPreviewFrame {
+    let surfaceID: CaptureSurfaceID
+    let capturedAt: Date
+    let image: CGImage
 }
 
 enum DesktopCaptureFailure: Error, Equatable, Sendable {

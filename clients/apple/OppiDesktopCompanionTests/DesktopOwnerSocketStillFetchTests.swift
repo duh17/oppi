@@ -268,10 +268,56 @@ struct DesktopOwnerSocketStillFetchTests {
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         #expect(source.contains("SCScreenshotManager.captureImage"))
         #expect(!source.contains("fileURL"))
-        #expect(!source.contains("SCStream("))
-        #expect(!source.contains("startCapture"))
         #expect(!source.contains("CGRequestScreenCaptureAccess"))
         #expect(!source.contains("com.apple.developer.persistent-content-capture"))
+    }
+
+    @Test func localPreviewDoesNotChangeStillFetchOrRecapture() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        let still = harness.captureAndShare()
+        let captures = harness.fake.captureCount
+        let sharedPNG = try #require(harness.session.shareGate.current()).pngData
+
+        harness.session.startLocalPreview()
+        harness.fake.confirmPreviewStart()
+        harness.fake.deliverPreviewFrame(makePixel(red: 1))
+        #expect(harness.session.isLivePreview)
+        #expect(harness.session.previewState == .live)
+        #expect(harness.fake.captureCount == captures)
+        #expect(harness.session.shareGate.current()?.captureID == still.captureID)
+        #expect(harness.session.shareGate.current()?.pngData == sharedPNG)
+        #expect(harness.session.shareGate.fetchCurrent() == .failure(.sharingDisabled))
+
+        let byID = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/still/\(still.captureID.uuidString)"
+        )
+        #expect(byID.statusCode == 200)
+        #expect(byID.body == sharedPNG)
+        #expect(harness.fake.captureCount == captures)
+
+        harness.session.enableRemoteView()
+        let current = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/still/current")
+        #expect(current.statusCode == 200)
+        #expect(current.body == sharedPNG)
+        #expect(current.headers["x-oppi-caption"] == "Still—not live")
+        #expect(harness.fake.captureCount == captures)
+
+        harness.session.stopLocalPreview()
+        harness.fake.completePreviewStop()
+        #expect(harness.session.previewState == .stopped)
+        #expect(!harness.session.isLivePreview)
+        let afterStop = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/still/\(still.captureID.uuidString)"
+        )
+        #expect(afterStop.statusCode == 200)
+        #expect(afterStop.body == sharedPNG)
+        #expect(harness.fake.captureCount == captures)
+        #expect(harness.session.shareGate.current()?.captureID == still.captureID)
+        #expect(harness.session.isLocalShareEnabled)
+        #expect(harness.session.isRemoteViewEnabled)
     }
 }
 
@@ -456,77 +502,4 @@ private func posixMode(_ path: String) -> Int? {
     var st = stat()
     guard lstat(path, &st) == 0 else { return nil }
     return Int(st.st_mode & 0o777)
-}
-
-@MainActor
-private func pickWindow(
-    _ session: DesktopCaptureSession,
-    _ fake: FakeDesktopCaptureService,
-    _ surface: CaptureSurface
-) {
-    session.selectWindow()
-    fake.simulateUserSelection(surface)
-}
-
-private func makeSurface(windowID: UInt32, title: String) -> CaptureSurface {
-    CaptureSurface(surfaceID: CaptureSurfaceID(windowID: windowID), title: title)
-}
-
-private func makeStill(surface: CaptureSurface) -> CapturedStill {
-    CapturedStill(captureID: UUID(), surfaceID: surface.surfaceID, capturedAt: Date(), image: makePixel())
-}
-
-private func makePixel() -> CGImage {
-    let space = CGColorSpaceCreateDeviceRGB()
-    guard
-        let context = CGContext(
-            data: nil,
-            width: 1,
-            height: 1,
-            bitsPerComponent: 8,
-            bytesPerRow: 4,
-            space: space,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ),
-        let image = context.makeImage()
-    else {
-        fatalError("Unable to create a 1×1 test still")
-    }
-    return image
-}
-
-@MainActor
-private final class FakeDesktopCaptureService: DesktopCaptureServicing {
-    weak var delegate: DesktopCaptureServiceDelegate?
-    var availability: CaptureAvailability = .ready
-    private(set) var captureCount = 0
-    private var pendingCompletion: (@MainActor (Result<CapturedStill, DesktopCaptureFailure>) -> Void)?
-
-    func presentWindowPicker() {}
-
-    func captureStill(
-        surface: CaptureSurface,
-        completion: @escaping @MainActor (Result<CapturedStill, DesktopCaptureFailure>) -> Void
-    ) {
-        captureCount += 1
-        pendingCompletion = completion
-    }
-
-    func currentAvailability() -> CaptureAvailability {
-        availability
-    }
-
-    func simulateUserSelection(_ surface: CaptureSurface) {
-        delegate?.desktopCaptureServiceDidSelect(surface)
-    }
-
-    func simulateSurfaceUnavailable(_ surface: CaptureSurface) {
-        delegate?.desktopCaptureServiceSurfaceBecameUnavailable(surface)
-    }
-
-    func completePending(_ result: Result<CapturedStill, DesktopCaptureFailure>) {
-        let completion = pendingCompletion
-        pendingCompletion = nil
-        completion?(result)
-    }
 }

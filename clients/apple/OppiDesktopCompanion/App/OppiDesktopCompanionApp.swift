@@ -31,23 +31,29 @@ private final class CompanionRuntime {
             ownerSocket = nil
             return
         }
-        let socket = DesktopCompanionOwnerSocket(shareGate: shareGate)
+        let captureSession = session
+        var startedSocket: DesktopCompanionOwnerSocket?
         do {
+            let socket = DesktopCompanionOwnerSocket(shareGate: shareGate)
             try socket.start()
+            startedSocket = socket
             ownerSocket = socket
-            NotificationCenter.default.addObserver(
-                forName: NSApplication.willTerminateNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                socket.stop()
-            }
         } catch {
             ownerSocket = nil
             Logger(
                 subsystem: Bundle.main.bundleIdentifier ?? "OppiDesktopCompanion",
                 category: "OwnerSocket"
             ).error("Owner socket failed to start: \(error.localizedDescription, privacy: .public)")
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                captureSession.stopLocalPreview()
+                startedSocket?.stop()
+            }
         }
     }
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 @MainActor
@@ -13,15 +14,43 @@ final class DesktopCaptureSession {
     private(set) var isPickerPresented = false
     private(set) var isLocalShareEnabled = false
     private(set) var isRemoteViewEnabled = false
+    private(set) var previewState: DesktopLocalPreviewState = .stopped
+    private(set) var previewFrame: CGImage?
 
     let shareGate: DesktopStillShareGate
 
     var stillLabel: String? { still == nil ? nil : Self.stillCaption }
-    var isLivePreview: Bool { false }
-    var canCapture: Bool {
-        selection != nil && !isCaptureInFlight && availability == .ready
+    var previewLabel: String? {
+        previewState == .live ? DesktopCaptureCopy.localPreviewCaption : nil
     }
-    var canClear: Bool { still != nil || isCaptureInFlight }
+    var previewStatusText: String {
+        switch previewState {
+        case .stopped: DesktopCaptureCopy.previewStopped
+        case .starting: DesktopCaptureCopy.previewStarting
+        case .live: DesktopCaptureCopy.localPreviewCaption
+        case .stopping: DesktopCaptureCopy.previewStopping
+        case .unavailable: DesktopCaptureCopy.previewUnavailable
+        }
+    }
+    var isLivePreview: Bool { previewState == .live }
+    var isLocalPreviewActive: Bool {
+        switch previewState {
+        case .starting, .live, .stopping: true
+        case .stopped, .unavailable: false
+        }
+    }
+    var canCapture: Bool {
+        selection != nil && !isCaptureInFlight && availability == .ready && !isLocalPreviewActive
+    }
+    var canClear: Bool {
+        still != nil || isCaptureInFlight || isLocalPreviewActive || previewFrame != nil
+    }
+    var canStartLocalPreview: Bool {
+        selection != nil && !isCaptureInFlight && !isLocalPreviewActive && availability == .ready
+    }
+    var canStopLocalPreview: Bool {
+        previewState == .starting || previewState == .live
+    }
     var canCancel: Bool { isCaptureInFlight }
     var canEnableLocalShare: Bool { still != nil && !isLocalShareEnabled }
     var canRevokeLocalShare: Bool { isLocalShareEnabled }
@@ -33,6 +62,10 @@ final class DesktopCaptureSession {
     /// Token for the single outstanding capture. Late callbacks with a stale token are discarded.
     private var inFlightToken: UInt64 = 0
     private var nextTokenValue: UInt64 = 1
+    /// Current preview generation. Late start completions and frames with a stale value are discarded.
+    private var previewGeneration: UInt64 = 0
+    private var previewStartConfirmed = false
+    private var stoppingGeneration: UInt64?
 
     init(
         service: any DesktopCaptureServicing,
@@ -50,7 +83,7 @@ final class DesktopCaptureSession {
     }
 
     func captureOnce() {
-        guard !isCaptureInFlight else { return }
+        guard !isCaptureInFlight, !isLocalPreviewActive else { return }
         refreshAvailability()
         switch availability {
         case .ready:
@@ -83,8 +116,47 @@ final class DesktopCaptureSession {
         failure = .cancelled
     }
 
+    func startLocalPreview() {
+        guard canStartLocalPreview else { return }
+        refreshAvailability()
+        switch availability {
+        case .ready:
+            break
+        case .permissionDenied:
+            failure = .permissionDenied
+            return
+        case .unavailable:
+            failure = .unavailable
+            return
+        case .unsupported:
+            failure = .unsupported
+            return
+        }
+        guard let surface = selection else { return }
+
+        failure = nil
+        previewStartConfirmed = false
+        previewFrame = nil
+        previewGeneration += 1
+        let generation = previewGeneration
+        previewState = .starting
+        service.startLocalPreview(surface: surface, generation: generation, handler: self)
+    }
+
+    func stopLocalPreview() {
+        guard canStopLocalPreview else { return }
+        let generation = previewGeneration
+        previewGeneration += 1
+        previewStartConfirmed = false
+        previewFrame = nil
+        stoppingGeneration = generation
+        previewState = .stopping
+        service.stopLocalPreview(generation: generation)
+    }
+
     func clear() {
         invalidatePendingCapture()
+        haltLocalPreview(to: .stopped)
         revokeAllGrants()
         still = nil
         failure = nil
@@ -153,10 +225,32 @@ final class DesktopCaptureSession {
 
     private func applyUserSelection(_ surface: CaptureSurface) {
         invalidatePendingCapture()
+        haltLocalPreview(to: .stopped)
         revokeAllGrants()
         still = nil
         selection = surface
         failure = nil
+    }
+
+    private func haltLocalPreview(to newState: DesktopLocalPreviewState) {
+        let shouldStop =
+            previewState == .starting
+            || previewState == .live
+            || previewState == .stopping
+        if shouldStop {
+            let generation = stoppingGeneration ?? previewGeneration
+            previewGeneration += 1
+            service.stopLocalPreview(generation: generation)
+        }
+        previewStartConfirmed = false
+        previewFrame = nil
+        stoppingGeneration = nil
+        previewState = newState
+    }
+
+    private func promotePreviewIfReady() {
+        guard previewState == .starting, previewStartConfirmed, previewFrame != nil else { return }
+        previewState = .live
     }
 
     private func finishCapture(
@@ -198,6 +292,9 @@ extension DesktopCaptureSession: DesktopCaptureServiceDelegate {
         }
         // Unsolicited different surface: never present it as the selection or a new still.
         invalidatePendingCapture()
+        if selection != nil {
+            haltLocalPreview(to: .stopped)
+        }
         revokeAllGrants()
         still = nil
         failure = .surfaceSubstitutionRejected
@@ -217,9 +314,53 @@ extension DesktopCaptureSession: DesktopCaptureServiceDelegate {
         guard selection?.surfaceID == surface.surfaceID else { return }
         isPickerPresented = false
         invalidatePendingCapture()
+        haltLocalPreview(to: .unavailable)
         revokeAllGrants()
         still = nil
         selection = nil
         failure = .unavailable
+    }
+}
+
+extension DesktopCaptureSession: DesktopLocalPreviewHandling {
+    func localPreviewDidConfirmStart(generation: UInt64) {
+        guard generation == previewGeneration, previewState == .starting else { return }
+        previewStartConfirmed = true
+        promotePreviewIfReady()
+    }
+
+    func localPreviewDidDeliverFrame(_ frame: DesktopPreviewFrame, generation: UInt64) {
+        guard generation == previewGeneration else { return }
+        guard previewState == .starting || previewState == .live else { return }
+        guard selection?.surfaceID == frame.surfaceID else {
+            haltLocalPreview(to: .stopped)
+            failure = .surfaceSubstitutionRejected
+            return
+        }
+        previewFrame = frame.image
+        promotePreviewIfReady()
+    }
+
+    func localPreviewDidStop(generation: UInt64, failure: DesktopCaptureFailure?) {
+        guard previewState == .stopping, stoppingGeneration == generation else { return }
+        stoppingGeneration = nil
+        previewStartConfirmed = false
+        previewFrame = nil
+        previewState = .stopped
+        if let failure {
+            self.failure = failure
+        }
+    }
+
+    func localPreviewDidFail(generation: UInt64, failure: DesktopCaptureFailure) {
+        guard generation == previewGeneration else { return }
+        guard previewState == .starting || previewState == .live else { return }
+        previewGeneration += 1
+        previewStartConfirmed = false
+        previewFrame = nil
+        stoppingGeneration = nil
+        previewState = .stopped
+        self.failure = failure
+        service.stopLocalPreview(generation: generation)
     }
 }

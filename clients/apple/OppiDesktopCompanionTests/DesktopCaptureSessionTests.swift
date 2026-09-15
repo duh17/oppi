@@ -148,7 +148,7 @@ struct DesktopCaptureSessionTests {
         #expect(session.still == nil)
     }
 
-    @Test func screenshotManagerIsOneShotInMemoryAndDoesNotStartAStream() throws {
+    @Test func screenshotManagerIsOneShotInMemoryWithoutDiskOrTCCPrompt() throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -156,10 +156,14 @@ struct DesktopCaptureSessionTests {
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         #expect(source.contains("SCScreenshotManager.captureImage"))
         #expect(!source.contains("fileURL"))
-        #expect(!source.contains("SCStream("))
-        #expect(!source.contains("startCapture"))
         #expect(!source.contains("CGRequestScreenCaptureAccess"))
         #expect(!source.contains("com.apple.developer.persistent-content-capture"))
+        let entitlementsURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "OppiDesktopCompanion/OppiDesktopCompanion.entitlements")
+        let entitlements = try String(contentsOf: entitlementsURL, encoding: .utf8)
+        #expect(!entitlements.contains("com.apple.developer.persistent-content-capture"))
     }
 
     @Test func successfulCaptureIsLabeledStillNotLive() {
@@ -386,85 +390,5 @@ struct DesktopCaptureSessionTests {
         #expect(session.still?.captureID == second.captureID)
         #expect(!session.isRemoteViewEnabled)
         #expect(session.shareGate.fetchCurrent() == .failure(.sharingDisabled))
-    }
-}
-
-@MainActor
-private func makeHarness() -> (DesktopCaptureSession, FakeDesktopCaptureService) {
-    let fake = FakeDesktopCaptureService()
-    let session = DesktopCaptureSession(service: fake)
-    return (session, fake)
-}
-
-@MainActor
-private func pickWindow(
-    _ session: DesktopCaptureSession,
-    _ fake: FakeDesktopCaptureService,
-    _ surface: CaptureSurface
-) {
-    session.selectWindow()
-    fake.simulateUserSelection(surface)
-}
-
-private func makeSurface(windowID: UInt32, title: String) -> CaptureSurface {
-    CaptureSurface(surfaceID: CaptureSurfaceID(windowID: windowID), title: title)
-}
-
-private func makeStill(surface: CaptureSurface) -> CapturedStill {
-    CapturedStill(captureID: UUID(), surfaceID: surface.surfaceID, capturedAt: Date(), image: makePixel())
-}
-
-private func makePixel() -> CGImage {
-    let space = CGColorSpaceCreateDeviceRGB()
-    guard
-        let context = CGContext(
-            data: nil,
-            width: 1,
-            height: 1,
-            bitsPerComponent: 8,
-            bytesPerRow: 4,
-            space: space,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ),
-        let image = context.makeImage()
-    else {
-        fatalError("Unable to create a 1×1 test still")
-    }
-    return image
-}
-
-@MainActor
-private final class FakeDesktopCaptureService: DesktopCaptureServicing {
-    weak var delegate: DesktopCaptureServiceDelegate?
-    var availability: CaptureAvailability = .ready
-    private(set) var captureCount = 0
-    private var pendingCompletion: (@MainActor (Result<CapturedStill, DesktopCaptureFailure>) -> Void)?
-
-    func presentWindowPicker() {}
-
-    func captureStill(
-        surface: CaptureSurface,
-        completion: @escaping @MainActor (Result<CapturedStill, DesktopCaptureFailure>) -> Void
-    ) {
-        captureCount += 1
-        pendingCompletion = completion
-    }
-
-    func currentAvailability() -> CaptureAvailability {
-        availability
-    }
-
-    func simulateUserSelection(_ surface: CaptureSurface) {
-        delegate?.desktopCaptureServiceDidSelect(surface)
-    }
-
-    func simulateSurfaceUnavailable(_ surface: CaptureSurface) {
-        delegate?.desktopCaptureServiceSurfaceBecameUnavailable(surface)
-    }
-
-    func completePending(_ result: Result<CapturedStill, DesktopCaptureFailure>) {
-        let completion = pendingCompletion
-        pendingCompletion = nil
-        completion?(result)
     }
 }

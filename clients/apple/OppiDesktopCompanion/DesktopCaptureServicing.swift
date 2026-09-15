@@ -9,6 +9,14 @@ protocol DesktopCaptureServiceDelegate: AnyObject {
 }
 
 @MainActor
+protocol DesktopLocalPreviewHandling: AnyObject {
+    func localPreviewDidConfirmStart(generation: UInt64)
+    func localPreviewDidDeliverFrame(_ frame: DesktopPreviewFrame, generation: UInt64)
+    func localPreviewDidStop(generation: UInt64, failure: DesktopCaptureFailure?)
+    func localPreviewDidFail(generation: UInt64, failure: DesktopCaptureFailure)
+}
+
+@MainActor
 protocol DesktopCaptureServicing: AnyObject {
     var delegate: DesktopCaptureServiceDelegate? { get set }
 
@@ -17,5 +25,11 @@ protocol DesktopCaptureServicing: AnyObject {
         surface: CaptureSurface,
         completion: @escaping @MainActor (Result<CapturedStill, DesktopCaptureFailure>) -> Void
     )
+    func startLocalPreview(
+        surface: CaptureSurface,
+        generation: UInt64,
+        handler: any DesktopLocalPreviewHandling
+    )
+    func stopLocalPreview(generation: UInt64)
     func currentAvailability() -> CaptureAvailability
 }

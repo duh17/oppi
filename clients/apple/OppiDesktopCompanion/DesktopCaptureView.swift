@@ -6,10 +6,12 @@ struct DesktopCaptureView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Select a window, capture one still, inspect it locally, then clear.")
+            Text("Select a window. Capture a still, or start a local live preview. Preview is not shared.")
                 .foregroundStyle(.secondary)
 
             statusRow
+
+            localPreview
 
             stillPreview
 
@@ -28,6 +30,15 @@ struct DesktopCaptureView: View {
                 Button("Clear", action: session.clear)
                     .disabled(!session.canClear)
             }
+
+            HStack {
+                Button("Start Local Preview", action: session.startLocalPreview)
+                    .disabled(!session.canStartLocalPreview)
+                    .accessibilityIdentifier("start-local-preview")
+                Button("Stop Preview", action: session.stopLocalPreview)
+                    .disabled(!session.canStopLocalPreview)
+                    .accessibilityIdentifier("stop-local-preview")
+            }
         }
         .padding(20)
         .frame(minWidth: 520, minHeight: 420)
@@ -43,6 +54,29 @@ struct DesktopCaptureView: View {
         } else {
             Text("No window selected")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var localPreview: some View {
+        if session.selection != nil || session.isLocalPreviewActive || session.previewState == .unavailable {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(session.previewStatusText)
+                    .font(session.previewState == .live ? .headline : .body)
+                    .foregroundStyle(session.previewState == .unavailable ? .red : .primary)
+                    .accessibilityIdentifier(
+                        session.previewState == .live ? "local-preview-caption" : "local-preview-status"
+                    )
+                if let frame = session.previewFrame {
+                    Image(nsImage: NSImage(cgImage: frame, size: .zero))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 200)
+                        .accessibilityLabel(
+                            Text(session.previewLabel ?? session.previewStatusText)
+                        )
+                }
+            }
         }
     }
 
@@ -115,6 +149,10 @@ struct DesktopCaptureCommands: Commands {
             Button("Select Window", action: session.selectWindow)
             Button("Capture Once", action: session.captureOnce)
                 .disabled(!session.canCapture)
+            Button("Start Local Preview", action: session.startLocalPreview)
+                .disabled(!session.canStartLocalPreview)
+            Button("Stop Preview", action: session.stopLocalPreview)
+                .disabled(!session.canStopLocalPreview)
             Button("Cancel", action: session.cancelCapture)
                 .disabled(!session.canCancel)
             Button("Clear", action: session.clear)
