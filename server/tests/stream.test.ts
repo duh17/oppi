@@ -9,6 +9,7 @@ import { AgentConfigurationError } from "../src/agent-launch-errors.js";
 import { CLOCK_SKEW_MS } from "../src/storage/device-auth.js";
 import { BoundSessionStreamMux, DictationStreamMux, type StreamContext } from "../src/stream.js";
 import type { SessionCatchUpResponse } from "../src/session-broadcast.js";
+import { SessionLifecycleService } from "../src/session-lifecycle-service.js";
 import { Storage } from "../src/storage.js";
 import type { ClientMessage, ServerMessage, Session, Workspace } from "../src/types.js";
 
@@ -295,6 +296,81 @@ describe("BoundSessionStreamMux", () => {
         id: `worktree-rebind:${session.id}`,
         message: "Resuming on Main checkout. The worktree is gone.",
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits the live cache_miss after HTTP resume already rebound the session", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-stream-resume-then-open-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-stream-resume-then-open-data-"));
+    execFileSync("git", ["init", "--initial-branch=main"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "oppi-test@example.invalid"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Oppi Test"], { cwd: root });
+    writeFileSync(join(root, "README.md"), "main\n");
+    execFileSync("git", ["add", "README.md"], { cwd: root });
+    execFileSync("git", ["commit", "-m", "initial"], { cwd: root });
+    const workspace: Workspace = {
+      id: "w1",
+      name: "Workspace",
+      hostMount: root,
+      systemPromptMode: "append",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const session = {
+      ...makeSession("sess-resume-then-open", "w1"),
+      runtime: "oppi" as const,
+      worktreeId: "wt_removed",
+      status: "stopped" as const,
+    };
+    const { ctx, sessionMap } = createMockContext([session]);
+    ctx.storage.getDataDir = () => dataDir;
+    ctx.resolveWorkspaceForSession = () => workspace;
+    vi.mocked(ctx.sessions.startSession).mockImplementation(async (id: string) => {
+      const current = sessionMap.get(id) ?? session;
+      current.status = "ready";
+      return current;
+    });
+    const lifecycle = new SessionLifecycleService({
+      storage: ctx.storage,
+      sessions: ctx.sessions,
+      sessionRuntimes: ctx.sessionRuntimes,
+      ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+    });
+
+    try {
+      const resume = await lifecycle.resumeWorkspaceSession({ session, workspace });
+      expect(resume.rebound).toBe(true);
+      expect(sessionMap.get(session.id)?.worktreeId).toBe("main");
+      expect(sessionMap.get(session.id)?.warnings).toBeUndefined();
+
+      const ws = new FakeWebSocket();
+      await new BoundSessionStreamMux(ctx).handleWebSocket(
+        "w1",
+        session.id,
+        ws as unknown as WebSocket,
+      );
+      await drain();
+
+      expect(ws.closeCode).toBeUndefined();
+      expect(ws.sentOfType("cache_miss")).toEqual([
+        expect.objectContaining({
+          type: "cache_miss",
+          id: `worktree-rebind:${session.id}`,
+          message: "Resuming on Main checkout. The worktree is gone.",
+        }),
+      ]);
+
+      const second = new FakeWebSocket();
+      await new BoundSessionStreamMux(ctx).handleWebSocket(
+        "w1",
+        session.id,
+        second as unknown as WebSocket,
+      );
+      await drain();
+      expect(second.sentOfType("cache_miss")).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });

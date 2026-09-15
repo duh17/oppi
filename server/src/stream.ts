@@ -15,6 +15,7 @@ import type { DictationManager } from "./dictation-manager.js";
 import {
   SessionLifecycleError,
   SessionLifecycleService,
+  takePendingWorktreeRebindNotice,
   WORKTREE_REBIND_NOTICE,
 } from "./session-lifecycle-service.js";
 import type { SessionRuntimes } from "./runtime-router.js";
@@ -502,7 +503,8 @@ export class BoundSessionStreamMux {
       for (const pendingUIMsg of pendingUIMsgs) {
         sendForSession(pendingUIMsg);
       }
-      if (openResult.rebound) {
+      const pendingRebindNotice = takePendingWorktreeRebindNotice(sessionId);
+      if (openResult.rebound || pendingRebindNotice) {
         sendForSession({
           type: "cache_miss",
           id: `worktree-rebind:${sessionId}`,

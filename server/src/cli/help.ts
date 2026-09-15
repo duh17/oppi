@@ -705,7 +705,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Remove keeps session history, but refuses the main checkout, project-local .pi/worktrees entries, and worktrees with active sessions.",
-      "A worktree id stays reserved only while sessions are still bound to it. Migrate idle sessions onto Main, then remove.",
+      "A worktree id stays reserved only while sessions are still bound to it. Idle sessions continue on Main after their worktree is gone.",
     ],
     examples: [{ command: "oppi worktree remove wt_feature-foo-abc12345 --workspace ws_123" }],
   },

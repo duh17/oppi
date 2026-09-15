@@ -47,6 +47,17 @@ const log = createLogger({ base: { component: "session_lifecycle" } });
 
 export const WORKTREE_REBIND_NOTICE = "Resuming on Main checkout. The worktree is gone.";
 
+const pendingWorktreeRebindNotices = new Set<string>();
+
+function stashWorktreeRebindNotice(sessionId: string): void {
+  pendingWorktreeRebindNotices.add(sessionId);
+}
+
+/** One-shot in-memory notice. HTTP resume and focused open do not share a service instance. */
+export function takePendingWorktreeRebindNotice(sessionId: string): boolean {
+  return pendingWorktreeRebindNotices.delete(sessionId);
+}
+
 const STALE_WORKTREE_REBIND_WARNINGS = new Set([
   "Worktree was removed; continuing on Main checkout.",
   WORKTREE_REBIND_NOTICE,
@@ -741,6 +752,7 @@ export class SessionLifecycleService {
     if (warnings) next.warnings = warnings;
     else delete next.warnings;
     this.deps.storage.saveSession(next);
+    stashWorktreeRebindNotice(next.id);
     if (!wasConnected) {
       return { session: this.hydratedSnapshot(next), rebound: true };
     }

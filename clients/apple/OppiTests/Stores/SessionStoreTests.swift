@@ -386,6 +386,23 @@ struct SessionStorePartitioningTests {
         #expect(store.session(id: "s1")?.contextTokens == 99)
     }
 
+    @Test func applySummaryPreservesExistingSessionWarnings() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+
+        var initial = makeTestSession(id: "s1", status: .ready)
+        initial.warnings = ["Configured Agent tool is unavailable and was dropped from this session: foo."]
+        store.upsert(initial)
+
+        var projected = makeTestSession(id: "s1", status: .busy)
+        projected.warnings = nil
+        #expect(store.applySummary(SessionSummary(from: projected)))
+        #expect(store.session(id: "s1")?.status == .busy)
+        #expect(store.session(id: "s1")?.warnings == [
+            "Configured Agent tool is unavailable and was dropped from this session: foo."
+        ])
+    }
+
     @Test func lossyLifecycleSummariesPreserveFocusedChangedFilesAndContextScope() {
         let store = SessionStore()
         store.switchServer(to: "srv1")
