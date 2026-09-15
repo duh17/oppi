@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { renderHelpTopic, resolveHelpTopic } from "../src/cli/help.js";
+import { helpTopicToJson, renderHelpTopic, resolveHelpTopic } from "../src/cli/help.js";
 
 const EXAMPLE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -52,6 +52,96 @@ describe("Pi create-flag help", () => {
       expect(text, path.join(" ")).toContain("sessionDefaults");
       expect(text, path.join(" ")).toContain(":thinking");
     }
+  });
+
+  it("leads agent parent/create/update help with flag-only examples", () => {
+    for (const path of [["agent"], ["agent", "create"], ["agent", "update"]]) {
+      const topic = resolveHelpTopic(path);
+      expect(topic, path.join(" ")).toBeDefined();
+      const first = topic?.examples?.[0]?.command ?? "";
+      expect(first, path.join(" ")).toContain("oppi agent");
+      expect(first, path.join(" ")).not.toContain("--definition");
+      expect(first, path.join(" ")).not.toContain("--definition-json");
+      expect(first, path.join(" ")).not.toMatch(/--skills\s+review\b/);
+      expect(first, path.join(" ")).not.toMatch(/--extensions\s+git\b/);
+      if (path[1] === "update") {
+        expect(first).toContain("--expected-version");
+      }
+      expect(topic?.examples?.some((example) => example.command.includes("--definition"))).toBe(
+        true,
+      );
+    }
+  });
+
+  it("documents native-editor flags, JSON bulk use, and agent get --json guidance", () => {
+    const editorFlags = [
+      "--name",
+      "--description",
+      "--icon",
+      "--instructions",
+      "--instructions-file",
+      "--instructions-mode",
+      "--skills",
+      "--extensions",
+      "--allowed-workspaces",
+      "--required-runtime",
+    ];
+    const resetFlags = [
+      "--clear-description",
+      "--clear-icon",
+      "--clear-instructions",
+      "--clear-skills",
+      "--clear-extensions",
+      "--clear-allowed-workspaces",
+      "--clear-required-runtime",
+    ];
+    const mappings = [
+      "resources.skillPaths",
+      "resources.extensionIds",
+      "launchConstraints.allowedWorkspaceIds",
+    ];
+
+    for (const path of [
+      ["agent", "create"],
+      ["agent", "update"],
+    ]) {
+      const topic = resolveHelpTopic(path);
+      expect(topic, path.join(" ")).toBeDefined();
+      if (!topic) continue;
+      const text = renderHelpTopic(topic);
+      const json = helpTopicToJson(topic);
+      const flagNames = (json.flags ?? []).map((flag) => flag.name).join("\n");
+      for (const flag of editorFlags) {
+        expect(text, path.join(" ")).toContain(flag);
+        expect(flagNames, path.join(" ")).toContain(flag);
+        expect(topic.usage, path.join(" ")).toContain(flag);
+      }
+      for (const mapping of mappings) {
+        expect(text, path.join(" ")).toContain(mapping);
+      }
+      expect(text).toContain("target, workspaceId, worktreeId, cwd, schedule, attachments, images");
+      expect(text).toContain("default, one Unicode emoji, or an SF Symbol name");
+    }
+
+    const update = helpText(["agent", "update"]);
+    const create = helpText(["agent", "create"]);
+    for (const flag of resetFlags) {
+      expect(update).toContain(flag);
+      expect(create).not.toContain(flag);
+    }
+    expect(update).toContain("omit them to inherit");
+    expect(create).toContain("empty CSV is none");
+    expect(create).toContain("<skill-path>");
+    expect(create).toContain("extension_<id>");
+    expect(create).not.toMatch(/--skills\s+review\b/);
+    expect(create).not.toMatch(/--extensions\s+git\b/);
+
+    const get = helpText(["agent", "get"]);
+    expect(get).toContain("For the full definition, run `oppi agent get <agent> --json`");
+    const getJson = helpTopicToJson(resolveHelpTopic(["agent", "get"])!);
+    expect(JSON.stringify(getJson)).toContain(
+      "For the full definition, run `oppi agent get <agent> --json`",
+    );
   });
 
   it("replaces sess_123 session-id examples with a full UUID", () => {

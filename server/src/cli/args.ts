@@ -37,10 +37,9 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
       const key = arg.slice(2);
       if (!key) throw new Error("Flag name cannot be empty");
       if (Object.hasOwn(flags, key)) throw new Error(`Duplicate flag: --${key}`);
-      const next = args[i + 1];
-      const value =
-        next && next !== "--" && !next.startsWith("--") ? (args[++i] ?? "true") : "true";
-      flags[key] = value;
+      const consumed = consumeFlagValue(args, i);
+      flags[key] = consumed.value;
+      i = consumed.index;
     } else if (parseFlags && arg.startsWith("-") && arg !== "-") {
       const spec = SHORT_FLAGS[arg.slice(1)];
       if (!spec) throw new Error(`Unknown flag: ${arg}`);
@@ -48,10 +47,9 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
       if (spec.boolean) {
         flags[spec.name] = "true";
       } else {
-        const next = args[i + 1];
-        const value =
-          next && next !== "--" && !next.startsWith("--") ? (args[++i] ?? "true") : "true";
-        flags[spec.name] = value;
+        const consumed = consumeFlagValue(args, i);
+        flags[spec.name] = consumed.value;
+        i = consumed.index;
       }
     } else {
       positional.push(arg);
@@ -59,6 +57,14 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
   }
 
   return { command, flags, positional };
+}
+
+function consumeFlagValue(args: string[], index: number): { value: string; index: number } {
+  const next = args[index + 1];
+  if (next === undefined || next === "--" || next.startsWith("--")) {
+    return { value: "true", index };
+  }
+  return { value: next, index: index + 1 };
 }
 
 export function isHelpFlag(flags: Record<string, string>): boolean {

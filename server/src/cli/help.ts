@@ -1396,7 +1396,10 @@ const HELP_TOPICS: HelpTopic[] = [
         name: "create",
         summary: "create a saved Agent from flags and optional file or inline JSON",
       },
-      { name: "update <agent>", summary: "patch a saved Agent from file or inline JSON" },
+      {
+        name: "update <agent>",
+        summary: "patch a saved Agent from flags and optional file or inline JSON",
+      },
       { name: "archive <agent>", summary: "archive a saved Agent" },
     ],
     notes: [
@@ -1408,8 +1411,11 @@ const HELP_TOPICS: HelpTopic[] = [
       "Use 'oppi session create --agent <agent> --workspace <workspace> --prompt <text>' to launch a saved Agent.",
     ],
     examples: [
-      { command: "oppi agent create --name Reviewer --definition ./agent.json --json" },
+      {
+        command: 'oppi agent create --name Reviewer --instructions "Review diffs" --json',
+      },
       { command: 'oppi session create --agent Reviewer --workspace ws_123 --prompt "Review this"' },
+      { command: "oppi agent create --name Reviewer --definition ./agent.json --json" },
     ],
   },
   {
@@ -1427,19 +1433,67 @@ const HELP_TOPICS: HelpTopic[] = [
     usage: "oppi agent get <agent> [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
-    examples: [{ command: "oppi agent get Reviewer --json" }],
+    notes: [
+      "Human output is metadata (id, name, status, version).",
+      "For the full definition, run `oppi agent get <agent> --json`.",
+    ],
+    examples: [
+      { command: "oppi agent get Reviewer" },
+      { command: "oppi agent get Reviewer --json" },
+    ],
   },
   {
     path: ["agent", "create"],
     title: "Create saved Agent",
-    summary: "Create a saved Agent from --name and an optional file or inline JSON definition.",
+    summary: "Create a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent create [--name <name>] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--json]",
+      "oppi agent create [--name <name>] [--description <text>] [--icon <text>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--json]",
     flags: [
       {
         name: "--name, -n",
         value: "<name>",
         summary: "Agent display name; overrides definition.name",
+      },
+      { name: "--description", value: "<text>", summary: "Agent description" },
+      {
+        name: "--icon",
+        value: "<text>",
+        summary: "default, one Unicode emoji, or an SF Symbol name",
+      },
+      {
+        name: "--instructions",
+        value: "<text>",
+        summary: "writes instructions.text; mutually exclusive with --instructions-file",
+      },
+      {
+        name: "--instructions-file",
+        value: "<file>",
+        summary: "read instructions.text from a file",
+      },
+      {
+        name: "--instructions-mode",
+        value: "<append|replace>",
+        summary: "writes instructions.mode; defaults to append when creating from text or file",
+      },
+      {
+        name: "--skills",
+        value: "<csv>",
+        summary: "writes resources.skillPaths (skill paths); empty CSV is none []",
+      },
+      {
+        name: "--extensions",
+        value: "<csv>",
+        summary: "writes resources.extensionIds (extension IDs); empty CSV is none []",
+      },
+      {
+        name: "--allowed-workspaces",
+        value: "<csv>",
+        summary: "writes launchConstraints.allowedWorkspaceIds (workspace IDs); must not be empty",
+      },
+      {
+        name: "--required-runtime",
+        value: "<host|sandbox>",
+        summary: "writes launchConstraints.requiredRuntime",
       },
       { name: "--definition", value: "<file>", summary: "JSON AgentDefinition fields" },
       {
@@ -1478,15 +1532,26 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
-      "Choose at most one of --definition or --definition-json; --name or definition.name is required.",
+      "Choose at most one of --definition or --definition-json; --name or definition.name is required. JSON is bulk/round-trip; first-class flags cover native-editor fields.",
       "--model, --thinking, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write sessionDefaults and overlay the same keys from --definition / --definition-json. --thinking wins over a --model :thinking suffix.",
       "Allowed AgentDefinition keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints.",
       "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
-      "resources.extensionIds / resources.skillPaths are exact selections; omit them to inherit Pi discovery.",
+      "--skills <skill-path> writes resources.skillPaths (skill paths); --extensions extension_<id> writes resources.extensionIds (extension IDs). Empty CSV is none []; omit them to inherit Pi discovery.",
+      "--allowed-workspaces writes launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; omit it for any workspace. --required-runtime writes launchConstraints.requiredRuntime.",
+      "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole.",
+      "--instructions and --instructions-file are mutually exclusive. --instructions-mode is append or replace and defaults to append when creating from text or file; it requires --instructions, --instructions-file, or instructions.text in the definition JSON.",
+      "--icon is default, one Unicode emoji, or an SF Symbol name. There is no Genmoji upload flag; Genmoji can still be set via definition JSON.",
       "sessionDefaults.tools must list real tool names available at launch; unavailable names are dropped with a session warning, not a launch failure. excludeTools stays a denylist and noTools stays 'all' | 'builtin'.",
-      "definition.icon uses the tagged default, emoji, symbol, or Genmoji asset-reference object.",
     ],
     examples: [
+      {
+        command:
+          'oppi agent create --name Reviewer --instructions "Review diffs" --required-runtime sandbox --json',
+      },
+      {
+        command:
+          "oppi agent create --name Reviewer --skills <skill-path> --extensions extension_<id> --json",
+      },
       { command: "oppi agent create --name Reviewer --definition ./agent.json --json" },
       {
         command: `oppi agent create --definition-json '{"name":"Reviewer","sessionDefaults":{"tools":["read","grep","oppi"]}}' --json`,
@@ -1496,11 +1561,80 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["agent", "update"],
     title: "Update saved Agent",
-    summary: "Patch a saved Agent from a JSON definition file or inline JSON object.",
+    summary: "Patch a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent update <agent> [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--expected-version <version>] [--json]",
+      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--skills <csv>] [--clear-skills] [--extensions <csv>] [--clear-extensions] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--expected-version <version>] [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
+      {
+        name: "--name, -n",
+        value: "<name>",
+        summary: "overlays definition.name",
+      },
+      { name: "--description", value: "<text>", summary: "overlays description" },
+      {
+        name: "--clear-description",
+        summary: "sets description null",
+      },
+      {
+        name: "--icon",
+        value: "<text>",
+        summary: "default, one Unicode emoji, or an SF Symbol name",
+      },
+      { name: "--clear-icon", summary: "sets icon null" },
+      {
+        name: "--instructions",
+        value: "<text>",
+        summary: "replaces instructions.text; mutually exclusive with --instructions-file",
+      },
+      {
+        name: "--instructions-file",
+        value: "<file>",
+        summary: "read instructions.text from a file",
+      },
+      {
+        name: "--instructions-mode",
+        value: "<append|replace>",
+        summary: "replaces instructions.mode; requires text from flags or definition JSON",
+      },
+      { name: "--clear-instructions", summary: "sets instructions null" },
+      {
+        name: "--skills",
+        value: "<csv>",
+        summary: "overlays resources.skillPaths (skill paths); empty CSV is none []",
+      },
+      {
+        name: "--clear-skills",
+        summary: "sets resources.skillPaths null (inherit)",
+      },
+      {
+        name: "--extensions",
+        value: "<csv>",
+        summary: "overlays resources.extensionIds (extension IDs); empty CSV is none []",
+      },
+      {
+        name: "--clear-extensions",
+        summary: "sets resources.extensionIds null (inherit)",
+      },
+      {
+        name: "--allowed-workspaces",
+        value: "<csv>",
+        summary:
+          "overlays launchConstraints.allowedWorkspaceIds (workspace IDs); must not be empty",
+      },
+      {
+        name: "--clear-allowed-workspaces",
+        summary: "sets launchConstraints.allowedWorkspaceIds null (any)",
+      },
+      {
+        name: "--required-runtime",
+        value: "<host|sandbox>",
+        summary: "overlays launchConstraints.requiredRuntime",
+      },
+      {
+        name: "--clear-required-runtime",
+        summary: "sets launchConstraints.requiredRuntime null (either)",
+      },
       {
         name: "--definition",
         value: "<file>",
@@ -1547,14 +1681,24 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
-      "Choose at most one of --definition or --definition-json; first-class sessionDefaults flags can patch without JSON.",
+      "Choose at most one of --definition or --definition-json; first-class flags can patch without JSON. JSON is bulk/round-trip.",
+      "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
       "Update is a PATCH: omitted fields keep their stored values; nested resources, sessionDefaults, and launchConstraints merge key by key; JSON null clears a field or nested key.",
       "Run 'oppi agent get <agent>' first, then patch only the changed fields; --expected-version with the reviewed version returns a conflict instead of overwriting newer changes.",
       "sessionDefaults.tools is an allowlist of real tool names; a stale name is dropped from launched sessions with a warning, so patch it to the current tool names instead of leaving leftovers.",
       "--model, --thinking, --tools, --exclude-tools, --no-tools, and --no-builtin-tools overlay the same sessionDefaults keys from --definition / --definition-json. --thinking wins over a --model :thinking suffix.",
+      "--skills overlays resources.skillPaths (skill paths); --extensions overlays resources.extensionIds (extension IDs). Empty CSV is none []; --clear-skills / --clear-extensions set null so omit them to inherit Pi discovery.",
+      "--allowed-workspaces overlays launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; --clear-allowed-workspaces sets null (any). --required-runtime overlays launchConstraints.requiredRuntime; --clear-required-runtime sets null (either).",
+      "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole. --name overlays definition.name.",
+      "--instructions and --instructions-file are mutually exclusive. --instructions-mode requires --instructions, --instructions-file, or instructions.text in the definition JSON rather than dropping stored text.",
+      "--icon is default, one Unicode emoji, or an SF Symbol name. Do not combine a value flag with its --clear-* twin.",
       "Omit --expected-version for a compatible unconditional PATCH.",
     ],
     examples: [
+      {
+        command:
+          'oppi agent update Reviewer --instructions "Review risky diffs" --expected-version 3 --json',
+      },
       { command: "oppi agent update Reviewer --definition ./agent-update.json --json" },
       {
         command: `oppi agent update Reviewer --definition-json '{"sessionDefaults":{"tools":["read","grep","oppi"]}}' --expected-version 3 --json`,

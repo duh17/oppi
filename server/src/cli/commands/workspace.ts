@@ -2,9 +2,9 @@
 import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
-import { migrateIconChoice } from "../../icon-choice.js";
-import type { LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext } from "../command-support.js";
+import { iconChoiceFromFlag } from "../icon-flag.js";
+import type { LocalApiConnection } from "../local-api-client.js";
 import {
   codeValue,
   nonEmptyDetails,
@@ -147,16 +147,6 @@ function workspaceDefinitionFromFlags(
     throw new Error("--definition or at least one workspace field flag is required");
   }
   return definition;
-}
-
-function iconChoiceFromFlag(value: string): Record<string, string> {
-  const trimmed = value.trim();
-  if (trimmed.toLowerCase() === "default") return { kind: "default" };
-  const icon = migrateIconChoice(trimmed);
-  if (icon.kind === "default") {
-    throw new Error("--icon must be default, one Unicode emoji, or an SF Symbol name");
-  }
-  return icon;
 }
 
 function applyStringFlag(

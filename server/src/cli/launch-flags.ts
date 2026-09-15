@@ -50,9 +50,35 @@ export function resolveToolPolicyFromFlags(flags: Record<string, string>): CliTo
   };
 }
 
+const AGENT_EDITOR_FLAGS = [
+  "name",
+  "description",
+  "icon",
+  "instructions",
+  "instructions-file",
+  "instructions-mode",
+  "skills",
+  "extensions",
+  "allowed-workspaces",
+  "required-runtime",
+  "clear-description",
+  "clear-icon",
+  "clear-instructions",
+  "clear-skills",
+  "clear-extensions",
+  "clear-allowed-workspaces",
+  "clear-required-runtime",
+] as const;
+
 export function hasSessionDefaultFlags(flags: Record<string, string>): boolean {
   return ["model", "thinking", "tools", "exclude-tools", "no-tools", "no-builtin-tools"].some(
     (key) => Object.hasOwn(flags, key),
+  );
+}
+
+export function hasAgentDefinitionFlags(flags: Record<string, string>): boolean {
+  return (
+    hasSessionDefaultFlags(flags) || AGENT_EDITOR_FLAGS.some((key) => Object.hasOwn(flags, key))
   );
 }
 

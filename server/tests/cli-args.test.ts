@@ -85,4 +85,32 @@ describe("parseCliArgs", () => {
       "Duplicate flag: --name",
     );
   });
+
+  it("treats an immediately following empty string as a value-flag value", () => {
+    expect(
+      parseCliArgs(["agent", "create", "--name", "Reviewer", "--skills", "", "--extensions", ""]),
+    ).toEqual({
+      command: "agent",
+      flags: { name: "Reviewer", skills: "", extensions: "" },
+      positional: ["create"],
+    });
+    expect(parseCliArgs(["agent", "create", "--allowed-workspaces", ""])).toEqual({
+      command: "agent",
+      flags: { "allowed-workspaces": "" },
+      positional: ["create"],
+    });
+    expect(parseCliArgs(["session", "create", "-t", ""])).toEqual({
+      command: "session",
+      flags: { tools: "" },
+      positional: ["create"],
+    });
+  });
+
+  it("still treats a valueless --skills as true rather than none", () => {
+    expect(parseCliArgs(["agent", "create", "--skills", "--json"])).toEqual({
+      command: "agent",
+      flags: { skills: "true", json: "true" },
+      positional: ["create"],
+    });
+  });
 });
