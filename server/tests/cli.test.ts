@@ -547,7 +547,7 @@ describe("oppi help", () => {
           "Usage: oppi worktree create",
           "--branch <branch>",
           "OPPI_DATA_DIR",
-          "Retained session history reserves its worktree id",
+          "The worktree id stays reserved only while sessions are still bound to it",
         ],
       },
       {
@@ -568,7 +568,7 @@ describe("oppi help", () => {
           "Usage: oppi worktree remove <worktree>",
           "--force",
           "active sessions",
-          "Retained history reserves the removed worktree id",
+          "A worktree id stays reserved only while sessions are still bound to it",
         ],
       },
       {
@@ -616,6 +616,14 @@ describe("oppi help", () => {
       {
         args: ["session", "resume", "--help"],
         expected: ["Usage: oppi session resume <id>", "--json"],
+      },
+      {
+        args: ["session", "migrate", "--help"],
+        expected: [
+          "Usage: oppi session migrate <id>",
+          "--json",
+          "leaving a worktree",
+        ],
       },
       {
         args: ["session", "fork", "--help"],

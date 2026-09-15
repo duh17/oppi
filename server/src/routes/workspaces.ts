@@ -479,6 +479,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       if (isPiTuiTaskRecordSession(session)) return;
 
       countedSessionIds.add(session.id);
+      // Reservations follow the current binding. Detached/migrated sessions count as main.
       const worktreeId = session.worktreeId?.trim() || "main";
       counts.set(worktreeId, (counts.get(worktreeId) ?? 0) + 1);
     };

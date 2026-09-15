@@ -20,6 +20,7 @@ import {
 import { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { WorkspaceWorktreeError } from "./worktrees.js";
 import { resolveWorkspaceUserPath } from "./workspace-user-path.js";
 import type { Storage } from "./storage.js";
 import {
@@ -402,9 +403,8 @@ export class SessionTraceService {
       return { kind: "path-required" };
     }
 
-    const workspaceRoot = resolveSdkSessionCwd(params.workspace, params.session, {
-      dataDir: this.deps.storage.getDataDir(),
-    });
+    const workspaceRoot = this.resolveSdkCwdOrNull(params.workspace, params.session);
+    if (!workspaceRoot) return { kind: "workspace-root-not-found" };
     let realWorkspaceRoot: string;
     try {
       realWorkspaceRoot = await realpath(workspaceRoot);
@@ -545,12 +545,21 @@ export class SessionTraceService {
       : undefined;
 
     if (workspace?.hostMount) {
-      const resolved = resolveSdkSessionCwd(workspace, session, {
-        dataDir: this.deps.storage.getDataDir(),
-      });
-      return (await pathExists(resolved)) ? resolved : null;
+      const resolved = this.resolveSdkCwdOrNull(workspace, session);
+      return resolved && (await pathExists(resolved)) ? resolved : null;
     }
     return homedir();
+  }
+
+  private resolveSdkCwdOrNull(workspace: Workspace, session: Session): string | null {
+    try {
+      return resolveSdkSessionCwd(workspace, session, {
+        dataDir: this.deps.storage.getDataDir(),
+      });
+    } catch (error) {
+      if (error instanceof WorkspaceWorktreeError) return null;
+      throw error;
+    }
   }
 
   private withMobileRenderSegments(trace: TraceEvent[]): TraceEvent[] {

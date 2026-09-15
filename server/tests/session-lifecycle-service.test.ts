@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,9 @@ import {
 import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { buildSessionSummary } from "../src/session-summary.js";
 import type { Session, Workspace } from "../src/types.js";
+import { createWorkspaceWorktree } from "../src/worktrees.js";
+
+const WORKTREE_REMOVED_NOTICE = "Worktree was removed; continuing on Main checkout.";
 
 function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
@@ -33,6 +37,20 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     name: "Workspace",
     ...overrides,
   } as Workspace;
+}
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function makeGitWorkspace(root: string): Workspace {
+  git(root, ["init", "--initial-branch=main"]);
+  git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+  git(root, ["config", "user.name", "Oppi Test"]);
+  writeFileSync(join(root, "README.md"), "main checkout\n");
+  git(root, ["add", "README.md"]);
+  git(root, ["commit", "-m", "initial"]);
+  return makeWorkspace({ hostMount: root });
 }
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -867,27 +885,185 @@ describe("SessionLifecycleService", () => {
       expect(result.session).toMatchObject({ runtime: "oppi", status: "ready" });
     });
 
-    it("keeps removed-worktree sessions archived instead of resuming them in main", async () => {
+    it("migrates removed-worktree sessions onto main and resumes the same id", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-main-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "oppi",
+          status: "stopped",
+          worktreeId: "wt_removed",
+          piSessionFile: "/tmp/sess-1.jsonl",
+          launch: {
+            status: "accepted",
+            requestedAt: 1,
+            target: { workspaceId: "ws-1", worktreeId: "wt_removed", runtime: "host" },
+          },
+        });
+        const started = makeSession({
+          ...session,
+          status: "ready",
+          worktreeId: "main",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+        const { service, startSession, saveSession, getPersistedSession } = makeService({
+          started,
+          dataDir,
+        });
+
+        const result = await service.resumeWorkspaceSession({ session, workspace });
+
+        expect(getPersistedSession("sess-1")).toMatchObject({
+          id: "sess-1",
+          worktreeId: "main",
+          piSessionFile: "/tmp/sess-1.jsonl",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+        expect(getPersistedSession("sess-1")?.launch?.target?.worktreeId).toBeUndefined();
+        expect(saveSession).toHaveBeenCalled();
+        expect(startSession).toHaveBeenCalledWith(
+          "sess-1",
+          expect.objectContaining({ id: "ws-1" }),
+        );
+        expect(result).toMatchObject({
+          owner: "oppi",
+          startedSession: true,
+          session: {
+            id: "sess-1",
+            worktreeId: "main",
+            warnings: [WORKTREE_REMOVED_NOTICE],
+          },
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("does not treat a missing workspace checkout as a removed worktree", async () => {
       const session = makeSession({
         runtime: "oppi",
         status: "stopped",
         worktreeId: "wt_removed",
       });
-      const { service, startSession } = makeService({
-        dataDir: join(tmpdir(), "oppi-lifecycle-removed-worktree"),
-      });
+      const { service, startSession, saveSession } = makeService();
 
       await expect(
         service.resumeWorkspaceSession({
           session,
-          workspace: makeWorkspace({ hostMount: join(tmpdir(), "oppi-lifecycle-main") }),
+          workspace: makeWorkspace(),
         }),
       ).rejects.toMatchObject({
         name: "SessionLifecycleError",
         statusCode: 409,
-        message: "Session worktree is no longer available",
+        message: "Workspace main checkout is unavailable",
       } satisfies Partial<SessionLifecycleError>);
       expect(startSession).not.toHaveBeenCalled();
+      expect(saveSession).not.toHaveBeenCalled();
+      expect(session.worktreeId).toBe("wt_removed");
+    });
+
+    it("refuses to migrate a busy session and keeps its worktree binding", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-busy-main-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-busy-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "oppi",
+          status: "busy",
+          worktreeId: "wt_removed",
+        });
+        const { service, startSession, saveSession } = makeService({
+          live: true,
+          active: session,
+          dataDir,
+        });
+
+        await expect(service.resumeWorkspaceSession({ session, workspace })).rejects.toMatchObject({
+          name: "SessionLifecycleError",
+          statusCode: 409,
+        } satisfies Partial<SessionLifecycleError>);
+        expect(saveSession).not.toHaveBeenCalled();
+        expect(startSession).not.toHaveBeenCalled();
+        expect(session.worktreeId).toBe("wt_removed");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("quiesces a connected idle runtime before clearing worktree bindings", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-quiesce-main-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-quiesce-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "oppi",
+          status: "ready",
+          worktreeId: "wt_removed",
+          piSessionFile: "/tmp/sess-1.jsonl",
+        });
+        const started = makeSession({
+          ...session,
+          worktreeId: "main",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+        const { service, startSession, saveSession, stopSession, getPersistedSession } =
+          makeService({
+            live: true,
+            active: session,
+            started,
+            dataDir,
+          });
+
+        await service.resumeWorkspaceSession({ session, workspace });
+
+        expect(stopSession).toHaveBeenCalledWith("sess-1");
+        expect(saveSession).toHaveBeenCalled();
+        expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(
+          saveSession.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+        expect(saveSession.mock.invocationCallOrder[0]).toBeLessThan(
+          startSession.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+        expect(getPersistedSession("sess-1")?.worktreeId).toBe("main");
+        expect(startSession).toHaveBeenCalledWith(
+          "sess-1",
+          expect.objectContaining({ id: "ws-1" }),
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps the migrated binding if a later runtime start fails", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-start-fail-main-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-start-fail-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "oppi",
+          status: "stopped",
+          worktreeId: "wt_removed",
+        });
+        const { service, getPersistedSession } = makeService({
+          startSessionError: new Error("Required model is not available"),
+          dataDir,
+        });
+
+        await expect(service.resumeWorkspaceSession({ session, workspace })).rejects.toMatchObject({
+          message: "Required model is not available",
+        });
+        expect(getPersistedSession("sess-1")).toMatchObject({
+          worktreeId: "main",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
     });
 
     it("retries a failed required-model session when the model becomes available", async () => {
@@ -1070,27 +1246,76 @@ describe("SessionLifecycleService", () => {
       expect(result).toMatchObject({ owner: "oppi", startedSession: true });
     });
 
-    it("does not open removed-worktree sessions in the main checkout", async () => {
-      const session = makeSession({
-        runtime: "oppi",
-        status: "stopped",
-        worktreeId: "wt_removed",
-      });
-      const { service, startSession } = makeService({
-        dataDir: join(tmpdir(), "oppi-lifecycle-removed-worktree"),
-      });
+    it("migrates removed-worktree sessions onto main when a focused stream opens", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-main-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "oppi",
+          status: "stopped",
+          worktreeId: "wt_removed",
+          piSessionFile: "/tmp/sess-1.jsonl",
+        });
+        const started = makeSession({
+          ...session,
+          status: "ready",
+          worktreeId: "main",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+        const { service, startSession, getPersistedSession } = makeService({
+          started,
+          dataDir,
+        });
 
-      await expect(
-        service.openFocusedSession({
-          session,
-          workspace: makeWorkspace({ hostMount: join(tmpdir(), "oppi-lifecycle-main") }),
-        }),
-      ).rejects.toMatchObject({
-        name: "SessionLifecycleError",
-        statusCode: 409,
-        message: "Session worktree is no longer available",
-      } satisfies Partial<SessionLifecycleError>);
-      expect(startSession).not.toHaveBeenCalled();
+        const result = await service.openFocusedSession({ session, workspace });
+
+        expect(getPersistedSession("sess-1")).toMatchObject({
+          id: "sess-1",
+          worktreeId: "main",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+        expect(startSession).toHaveBeenCalledWith(
+          "sess-1",
+          expect.objectContaining({ id: "ws-1" }),
+        );
+        expect(result).toMatchObject({
+          owner: "oppi",
+          startedSession: true,
+          session: { id: "sess-1", worktreeId: "main", warnings: [WORKTREE_REMOVED_NOTICE] },
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses to relocate a terminal-owned session when its worktree is gone", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-mirror-main-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-mirror-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "pi-tui",
+          status: "stopped",
+          worktreeId: "wt_removed",
+          mirror: { status: "disconnected" },
+          piSessionFile: "/tmp/mirror.jsonl",
+        });
+        const { service, startSession, saveSession } = makeService({ dataDir });
+
+        await expect(service.openFocusedSession({ session, workspace })).rejects.toMatchObject({
+          name: "SessionLifecycleError",
+          statusCode: 409,
+          message: "Session worktree is no longer available",
+        } satisfies Partial<SessionLifecycleError>);
+        expect(startSession).not.toHaveBeenCalled();
+        expect(saveSession).not.toHaveBeenCalled();
+        expect(session.worktreeId).toBe("wt_removed");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
     });
 
     it("opens a failed required-model session when the model becomes available", async () => {
@@ -1330,6 +1555,168 @@ describe("SessionLifecycleService", () => {
       expect(stopSession).toHaveBeenCalledWith("fork-1");
       expect(deleteSession).toHaveBeenCalledWith("fork-1");
     });
+
+    it("migrates the source onto main before forking and includes the notice", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-fork-main-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-fork-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const sourceSession = makeSession({
+          id: "source-1",
+          workspaceId: workspace.id,
+          runtime: "oppi",
+          status: "stopped",
+          worktreeId: "wt_removed",
+          piSessionFile: "/tmp/current.jsonl",
+        });
+        const forkSession = makeSession({ id: "fork-1" });
+        const { service, saveSession, getPersistedSession, startSession } = makeService({
+          forkSession,
+          storedSession: sourceSession,
+          dataDir,
+        });
+
+        const result = await service.forkSession({
+          workspace,
+          sourceSession,
+          entryId: "entry-user-1",
+        });
+
+        expect(getPersistedSession("source-1")).toMatchObject({
+          id: "source-1",
+          worktreeId: "main",
+          piSessionFile: "/tmp/current.jsonl",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+        expect(saveSession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: "fork-1",
+            worktreeId: "main",
+            warnings: [WORKTREE_REMOVED_NOTICE],
+          }),
+        );
+        expect(startSession).toHaveBeenCalledWith(
+          "fork-1",
+          expect.objectContaining({ id: "ws-1" }),
+        );
+        expect(result.session).toMatchObject({
+          id: "fork-1",
+          worktreeId: "main",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("migrateSessionToMainCheckout", () => {
+    it("is a success no-op when the session is already on main", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-noop-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-noop-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "oppi",
+          status: "ready",
+          worktreeId: "main",
+        });
+        const { service, saveSession, stopSession } = makeService({ dataDir });
+
+        const result = await service.migrateSessionToMainCheckout({
+          session,
+          workspace,
+        });
+
+        expect(result).toMatchObject({ migrated: false, session: { worktreeId: "main" } });
+        expect(result.session.warnings).toBeUndefined();
+        expect(saveSession).not.toHaveBeenCalled();
+        expect(stopSession).not.toHaveBeenCalled();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("detaches an idle session from an existing worktree onto main", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-existing-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-existing-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const created = createWorkspaceWorktree(
+          workspace,
+          { branch: "feature/still-here" },
+          { dataDir },
+        );
+        const session = makeSession({
+          runtime: "oppi",
+          status: "ready",
+          worktreeId: created.id,
+          launch: {
+            status: "accepted",
+            requestedAt: 1,
+            target: { workspaceId: "ws-1", worktreeId: created.id, runtime: "host" },
+          },
+        });
+        const { service, saveSession, getPersistedSession, stopSession } = makeService({
+          dataDir,
+        });
+
+        const result = await service.migrateSessionToMainCheckout({
+          session,
+          workspace,
+        });
+
+        expect(existsSync(created.path)).toBe(true);
+        expect(stopSession).not.toHaveBeenCalled();
+        expect(saveSession).toHaveBeenCalled();
+        expect(getPersistedSession("sess-1")).toMatchObject({
+          worktreeId: "main",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+        expect(getPersistedSession("sess-1")?.launch?.target?.worktreeId).toBeUndefined();
+        expect(result).toMatchObject({
+          migrated: true,
+          session: { worktreeId: "main", warnings: [WORKTREE_REMOVED_NOTICE] },
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("treats a git worktree record with a missing directory as unavailable", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-missing-dir-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-missing-dir-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const created = createWorkspaceWorktree(
+          workspace,
+          { branch: "feature/vanished-dir" },
+          { dataDir },
+        );
+        rmSync(created.path, { recursive: true, force: true });
+        const session = makeSession({
+          runtime: "oppi",
+          status: "stopped",
+          worktreeId: created.id,
+        });
+        const { service, getPersistedSession } = makeService({ dataDir });
+
+        const result = await service.migrateSessionToMainCheckout({
+          session,
+          workspace,
+        });
+
+        expect(result.migrated).toBe(true);
+        expect(getPersistedSession("sess-1")?.worktreeId).toBe("main");
+        expect(getPersistedSession("sess-1")?.warnings).toEqual([WORKTREE_REMOVED_NOTICE]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("stopSession", () => {
@@ -1478,6 +1865,29 @@ describe("SessionLifecycleService", () => {
 
         expect(result.deleted.workspaceAttachmentCopies).toBe(false);
         expect(existsSync(mainAttachment)).toBe(true);
+      } finally {
+        rmSync(workspaceDir, { recursive: true, force: true });
+      }
+    });
+
+    it("deletes main-checkout attachments only after an honest detach", async () => {
+      const workspaceDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-detached-delete-"));
+      const mainAttachment = join(workspaceDir, ".pi", "attachments", "delete-1", "keep.txt");
+      mkdirSync(join(workspaceDir, ".pi", "attachments", "delete-1"), { recursive: true });
+      writeFileSync(mainAttachment, "main attachment after detach");
+      const workspace = makeWorkspace({ hostMount: workspaceDir });
+      const session = makeSession({
+        id: "delete-1",
+        workspaceId: workspace.id,
+        worktreeId: "main",
+      });
+      const { service } = makeService({ workspace });
+
+      try {
+        const result = await service.deleteSession(session);
+
+        expect(result.deleted.workspaceAttachmentCopies).toBe(true);
+        expect(existsSync(mainAttachment)).toBe(false);
       } finally {
         rmSync(workspaceDir, { recursive: true, force: true });
       }

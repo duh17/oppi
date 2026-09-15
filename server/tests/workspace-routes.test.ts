@@ -663,6 +663,76 @@ describe("workspaces module", () => {
     }
   });
 
+  it("does not reserve or block a worktree after sessions detach onto main", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-detached-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-detached-data-"));
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/detached-history" },
+        { dataDir },
+      );
+      const detachedSession = makeRouteSession("detached-worktree", {
+        status: "ready",
+        worktreeId: "main",
+      });
+      const listSnapshots = vi.fn(() => [detachedSession]);
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          listAllWorkspaceSessionSnapshots: listSnapshots,
+        },
+        sessionRuntimes: {
+          getActiveSessionIds: vi.fn(() => new Set<string>()),
+          getActiveSession: vi.fn(() => undefined),
+        },
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "DELETE",
+        path: `/workspaces/ws-1/worktrees/${worktree.id}`,
+        url: new URL(`http://localhost/workspaces/ws-1/worktrees/${worktree.id}`),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(existsSync(worktree.path)).toBe(false);
+
+      const recreateRes = makeResponse();
+      await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/worktrees",
+        url: new URL("http://localhost/workspaces/ws-1/worktrees"),
+        req: makeRequest({ branch: "feature/detached-history" }) as never,
+        res: recreateRes as never,
+      });
+      expect(recreateRes.statusCode).toBe(201);
+      expect(JSON.parse(recreateRes.body).worktree.branch).toBe("feature/detached-history");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses persisted nonterminal sessions and canonical ids for remove guards", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-worktree-route-remove-guard-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktree-route-remove-guard-data-"));

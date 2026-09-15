@@ -38,12 +38,19 @@ import {
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
 import type { ChatAttachmentRef, ControlSessionMetadata, Session, Workspace } from "./types.js";
-import { resolveWorkspaceWorktree, WorkspaceWorktreeError } from "./worktrees.js";
+import { listWorkspaceWorktrees, WorkspaceWorktreeError } from "./worktrees.js";
 
 const CONTROL_LAUNCH_LEASE_OWNER = "control-session-create";
 const CONTROL_LAUNCH_LEASE_TTL_MS = 2 * 60_000;
 
 const log = createLogger({ base: { component: "session_lifecycle" } });
+
+export const WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING =
+  "Worktree was removed; continuing on Main checkout.";
+
+type WorktreeBindingState = "main" | "available" | "unavailable" | "main-missing";
+
+const MIGRATION_BLOCKING_STATUSES = new Set<Session["status"]>(["busy", "starting", "stopping"]);
 
 export type OpenSessionOwner = "oppi" | "pi-tui";
 
@@ -409,11 +416,11 @@ export class SessionLifecycleService {
     session: Session;
     workspace: Workspace;
   }): Promise<OpenSessionResult> {
-    this.requireSessionWorktreeAvailable(params.session, params.workspace);
-    const session = this.prepareMirrorSessionForOpen(params.session);
+    const binding = await this.ensureManagedWorktreeBinding(params.session, params.workspace);
+    const session = this.prepareMirrorSessionForOpen(binding.session);
     if (session.owner === "pi-tui") {
       const active =
-        this.deps.sessionRuntimes.getSessionSnapshot(params.session.id) ?? params.session;
+        this.deps.sessionRuntimes.getSessionSnapshot(params.session.id) ?? binding.session;
       return {
         session: this.deps.ensureSessionContextWindow(active),
         owner: "pi-tui",
@@ -421,16 +428,16 @@ export class SessionLifecycleService {
       };
     }
 
-    if (this.deps.sessionRuntimes.isSessionConnected(params.session.id)) {
+    if (!binding.migrated && this.deps.sessionRuntimes.isSessionConnected(params.session.id)) {
       const active = this.deps.sessionRuntimes.getActiveSession(params.session.id);
       return {
-        session: active ? this.deps.ensureSessionContextWindow(active) : params.session,
+        session: active ? this.deps.ensureSessionContextWindow(active) : binding.session,
         owner: "oppi",
         startedSession: false,
       };
     }
 
-    const started = await this.startManagedSession(params.session, params.workspace);
+    const started = await this.startManagedSession(binding.session, params.workspace);
     return {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
@@ -463,11 +470,11 @@ export class SessionLifecycleService {
     session: Session;
     workspace?: Workspace;
   }): Promise<OpenSessionResult> {
-    this.requireSessionWorktreeAvailable(params.session, params.workspace);
-    const session = this.prepareMirrorSessionForOpen(params.session);
+    const binding = await this.ensureManagedWorktreeBinding(params.session, params.workspace);
+    const session = this.prepareMirrorSessionForOpen(binding.session);
     if (session.owner === "pi-tui") {
       const snapshot =
-        this.deps.sessionRuntimes.getSessionSnapshot(params.session.id) ?? params.session;
+        this.deps.sessionRuntimes.getSessionSnapshot(params.session.id) ?? binding.session;
       return {
         session: this.deps.ensureSessionContextWindow(snapshot),
         owner: "pi-tui",
@@ -475,8 +482,9 @@ export class SessionLifecycleService {
       };
     }
 
-    const hadActiveSession = this.deps.sessionRuntimes.isSessionConnected(params.session.id);
-    const started = await this.startManagedSession(params.session, params.workspace);
+    const hadActiveSession =
+      !binding.migrated && this.deps.sessionRuntimes.isSessionConnected(params.session.id);
+    const started = await this.startManagedSession(binding.session, params.workspace);
     return {
       session: this.deps.ensureSessionContextWindow(started),
       owner: "oppi",
@@ -617,11 +625,10 @@ export class SessionLifecycleService {
     entryId: string;
     name?: string;
   }): Promise<ForkSessionResult> {
-    this.requireSessionWorktreeAvailable(params.sourceSession, params.workspace);
+    const binding = await this.ensureManagedWorktreeBinding(params.sourceSession, params.workspace);
     await this.deps.sessionRuntimes.refreshSessionState(params.sourceSession.id);
 
-    const latestSource =
-      this.deps.storage.getSession(params.sourceSession.id) || params.sourceSession;
+    const latestSource = this.deps.storage.getSession(params.sourceSession.id) || binding.session;
     const sourceSessionFile =
       latestSource.piSessionFile ||
       latestSource.piSessionFiles?.[latestSource.piSessionFiles.length - 1];
@@ -647,6 +654,9 @@ export class SessionLifecycleService {
     forkSession.workspaceName = params.workspace.name;
     if (latestSource.worktreeId) {
       forkSession.worktreeId = latestSource.worktreeId;
+    }
+    if (latestSource.warnings && latestSource.warnings.length > 0) {
+      forkSession.warnings = [...latestSource.warnings];
     }
 
     if (latestSource.thinkingLevel) forkSession.thinkingLevel = latestSource.thinkingLevel;
@@ -686,6 +696,42 @@ export class SessionLifecycleService {
 
     const created = this.deps.storage.getSession(forkSession.id) || forkSession;
     return { session: this.deps.ensureSessionContextWindow(created) };
+  }
+
+  async migrateSessionToMainCheckout(params: {
+    session: Session;
+    workspace: Workspace;
+  }): Promise<{ session: Session; migrated: boolean }> {
+    if (params.session.runtime === "pi-tui") {
+      throw new SessionLifecycleError("Cannot migrate a terminal-owned session", 409);
+    }
+
+    const binding = this.inspectWorktreeBinding(params.session, params.workspace);
+    if (binding === "main") {
+      return { session: this.hydratedSnapshot(params.session), migrated: false };
+    }
+    if (binding === "main-missing") {
+      throw new SessionLifecycleError("Workspace main checkout is unavailable", 409);
+    }
+
+    this.assertSessionIdleForMigration(params.session);
+    if (this.deps.sessionRuntimes.isSessionConnected(params.session.id)) {
+      await this.deps.sessionRuntimes.stopSession(params.session.id);
+    }
+
+    const next: Session = {
+      ...(this.deps.storage.getSession(params.session.id) ?? params.session),
+    };
+    next.worktreeId = "main";
+    if (next.launch?.target) {
+      const { worktreeId: _cleared, ...target } = next.launch.target;
+      next.launch = { ...next.launch, target };
+    }
+    next.warnings = [
+      ...new Set([...(next.warnings ?? []), WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING]),
+    ];
+    this.deps.storage.saveSession(next);
+    return { session: this.hydratedSnapshot(next), migrated: true };
   }
 
   async stopSession(session: Session): Promise<StopSessionResult> {
@@ -826,18 +872,50 @@ export class SessionLifecycleService {
     }
   }
 
-  private requireSessionWorktreeAvailable(session: Session, workspace?: Workspace): void {
-    const worktreeId = session.worktreeId?.trim();
-    if (!worktreeId || worktreeId === "main") return;
+  private inspectWorktreeBinding(session: Session, workspace?: Workspace): WorktreeBindingState {
+    const requested = session.worktreeId?.trim();
+    if (!requested || requested === "main") return "main";
+    if (!workspace) return "main-missing";
 
-    const worktree = workspace
-      ? resolveWorkspaceWorktree(workspace, worktreeId, {
-          dataDir: this.deps.storage.getDataDir(),
-        })
-      : undefined;
-    if (!worktree) {
+    const worktrees = listWorkspaceWorktrees(workspace, {
+      dataDir: this.deps.storage.getDataDir(),
+    });
+    const main = worktrees.find((worktree) => worktree.isMain);
+    if (!main || !main.isGitRepo || !existsSync(main.path)) return "main-missing";
+
+    const worktree = worktrees.find((candidate) => candidate.id === requested);
+    if (!worktree || !existsSync(worktree.path)) return "unavailable";
+    return "available";
+  }
+
+  private assertSessionIdleForMigration(session: Session): void {
+    const active = this.deps.sessionRuntimes.getActiveSession(session.id);
+    if (
+      MIGRATION_BLOCKING_STATUSES.has(session.status) ||
+      (active && MIGRATION_BLOCKING_STATUSES.has(active.status))
+    ) {
+      throw new SessionLifecycleError(
+        "Cannot migrate a session that is busy, starting, or stopping",
+        409,
+      );
+    }
+  }
+
+  private async ensureManagedWorktreeBinding(
+    session: Session,
+    workspace?: Workspace,
+  ): Promise<{ session: Session; migrated: boolean }> {
+    const binding = this.inspectWorktreeBinding(session, workspace);
+    if (binding === "main" || binding === "available") {
+      return { session, migrated: false };
+    }
+    if (session.runtime === "pi-tui") {
       throw new SessionLifecycleError("Session worktree is no longer available", 409);
     }
+    if (binding === "main-missing" || !workspace) {
+      throw new SessionLifecycleError("Workspace main checkout is unavailable", 409);
+    }
+    return this.migrateSessionToMainCheckout({ session, workspace });
   }
 
   private prepareMirrorSessionForOpen(session: Session): { owner: OpenSessionOwner } {

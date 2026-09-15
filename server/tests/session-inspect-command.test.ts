@@ -197,4 +197,38 @@ describe("session inspect command contract", () => {
   ])("rejects malformed input: $name", async ({ flags, call, message }) => {
     await expect(inspectSession("s", [], flags, call)).rejects.toThrow(message);
   });
+
+  it("keeps session warnings in inspect JSON summaries", async () => {
+    const call: ApiCall = async <T>(path: string): Promise<T> => {
+      if (path === "/sessions/session%2F1") {
+        return {
+          session: {
+            id: "session/1",
+            name: "Coverage",
+            workspaceId: "ws 1",
+            worktreeId: "main",
+            status: "stopped",
+            model: "test/model",
+            warnings: ["Worktree was removed; continuing on Main checkout."],
+          },
+        } as T;
+      }
+      if (path.endsWith("/trace-outline")) {
+        return { outline: { entries: [] } } as T;
+      }
+      throw new Error(`unexpected path ${path}`);
+    };
+
+    const result = await inspectSession("session/1", [], { view: "summary" }, call);
+    const json = inspectJsonResult(result);
+
+    expect(json).toMatchObject({
+      view: "summary",
+      summary: {
+        sessionId: "session/1",
+        worktreeId: "main",
+        warnings: ["Worktree was removed; continuing on Main checkout."],
+      },
+    });
+  });
 });

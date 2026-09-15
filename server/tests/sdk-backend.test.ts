@@ -1,9 +1,11 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -33,6 +35,7 @@ import type { MobileOutputGuideSettingsSnapshot } from "../src/mobile-output-gui
 import { buildMobileOutputGuide } from "../src/oppi-docs.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
+import { createWorkspaceWorktree } from "../src/worktrees.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -105,6 +108,32 @@ describe("resolveSdkSessionCwd", () => {
       );
     } finally {
       rmSync(mount, { recursive: true, force: true });
+    }
+  });
+
+  it("never falls back to main when a git worktree directory is gone", () => {
+    const mount = mkdtempSync(join(tmpdir(), "oppi-missing-dir-cwd-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-missing-dir-cwd-data-"));
+    execFileSync("git", ["init", "--initial-branch=main"], { cwd: mount });
+    execFileSync("git", ["config", "user.email", "oppi-test@example.invalid"], { cwd: mount });
+    execFileSync("git", ["config", "user.name", "Oppi Test"], { cwd: mount });
+    writeFileSync(join(mount, "README.md"), "main\n");
+    execFileSync("git", ["add", "README.md"], { cwd: mount });
+    execFileSync("git", ["commit", "-m", "initial"], { cwd: mount });
+    const workspace = { id: "ws-1", hostMount: mount } as Workspace;
+    const created = createWorkspaceWorktree(workspace, { branch: "feature/gone" }, { dataDir });
+    rmSync(created.path, { recursive: true, force: true });
+
+    try {
+      expect(() =>
+        resolveSdkSessionCwd(workspace, { worktreeId: created.id }, { dataDir }),
+      ).toThrow("Session worktree is no longer available");
+      expect(resolveSdkSessionCwd(workspace, { worktreeId: "main" }, { dataDir })).toBe(
+        realpathSync(mount),
+      );
+    } finally {
+      rmSync(mount, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
     }
   });
 });

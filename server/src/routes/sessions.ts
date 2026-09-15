@@ -518,6 +518,46 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
+  async function handleMigrateWorkspaceSession(
+    workspaceId: string,
+    sessionId: string,
+    res: ServerResponse,
+  ): Promise<void> {
+    const workspace = ctx.storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      helpers.error(res, 404, "Workspace not found");
+      return;
+    }
+
+    const session = ctx.storage.getSession(sessionId);
+    if (!session) {
+      helpers.error(res, 404, "Session not found");
+      return;
+    }
+
+    if (session.workspaceId !== workspaceId) {
+      helpers.error(res, 400, "Session does not belong to this workspace");
+      return;
+    }
+
+    try {
+      const result = await lifecycle.migrateSessionToMainCheckout({ session, workspace });
+      helpers.json(res, { session: result.session });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Migrate failed";
+      if (err instanceof SessionLifecycleError) {
+        helpers.error(res, err.statusCode, message);
+        return;
+      }
+      log.error("sessions.migrate.failed", {
+        sessionId,
+        workspaceId,
+        error: safeErrorMessage(err),
+      });
+      helpers.error(res, 500, message);
+    }
+  }
+
   async function handleForkWorkspaceSession(
     workspaceId: string,
     sourceSessionId: string,
@@ -841,6 +881,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionResumeMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/);
     if (wsSessionResumeMatch && method === "POST") {
       await handleResumeWorkspaceSession(wsSessionResumeMatch[1], wsSessionResumeMatch[2], res);
+      return true;
+    }
+
+    const wsSessionMigrateMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/migrate$/);
+    if (wsSessionMigrateMatch && method === "POST") {
+      await handleMigrateWorkspaceSession(wsSessionMigrateMatch[1], wsSessionMigrateMatch[2], res);
       return true;
     }
 

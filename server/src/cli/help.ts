@@ -611,7 +611,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "If the branch already exists, Oppi checks out that branch in a new worktree.",
-      "Retained session history reserves its worktree id, so the same branch or custom path cannot be recreated until that history is deleted.",
+      "Session history can remain after a worktree is removed. The worktree id stays reserved only while sessions are still bound to it.",
       "Custom paths are rejected unless they stay inside the Oppi-managed data-dir root.",
     ],
     examples: [
@@ -704,8 +704,8 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
-      "Remove keeps stopped session history, but refuses the main checkout, project-local .pi/worktrees entries, and worktrees with active sessions.",
-      "Retained history reserves the removed worktree id until that history is deleted.",
+      "Remove keeps session history, but refuses the main checkout, project-local .pi/worktrees entries, and worktrees with active sessions.",
+      "A worktree id stays reserved only while sessions are still bound to it. Migrate idle sessions onto Main, then remove.",
     ],
     examples: [{ command: "oppi worktree remove wt_feature-foo-abc12345 --workspace ws_123" }],
   },
@@ -1009,6 +1009,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "inspect <id>", summary: "inspect selected turns from a session trace" },
       { name: "stop <id>", summary: "stop a session" },
       { name: "resume <id>", summary: "resume a stopped session" },
+      { name: "migrate <id>", summary: "move a session onto the workspace Main checkout" },
       { name: "fork <id>", summary: "fork a session from a trace entry" },
       { name: "delete <id>", summary: "delete a session" },
       { name: "tool-output <id> <tool>", summary: "show stored tool output" },
@@ -1020,6 +1021,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Plain 'send' prompts an idle session and steers a busy session at the next turn boundary; use '--follow-up' to wait until current work finishes.",
       "Orchestrate with 'wait <id>' to block until a session is idle or needs attention.",
       "Inspect history progressively: 'inspect <id> --view summary' for counts, '--view outline' to choose turns, then '--view messages' or '--view tools'.",
+      "Use 'session migrate' to leave a worktree and continue on the workspace Main checkout.",
     ],
     examples: [
       { command: "oppi session wait 11111111-1111-4111-8111-111111111111 --for idle" },
@@ -1301,6 +1303,19 @@ const HELP_TOPICS: HelpTopic[] = [
     arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
     examples: [{ command: "oppi session resume 11111111-1111-4111-8111-111111111111 --json" }],
+  },
+  {
+    path: ["session", "migrate"],
+    title: "Migrate session",
+    summary: "Move a session onto the workspace Main checkout so its worktree can be removed.",
+    usage: "oppi session migrate <id> [--json]",
+    arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    notes: [
+      "Migrate is for leaving a worktree. It detaches the same Session.id onto Main without creating a new session.",
+      "An idle orchestration session may migrate itself, then run 'oppi worktree remove' if other remove guards pass.",
+    ],
+    examples: [{ command: "oppi session migrate 11111111-1111-4111-8111-111111111111 --json" }],
   },
   {
     path: ["session", "fork"],

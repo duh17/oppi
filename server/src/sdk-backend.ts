@@ -191,7 +191,7 @@ export function resolveSdkSessionCwd(
 
   if (workspace?.runtime !== "sandbox" && workspace && session?.worktreeId) {
     const worktreePath = resolveWorkspaceSessionCwd(workspace, session.worktreeId, options);
-    if (worktreePath) return worktreePath;
+    if (worktreePath && existsSync(worktreePath)) return worktreePath;
     throw new WorkspaceWorktreeError(409, "Session worktree is no longer available");
   }
 

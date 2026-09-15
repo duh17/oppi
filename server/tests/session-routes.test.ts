@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -474,7 +474,7 @@ describe("sessions module", () => {
     });
   });
 
-  it("returns conflict instead of resuming removed-worktree sessions in main", async () => {
+  it("migrates and resumes removed-worktree sessions onto main", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-session-route-removed-worktree-root-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-removed-worktree-data-"));
     try {
@@ -483,6 +483,7 @@ describe("sessions module", () => {
         id: "stopped-1",
         workspaceId: workspace.id,
         worktreeId: "wt_removed",
+        runtime: "oppi",
         status: "stopped",
         createdAt: 1,
         lastActivity: 1,
@@ -490,16 +491,25 @@ describe("sessions module", () => {
         tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         cost: 0,
       };
-      const startSession = vi.fn(async () => session);
+      const persisted = new Map<string, Session>([[session.id, session]]);
+      const startSession = vi.fn(async (id: string) => persisted.get(id) ?? session);
       const ctx = {
         storage: {
           getWorkspace: vi.fn(() => workspace),
-          getSession: vi.fn(() => session),
+          getSession: vi.fn((id: string) => persisted.get(id)),
           getDataDir: vi.fn(() => dataDir),
+          saveSession: vi.fn((value: Session) => {
+            persisted.set(value.id, value);
+          }),
         },
-        sessions: { startSession },
+        sessions: { startSession, stopSession: vi.fn(async () => {}) },
         sessionRuntimes: {
           isSessionConnected: vi.fn(() => false),
+          getActiveSession: vi.fn(() => undefined),
+          getSessionSnapshot: vi.fn(() => undefined),
+          refreshSessionState: vi.fn(async () => null),
+          stopSession: vi.fn(async () => {}),
+          stopSessionIfActive: vi.fn(async () => {}),
         },
         ensureSessionContextWindow: vi.fn((value: Session) => value),
       } as unknown as RouteContext;
@@ -515,11 +525,87 @@ describe("sessions module", () => {
       });
 
       expect(handled).toBe(true);
-      expect(res.statusCode).toBe(409);
-      expect(JSON.parse(res.body)).toEqual({
-        error: "Session worktree is no longer available",
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toMatchObject({
+        session: {
+          id: "stopped-1",
+          worktreeId: "main",
+          warnings: ["Worktree was removed; continuing on Main checkout."],
+        },
       });
-      expect(startSession).not.toHaveBeenCalled();
+      expect(persisted.get("stopped-1")?.worktreeId).toBe("main");
+      expect(startSession).toHaveBeenCalledWith("stopped-1", workspace);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("migrates an idle session off an existing worktree onto main", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-session-route-migrate-root-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-migrate-data-"));
+    try {
+      const workspace = makeGitWorkspace(root);
+      const worktree = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/self-cleanup" },
+        { dataDir },
+      );
+      const session: Session = {
+        id: "ready-1",
+        workspaceId: workspace.id,
+        worktreeId: worktree.id,
+        runtime: "oppi",
+        status: "ready",
+        createdAt: 1,
+        lastActivity: 1,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+      };
+      const persisted = new Map<string, Session>([[session.id, session]]);
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getSession: vi.fn((id: string) => persisted.get(id)),
+          getDataDir: vi.fn(() => dataDir),
+          saveSession: vi.fn((value: Session) => {
+            persisted.set(value.id, value);
+          }),
+        },
+        sessions: { startSession: vi.fn(async () => session), stopSession: vi.fn(async () => {}) },
+        sessionRuntimes: {
+          isSessionConnected: vi.fn(() => false),
+          getActiveSession: vi.fn(() => undefined),
+          getSessionSnapshot: vi.fn(() => undefined),
+          refreshSessionState: vi.fn(async () => null),
+          stopSession: vi.fn(async () => {}),
+          stopSessionIfActive: vi.fn(async () => {}),
+        },
+        ensureSessionContextWindow: vi.fn((value: Session) => value),
+      } as unknown as RouteContext;
+      const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "POST",
+        path: "/workspaces/ws-1/sessions/ready-1/migrate",
+        url: new URL("http://localhost/workspaces/ws-1/sessions/ready-1/migrate"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toMatchObject({
+        session: {
+          id: "ready-1",
+          worktreeId: "main",
+          warnings: ["Worktree was removed; continuing on Main checkout."],
+        },
+      });
+      expect(persisted.get("ready-1")?.worktreeId).toBe("main");
+      expect(existsSync(worktree.path)).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });

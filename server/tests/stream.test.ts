@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
@@ -138,6 +139,8 @@ function createMockContext(sessions: Session[]): {
     getPendingUIRequestMessages: (id: string) =>
       runtimeOverride(id).getPendingUIRequestMessages?.(id) ??
       ctx.sessions.getPendingUIRequestMessages(id),
+    stopSession: vi.fn(async () => {}),
+    stopSessionIfActive: vi.fn(async () => {}),
   } as unknown as StreamContext["sessionRuntimes"];
 
   ctx = {
@@ -147,6 +150,7 @@ function createMockContext(sessions: Session[]): {
       saveSession: (session: Session) => {
         sessionMap.set(session.id, structuredClone(session));
       },
+      getDataDir: () => tmpdir(),
     } as StreamContext["storage"],
     sessions: {
       startSession: vi.fn(async (id: string) => sessionMap.get(id)!),
@@ -236,6 +240,60 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.closeCode).toBe(1008);
     expect(ws.sentOfType("error", session.id)).toHaveLength(0);
     expect(ws.sentOfType("connected", session.id)).toHaveLength(0);
+  });
+
+  it("migrates a removed-worktree focused session onto main instead of closing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-stream-removed-worktree-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-stream-removed-worktree-data-"));
+    execFileSync("git", ["init", "--initial-branch=main"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "oppi-test@example.invalid"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Oppi Test"], { cwd: root });
+    writeFileSync(join(root, "README.md"), "main\n");
+    execFileSync("git", ["add", "README.md"], { cwd: root });
+    execFileSync("git", ["commit", "-m", "initial"], { cwd: root });
+    const workspace: Workspace = {
+      id: "w1",
+      name: "Workspace",
+      hostMount: root,
+      systemPromptMode: "append",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const session = {
+      ...makeSession("sess-removed", "w1"),
+      runtime: "oppi" as const,
+      worktreeId: "wt_removed",
+      status: "stopped" as const,
+    };
+    const { ctx, sessionMap } = createMockContext([session]);
+    ctx.storage.getDataDir = () => dataDir;
+    ctx.resolveWorkspaceForSession = () => workspace;
+    vi.mocked(ctx.sessions.startSession).mockImplementation(async (id: string) => {
+      const current = sessionMap.get(id) ?? session;
+      current.status = "ready";
+      return current;
+    });
+
+    try {
+      const ws = new FakeWebSocket();
+      await new BoundSessionStreamMux(ctx).handleWebSocket(
+        "w1",
+        session.id,
+        ws as unknown as WebSocket,
+      );
+      await drain();
+
+      expect(ws.closeCode).toBeUndefined();
+      expect(ws.sentOfType("stream_connected")).toHaveLength(1);
+      expect(sessionMap.get(session.id)?.worktreeId).toBe("main");
+      expect(sessionMap.get(session.id)?.warnings).toEqual([
+        "Worktree was removed; continuing on Main checkout.",
+      ]);
+      expect(ctx.sessions.startSession).toHaveBeenCalledWith(session.id, workspace);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("opens a control stream after the declared session is reloaded from SQLite", async () => {

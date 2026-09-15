@@ -637,6 +637,111 @@ describe("session command dispatch and output boundaries", () => {
     expect(log.mock.calls.flat().join("\n")).toContain("No sessions found.");
     log.mockRestore();
   });
+
+  it("allows a session to migrate itself onto Main", async () => {
+    request.mockImplementation(async (_storage, path, options) => {
+      if (path === "/sessions") return { sessions: [{ id: "caller-1", workspaceId: "ws-1" }] };
+      if (path === "/sessions/caller-1") {
+        return { session: { id: "caller-1", workspaceId: "ws-1", worktreeId: "wt_feature" } };
+      }
+      if (path === "/workspaces/ws-1/sessions/caller-1/migrate" && options?.method === "POST") {
+        return {
+          session: {
+            id: "caller-1",
+            status: "ready",
+            worktreeId: "main",
+            warnings: ["Worktree was removed; continuing on Main checkout."],
+          },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { stdout, exitCode } = await captureCliOutput(() =>
+      cmdSession(storage, "migrate", ["caller-1"], { json: "true" }, process.cwd(), {
+        callerSessionId: "caller-1",
+      }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        session_id: "caller-1",
+        status: "ready",
+        worktreeId: "main",
+        warnings: ["Worktree was removed; continuing on Main checkout."],
+      },
+    });
+    expect(request).toHaveBeenCalledWith(
+      storage,
+      "/workspaces/ws-1/sessions/caller-1/migrate",
+      { method: "POST" },
+    );
+  });
+
+  it("keeps resume JSON warnings", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path === "/sessions") return { sessions: [{ id: "sess-1", workspaceId: "ws-1" }] };
+      if (path === "/sessions/sess-1") {
+        return { session: { id: "sess-1", workspaceId: "ws-1" } };
+      }
+      if (path === "/workspaces/ws-1/sessions/sess-1/resume") {
+        return {
+          session: {
+            id: "sess-1",
+            status: "ready",
+            worktreeId: "main",
+            warnings: ["Worktree was removed; continuing on Main checkout."],
+          },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { stdout } = await captureCliOutput(() =>
+      cmdSession(storage, "resume", ["sess-1"], { json: "true" }),
+    );
+
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        session_id: "sess-1",
+        status: "ready",
+        warnings: ["Worktree was removed; continuing on Main checkout."],
+      },
+    });
+  });
+
+  it("keeps get JSON warnings", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path === "/sessions") return { sessions: [{ id: "sess-1" }] };
+      if (path === "/sessions/sess-1") {
+        return {
+          session: {
+            id: "sess-1",
+            status: "ready",
+            warnings: ["Worktree was removed; continuing on Main checkout."],
+          },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { stdout } = await captureCliOutput(() =>
+      cmdSession(storage, "get", ["sess-1"], { json: "true" }),
+    );
+
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: {
+        session: {
+          id: "sess-1",
+          warnings: ["Worktree was removed; continuing on Main checkout."],
+        },
+      },
+    });
+  });
 });
 
 async function withCallerSessionEnv(

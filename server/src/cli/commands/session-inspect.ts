@@ -292,6 +292,9 @@ function inspectSummary(
     worktreeId: session?.worktreeId,
     status: session?.status,
     model: session?.model,
+    ...(Array.isArray(session?.warnings) && session.warnings.length > 0
+      ? { warnings: session.warnings }
+      : {}),
     counts: {
       traceEvents: trace.length,
       turns: turns.length,
