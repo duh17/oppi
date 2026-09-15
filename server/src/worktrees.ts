@@ -29,6 +29,8 @@ type WorktreePorcelainRecord = {
 type ListWorkspaceWorktreesOptions = {
   dataDir?: string;
   sessionCountsByWorktreeId?: ReadonlyMap<string, number>;
+  /** When `throw`, git worktree list failure is 409 instead of a main-only fallback. */
+  listingFailure?: "fallback-main" | "throw";
 };
 
 type GitResult = {
@@ -312,10 +314,14 @@ export function listWorkspaceWorktrees(
   }
 
   const workspaceRoot = safeRealpath(rootOut.trim());
-  const raw = runGit(workspaceRoot, ["worktree", "list", "--porcelain"]);
-  if (!raw) {
+  const listed = runGitResult(workspaceRoot, ["worktree", "list", "--porcelain"]);
+  if (listed.status !== 0) {
+    if (options.listingFailure === "throw") {
+      throw new WorkspaceWorktreeError(409, "Worktree inspection failed");
+    }
     return withSessionCounts([fallbackMainWorktree(workspaceRoot, true)], options);
   }
+  const raw = listed.stdout;
 
   const projectManagedRoot = projectManagedWorktreesRoot(workspaceRoot);
   const records = parseWorktreePorcelain(raw);

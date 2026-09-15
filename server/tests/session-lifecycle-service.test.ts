@@ -27,7 +27,11 @@ import {
 import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { buildSessionSummary } from "../src/session-summary.js";
 import type { Session, Workspace } from "../src/types.js";
-import { createWorkspaceWorktree } from "../src/worktrees.js";
+import {
+  createWorkspaceWorktree,
+  WorkspaceWorktreeError,
+} from "../src/worktrees.js";
+import * as worktrees from "../src/worktrees.js";
 
 const WORKTREE_REMOVED_NOTICE = "Worktree was removed; continuing on Main checkout.";
 
@@ -1568,6 +1572,9 @@ describe("SessionLifecycleService", () => {
           status: "stopped",
           worktreeId: "wt_removed",
           piSessionFile: "/tmp/current.jsonl",
+          warnings: [
+            "Configured Agent tool is unavailable and was dropped from this session: foo.",
+          ],
         });
         const forkSession = makeSession({ id: "fork-1" });
         const { service, saveSession, getPersistedSession, startSession } = makeService({
@@ -1586,8 +1593,11 @@ describe("SessionLifecycleService", () => {
           id: "source-1",
           worktreeId: "main",
           piSessionFile: "/tmp/current.jsonl",
-          warnings: [WORKTREE_REMOVED_NOTICE],
         });
+        expect(getPersistedSession("source-1")?.warnings).toEqual([
+          "Configured Agent tool is unavailable and was dropped from this session: foo.",
+          WORKTREE_REMOVED_NOTICE,
+        ]);
         expect(saveSession).toHaveBeenCalledWith(
           expect.objectContaining({
             id: "fork-1",
@@ -1659,9 +1669,10 @@ describe("SessionLifecycleService", () => {
             target: { workspaceId: "ws-1", worktreeId: created.id, runtime: "host" },
           },
         });
-        const { service, saveSession, getPersistedSession, stopSession } = makeService({
-          dataDir,
-        });
+        const { service, saveSession, getPersistedSession, startSession, stopSession } =
+          makeService({
+            dataDir,
+          });
 
         const result = await service.migrateSessionToMainCheckout({
           session,
@@ -1670,6 +1681,7 @@ describe("SessionLifecycleService", () => {
 
         expect(existsSync(created.path)).toBe(true);
         expect(stopSession).not.toHaveBeenCalled();
+        expect(startSession).not.toHaveBeenCalled();
         expect(saveSession).toHaveBeenCalled();
         expect(getPersistedSession("sess-1")).toMatchObject({
           worktreeId: "main",
@@ -1713,6 +1725,93 @@ describe("SessionLifecycleService", () => {
         expect(getPersistedSession("sess-1")?.worktreeId).toBe("main");
         expect(getPersistedSession("sess-1")?.warnings).toEqual([WORKTREE_REMOVED_NOTICE]);
       } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("restarts a connected idle runtime on main after persisting the detach", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-live-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-live-data-"));
+      try {
+        const workspace = makeGitWorkspace(root);
+        const created = createWorkspaceWorktree(
+          workspace,
+          { branch: "feature/live-detach" },
+          { dataDir },
+        );
+        const session = makeSession({
+          runtime: "oppi",
+          status: "ready",
+          worktreeId: created.id,
+        });
+        const started = makeSession({
+          ...session,
+          worktreeId: "main",
+          warnings: [WORKTREE_REMOVED_NOTICE],
+        });
+        const { service, startSession, saveSession, stopSession, getPersistedSession } =
+          makeService({
+            live: true,
+            active: session,
+            started,
+            dataDir,
+          });
+
+        const result = await service.migrateSessionToMainCheckout({ session, workspace });
+
+        expect(stopSession).toHaveBeenCalledWith("sess-1");
+        expect(saveSession).toHaveBeenCalled();
+        expect(startSession).toHaveBeenCalledWith(
+          "sess-1",
+          expect.objectContaining({ id: "ws-1" }),
+        );
+        expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(
+          saveSession.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+        expect(saveSession.mock.invocationCallOrder[0]).toBeLessThan(
+          startSession.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+        expect(getPersistedSession("sess-1")?.worktreeId).toBe("main");
+        expect(result).toMatchObject({
+          migrated: true,
+          session: { worktreeId: "main", warnings: [WORKTREE_REMOVED_NOTICE] },
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("does not migrate when git worktree listing fails", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-list-fail-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-migrate-list-fail-data-"));
+      const spy = vi.spyOn(worktrees, "listWorkspaceWorktrees");
+      try {
+        const workspace = makeGitWorkspace(root);
+        const session = makeSession({
+          runtime: "oppi",
+          status: "ready",
+          worktreeId: "wt_feature",
+        });
+        const { service, saveSession, startSession, stopSession } = makeService({ dataDir });
+        spy.mockImplementation(() => {
+          throw new WorkspaceWorktreeError(409, "Worktree inspection failed");
+        });
+
+        await expect(
+          service.migrateSessionToMainCheckout({ session, workspace }),
+        ).rejects.toMatchObject({
+          name: "SessionLifecycleError",
+          statusCode: 409,
+          message: "Worktree inspection failed",
+        } satisfies Partial<SessionLifecycleError>);
+        expect(saveSession).not.toHaveBeenCalled();
+        expect(stopSession).not.toHaveBeenCalled();
+        expect(startSession).not.toHaveBeenCalled();
+        expect(session.worktreeId).toBe("wt_feature");
+      } finally {
+        spy.mockRestore();
         rmSync(root, { recursive: true, force: true });
         rmSync(dataDir, { recursive: true, force: true });
       }

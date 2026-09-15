@@ -48,7 +48,12 @@ const log = createLogger({ base: { component: "session_lifecycle" } });
 export const WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING =
   "Worktree was removed; continuing on Main checkout.";
 
-type WorktreeBindingState = "main" | "available" | "unavailable" | "main-missing";
+type WorktreeBindingState =
+  | "main"
+  | "available"
+  | "unavailable"
+  | "main-missing"
+  | "inspection-failed";
 
 const MIGRATION_BLOCKING_STATUSES = new Set<Session["status"]>(["busy", "starting", "stopping"]);
 
@@ -655,8 +660,8 @@ export class SessionLifecycleService {
     if (latestSource.worktreeId) {
       forkSession.worktreeId = latestSource.worktreeId;
     }
-    if (latestSource.warnings && latestSource.warnings.length > 0) {
-      forkSession.warnings = [...latestSource.warnings];
+    if (latestSource.warnings?.includes(WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING)) {
+      forkSession.warnings = [WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING];
     }
 
     if (latestSource.thinkingLevel) forkSession.thinkingLevel = latestSource.thinkingLevel;
@@ -710,12 +715,16 @@ export class SessionLifecycleService {
     if (binding === "main") {
       return { session: this.hydratedSnapshot(params.session), migrated: false };
     }
+    if (binding === "inspection-failed") {
+      throw new SessionLifecycleError("Worktree inspection failed", 409);
+    }
     if (binding === "main-missing") {
       throw new SessionLifecycleError("Workspace main checkout is unavailable", 409);
     }
 
     this.assertSessionIdleForMigration(params.session);
-    if (this.deps.sessionRuntimes.isSessionConnected(params.session.id)) {
+    const wasConnected = this.deps.sessionRuntimes.isSessionConnected(params.session.id);
+    if (wasConnected) {
       await this.deps.sessionRuntimes.stopSession(params.session.id);
     }
 
@@ -731,7 +740,12 @@ export class SessionLifecycleService {
       ...new Set([...(next.warnings ?? []), WORKTREE_REMOVED_MAIN_CHECKOUT_WARNING]),
     ];
     this.deps.storage.saveSession(next);
-    return { session: this.hydratedSnapshot(next), migrated: true };
+    if (!wasConnected) {
+      return { session: this.hydratedSnapshot(next), migrated: true };
+    }
+
+    const started = await this.startManagedSession(next, params.workspace);
+    return { session: this.deps.ensureSessionContextWindow(started), migrated: true };
   }
 
   async stopSession(session: Session): Promise<StopSessionResult> {
@@ -877,9 +891,16 @@ export class SessionLifecycleService {
     if (!requested || requested === "main") return "main";
     if (!workspace) return "main-missing";
 
-    const worktrees = listWorkspaceWorktrees(workspace, {
-      dataDir: this.deps.storage.getDataDir(),
-    });
+    let worktrees;
+    try {
+      worktrees = listWorkspaceWorktrees(workspace, {
+        dataDir: this.deps.storage.getDataDir(),
+        listingFailure: "throw",
+      });
+    } catch (error) {
+      if (error instanceof WorkspaceWorktreeError) return "inspection-failed";
+      throw error;
+    }
     const main = worktrees.find((worktree) => worktree.isMain);
     if (!main || !main.isGitRepo || !existsSync(main.path)) return "main-missing";
 
@@ -908,6 +929,9 @@ export class SessionLifecycleService {
     const binding = this.inspectWorktreeBinding(session, workspace);
     if (binding === "main" || binding === "available") {
       return { session, migrated: false };
+    }
+    if (binding === "inspection-failed") {
+      throw new SessionLifecycleError("Worktree inspection failed", 409);
     }
     if (session.runtime === "pi-tui") {
       throw new SessionLifecycleError("Session worktree is no longer available", 409);
