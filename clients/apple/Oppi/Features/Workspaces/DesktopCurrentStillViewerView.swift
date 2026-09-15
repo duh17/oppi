@@ -58,6 +58,8 @@ struct DesktopCurrentStillViewerView: View {
             }
             let next = DesktopCurrentStillViewerModel {
                 try await apiClient.getDesktopCurrentStill()
+            } fetchViewSession: {
+                try await apiClient.getDesktopViewSession()
             }
             model = next
             await next.load()
@@ -66,10 +68,23 @@ struct DesktopCurrentStillViewerView: View {
 
     @ViewBuilder
     private func content(_ model: DesktopCurrentStillViewerModel) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.viewGrantStatus.message)
+                .font(.subheadline)
+                .foregroundStyle(.themeComment)
+                .accessibilityIdentifier("desktop.still.viewGrantStatus")
+            phaseContent(model)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func phaseContent(_ model: DesktopCurrentStillViewerModel) -> some View {
         switch model.phase {
         case .loading:
             ProgressView("Loading…")
                 .accessibilityIdentifier("desktop.still.loading")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded(let still):
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {

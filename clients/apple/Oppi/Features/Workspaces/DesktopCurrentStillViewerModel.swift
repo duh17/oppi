@@ -44,6 +44,36 @@ enum DesktopCurrentStillViewerFailure: Equatable, Sendable {
     }
 }
 
+enum DesktopViewGrantStatus: Equatable, Sendable {
+    case none
+    case granted(expiresAt: Date)
+    case notGranted
+
+    init(_ error: Error) {
+        guard let apiError = error as? APIError else {
+            self = .none
+            return
+        }
+        switch apiError {
+        case .codedServer(_, _, let code) where code == "view_grant_not_bound":
+            self = .notGranted
+        case .codedServer, .server, .invalidResponse:
+            self = .none
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .none:
+            "No view session."
+        case .granted(let expiresAt):
+            "Granted to this device until \(expiresAt.formatted(date: .abbreviated, time: .standard))."
+        case .notGranted:
+            "View session is not granted to this device."
+        }
+    }
+}
+
 enum DesktopCurrentStillViewerPhase: Equatable, Sendable {
     case loading
     case loaded(DesktopCurrentStill)
@@ -55,8 +85,10 @@ enum DesktopCurrentStillViewerPhase: Equatable, Sendable {
 @Observable
 final class DesktopCurrentStillViewerModel {
     private(set) var phase: DesktopCurrentStillViewerPhase = .loading
+    private(set) var viewGrantStatus: DesktopViewGrantStatus = .none
 
     private let fetchCurrent: @Sendable () async throws -> DesktopCurrentStill
+    private let fetchViewSession: (@Sendable () async throws -> DesktopViewSession)?
     private var generation = 0
 
     var still: DesktopCurrentStill? {
@@ -83,30 +115,60 @@ final class DesktopCurrentStillViewerModel {
         !inFlight && !isLoading
     }
 
-    init(fetchCurrent: @escaping @Sendable () async throws -> DesktopCurrentStill) {
+    init(
+        fetchCurrent: @escaping @Sendable () async throws -> DesktopCurrentStill,
+        fetchViewSession: (@Sendable () async throws -> DesktopViewSession)? = nil
+    ) {
         self.fetchCurrent = fetchCurrent
+        self.fetchViewSession = fetchViewSession
     }
 
     func load() async {
         generation += 1
         let currentGeneration = generation
         let previous = phase
+        let previousStatus = viewGrantStatus
         inFlight = true
         // Keep loaded/failed chrome mounted during refetch so pull-to-refresh
         // cannot cancel into a stuck ProgressView. Initial load stays .loading.
         do {
             let still = try await fetchCurrent()
             guard currentGeneration == generation else { return }
-            inFlight = false
             phase = .loaded(still)
+            await loadViewGrantStatus(generation: currentGeneration, previous: previousStatus)
+            guard currentGeneration == generation else { return }
+            inFlight = false
         } catch is CancellationError {
             finishCanceled(previous: previous, generation: currentGeneration)
         } catch let urlError as URLError where urlError.code == .cancelled {
             finishCanceled(previous: previous, generation: currentGeneration)
         } catch {
             guard currentGeneration == generation else { return }
-            inFlight = false
             phase = .failed(DesktopCurrentStillViewerFailure(error))
+            await loadViewGrantStatus(generation: currentGeneration, previous: previousStatus)
+            guard currentGeneration == generation else { return }
+            inFlight = false
+        }
+    }
+
+    private func loadViewGrantStatus(
+        generation currentGeneration: Int,
+        previous: DesktopViewGrantStatus
+    ) async {
+        guard let fetchViewSession else { return }
+        do {
+            let session = try await fetchViewSession()
+            guard currentGeneration == generation else { return }
+            viewGrantStatus = .granted(expiresAt: session.expiresAt)
+        } catch is CancellationError {
+            guard currentGeneration == generation else { return }
+            viewGrantStatus = previous
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            guard currentGeneration == generation else { return }
+            viewGrantStatus = previous
+        } catch {
+            guard currentGeneration == generation else { return }
+            viewGrantStatus = DesktopViewGrantStatus(error)
         }
     }
 

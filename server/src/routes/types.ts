@@ -11,6 +11,7 @@ import type { ProviderQuotasStatus } from "../provider-quota.js";
 import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
 import type { DesktopCompanionStill } from "../desktop-companion-still-client.js";
+import type { DesktopCompanionViewSession } from "../desktop-companion-view-session-client.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
 
@@ -43,6 +44,14 @@ export interface RouteContext {
   /** Companion current-still fetch. Never starts a capture. */
   desktopCompanionStillClient?: {
     fetchCurrentStill: (options?: { signal?: AbortSignal }) => Promise<DesktopCompanionStill>;
+  };
+  /** Companion view-session metadata. JSON only. Never starts a capture. */
+  desktopCompanionViewSessionClient?: {
+    fetchViewSession: (input: {
+      deviceId: string;
+      deviceName?: string;
+      signal?: AbortSignal;
+    }) => Promise<DesktopCompanionViewSession>;
   };
 }
 

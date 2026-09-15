@@ -37,6 +37,78 @@ enum DesktopCurrentStillHeaders {
     }
 }
 
+struct DesktopViewSession: Sendable, Equatable {
+    let grantId: UUID
+    let capability: String
+    let deviceId: String
+    let expiresAt: Date
+    let caption: String
+}
+
+enum DesktopViewSessionJSON {
+    static let capabilityView = "view"
+    static let caption = "View session—not live delivery"
+}
+
+enum DesktopViewSessionParser {
+    static func parse(data: Data, response: URLResponse) throws -> DesktopViewSession {
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        let contentType = http.value(forHTTPHeaderField: "Content-Type")?
+            .split(separator: ";", maxSplits: 1).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let cacheControl = http.value(forHTTPHeaderField: "Cache-Control")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard contentType == "application/json", cacheControl == "no-store" else {
+            throw APIError.invalidResponse
+        }
+        guard !data.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else {
+            throw APIError.invalidResponse
+        }
+        struct Payload: Decodable {
+            let grantId: String
+            let capability: String
+            let deviceId: String
+            let expiresAt: String
+            let caption: String
+        }
+        let payload: Payload
+        do {
+            payload = try JSONDecoder().decode(Payload.self, from: data)
+        } catch {
+            throw APIError.invalidResponse
+        }
+        guard
+            let grantId = UUID(uuidString: payload.grantId),
+            payload.capability == DesktopViewSessionJSON.capabilityView,
+            !payload.deviceId.isEmpty,
+            let expiresAt = parseExpiresAt(payload.expiresAt),
+            payload.caption == DesktopViewSessionJSON.caption
+        else {
+            throw APIError.invalidResponse
+        }
+        return DesktopViewSession(
+            grantId: grantId,
+            capability: DesktopViewSessionJSON.capabilityView,
+            deviceId: payload.deviceId,
+            expiresAt: expiresAt,
+            caption: DesktopViewSessionJSON.caption
+        )
+    }
+
+    private static func parseExpiresAt(_ raw: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: raw) { return date }
+        let basic = ISO8601DateFormatter()
+        basic.formatOptions = [.withInternetDateTime]
+        return basic.date(from: raw)
+    }
+}
+
 enum DesktopCurrentStillParser {
     static func parse(data: Data, response: URLResponse) throws -> DesktopCurrentStill {
         guard let http = response as? HTTPURLResponse else {
@@ -2104,6 +2176,19 @@ actor APIClient: ClientLogUploading {
         }
         try checkStatus(response, data: data)
         return try DesktopCurrentStillParser.parse(data: data, response: response)
+    }
+
+    func getDesktopViewSession() async throws -> DesktopViewSession {
+        let (data, response) = try await performAuthorized {
+            var req = try URLRequest(
+                url: self.makeURL(path: "/desktop/view/session"),
+                cachePolicy: .reloadIgnoringLocalCacheData
+            )
+            req.httpMethod = "GET"
+            return req
+        }
+        try checkStatus(response, data: data)
+        return try DesktopViewSessionParser.parse(data: data, response: response)
     }
 
     func get(_ path: String) async throws -> Data {

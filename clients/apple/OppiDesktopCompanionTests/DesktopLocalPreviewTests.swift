@@ -452,6 +452,8 @@ struct DesktopLocalPreviewTests {
         let (session, fake) = makeHarness()
         let surface = makeSurface(windowID: 123, title: "Calendar")
         pickWindow(session, fake, surface)
+        session.grantView()
+        #expect(session.viewGrant != nil)
         session.startLocalPreview()
         fake.failPreview(.unavailable)
         fake.deliverPreviewFrame(makePixel())
@@ -464,12 +466,16 @@ struct DesktopLocalPreviewTests {
         #expect(!session.isLivePreview)
         #expect(session.previewLabel == nil)
         #expect(fake.previewStartCount == 1)
+        #expect(session.viewGrant == nil)
+        #expect(session.viewGrantGate.current() == nil)
     }
 
     @Test func unavailableFailureRacingStopMapsToUnavailable() throws {
         let (session, fake) = makeHarness()
         let surface = makeSurface(windowID: 124, title: "Safari")
         pickWindow(session, fake, surface)
+        session.grantView()
+        #expect(session.viewGrant != nil)
         session.startLocalPreview()
         fake.confirmPreviewStart()
         fake.deliverPreviewFrame(makePixel())
@@ -484,6 +490,8 @@ struct DesktopLocalPreviewTests {
         #expect(!session.isLivePreview)
         #expect(session.previewLabel == nil)
         #expect(session.previewFrame == nil)
+        #expect(session.viewGrant == nil)
+        #expect(session.viewGrantGate.current() == nil)
     }
 
     @Test func debugTestsInjectAFakeCaptureProducer() throws {

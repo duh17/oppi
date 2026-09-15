@@ -129,6 +129,7 @@ struct DesktopOwnerSocketStillFetchTests {
 
         let second = DesktopCompanionOwnerSocket(
             shareGate: harness.session.shareGate,
+            viewGrantGate: harness.session.viewGrantGate,
             runtimeRoot: harness.runtimeRoot
         )
         #expect(throws: DesktopCompanionOwnerSocketError.self) {
@@ -321,6 +322,270 @@ struct DesktopOwnerSocketStillFetchTests {
     }
 }
 
+@Suite("Desktop owner-socket view session")
+@MainActor
+struct DesktopOwnerSocketViewSessionTests {
+    @Test func missingDeviceIDIs400AndDoesNotBind() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 201, title: "Notes"))
+        harness.session.grantView()
+        #expect(harness.session.viewGrant?.deviceId == nil)
+
+        let response = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/view/session")
+        #expect(response.statusCode == 400)
+        #expect(String(data: response.body, encoding: .utf8) == DesktopViewGrantHTTP.missingDeviceIDBody)
+        #expect(!response.body.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        #expect(harness.session.viewGrantGate.current()?.deviceId == nil)
+        #expect(DesktopViewGrantJSON.body(for: try #require(harness.session.viewGrantGate.current())) == nil)
+    }
+
+    @Test func firstDeviceBindsAtomicallyAndLaterSameDeviceIs200() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 202, title: "Notes"))
+        harness.session.grantView()
+        let unbound = try #require(harness.session.viewGrant)
+        #expect(unbound.deviceId == nil)
+        #expect(DesktopViewGrantJSON.body(for: unbound) == nil)
+
+        let first = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [
+                DesktopViewGrantHTTP.deviceID: "phone-1",
+                DesktopViewGrantHTTP.deviceName: "Chen iPhone",
+            ]
+        )
+        #expect(first.statusCode == 200)
+        #expect(first.headers["content-type"] == "application/json")
+        #expect(first.headers["cache-control"] == "no-store")
+        let payload = try viewSessionJSON(first.body)
+        #expect(payload["grantId"] == unbound.grantId.uuidString)
+        #expect(payload["capability"] == DesktopViewGrant.capabilityView)
+        #expect(payload["deviceId"] == "phone-1")
+        #expect(payload["caption"] == DesktopCaptureCopy.viewSessionCaption)
+        #expect(payload["expiresAt"] == DesktopStillShareHTTP.date(unbound.expiresAt))
+        #expect(payload["deviceName"] == nil)
+        #expect(harness.session.syncedViewGrant()?.deviceId == "phone-1")
+        #expect(harness.session.syncedViewGrant()?.deviceName == "Chen iPhone")
+
+        let again = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(again.statusCode == 200)
+        let againPayload = try viewSessionJSON(again.body)
+        #expect(againPayload["grantId"] == unbound.grantId.uuidString)
+        #expect(againPayload["deviceId"] == "phone-1")
+    }
+
+    @Test func otherDeviceGets403WithoutLeakingBoundIdentity() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 203, title: "Mail"))
+        harness.session.grantView()
+        let bound = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(bound.statusCode == 200)
+
+        let other = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-2"]
+        )
+        #expect(other.statusCode == 403)
+        let body = String(data: other.body, encoding: .utf8) ?? ""
+        #expect(body == DesktopViewGrantHTTP.notBoundBody)
+        #expect(!body.contains("phone-1"))
+        #expect(!body.contains("phone-2"))
+        #expect((try? viewSessionJSON(other.body))?["deviceId"] == nil)
+        #expect(harness.session.viewGrantGate.current()?.deviceId == "phone-1")
+    }
+
+    @Test func absentExpiredAndRevokedAre403() throws {
+        let box = DateBox(Date(timeIntervalSince1970: 1_700_000_000))
+        let harness = try SocketHarness(viewGrantGate: DesktopViewGrantGate(clock: { box.now }))
+        defer { harness.tearDown() }
+
+        let absent = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(absent.statusCode == 403)
+        #expect(String(data: absent.body, encoding: .utf8) == DesktopViewGrantHTTP.unavailableBody)
+
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 204, title: "Code"))
+        harness.session.grantView()
+        let granted = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(granted.statusCode == 200)
+
+        box.now = box.now.addingTimeInterval(DesktopViewGrant.ttl)
+        let expired = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(expired.statusCode == 403)
+        #expect(String(data: expired.body, encoding: .utf8) == DesktopViewGrantHTTP.unavailableBody)
+        #expect(harness.session.syncedViewGrant() == nil)
+
+        harness.session.grantView()
+        let rebound = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(rebound.statusCode == 200)
+        harness.session.revokeViewGrant()
+        let revoked = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(revoked.statusCode == 403)
+        #expect(String(data: revoked.body, encoding: .utf8) == DesktopViewGrantHTTP.unavailableBody)
+    }
+
+    @Test func viewGrantIsIndependentOfStillShareAndRemoteView() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        let still = harness.captureStill()
+        harness.session.grantView()
+
+        let view = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(view.statusCode == 200)
+        let currentStill = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/still/current")
+        #expect(currentStill.statusCode == 403)
+        let byID = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/still/\(still.captureID.uuidString)"
+        )
+        #expect(byID.statusCode == 403)
+
+        harness.session.enableRemoteView()
+        harness.session.revokeViewGrant()
+        let stillOn = try unixHTTPGet(socketPath: harness.socket.socketPath, path: "/still/current")
+        #expect(stillOn.statusCode == 200)
+        let viewOff = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(viewOff.statusCode == 403)
+        #expect(harness.session.isRemoteViewEnabled)
+    }
+
+    @Test func previewStartStopDoesNotCreateOrRevokeViewGrant() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 205, title: "Preview"))
+        #expect(harness.session.viewGrant == nil)
+
+        harness.session.startLocalPreview()
+        harness.fake.confirmPreviewStart()
+        harness.fake.deliverPreviewFrame(makePixel(red: 1))
+        let during = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(during.statusCode == 403)
+        #expect(harness.session.viewGrant == nil)
+
+        harness.session.grantView()
+        let granted = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(granted.statusCode == 200)
+        harness.session.stopLocalPreview()
+        harness.fake.completePreviewStop()
+        let afterStop = try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        #expect(afterStop.statusCode == 200)
+        #expect(harness.session.syncedViewGrant()?.deviceId == "phone-1")
+        #expect(!harness.session.isLivePreview)
+    }
+
+    @Test func clearReselectUnavailableAndTerminateRevokeViewGrant() throws {
+        let harness = try SocketHarness()
+        defer { harness.tearDown() }
+        let first = makeSurface(windowID: 206, title: "Keep")
+        pickWindow(harness.session, harness.fake, first)
+        harness.session.grantView()
+        #expect(try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        ).statusCode == 200)
+
+        harness.session.clear()
+        #expect(try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        ).statusCode == 403)
+
+        pickWindow(harness.session, harness.fake, first)
+        harness.session.grantView()
+        #expect(try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        ).statusCode == 200)
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 207, title: "Other"))
+        #expect(try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        ).statusCode == 403)
+
+        harness.session.grantView()
+        #expect(try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        ).statusCode == 200)
+        harness.fake.simulateSurfaceUnavailable(makeSurface(windowID: 207, title: "Other"))
+        #expect(try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        ).statusCode == 403)
+
+        pickWindow(harness.session, harness.fake, first)
+        harness.session.grantView()
+        harness.session.startLocalPreview()
+        harness.session.prepareForTermination()
+        harness.fake.completePreviewStop()
+        #expect(harness.session.viewGrant == nil)
+        #expect(try unixHTTPGet(
+            socketPath: harness.socket.socketPath,
+            path: "/view/session",
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        ).statusCode == 403)
+        #expect(harness.session.previewState == .stopped)
+    }
+}
+
 @MainActor
 private final class SocketHarness {
     let runtimeRoot: URL
@@ -329,13 +594,21 @@ private final class SocketHarness {
     let socket: DesktopCompanionOwnerSocket
     private var toreDown = false
 
-    init(authorizer: any DesktopOwnerSocketPeerAuthorizing = SameUserDesktopOwnerSocketPeerAuthorizer()) throws {
+    init(
+        authorizer: any DesktopOwnerSocketPeerAuthorizing = SameUserDesktopOwnerSocketPeerAuthorizer(),
+        viewGrantGate: DesktopViewGrantGate = DesktopViewGrantGate()
+    ) throws {
         runtimeRoot = URL(fileURLWithPath: "/tmp/oppi-dc-\(UUID().uuidString)", isDirectory: true)
         fake = FakeDesktopCaptureService()
-        let gate = DesktopStillShareGate()
-        session = DesktopCaptureSession(service: fake, shareGate: gate)
+        let shareGate = DesktopStillShareGate()
+        session = DesktopCaptureSession(
+            service: fake,
+            shareGate: shareGate,
+            viewGrantGate: viewGrantGate
+        )
         socket = DesktopCompanionOwnerSocket(
-            shareGate: gate,
+            shareGate: shareGate,
+            viewGrantGate: viewGrantGate,
             runtimeRoot: runtimeRoot,
             peerAuthorizer: authorizer
         )
@@ -397,11 +670,20 @@ private enum UnixHTTPClientError: Error {
     case invalidResponse
 }
 
-private func unixHTTPGet(socketPath: String, path: String) throws -> UnixHTTPResponse {
-    try unixHTTP(socketPath: socketPath, method: "GET", path: path)
+private func unixHTTPGet(
+    socketPath: String,
+    path: String,
+    headers: [String: String] = [:]
+) throws -> UnixHTTPResponse {
+    try unixHTTP(socketPath: socketPath, method: "GET", path: path, headers: headers)
 }
 
-private func unixHTTP(socketPath: String, method: String, path: String) throws -> UnixHTTPResponse {
+private func unixHTTP(
+    socketPath: String,
+    method: String,
+    path: String,
+    headers: [String: String] = [:]
+) throws -> UnixHTTPResponse {
     let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw UnixHTTPClientError.connectFailed }
     defer { Darwin.close(fd) }
@@ -411,7 +693,11 @@ private func unixHTTP(socketPath: String, method: String, path: String) throws -
     _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
     try connectUnix(fd: fd, path: socketPath)
-    let request = "\(method) \(path) HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    var request = "\(method) \(path) HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+    for (name, value) in headers {
+        request += "\(name): \(value)\r\n"
+    }
+    request += "\r\n"
     try writeAll(fd: fd, data: Data(request.utf8))
     Darwin.shutdown(fd, SHUT_WR)
     let buffer = try readAll(fd: fd)
@@ -502,4 +788,17 @@ private func posixMode(_ path: String) -> Int? {
     var st = stat()
     guard lstat(path, &st) == 0 else { return nil }
     return Int(st.st_mode & 0o777)
+}
+
+private final class DateBox: @unchecked Sendable {
+    var now: Date
+    init(_ now: Date) { self.now = now }
+}
+
+private func viewSessionJSON(_ data: Data) throws -> [String: String] {
+    let object = try JSONSerialization.jsonObject(with: data)
+    guard let payload = object as? [String: String] else {
+        throw UnixHTTPClientError.invalidResponse
+    }
+    return payload
 }

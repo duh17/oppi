@@ -8,6 +8,7 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
     static let processInstanceToken = UUID().uuidString
 
     let shareGate: DesktopStillShareGate
+    let viewGrantGate: DesktopViewGrantGate
     let runtimeRoot: URL
     let runtimeDirectory: URL
     let socketPath: String
@@ -31,10 +32,12 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
 
     init(
         shareGate: DesktopStillShareGate,
+        viewGrantGate: DesktopViewGrantGate,
         runtimeRoot: URL = DesktopCompanionOwnerSocketPath.defaultRuntimeRoot(),
         peerAuthorizer: any DesktopOwnerSocketPeerAuthorizing = SameUserDesktopOwnerSocketPeerAuthorizer()
     ) {
         self.shareGate = shareGate
+        self.viewGrantGate = viewGrantGate
         self.runtimeRoot = runtimeRoot
         self.peerAuthorizer = peerAuthorizer
         let socketURL = DesktopCompanionOwnerSocketPath.socketURL(runtimeRoot: runtimeRoot)
@@ -216,6 +219,11 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
             return
         }
 
+        if request.path == "/view/session" {
+            writeViewSession(fd: clientFD, headers: request.headers)
+            return
+        }
+
         guard let captureID = stillCaptureID(from: request.path) else {
             writeResponse(
                 fd: clientFD,
@@ -275,6 +283,61 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
         }
     }
 
+    private func writeViewSession(fd: Int32, headers: [String: String]) {
+        guard let deviceId = DesktopViewGrantHTTP.deviceID(from: headers) else {
+            writeResponse(
+                fd: fd,
+                status: 400,
+                reason: "Bad Request",
+                contentType: "text/plain; charset=utf-8",
+                headers: [:],
+                body: Data(DesktopViewGrantHTTP.missingDeviceIDBody.utf8)
+            )
+            return
+        }
+        let deviceName = DesktopViewGrantHTTP.deviceName(from: headers)
+        switch viewGrantGate.claim(deviceId: deviceId, deviceName: deviceName) {
+        case .failure(.unavailable):
+            writeResponse(
+                fd: fd,
+                status: 403,
+                reason: "Forbidden",
+                contentType: "text/plain; charset=utf-8",
+                headers: [:],
+                body: Data(DesktopViewGrantHTTP.unavailableBody.utf8)
+            )
+        case .failure(.notBound):
+            writeResponse(
+                fd: fd,
+                status: 403,
+                reason: "Forbidden",
+                contentType: "text/plain; charset=utf-8",
+                headers: [:],
+                body: Data(DesktopViewGrantHTTP.notBoundBody.utf8)
+            )
+        case .success(let grant):
+            guard let body = DesktopViewGrantJSON.body(for: grant) else {
+                writeResponse(
+                    fd: fd,
+                    status: 403,
+                    reason: "Forbidden",
+                    contentType: "text/plain; charset=utf-8",
+                    headers: [:],
+                    body: Data(DesktopViewGrantHTTP.unavailableBody.utf8)
+                )
+                return
+            }
+            writeResponse(
+                fd: fd,
+                status: 200,
+                reason: "OK",
+                contentType: "application/json",
+                headers: ["Cache-Control": "no-store"],
+                body: body
+            )
+        }
+    }
+
     private func stillCaptureID(from path: String) -> UUID? {
         let prefix = "/still/"
         guard path.hasPrefix(prefix) else { return nil }
@@ -283,7 +346,7 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
         return UUID(uuidString: rest)
     }
 
-    private func readRequest(fd: Int32) -> (method: String, path: String)? {
+    private func readRequest(fd: Int32) -> (method: String, path: String, headers: [String: String])? {
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 4_096)
         let separator = Data("\r\n\r\n".utf8)
@@ -310,7 +373,17 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
         guard let requestLine = lines.first else { return nil }
         let parts = requestLine.split(separator: " ")
         guard parts.count >= 2 else { return nil }
-        return (String(parts[0]), String(parts[1]))
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let name = String(line[..<colon]).trimmingCharacters(in: .whitespaces).lowercased()
+            let value = String(line[line.index(after: colon)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                headers[name] = value
+            }
+        }
+        return (String(parts[0]), String(parts[1]), headers)
     }
 
     private func writeResponse(

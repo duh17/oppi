@@ -16,8 +16,10 @@ final class DesktopCaptureSession {
     private(set) var isRemoteViewEnabled = false
     private(set) var previewState: DesktopLocalPreviewState = .stopped
     private(set) var previewFrame: CGImage?
+    private(set) var viewGrant: DesktopViewGrant?
 
     let shareGate: DesktopStillShareGate
+    let viewGrantGate: DesktopViewGrantGate
 
     var stillLabel: String? { still == nil ? nil : Self.stillCaption }
     var previewLabel: String? {
@@ -43,7 +45,11 @@ final class DesktopCaptureSession {
         selection != nil && !isCaptureInFlight && availability == .ready && !isLocalPreviewActive
     }
     var canClear: Bool {
-        still != nil || isCaptureInFlight || isLocalPreviewActive || previewFrame != nil
+        still != nil
+            || isCaptureInFlight
+            || isLocalPreviewActive
+            || previewFrame != nil
+            || viewGrant != nil
     }
     var canStartLocalPreview: Bool {
         selection != nil && !isCaptureInFlight && !isLocalPreviewActive && availability == .ready
@@ -56,7 +62,10 @@ final class DesktopCaptureSession {
     var canRevokeLocalShare: Bool { isLocalShareEnabled }
     var canEnableRemoteView: Bool { still != nil && !isRemoteViewEnabled }
     var canRevokeRemoteView: Bool { isRemoteViewEnabled }
+    var canGrantView: Bool { selection != nil && viewGrant == nil && availability == .ready }
+    var canRevokeViewGrant: Bool { viewGrant != nil }
     var sharedCaptureID: UUID? { isLocalShareEnabled ? still?.captureID : nil }
+    var viewGrantStatusText: String { viewGrantStatusText(now: Date()) }
 
     private let service: any DesktopCaptureServicing
     /// Token for the single outstanding capture. Late callbacks with a stale token are discarded.
@@ -71,10 +80,12 @@ final class DesktopCaptureSession {
 
     init(
         service: any DesktopCaptureServicing,
-        shareGate: DesktopStillShareGate = DesktopStillShareGate()
+        shareGate: DesktopStillShareGate = DesktopStillShareGate(),
+        viewGrantGate: DesktopViewGrantGate = DesktopViewGrantGate()
     ) {
         self.service = service
         self.shareGate = shareGate
+        self.viewGrantGate = viewGrantGate
         self.service.delegate = self
     }
 
@@ -94,6 +105,7 @@ final class DesktopCaptureSession {
             failure = .permissionDenied
             return
         case .unavailable:
+            revokeViewGrant()
             failure = .unavailable
             return
         case .unsupported:
@@ -128,6 +140,7 @@ final class DesktopCaptureSession {
             failure = .permissionDenied
             return
         case .unavailable:
+            revokeViewGrant()
             failure = .unavailable
             return
         case .unsupported:
@@ -156,6 +169,56 @@ final class DesktopCaptureSession {
         revokeAllGrants()
         still = nil
         failure = nil
+    }
+
+    func grantView() {
+        refreshAvailability()
+        guard selection != nil, availability == .ready else {
+            if availability == .unavailable {
+                revokeViewGrant()
+            }
+            return
+        }
+        if syncedViewGrant() != nil { return }
+        viewGrant = viewGrantGate.grantView()
+    }
+
+    func revokeViewGrant() {
+        viewGrantGate.revoke()
+        viewGrant = nil
+    }
+
+    /// Companion terminate: stop preview and drop the view grant. Does not create grants.
+    func prepareForTermination() {
+        stopLocalPreview()
+        revokeViewGrant()
+    }
+
+    func viewGrantStatusText(now: Date) -> String {
+        guard let grant = syncedViewGrant() else {
+            return DesktopCaptureCopy.viewGrantNone
+        }
+        if grant.deviceId == nil {
+            return DesktopCaptureCopy.viewGrantPending
+        }
+        let trimmedName = grant.deviceName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let device: String
+        if let trimmedName, !trimmedName.isEmpty {
+            device = trimmedName
+        } else {
+            device = "this iPhone"
+        }
+        let remaining = DesktopViewGrantHTTP.remainingPhrase(expiresAt: grant.expiresAt, now: now)
+        return "View session granted to \(device) · \(remaining). Not live delivery."
+    }
+
+    @discardableResult
+    func syncedViewGrant() -> DesktopViewGrant? {
+        let current = viewGrantGate.current()
+        if viewGrant != current {
+            viewGrant = current
+        }
+        return current
     }
 
     func enableLocalShare() {
@@ -205,9 +268,14 @@ final class DesktopCaptureSession {
         shareGate.setRemoteView(granted: false, still: nil)
     }
 
-    private func revokeAllGrants() {
+    private func revokeStillGrants() {
         revokeLocalShare()
         revokeRemoteView()
+    }
+
+    private func revokeAllGrants() {
+        revokeStillGrants()
+        revokeViewGrant()
     }
 
     func refreshAvailability() {
@@ -280,6 +348,7 @@ final class DesktopCaptureSession {
         previewFrame = nil
         if failure == .unavailable || pending == .unavailable {
             previewState = .unavailable
+            revokeViewGrant()
         } else {
             previewState = pending ?? .stopped
         }
@@ -310,10 +379,13 @@ final class DesktopCaptureSession {
                 failure = .surfaceSubstitutionRejected
                 return
             }
-            revokeAllGrants()
+            revokeStillGrants()
             still = captured
             failure = nil
         case .failure(let error):
+            if error == .unavailable {
+                revokeViewGrant()
+            }
             failure = error
         }
     }
@@ -347,6 +419,9 @@ extension DesktopCaptureSession: DesktopCaptureServiceDelegate {
     func desktopCaptureServiceDidFail(_ failure: DesktopCaptureFailure) {
         isPickerPresented = false
         invalidatePendingCapture()
+        if failure == .unavailable {
+            revokeViewGrant()
+        }
         self.failure = failure
     }
 
@@ -402,6 +477,9 @@ extension DesktopCaptureSession: DesktopLocalPreviewHandling {
         pendingTerminalPreviewState = nil
         previewState = failure == .unavailable ? .unavailable : .stopped
         self.failure = failure
+        if failure == .unavailable {
+            revokeViewGrant()
+        }
         service.stopLocalPreview(generation: generation)
     }
 }

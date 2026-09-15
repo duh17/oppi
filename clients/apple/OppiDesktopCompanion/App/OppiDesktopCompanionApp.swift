@@ -23,9 +23,11 @@ private final class CompanionRuntime {
 
     init() {
         let shareGate = DesktopStillShareGate()
+        let viewGrantGate = DesktopViewGrantGate()
         session = DesktopCaptureSession(
             service: ScreenCaptureKitDesktopCaptureService(),
-            shareGate: shareGate
+            shareGate: shareGate,
+            viewGrantGate: viewGrantGate
         )
         guard !Self.isRunningUnderTests else {
             ownerSocket = nil
@@ -34,7 +36,10 @@ private final class CompanionRuntime {
         let captureSession = session
         var startedSocket: DesktopCompanionOwnerSocket?
         do {
-            let socket = DesktopCompanionOwnerSocket(shareGate: shareGate)
+            let socket = DesktopCompanionOwnerSocket(
+                shareGate: shareGate,
+                viewGrantGate: viewGrantGate
+            )
             try socket.start()
             startedSocket = socket
             ownerSocket = socket
@@ -51,7 +56,7 @@ private final class CompanionRuntime {
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
-                captureSession.stopLocalPreview()
+                captureSession.prepareForTermination()
                 startedSocket?.stop()
             }
         }

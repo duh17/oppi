@@ -86,6 +86,8 @@ struct DesktopCaptureSessionTests {
         let (session, fake) = makeHarness()
         let surface = makeSurface(windowID: 32, title: "Calendar")
         pickWindow(session, fake, surface)
+        session.grantView()
+        #expect(session.viewGrant != nil)
         fake.availability = .unavailable
 
         session.captureOnce()
@@ -94,6 +96,39 @@ struct DesktopCaptureSessionTests {
         #expect(session.failure == .unavailable)
         #expect(session.still == nil)
         #expect(!session.isCaptureInFlight)
+        #expect(session.viewGrant == nil)
+        #expect(session.viewGrantGate.current() == nil)
+        #expect(!session.canGrantView)
+    }
+
+    @Test func unavailableCaptureResultRevokesViewGrant() {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 33, title: "Notes")
+        pickWindow(session, fake, surface)
+        session.grantView()
+        session.captureOnce()
+
+        fake.completePending(.failure(.unavailable))
+
+        #expect(session.failure == .unavailable)
+        #expect(session.still == nil)
+        #expect(session.viewGrant == nil)
+        #expect(session.viewGrantGate.current() == nil)
+        #expect(fake.captureCount == 1)
+    }
+
+    @Test func pickerUnavailableFailureRevokesViewGrant() {
+        let (session, fake) = makeHarness()
+        pickWindow(session, fake, makeSurface(windowID: 34, title: "Mail"))
+        session.grantView()
+        #expect(session.viewGrant != nil)
+
+        fake.simulateDidFail(.unavailable)
+
+        #expect(session.failure == .unavailable)
+        #expect(session.viewGrant == nil)
+        #expect(session.viewGrantGate.current() == nil)
+        #expect(session.selection != nil)
     }
 
     @Test func clearInvalidatesStillAndPendingResult() {

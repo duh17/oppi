@@ -88,6 +88,7 @@ import {
   type LocalApiSocketBinding,
 } from "./local-api-socket.js";
 import { DesktopCompanionStillClient } from "./desktop-companion-still-client.js";
+import { DesktopCompanionViewSessionClient } from "./desktop-companion-view-session-client.js";
 import type { RequestPrincipal } from "./request-principal.js";
 import {
   isLocalRequest,
@@ -514,17 +515,27 @@ export class Server {
     DesktopCompanionStillClient,
     "fetchCurrentStill"
   >;
+  private readonly desktopCompanionViewSessionClient: Pick<
+    DesktopCompanionViewSessionClient,
+    "fetchViewSession"
+  >;
 
   constructor(
     storage: Storage,
     apnsConfig?: APNsConfig,
     options?: {
       desktopCompanionStillClient?: Pick<DesktopCompanionStillClient, "fetchCurrentStill">;
+      desktopCompanionViewSessionClient?: Pick<
+        DesktopCompanionViewSessionClient,
+        "fetchViewSession"
+      >;
     },
   ) {
     this.storage = storage;
     this.desktopCompanionStillClient =
       options?.desktopCompanionStillClient ?? new DesktopCompanionStillClient();
+    this.desktopCompanionViewSessionClient =
+      options?.desktopCompanionViewSessionClient ?? new DesktopCompanionViewSessionClient();
     this.piExecutable = resolvePiExecutable();
 
     const dataDir = storage.getDataDir();
@@ -851,6 +862,7 @@ export class Server {
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
       desktopCompanionStillClient: this.desktopCompanionStillClient,
+      desktopCompanionViewSessionClient: this.desktopCompanionViewSessionClient,
     });
   }
 

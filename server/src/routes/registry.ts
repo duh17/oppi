@@ -113,6 +113,7 @@ const sessionOperationIds = new Set<string>([
   "getIconAsset",
   "headIconAsset",
   "getDesktopCurrentStill",
+  "getDesktopViewSession",
 ]);
 
 const settingsOperationIds = new Set<string>([
@@ -892,6 +893,13 @@ const rawApiRouteSpecs = [
     method: "GET",
     path: "/desktop/stills/current",
     operationId: "getDesktopCurrentStill",
+    surface: "core",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/desktop/view/session",
+    operationId: "getDesktopViewSession",
     surface: "core",
     auth: "owner",
   },

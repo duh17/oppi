@@ -101,6 +101,10 @@ final class FakeDesktopCaptureService: DesktopCaptureServicing {
         delegate?.desktopCaptureServiceSurfaceBecameUnavailable(surface)
     }
 
+    func simulateDidFail(_ failure: DesktopCaptureFailure) {
+        delegate?.desktopCaptureServiceDidFail(failure)
+    }
+
     func completePending(_ result: Result<CapturedStill, DesktopCaptureFailure>) {
         let completion = pendingCompletion
         pendingCompletion = nil

@@ -11,6 +11,8 @@ struct DesktopCaptureView: View {
 
             statusRow
 
+            viewGrant
+
             localPreview
 
             stillPreview
@@ -39,6 +41,15 @@ struct DesktopCaptureView: View {
                     .disabled(!session.canStopLocalPreview)
                     .accessibilityIdentifier("stop-local-preview")
             }
+
+            HStack {
+                Button("Grant view", action: session.grantView)
+                    .disabled(!session.canGrantView)
+                    .accessibilityIdentifier("grant-view")
+                Button("Revoke view", action: session.revokeViewGrant)
+                    .disabled(!session.canRevokeViewGrant)
+                    .accessibilityIdentifier("revoke-view")
+            }
         }
         .padding(20)
         .frame(minWidth: 520, minHeight: 420)
@@ -54,6 +65,24 @@ struct DesktopCaptureView: View {
         } else {
             Text("No window selected")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var viewGrant: some View {
+        if session.selection != nil || session.viewGrant != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(session.viewGrantStatusText(now: context.date))
+                        .accessibilityIdentifier("view-grant-status")
+                        .onChange(of: context.date.timeIntervalSince1970) { _, _ in
+                            session.syncedViewGrant()
+                        }
+                }
+                Text(DesktopCaptureCopy.viewGrantHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -167,6 +196,11 @@ struct DesktopCaptureCommands: Commands {
                 .disabled(!session.canEnableRemoteView)
             Button("Revoke Paired View", action: session.revokeRemoteView)
                 .disabled(!session.canRevokeRemoteView)
+            Divider()
+            Button("Grant view", action: session.grantView)
+                .disabled(!session.canGrantView)
+            Button("Revoke view", action: session.revokeViewGrant)
+                .disabled(!session.canRevokeViewGrant)
         }
     }
 }
