@@ -1255,7 +1255,7 @@ final class ChatSessionManager {
                 focusedStreamPort.fatalSetupError = true
             }
 
-        case .sessionEnded, .cacheMiss, .compactionStart, .compactionEnd, .retryStart, .retryEnd:
+        case .sessionEnded, .cacheMiss, .notice, .compactionStart, .compactionEnd, .retryStart, .retryEnd:
             break
 
         case .commandResult(let command, let requestId, let success, let data, let error):

@@ -422,6 +422,12 @@ export type ServerMessage = // ── Connection ──
         id: string;
         message: string;
       }
+    | {
+        /** live user notice, not transcript, not model context, not cache billing. */
+        type: "notice";
+        id: string;
+        message: string;
+      }
     // ── Streaming ──
     | { type: "text_delta"; delta: string; contentIndex?: number }
     | { type: "thinking_delta"; delta: string; contentIndex?: number }

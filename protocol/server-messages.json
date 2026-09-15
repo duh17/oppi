@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 50
+    "messageCount": 51
   },
   "messages": {
     "connected": {
@@ -586,6 +586,11 @@
       "type": "cache_miss",
       "id": "cache-miss:1739750460000:anthropic/claude-sonnet-4-20250514",
       "message": "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)"
+    },
+    "notice": {
+      "type": "notice",
+      "id": "worktree-rebind:test-session-1",
+      "message": "Resuming on Main checkout. The worktree is gone."
     },
     "text_delta": {
       "type": "text_delta",

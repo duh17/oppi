@@ -17,6 +17,8 @@ struct TimelineReducerCanonicalIdentityTests {
                 return "tool:\(id):\(tool)"
             case .cacheMiss(let id, let message):
                 return "cacheMiss:\(id):\(message)"
+            case .notice(let id, let message):
+                return "notice:\(id):\(message)"
             default:
                 return "other"
             }

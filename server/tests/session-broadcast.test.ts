@@ -171,6 +171,7 @@ describe("SessionBroadcaster", () => {
       "state",
       "connected",
       "command_result",
+      "notice",
     ];
 
     for (const ephType of expectedEphemeralTypes) {

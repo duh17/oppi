@@ -301,6 +301,7 @@ final class LiveActivityManager {
              .thinkingDelta,
              .messageEnd,
              .cacheMiss,
+             .notice,
              .toolUpdate,
              .toolOutput,
              .compactionStart,

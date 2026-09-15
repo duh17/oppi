@@ -243,7 +243,7 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sentOfType("connected", session.id)).toHaveLength(0);
   });
 
-  it("rebinds a removed-worktree focused session onto main and emits a live cache_miss notice", async () => {
+  it("rebinds a removed-worktree focused session onto main and emits a live notice", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-stream-removed-worktree-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-stream-removed-worktree-data-"));
     execFileSync("git", ["init", "--initial-branch=main"], { cwd: root });
@@ -289,10 +289,11 @@ describe("BoundSessionStreamMux", () => {
       expect(sessionMap.get(session.id)?.worktreeId).toBe("main");
       expect(sessionMap.get(session.id)?.warnings).toBeUndefined();
       expect(ctx.sessions.startSession).toHaveBeenCalledWith(session.id, workspace);
-      const notices = ws.sentOfType("cache_miss");
+      expect(ws.sentOfType("cache_miss")).toHaveLength(0);
+      const notices = ws.sentOfType("notice");
       expect(notices).toHaveLength(1);
       expect(notices[0]).toMatchObject({
-        type: "cache_miss",
+        type: "notice",
         id: `worktree-rebind:${session.id}`,
         message: "Resuming on Main checkout. The worktree is gone.",
       });
@@ -302,7 +303,7 @@ describe("BoundSessionStreamMux", () => {
     }
   });
 
-  it("emits the live cache_miss after HTTP resume already rebound the session", async () => {
+  it("emits the live notice after HTTP resume already rebound the session", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-stream-resume-then-open-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-stream-resume-then-open-data-"));
     execFileSync("git", ["init", "--initial-branch=main"], { cwd: root });
@@ -355,9 +356,10 @@ describe("BoundSessionStreamMux", () => {
       await drain();
 
       expect(ws.closeCode).toBeUndefined();
-      expect(ws.sentOfType("cache_miss")).toEqual([
+      expect(ws.sentOfType("cache_miss")).toHaveLength(0);
+      expect(ws.sentOfType("notice")).toEqual([
         expect.objectContaining({
-          type: "cache_miss",
+          type: "notice",
           id: `worktree-rebind:${session.id}`,
           message: "Resuming on Main checkout. The worktree is gone.",
         }),
@@ -371,6 +373,7 @@ describe("BoundSessionStreamMux", () => {
       );
       await drain();
       expect(second.sentOfType("cache_miss")).toHaveLength(0);
+      expect(second.sentOfType("notice")).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });

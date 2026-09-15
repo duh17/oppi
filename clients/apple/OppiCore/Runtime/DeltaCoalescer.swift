@@ -199,6 +199,7 @@ final class DeltaCoalescer {
              .agentSettled,
              .messageEnd,
              .cacheMiss,
+             .notice,
              .sessionEnded,
              .error,
              .compactionStart,
@@ -586,7 +587,8 @@ final class DeltaCoalescer {
                 total += part.toolCallId?.utf8.count ?? 0
             } ?? 0)
 
-        case .cacheMiss(_, let id, let message):
+        case .cacheMiss(_, let id, let message),
+             .notice(_, let id, let message):
             return id.utf8.count + message.utf8.count
 
         case .toolStart(_, _, let tool, let args, let callSegments),

@@ -478,7 +478,7 @@ private struct ChatItemSummaryRow: View {
             )
         case .systemEvent(_, let message):
             MacSystemTimelineStrip(message: message, style: .informational)
-        case .cacheMiss(_, let message):
+        case .cacheMiss(_, let message), .notice(_, let message):
             MacSystemTimelineStrip(message: message, style: .warning)
         case .customEvent(_, let message, let presentation):
             TimelineBubble(

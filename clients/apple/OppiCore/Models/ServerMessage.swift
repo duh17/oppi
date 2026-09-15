@@ -86,6 +86,7 @@ enum ServerMessage: Sendable, Equatable {
         entryId: String? = nil
     )
     case cacheMiss(id: String, message: String)
+    case notice(id: String, message: String)
     case textDelta(delta: String, contentIndex: Int? = nil)
     case thinkingDelta(delta: String, contentIndex: Int? = nil)
     case audioStream(AudioStreamMessage)
@@ -292,7 +293,7 @@ extension ServerMessage: Decodable {
         case session
         // session_ended / stop lifecycle
         case reason, source
-        // message_end / cache_miss / text_delta / thinking_delta / audio_stream
+        // message_end / cache_miss / notice / text_delta / thinking_delta / audio_stream
         case role, content, assistantContent, entryId, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, details, callSegments, resultSegments
@@ -393,6 +394,12 @@ extension ServerMessage: Decodable {
 
         case "cache_miss":
             self = .cacheMiss(
+                id: try c.decode(String.self, forKey: .id),
+                message: try c.decode(String.self, forKey: .message)
+            )
+
+        case "notice":
+            self = .notice(
                 id: try c.decode(String.self, forKey: .id),
                 message: try c.decode(String.self, forKey: .message)
             )
@@ -758,6 +765,7 @@ extension ServerMessage {
         case .agentSettled: "agentSettled"
         case .messageEnd: "messageEnd"
         case .cacheMiss: "cacheMiss"
+        case .notice: "notice"
         case .textDelta: "textDelta"
         case .thinkingDelta: "thinkingDelta"
         case .audioStream: "audioStream"

@@ -15,6 +15,7 @@ struct QuietTimelineProjectionTests {
             .toolCall(id: "ask-1", tool: "ask", argsSummary: "question", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
             .error(id: "error-1", message: "Session error"),
             .cacheMiss(id: "cache-1", message: "Cached output unavailable"),
+            .notice(id: "notice-1", message: "Live user notice"),
             .systemEvent(id: "system-1", message: "Model changed"),
             .audioClip(id: "audio-1", title: "Reply", fileURL: URL(fileURLWithPath: "/tmp/reply.m4a"), timestamp: timestamp),
             .assistantMessage(id: "a1", text: "Done", timestamp: timestamp),
@@ -30,7 +31,7 @@ struct QuietTimelineProjectionTests {
         #expect(projection.fullTimelineItemIDs == items.map(\.id))
         #expect(projection.rows.map(\.id) == [
             "u1", "quiet-work-line:think-1", "ask-1", "error-1",
-            "cache-1", "system-1", "audio-1", "a1",
+            "cache-1", "notice-1", "system-1", "audio-1", "a1",
         ])
         let workLine = try #require(workLines(in: projection).first)
         #expect(workLine.sourceItemIDs == ["think-1", "tool-1", "tool-error"])

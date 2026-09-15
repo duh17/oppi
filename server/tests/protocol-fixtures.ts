@@ -213,6 +213,11 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     id: "cache-miss:1739750460000:anthropic/claude-sonnet-4-20250514",
     message: "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)",
   },
+  notice: {
+    type: "notice",
+    id: "worktree-rebind:test-session-1",
+    message: "Resuming on Main checkout. The worktree is gone.",
+  },
 
   // Streaming
   text_delta: { type: "text_delta", delta: "Hello, ", contentIndex: 0 },
@@ -588,6 +593,7 @@ const SERVER_MESSAGE_ORDER = [
   "agent_settled",
   "message_end",
   "cache_miss",
+  "notice",
   "text_delta",
   "thinking_delta",
   "audio_stream",

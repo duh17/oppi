@@ -361,7 +361,7 @@ struct QuietTimelineProjection: Equatable {
         case .thinking:
             return true
         case .userMessage, .assistantMessage, .audioClip, .systemEvent,
-             .cacheMiss, .customEvent, .error:
+             .cacheMiss, .notice, .customEvent, .error:
             return false
         }
     }

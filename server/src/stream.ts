@@ -506,7 +506,7 @@ export class BoundSessionStreamMux {
       const pendingRebindNotice = takePendingWorktreeRebindNotice(sessionId);
       if (openResult.rebound || pendingRebindNotice) {
         sendForSession({
-          type: "cache_miss",
+          type: "notice",
           id: `worktree-rebind:${sessionId}`,
           message: WORKTREE_REBIND_NOTICE,
         });

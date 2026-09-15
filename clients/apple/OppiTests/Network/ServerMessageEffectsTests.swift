@@ -276,6 +276,7 @@ struct ServerMessageEffectsTests {
         #expect(ServerMessageEffects.timelineEvents(for: .agentStart, sessionId: "s1").first?.typeLabel == "agentStart")
         #expect(ServerMessageEffects.timelineEvents(for: .textDelta(delta: "hi"), sessionId: "s1").first?.typeLabel == "textDelta")
         #expect(ServerMessageEffects.timelineEvents(for: .sessionEnded(reason: "done"), sessionId: "s1").first?.typeLabel == "sessionEnded")
+        #expect(ServerMessageEffects.timelineEvents(for: .notice(id: "n1", message: "hello"), sessionId: "s1").first?.typeLabel == "notice")
     }
 
     @Test func userMessageEndDoesNotMapToCoalescerEvent() {

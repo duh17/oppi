@@ -339,6 +339,16 @@ struct ProtocolSnapshotTests {
         #expect(message == "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)")
     }
 
+    @Test func notice() throws {
+        let msg = try decodeMessage("notice")
+        guard case .notice(let id, let message) = msg else {
+            Issue.record("Expected .notice")
+            return
+        }
+        #expect(id == "worktree-rebind:test-session-1")
+        #expect(message == "Resuming on Main checkout. The worktree is gone.")
+    }
+
     @Test func compaction() throws {
         let startMsg = try decodeMessage("compaction_start")
         guard case .compactionStart(let reason) = startMsg else {

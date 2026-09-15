@@ -24,6 +24,7 @@ enum ChatItem: Identifiable, Equatable {
     )
     case systemEvent(id: String, message: String)
     case cacheMiss(id: String, message: String)
+    case notice(id: String, message: String)
     case customEvent(id: String, message: String, presentation: TraceEventPresentation)
     case error(id: String, message: String)
 
@@ -36,6 +37,7 @@ enum ChatItem: Identifiable, Equatable {
         case .toolCall(let id, _, _, _, _, _, _): return id
         case .systemEvent(let id, _): return id
         case .cacheMiss(let id, _): return id
+        case .notice(let id, _): return id
         case .customEvent(let id, _, _): return id
         case .error(let id, _): return id
         }
@@ -65,6 +67,8 @@ enum ChatItem: Identifiable, Equatable {
             return .systemEvent(id: newID, message: message)
         case .cacheMiss(_, let message):
             return .cacheMiss(id: newID, message: message)
+        case .notice(_, let message):
+            return .notice(id: newID, message: message)
         case .customEvent(_, let message, let presentation):
             return .customEvent(id: newID, message: message, presentation: presentation)
         case .error(_, let message):

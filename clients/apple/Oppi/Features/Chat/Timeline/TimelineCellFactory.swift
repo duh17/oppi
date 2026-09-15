@@ -59,7 +59,7 @@ enum TimelineCellFactory {
                 ? registrations.compaction
                 : registrations.system
             return dequeuer(collectionView, indexPath, itemID)
-        case .cacheMiss:
+        case .cacheMiss, .notice:
             return registrations.system(collectionView, indexPath, itemID)
         case .customEvent:
             return registrations.system(collectionView, indexPath, itemID)

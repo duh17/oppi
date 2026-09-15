@@ -24,6 +24,24 @@ struct TimelineReducerTests {
         #expect(message == "Cache miss after 5m idle: 69k tokens re-billed (~$0.79)")
     }
 
+    @Test func noticeRendersAsWarningTimelineItem() {
+        let reducer = TimelineReducer()
+        let expectedID = "worktree-rebind:s1"
+        reducer.process(.notice(
+            sessionId: "s1",
+            id: expectedID,
+            message: "Resuming on Main checkout. The worktree is gone."
+        ))
+
+        #expect(reducer.items.count == 1)
+        guard case .notice(let id, let message) = reducer.items[0] else {
+            Issue.record("Expected typed live notice")
+            return
+        }
+        #expect(id == "worktree-rebind:s1")
+        #expect(message == "Resuming on Main checkout. The worktree is gone.")
+    }
+
     @Test func retryStartReusesPreviousErrorRow() {
         let reducer = TimelineReducer()
 

@@ -53,6 +53,7 @@ struct TraceRenderingTests {
         case .toolCall(_, let tool, _, _, _, _, _): return "tool(\(tool))"
         case .systemEvent: return "system"
         case .cacheMiss: return "cacheMiss"
+        case .notice: return "notice"
         case .customEvent: return "custom"
         case .error: return "error"
         }

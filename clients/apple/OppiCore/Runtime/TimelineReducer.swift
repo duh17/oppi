@@ -95,9 +95,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// before its agentStart still belongs to the incoming message.
     private var messageRegionStart = 0
     /// Last timeline row from the most recent `message_end`. Live `cache_miss`
-    /// events follow that message and have no canonical id in the trace, so a
-    /// history rebuild plus replay would otherwise append them under the last
-    /// assistant bubble. Insert after this row instead.
+    /// and `notice` events follow that message and have no canonical id in the
+    /// trace, so a history rebuild plus replay would otherwise append them under
+    /// the last assistant bubble. Insert after this row instead.
     private var lastMessageEndAnchorID: String?
 
     /// The item ID currently being rendered in streaming mode.
@@ -1080,15 +1080,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return renderMutationCheckpoint() != before
 
         case .cacheMiss(_, let id, let message):
-            let item = ChatItem.cacheMiss(id: id, message: message)
-            if let index = indexForID(id) {
-                guard items[index] != item else { return false }
-                items[index] = item
-                bumpItemsMutationSeq()
-            } else {
-                insertCanonicalItem(item, after: lastMessageEndAnchorID)
-            }
-            return true
+            return upsertLiveWarningRow(.cacheMiss(id: id, message: message), id: id)
+
+        case .notice(_, let id, let message):
+            return upsertLiveWarningRow(.notice(id: id, message: message), id: id)
 
         case .toolStart(_, let toolEventId, let tool, let args, let callSegments):
             return handleToolStart(
@@ -1821,6 +1816,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if lastMessageEndAnchorID == oldID { lastMessageEndAnchorID = newID }
         rebuildIndex()
         bumpItemsMutationSeq()
+    }
+
+    private func upsertLiveWarningRow(_ item: ChatItem, id: String) -> Bool {
+        if let index = indexForID(id) {
+            guard items[index] != item else { return false }
+            items[index] = item
+            bumpItemsMutationSeq()
+        } else {
+            insertCanonicalItem(item, after: lastMessageEndAnchorID)
+        }
+        return true
     }
 
     private func insertCanonicalItem(_ item: ChatItem, after previousID: String?) {
