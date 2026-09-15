@@ -6,11 +6,14 @@ import OSLog
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OppiMac", category: "TCCPermissionState")
 
-/// Tracks macOS TCC (Transparency, Consent, and Control) permission grants.
+/// Tracks macOS TCC (Transparency, Consent, and Control) permission grants
+/// for the Oppi Mac GUI (`dev.chenda.OppiMac`).
 ///
-/// The Oppi Mac app spawns Node.js as a child process. That child inherits
-/// the parent app's TCC grants, so these permissions directly control what
-/// the agent can access on this Mac.
+/// These checks describe the GUI process only. The server runs on the embedded
+/// Node worker (`dev.chenda.OppiMac.server`). A LaunchAgent is a separate launchd
+/// job, so macOS checks the worker's own identity there and Oppi's grants are not
+/// evidence about it. Whose identity macOS uses for a server that the app spawns
+/// as a child process is not something these checks can prove.
 @MainActor @Observable
 final class TCCPermissionState {
 
@@ -105,11 +108,12 @@ final class TCCPermissionState {
         switch kind {
         case .fullDiskAccess:
             #if DEBUG
-            // FDA cannot be prompted — only checked passively. Debug builds run from
+            // FDA cannot be prompted, only checked passively. Debug builds run from
             // DerivedData paths that change every build, so FDA grants never persist.
             // Skip the check to avoid a non-actionable warning during development.
             return .granted
             #else
+            // GUI process only; says nothing about `dev.chenda.OppiMac.server`.
             return checkFullDiskAccess()
             #endif
         case .accessibility:
@@ -184,7 +188,7 @@ extension TCCPermissionState.PermissionKind {
     var displayDescription: String {
         switch self {
         case .fullDiskAccess:
-            "Required so the server can read workspace files in ~/Desktop, ~/Documents, and other protected folders."
+            "Required so the server can read workspace files in ~/Desktop, ~/Documents, and other protected folders. macOS applies the grant to the process that runs the server: this app when it spawns the server, the bundled worker (dev.chenda.OppiMac.server, Contents/Resources/Helpers/node) when launchd runs it. Grant both if unsure. Oppi can only check this app's access."
         case .accessibility:
             "Optional. Enables future agent skills for screen automation via AppleScript."
         case .screenRecording:

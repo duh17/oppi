@@ -103,9 +103,12 @@ final class ServerProcessManager {
 
     /// Resolves the single npm-installed `oppi` CLI.
     ///
-    /// `OPPI_SERVER_PATH` remains an explicit source-checkout override for local
-    /// development. Production app launches otherwise use the same global CLI
-    /// that a human gets from `npm install -g oppi-server`.
+    /// `OPPI_SERVER_PATH` overrides which CLI the app runs (a source checkout).
+    /// It does not choose the Node runtime: that is always the bundled worker, so
+    /// builds without Contents/Resources/Helpers/node (Debug) cannot spawn a
+    /// server and only attach to one started elsewhere. Production app launches
+    /// otherwise use the same global CLI that a human gets from
+    /// `npm install -g oppi-server`.
     static func resolveServerCLIPath(
         environment: [String: String] = ProcessRunner.augmentedEnvironment
     ) -> String? {
@@ -150,15 +153,29 @@ final class ServerProcessManager {
         let engines: [String: String]?
     }
 
+    /// App-relative path of the version-pinned Node Mach-O copied in at release time.
+    static let bundledNodeRelativePath = "Contents/Resources/Helpers/node"
+
+    /// Homebrew and system locations a bundled helper must never be or resolve into.
+    static let forbiddenNodeRuntimePrefixes = [
+        "/opt/homebrew/bin/",
+        "/opt/homebrew/opt/",
+        "/opt/homebrew/Cellar/",
+        "/usr/local/bin/",
+        "/usr/local/opt/",
+        "/usr/local/Cellar/",
+        "/usr/bin/",
+    ]
+
+    private static let bundledHelpersSuffix = "/Contents/Resources/Helpers"
+
     /// Resolves the Node.js runtime binary path.
     ///
-    /// Search order:
-    /// 1. Homebrew Node.js
-    /// 2. /usr/local Node.js
-    /// 3. System Node.js
+    /// Production uses only the bundled Mach-O at Contents/Resources/Helpers/node.
+    /// Homebrew, /usr/local, and /usr/bin Node are never selected.
     ///
-    /// Returns nil when Node.js is missing or does not satisfy the server's
-    /// declared minimum version in package.json.
+    /// Returns nil when the bundled Node is missing or does not satisfy the
+    /// server's declared minimum version in package.json.
     static func resolveRuntimePath() -> String? {
         guard let nodePath = resolveNodePath() else {
             return nil
@@ -169,23 +186,80 @@ final class ServerProcessManager {
         return nodePath
     }
 
-    /// Resolves the Node.js binary path.
-    static func resolveNodePath() -> String? {
-        let candidates = [
-            "/opt/homebrew/bin/node",
-            "/usr/local/bin/node",
-            "/usr/bin/node",
-        ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    static func bundledNodePath(bundle: Bundle = .main) -> String {
+        if let resourcePath = bundle.resourcePath {
+            return (resourcePath as NSString).appendingPathComponent("Helpers/node")
+        }
+        return bundle.bundleURL.appendingPathComponent(bundledNodeRelativePath).path
+    }
+
+    static func isBundledServerNodePath(_ path: String) -> Bool {
+        path.hasSuffix("/Contents/Resources/Helpers/node")
+    }
+
+    static func isForbiddenNodeRuntimePath(_ path: String) -> Bool {
+        forbiddenNodeRuntimePrefixes.contains { path.hasPrefix($0) }
+    }
+
+    private static func realPath(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    /// lstat, so a symlink is never a regular file.
+    private static func isRegularFile(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFREG
+    }
+
+    /// Resolves the bundled Node.js binary path.
+    ///
+    /// Fail closed unless the helper is a regular file (not a symlink, even one that
+    /// stays inside Helpers) in the app's own Helpers directory. Node reports its
+    /// real path as `process.execPath`, so a linked helper would make
+    /// `oppi server install` look like a terminal install and pick Homebrew Node.
+    /// Never returns Homebrew or system Node.
+    static func resolveNodePath(
+        bundledPath: String? = nil,
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        isRegularFile: (String) -> Bool = { isRegularFile($0) },
+        resolvingSymlink: (String) -> String = { realPath($0) }
+    ) -> String? {
+        let candidate = bundledPath ?? bundledNodePath()
+        guard fileExists(candidate),
+              isBundledServerNodePath(candidate),
+              isRegularFile(candidate) else {
+            return nil
+        }
+        let real = resolvingSymlink(candidate)
+        let helpersDir = resolvingSymlink((candidate as NSString).deletingLastPathComponent)
+        guard (real as NSString).deletingLastPathComponent == helpersDir,
+              helpersDir.hasSuffix(bundledHelpersSuffix),
+              !isForbiddenNodeRuntimePath(real) else {
+            return nil
+        }
+        return candidate
     }
 
     /// Human-readable runtime failure reason for onboarding and launch errors.
     static func runtimeFailureReason() -> String {
+        let reason = bundledRuntimeFailureReason()
+        #if DEBUG
+        if resolveNodePath() == nil {
+            // Nothing outside release-mac.sh stages Helpers/node, by design.
+            return reason + ". Debug builds do not bundle Node: start the server with `oppi serve` and Oppi attaches to it."
+        }
+        #endif
+        return reason
+    }
+
+    private static func bundledRuntimeFailureReason() -> String {
         guard let nodePath = resolveNodePath() else {
             if let required = minimumRequiredNodeVersion() {
-                return "Node.js \(required) or newer not found"
+                return "Embedded Oppi server Node \(required) or newer not found at Contents/Resources/Helpers/node"
             }
-            return "Node.js not found"
+            return "Embedded Oppi server Node not found at Contents/Resources/Helpers/node"
         }
         return runtimeCompatibilityIssue(nodePath: nodePath) ?? "Node.js runtime unavailable"
     }

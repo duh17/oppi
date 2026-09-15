@@ -5,6 +5,7 @@
  * Covers: plist generation, path resolution, status parsing, install/uninstall
  * flows, restart/stop commands, readInstalledPlist parsing, and error paths.
  */
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -14,6 +15,7 @@ const mockMkdirSync = vi.fn();
 const mockWriteFileSync = vi.fn();
 const mockReadFileSync = vi.fn<(path: string, encoding: string) => string>();
 const mockRealpathSync = vi.fn<(path: string) => string>();
+const mockLstatSync = vi.fn<(path: string) => { isFile(): boolean }>();
 const mockUnlinkSync = vi.fn();
 const mockExecSync = vi.fn<(cmd: string, opts?: object) => string>();
 const mockHomedir = vi.fn(() => "/Users/testuser");
@@ -24,6 +26,7 @@ vi.mock("node:fs", () => ({
   writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
   readFileSync: (...args: unknown[]) => mockReadFileSync(args[0] as string, args[1] as string),
   realpathSync: (...args: unknown[]) => mockRealpathSync(args[0] as string),
+  lstatSync: (...args: unknown[]) => mockLstatSync(args[0] as string),
   unlinkSync: (...args: unknown[]) => mockUnlinkSync(...args),
 }));
 
@@ -37,11 +40,18 @@ vi.mock("node:os", () => ({
 
 // Stub process.getuid to return a fake uid on all platforms
 const originalGetuid = process.getuid;
+const originalExecPath = process.execPath;
+function setExecPath(path: string): void {
+  Object.defineProperty(process, "execPath", { value: path, configurable: true, writable: true });
+}
 beforeEach(() => {
+  // Terminal/headless install by default; bundled-helper tests override this.
+  setExecPath("/opt/homebrew/bin/node");
   process.getuid = () => 501;
   mockHomedir.mockImplementation(() => "/Users/testuser");
   mockUnlinkSync.mockImplementation(() => undefined);
   mockRealpathSync.mockImplementation((path: string) => path);
+  mockLstatSync.mockImplementation(() => ({ isFile: () => true }));
   mockReadFileSync.mockImplementation((path: string) => {
     if (path.endsWith("package.json")) {
       return JSON.stringify({ engines: { node: ">=22.19.0" } });
@@ -55,13 +65,17 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
   process.getuid = originalGetuid;
+  setExecPath(originalExecPath);
 });
 
 // Import after mocks are in place
 import {
   getServiceStatus,
   installService,
+  isBundledServerNodePath,
+  launchAgentRuntimeMigrationWarning,
   readInstalledPlist,
+  resolveRuntimeAbsolute,
   restartService,
   stopService,
   uninstallService,
@@ -277,6 +291,163 @@ describe("runtime resolution", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Node.js 22.19.0 or newer not found");
+  });
+});
+
+const BUNDLED_SERVER_NODE = "/Applications/Oppi.app/Contents/Resources/Helpers/node";
+const NPM_CLI = "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js";
+
+describe("runtime resolution when the Mac app starts the install", () => {
+  beforeEach(() => setExecPath(BUNDLED_SERVER_NODE));
+
+  it("uses the bundled helper and ignores Homebrew and system Node", () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === BUNDLED_SERVER_NODE) return true;
+      if (p === "/opt/homebrew/bin/node") return true;
+      if (p === "/usr/local/bin/node") return true;
+      if (p === "/usr/bin/node") return true;
+      if (p === NPM_CLI) return true;
+      return false;
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(true);
+    expect(result.runtimePath).toBe(BUNDLED_SERVER_NODE);
+    const xml = mockWriteFileSync.mock.calls.at(-1)?.[1] as string;
+    expect(xml).toContain(`<string>${BUNDLED_SERVER_NODE}</string>`);
+    expect(xml).not.toContain("<string>/opt/homebrew/bin/node</string>");
+  });
+
+  it("supports a relocated app because the running helper is authoritative", () => {
+    const relocated = "/Users/testuser/Downloads/Oppi.app/Contents/Resources/Helpers/node";
+    setExecPath(relocated);
+    mockExistsSync.mockImplementation((p: string) => p === relocated);
+
+    expect(resolveRuntimeAbsolute(NPM_CLI)).toBe(relocated);
+  });
+
+  it("fails closed with a bundled-runtime message instead of falling back to Homebrew", () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p === "/opt/homebrew/bin/node") return true;
+      if (p === "/usr/local/bin/node") return true;
+      if (p === NPM_CLI) return true;
+      return false;
+    });
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.runtimePath).toBeUndefined();
+    expect(result.message).toContain("Embedded Oppi server Node 22.19.0 or newer not found");
+    expect(result.message).toContain("Homebrew Node is not used");
+  });
+
+  it("rejects a bundled helper older than the server minimum", () => {
+    mockExistsSync.mockImplementation((p: string) => p === BUNDLED_SERVER_NODE || p === NPM_CLI);
+    mockExecSync.mockImplementation((cmd: string) => (cmd.includes("--version") ? "v20.11.1" : ""));
+
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Node.js 20.11.1 found");
+  });
+});
+
+describe("bundled helper symlink guard", () => {
+  let root: string;
+  let fsActual: typeof import("node:fs");
+
+  beforeEach(async () => {
+    fsActual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    root = fsActual.mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "oppi-helper-"));
+    mockExistsSync.mockImplementation((p: string) => fsActual.existsSync(p));
+    mockRealpathSync.mockImplementation((p: string) => fsActual.realpathSync(p));
+    mockLstatSync.mockImplementation((p: string) => fsActual.lstatSync(p));
+  });
+
+  afterEach(() => {
+    fsActual.rmSync(root, { recursive: true, force: true });
+  });
+
+  function helpersDir(app: string): string {
+    const dir = join(root, app, "Contents", "Resources", "Helpers");
+    fsActual.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  it("accepts a regular helper file", () => {
+    const dir = helpersDir("Real.app");
+    fsActual.writeFileSync(join(dir, "node"), "");
+    setExecPath(join(dir, "node"));
+    expect(resolveRuntimeAbsolute(NPM_CLI)).toBe(join(dir, "node"));
+  });
+
+  it("rejects a helper symlink even when it stays inside Helpers, with no Homebrew fallback", () => {
+    // Real Node reports the link target ("node-real") as process.execPath, so the
+    // install must fail closed instead of taking the terminal branch.
+    const dir = helpersDir("Linked.app");
+    fsActual.writeFileSync(join(dir, "node-real"), "");
+    fsActual.symlinkSync(join(dir, "node-real"), join(dir, "node"));
+
+    for (const execPath of [join(dir, "node"), join(dir, "node-real")]) {
+      setExecPath(execPath);
+      expect(resolveRuntimeAbsolute(NPM_CLI)).toBeNull();
+      const result = installService("/tmp/data");
+      expect(result.ok).toBe(false);
+      expect(result.runtimePath).toBeUndefined();
+    }
+  });
+
+  it("rejects a helper symlinked to a file outside the app's Helpers directory", () => {
+    const dir = helpersDir("Evil.app");
+    const outside = join(root, "brew-bin");
+    fsActual.mkdirSync(outside);
+    fsActual.writeFileSync(join(outside, "node"), "");
+    fsActual.symlinkSync(join(outside, "node"), join(dir, "node"));
+    setExecPath(join(dir, "node"));
+
+    expect(resolveRuntimeAbsolute(NPM_CLI)).toBeNull();
+    const result = installService("/tmp/data");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("must be a regular file, not a symlink");
+  });
+
+  it("rejects a Helpers directory symlinked to a Node bin directory", () => {
+    const outside = join(root, "brew-bin");
+    fsActual.mkdirSync(outside);
+    fsActual.writeFileSync(join(outside, "node"), "");
+    const resources = join(root, "Dir.app", "Contents", "Resources");
+    fsActual.mkdirSync(resources, { recursive: true });
+    fsActual.symlinkSync(outside, join(resources, "Helpers"));
+    setExecPath(join(resources, "Helpers", "node"));
+
+    expect(resolveRuntimeAbsolute(NPM_CLI)).toBeNull();
+  });
+});
+
+describe("LaunchAgent runtime migration warning", () => {
+  const homebrewPlist = { runtimePath: "/opt/homebrew/bin/node", cliPath: NPM_CLI };
+
+  it("warns when the Mac app is installed but the LaunchAgent still runs Homebrew Node", () => {
+    mockExistsSync.mockImplementation((p: string) => p === BUNDLED_SERVER_NODE);
+
+    const warning = launchAgentRuntimeMigrationWarning(homebrewPlist, "/Users/testuser");
+    expect(warning).toContain("/opt/homebrew/bin/node");
+    expect(warning).toContain(`"${BUNDLED_SERVER_NODE}" "${NPM_CLI}" server install`);
+  });
+
+  it("stays quiet for a terminal-managed install without the Mac app", () => {
+    mockExistsSync.mockReturnValue(false);
+    expect(launchAgentRuntimeMigrationWarning(homebrewPlist, "/Users/testuser")).toBeNull();
+  });
+
+  it("stays quiet once the LaunchAgent runs the bundled helper", () => {
+    mockExistsSync.mockImplementation((p: string) => p === BUNDLED_SERVER_NODE);
+    expect(
+      launchAgentRuntimeMigrationWarning(
+        { runtimePath: BUNDLED_SERVER_NODE, cliPath: NPM_CLI },
+        "/Users/testuser",
+      ),
+    ).toBeNull();
+    expect(isBundledServerNodePath(BUNDLED_SERVER_NODE)).toBe(true);
   });
 });
 

@@ -45,17 +45,35 @@ enum MacServerLifecycle {
         launchAgentPlistPaths.contains(where: fileExists)
     }
 
+    /// The LaunchAgent must run the npm `oppi` CLI on this app's bundled Node.
+    /// A plist whose `ProgramArguments[0]` is not the bundled helper (for example
+    /// Homebrew Node from a terminal install), or whose helper no longer exists,
+    /// is reinstalled through the bundled Node. When this app has no usable
+    /// bundled Node (`canRunBundledNode == false`, e.g. Debug builds), there is
+    /// nothing to migrate to and the existing agent is left alone.
     static func launchAgentNeedsMigration(
+        canRunBundledNode: Bool = ServerProcessManager.resolveRuntimePath() != nil,
         fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
         readContents: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }
     ) -> Bool {
         let currentPath = launchAgentPlistPaths[0]
-        guard fileExists(currentPath) else { return false }
+        guard canRunBundledNode, fileExists(currentPath) else { return false }
         guard let plist = readContents(currentPath) else { return true }
 
         let usesNpmBin = plist.contains("/oppi</string>")
         let usesNpmPackage = plist.contains("/node_modules/oppi-server/dist/src/cli.js</string>")
-        return !usesNpmBin && !usesNpmPackage
+        guard usesNpmBin || usesNpmPackage else { return true }
+
+        guard let runtime = programArgumentsRuntime(in: plist),
+              ServerProcessManager.isBundledServerNodePath(runtime) else {
+            return true
+        }
+        return !fileExists(runtime)
+    }
+
+    private static func programArgumentsRuntime(in plist: String) -> String? {
+        plist.firstMatch(of: #/<key>ProgramArguments</key>\s*<array>\s*<string>(.*?)</string>/#)
+            .map { String($0.1) }
     }
 
     @discardableResult

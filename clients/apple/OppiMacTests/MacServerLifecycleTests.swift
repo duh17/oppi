@@ -36,21 +36,65 @@ struct MacServerLifecycleTests {
         #expect(!MacServerLifecycle.launchAgentInstalled { _ in false })
     }
 
-    @Test func staleMutableRuntimeLaunchAgentNeedsMigration() {
+    private static let bundledHelper = "/Applications/Oppi.app/Contents/Resources/Helpers/node"
+
+    private static func migrationNeeded(
+        plistBody: String,
+        canRunBundledNode: Bool = true,
+        existing: Set<String> = []
+    ) -> Bool {
         let currentPath = MacServerLifecycle.launchAgentPlistPaths[0]
-        #expect(MacServerLifecycle.launchAgentNeedsMigration(
-            fileExists: { $0 == currentPath },
-            readContents: { _ in
-                "<string>/Users/test/.config/oppi/server-runtime/dist/src/cli.js</string>"
-            }
+        return MacServerLifecycle.launchAgentNeedsMigration(
+            canRunBundledNode: canRunBundledNode,
+            fileExists: { $0 == currentPath || existing.contains($0) },
+            readContents: { _ in plistBody }
+        )
+    }
+
+    private static func plist(node: String, cli: String) -> String {
+        """
+        <key>ProgramArguments</key>
+        <array>
+            <string>\(node)</string>
+            <string>\(cli)</string>
+            <string>serve</string>
+        </array>
+        """
+    }
+
+    @Test func staleMutableRuntimeLaunchAgentNeedsMigration() {
+        #expect(Self.migrationNeeded(
+            plistBody: Self.plist(
+                node: Self.bundledHelper,
+                cli: "/Users/test/.config/oppi/server-runtime/dist/src/cli.js"
+            ),
+            existing: [Self.bundledHelper]
         ))
     }
 
-    @Test func npmLaunchAgentDoesNotNeedMigration() {
-        let currentPath = MacServerLifecycle.launchAgentPlistPaths[0]
-        #expect(!MacServerLifecycle.launchAgentNeedsMigration(
-            fileExists: { $0 == currentPath },
-            readContents: { _ in "<string>/opt/homebrew/bin/oppi</string>" }
+    @Test func homebrewNodeLaunchAgentNeedsMigrationEvenWithNpmCLI() {
+        #expect(Self.migrationNeeded(
+            plistBody: Self.plist(node: "/opt/homebrew/bin/node", cli: "/opt/homebrew/bin/oppi")
+        ))
+    }
+
+    @Test func bundledNodeWithNpmCLIDoesNotNeedMigration() {
+        #expect(!Self.migrationNeeded(
+            plistBody: Self.plist(node: Self.bundledHelper, cli: "/opt/homebrew/bin/oppi"),
+            existing: [Self.bundledHelper]
+        ))
+    }
+
+    @Test func bundledNodeThatNoLongerExistsNeedsMigration() {
+        #expect(Self.migrationNeeded(
+            plistBody: Self.plist(node: Self.bundledHelper, cli: "/opt/homebrew/bin/oppi")
+        ))
+    }
+
+    @Test func launchAgentIsLeftAloneWhenThisAppHasNoBundledNode() {
+        #expect(!Self.migrationNeeded(
+            plistBody: Self.plist(node: "/opt/homebrew/bin/node", cli: "/opt/homebrew/bin/oppi"),
+            canRunBundledNode: false
         ))
     }
 }

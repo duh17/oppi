@@ -15,7 +15,7 @@ struct PermissionsStepView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
 
-                Text("Oppi needs Full Disk Access so the server can read workspace files in protected folders like ~/Desktop and ~/Documents.")
+                Text("The server needs Full Disk Access to read workspace files in protected folders like ~/Desktop and ~/Documents. macOS applies it to the process that runs the server: this app when it spawns the server, the bundled worker (dev.chenda.OppiMac.server) when launchd runs it. Grant both if unsure. Oppi can only check this app's access.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 420)

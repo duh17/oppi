@@ -178,12 +178,92 @@ struct LogBufferTests {
 @MainActor
 struct PathResolutionTests {
 
-    @Test func resolveNodePathFindsNode() {
-        let path = ServerProcessManager.resolveNodePath()
-        #expect(path != nil, "Node.js should be found on the build machine")
-        if let path {
-            #expect(path.hasSuffix("/node"))
+    @Test func resolveNodePathFailsClosedWhenBundledHelperMissing() {
+        let path = ServerProcessManager.resolveNodePath(
+            bundledPath: "/tmp/Oppi.app/Contents/Resources/Helpers/node",
+            fileExists: {
+                $0 == "/opt/homebrew/bin/node"
+                    || $0 == "/usr/local/bin/node"
+                    || $0 == "/usr/bin/node"
+            }
+        )
+        #expect(path == nil)
+    }
+
+    // Real files and symlinks in a temp dir: the guard resolves the filesystem, not a stub.
+    private struct HelperFixture {
+        let root: URL
+        let fm = FileManager.default
+
+        init() throws {
+            root = fm.temporaryDirectory.appending(path: "oppi-helper-\(UUID().uuidString)")
+            try fm.createDirectory(at: root, withIntermediateDirectories: true)
         }
+
+        func helpersDir(_ app: String) throws -> URL {
+            let dir = root.appending(path: "\(app)/Contents/Resources/Helpers")
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }
+
+        func file(_ url: URL) throws {
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            fm.createFile(atPath: url.path, contents: Data())
+        }
+
+        func link(_ url: URL, to target: URL) throws {
+            try fm.createSymbolicLink(at: url, withDestinationURL: target)
+        }
+
+        func cleanup() { try? fm.removeItem(at: root) }
+    }
+
+    @Test func resolveNodePathAcceptsRegularHelperFile() throws {
+        let fixture = try HelperFixture()
+        defer { fixture.cleanup() }
+
+        let real = try fixture.helpersDir("Real.app")
+        try fixture.file(real.appending(path: "node"))
+        #expect(ServerProcessManager.resolveNodePath(bundledPath: real.appending(path: "node").path)
+            == real.appending(path: "node").path)
+    }
+
+    @Test func resolveNodePathRejectsHelperSymlinkEvenInsideHelpersDir() throws {
+        let fixture = try HelperFixture()
+        defer { fixture.cleanup() }
+
+        let dir = try fixture.helpersDir("Linked.app")
+        try fixture.file(dir.appending(path: "node-real"))
+        try fixture.link(dir.appending(path: "node"), to: dir.appending(path: "node-real"))
+
+        #expect(ServerProcessManager.resolveNodePath(bundledPath: dir.appending(path: "node").path) == nil)
+    }
+
+    @Test func resolveNodePathRejectsHelperSymlinkedOutsideHelpersDir() throws {
+        let fixture = try HelperFixture()
+        defer { fixture.cleanup() }
+
+        let dir = try fixture.helpersDir("Evil.app")
+        let outside = fixture.root.appending(path: "brew-bin/node")
+        try fixture.file(outside)
+        try fixture.link(dir.appending(path: "node"), to: outside)
+
+        #expect(ServerProcessManager.resolveNodePath(bundledPath: dir.appending(path: "node").path) == nil)
+    }
+
+    @Test func resolveNodePathRejectsHelpersDirSymlinkedToNodeBinDir() throws {
+        let fixture = try HelperFixture()
+        defer { fixture.cleanup() }
+
+        let outside = fixture.root.appending(path: "brew-bin")
+        try fixture.file(outside.appending(path: "node"))
+        let resources = fixture.root.appending(path: "Dir.app/Contents/Resources")
+        try fixture.fm.createDirectory(at: resources, withIntermediateDirectories: true)
+        try fixture.link(resources.appending(path: "Helpers"), to: outside)
+
+        #expect(ServerProcessManager.resolveNodePath(
+            bundledPath: resources.appending(path: "Helpers/node").path
+        ) == nil)
     }
 
     @Test func resolveServerCLIPathUsesExplicitSourceOverride() {

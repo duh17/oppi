@@ -151,7 +151,7 @@ Control sessions pass Agent and schedule changes through size-limited `--definit
 
 ## Mac app shell (experimental)
 
-The macOS app, human users, and managed host sessions share the globally installed `oppi` command. The app does not bundle another server. Install or update it first:
+The macOS app, human users, and managed host sessions share the globally installed `oppi` command. The app does not bundle another server; it bundles only a signed Node runtime (`Contents/Resources/Helpers/node`, code-signing identifier `dev.chenda.OppiMac.server`) that runs that CLI, so the server does not use Homebrew Node when the app manages it. Install or update the CLI first:
 
 ```bash
 npm install -g oppi-server@latest

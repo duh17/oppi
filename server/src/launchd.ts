@@ -12,10 +12,15 @@
  * - All paths in ProgramArguments are resolved to absolute paths at install time
  * - PATH env includes /opt/homebrew/bin so git, pi, tailscale are available
  * - KeepAlive restarts on crash; RunAtLoad starts on boot/login
+ * - Runtime selection depends on who started the install. The Mac app runs the
+ *   CLI on its bundled Mach-O at Contents/Resources/Helpers/node (signed as
+ *   dev.chenda.OppiMac.server); that install is bundled-only and never falls back
+ *   to Homebrew/system Node. A terminal install keeps using Homebrew/system Node.
  */
 
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -24,9 +29,23 @@ import {
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 const LABEL = "dev.chaosdonkey.oppi";
+
+const BUNDLED_HELPERS_SUFFIX = "/Contents/Resources/Helpers";
+const BUNDLED_NODE_SUFFIX = `${BUNDLED_HELPERS_SUFFIX}/node`;
+const SYSTEM_NODE_CANDIDATES = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"];
+/** Package-manager and system locations a bundled helper must never resolve into. */
+const FORBIDDEN_NODE_PREFIXES = [
+  "/opt/homebrew/bin/",
+  "/opt/homebrew/opt/",
+  "/opt/homebrew/Cellar/",
+  "/usr/local/bin/",
+  "/usr/local/opt/",
+  "/usr/local/Cellar/",
+  "/usr/bin/",
+];
 
 function uid(): number {
   const id = process.getuid?.();
@@ -234,27 +253,103 @@ function runtimeCompatibilityIssue(nodePath: string, cliPath?: string | null): s
   return null;
 }
 
+/** True when `path` is the Mac app's bundled server Node (Contents/Resources/Helpers/node). */
+export function isBundledServerNodePath(path: string): boolean {
+  return path.replace(/\\/g, "/").endsWith(BUNDLED_NODE_SUFFIX);
+}
+
 /**
- * Resolve the absolute path to the Node.js runtime.
- *
- * Search order:
- * 1. Homebrew Node.js
- * 2. /usr/local Node.js
- * 3. System Node.js
+ * True when the running executable lives in an app's Contents/Resources/Helpers
+ * directory under any name. Node reports the real path as `process.execPath`, so
+ * a helper that is a symlink (`node` -> `node-real`) shows up as `node-real`.
+ * Such a process was still started by the Mac app: it must take the bundled-only
+ * path and fail closed, never the terminal path that would select Homebrew Node.
  */
-function resolveRuntimeAbsolute(cliPath?: string | null): string | null {
-  const nodeCandidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"];
-  for (const p of nodeCandidates) {
+function isMacAppHelperPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  return normalized.slice(0, normalized.lastIndexOf("/")).endsWith(BUNDLED_HELPERS_SUFFIX);
+}
+
+function isForbiddenNodeRuntimePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  return FORBIDDEN_NODE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+/**
+ * Why the bundled helper cannot be trusted, or null when it is a regular file
+ * named `node` in the app's own Helpers directory. A symlink at that path, even
+ * one that stays inside Helpers, is rejected: Node then reports the link target
+ * as its execPath, and a link to Homebrew Node would run under the worker's
+ * identity without being it.
+ */
+function bundledHelperIssue(helperPath: string): string | null {
+  let real: string;
+  let helpersDir: string;
+  try {
+    if (!lstatSync(helperPath).isFile()) {
+      return `Bundled server Node at ${helperPath} must be a regular file, not a symlink`;
+    }
+    real = realpathSync(helperPath);
+    helpersDir = realpathSync(dirname(helperPath));
+  } catch {
+    return `Could not resolve bundled server Node at ${helperPath}`;
+  }
+  if (
+    basename(helperPath) !== "node" ||
+    dirname(real) !== helpersDir ||
+    !helpersDir.endsWith(BUNDLED_HELPERS_SUFFIX) ||
+    isForbiddenNodeRuntimePath(real)
+  ) {
+    return `Bundled server Node at ${helperPath} is not Contents/Resources/Helpers/node of a real app (${real})`;
+  }
+  return null;
+}
+
+/**
+ * Resolve the absolute path to the Node.js runtime for the LaunchAgent.
+ *
+ * - Started by the Mac app (`execPath` is inside Contents/Resources/Helpers):
+ *   only Helpers/node, and only when it is a regular file in the app's Helpers
+ *   directory. Homebrew/system Node is never selected on this path.
+ * - Otherwise (terminal or headless install), in order:
+ *   1. Homebrew Node.js
+ *   2. /usr/local Node.js
+ *   3. System Node.js
+ */
+export function resolveRuntimeAbsolute(
+  cliPath?: string | null,
+  options: { execPath?: string } = {},
+): string | null {
+  const execPath = options.execPath ?? process.execPath;
+  if (isMacAppHelperPath(execPath)) {
+    if (!existsSync(execPath) || bundledHelperIssue(execPath)) return null;
+    return runtimeCompatibilityIssue(execPath, cliPath) ? null : execPath;
+  }
+  for (const p of SYSTEM_NODE_CANDIDATES) {
     if (existsSync(p) && !runtimeCompatibilityIssue(p, cliPath)) return p;
   }
   return null;
 }
 
-function runtimeResolutionFailureMessage(cliPath?: string | null): string {
+function runtimeResolutionFailureMessage(
+  cliPath?: string | null,
+  options: { execPath?: string } = {},
+): string {
+  const execPath = options.execPath ?? process.execPath;
   const minimum = minimumRequiredNodeVersion(cliPath);
-  const nodeCandidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"];
 
-  for (const path of nodeCandidates) {
+  if (isMacAppHelperPath(execPath)) {
+    if (existsSync(execPath)) {
+      return (
+        bundledHelperIssue(execPath) ||
+        runtimeCompatibilityIssue(execPath, cliPath) ||
+        "Embedded Oppi server Node unavailable"
+      );
+    }
+    return `Embedded Oppi server Node${minimum ? ` ${formatSemanticVersion(minimum)} or newer` : ""} not found at ${execPath}. Homebrew Node is not used for installs started by the Mac app.`;
+  }
+
+  for (const path of SYSTEM_NODE_CANDIDATES) {
     if (!existsSync(path)) continue;
     return runtimeCompatibilityIssue(path, cliPath) || "Node.js runtime unavailable";
   }
@@ -263,6 +358,28 @@ function runtimeResolutionFailureMessage(cliPath?: string | null): string {
     return `Node.js ${formatSemanticVersion(minimum)} or newer not found. Install Node.js and try again.`;
   }
   return "Node.js not found. Install Node.js and try again.";
+}
+
+/**
+ * `oppi doctor` warning for a LaunchAgent that still runs a non-bundled Node
+ * while the Mac app manages the service, or null when nothing needs attention.
+ *
+ * "The Mac app manages the service" means an Oppi.app that ships the bundled
+ * server Node is installed: on launch it reinstalls any LaunchAgent whose node
+ * is not its helper. Without the app, a terminal-installed system-Node
+ * LaunchAgent is the supported setup and stays quiet.
+ */
+export function launchAgentRuntimeMigrationWarning(
+  installed: { runtimePath: string; cliPath: string },
+  home: string = homedir(),
+): string | null {
+  if (isBundledServerNodePath(installed.runtimePath)) return null;
+  for (const app of ["/Applications/Oppi.app", join(home, "Applications/Oppi.app")]) {
+    const helper = `${app}${BUNDLED_NODE_SUFFIX}`;
+    if (!existsSync(helper) || bundledHelperIssue(helper)) continue;
+    return `LaunchAgent runs ${installed.runtimePath}, not the Oppi Mac app's bundled Node. The app migrates it on next launch, or run: "${helper}" "${installed.cliPath}" server install`;
+  }
+  return null;
 }
 
 /**

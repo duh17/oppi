@@ -42,6 +42,7 @@ import { getPackageInfo } from "./version.js";
 import {
   getServiceStatus,
   installService,
+  launchAgentRuntimeMigrationWarning,
   readInstalledPlist,
   restartService,
   stopService,
@@ -624,6 +625,8 @@ function cmdDoctor(storage: CliConnectionConfig): void {
           message: `LaunchAgent CLI missing: ${paths.cliPath} (oppi server install to fix)`,
         });
       }
+      const migration = launchAgentRuntimeMigrationWarning(paths);
+      if (migration) checks.push({ level: "warn", message: migration });
     }
   } else {
     checks.push({

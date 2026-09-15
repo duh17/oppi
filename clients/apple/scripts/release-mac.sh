@@ -11,7 +11,11 @@
 #   - Xcode with Developer ID signing
 #   - XcodeGen installed (brew install xcodegen)
 #   - gh CLI authenticated (gh auth login)
-#   - Node.js and the global Oppi CLI installed (`npm install -g oppi-server`)
+#   - The global Oppi CLI installed (`npm install -g oppi-server`)
+#   - bun (runs bundle-mac-server-node.ts)
+#   - Network access to nodejs.org to download the pinned official Node tarballs
+#     (arm64 + x64, SHA-256 verified, lipo'd into one universal helper; never
+#     Homebrew Node; signed as dev.chenda.OppiMac.server)
 #
 # Optional overrides:
 #   OPPI_DEVELOPMENT_TEAM, OPPI_MAC_SIGNING_IDENTITY, OPPI_GITHUB_URL
@@ -195,6 +199,41 @@ if [[ ! -d "$APP_PATH" ]]; then
 fi
 echo "Exported to $APP_PATH"
 
+# ── Step 4b: Bundle version-pinned Node as the server worker ──
+#
+# Copied into Resources/Helpers after archive. No extra Xcode app target.
+# Fail closed if staging does not produce the helper; never copy Homebrew Node.
+
+echo "--- Step 4b: Bundling pinned Node server worker ---"
+SERVER_WORKER_IDENTIFIER="$(bun "$SCRIPT_DIR/bundle-mac-server-node.ts" identifier)"
+if [[ "$SERVER_WORKER_IDENTIFIER" != "dev.chenda.OppiMac.server" ]]; then
+    echo "Error: server worker identifier mismatch: $SERVER_WORKER_IDENTIFIER"
+    exit 1
+fi
+bun "$SCRIPT_DIR/bundle-mac-server-node.ts" stage --app "$APP_PATH"
+SERVER_NODE="$(bun "$SCRIPT_DIR/bundle-mac-server-node.ts" path --app "$APP_PATH")"
+if [[ ! -f "$SERVER_NODE" ]]; then
+    echo "Error: bundled server Node missing at $SERVER_NODE"
+    exit 1
+fi
+case "$SERVER_NODE" in
+    */Contents/Resources/Helpers/node) ;;
+    *)
+        echo "Error: bundled server Node must live at Contents/Resources/Helpers/node, got $SERVER_NODE"
+        exit 1
+        ;;
+esac
+# The Release app is universal. A helper with fewer slices would fail to launch on the
+# missing architecture, so refuse to sign a mismatch.
+sorted_archs() { lipo -archs "$1" | tr ' ' '\n' | sort | tr '\n' ' '; }
+APP_ARCHS="$(sorted_archs "$APP_PATH/Contents/MacOS/Oppi")"
+NODE_ARCHS="$(sorted_archs "$SERVER_NODE")"
+if [[ "$APP_ARCHS" != "$NODE_ARCHS" ]]; then
+    echo "Error: app architectures (${APP_ARCHS% }) differ from bundled Node (${NODE_ARCHS% })."
+    exit 1
+fi
+echo "Bundled Node: $SERVER_NODE ($SERVER_WORKER_IDENTIFIER, ${NODE_ARCHS% })"
+
 # ── Step 5: Codesign (inside-out) ──
 #
 # macOS codesigning requires inside-out: sign leaf Mach-O binaries first, then
@@ -202,20 +241,42 @@ echo "Exported to $APP_PATH"
 # app would clobber inner signatures.
 
 echo "--- Step 5: Signing (inside-out) ---"
-RESOURCES="$APP_PATH/Contents/Resources"
+SERVER_NODE_ENTITLEMENTS="$BUILD_DIR/OppiMac.server.entitlements"
+bun "$SCRIPT_DIR/bundle-mac-server-node.ts" write-entitlements --output "$SERVER_NODE_ENTITLEMENTS"
 
-# 1. Sign any Mach-O binaries in Frameworks/ or Helpers/
+# 1. Sign any Mach-O binaries in Frameworks/ or Contents/Helpers/, except the
+#    bundled server Node. That worker is signed separately with its own
+#    identifier. Never copy Oppi's designated requirement onto Node.
 SIGN_DIRS=()
 [[ -d "$APP_PATH/Contents/Frameworks" ]] && SIGN_DIRS+=("$APP_PATH/Contents/Frameworks")
 [[ -d "$APP_PATH/Contents/Helpers" ]] && SIGN_DIRS+=("$APP_PATH/Contents/Helpers")
-find "${SIGN_DIRS[@]}" -type f -perm +111 2>/dev/null | while read -r binary; do
-    # Skip non-Mach-O files
-    file "$binary" | grep -q "Mach-O" || continue
-    codesign --force --options runtime --timestamp \
-        --sign "$SIGNING_IDENTITY" \
-        "$binary" 2>&1
-    echo "  Signed: $(basename "$binary")"
-done
+if [[ ${#SIGN_DIRS[@]} -gt 0 ]]; then
+    find "${SIGN_DIRS[@]}" -type f -perm +111 2>/dev/null | while read -r binary; do
+        [[ "$binary" == "$SERVER_NODE" ]] && continue
+        # Skip non-Mach-O files
+        file "$binary" | grep -q "Mach-O" || continue
+        codesign --force --options runtime --timestamp \
+            --sign "$SIGNING_IDENTITY" \
+            "$binary" 2>&1
+        echo "  Signed: $(basename "$binary")"
+    done
+fi
+
+# 1b. Sign the bundled server Node as dev.chenda.OppiMac.server. The exact flags
+#     come from bundle-mac-server-node.ts (unit-tested): no --requirements, and
+#     the Node-specific entitlements, never OppiMac.entitlements.
+CODESIGN_ARGS_TEXT="$(bun "$SCRIPT_DIR/bundle-mac-server-node.ts" codesign-args \
+    --app "$APP_PATH" --identity "$SIGNING_IDENTITY" --entitlements "$SERVER_NODE_ENTITLEMENTS")"
+SERVER_NODE_CODESIGN=()
+while IFS= read -r arg; do
+    SERVER_NODE_CODESIGN+=("$arg")
+done <<< "$CODESIGN_ARGS_TEXT"
+if [[ "${SERVER_NODE_CODESIGN[0]:-}" != "codesign" ]]; then
+    echo "Error: bundle-mac-server-node.ts did not produce a codesign command"
+    exit 1
+fi
+"${SERVER_NODE_CODESIGN[@]}" 2>&1
+echo "  Signed: $(basename "$SERVER_NODE") ($SERVER_WORKER_IDENTIFIER)"
 
 # 2. Sign the outer .app (NO --deep — inner binaries already signed)
 codesign --force --options runtime --timestamp \
@@ -274,10 +335,11 @@ Oppi $VERSION aligns mobile supervision with the current Pi runtime: live termin
 - Replace Oppi's built-in permission gate with standard Pi extension permission flows, improving compatibility for extension-driven tools.
 - Improve the iPad workspace shell so workspaces, sessions, and chat are easier to move between.
 - Use one globally installed \`oppi\` CLI for both the Mac app and terminal workflows.
+- Run the server on the app-bundled Node worker (\`dev.chenda.OppiMac.server\`), not Homebrew Node.
 
 ### Prerequisites
 - macOS 26.0+
-- Node.js 22.19.0 or newer installed on the Mac (sandbox workspaces need 23.6.0+)
+- Node.js 22.19.0 or newer and npm on the Mac. The app runs the server on its own bundled Node, but \`npm install -g oppi-server@latest\`, the \`oppi\` command, and in-app server updates still use your Node and npm.
 - \`npm install -g oppi-server@latest\`
 
 ### Install

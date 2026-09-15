@@ -63,6 +63,7 @@ Example:
 
 ### Changed
 
+- **Mac:** The Oppi server runs on a signed Node worker bundled in the app (`dev.chenda.OppiMac.server`, universal, SHA-256-pinned Node 24.11.1) instead of Homebrew Node. An existing LaunchAgent that still runs Homebrew Node is reinstalled on the bundled Node at app launch. Full Disk Access must be granted to the worker when launchd runs the server. `oppi server install` from a terminal keeps using system Node, and `oppi doctor` warns when an installed Oppi.app will migrate the LaunchAgent. Debug builds have no bundled Node and only attach to a server you start.
 - **Client:** New orbs animate for dictation and the agent's thinking/working indicator, adapted from Thinking Orbs designs by Jakub Antalik and a Swift port by Haplo LLC. The dictation orb responds to voice. On-device dictation prefers Apple's DictationTranscriber, which accepts Dictionary phrase hints and gave better results than SpeechTranscriber in our normal-path use; SpeechTranscriber remains the fallback.
 - **Server:** Bundled Pi runtime moves to `0.87.1`.
 - **Mac:** New Session uses the same mic, plus, model, and thinking pills as the session composer. Code fences use the iPhone card: an 11 pt language header, wrap, and copy, over a shorter code body.
