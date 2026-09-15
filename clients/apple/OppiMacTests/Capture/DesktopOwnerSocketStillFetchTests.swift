@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 import ImageIO
 import Testing
-@testable import OppiDesktopCompanion
+@testable import Oppi
 
 @Suite("Desktop owner-socket still fetch")
 @MainActor
@@ -136,10 +136,8 @@ struct DesktopOwnerSocketStillFetchTests {
             try second.start()
         }
 
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "OppiDesktopCompanion/DesktopCompanionOwnerSocket.swift")
+        let sourceURL = appleClientRoot()
+            .appending(path: "OppiMac/Capture/DesktopCompanionOwnerSocket.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         #expect(source.contains("chmod"))
         #expect(source.contains("0o600"))
@@ -262,10 +260,8 @@ struct DesktopOwnerSocketStillFetchTests {
     }
 
     @Test func captureServiceFencesStayCaptureOnly() throws {
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "OppiDesktopCompanion/ScreenCaptureKitDesktopCaptureService.swift")
+        let sourceURL = appleClientRoot()
+            .appending(path: "OppiMac/Capture/ScreenCaptureKitDesktopCaptureService.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         #expect(source.contains("SCScreenshotManager.captureImage"))
         #expect(!source.contains("fileURL"))

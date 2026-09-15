@@ -19,6 +19,7 @@ struct OppiMacApp: App {
     @State private var workspaceStore = MacWorkspaceSnapshotStore()
     @State private var showOnboarding = false
     @State private var pendingSessionDeepLinkURL: URL?
+    @State private var captureRuntime = MacCaptureRuntime()
 
     init() {
         updaterController = SPUStandardUpdaterController(
@@ -82,7 +83,13 @@ struct OppiMacApp: App {
         .commands {
             MacSessionCommands()
             MacSessionPaneCommandMenu()
+            DesktopCaptureCommands(session: captureRuntime.session)
         }
+
+        Window("Capture", id: MacCaptureRuntime.windowID) {
+            DesktopCaptureView(session: captureRuntime.session)
+        }
+        .defaultLaunchBehavior(.suppressed)
 
         Settings {
             AppSettingsView(

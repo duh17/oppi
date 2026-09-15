@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import Testing
-@testable import OppiDesktopCompanion
+@testable import Oppi
 
 @Suite("DesktopCaptureSession")
 @MainActor
@@ -184,19 +184,15 @@ struct DesktopCaptureSessionTests {
     }
 
     @Test func screenshotManagerIsOneShotInMemoryWithoutDiskOrTCCPrompt() throws {
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "OppiDesktopCompanion/ScreenCaptureKitDesktopCaptureService.swift")
+        let sourceURL = appleClientRoot()
+            .appending(path: "OppiMac/Capture/ScreenCaptureKitDesktopCaptureService.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         #expect(source.contains("SCScreenshotManager.captureImage"))
         #expect(!source.contains("fileURL"))
         #expect(!source.contains("CGRequestScreenCaptureAccess"))
         #expect(!source.contains("com.apple.developer.persistent-content-capture"))
-        let entitlementsURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "OppiDesktopCompanion/OppiDesktopCompanion.entitlements")
+        let entitlementsURL = appleClientRoot()
+            .appending(path: "OppiMac/OppiMac.entitlements")
         let entitlements = try String(contentsOf: entitlementsURL, encoding: .utf8)
         #expect(!entitlements.contains("com.apple.developer.persistent-content-capture"))
     }

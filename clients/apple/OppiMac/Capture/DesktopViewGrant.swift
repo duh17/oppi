@@ -18,7 +18,7 @@ enum DesktopViewGrantClaimFailure: Error, Equatable, Sendable {
     case notBound
 }
 
-/// Companion-owned expiring view grant. One active grant. Fetch never creates one.
+/// OppiMac-owned expiring view grant. One active grant. Fetch never creates one.
 final class DesktopViewGrantGate: @unchecked Sendable {
     private let lock = NSLock()
     private let clock: @Sendable () -> Date

@@ -1,23 +1,12 @@
 import AppKit
 import OSLog
-import SwiftUI
 
-@main
-struct OppiDesktopCompanionApp: App {
-    @State private var runtime = CompanionRuntime()
-
-    var body: some Scene {
-        Window("Oppi Desktop Companion", id: "main") {
-            DesktopCaptureView(session: runtime.session)
-        }
-        .commands {
-            DesktopCaptureCommands(session: runtime.session)
-        }
-    }
-}
-
+/// In-process ScreenCaptureKit + owner-socket still fetch.
+/// Screen Recording TCC belongs to Oppi (`dev.chenda.OppiMac`), not a companion app.
 @MainActor
-private final class CompanionRuntime {
+final class MacCaptureRuntime {
+    static let windowID = "capture"
+
     let session: DesktopCaptureSession
     private let ownerSocket: DesktopCompanionOwnerSocket?
 
@@ -46,7 +35,7 @@ private final class CompanionRuntime {
         } catch {
             ownerSocket = nil
             Logger(
-                subsystem: Bundle.main.bundleIdentifier ?? "OppiDesktopCompanion",
+                subsystem: Bundle.main.bundleIdentifier ?? "dev.chenda.OppiMac",
                 category: "OwnerSocket"
             ).error("Owner socket failed to start: \(error.localizedDescription, privacy: .public)")
         }

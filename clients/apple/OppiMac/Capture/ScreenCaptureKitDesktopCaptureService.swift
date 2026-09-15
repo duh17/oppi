@@ -7,7 +7,7 @@ import OSLog
 import ScreenCaptureKit
 
 private let logger = Logger(
-    subsystem: Bundle.main.bundleIdentifier ?? "OppiDesktopCompanion",
+    subsystem: Bundle.main.bundleIdentifier ?? "dev.chenda.OppiMac",
     category: "ScreenCapture"
 )
 
@@ -322,7 +322,7 @@ final class DesktopSCStreamPreviewProducer: NSObject, SCStreamOutput, SCStreamDe
     private let surface: CaptureSurface
     private let filter: SCContentFilter
     private let configuration: SCStreamConfiguration
-    private let captureQueue = DispatchQueue(label: "dev.chenda.OppiDesktopCompanion.local-preview")
+    private let captureQueue = DispatchQueue(label: "dev.chenda.OppiMac.local-preview")
     private let confirmStart: @Sendable () -> Void
     private let fail: @Sendable (DesktopCaptureFailure) -> Void
     private let stopped: @Sendable (DesktopCaptureFailure?) -> Void

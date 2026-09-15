@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import OppiDesktopCompanion
+@testable import Oppi
 
 @Suite("DesktopLatestFrameMailbox")
 struct DesktopLatestFrameMailboxTests {

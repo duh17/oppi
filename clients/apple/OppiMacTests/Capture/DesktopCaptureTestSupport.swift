@@ -1,6 +1,13 @@
 import CoreGraphics
 import Foundation
-@testable import OppiDesktopCompanion
+@testable import Oppi
+
+func appleClientRoot() -> URL {
+    URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+}
 
 @MainActor
 func makeHarness() -> (DesktopCaptureSession, FakeDesktopCaptureService) {

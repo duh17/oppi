@@ -188,7 +188,7 @@ final class DesktopCaptureSession {
         viewGrant = nil
     }
 
-    /// Companion terminate: stop preview and drop the view grant. Does not create grants.
+    /// Oppi terminate: stop preview and drop the view grant. Does not create grants.
     func prepareForTermination() {
         stopLocalPreview()
         revokeViewGrant()

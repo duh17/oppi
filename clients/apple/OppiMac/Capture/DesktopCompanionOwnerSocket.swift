@@ -2,8 +2,9 @@ import Darwin
 import Foundation
 import OSLog
 
-/// Companion-owned Unix-domain still fetch. Not the Oppi server local API socket.
+/// OppiMac-owned Unix-domain still fetch. Not the Oppi server local API socket.
 /// Fetch never starts a capture. Sharing stays default-off on the session gate.
+/// Socket path stays `companion.sock` so Node remains a fetch client.
 final class DesktopCompanionOwnerSocket: @unchecked Sendable {
     static let processInstanceToken = UUID().uuidString
 
@@ -18,9 +19,9 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
 
     private let peerAuthorizer: any DesktopOwnerSocketPeerAuthorizing
     private let stateLock = NSLock()
-    private let acceptQueue = DispatchQueue(label: "dev.chenda.OppiDesktopCompanion.owner-socket")
+    private let acceptQueue = DispatchQueue(label: "dev.chenda.OppiMac.owner-socket")
     private let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "OppiDesktopCompanion",
+        subsystem: Bundle.main.bundleIdentifier ?? "dev.chenda.OppiMac",
         category: "OwnerSocket"
     )
 
@@ -573,6 +574,7 @@ enum DesktopCompanionOwnerSocketPath {
     static let socketName = "companion.sock"
 
     static func defaultRuntimeRoot() -> URL {
+        // Node still fetches `companion.sock` under this Application Support name.
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("OppiDesktopCompanion", isDirectory: true)
     }

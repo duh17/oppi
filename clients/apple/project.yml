@@ -581,6 +581,7 @@ targets:
       - path: Oppi/Core/Theme/ThemeCatalog.swift
       - path: Oppi/Core/Theme/ThemeStore.swift
     dependencies:
+      - sdk: ScreenCaptureKit.framework
       - package: Sparkle
       - package: swift-cmark
         product: cmark-gfm
@@ -652,54 +653,6 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
 
-  OppiDesktopCompanionTests:
-    type: bundle.unit-test
-    platform: macOS
-    deploymentTarget: "26.0"
-    sources:
-      - path: OppiDesktopCompanionTests
-        type: group
-    dependencies:
-      - target: OppiDesktopCompanion
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiDesktopCompanionTests
-        CODE_SIGN_IDENTITY: ""
-        CODE_SIGNING_ALLOWED: "NO"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/OppiDesktopCompanion.app/Contents/MacOS/OppiDesktopCompanion"
-        BUNDLE_LOADER: "$(TEST_HOST)"
-
-  OppiDesktopCompanion:
-    type: application
-    platform: macOS
-    deploymentTarget: "26.0"
-    sources:
-      - path: OppiDesktopCompanion
-        type: group
-    dependencies:
-      - sdk: ScreenCaptureKit.framework
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiDesktopCompanion
-        PRODUCT_NAME: OppiDesktopCompanion
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: 1
-        CODE_SIGN_IDENTITY: "Developer ID Application"
-        CODE_SIGN_STYLE: Manual
-        DEVELOPMENT_TEAM: AZAQMY4SPZ
-        ENABLE_HARDENED_RUNTIME: true
-        CODE_SIGN_ENTITLEMENTS: OppiDesktopCompanion/OppiDesktopCompanion.entitlements
-      configs:
-        Debug:
-          CODE_SIGN_IDENTITY: ""
-          CODE_SIGNING_ALLOWED: "NO"
-          ENABLE_HARDENED_RUNTIME: false
-    info:
-      path: OppiDesktopCompanion/Resources/Info.plist
-      properties:
-        CFBundleDisplayName: Oppi Desktop Companion
-        LSApplicationCategoryType: public.app-category.utilities
-
 schemes:
   OppiUnitTests:
     build:
@@ -744,13 +697,3 @@ schemes:
           parallelizable: true
           randomExecutionOrder: true
 
-  OppiDesktopCompanion:
-    build:
-      targets:
-        OppiDesktopCompanion: all
-        OppiDesktopCompanionTests: [test]
-    test:
-      targets:
-        - name: OppiDesktopCompanionTests
-          parallelizable: true
-          randomExecutionOrder: true
