@@ -66,6 +66,8 @@ final class DesktopCaptureSession {
     private var previewGeneration: UInt64 = 0
     private var previewStartConfirmed = false
     private var stoppingGeneration: UInt64?
+    /// Terminal state to apply when the in-flight stop completes (or a racing fail arrives).
+    private var pendingTerminalPreviewState: DesktopLocalPreviewState?
 
     init(
         service: any DesktopCaptureServicing,
@@ -145,13 +147,7 @@ final class DesktopCaptureSession {
 
     func stopLocalPreview() {
         guard canStopLocalPreview else { return }
-        let generation = previewGeneration
-        previewGeneration += 1
-        previewStartConfirmed = false
-        previewFrame = nil
-        stoppingGeneration = generation
-        previewState = .stopping
-        service.stopLocalPreview(generation: generation)
+        beginStopping(pending: .stopped)
     }
 
     func clear() {
@@ -233,19 +229,63 @@ final class DesktopCaptureSession {
     }
 
     private func haltLocalPreview(to newState: DesktopLocalPreviewState) {
-        let shouldStop =
-            previewState == .starting
-            || previewState == .live
-            || previewState == .stopping
-        if shouldStop {
-            let generation = stoppingGeneration ?? previewGeneration
-            previewGeneration += 1
-            service.stopLocalPreview(generation: generation)
+        switch previewState {
+        case .starting, .live, .stopping:
+            beginStopping(pending: newState)
+        case .stopped, .unavailable:
+            previewStartConfirmed = false
+            previewFrame = nil
+            stoppingGeneration = nil
+            pendingTerminalPreviewState = nil
+            previewState = newState
         }
+    }
+
+    /// Stay in `.stopping` until stop completes so Clear/reselect cannot start a new stream.
+    private func beginStopping(pending terminal: DesktopLocalPreviewState) {
+        if previewState == .stopping {
+            pendingTerminalPreviewState = mergedTerminalPreviewState(
+                pendingTerminalPreviewState,
+                terminal
+            )
+            previewStartConfirmed = false
+            previewFrame = nil
+            return
+        }
+        let generation = previewGeneration
+        previewGeneration += 1
         previewStartConfirmed = false
         previewFrame = nil
+        stoppingGeneration = generation
+        pendingTerminalPreviewState = terminal
+        previewState = .stopping
+        service.stopLocalPreview(generation: generation)
+    }
+
+    private func mergedTerminalPreviewState(
+        _ current: DesktopLocalPreviewState?,
+        _ next: DesktopLocalPreviewState
+    ) -> DesktopLocalPreviewState {
+        if current == .unavailable || next == .unavailable {
+            return .unavailable
+        }
+        return next
+    }
+
+    private func applyPreviewTerminal(failure: DesktopCaptureFailure?) {
+        let pending = pendingTerminalPreviewState
+        pendingTerminalPreviewState = nil
         stoppingGeneration = nil
-        previewState = newState
+        previewStartConfirmed = false
+        previewFrame = nil
+        if failure == .unavailable || pending == .unavailable {
+            previewState = .unavailable
+        } else {
+            previewState = pending ?? .stopped
+        }
+        if let failure {
+            self.failure = failure
+        }
     }
 
     private func promotePreviewIfReady() {
@@ -343,23 +383,24 @@ extension DesktopCaptureSession: DesktopLocalPreviewHandling {
 
     func localPreviewDidStop(generation: UInt64, failure: DesktopCaptureFailure?) {
         guard previewState == .stopping, stoppingGeneration == generation else { return }
-        stoppingGeneration = nil
-        previewStartConfirmed = false
-        previewFrame = nil
-        previewState = .stopped
-        if let failure {
-            self.failure = failure
-        }
+        applyPreviewTerminal(failure: failure)
     }
 
     func localPreviewDidFail(generation: UInt64, failure: DesktopCaptureFailure) {
+        // Concurrent didStopWithError can enqueue fail() after stop advanced generation.
+        // Accept that terminal fail once so the session cannot stay stuck in `.stopping`.
+        if previewState == .stopping, stoppingGeneration == generation {
+            applyPreviewTerminal(failure: failure)
+            return
+        }
         guard generation == previewGeneration else { return }
         guard previewState == .starting || previewState == .live else { return }
         previewGeneration += 1
         previewStartConfirmed = false
         previewFrame = nil
         stoppingGeneration = nil
-        previewState = .stopped
+        pendingTerminalPreviewState = nil
+        previewState = failure == .unavailable ? .unavailable : .stopped
         self.failure = failure
         service.stopLocalPreview(generation: generation)
     }

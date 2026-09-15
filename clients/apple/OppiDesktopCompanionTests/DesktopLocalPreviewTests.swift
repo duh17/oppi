@@ -156,7 +156,7 @@ struct DesktopLocalPreviewTests {
         session.clear()
         fake.deliverPreviewFrame(makePixel(green: 1))
 
-        #expect(session.previewState == .stopped)
+        #expect(session.previewState == .stopping)
         #expect(session.previewFrame == nil)
         #expect(!session.isLivePreview)
         #expect(session.still == nil)
@@ -164,6 +164,10 @@ struct DesktopLocalPreviewTests {
         #expect(session.shareGate.current() == nil)
         #expect(fake.previewStopCount == 1)
         #expect(fake.captureCount == captures)
+
+        fake.completePreviewStop()
+        #expect(session.previewState == .stopped)
+        #expect(session.previewFrame == nil)
     }
 
     @Test func reselectionStopsPreviewAndRevokesStillShare() throws {
@@ -183,12 +187,16 @@ struct DesktopLocalPreviewTests {
         fake.deliverPreviewFrame(makePixel(red: 1), generation: staleGeneration)
 
         #expect(session.selection == second)
-        #expect(session.previewState == .stopped)
+        #expect(session.previewState == .stopping)
         #expect(session.previewFrame == nil)
         #expect(session.still == nil)
         #expect(!session.isLocalShareEnabled)
         #expect(session.shareGate.current() == nil)
         #expect(fake.previewStopCount == 1)
+
+        fake.completePreviewStop()
+        #expect(session.previewState == .stopped)
+        #expect(session.previewFrame == nil)
     }
 
     @Test func selectedWindowClosureStopsPreviewAndDoesNotSubstitute() throws {
@@ -208,12 +216,17 @@ struct DesktopLocalPreviewTests {
 
         #expect(session.selection == nil)
         #expect(session.selection != other)
-        #expect(session.previewState == .unavailable)
-        #expect(session.previewStatusText == DesktopCaptureCopy.previewUnavailable)
+        #expect(session.previewState == .stopping)
         #expect(session.previewFrame == nil)
         #expect(!session.isLivePreview)
         #expect(session.failure == .unavailable || session.failure == .surfaceSubstitutionRejected)
         #expect(fake.previewStopCount == 1)
+        #expect(!session.canStartLocalPreview)
+
+        fake.completePreviewStop()
+        #expect(session.previewState == .unavailable)
+        #expect(session.previewStatusText == DesktopCaptureCopy.previewUnavailable)
+        #expect(session.previewFrame == nil)
         #expect(!session.canStartLocalPreview)
     }
 
@@ -319,8 +332,12 @@ struct DesktopLocalPreviewTests {
         #expect(session.previewFrame == nil)
         #expect(!session.isLivePreview)
         #expect(session.failure == .surfaceSubstitutionRejected)
-        #expect(session.previewState == .stopped)
+        #expect(session.previewState == .stopping)
         #expect(fake.previewStopCount == 1)
+
+        fake.completePreviewStop()
+        #expect(session.previewState == .stopped)
+        #expect(session.previewFrame == nil)
     }
 
     @Test func identicalFramesKeepTheStreamLive() {
@@ -369,6 +386,106 @@ struct DesktopLocalPreviewTests {
         #expect(!session.isLivePreview)
     }
 
+    @Test func failureRacingExplicitStopLeavesPreviewTerminalOnce() throws {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 121, title: "Notes")
+        pickWindow(session, fake, surface)
+        session.startLocalPreview()
+        fake.confirmPreviewStart()
+        fake.deliverPreviewFrame(makePixel())
+        let stoppingGeneration = try #require(fake.lastPreviewGeneration)
+
+        session.stopLocalPreview()
+        #expect(session.previewState == .stopping)
+        #expect(!session.canCapture)
+        #expect(!session.canStartLocalPreview)
+
+        fake.failPreview(.captureFailed, generation: stoppingGeneration)
+        #expect(session.previewState == .stopped)
+        #expect(session.previewStatusText == DesktopCaptureCopy.previewStopped)
+        #expect(session.failure == .captureFailed)
+        #expect(!session.isLivePreview)
+        #expect(session.previewLabel == nil)
+        #expect(session.canCapture)
+        #expect(session.canStartLocalPreview)
+
+        fake.completePreviewStop(failure: .permissionDenied, generation: stoppingGeneration)
+        #expect(session.previewState == .stopped)
+        #expect(session.failure == .captureFailed)
+        #expect(fake.previewStartCount == 1)
+    }
+
+    @Test func delayedStopBlocksRestartUntilProducerCompletes() throws {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 122, title: "Mail")
+        pickWindow(session, fake, surface)
+        session.startLocalPreview()
+        fake.confirmPreviewStart()
+        fake.deliverPreviewFrame(makePixel(red: 1))
+        #expect(session.previewState == .live)
+        #expect(fake.previewStartCount == 1)
+
+        session.clear()
+        #expect(session.previewState == .stopping)
+        #expect(session.previewStatusText == DesktopCaptureCopy.previewStopping)
+        #expect(!session.canStartLocalPreview)
+        #expect(!session.canCapture)
+        #expect(session.still == nil)
+
+        session.startLocalPreview()
+        session.captureOnce()
+        #expect(fake.previewStartCount == 1)
+        #expect(fake.captureCount == 0)
+        #expect(session.previewState == .stopping)
+
+        fake.completePreviewStop()
+        #expect(session.previewState == .stopped)
+        #expect(session.canStartLocalPreview)
+        #expect(session.canCapture)
+
+        session.startLocalPreview()
+        #expect(fake.previewStartCount == 2)
+        #expect(session.previewState == .starting)
+    }
+
+    @Test func unavailableStartupFailureMapsToUnavailableWithoutLiveCaption() {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 123, title: "Calendar")
+        pickWindow(session, fake, surface)
+        session.startLocalPreview()
+        fake.failPreview(.unavailable)
+        fake.deliverPreviewFrame(makePixel())
+        fake.confirmPreviewStart()
+
+        #expect(session.previewState == .unavailable)
+        #expect(session.previewStatusText == DesktopCaptureCopy.previewUnavailable)
+        #expect(session.failure == .unavailable)
+        #expect(session.previewFrame == nil)
+        #expect(!session.isLivePreview)
+        #expect(session.previewLabel == nil)
+        #expect(fake.previewStartCount == 1)
+    }
+
+    @Test func unavailableFailureRacingStopMapsToUnavailable() throws {
+        let (session, fake) = makeHarness()
+        let surface = makeSurface(windowID: 124, title: "Safari")
+        pickWindow(session, fake, surface)
+        session.startLocalPreview()
+        fake.confirmPreviewStart()
+        fake.deliverPreviewFrame(makePixel())
+        let stoppingGeneration = try #require(fake.lastPreviewGeneration)
+
+        session.stopLocalPreview()
+        fake.failPreview(.unavailable, generation: stoppingGeneration)
+
+        #expect(session.previewState == .unavailable)
+        #expect(session.previewStatusText == DesktopCaptureCopy.previewUnavailable)
+        #expect(session.failure == .unavailable)
+        #expect(!session.isLivePreview)
+        #expect(session.previewLabel == nil)
+        #expect(session.previewFrame == nil)
+    }
+
     @Test func debugTestsInjectAFakeCaptureProducer() throws {
         let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let files = try FileManager.default.contentsOfDirectory(
@@ -394,6 +511,9 @@ struct DesktopLocalPreviewTests {
         #expect(source.contains("SCScreenshotManager.captureImage"))
         #expect(source.contains("DesktopLatestFrameMailbox"))
         #expect(source.contains("startCapture"))
+        #expect(source.contains("retiringProducer"))
+        #expect(source.contains("error.map(ScreenCaptureKitDesktopCaptureService.mapError)"))
+        #expect(source.contains("MainActor.assumeIsolated"))
         #expect(!source.contains("fileURL"))
         #expect(!source.contains("CGRequestScreenCaptureAccess"))
         #expect(!source.contains("com.apple.developer.persistent-content-capture"))

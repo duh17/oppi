@@ -23,6 +23,8 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
     private var selectedSurface: CaptureSurface?
     private var didAddObserver = false
     private var previewProducer: DesktopSCStreamPreviewProducer?
+    /// Retained until stopCapture completes so a new SCStream cannot overlap a retiring one.
+    private var retiringProducer: DesktopSCStreamPreviewProducer?
 
     func presentWindowPicker() {
         let picker = SCContentSharingPicker.shared
@@ -107,7 +109,10 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
         generation: UInt64,
         handler: any DesktopLocalPreviewHandling
     ) {
-        stopPreviewProducer()
+        guard previewProducer == nil, retiringProducer == nil else {
+            handler.localPreviewDidFail(generation: generation, failure: .captureFailed)
+            return
+        }
 
         guard
             let filter = selectedFilter,
@@ -146,13 +151,14 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
                 callbacks.surfaceUnavailable(unavailableSurface)
             }
         )
+        callbacks.producer = producer
         previewProducer = producer
         producer.start()
     }
 
     func stopLocalPreview(generation: UInt64) {
         _ = generation
-        stopPreviewProducer()
+        retirePreviewProducer()
     }
 
     func currentAvailability() -> CaptureAvailability {
@@ -162,10 +168,20 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
         return .permissionDenied
     }
 
-    private func stopPreviewProducer() {
-        let producer = previewProducer
+    private func retirePreviewProducer() {
+        guard let producer = previewProducer else { return }
         previewProducer = nil
-        producer?.invalidateAndStop()
+        retiringProducer = producer
+        producer.invalidateAndStop()
+    }
+
+    fileprivate func previewProducerDidFinish(_ producer: DesktopSCStreamPreviewProducer) {
+        if previewProducer === producer {
+            previewProducer = nil
+        }
+        if retiringProducer === producer {
+            retiringProducer = nil
+        }
     }
 
     private static func makeStreamConfiguration(filter: SCContentFilter) -> SCStreamConfiguration {
@@ -234,6 +250,7 @@ private final class DesktopLocalPreviewCallbackBridge: @unchecked Sendable {
     let surfaceID: CaptureSurfaceID
     nonisolated(unsafe) weak var handler: (any DesktopLocalPreviewHandling)?
     nonisolated(unsafe) weak var service: ScreenCaptureKitDesktopCaptureService?
+    nonisolated(unsafe) weak var producer: DesktopSCStreamPreviewProducer?
 
     init(
         generation: UInt64,
@@ -273,14 +290,22 @@ private final class DesktopLocalPreviewCallbackBridge: @unchecked Sendable {
 
     func fail(_ failure: DesktopCaptureFailure) {
         let generation = self.generation
+        let producer = self.producer
         Task { @MainActor in
+            if let producer {
+                self.service?.previewProducerDidFinish(producer)
+            }
             self.handler?.localPreviewDidFail(generation: generation, failure: failure)
         }
     }
 
     func stopped(_ failure: DesktopCaptureFailure?) {
         let generation = self.generation
+        let producer = self.producer
         Task { @MainActor in
+            if let producer {
+                self.service?.previewProducerDidFinish(producer)
+            }
             self.handler?.localPreviewDidStop(generation: generation, failure: failure)
         }
     }
@@ -388,8 +413,8 @@ final class DesktopSCStreamPreviewProducer: NSObject, SCStreamOutput, SCStreamDe
             stopped(nil)
             return
         }
-        stream.stopCapture { [weak self] _ in
-            self?.stopped(nil)
+        stream.stopCapture { [weak self] error in
+            self?.stopped(error.map(ScreenCaptureKitDesktopCaptureService.mapError))
         }
     }
 
@@ -411,9 +436,9 @@ final class DesktopSCStreamPreviewProducer: NSObject, SCStreamOutput, SCStreamDe
             lock.unlock()
             mailbox.close()
             if let stream {
-                stream.stopCapture { [weak self] _ in
+                stream.stopCapture { [weak self] error in
                     if alreadyStopping { return }
-                    self?.stopped(nil)
+                    self?.stopped(error.map(ScreenCaptureKitDesktopCaptureService.mapError))
                 }
             } else if !alreadyStopping {
                 stopped(nil)
@@ -457,7 +482,7 @@ final class DesktopSCStreamPreviewProducer: NSObject, SCStreamOutput, SCStreamDe
             lock.unlock()
             mailbox.close()
             if !alreadyStopping {
-                stopped(nil)
+                stopped(ScreenCaptureKitDesktopCaptureService.mapError(error))
             }
             return
         }
@@ -471,9 +496,8 @@ final class DesktopSCStreamPreviewProducer: NSObject, SCStreamOutput, SCStreamDe
         let failure = ScreenCaptureKitDesktopCaptureService.mapError(error)
         if failure == .unavailable {
             surfaceUnavailable(surface)
-        } else {
-            fail(failure)
         }
+        fail(failure)
     }
 
     private func makeCGImage(from sampleBuffer: CMSampleBuffer) -> CGImage? {
