@@ -1438,6 +1438,68 @@ describe("oppi mirror caller session identity", () => {
   });
 });
 
+describe("oppi mirror terminal footer indicator", () => {
+  it("puts compact mirror state in footer status instead of a widget row", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      const setStatus = ctx.ui.setStatus;
+      const setWidget = ctx.ui.setWidget;
+      await startSession(pi, ctx);
+
+      await pi.commands.get("oppi-mirror")?.handler("start", ctx);
+      expect(setStatus).toHaveBeenCalledWith("oppi-mirror", "connecting");
+
+      const socket = wsMock.instances.at(-1);
+      if (!socket) throw new Error("Expected mirror websocket");
+      socket.open();
+      socket.receive(
+        JSON.stringify({
+          type: "hello_ack",
+          protocolVersion: 2,
+          sessionId: "s1",
+          workspaceId: "w1",
+        }),
+      );
+      await Promise.resolve();
+
+      expect(setStatus).toHaveBeenCalledWith("oppi-mirror", "live");
+      expect(
+        setWidget.mock.calls.filter((call) => call[0] === "oppi-mirror"),
+      ).toEqual([]);
+      expect(
+        sentExtensionUIRequests(socket).filter(
+          (request) =>
+            request.statusKey === "oppi-mirror" ||
+            request.widgetKey === "oppi-mirror",
+        ),
+      ).toEqual([]);
+    });
+  });
+
+  it("clears footer status when the mirror stops", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext();
+      const setStatus = ctx.ui.setStatus;
+      await startSession(pi, ctx);
+      await startMirror(pi, ctx);
+
+      await pi.commands.get("oppi-mirror")?.handler("stop", ctx);
+
+      expect(setStatus).toHaveBeenCalledWith("oppi-mirror", undefined);
+    });
+  });
+});
+
 describe("oppi mirror extension UI replay", () => {
   it("does not initialize mirror runtime side effects for managed RPC sessions", async () => {
     vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");

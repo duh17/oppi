@@ -2133,7 +2133,6 @@ type MirrorIndicatorMode =
   | "reconnecting"
   | "blocked"
   | "error";
-type MirrorIndicatorColor = "success" | "error" | "warning" | "muted";
 
 type MirrorExtensionUIMethod =
   | "ask"
@@ -2934,9 +2933,6 @@ async function createTuiMirrorRuntime(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let indicatorMode: MirrorIndicatorMode | null = null;
-  let indicatorLabel: string | undefined;
-  let indicatorWidgetMounted = false;
-  let requestIndicatorRender: (() => void) | null = null;
   let manualStop = false;
   const bridgeId = `pi-tui-${process.pid}`;
   let connectedSessionId: string | null = null;
@@ -3095,58 +3091,10 @@ async function createTuiMirrorRuntime(
     writeMirrorLog("warn", "callback_error", { scope, error });
   }
 
-  function truncatePlain(text: string, width: number): string {
-    if (width <= 0) return "";
-    return text.length > width ? text.slice(0, width) : text;
-  }
-
-  function indicatorColor(): MirrorIndicatorColor {
-    if (indicatorMode === "live") return "success";
-    if (indicatorMode === "error") return "error";
-    if (indicatorMode === "reconnecting" || indicatorMode === "blocked") {
-      return "warning";
-    }
-    return "muted";
-  }
-
-  function mountIndicatorWidget(ctx: ExtensionContext) {
-    ctx.ui.setWidget(
-      "oppi-mirror",
-      (tui, theme) => {
-        requestIndicatorRender = () => tui.requestRender();
-        return {
-          render(width: number): string[] {
-            if (!indicatorLabel) return [];
-            const maxTextWidth = Math.max(0, width - 2);
-            const text = truncatePlain(indicatorLabel, maxTextWidth);
-            const visibleWidth = text.length === 0 ? 1 : text.length + 2;
-            const padding = " ".repeat(Math.max(0, width - visibleWidth));
-            const dot = theme.fg(indicatorColor(), "●");
-            return [`${padding}${text.length === 0 ? dot : `${dot} ${text}`}`];
-          },
-          invalidate(): void {},
-        };
-      },
-      { placement: "belowEditor" },
-    );
-    indicatorWidgetMounted = true;
-  }
-
   function safeSetIndicator(ctx: ExtensionContext, label: string | undefined) {
-    indicatorLabel = label;
     try {
       withSuppressedUIForwarding(() => {
-        if (!label) {
-          ctx.ui.setWidget("oppi-mirror", undefined);
-          indicatorWidgetMounted = false;
-          requestIndicatorRender = null;
-          return;
-        }
-        if (!indicatorWidgetMounted) {
-          mountIndicatorWidget(ctx);
-          return;
-        }
-        requestIndicatorRender?.();
+        ctx.ui.setStatus("oppi-mirror", label);
       });
     } catch (error) {
       logCallbackError("failed to update status", error);
@@ -3739,14 +3687,14 @@ async function createTuiMirrorRuntime(
     const queued = pendingCount > 0 ? ` q:${pendingCount}` : "";
     const label =
       indicatorMode === "live"
-        ? `Oppi mirroring live${queued}`
+        ? `live${queued}`
         : indicatorMode === "connecting"
-          ? "Oppi mirror connecting"
+          ? "connecting"
           : indicatorMode === "reconnecting"
-            ? "Oppi mirror reconnecting"
+            ? "reconnecting"
             : indicatorMode === "blocked"
-              ? "Oppi mirror waiting"
-              : "Oppi mirror offline";
+              ? "waiting"
+              : "offline";
     safeSetIndicator(ctx, label);
   }
 
