@@ -349,7 +349,7 @@ extension ChatTimelineCollectionHost.Controller {
 
         let maxBubbleHeight = ThinkingRowHeightPolicy.defaultMaxBubbleHeight
 
-        return ThinkingTimelineRowConfiguration(
+        var configuration = ThinkingTimelineRowConfiguration(
             isDone: isDone,
             previewText: preview,
             fullText: toolOutputStore?.fullOutput(for: itemID),
@@ -358,6 +358,8 @@ extension ChatTimelineCollectionHost.Controller {
             sourceLabel: currentExtensionHiddenThinkingLabel,
             interactionContext: interactionContext
         )
+        configuration.openFullScreen = onOpenChatReader
+        return configuration
     }
 
     func audioRowConfiguration(item: ChatItem) -> AudioClipTimelineRowConfiguration? {
@@ -623,6 +625,9 @@ extension ChatTimelineCollectionHost.Controller {
             configuration.openCurrentFile = {
                 onOpenCurrentFile(intent.path)
             }
+        }
+        if let onOpenChatReader {
+            configuration.openFullScreen = onOpenChatReader
         }
         configuration.serverID = serverId
         configuration.workspaceID = workspaceId

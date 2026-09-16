@@ -793,6 +793,19 @@ final class NativeExpandedVideoAttachmentView: UIView {
     }
 
     private func presentVideo(_ source: AuthenticatedMediaSource, startedNs: UInt64) {
+        if ChatReaderOpenLookup.open(
+            .video(
+                ChatReaderVideoContent(
+                    source: source,
+                    telemetrySource: "tool_video_attachment",
+                    telemetrySessionId: sessionId,
+                    startedNs: startedNs
+                )
+            ),
+            from: self
+        ) {
+            return
+        }
         guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
         SystemVideoPlaybackPresenter.present(
             source: source,
@@ -1374,13 +1387,22 @@ final class NativeExpandedInlineImageView: UIView {
 
     @objc private func handleTap() {
         guard let image = imageView.image else { return }
+        if ChatReaderOpenLookup.open(.image(image), from: self) {
+            return
+        }
         FullScreenImageViewController.present(image: image)
     }
 
     @objc private func handleAnimatedImageTap() {
         guard let data = previewData,
-              let mimeType = previewMimeType,
-              let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
+              let mimeType = previewMimeType else { return }
+        if ChatReaderOpenLookup.open(
+            .imageData(data, mimeType: mimeType),
+            from: self
+        ) {
+            return
+        }
+        guard let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self) else { return }
 
         FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType, from: presenter)
     }

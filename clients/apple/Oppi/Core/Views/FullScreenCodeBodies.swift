@@ -4207,6 +4207,12 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
         }
 
         let action = linkAction(for: url)
+        if ChatReaderLinkIntercept.canHandle(from: textView) {
+            return UIAction { [weak textView] _ in
+                guard let textView else { return }
+                _ = ChatReaderLinkIntercept.handle(action, from: textView)
+            }
+        }
         return MarkdownLinkInteractionSupport.primaryAction(
             for: action,
             defaultAction: defaultAction

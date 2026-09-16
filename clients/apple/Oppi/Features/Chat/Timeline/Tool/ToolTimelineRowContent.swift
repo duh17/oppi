@@ -62,6 +62,7 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
     var currentFileOpenIntent: ToolCurrentFileOpenIntent? = nil
     var openCurrentFile: (() -> Void)? = nil
+    var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         ToolTimelineRowContentView(configuration: self)
@@ -2303,24 +2304,31 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
 
     @discardableResult
     func presentCollapsedImagePreviewIfAvailable() -> Bool {
+        let image: UIImage?
+        if let preview = imagePreviewImageView.image {
+            image = preview
+        } else if let base64 = currentConfiguration.collapsedImageBase64,
+                  !base64.isEmpty {
+            image = ImageDecodeCache.decode(base64: base64, maxPixelSize: 1600)
+        } else {
+            image = nil
+        }
+        guard let image else { return false }
+
+        if let openFullScreen = currentConfiguration.openFullScreen {
+            openFullScreen(.image(image))
+            return true
+        }
+        if ChatReaderOpenLookup.open(.image(image), from: self) {
+            return true
+        }
+
         // Requires a presenter in the responder chain. UI test harnesses that
         // attach collection views directly to windows may intentionally skip
         // modal presentation and fall back to default row expansion behavior.
         guard ToolTimelineRowPresentationHelpers.nearestViewController(from: self) != nil else {
             return false
         }
-
-        if let image = imagePreviewImageView.image {
-            ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
-            return true
-        }
-
-        guard let base64 = currentConfiguration.collapsedImageBase64,
-              !base64.isEmpty,
-              let image = ImageDecodeCache.decode(base64: base64, maxPixelSize: 1600) else {
-            return false
-        }
-
         ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
         return true
     }
@@ -2445,11 +2453,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard let content = fullScreenContent else {
             return
         }
-
-        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
-            content,
-            from: self,
-            reviewCommentSelectionContext: reviewCommentSelectionContext
+        currentConfiguration.openFullScreen?(
+            ChatReaderPayload(
+                content: content,
+                reviewCommentSelectionContext: reviewCommentSelectionContext
+            )
         )
     }
 
@@ -2568,6 +2576,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             },
             onViewFullScreenImage: { [weak self] in
                 guard let self, let image = self.imagePreviewImageView.image else { return }
+                if let openFullScreen = self.currentConfiguration.openFullScreen {
+                    openFullScreen(.image(image))
+                    return
+                }
                 ToolTimelineRowPresentationHelpers.presentFullScreenImage(image, from: self)
             },
             onCopyImage: { [weak self] in

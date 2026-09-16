@@ -167,6 +167,18 @@ final class FullScreenCodeViewController: UIViewController {
         while let presented = presenter.presentedViewController {
             presenter = presented
         }
+        let reviewContext = reviewCommentSelectionContext
+            ?? ReviewCommentSelectionContext(
+                router: reviewCommentSelectionRouter,
+                sessionId: reviewCommentSessionId,
+                sourceLabel: reviewCommentSourceLabel
+            )
+        if ChatReaderOpenLookup.open(
+            .document(content: content, reviewCommentSelectionContext: reviewContext),
+            from: presenter
+        ) {
+            return
+        }
         // A Markdown reader may open one focused rendered visual above itself.
         // Every other viewer remains terminal so repeated taps cannot grow an
         // unbounded modal stack.
@@ -178,12 +190,7 @@ final class FullScreenCodeViewController: UIViewController {
 
         let controller = FullScreenCodeViewController(
             content: content,
-            reviewCommentSelectionContext: reviewCommentSelectionContext
-                ?? ReviewCommentSelectionContext(
-                    router: reviewCommentSelectionRouter,
-                    sessionId: reviewCommentSessionId,
-                    sourceLabel: reviewCommentSourceLabel
-                ),
+            reviewCommentSelectionContext: reviewContext,
             addToChatDestination: capturedAddToChatDestination(from: presenter)
         )
         FullScreenViewerPresentationPolicy.configureLargePresentation(

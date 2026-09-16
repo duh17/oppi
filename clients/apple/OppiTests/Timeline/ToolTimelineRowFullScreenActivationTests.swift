@@ -14,23 +14,21 @@ struct ToolTimelineRowFullScreenActivationTests {
     func bashOutputActivationOpensFullScreen() throws {
         let harness = makeHostHarness()
         let host = harness.host
-        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
-            copyCommandText: "echo hi",
-            copyOutputText: "hi",
-            isExpanded: true
-        ))
-
-        host.view.addSubview(view)
-        view.frame = host.view.bounds
-        host.view.layoutIfNeeded()
-
-        view.performOutputActivation()
-
-        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
-        #expect(presented.modalPresentationStyle == .pageSheet)
-
-        host.dismiss(animated: false)
+        let opened = try activateReader(
+            configuration: makeTimelineToolConfiguration(
+                expandedContent: .bash(command: "echo hi", output: "hi", unwrapped: true),
+                copyCommandText: "echo hi",
+                copyOutputText: "hi",
+                isExpanded: true
+            ),
+            host: host,
+            activate: { $0.performOutputActivation() }
+        )
+        #expect(host.presentedViewController == nil)
+        guard case .terminal = opened.payload.content else {
+            Issue.record("Expected terminal reader payload")
+            return
+        }
         harness.window.isHidden = true
     }
 
@@ -67,24 +65,24 @@ struct ToolTimelineRowFullScreenActivationTests {
     func expandedCodeActivationOpensFullScreen() throws {
         let harness = makeHostHarness()
         let host = harness.host
-        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .code(text: "struct App {}", language: .swift, startLine: 1, filePath: "App.swift"),
-            copyCommandText: "read App.swift",
-            copyOutputText: "struct App {}",
-            toolNamePrefix: "read",
-            isExpanded: true
-        ))
-
-        host.view.addSubview(view)
-        view.frame = host.view.bounds
-        host.view.layoutIfNeeded()
-
-        view.performExpandedActivation()
-
-        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
-        #expect(presented.modalPresentationStyle == .pageSheet)
-
-        host.dismiss(animated: false)
+        let opened = try activateReader(
+            configuration: makeTimelineToolConfiguration(
+                expandedContent: .code(text: "struct App {}", language: .swift, startLine: 1, filePath: "App.swift"),
+                copyCommandText: "read App.swift",
+                copyOutputText: "struct App {}",
+                toolNamePrefix: "read",
+                isExpanded: true
+            ),
+            host: host,
+            activate: { $0.performExpandedActivation() }
+        )
+        #expect(host.presentedViewController == nil)
+        guard case .code(let text, _, let filePath, _) = opened.payload.content else {
+            Issue.record("Expected code reader payload")
+            return
+        }
+        #expect(text.contains("struct App"))
+        #expect(filePath == "App.swift")
         harness.window.isHidden = true
     }
 
@@ -92,24 +90,117 @@ struct ToolTimelineRowFullScreenActivationTests {
     func expandedMarkdownActivationOpensFullScreen() throws {
         let harness = makeHostHarness()
         let host = harness.host
-        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .markdown(text: "# Header\n\nBody"),
-            copyOutputText: "# Header\n\nBody",
-            toolNamePrefix: "read",
-            isExpanded: true
-        ))
+        let opened = try activateReader(
+            configuration: makeTimelineToolConfiguration(
+                expandedContent: .markdown(text: "# Header\n\nBody"),
+                copyOutputText: "# Header\n\nBody",
+                toolNamePrefix: "read",
+                isExpanded: true
+            ),
+            host: host,
+            activate: { $0.performExpandedActivation() }
+        )
+        #expect(host.presentedViewController == nil)
+        guard case .markdown(let text, _, _) = opened.payload.content else {
+            Issue.record("Expected markdown reader payload")
+            return
+        }
+        #expect(text.contains("# Header"))
+        harness.window.isHidden = true
+    }
 
+    @Test("thinking overflow activation does not pageSheet-present")
+    func thinkingOverflowActivationOpensReaderWithoutPresenting() throws {
+        let harness = makeHostHarness()
+        let host = harness.host
+        var opened: ChatReaderPayload?
+        var configuration = ThinkingTimelineRowConfiguration(
+            isDone: true,
+            previewText: "",
+            fullText: Array(repeating: "line", count: 320).joined(separator: "\n")
+        )
+        configuration.openFullScreen = { opened = $0 }
+        let view = ThinkingTimelineRowContentView(configuration: configuration)
         host.view.addSubview(view)
-        view.frame = host.view.bounds
+        _ = fittedTimelineSize(for: view, width: 360)
         host.view.layoutIfNeeded()
 
-        view.performExpandedActivation()
+        view.showFullScreen()
 
-        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
-        #expect(presented.modalPresentationStyle == .pageSheet)
-
-        host.dismiss(animated: false)
+        #expect(host.presentedViewController == nil)
+        let payload = try #require(opened)
+        guard case .document(let content, _) = payload else {
+            Issue.record("Expected document reader payload")
+            harness.window.isHidden = true
+            return
+        }
+        guard case .thinking = content else {
+            Issue.record("Expected thinking reader payload")
+            harness.window.isHidden = true
+            return
+        }
         harness.window.isHidden = true
+    }
+
+    @Test("collapsed image activation does not pageSheet-present")
+    func collapsedImageActivationOpensReaderWithoutPresenting() throws {
+        let harness = makeHostHarness()
+        let host = harness.host
+        let image = try #require(Self.makeTestPNG())
+        let opened = try activateReader(
+            configuration: makeTimelineToolConfiguration(
+                collapsedImageBase64: image.pngData()?.base64EncodedString(),
+                collapsedImageMimeType: "image/png",
+                isExpanded: false
+            ),
+            host: host,
+            activate: { view in
+                #expect(view.presentCollapsedImagePreviewIfAvailable())
+            }
+        )
+        #expect(host.presentedViewController == nil)
+        guard case .image = opened.payload else {
+            Issue.record("Expected image reader payload")
+            harness.window.isHidden = true
+            return
+        }
+        harness.window.isHidden = true
+    }
+
+    @Test("chat reader destination uses embedded back chrome")
+    func chatReaderDestinationUsesEmbeddedBackChrome() throws {
+        let store = ChatReaderPayloadStore()
+        let target = store.store(
+            ChatReaderPayload(content: .plainText(content: "note", filePath: "note.txt"))
+        )
+        #expect(store.payload(for: target.id) != nil)
+
+        let destination = ChatReaderDestinationView(target: target, store: store)
+        let controller = try #require(destination.debugMakeControllerForTesting())
+        controller.loadViewIfNeeded()
+        let navigation = try #require(controller.children.first as? UINavigationController)
+        #expect(
+            navigation.topViewController?.navigationItem.leftBarButtonItem?.accessibilityIdentifier
+                == "fullscreen-code.back"
+        )
+    }
+
+    @Test("chat reader image destination uses embedded back chrome")
+    func chatReaderImageDestinationUsesEmbeddedBackChrome() throws {
+        let image = try #require(Self.makeTestPNG())
+        let store = ChatReaderPayloadStore()
+        let target = store.store(.image(image))
+        let viewer = EmbeddedImageViewerView(image: image)
+        let controller = viewer.debugMakeControllerForTesting()
+        controller.loadViewIfNeeded()
+        let navigation = try #require(controller as? UINavigationController)
+        let imageController = try #require(navigation.topViewController as? FullScreenImageViewController)
+        imageController.loadViewIfNeeded()
+        #expect(
+            imageController.navigationItem.leftBarButtonItem?.accessibilityIdentifier
+                == "fullscreen-image.back"
+        )
+        #expect(store.payload(for: target.id) != nil)
     }
 
     @Test("expanded large markdown activation opens full screen")
@@ -125,23 +216,22 @@ struct ToolTimelineRowFullScreenActivationTests {
 
         let harness = makeHostHarness()
         let host = harness.host
-        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .markdown(text: largeMarkdown),
-            copyOutputText: largeMarkdown,
-            toolNamePrefix: "web_fetch",
-            isExpanded: true
-        ))
-
-        host.view.addSubview(view)
-        view.frame = host.view.bounds
-        host.view.layoutIfNeeded()
-
-        view.performExpandedActivation()
-
-        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
-        #expect(presented.modalPresentationStyle == .pageSheet)
-
-        host.dismiss(animated: false)
+        let opened = try activateReader(
+            configuration: makeTimelineToolConfiguration(
+                expandedContent: .markdown(text: largeMarkdown),
+                copyOutputText: largeMarkdown,
+                toolNamePrefix: "web_fetch",
+                isExpanded: true
+            ),
+            host: host,
+            activate: { $0.performExpandedActivation() }
+        )
+        #expect(host.presentedViewController == nil)
+        guard case .markdown(let text, _, _) = opened.payload.content else {
+            Issue.record("Expected markdown reader payload")
+            return
+        }
+        #expect(text.utf8.count > 64 * 1024)
         harness.window.isHidden = true
     }
 
@@ -289,25 +379,26 @@ struct ToolTimelineRowFullScreenActivationTests {
         let csv = "date,route\n2026-09-01,Lake"
         let harness = makeHostHarness()
         let host = harness.host
-        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
-            copyOutputText: csv,
-            toolNamePrefix: "write",
-            isExpanded: true
-        ))
-
-        host.view.addSubview(view)
-        view.frame = host.view.bounds
-        host.view.layoutIfNeeded()
-
-        #expect(view.expandedTapCopyGestureEnabledForTesting)
-
-        view.performExpandedActivation()
-
-        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
-        #expect(presented.modalPresentationStyle == .pageSheet)
-
-        host.dismiss(animated: false)
+        let opened = try activateReader(
+            configuration: makeTimelineToolConfiguration(
+                expandedContent: .delimitedTable(text: csv, filePath: "rides.csv"),
+                copyOutputText: csv,
+                toolNamePrefix: "write",
+                isExpanded: true
+            ),
+            host: host,
+            activate: { view in
+                #expect(view.expandedTapCopyGestureEnabledForTesting)
+                view.performExpandedActivation()
+            }
+        )
+        #expect(host.presentedViewController == nil)
+        guard case .delimitedTable(let text, let filePath) = opened.payload.content else {
+            Issue.record("Expected delimited-table reader payload")
+            return
+        }
+        #expect(text == csv)
+        #expect(filePath == "rides.csv")
         harness.window.isHidden = true
     }
 
@@ -315,23 +406,17 @@ struct ToolTimelineRowFullScreenActivationTests {
     func expandedTextActivationOpensFullScreen() throws {
         let harness = makeHostHarness()
         let host = harness.host
-        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .text(text: "Saved to journal: 2026-03-07.md", language: nil),
-            copyOutputText: "Saved to journal: 2026-03-07.md",
-            toolNamePrefix: "recall",
-            isExpanded: true
-        ))
-
-        host.view.addSubview(view)
-        view.frame = host.view.bounds
-        host.view.layoutIfNeeded()
-
-        view.performExpandedActivation()
-
-        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
-        #expect(presented.modalPresentationStyle == .pageSheet)
-
-        host.dismiss(animated: false)
+        let opened = try activateReader(
+            configuration: makeTimelineToolConfiguration(
+                expandedContent: .text(text: "Saved to journal: 2026-03-07.md", language: nil),
+                copyOutputText: "Saved to journal: 2026-03-07.md",
+                toolNamePrefix: "recall",
+                isExpanded: true
+            ),
+            host: host,
+            activate: { $0.performExpandedActivation() }
+        )
+        #expect(host.presentedViewController == nil)
         harness.window.isHidden = true
     }
 
@@ -347,26 +432,32 @@ struct ToolTimelineRowFullScreenActivationTests {
         ]
         let harness = makeHostHarness()
         let host = harness.host
-        let view = ToolTimelineRowContentView(configuration: makeTimelineToolConfiguration(
-            expandedContent: .diff(
-                lines: lines,
-                path: "/Users/chenda/workspace/oppi/clients/apple/scripts/sim-slim.sh"
+        let opened = try activateReader(
+            configuration: makeTimelineToolConfiguration(
+                expandedContent: .diff(
+                    lines: lines,
+                    path: "/Users/chenda/workspace/oppi/clients/apple/scripts/sim-slim.sh"
+                ),
+                copyOutputText: DiffEngine.formatUnified(lines),
+                toolNamePrefix: "edit",
+                editAdded: 2,
+                editRemoved: 1,
+                isExpanded: true,
+                isDone: true
             ),
-            copyOutputText: DiffEngine.formatUnified(lines),
-            toolNamePrefix: "edit",
-            editAdded: 2,
-            editRemoved: 1,
-            isExpanded: true,
-            isDone: true
-        ))
+            host: host,
+            activate: { $0.performExpandedActivation() }
+        )
+        #expect(host.presentedViewController == nil)
 
-        host.view.addSubview(view)
-        view.frame = host.view.bounds
-        host.view.layoutIfNeeded()
-        view.performExpandedActivation()
-
-        let presented = try #require(host.presentedViewController as? FullScreenCodeViewController)
-        #expect(presented.modalPresentationStyle == .pageSheet)
+        let presented = FullScreenCodeViewController(
+            content: opened.payload.content,
+            presentationMode: .embedded(onDismiss: {})
+        )
+        host.present(presented, animated: false)
+        presented.loadViewIfNeeded()
+        presented.view.frame = host.view.bounds
+        presented.view.layoutIfNeeded()
         let body = try #require(presented.installedBodyViewForTesting as? NativeFullScreenDiffBody)
         let textView = try #require(timelineAllTextViews(in: body).first)
 
@@ -501,6 +592,14 @@ struct ToolTimelineRowFullScreenActivationTests {
         #expect(!snapshot.isDone)
     }
 
+    private static func makeTestPNG() -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2))
+        return renderer.image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        }
+    }
+
     private func makeHostHarness() -> HostHarness {
         let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
@@ -517,5 +616,49 @@ struct ToolTimelineRowFullScreenActivationTests {
         window.makeKeyAndVisible()
         host.loadViewIfNeeded()
         return HostHarness(window: window, host: host)
+    }
+
+    @Test("lookup from presenter finds install on a descendant collection view")
+    func lookupFromPresenterFindsDescendantInstall() {
+        let harness = makeHostHarness()
+        var opened: ChatReaderPayload?
+        let collection = UICollectionView(
+            frame: harness.host.view.bounds,
+            collectionViewLayout: UICollectionViewFlowLayout()
+        )
+        harness.host.view.addSubview(collection)
+        ChatReaderOpenLookup.install({ opened = $0 }, on: collection)
+
+        let didOpen = ChatReaderOpenLookup.open(
+            ChatReaderPayload(content: .plainText(content: "note", filePath: "note.txt")),
+            from: harness.host
+        )
+
+        #expect(didOpen)
+        #expect(opened != nil)
+        #expect(harness.host.presentedViewController == nil)
+        harness.window.isHidden = true
+    }
+
+    private struct ActivatedReader {
+        let view: ToolTimelineRowContentView
+        let payload: ChatReaderPayload
+    }
+
+    private func activateReader(
+        configuration: ToolTimelineRowConfiguration,
+        host: UIViewController,
+        activate: (ToolTimelineRowContentView) -> Void
+    ) throws -> ActivatedReader {
+        var opened: ChatReaderPayload?
+        var configuration = configuration
+        configuration.openFullScreen = { opened = $0 }
+        let view = ToolTimelineRowContentView(configuration: configuration)
+        host.view.addSubview(view)
+        view.frame = host.view.bounds
+        host.view.layoutIfNeeded()
+        activate(view)
+        let payload = try #require(opened)
+        return ActivatedReader(view: view, payload: payload)
     }
 }

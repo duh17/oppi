@@ -15,6 +15,7 @@ struct ImageBlobView: View {
     let base64: String
     let mimeType: String?
 
+    @Environment(\.openChatReader) private var openChatReader
     @State private var phase: Phase = .loading
     @State private var staticImageWidth: CGFloat = 0
 
@@ -31,7 +32,13 @@ struct ImageBlobView: View {
                     }
             case .staticImage(let image):
                 renderedStaticImage(image)
-                    .onTapGesture { FullScreenImageViewController.present(image: image) }
+                    .onTapGesture {
+                        if let openChatReader {
+                            openChatReader(.image(image))
+                        } else {
+                            FullScreenImageViewController.present(image: image)
+                        }
+                    }
                     .contextMenu {
                         Button("Copy", systemImage: "doc.on.doc") {
                             UIPasteboard.general.image = image

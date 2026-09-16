@@ -118,6 +118,8 @@ struct ChatView: View {
     @State private var showRenameAlert = false
     @State private var renameText = ""
     @State private var forkedSessionToOpen: ForkRoute?
+    @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
+    @State private var chatReaderRoute: ChatReaderNavTarget?
     @State private var showShareRedactionSheet = false
     @State private var shareRedactionPolicy = AppPreferences.Share.redactionPolicy
     @State private var sharePreflightResult: ShareSessionPrepareResult?
@@ -132,7 +134,6 @@ struct ChatView: View {
     @State private var headerChromeFrame: CGRect = .zero
     @State private var chromeSafeAreaTop: CGFloat = 0
     @State private var visibleAudioStripItemIDs: Set<String> = []
-    @State private var presentsNowPlayingPlayer = false
     @State private var nowPlayingDrawerExpanded = false
     @State private var reviewCommentDrawerExpanded = false
     @State private var extensionDrawerCollapseRequestID = 0
@@ -531,6 +532,7 @@ struct ChatView: View {
             workStripStyle: workStripStyle,
             onFork: forkFromMessage,
             onOpenCurrentFile: openCurrentToolFile,
+            onOpenChatReader: openTimelineReader,
             onBackSwipe: navigateBackFromChat,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             topOverlap: timelineTopOverlap,
@@ -571,6 +573,10 @@ struct ChatView: View {
         case .workspace, nil:
             return nil
         }
+    }
+
+    private func openTimelineReader(_ payload: ChatReaderPayload) {
+        chatReaderRoute = chatReaderPayloadStore.store(payload)
     }
 
     private func openCurrentToolFile(path: String) {
@@ -727,9 +733,7 @@ struct ChatView: View {
             .onChange(of: scrollController.isJumpToBottomHintVisible) { _, visible in
                 if visible { contextBarCollapseToken &+= 1 }
             }
-            .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
-                InAppNowPlayingPlayerScreen(audioPlayer: audioPlayer)
-            }
+
             .onChange(of: showsNowPlayingPill) { _, visible in
                 if !visible {
                     nowPlayingDrawerExpanded = false
@@ -916,7 +920,7 @@ struct ChatView: View {
                 sessionManager.cleanup()
                 scrollController.cancel()
                 visibleAudioStripItemIDs = []
-                presentsNowPlayingPlayer = false
+                chatReaderRoute = nil
                 nowPlayingDrawerExpanded = false
                 reviewCommentDrawerExpanded = false
                 reviewCommentStashPresentation = nil
@@ -1022,6 +1026,10 @@ struct ChatView: View {
             .navigationDestination(item: $sessionRouteToOpen) { route in
                 Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
             }
+            .navigationDestination(item: $chatReaderRoute) { route in
+                ChatReaderDestinationView(target: route, store: chatReaderPayloadStore)
+            }
+            .environment(\.openChatReader, ChatReaderOpenAction(handler: openTimelineReader))
     }
 
     @ViewBuilder
@@ -1076,7 +1084,7 @@ struct ChatView: View {
                                             accessibilityPrefix: "chat.nowPlaying",
                                             isExpanded: nowPlayingDrawerExpanded,
                                             onExpand: toggleNowPlayingDrawer,
-                                            onOpen: { presentsNowPlayingPlayer = true }
+                                            onOpen: { openTimelineReader(.nowPlaying(audioPlayer)) }
                                         )
                                     }
                                 }
@@ -1093,7 +1101,7 @@ struct ChatView: View {
                             InAppNowPlayingDrawer(
                                 audioPlayer: audioPlayer,
                                 accessibilityPrefix: "chat.nowPlaying",
-                                onOpen: { presentsNowPlayingPlayer = true }
+                                onOpen: { openTimelineReader(.nowPlaying(audioPlayer)) }
                             )
                             .padding(.horizontal, 16)
                         }

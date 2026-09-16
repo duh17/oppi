@@ -27,6 +27,7 @@ struct ThinkingTimelineRowConfiguration: UIContentConfiguration {
     let itemID: String?
     let sourceLabel: String?
     var interactionContext: TimelineInteractionContext? = nil
+    var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
 
     init(
         isDone: Bool,
@@ -582,6 +583,14 @@ final class ThinkingTimelineRowContentView: UIView, UIContentView, TimelineRowIn
                 sourceLabel: currentConfiguration.normalizedSourceLabel,
                 timelineItemId: currentConfiguration.itemID
             )
+        let payload = ChatReaderPayload.document(
+            content: content,
+            reviewCommentSelectionContext: reviewCommentSelectionContext
+        )
+        if let openFullScreen = currentConfiguration.openFullScreen {
+            openFullScreen(payload)
+            return
+        }
         ToolTimelineRowPresentationHelpers.presentFullScreenContent(
             content,
             from: self,

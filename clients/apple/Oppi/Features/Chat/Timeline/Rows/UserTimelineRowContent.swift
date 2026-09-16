@@ -884,14 +884,26 @@ private final class UserTimelineImageThumbnailView: UIView {
             install(imageView)
             onTap = { [weak self] in
                 guard let self else { return }
-                ToolTimelineRowPresentationHelpers.presentFullScreenImage(UIImage(data: data) ?? image, from: self)
+                let resolved = UIImage(data: data) ?? image
+                if ChatReaderOpenLookup.open(.image(resolved), from: self) {
+                    return
+                }
+                ToolTimelineRowPresentationHelpers.presentFullScreenImage(resolved, from: self)
             }
         case .web(let dataURL):
             let web = AnimatedImageWebContainerView()
             web.isUserInteractionEnabled = false
             install(web)
             web.apply(dataURLString: dataURL)
-            onTap = { FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType) }
+            onTap = { [weak self] in
+                if let self, ChatReaderOpenLookup.open(
+                    .imageData(data, mimeType: mimeType),
+                    from: self
+                ) {
+                    return
+                }
+                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+            }
         case .failure:
             let label = UILabel()
             label.text = String(localized: "Image preview unavailable")

@@ -499,6 +499,8 @@ struct InAppNowPlayingPlayerScreen: View {
             },
             openFile: nil,
             autoplayOnAppear: false,
+            showsCloseButton: false,
+            usesNavigationBackButton: true,
             timedText: audioPlayer.nowPlayingTimedText
         )
         .onAppear(perform: dismissIfPlaybackEnded)

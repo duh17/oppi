@@ -372,6 +372,17 @@ enum NavigationSwipeGesturePolicy {
 enum HorizontalBackSwipeGesturePolicy {
     static let minimumHorizontalDistance = NavigationSwipeGesturePolicy.minimumDistance
     static let horizontalDominanceRatio = NavigationSwipeGesturePolicy.dominanceRatio
+    static let leadingEdgeWidth: CGFloat = 20
+
+    static func isLeadingEdgeStart(location: CGPoint?, in hostView: UIView?) -> Bool {
+        guard let location, let hostView else { return false }
+        switch hostView.effectiveUserInterfaceLayoutDirection {
+        case .rightToLeft:
+            return location.x >= hostView.bounds.maxX - leadingEdgeWidth
+        default:
+            return location.x <= hostView.bounds.minX + leadingEdgeWidth
+        }
+    }
 
     /// Claims held by nested scrub gestures while their drag is active. A set
     /// (not a counter) makes release idempotent: an owner can release on cancel,
@@ -423,12 +434,33 @@ enum HorizontalBackSwipeGesturePolicy {
     @MainActor
     static func handleSwiftUIBackSwipeEnded(
         translation: CGSize,
+        startLocation: CGPoint,
+        containerWidth: CGFloat,
+        layoutDirection: LayoutDirection = .leftToRight,
         didLatchSuppression: Bool,
         onBack: () -> Void
     ) {
         guard !didLatchSuppression else { return }
+        guard isSwiftUILeadingEdgeStart(
+            startLocation: startLocation,
+            containerWidth: containerWidth,
+            layoutDirection: layoutDirection
+        ) else { return }
         guard isBackSwipe(translation: translation) else { return }
         onBack()
+    }
+
+    static func isSwiftUILeadingEdgeStart(
+        startLocation: CGPoint,
+        containerWidth: CGFloat,
+        layoutDirection: LayoutDirection = .leftToRight
+    ) -> Bool {
+        switch layoutDirection {
+        case .rightToLeft:
+            return startLocation.x >= containerWidth - leadingEdgeWidth
+        default:
+            return startLocation.x <= leadingEdgeWidth
+        }
     }
 }
 
@@ -456,12 +488,23 @@ private struct HorizontalBackSwipeGestureModifier: ViewModifier {
     /// `onEnded` is guaranteed to read it.
     @GestureState private var isTrackingBackSwipe = false
     @State private var didLatchSuppression = false
+    @State private var containerWidth: CGFloat = 0
+    @Environment(\.layoutDirection) private var layoutDirection
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if isEnabled {
             content
                 .contentShape(Rectangle())
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: HorizontalBackSwipeWidthKey.self,
+                            value: proxy.size.width
+                        )
+                    }
+                }
+                .onPreferenceChange(HorizontalBackSwipeWidthKey.self) { containerWidth = $0 }
                 .simultaneousGesture(
                     DragGesture(minimumDistance: HorizontalBackSwipeGesturePolicy.minimumHorizontalDistance)
                         .updating($isTrackingBackSwipe) { _, tracking, _ in
@@ -476,6 +519,9 @@ private struct HorizontalBackSwipeGestureModifier: ViewModifier {
                             didLatchSuppression = false
                             HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
                                 translation: value.translation,
+                                startLocation: value.startLocation,
+                                containerWidth: containerWidth,
+                                layoutDirection: layoutDirection,
                                 didLatchSuppression: latched,
                                 onBack: onBack
                             )
@@ -506,6 +552,13 @@ extension View {
         _ onBack: @escaping () -> Void
     ) -> some View {
         modifier(HorizontalBackSwipeGestureModifier(isEnabled: isEnabled, onBack: onBack))
+    }
+}
+
+private struct HorizontalBackSwipeWidthKey: PreferenceKey {
+    nonisolated(unsafe) static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -631,6 +684,12 @@ final class HorizontalBackSwipeGestureInstaller: NSObject, UIGestureRecognizerDe
             translation: translation,
             direction: direction
         ) else { return }
+        if direction == .right {
+            guard HorizontalBackSwipeGesturePolicy.isLeadingEdgeStart(
+                location: touchLocationInHost,
+                in: hostView
+            ) else { return }
+        }
         // Re-check scroll edges on end so a pan that began at the edge but was
         // absorbed as document scrolling cannot dismiss mid-content.
         guard canClaimSwipe(in: hostView, touchLocationInHost: touchLocationInHost) else { return }
@@ -662,6 +721,12 @@ final class HorizontalBackSwipeGestureInstaller: NSObject, UIGestureRecognizerDe
             velocity: velocity,
             direction: direction
         ) else { return false }
+        if direction == .right {
+            guard HorizontalBackSwipeGesturePolicy.isLeadingEdgeStart(
+                location: touchLocationInHost,
+                in: hostView
+            ) else { return false }
+        }
         return canClaimSwipe(in: hostView, touchLocationInHost: touchLocationInHost)
     }
 
@@ -684,7 +749,12 @@ final class HorizontalBackSwipeGestureInstaller: NSObject, UIGestureRecognizerDe
         // without invoking the action selector, so requiring `== nil` would leave a
         // stale point. After began/changed, keep the original finger location.
         if gestureRecognizer.state == .possible, let host = gestureRecognizer.view {
-            activeTouchLocationInHost = touch.location(in: host)
+            let location = touch.location(in: host)
+            if direction == .right,
+               !HorizontalBackSwipeGesturePolicy.isLeadingEdgeStart(location: location, in: host) {
+                return false
+            }
+            activeTouchLocationInHost = location
         }
         return true
     }

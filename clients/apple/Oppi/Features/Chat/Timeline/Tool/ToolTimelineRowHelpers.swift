@@ -160,18 +160,25 @@ enum ToolTimelineRowPresentationHelpers {
         guard let presenter = nearestViewController(from: sourceView) else {
             return
         }
+        let reviewContext = reviewCommentSelectionContext
+            ?? ReviewCommentSelectionContext(
+                router: reviewCommentSelectionRouter,
+                sessionId: reviewCommentSessionId,
+                sourceLabel: reviewCommentSourceLabel
+            )
+        if ChatReaderOpenLookup.open(
+            .document(content: content, reviewCommentSelectionContext: reviewContext),
+            from: sourceView
+        ) {
+            return
+        }
         guard !isWithinFullScreenModalContext(presenter) else {
             return
         }
 
         let controller = FullScreenCodeViewController(
             content: content,
-            reviewCommentSelectionContext: reviewCommentSelectionContext
-                ?? ReviewCommentSelectionContext(
-                    router: reviewCommentSelectionRouter,
-                    sessionId: reviewCommentSessionId,
-                    sourceLabel: reviewCommentSourceLabel
-                ),
+            reviewCommentSelectionContext: reviewContext,
             addToChatDestination: FullScreenCodeViewController.capturedAddToChatDestination(
                 from: presenter
             )
@@ -186,9 +193,14 @@ enum ToolTimelineRowPresentationHelpers {
 
     static func presentFullScreenImage(_ image: UIImage, from sourceView: UIView) {
         guard let presenter = nearestViewController(from: sourceView) else { return }
-        guard !isWithinFullScreenModalContext(presenter) else { return }
-
         let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
+        if ChatReaderOpenLookup.open(
+            .image(image, addToChatDestination: destination),
+            from: sourceView
+        ) {
+            return
+        }
+        guard !isWithinFullScreenModalContext(presenter) else { return }
         let controller = FullScreenImageViewController.makeSlideDownController(
             image: image,
             prefersFullScreenOverlay: FullScreenViewerPresentationPolicy.prefersFullScreenOverlay(

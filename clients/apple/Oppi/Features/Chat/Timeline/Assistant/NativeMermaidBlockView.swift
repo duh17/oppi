@@ -567,36 +567,14 @@ final class NativeMermaidBlockView: UIView {
         guard let code = currentCode, isShowingDiagram else { return false }
 
         let content = FullScreenCodeContent.mermaid(content: code, filePath: nil)
-        if let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self),
-           !isInsideFullScreenCodeViewer(presenter) {
-            ToolTimelineRowPresentationHelpers.presentFullScreenContent(
-                content,
-                from: self,
-                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
-                reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
-                reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel
-            )
-            return true
-        }
-
-        // The global presenter intentionally permits one focused visual above
-        // a full-screen Markdown reader while still preventing deeper stacks.
-        FullScreenCodeViewController.present(
-            content: content,
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            content,
+            from: self,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
             reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel
         )
         return true
-    }
-
-    private func isInsideFullScreenCodeViewer(_ presenter: UIViewController) -> Bool {
-        var current: UIViewController? = presenter
-        while let node = current {
-            if node is FullScreenCodeViewController { return true }
-            current = node.parent
-        }
-        return false
     }
 }
 

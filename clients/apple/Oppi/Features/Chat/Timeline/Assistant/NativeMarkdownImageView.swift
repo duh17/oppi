@@ -1153,6 +1153,9 @@ final class NativeMarkdownImageView: UIView {
     @discardableResult
     private func openRasterPreview() -> Bool {
         guard let image = imageView.image, !imageView.isHidden else { return false }
+        if ChatReaderOpenLookup.open(.image(image), from: self) {
+            return true
+        }
         if let presenter = nearestViewController() {
             FullScreenImageViewController.present(image: image, from: presenter)
         } else {
@@ -1168,8 +1171,14 @@ final class NativeMarkdownImageView: UIView {
     @discardableResult
     private func openSVGPreview() -> Bool {
         guard let data = svgPreviewData,
-              svgTapOverlay.map({ !$0.isHidden }) == true,
-              let presenter = nearestViewController() else { return false }
+              svgTapOverlay.map({ !$0.isHidden }) == true else { return false }
+        if ChatReaderOpenLookup.open(
+            .imageData(data, mimeType: svgPreviewMimeType),
+            from: self
+        ) {
+            return true
+        }
+        guard let presenter = nearestViewController() else { return false }
 
         FullScreenImageDataPreviewPresenter.present(
             data: data,

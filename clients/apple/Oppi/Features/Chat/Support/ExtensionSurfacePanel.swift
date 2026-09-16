@@ -399,7 +399,7 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
     }
 }
 
-private struct ExtensionNativeSurfaceDetailSheet: View {
+struct ExtensionNativeSurfaceDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let surface: ExtensionUINativeSurface
@@ -409,6 +409,7 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
     let statusText: String?
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)?
+    var usesNavigationBackChrome = false
 
     private var displayBlocks: [ExtensionUINativeBlock] {
         surface.nativeDisplayBlocks
@@ -417,11 +418,21 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                Button("Done") {
-                    dismiss()
+                if usesNavigationBackChrome {
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "chevron.backward")
+                            .font(.body.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(String(localized: "Back"))
+                    .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-back")
+                } else {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-done")
                 }
-                .font(.subheadline.weight(.semibold))
-                .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-done")
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
@@ -469,6 +480,9 @@ private struct ExtensionNativeSurfaceDetailSheet: View {
         }
         .themedScrollSurface()
         .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail")
+        .horizontalBackSwipeGesture(isEnabled: usesNavigationBackChrome) {
+            dismiss()
+        }
     }
 }
 
@@ -1508,6 +1522,7 @@ private struct ExtensionSurfaceDrawer: View {
     var onOpenURL: ((URL) -> Bool)?
     let onCollapse: () -> Void
 
+    @Environment(\.openChatReader) private var openChatReader
     @State private var nativeDetailPresented = false
     @State private var terminalDetailPresented = false
 
@@ -1605,7 +1620,7 @@ private struct ExtensionSurfaceDrawer: View {
                 surface: nativeSurface.surface,
                 identifierSuffix: identifierSuffix,
                 maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight,
-                onOpenFullScreen: { nativeDetailPresented = true },
+                onOpenFullScreen: { openNativeDetail() },
                 linkContext: linkContext,
                 onOpenURL: onOpenURL
             )
@@ -1613,7 +1628,7 @@ private struct ExtensionSurfaceDrawer: View {
             ExtensionWidgetLinesView(
                 lines: widget.lines,
                 scrollIdentifier: "extension-strip-\(placement.accessibilityIdentifierComponent)-terminal-\(identifierSuffix)",
-                onOpenFullScreen: { terminalDetailPresented = true }
+                onOpenFullScreen: { openTerminalDetail() }
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         case .messageQueue:
@@ -1640,12 +1655,41 @@ private struct ExtensionSurfaceDrawer: View {
     private func openFullScreen() {
         switch entry {
         case .native:
-            nativeDetailPresented = true
+            openNativeDetail()
         case .widget:
-            terminalDetailPresented = true
+            openTerminalDetail()
         case .title, .status, .messageQueue:
             break
         }
+    }
+
+    private func openNativeDetail() {
+        guard case .native(let nativeSurface, let statusText) = entry else { return }
+        if let openChatReader {
+            openChatReader(
+                .extensionNative(
+                    ExtensionNativeReaderContent(
+                        surface: nativeSurface.surface,
+                        identifierSuffix: identifierSuffix,
+                        title: entry.title,
+                        subtitle: entry.subtitle,
+                        statusText: statusText,
+                        linkContext: linkContext,
+                        onOpenURL: onOpenURL
+                    )
+                )
+            )
+            return
+        }
+        nativeDetailPresented = true
+    }
+
+    private func openTerminalDetail() {
+        if let openChatReader {
+            openChatReader(.document(content: terminalFullScreenContent))
+            return
+        }
+        terminalDetailPresented = true
     }
 }
 

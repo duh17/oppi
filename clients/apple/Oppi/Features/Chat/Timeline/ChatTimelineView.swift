@@ -101,6 +101,7 @@ struct ChatTimelineView: View {
     var workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons
     let onFork: (String) -> Void
     let onOpenCurrentFile: (String) -> Void
+    var onOpenChatReader: (ChatReaderPayload) -> Void = { _ in }
     let onBackSwipe: () -> Void
     let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let topOverlap: CGFloat
@@ -132,6 +133,7 @@ struct ChatTimelineView: View {
                 routeScope: routeScope,
                 onFork: onFork,
                 onOpenCurrentFile: onOpenCurrentFile,
+                onOpenChatReader: onOpenChatReader,
                 onBackSwipe: onBackSwipe,
                 onShowEarlier: {},
                 scrollController: scrollController,

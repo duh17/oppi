@@ -477,8 +477,9 @@ final class NativeLatexBlockView: UIView {
         guard let code = currentCode, isShowingFormula else { return }
 
         let content = FullScreenCodeContent.latex(content: code, filePath: nil)
-        FullScreenCodeViewController.present(
-            content: content,
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            content,
+            from: self,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
             reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel

@@ -5,7 +5,13 @@ import UIKit
 /// Presented as a large detent sheet so it matches the app's slide-down
 /// dismissal behavior used by other "full-screen" previews.
 final class FullScreenImageViewController: UIViewController {
+    enum PresentationMode {
+        case sheet
+        case embedded(onDismiss: @MainActor @Sendable () -> Void)
+    }
+
     private let image: UIImage
+    private let presentationMode: PresentationMode
     private let addToChatDestination: ComposerCanvasDestination?
     private var palette: ThemePalette
     private let scrollView = UIScrollView()
@@ -15,8 +21,13 @@ final class FullScreenImageViewController: UIViewController {
     private var savedFeedbackLabel: UILabel?
     private(set) var didDismissAfterCanvasDeliveryForTesting = false
 
-    init(image: UIImage, addToChatDestination: ComposerCanvasDestination? = nil) {
+    init(
+        image: UIImage,
+        presentationMode: PresentationMode = .sheet,
+        addToChatDestination: ComposerCanvasDestination? = nil
+    ) {
         self.image = image
+        self.presentationMode = presentationMode
         self.addToChatDestination = addToChatDestination
         self.palette = ThemeRuntimeState.currentThemeID().palette
         self.imageView = UIImageView(image: image)
@@ -51,13 +62,24 @@ final class FullScreenImageViewController: UIViewController {
 
     // MARK: - Setup
 
+    private var dismissMode: FullScreenViewerNavigationChrome.DismissMode {
+        switch presentationMode {
+        case .sheet:
+            return .modal
+        case .embedded:
+            return .embedded
+        }
+    }
+
     private func setupNavigationChrome() {
         navigationItem.leftBarButtonItem = FullScreenViewerNavigationChrome.makeDismissButton(
-            mode: .modal,
+            mode: dismissMode,
             target: self,
             action: #selector(dismissTapped),
             palette: palette,
-            accessibilityIdentifier: "fullscreen-image.dismiss"
+            accessibilityIdentifier: dismissMode == .embedded
+                ? "fullscreen-image.back"
+                : "fullscreen-image.dismiss"
         )
 
         let shareButton = UIBarButtonItem(
@@ -86,9 +108,9 @@ final class FullScreenImageViewController: UIViewController {
     private func setupSwipeDismiss() {
         let handler = HorizontalBackSwipeGestureInstaller(
             onBack: { [weak self] in
-                self?.dismiss(animated: true)
+                self?.performDismiss()
             },
-            direction: FullScreenViewerNavigationChrome.DismissMode.modal.gestureDirection
+            direction: dismissMode.gestureDirection
         )
         handler.install(on: view)
         swipeDismissHandler = handler
@@ -194,7 +216,16 @@ final class FullScreenImageViewController: UIViewController {
     }
 
     @objc private func dismissTapped() {
-        dismiss(animated: true)
+        performDismiss()
+    }
+
+    private func performDismiss() {
+        switch presentationMode {
+        case .sheet:
+            dismiss(animated: true)
+        case .embedded(let onDismiss):
+            onDismiss()
+        }
     }
 
     @objc private func annotateTapped() {
@@ -437,6 +468,12 @@ extension FullScreenImageViewController {
         // Resolve before presenting. The sheet's later presenter chain is not
         // a reliable path back to the chat composer destination.
         let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
+        if ChatReaderOpenLookup.open(
+            .image(image, addToChatDestination: destination),
+            from: presenter
+        ) {
+            return
+        }
         ImagePreviewPresentationCoordinator.present(
             makeSlideDownController(
                 image: image,

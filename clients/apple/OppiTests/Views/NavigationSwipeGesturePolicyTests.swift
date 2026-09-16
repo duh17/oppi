@@ -298,6 +298,37 @@ struct NavigationSwipeGesturePolicyTests {
         #expect(installer.activeTouchLocationForTesting() == nil)
     }
 
+    @Test func installerDoesNotPopFromInteriorLeftToRightPan() {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        var backCount = 0
+        let installer = HorizontalBackSwipeGestureInstaller(onBack: { backCount += 1 })
+        installer.install(on: host)
+
+        #expect(!installer.shouldBeginNavigationSwipe(
+            velocity: CGPoint(x: 900, y: 0),
+            in: host,
+            touchLocationInHost: CGPoint(x: 140, y: 200)
+        ))
+        installer.handleNavigationSwipeEnded(
+            translation: CGSize(width: 90, height: 12),
+            in: host,
+            touchLocationInHost: CGPoint(x: 140, y: 200)
+        )
+        #expect(backCount == 0)
+
+        #expect(installer.shouldBeginNavigationSwipe(
+            velocity: CGPoint(x: 900, y: 0),
+            in: host,
+            touchLocationInHost: CGPoint(x: 8, y: 200)
+        ))
+        installer.handleNavigationSwipeEnded(
+            translation: CGSize(width: 90, height: 12),
+            in: host,
+            touchLocationInHost: CGPoint(x: 8, y: 200)
+        )
+        #expect(backCount == 1)
+    }
+
     @Test func installerUsesSingleTouchPanRecognizer() {
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         let installer = HorizontalBackSwipeGestureInstaller(onBack: {}, direction: .down)
@@ -381,6 +412,8 @@ struct NavigationSwipeGesturePolicyTests {
         var backCount = 0
         HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
             translation: swipe,
+            startLocation: CGPoint(x: 8, y: 200),
+            containerWidth: 390,
             didLatchSuppression: latched,
             onBack: { backCount += 1 }
         )
@@ -413,6 +446,30 @@ struct NavigationSwipeGesturePolicyTests {
         var backCount = 0
         HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
             translation: swipe,
+            startLocation: CGPoint(x: 8, y: 200),
+            containerWidth: 390,
+            didLatchSuppression: false,
+            onBack: { backCount += 1 }
+        )
+        #expect(backCount == 1)
+    }
+
+    @Test func swiftUIInteriorLeftToRightPanDoesNotPop() {
+        let swipe = CGSize(width: 90, height: 12)
+        var backCount = 0
+        HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
+            translation: swipe,
+            startLocation: CGPoint(x: 140, y: 200),
+            containerWidth: 390,
+            didLatchSuppression: false,
+            onBack: { backCount += 1 }
+        )
+        #expect(backCount == 0)
+
+        HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
+            translation: swipe,
+            startLocation: CGPoint(x: 8, y: 200),
+            containerWidth: 390,
             didLatchSuppression: false,
             onBack: { backCount += 1 }
         )
@@ -434,6 +491,8 @@ struct NavigationSwipeGesturePolicyTests {
         var backCount = 0
         HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
             translation: swipe,
+            startLocation: CGPoint(x: 8, y: 200),
+            containerWidth: 390,
             didLatchSuppression: false,
             onBack: { backCount += 1 }
         )

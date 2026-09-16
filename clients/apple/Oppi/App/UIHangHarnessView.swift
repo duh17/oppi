@@ -612,6 +612,8 @@ struct UIHangHarnessView: View {
     @State private var stallCount = 0
     @State private var streamTick = 0
 
+    @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
+    @State private var chatReaderRoute: ChatReaderNavTarget?
     @State private var streamEnabled = !UIHangHarnessConfig.streamDisabled
     @State private var diagnosticsTask: Task<Void, Never>?
     @State private var streamTask: Task<Void, Never>?
@@ -838,6 +840,7 @@ struct UIHangHarnessView: View {
     }
 
     var body: some View {
+        NavigationStack {
         VStack(spacing: 10) {
             Text("Harness Ready")
                 .font(.caption)
@@ -869,6 +872,9 @@ struct UIHangHarnessView: View {
                     sessionId: "harness-\(selectedSession.rawValue)",
                     workspaceId: "harness-workspace",
                     onFork: { _ in },
+                    onOpenChatReader: { payload in
+                        chatReaderRoute = chatReaderPayloadStore.store(payload)
+                    },
                     onBackSwipe: {},
                     onShowEarlier: {
                         renderWindow = min(currentItems.count, renderWindow + Self.renderWindowStep)
@@ -896,6 +902,13 @@ struct UIHangHarnessView: View {
         }
         .padding()
         .background(Color.themeBg.ignoresSafeArea())
+        .toolbarVisibility(.hidden, for: .navigationBar)
+        .navigationDestination(item: $chatReaderRoute) { route in
+            ChatReaderDestinationView(target: route, store: chatReaderPayloadStore)
+        }
+        .environment(\.openChatReader, ChatReaderOpenAction { payload in
+            chatReaderRoute = chatReaderPayloadStore.store(payload)
+        })
         .onAppear {
             originalThemeID = ThemeRuntimeState.currentThemeID()
             ThemeRuntimeState.setThemeID(themeID)
@@ -936,6 +949,7 @@ struct UIHangHarnessView: View {
         .onChange(of: themeID) { _, newThemeID in
             ThemeRuntimeState.setThemeID(newThemeID)
             heartbeat &+= 1
+        }
         }
     }
 

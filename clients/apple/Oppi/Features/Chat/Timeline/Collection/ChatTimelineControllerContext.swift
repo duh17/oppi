@@ -10,6 +10,7 @@ final class ChatTimelineControllerContext {
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
     var onOpenCurrentFile: ((String) -> Void)?
+    var onOpenChatReader: ((ChatReaderPayload) -> Void)?
     var onShowEarlier: (() -> Void)?
     var onQuietWorkLineToggle: ((String) -> Void)?
     weak var scrollController: ChatScrollController?
@@ -47,6 +48,7 @@ final class ChatTimelineControllerContext {
         routeScope = configuration.routeScope
         onFork = configuration.onFork
         onOpenCurrentFile = configuration.onOpenCurrentFile
+        onOpenChatReader = configuration.onOpenChatReader
         onShowEarlier = configuration.onShowEarlier
         onQuietWorkLineToggle = configuration.onQuietWorkLineToggle
         scrollController = configuration.scrollController
@@ -62,5 +64,6 @@ final class ChatTimelineControllerContext {
         audioLifecycleCoordinator = configuration.audioLifecycleCoordinator
         interactionContext.reviewCommentSelectionRouter = configuration.reviewCommentSelectionRouter
         interactionContext.sessionId = configuration.sessionId
+        interactionContext.openChatReader = configuration.onOpenChatReader
     }
 }

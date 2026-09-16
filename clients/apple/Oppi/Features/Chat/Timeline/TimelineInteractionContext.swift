@@ -10,6 +10,7 @@ import Foundation
 final class TimelineInteractionContext {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var sessionId: String = ""
+    var openChatReader: ((ChatReaderPayload) -> Void)?
 
     /// Context object for renderer plumbing.
     var reviewCommentSelectionContext: ReviewCommentSelectionContext? {

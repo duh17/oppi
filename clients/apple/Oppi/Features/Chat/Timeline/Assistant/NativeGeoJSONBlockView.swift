@@ -115,32 +115,13 @@ final class NativeGeoJSONBlockView: UIView {
     private func openMapPreview() -> Bool {
         guard let code = currentCode, isShowingMap else { return false }
         let content = FullScreenCodeContent.geoJSON(content: code, filePath: nil)
-        if let presenter = ToolTimelineRowPresentationHelpers.nearestViewController(from: self),
-           !isInsideFullScreenCodeViewer(presenter) {
-            ToolTimelineRowPresentationHelpers.presentFullScreenContent(
-                content,
-                from: self,
-                reviewCommentSelectionRouter: reviewCommentSelectionRouter,
-                reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
-                reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel
-            )
-            return true
-        }
-        FullScreenCodeViewController.present(
-            content: content,
+        ToolTimelineRowPresentationHelpers.presentFullScreenContent(
+            content,
+            from: self,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSessionId: reviewCommentSourceContext?.sessionId,
             reviewCommentSourceLabel: reviewCommentSourceContext?.sourceLabel
         )
         return true
-    }
-
-    private func isInsideFullScreenCodeViewer(_ presenter: UIViewController) -> Bool {
-        var current: UIViewController? = presenter
-        while let node = current {
-            if node is FullScreenCodeViewController { return true }
-            current = node.parent
-        }
-        return false
     }
 }

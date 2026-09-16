@@ -716,6 +716,12 @@ enum FullScreenImageDataPreviewPresenter {
         // Resolve before presenting. The sheet's later presenter chain is not
         // a reliable path back to the chat composer destination.
         let destination = ComposerCanvasDestinationResolver.resolve(from: presenter)
+        if ChatReaderOpenLookup.open(
+            .imageData(data, mimeType: mimeType, addToChatDestination: destination),
+            from: presenter
+        ) {
+            return
+        }
         ImagePreviewPresentationCoordinator.present(
             FullScreenImageDataPreviewViewController.makeSlideDownController(
                 data: data,
@@ -743,9 +749,15 @@ enum FullScreenImageDataPreviewPresenter {
 }
 
 final class FullScreenImageDataPreviewViewController: UIViewController, UIScrollViewDelegate {
+    enum PresentationMode {
+        case sheet
+        case embedded(onDismiss: @MainActor @Sendable () -> Void)
+    }
+
     private let data: Data
     private let mimeType: String?
     private let previewTitle: String
+    private let presentationMode: PresentationMode
     private let addToChatDestination: ComposerCanvasDestination?
     private let palette: ThemePalette
     private let scrollView = UIScrollView()
@@ -759,11 +771,13 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
         data: Data,
         mimeType: String?,
         title: String,
+        presentationMode: PresentationMode = .sheet,
         addToChatDestination: ComposerCanvasDestination? = nil
     ) {
         self.data = data
         self.mimeType = mimeType
         self.previewTitle = title
+        self.presentationMode = presentationMode
         self.addToChatDestination = addToChatDestination
         self.palette = ThemeRuntimeState.currentThemeID().palette
         super.init(nibName: nil, bundle: nil)
@@ -789,13 +803,24 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
         containerView
     }
 
+    private var dismissMode: FullScreenViewerNavigationChrome.DismissMode {
+        switch presentationMode {
+        case .sheet:
+            return .modal
+        case .embedded:
+            return .embedded
+        }
+    }
+
     private func setupNavigationChrome() {
         navigationItem.leftBarButtonItem = FullScreenViewerNavigationChrome.makeDismissButton(
-            mode: .modal,
+            mode: dismissMode,
             target: self,
             action: #selector(dismissTapped),
             palette: palette,
-            accessibilityIdentifier: "fullscreen-image-data.dismiss"
+            accessibilityIdentifier: dismissMode == .embedded
+                ? "fullscreen-image-data.back"
+                : "fullscreen-image-data.dismiss"
         )
         containerView.onRenderStateChange = { [weak self] in
             self?.updateAnnotateAvailability()
@@ -825,9 +850,9 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     private func setupSwipeDismiss() {
         let handler = HorizontalBackSwipeGestureInstaller(
             onBack: { [weak self] in
-                self?.dismiss(animated: true)
+                self?.performDismiss()
             },
-            direction: FullScreenViewerNavigationChrome.DismissMode.modal.gestureDirection
+            direction: dismissMode.gestureDirection
         )
         handler.install(on: view)
         swipeDismissHandler = handler
@@ -877,7 +902,16 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
     }
 
     @objc private func dismissTapped() {
-        dismiss(animated: true)
+        performDismiss()
+    }
+
+    private func performDismiss() {
+        switch presentationMode {
+        case .sheet:
+            dismiss(animated: true)
+        case .embedded(let onDismiss):
+            onDismiss()
+        }
     }
 
     @objc private func annotateTapped() {
@@ -1009,6 +1043,7 @@ struct DataImagePreviewView: View {
     var heightMode: ImageViewportSizing.HeightMode = .singleScreenFit
     var allowsFullscreenStaticImage = true
 
+    @Environment(\.openChatReader) private var openChatReader
     @State private var phase: Phase = .loading
 
     var body: some View {
@@ -1044,7 +1079,11 @@ struct DataImagePreviewView: View {
                         .onTapGesture {
                             guard allowsFullscreenStaticImage else { return }
                             let fullResolutionImage = UIImage(data: data) ?? image
-                            FullScreenImageViewController.present(image: fullResolutionImage)
+                            if let openChatReader {
+                                openChatReader(.image(fullResolutionImage))
+                            } else {
+                                FullScreenImageViewController.present(image: fullResolutionImage)
+                            }
                         },
                     aspectRatio: aspectRatio
                 )
@@ -1052,7 +1091,11 @@ struct DataImagePreviewView: View {
                 renderedImage(
                     AnimatedImageWebView(dataURLString: dataURLString)
                         .onTapGesture {
-                            FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+                            if let openChatReader {
+                                openChatReader(.imageData(data, mimeType: mimeType))
+                            } else {
+                                FullScreenImageDataPreviewPresenter.present(data: data, mimeType: mimeType)
+                            }
                         },
                     aspectRatio: aspectRatio
                 )
@@ -1512,6 +1555,19 @@ enum SystemVideoPlaybackPresenter {
             telemetrySessionId: telemetrySessionId,
             startedNs: startedNs
         )
+        if ChatReaderOpenLookup.open(
+            .video(
+                ChatReaderVideoContent(
+                    source: source,
+                    telemetrySource: telemetrySource,
+                    telemetrySessionId: telemetrySessionId,
+                    startedNs: startedNs
+                )
+            ),
+            from: presenter
+        ) {
+            return
+        }
         controller.modalPresentationStyle = .fullScreen
         controller.overrideUserInterfaceStyle = ThemeRuntimeState.currentThemeID().preferredColorScheme == .light ? .light : .dark
         presenter.present(controller, animated: true) {

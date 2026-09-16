@@ -42,6 +42,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let routeScope: SessionRouteScope?
         let onFork: (String) -> Void
         let onOpenCurrentFile: (String) -> Void
+        let onOpenChatReader: (ChatReaderPayload) -> Void
         let onBackSwipe: () -> Void
         var onQuietWorkLineToggle: (String) -> Void
         var onShowEarlier: () -> Void
@@ -89,6 +90,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             routeScope: SessionRouteScope? = nil,
             onFork: @escaping (String) -> Void,
             onOpenCurrentFile: @escaping (String) -> Void = { _ in },
+            onOpenChatReader: @escaping (ChatReaderPayload) -> Void = { _ in },
             onBackSwipe: @escaping () -> Void,
             onQuietWorkLineToggle: @escaping (String) -> Void = { _ in },
             onShowEarlier: @escaping () -> Void,
@@ -134,6 +136,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 ?? workspaceId.map(SessionRouteScope.workspace)
             self.onFork = onFork
             self.onOpenCurrentFile = onOpenCurrentFile
+            self.onOpenChatReader = onOpenChatReader
             self.onBackSwipe = onBackSwipe
             self.onQuietWorkLineToggle = onQuietWorkLineToggle
             self.onShowEarlier = onShowEarlier
@@ -194,11 +197,13 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         context.coordinator.attachHardwareKeybindingResponder(to: collectionView)
         context.coordinator.configureDataSource(collectionView: collectionView)
         collectionView.prefetchDataSource = context.coordinator
+        ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
         return collectionView
     }
 
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
         ChatTimelinePerf.recordHostUpdateUIView()
+        ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
         context.coordinator.composerDraftStore = composerDraftStore
         if configuration.ownsTimelineProjection {
             context.coordinator.updateHostChrome(configuration: configuration, to: collectionView)
@@ -327,6 +332,11 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         var onOpenCurrentFile: ((String) -> Void)? {
             get { context.onOpenCurrentFile }
             set { context.onOpenCurrentFile = newValue }
+        }
+
+        var onOpenChatReader: ((ChatReaderPayload) -> Void)? {
+            get { context.onOpenChatReader }
+            set { context.onOpenChatReader = newValue }
         }
 
         var onShowEarlier: (() -> Void)? {
@@ -855,6 +865,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
 
             context.apply(configuration: configuration)
+            ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
             self.collectionView = collectionView
             refreshHardwareKeybindingResponder()
             currentFullTimelineItemIDs = configuration.fullTimelineItemIDs

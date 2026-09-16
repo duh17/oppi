@@ -48,6 +48,24 @@ enum AudioLyricsPlayerPresenter {
         // Expand starts playback only when the caller opts in: already playing
         // this item, or a voice `playNow` reply. Markdown and file browser pass false.
         guard let presenter = nearestViewController(from: view) else { return }
+        if ChatReaderOpenLookup.open(
+            .audioLyrics(
+                AudioLyricsReaderContent(
+                    title: title,
+                    lyrics: lyrics,
+                    itemID: itemID,
+                    audioPlayer: audioPlayer,
+                    play: play,
+                    openFile: openFile,
+                    autoplayOnAppear: autoplayOnAppear,
+                    timedText: timedText,
+                    sidecarLoader: sidecarLoader
+                )
+            ),
+            from: view
+        ) {
+            return
+        }
         let root = AudioLyricsPlayerView(
             title: title,
             lyrics: lyrics,
@@ -87,6 +105,7 @@ struct AudioLyricsPlayerView: View {
     let openFile: (() -> Void)?
     var autoplayOnAppear = false
     var showsCloseButton = true
+    var usesNavigationBackButton = false
     var titlePresentation: AudioLyricsPlayerTitlePresentation = .playerShowsTitle
     var timedText: TimedText.LoadResult? = nil
     var sidecarLoader: (() async -> TimedText.LoadResult)? = nil
@@ -174,11 +193,24 @@ struct AudioLyricsPlayerView: View {
         .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { _ in
             progressTick += 1
         }
+        .horizontalBackSwipeGesture(isEnabled: usesNavigationBackButton) {
+            dismiss()
+        }
     }
 
     private var header: some View {
         HStack {
-            if showsCloseButton {
+            if usesNavigationBackButton {
+                Button(action: { dismiss() }) {
+                    Image(systemName: "chevron.backward")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.themeCyan)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(localized: "Back"))
+                .accessibilityIdentifier("fullscreen-audio.back")
+            } else if showsCloseButton {
                 Button("Done") { dismiss() }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.themeCyan)
@@ -197,7 +229,7 @@ struct AudioLyricsPlayerView: View {
             // File browser embeds this view with the shared player and
             // `showsCloseButton: false`. Stop belongs only on presented
             // Now Playing chrome so it cannot kill unrelated playback.
-            if showsCloseButton, let audioPlayer {
+            if (showsCloseButton || usesNavigationBackButton), let audioPlayer {
                 InAppNowPlayingStopButton(
                     audioPlayer: audioPlayer,
                     accessibilityIdentifier: "audioLyrics.stop"

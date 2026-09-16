@@ -430,6 +430,7 @@ private struct FullScreenViewerPresentationModifier: ViewModifier {
     let lineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.openChatReader) private var openChatReader
 
     private var prefersFullScreenCover: Bool {
         horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .pad
@@ -437,7 +438,23 @@ private struct FullScreenViewerPresentationModifier: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if prefersFullScreenCover {
+        if let openChatReader {
+            content.onChange(of: isPresented) { _, presented in
+                guard presented else { return }
+                isPresented = false
+                openChatReader(
+                    .document(
+                        content: viewerContent,
+                        reviewCommentSelectionContext: reviewCommentSelectionContext
+                            ?? ReviewCommentSelectionContext(
+                                router: reviewCommentSelectionRouter,
+                                sessionId: sessionId,
+                                sourceLabel: sourceLabel
+                            )
+                    )
+                )
+            }
+        } else if prefersFullScreenCover {
             content.fullScreenCover(isPresented: $isPresented) {
                 fullScreenCodeView
             }
