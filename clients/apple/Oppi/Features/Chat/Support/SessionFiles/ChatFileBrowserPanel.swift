@@ -97,6 +97,7 @@ struct ChatFileBrowserPanel: View {
                 .id(selectedTab)
         }
         .background(.themeBg)
+        .environment(\.reviewCommentSelectionScope, fileDetailReviewCommentScope)
         .onAppear {
             ClientLog.info("FileBrowser", "Chat file panel appeared", metadata: [
                 "sessionId": sessionId,

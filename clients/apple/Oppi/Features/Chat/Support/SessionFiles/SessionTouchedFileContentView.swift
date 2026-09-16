@@ -74,6 +74,13 @@ struct SessionTouchedFileContentView: View {
         return false
     }
 
+    private var usesUIKitReviewCommentStash: Bool {
+        if case .text = phase {
+            return true
+        }
+        return false
+    }
+
     private var currentSelection: FileBrowserSelection {
         activeSelection ?? FileBrowserSelection(path: filePath, name: fileName, size: nil)
     }
@@ -135,6 +142,10 @@ struct SessionTouchedFileContentView: View {
                 onPrevious: { navigateToAdjacentFile(.previous) },
                 onNext: { navigateToAdjacentFile(.next) }
             ))
+            .fullScreenReviewCommentStashOverlay(
+                isEnabled: !usesUIKitReviewCommentStash,
+                leadingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0
+            )
         .navigationTitle(
             isUsingFileViewer
                 ? ""
@@ -177,7 +188,8 @@ struct SessionTouchedFileContentView: View {
         case .text(let content):
             EmbeddedFileViewerView(
                 content: fullScreenContent(text: content),
-                backSwipeAction: { dismiss() }
+                backSwipeAction: { dismiss() },
+                leadingFloatingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0
             )
             .ignoresSafeArea(edges: .top)
         case .image(let data):

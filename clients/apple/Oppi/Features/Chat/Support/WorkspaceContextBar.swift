@@ -924,6 +924,11 @@ struct WorkspaceContextBar: View {
         navigationFiles: [WorkspaceReviewFile]
     ) -> some View {
         if let workspaceId {
+            let reviewCommentScope = Self.makeFileDetailReviewCommentScope(
+                parentScope: fileDetailReviewCommentScope,
+                fallbackScope: nil,
+                dismissFileDetail: { reviewPresentation.dismiss() }
+            )
             NavigationStack {
                 WorkspaceReviewFileDetailView(
                     workspaceId: workspaceId,
@@ -931,14 +936,11 @@ struct WorkspaceContextBar: View {
                     file: file.toReviewFile(),
                     worktreeId: worktreeId,
                     serverId: serverId,
-                    reviewCommentSelectionScopeOverride: Self.makeFileDetailReviewCommentScope(
-                        parentScope: fileDetailReviewCommentScope,
-                        fallbackScope: nil,
-                        dismissFileDetail: { reviewPresentation.dismiss() }
-                    ),
+                    reviewCommentSelectionScopeOverride: reviewCommentScope,
                     navigationFiles: navigationFiles,
                     allowsHorizontalBackSwipe: false
                 )
+                .environment(\.reviewCommentSelectionScope, reviewCommentScope)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button {

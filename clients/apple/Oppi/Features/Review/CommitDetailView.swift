@@ -483,6 +483,7 @@ struct CommitFileDiffView: View {
         .background(.themeBgDark)
         .navigationTitle(file.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
+        .fullScreenReviewCommentStashOverlay()
         .task(id: sha + "|" + file.path) {
             await loadDiff()
         }

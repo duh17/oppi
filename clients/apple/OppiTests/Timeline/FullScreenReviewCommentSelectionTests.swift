@@ -2147,6 +2147,21 @@ struct FullScreenReviewCommentSelectionTests {
         )
     }
 
+    @Test func reviewCommentStashButtonStacksAboveLeadingFileNavigator() throws {
+        let fixture = try makeStashFixture(stagedCount: 1)
+        fixture.controller.setLeadingFloatingAccessoryCount(1)
+        fixture.controller.view.layoutIfNeeded()
+
+        let stashFrame = try #require(fixture.controller.floatingStashButtonFrameForTesting)
+        #expect(
+            abs(
+                fixture.controller.view.bounds.maxY
+                    - stashFrame.maxY
+                    - FullScreenReviewCommentStashControl.bottomPadding(leadingAccessoryCount: 1)
+            ) <= 0.5
+        )
+    }
+
     @Test func reviewCommentStashButtonRevealsAfterInlineSaveAndHidesAfterLastDelete() async throws {
         let fixture = try makeStashFixture(stagedCount: 0)
         #expect(fixture.controller.floatingStashButtonForTesting == nil)

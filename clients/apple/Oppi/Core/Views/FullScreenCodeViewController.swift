@@ -103,6 +103,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var stashButton: UIButton?
     private var stashBadgeLabel: UILabel?
     private var stashBottomConstraint: NSLayoutConstraint?
+    private var leadingFloatingAccessoryCount = 0
     private var lastPresentedStashCount = 0
     private var isObservingReviewCommentStash = false
     private weak var presentedStashSheetHost: UIViewController?
@@ -948,12 +949,21 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private var stashBottomPadding: CGFloat {
-        var padding = FullScreenFloatingControlChrome.bottomPadding
+        var accessoryCount = leadingFloatingAccessoryCount
         if annotateButton?.superview != nil {
-            padding += FullScreenFloatingControlChrome.controlSize
-                + FullScreenFloatingControlChrome.stackSpacing
+            accessoryCount += 1
         }
-        return padding
+        return FullScreenReviewCommentStashControl.bottomPadding(
+            leadingAccessoryCount: accessoryCount
+        )
+    }
+
+    func setLeadingFloatingAccessoryCount(_ count: Int) {
+        let normalized = max(0, count)
+        guard leadingFloatingAccessoryCount != normalized else { return }
+        leadingFloatingAccessoryCount = normalized
+        guard isViewLoaded, let host = contentHostController else { return }
+        updateStashBottomConstraint(on: host.view)
     }
 
     private func updateStashBottomConstraint(on view: UIView) {

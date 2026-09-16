@@ -128,6 +128,9 @@ struct FileBrowserContentView: View {
     var onLineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     var markdownViewportRestore: Binding<FullScreenMarkdownViewportRestoreState>? = nil
     var addToChatDestination: ComposerCanvasDestination? = nil
+    /// Parent review hosts keep one stash overlay. Nested file content must not
+    /// draw a second pill on top of previous-file.
+    var showsSwiftUIReviewCommentStashOverlay = true
 
     static func restoreStore(
         for host: FileBrowserMarkdownViewportRestoreHost,
@@ -212,6 +215,13 @@ struct FileBrowserContentView: View {
         FileBrowserContentRenderingPolicy.textRenderer(for: chromeMode) == .embeddedFileViewer
     }
 
+    private var usesUIKitReviewCommentStash: Bool {
+        if case .text = content {
+            return shouldUseEmbeddedFileViewer
+        }
+        return false
+    }
+
     private var shouldShowEmbeddedNavigationChrome: Bool {
         FileBrowserContentRenderingPolicy.showsNavigationChrome(for: chromeMode, source: source)
     }
@@ -275,6 +285,10 @@ struct FileBrowserContentView: View {
                 onPrevious: { navigateToAdjacentFile(.previous) },
                 onNext: { navigateToAdjacentFile(.next) }
             ))
+            .fullScreenReviewCommentStashOverlay(
+                isEnabled: showsSwiftUIReviewCommentStashOverlay && !usesUIKitReviewCommentStash,
+                leadingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0
+            )
         .navigationTitle(shouldHideHostNavigationBar ? "" : viewerTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .automatic, for: .navigationBar)
@@ -319,7 +333,8 @@ struct FileBrowserContentView: View {
                     showsNavigationChrome: shouldShowEmbeddedNavigationChrome,
                     backSwipeAction: navigateBackToFileList,
                     markdownViewportIntent: markdownViewportRestore?.intent(for: currentFilePath),
-                    addToChatDestination: addToChatDestination
+                    addToChatDestination: addToChatDestination,
+                    leadingFloatingAccessoryCount: adjacentSelection(.previous) != nil ? 1 : 0
                 )
                 .ignoresSafeArea(edges: shouldShowEmbeddedNavigationChrome ? .top : [])
             } else {

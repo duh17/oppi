@@ -17,7 +17,9 @@ import UIKit
 ///    can annotate. Do not put Annotate in the top bar. Staged review comments
 ///    use the same corner when `stagedCount > 0`. If both are present, stack
 ///    stash above Annotate. Annotate stays in the original slot when stash is
-///    hidden. Do not add a second stash control in the top bar.
+///    hidden. Adjacent previous-file controls occupy this same corner on
+///    SwiftUI file hosts; stash stacks above them the same way. Do not add a
+///    second stash control in the top bar.
 /// 4. Bottom trailing: Viewing Options / Reader as a floating glass control.
 ///    Do not cover it with Annotate, stash, or a bottom toolbar.
 ///
@@ -134,6 +136,14 @@ enum FullScreenReviewCommentStashControl {
 
     static func accessibilityValue(for count: Int) -> String {
         count == 1 ? "1 staged comment" : "\(count) staged comments"
+    }
+
+    static func bottomPadding(leadingAccessoryCount: Int = 0) -> CGFloat {
+        FullScreenFloatingControlChrome.bottomPadding
+            + CGFloat(max(0, leadingAccessoryCount)) * (
+                FullScreenFloatingControlChrome.controlSize
+                    + FullScreenFloatingControlChrome.stackSpacing
+            )
     }
 
     #if DEBUG

@@ -65,6 +65,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     var navigationActions: [FullScreenViewerNavigationAction] = []
     var markdownViewportIntent: Binding<FullScreenMarkdownViewportIntent?>? = nil
     var addToChatDestination: ComposerCanvasDestination? = nil
+    var leadingFloatingAccessoryCount: Int = 0
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
@@ -90,7 +91,7 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
             presentationMode = .contentOnly(onBackSwipe: { backSwipeAction?() ?? dismissAction() })
         }
         let viewportBinding = markdownViewportIntent
-        return FullScreenCodeViewController(
+        let viewController = FullScreenCodeViewController(
             content: content,
             presentationMode: presentationMode,
             reviewCommentSelectionContext: effectiveReviewCommentSelectionContext,
@@ -103,6 +104,8 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
             },
             addToChatDestination: addToChatDestination
         )
+        viewController.setLeadingFloatingAccessoryCount(leadingFloatingAccessoryCount)
+        return viewController
     }
 
     func updateUIViewController(
@@ -111,11 +114,12 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
     ) {
         uiViewController.setNavigationActions(navigationActions)
         uiViewController.applyThemeIfNeeded(themeID)
+        uiViewController.setLeadingFloatingAccessoryCount(leadingFloatingAccessoryCount)
     }
 
 #if DEBUG
     func debugMakeControllerForTesting() -> FullScreenCodeViewController {
-        FullScreenCodeViewController(
+        let controller = FullScreenCodeViewController(
             content: content,
             presentationMode: showsNavigationChrome
                 ? .embedded(onDismiss: {})
@@ -127,6 +131,8 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
             markdownViewportIntent: markdownViewportIntent?.wrappedValue,
             addToChatDestination: addToChatDestination
         )
+        controller.setLeadingFloatingAccessoryCount(leadingFloatingAccessoryCount)
+        return controller
     }
 #endif
 }

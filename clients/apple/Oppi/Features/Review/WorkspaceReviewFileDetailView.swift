@@ -214,6 +214,10 @@ struct WorkspaceReviewFileDetailView: View {
             onPrevious: { navigateToAdjacentReviewFile(.previous) },
             onNext: { navigateToAdjacentReviewFile(.next) }
         ))
+        .fullScreenReviewCommentStashOverlay(
+            leadingAccessoryCount: adjacentReviewFile(.previous) != nil ? 1 : 0
+        )
+        .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
         .navigationTitle(currentFile.path.lastPathComponentForDisplay)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: diffTaskID) {
@@ -405,7 +409,8 @@ struct WorkspaceReviewFileDetailView: View {
                 filePath: currentFile.path,
                 fileName: currentFile.path.lastPathComponentForDisplay,
                 chromeMode: .treePane,
-                allowsHorizontalBackSwipe: allowsHorizontalBackSwipe
+                allowsHorizontalBackSwipe: allowsHorizontalBackSwipe,
+                showsSwiftUIReviewCommentStashOverlay: false
             )
         }
         .background(.themeBgDark)
