@@ -33,13 +33,13 @@ enum DesktopCurrentStillViewerFailure: Equatable, Sendable {
     var message: String {
         switch self {
         case .remoteViewOff:
-            "Remote view is off on the Mac. In Oppi Desktop Companion, turn on Allow paired devices to view this still."
+            "Remote view is off on the Mac. In Oppi on the Mac, turn on Allow paired devices to view this still."
         case .noneAvailable:
-            "No still is available. Capture one in Oppi Desktop Companion, then allow paired devices to view it."
+            "No still is available. Capture one in Oppi on the Mac, then allow paired devices to view it."
         case .companionDown:
-            "Oppi Desktop Companion is not running. Open it on the Mac, then retry."
+            "Oppi on the Mac is not sharing a still. Open Oppi on the Mac, then retry."
         case .unavailable:
-            "Couldn't load the Mac still. Check Oppi Desktop Companion, then retry."
+            "Couldn't load the Mac still. Check Oppi on the Mac, then retry."
         }
     }
 }

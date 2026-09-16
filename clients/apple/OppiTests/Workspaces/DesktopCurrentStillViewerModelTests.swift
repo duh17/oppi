@@ -125,7 +125,7 @@ struct DesktopCurrentStillViewerModelTests {
         #expect(model.still == nil)
         #expect(model.phase == .failed(.companionDown))
         let message = try #require(model.failure?.message)
-        #expect(message.localizedCaseInsensitiveContains("companion"))
+        #expect(message.localizedCaseInsensitiveContains("oppi on the mac"))
         #expect(!message.contains("502"))
     }
 
