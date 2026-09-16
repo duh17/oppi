@@ -246,4 +246,62 @@ struct ToolElapsedTimeTests {
         #expect(!label.isHidden)
         #expect(label.text == "10s")
     }
+
+    @Test("releasing a running expanded tool row invalidates its elapsed timer")
+    func releasingRunningExpandedToolRowInvalidatesElapsedTimer() {
+        let timer = elapsedTimerAfterReleasingRunningExpandedToolRow()
+        #expect(timer != nil, "Running tool rows should start an elapsed timer")
+        #expect(timer?.isValid == false, "Elapsed timer must not stay on the run loop after the row is released")
+    }
+
+    @Test("releasing a running collapsed tool row invalidates its elapsed timer")
+    func releasingRunningCollapsedToolRowInvalidatesElapsedTimer() {
+        let timer = elapsedTimerAfterReleasingRunningCollapsedToolRow()
+        #expect(timer != nil, "Running collapsed tool rows should start an elapsed timer")
+        #expect(timer?.isValid == false, "Elapsed timer must not stay on the run loop after the row is released")
+    }
+}
+
+@MainActor
+private func elapsedTimerAfterReleasingRunningExpandedToolRow() -> Timer? {
+    var timer: Timer?
+    do {
+        let view = ToolTimelineRowContentView(configuration: runningElapsedToolConfiguration())
+        timer = elapsedTimer(from: view)
+        #expect(timer?.isValid == true)
+    }
+    return timer
+}
+
+@MainActor
+private func elapsedTimerAfterReleasingRunningCollapsedToolRow() -> Timer? {
+    var timer: Timer?
+    do {
+        let view = CollapsedToolTimelineRowContentView(
+            configuration: CollapsedToolTimelineRowConfiguration(chrome: runningElapsedToolConfiguration())
+        )
+        timer = elapsedTimer(from: view)
+        #expect(timer?.isValid == true)
+    }
+    return timer
+}
+
+private func runningElapsedToolConfiguration() -> ToolTimelineRowConfiguration {
+    makeTimelineToolConfiguration(
+        title: "elapsed-timer-release",
+        isExpanded: true,
+        isDone: false,
+        startedAt: Date(timeIntervalSinceNow: -12)
+    )
+}
+
+private func elapsedTimer(from view: UIView) -> Timer? {
+    guard let value = Mirror(reflecting: view).children.first(where: { $0.label == "elapsedTimer" })?.value else {
+        return nil
+    }
+    let mirror = Mirror(reflecting: value)
+    if mirror.displayStyle == .optional {
+        return mirror.children.first?.value as? Timer
+    }
+    return value as? Timer
 }

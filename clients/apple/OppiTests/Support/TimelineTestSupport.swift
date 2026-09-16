@@ -634,6 +634,7 @@ func makeTimelineToolConfiguration(
     isExpanded: Bool,
     isDone: Bool = true,
     isError: Bool = false,
+    startedAt: Date? = nil,
     reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
     reviewCommentSessionId: String? = nil
 ) -> ToolTimelineRowConfiguration {
@@ -656,7 +657,7 @@ func makeTimelineToolConfiguration(
         isExpanded: isExpanded,
         isDone: isDone,
         isError: isError,
-        startedAt: nil,
+        startedAt: startedAt,
         elapsedSeconds: nil,
         segmentAttributedTitle: nil,
         segmentAttributedTrailing: nil,

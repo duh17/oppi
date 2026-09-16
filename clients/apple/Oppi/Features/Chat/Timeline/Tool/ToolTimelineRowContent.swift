@@ -229,7 +229,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private var expandedWidthEstimateCache = ToolTimelineRowWidthEstimateCache()
     private var expandedViewportHeightCache = ToolTimelineRowViewportHeightCache()
     private var expandedPinchDidTriggerFullScreen = false
-    private var elapsedTimer: Timer?
+    nonisolated(unsafe) private var elapsedTimer: Timer?
     private let fullScreenTerminalStream: TerminalTraceStream
     private let fullScreenSourceStream: SourceTraceStream
 
@@ -291,6 +291,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     }
 
     deinit {
+        elapsedTimer?.invalidate()
         imagePreviewDecodeTask?.cancel()
         expandedCodeDeferredHighlightTask?.cancel()
         if let featureTipID {

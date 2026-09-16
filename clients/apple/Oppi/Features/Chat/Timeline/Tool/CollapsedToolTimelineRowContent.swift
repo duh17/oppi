@@ -39,7 +39,7 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
     private var toolWidthConstraint: NSLayoutConstraint?
     private var titleLeadingToStatusConstraint: NSLayoutConstraint?
     private var titleLeadingToToolConstraint: NSLayoutConstraint?
-    private var elapsedTimer: Timer?
+    nonisolated(unsafe) private var elapsedTimer: Timer?
     private var featureTipView: FeatureEducationTipBannerView?
     private var featureTipID: String?
 
@@ -56,6 +56,7 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
     }
 
     deinit {
+        elapsedTimer?.invalidate()
         if let featureTipID {
             let ownerID = featureTipPresentationOwnerID
             Task { @MainActor in
