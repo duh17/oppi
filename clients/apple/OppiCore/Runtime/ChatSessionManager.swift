@@ -68,8 +68,8 @@ final class ChatSessionManager {
     /// Bumped to restart the `.task(id:)` connection loop.
     private(set) var connectionGeneration = 0
 
-    /// iOS ChatView re-runs `connect()` via `.task(id: connectionGeneration)`.
-    /// Mac has no equivalent view task, so the store re-invokes `connect()` here.
+    /// Mac re-invokes `connect()` from its own runtime task. iOS owns the
+    /// loop via `ensureConnected()` / `startConnectLoop()` instead.
     @ObservationIgnored
     var onReconnect: (() -> Void)?
 
@@ -87,6 +87,7 @@ final class ChatSessionManager {
     private var activeHistoryReplayID: UUID?
     private var stateSyncTask: Task<Void, Never>?
     private var autoReconnectTask: Task<Void, Never>?
+    private var connectLoopTask: Task<Void, Never>?
     private let streamingWaiters = StreamingWaiterBox()
     private var latestTraceSignature: TraceSignature?
 
@@ -497,16 +498,10 @@ final class ChatSessionManager {
 
     // MARK: - Lifecycle
 
-    /// True after the view has appeared and teardown has not run. Covered
-    /// reader/file pushes keep this set so reappear can skip a cold reconnect.
-    var isPreservingCoveredLifetime: Bool {
-        hasAppeared && wantsAutoReconnect
-    }
-
-    func markAppeared(isCoveredReentry: Bool = false) {
+    func markAppeared() {
         wantsAutoReconnect = true
         if hasAppeared {
-            if isCoveredReentry {
+            if isConnectLoopLive {
                 return
             }
             cancelPresentationReloadRetry()
@@ -520,7 +515,39 @@ final class ChatSessionManager {
         cancelAutoReconnect()
         cancelPresentationReloadRetry()
         connectionGeneration &+= 1
-        onReconnect?()
+        if connectLoopTask != nil {
+            startConnectLoop()
+        } else {
+            onReconnect?()
+        }
+    }
+
+    /// Start the manager-owned connect loop if it is not already running.
+    /// ChatView `.task` must call this and return; cancelling that task must
+    /// not cancel the loop. Only `cleanup()` and `reconnect()` cancel it.
+    func ensureConnected() {
+        if isConnectLoopLive {
+            return
+        }
+        startConnectLoop()
+    }
+
+    private var isConnectLoopLive: Bool {
+        guard let connectLoopTask, !connectLoopTask.isCancelled else { return false }
+        switch entryState {
+        case .disconnected:
+            return false
+        case .idle, .loadingCache, .awaitingConnected, .streaming, .stopped:
+            return true
+        }
+    }
+
+    private func startConnectLoop() {
+        connectLoopTask?.cancel()
+        connectLoopTask = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            await self.connect()
+        }
     }
 
     /// Wait until the focused stream has bound (`.streaming`).
@@ -603,10 +630,7 @@ final class ChatSessionManager {
             return
         }
 
-        let preservePopulatedReducer = !reducer.items.isEmpty
-        if !preservePopulatedReducer {
-            transitionTo(.idle)
-        }
+        transitionTo(.idle)
         if let resolvedWorkspaceId = effectsStatePort.resolveSessionReentryWorkspaceId(
             sessionId: sessionId,
             workspaceIdHint: workspaceIdHint
@@ -617,11 +641,9 @@ final class ChatSessionManager {
         focusedStreamPort.fatalSetupError = false
         cancelAutoReconnect()
         cancelStateSync()
-        if !preservePopulatedReducer {
-            reducer.reset()
-            toolCallCorrelator.reset()
-        }
+        reducer.reset()
         coalescer.sessionId = sessionId
+        toolCallCorrelator.reset()
 
         effectsStatePort.setActiveSessionId(sessionId)
         effectsStatePort.setTimelineActiveSessionId(sessionId)
@@ -644,11 +666,7 @@ final class ChatSessionManager {
         telemetry.updateTransportPath(focusedStreamPort.transportPath)
         telemetry.beginFreshContentLagMeasurement(hadCache: false)
 
-        if preservePopulatedReducer {
-            log.info("Skipped reducer reset — keeping \(self.reducer.items.count) live items for \(self.sessionId)")
-        } else {
-            latestTraceSignature = await loadCachedTimeline()
-        }
+        latestTraceSignature = await loadCachedTimeline()
 
         // Stopped sessions: load fresh history but do NOT open a WebSocket.
         // Opening the WS would auto-resume the pi process on the server.
@@ -1077,12 +1095,7 @@ final class ChatSessionManager {
 
         focusedStreamPort.setReconnectHandler(nil)
         cancelStateSync()
-        // Covered ChatView disappearance cancels `.task` without cleanup().
-        // Keep the focused session so reappear is not a cold reconnect.
-        let preserveCoveredConnection = Task.isCancelled && wantsAutoReconnect
-        if !preserveCoveredConnection {
-            disconnectIfCurrent(generation)
-        }
+        disconnectIfCurrent(generation)
     }
 
     /// Reconcile session state from REST after a stop attempt times out.
@@ -1182,6 +1195,8 @@ final class ChatSessionManager {
     func cleanup() {
         wantsAutoReconnect = false
         onReconnect = nil
+        connectLoopTask?.cancel()
+        connectLoopTask = nil
         reconcileTask?.cancel()
         reconcileTask = nil
         cancelAutoReconnect()

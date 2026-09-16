@@ -350,6 +350,11 @@ struct ChatReaderDestinationView: View {
     var body: some View {
         readerPage(for: target)
             .toolbarVisibility(.hidden, for: .navigationBar)
+            .onDisappear {
+                if !navigation.containsChatReader(target) {
+                    store.remove(target)
+                }
+            }
     }
 
     @ViewBuilder

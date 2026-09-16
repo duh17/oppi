@@ -31,6 +31,14 @@ extension ChatSessionManager {
         await connect()
     }
 
+    func ensureConnected(
+        connection: ServerConnection,
+        sessionStore: SessionStore
+    ) {
+        bindIOSRuntime(connection: connection, sessionStore: sessionStore)
+        ensureConnected()
+    }
+
     func reloadTimelineAfterPresentationOverflow(
         connection: ServerConnection,
         sessionStore: SessionStore

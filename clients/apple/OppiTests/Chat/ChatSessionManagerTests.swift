@@ -123,54 +123,57 @@ struct ChatSessionManagerTests {
         #expect(manager.connectionGeneration == 2, "Third appear should bump again")
     }
 
-    @Test func coveredReappearDoesNotBumpGeneration() {
+    @Test func cleanupAllowsSubsequentAppearToBumpGeneration() {
         let manager = ChatSessionManager(sessionId: "s1")
         manager.markAppeared()
         #expect(manager.connectionGeneration == 0)
-        #expect(manager.isPreservingCoveredLifetime)
-
-        manager.markAppeared(isCoveredReentry: true)
-        #expect(manager.connectionGeneration == 0, "Covered reappear must not bump generation")
-        #expect(manager.hasAppeared)
-        #expect(manager.isPreservingCoveredLifetime)
-    }
-
-    @Test func cleanupClearsCoveredLifetimePreservationSoTrueLeaveCanReconnect() {
-        let manager = ChatSessionManager(sessionId: "s1")
-        manager.markAppeared()
-        #expect(manager.isPreservingCoveredLifetime)
 
         manager.cleanup()
-        #expect(!manager.isPreservingCoveredLifetime)
-
-        manager.markAppeared(isCoveredReentry: manager.isPreservingCoveredLifetime)
+        manager.markAppeared()
         #expect(manager.connectionGeneration == 1, "True leave must still bump generation")
     }
 
-    @Test func connectDoesNotResetPopulatedSameSessionReducerOnCoveredReentry() async {
-        let sessionId = "covered-reset-\(UUID().uuidString)"
-        let manager = ChatSessionManager(sessionId: sessionId, workspaceIdHint: "w1")
-        manager.reducer.loadSession([
-            makeTraceEvent(id: "u1", type: .user, text: "hello"),
-            makeTraceEvent(id: "a1", type: .assistant, text: "world"),
-        ])
-        let itemIDs = manager.reducer.items.map(\.id)
-        #expect(itemIDs == ["u1", "a1"])
-
+    @Test func swiftUITaskCancelDoesNotRestartConnectLoopWhileStreaming() async {
+        let sessionId = "covered-loop-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
         manager._loadHistoryForTesting = { _, _ in nil }
 
-        let (connection, _) = makeTestConnection(sessionId: sessionId)
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: false)
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
         let sessionStore = SessionStore()
-        sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: "w1"))
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
-        await manager.connect(connection: connection, sessionStore: sessionStore)
+        manager.markAppeared()
+        let swiftUITask = Task { @MainActor in
+            manager.ensureConnected(connection: connection, sessionStore: sessionStore)
+        }
 
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { manager.entryState == .streaming }
+        })
+        #expect(manager.connectionGeneration == 0)
+
+        swiftUITask.cancel()
+        manager._streamSessionForTesting = { _ in
+            AsyncStream { _ in }
+        }
+        manager.markAppeared()
+        manager.ensureConnected(connection: connection, sessionStore: sessionStore)
+
+        #expect(manager.connectionGeneration == 0, "Covered reappear must not bump generation while the loop is live")
         #expect(
-            Set(itemIDs).isSubset(of: Set(manager.reducer.items.map(\.id))),
-            "Covered re-entry must not empty-reducer reconnect"
+            manager.entryState == .streaming,
+            "Covered SwiftUI .task cancel must not kill the manager-owned connect loop"
         )
+        #expect(streams.streamsCreated == 1, "ensureConnected must not open a second stream")
+
+        streams.finish(index: 0)
         manager.cleanup()
+        await swiftUITask.value
     }
 
     @Test func reconnectBumpsGeneration() {

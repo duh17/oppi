@@ -652,6 +652,25 @@ final class AppNavigation {
         return false
     }
 
+    func containsChatReader(_ target: ChatReaderNavTarget) -> Bool {
+        switch workspaceNavigationPresentation {
+        case .stack:
+            return workspaceStackRouteElements.contains { element in
+                if case .chatReader(let stacked) = element {
+                    return stacked == target
+                }
+                return false
+            }
+        case .split:
+            return splitDetailPathElements.contains { element in
+                if case .chatReader(let stacked) = element {
+                    return stacked == target
+                }
+                return false
+            }
+        }
+    }
+
     /// True when this session is still under a pushed reader or same-session
     /// linked file. ChatView uses this to skip teardown on a covering disappear.
     func isCoveringChat(sessionId: String) -> Bool {
