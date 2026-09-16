@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WorkspaceAdaptiveRootView: View {
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private let minimumSplitWidth: CGFloat = 980
@@ -64,6 +65,7 @@ private struct WorkspaceStackRootView: View {
 
 private struct WorkspaceSplitRootView: View {
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
 
     var body: some View {
         @Bindable var nav = navigation
@@ -85,6 +87,11 @@ private struct WorkspaceSplitRootView: View {
                     }
                     .navigationDestination(for: WorkspaceLinkedFileNavTarget.self) { target in
                         WorkspaceLinkedFileDestinationView(target: target)
+                    }
+                    .navigationDestination(for: ChatReaderNavTarget.self) { target in
+                        if let store = chatReaderPayloadStore {
+                            ChatReaderDestinationView(target: target, store: store)
+                        }
                     }
                     .navigationDestination(for: ServerResourceDetailNavTarget.self) { target in
                         ServerResourceDetailDestinationView(target: target)

@@ -162,6 +162,7 @@ struct SessionInboxView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
     @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.theme) private var theme
 
@@ -455,6 +456,11 @@ struct SessionInboxView: View {
         }
         .navigationDestination(for: WorkspaceLinkedFileNavTarget.self) { target in
             WorkspaceLinkedFileDestinationView(target: target)
+        }
+        .navigationDestination(for: ChatReaderNavTarget.self) { target in
+            if let store = chatReaderPayloadStore {
+                ChatReaderDestinationView(target: target, store: store)
+            }
         }
         .navigationDestination(for: FileBrowserNavTarget.self) { target in
             WorkspaceFileBrowserDestinationView(target: target)

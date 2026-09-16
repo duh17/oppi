@@ -614,6 +614,7 @@ struct UIHangHarnessView: View {
 
     @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
     @State private var chatReaderRoute: ChatReaderNavTarget?
+    @State private var harnessNavigation = AppNavigation()
     @State private var streamEnabled = !UIHangHarnessConfig.streamDisabled
     @State private var diagnosticsTask: Task<Void, Never>?
     @State private var streamTask: Task<Void, Never>?
@@ -907,6 +908,8 @@ struct UIHangHarnessView: View {
         .navigationDestination(item: $chatReaderRoute) { route in
             ChatReaderDestinationView(target: route, store: chatReaderPayloadStore)
         }
+        .environment(harnessNavigation)
+        .environment(\.chatReaderPayloadStore, chatReaderPayloadStore)
         .environment(\.openChatReader, ChatReaderOpenAction { payload in
             chatReaderPayloadStore.removeAll()
             chatReaderRoute = chatReaderPayloadStore.store(payload)

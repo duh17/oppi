@@ -91,6 +91,7 @@ enum WorkspaceSplitDetailPathElement: Hashable {
     case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
     case linkedFile(WorkspaceLinkedFileNavTarget)
+    case chatReader(ChatReaderNavTarget)
     case serverResourceDetail(ServerResourceDetailNavTarget)
     case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
@@ -107,6 +108,7 @@ private enum WorkspaceStackRouteElement: Hashable {
     case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
     case linkedFile(WorkspaceLinkedFileNavTarget)
+    case chatReader(ChatReaderNavTarget)
     case workspaceConfiguration(WorkspaceNavTarget)
     case utility(WorkspaceUtilityNavTarget)
     case serverDetails(ServerDetailsNavTarget)
@@ -557,6 +559,35 @@ final class AppNavigation {
         _ rhs: WorkspaceSessionNavTarget
     ) -> Bool {
         lhs.serverId == rhs.serverId && lhs.sessionId == rhs.sessionId
+    }
+
+    func isShowingChatReader() -> Bool {
+        switch workspaceNavigationPresentation {
+        case .stack:
+            if case .chatReader = workspaceStackRouteElements.last {
+                return true
+            }
+        case .split:
+            if case .chatReader = splitDetailPathElements.last {
+                return true
+            }
+        }
+        return false
+    }
+
+    func openChatReader(_ target: ChatReaderNavTarget) {
+        selectedTab = .workspaces
+        switch workspaceNavigationPresentation {
+        case .stack:
+            appendWorkspaceStack(
+                target,
+                diagnosticContext: Self.chatReaderDiagnosticContext,
+                routeElement: .chatReader(target)
+            )
+        case .split:
+            splitDetailPath.append(target)
+            splitDetailPathElements.append(.chatReader(target))
+        }
     }
 
     func openWorkspaceFileBrowser(_ target: FileBrowserNavTarget, workspace: WorkspaceNavTarget? = nil) {
@@ -1023,6 +1054,8 @@ final class AppNavigation {
                 path.append(target)
             case .linkedFile(let target):
                 path.append(target)
+            case .chatReader(let target):
+                path.append(target)
             case .serverResourceDetail(let target):
                 path.append(target)
             case .serverSkillBrowser(let target):
@@ -1097,6 +1130,7 @@ final class AppNavigation {
         case .session(let target): sessionDiagnosticContext(target)
         case .fileBrowser(let target): fileBrowserDiagnosticContext(target)
         case .linkedFile(let target): linkedFileDiagnosticContext(target)
+        case .chatReader: chatReaderDiagnosticContext
         case .serverResourceDetail(let target): serverResourceDetailDiagnosticContext(target)
         case .serverSkillBrowser: serverSkillBrowserDiagnosticContext
         case .serverSkillFile: serverSkillFileDiagnosticContext
@@ -1144,6 +1178,12 @@ final class AppNavigation {
             workspaceId: target.workspaceId
         )
     }
+
+    private static let chatReaderDiagnosticContext = WorkspaceStackDiagnosticContext(
+        screen: "chat_reader",
+        sessionId: nil,
+        workspaceId: nil
+    )
 
     private static func workspaceConfigurationDiagnosticContext(
         _ target: WorkspaceNavTarget
@@ -1270,6 +1310,10 @@ final class AppNavigation {
                 path.append(target)
                 contexts.append(Self.linkedFileDiagnosticContext(target))
                 routeElements.append(.linkedFile(target))
+            case .chatReader(let target):
+                path.append(target)
+                contexts.append(Self.chatReaderDiagnosticContext)
+                routeElements.append(.chatReader(target))
             case .serverResourceDetail(let target):
                 path.append(target)
                 contexts.append(Self.serverResourceDetailDiagnosticContext(target))
@@ -1327,6 +1371,8 @@ final class AppNavigation {
                 } else {
                     detailPathElements.append(.linkedFile(target))
                 }
+            case .chatReader(let target):
+                detailPathElements.append(.chatReader(target))
             case .workspaceConfiguration(let target):
                 workspace = target
                 detail = .workspaceConfiguration(target)

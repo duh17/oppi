@@ -83,6 +83,7 @@ struct ChatView: View {
     @Environment(FileIndexStore.self) private var fileIndexStore
     @Environment(MessageQueueStore.self) private var messageQueueStore
     @Environment(AppNavigation.self) private var appNavigation
+    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
     @Environment(QuickCommentTemplateStore.self) private var quickCommentTemplateStore
     @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.scenePhase) private var scenePhase
@@ -118,8 +119,6 @@ struct ChatView: View {
     @State private var showRenameAlert = false
     @State private var renameText = ""
     @State private var forkedSessionToOpen: ForkRoute?
-    @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
-    @State private var chatReaderRoute: ChatReaderNavTarget?
     @State private var showShareRedactionSheet = false
     @State private var shareRedactionPolicy = AppPreferences.Share.redactionPolicy
     @State private var sharePreflightResult: ShareSessionPrepareResult?
@@ -576,8 +575,12 @@ struct ChatView: View {
     }
 
     private func openTimelineReader(_ payload: ChatReaderPayload) {
-        chatReaderPayloadStore.removeAll()
-        chatReaderRoute = chatReaderPayloadStore.store(payload)
+        guard let store = chatReaderPayloadStore else { return }
+        if appNavigation.isShowingChatReader() {
+            return
+        }
+        store.removeAll()
+        appNavigation.openChatReader(store.store(payload))
     }
 
     private func openCurrentToolFile(path: String) {
@@ -921,8 +924,7 @@ struct ChatView: View {
                 sessionManager.cleanup()
                 scrollController.cancel()
                 visibleAudioStripItemIDs = []
-                chatReaderRoute = nil
-                chatReaderPayloadStore.removeAll()
+                chatReaderPayloadStore?.removeAll()
                 nowPlayingDrawerExpanded = false
                 reviewCommentDrawerExpanded = false
                 reviewCommentStashPresentation = nil
@@ -1027,14 +1029,6 @@ struct ChatView: View {
             }
             .navigationDestination(item: $sessionRouteToOpen) { route in
                 Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
-            }
-            .navigationDestination(item: $chatReaderRoute) { route in
-                ChatReaderDestinationView(target: route, store: chatReaderPayloadStore)
-            }
-            .onChange(of: chatReaderRoute) { _, newRoute in
-                if newRoute == nil {
-                    chatReaderPayloadStore.removeAll()
-                }
             }
             .environment(\.openChatReader, ChatReaderOpenAction(handler: openTimelineReader))
     }

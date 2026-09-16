@@ -330,31 +330,26 @@ final class ChatReaderPayloadStore {
     }
 }
 
-/// Pushed reader page. Documents keep ``EmbeddedFileViewerView`` chrome.
-/// Nested wiki/file/media opens stay on this inner stack so Back returns here.
+private struct ChatReaderPayloadStoreKey: EnvironmentKey {
+    nonisolated(unsafe) static let defaultValue: ChatReaderPayloadStore? = nil
+}
+
+extension EnvironmentValues {
+    var chatReaderPayloadStore: ChatReaderPayloadStore? {
+        get { self[ChatReaderPayloadStoreKey.self] }
+        set { self[ChatReaderPayloadStoreKey.self] = newValue }
+    }
+}
+
+/// Pushed reader page on the existing workspace/chat stack.
 struct ChatReaderDestinationView: View {
     let target: ChatReaderNavTarget
     let store: ChatReaderPayloadStore
-    @State private var nestedPath = NavigationPath()
+    @Environment(AppNavigation.self) private var navigation
 
     var body: some View {
-        NavigationStack(path: $nestedPath) {
-            readerPage(for: target)
-                .navigationDestination(for: ChatReaderNavTarget.self) { nested in
-                    readerPage(for: nested)
-                }
-                .navigationDestination(for: WorkspaceLinkedFileNavTarget.self) { file in
-                    WorkspaceLinkedFileDestinationView(target: file)
-                        .toolbarVisibility(.hidden, for: .navigationBar)
-                }
-        }
-        .toolbarVisibility(.hidden, for: .navigationBar)
-        .background {
-            OuterInteractivePopGate(allowOuterPop: nestedPath.isEmpty)
-        }
-        .onDisappear {
-            store.remove(target)
-        }
+        readerPage(for: target)
+            .toolbarVisibility(.hidden, for: .navigationBar)
     }
 
     @ViewBuilder
@@ -363,15 +358,12 @@ struct ChatReaderDestinationView: View {
             target: target,
             store: store,
             onOpenNestedReader: { payload in
-                nestedPath.append(store.store(payload))
+                navigation.openChatReader(store.store(payload))
             },
             onOpenLinkedFile: { action in
                 openLinkedFile(action)
             }
         )
-        .onDisappear {
-            store.remove(target)
-        }
     }
 
     private func openLinkedFile(_ action: LinkAction) -> Bool {
@@ -379,7 +371,7 @@ struct ChatReaderDestinationView: View {
               let file = linkedFileTarget(for: action, payload: payload) else {
             return false
         }
-        nestedPath.append(file)
+        navigation.openWorkspaceLinkedFile(file)
         return true
     }
 
@@ -792,62 +784,5 @@ private struct PushedReaderLeaveChrome: ViewModifier {
 extension View {
     fileprivate func pushedReaderLeaveChrome(accessibilityIdentifier: String) -> some View {
         modifier(PushedReaderLeaveChrome(accessibilityIdentifier: accessibilityIdentifier))
-    }
-}
-
-/// Keep nested reader pages from being skipped by the workspace stack's pop.
-private struct OuterInteractivePopGate: UIViewControllerRepresentable {
-    var allowOuterPop: Bool
-
-    func makeUIViewController(context: Context) -> Controller {
-        Controller()
-    }
-
-    func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.allowOuterPop = allowOuterPop
-        controller.apply()
-    }
-
-    final class Controller: UIViewController {
-        var allowOuterPop = true
-        private var restoredEnabled: Bool?
-
-        override func didMove(toParent parent: UIViewController?) {
-            super.didMove(toParent: parent)
-            apply()
-        }
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            apply()
-        }
-
-        override func viewWillDisappear(_ animated: Bool) {
-            super.viewWillDisappear(animated)
-            restore()
-        }
-
-        func apply() {
-            guard let recognizer = enclosingNavigationController()?.interactivePopGestureRecognizer else {
-                return
-            }
-            if restoredEnabled == nil {
-                restoredEnabled = recognizer.isEnabled
-            }
-            recognizer.isEnabled = allowOuterPop ? (restoredEnabled ?? true) : false
-        }
-
-        private func restore() {
-            guard let enabled = restoredEnabled,
-                  let recognizer = enclosingNavigationController()?.interactivePopGestureRecognizer else {
-                return
-            }
-            recognizer.isEnabled = enabled
-            restoredEnabled = nil
-        }
-
-        private func enclosingNavigationController() -> UINavigationController? {
-            navigationController ?? parent?.navigationController
-        }
     }
 }

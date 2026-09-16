@@ -392,6 +392,7 @@ struct OppiApp: App {
     @State private var themeStore = ThemeStore()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore()
     @State private var composerDraftStore = ComposerDraftStore()
+    @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
 
     /// Convenience accessor — most lifecycle code targets the active connection.
     private var connection: ServerConnection { coordinator.activeConnection }
@@ -473,6 +474,7 @@ struct OppiApp: App {
             .environment(coordinator)
             .withServerScopedEnvironment(coordinator.activeConnection)
             .environment(navigation)
+            .environment(\.chatReaderPayloadStore, chatReaderPayloadStore)
             .environment(coordinator.serverStore)
             .environment(themeStore)
             .environment(quickCommentTemplateStore)
