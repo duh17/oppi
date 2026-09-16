@@ -333,7 +333,7 @@ struct DesktopCurrentStillViewerModelTests {
         )
     }
 
-    private func makeViewSession(expiresAt: Date) -> DesktopViewSession {
+    private nonisolated func makeViewSession(expiresAt: Date) -> DesktopViewSession {
         DesktopViewSession(
             grantId: UUID(uuidString: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff")!,
             capability: DesktopViewSessionJSON.capabilityView,
