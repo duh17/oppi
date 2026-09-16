@@ -11,22 +11,15 @@ enum IconPickerMedia: Hashable, Sendable {
 }
 
 enum IconPickerPurpose: Sendable {
-    case assistant
     case agent
     case workspace
 
     var allowedMedia: Set<IconPickerMedia> {
-        switch self {
-        case .assistant:
-            return [.emoji, .genmoji]
-        case .agent, .workspace:
-            return [.emoji, .genmoji, .symbol]
-        }
+        [.emoji, .genmoji, .symbol]
     }
 
     var title: String {
         switch self {
-        case .assistant: return "Assistant Avatar"
         case .agent: return "Agent Icon"
         case .workspace: return "Workspace Icon"
         }
@@ -34,7 +27,6 @@ enum IconPickerPurpose: Sendable {
 
     var symbolSectionTitle: String {
         switch self {
-        case .assistant: return ""
         case .agent: return "Agent Symbols"
         case .workspace: return "Workspace Symbols"
         }
@@ -927,4 +919,28 @@ private enum PickerAdaptiveGlyphRenderer {
 
 private final class AdaptiveGlyphTextView: UITextView {
     override var canBecomeFirstResponder: Bool { true }
+}
+
+/// Local HEIF draft preview for Agent and Workspace icon pickers.
+struct IconPickerGenmojiDraftPreview: View {
+    let data: Data
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let image = try? IconAssetCache.decodeRemoteHEIF(
+                data: data,
+                size: min(512, max(1, size))
+            ).image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                RoundedRectangle(cornerRadius: size * 0.32, style: .continuous)
+                    .fill(.themeComment.opacity(0.10))
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
 }

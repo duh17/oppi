@@ -7,15 +7,12 @@ struct ChatEmptyState: View {
     var agentId: String?
     var agentIcon: IconChoice?
     @State private var visible = false
-    @State private var avatar: AssistantAvatar
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(sessionId: String = "", agentId: String? = nil, agentIcon: IconChoice? = nil) {
         self.sessionId = sessionId
         self.agentId = agentId
         self.agentIcon = agentIcon
-        let presentation = AssistantIdentityPresentation.resolve(agentId: agentId, agentIcon: agentIcon)
-        _avatar = State(initialValue: presentation == .globalAvatar ? AssistantAvatar.current : .officialPi)
     }
 
     var body: some View {
@@ -33,23 +30,14 @@ struct ChatEmptyState: View {
                     visualScale: ChatAgentIconStyle.heroVisualScale
                 )
             case .globalAvatar:
-                AssistantAvatarPreview(
-                    avatar: avatar,
-                    sessionId: sessionId,
-                    size: 112
-                )
-                .accessibilityHidden(false)
-                .accessibilityLabel(avatar.accessibilityDescription)
+                PiAvatarView(size: 112)
+                    .accessibilityHidden(false)
+                    .accessibilityLabel(PiAvatar.accessibilityLabel)
             }
         }
         .opacity(visible ? 1 : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onReceive(NotificationCenter.default.publisher(for: .assistantAvatarDidChange)) { _ in
-            guard AssistantIdentityPresentation.resolve(agentId: agentId, agentIcon: agentIcon) == .globalAvatar else {
-                return
-            }
-            avatar = AssistantAvatar.current
-        }
+        .id(sessionId)
         .task {
             // Delay appearance to avoid flash on existing sessions
             // that briefly have empty items while loading.

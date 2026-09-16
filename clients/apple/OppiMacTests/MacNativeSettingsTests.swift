@@ -28,7 +28,7 @@ struct MacNativeSettingsRoutingTests {
         )
         #expect(labels.contains(where: { $0.contains("App preferences are in Settings") }))
         #expect(!labels.contains(where: { $0.contains("npm install -g oppi-server@latest") }))
-        #expect(!labels.contains(MacAppSettingsPreferenceControl.assistantAvatar.title))
+        #expect(!labels.contains("Assistant Avatar"))
     }
 
     @Test func reopenedPreferencesReadTheSameThemeStoreAndPersistedValues() {

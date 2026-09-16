@@ -509,7 +509,7 @@ struct SessionTraceShellDetail: View {
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .navigation) {
-            MacAssistantAvatarView(avatar: .officialPi, sessionId: store.selectedTarget?.sessionId ?? "session", size: 26)
+            MacAssistantAvatarView(size: 26)
                 .accessibilityLabel("Pi")
                 .accessibilityIdentifier("mac.session.toolbar.piIdentity")
                 .help("Pi session")

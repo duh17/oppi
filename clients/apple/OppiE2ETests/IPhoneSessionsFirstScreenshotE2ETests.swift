@@ -730,54 +730,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertTrue(app.staticTexts["All Sessions"].waitForExistence(timeout: 10), "Workspace swipe did not return to All Sessions")
     }
 
-    func testAssistantAvatarPickerIncludesOfficialPi() throws {
-        XCUIDevice.shared.orientation = .portrait
-
-        let serverSwitcher = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Current server:")
-        ).firstMatch
-        tap(serverSwitcher, named: "server switcher", timeout: 10)
-        tap(app.buttons["App Settings"], named: "app settings", timeout: 5)
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10), "Settings did not open")
-
-        let avatarSetting = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Assistant Avatar")
-        ).firstMatch
-        tap(avatarSetting, named: "assistant avatar setting", timeout: 5)
-        XCTAssertTrue(
-            app.navigationBars["Assistant Avatar"].waitForExistence(timeout: 5),
-            "Assistant avatar picker did not open"
-        )
-
-        let officialPi = app.buttons["assistant.avatarPicker.option.officialPi"]
-        XCTAssertTrue(officialPi.waitForExistence(timeout: 5), "Official Pi avatar option did not appear")
-        try saveLabScreenshot(name: "iphone-official-pi-avatar-picker-e2e")
-
-        tap(officialPi, named: "official Pi avatar", timeout: 5)
-        XCTAssertTrue(
-            app.navigationBars["Assistant Avatar"].exists,
-            "Choosing an assistant avatar must remain a draft until Save"
-        )
-        tap(app.buttons["assistant.avatarPicker.save"], named: "assistant avatar Save", timeout: 5)
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Avatar picker did not dismiss")
-        XCTAssertTrue(
-            app.staticTexts["Official Pi"].waitForExistence(timeout: 5),
-            "Settings did not show Official Pi as the selected avatar"
-        )
-
-        tap(avatarSetting, named: "assistant avatar setting", timeout: 5)
-        XCTAssertTrue(
-            app.buttons["assistant.avatarPicker.emojiGenmoji"].waitForExistence(timeout: 5),
-            "Assistant picker did not expose Choose Emoji or Genmoji"
-        )
-        XCTAssertFalse(
-            app.buttons["assistant.avatarPicker.option.default"].exists,
-            "Assistant picker must not offer a standalone Default reset"
-        )
-        tap(app.buttons["assistant.avatarPicker.cancel"], named: "assistant avatar Cancel", timeout: 5)
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Avatar picker did not dismiss")
-    }
-
     func testIPhoneWorkspaceDeepLinkPresentsPrefilledCreate() throws {
         XCUIDevice.shared.orientation = .portrait
         let url = try XCTUnwrap(

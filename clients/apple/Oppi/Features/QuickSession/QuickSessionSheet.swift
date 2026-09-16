@@ -1280,11 +1280,7 @@ private struct QuickSessionAgentPillLabel: View {
             if let agent {
                 AgentIconView(value: agent.icon, size: 12, frameSize: 16)
             } else {
-                AssistantAvatarPreview(
-                    avatar: AgentManagementPresentation.piAvatar,
-                    sessionId: "quick-session-agent-pill",
-                    size: 16
-                )
+                PiAvatarView(size: 16)
             }
             Text(agent?.name ?? "Pi")
                 .font(.caption2.weight(.semibold))
@@ -1480,11 +1476,7 @@ private struct QuickSessionAgentPicker: View {
         } label: {
             HStack(spacing: 10) {
                 if usesPiAvatar {
-                    AssistantAvatarPreview(
-                        avatar: AgentManagementPresentation.piAvatar,
-                        sessionId: "quick-session-agent-picker-pi",
-                        size: 22
-                    )
+                    PiAvatarView(size: 22)
                 } else if let icon {
                     AgentIconView(
                         value: icon,

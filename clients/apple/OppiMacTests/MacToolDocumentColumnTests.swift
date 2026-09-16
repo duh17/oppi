@@ -296,7 +296,7 @@ struct MacToolDocumentColumnTests {
         #expect(shell.contains(".inspectorColumnWidth(min: 260, ideal: 320, max: 420)"))
         #expect(shell.contains("Session Files"))
         #expect(shell.contains("mac.session.toolbar.files"))
-        #expect(shell.contains("MacAssistantAvatarView(avatar: .officialPi"))
+        #expect(shell.contains("MacAssistantAvatarView(size: 26)"))
         #expect(shell.contains("MacWorkspaceFileBrowserView("))
         #expect(!shell.contains("MacWorkspaceFileBrowserPresentation"))
         #expect(shell.contains("MacSessionFilesInspectorSection"))

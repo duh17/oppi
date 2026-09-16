@@ -125,7 +125,6 @@ struct MacAppSettingsNativePreferencesPane: View {
 
 /// Titles for Mac Settings controls that persist through OppiCore keys.
 enum MacAppSettingsPreferenceControl: String, CaseIterable, Identifiable {
-    case assistantAvatar
     case spinnerStyle
     case keybindings
     case codeFont
@@ -141,7 +140,6 @@ enum MacAppSettingsPreferenceControl: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .assistantAvatar: return "Assistant Avatar"
         case .spinnerStyle: return "Spinner Style"
         case .keybindings: return "Keybindings"
         case .codeFont: return "Code Font"
@@ -160,38 +158,6 @@ enum MacAppSettingsPreferenceControl: String, CaseIterable, Identifiable {
     }
 }
 
-/// Built-in plus emoji avatar kinds. Mac does not offer Genmoji.
-enum MacAssistantAvatarKind: String, CaseIterable, Identifiable {
-    case officialPi
-    case golGrid
-    case emoji
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .officialPi: return AssistantAvatarPreference.officialPi.displayName
-        case .golGrid: return AssistantAvatarPreference.golGrid.displayName
-        case .emoji: return "Emoji"
-        }
-    }
-
-    init(avatar: AssistantAvatarPreference) {
-        switch avatar {
-        case .officialPi: self = .officialPi
-        case .golGrid: self = .golGrid
-        case .emoji: self = .emoji
-        }
-    }
-
-    static func emojiDraft(for avatar: AssistantAvatarPreference) -> String {
-        if case .emoji(let value) = avatar {
-            return value
-        }
-        return ""
-    }
-}
-
 /// General app preferences, runtime paths, and update controls.
 ///
 /// Keep-screen-awake uses `MacScreenAwakeController` (`ProcessInfo`), not UIKit.
@@ -207,12 +173,6 @@ struct AppSettingsView: View {
     @State private var useMonoMessages = FontPreferenceStore.useMonoForMessages
     @State private var selectedSpinnerStyle = SpinnerStyle.current
     @State private var selectedKeybindingMode = KeybindingPreferenceStore().mode
-    @State private var selectedAvatar = AssistantAvatarPreference.current
-    @State private var avatarKind = MacAssistantAvatarKind(avatar: AssistantAvatarPreference.current)
-    @State private var emojiDraft = MacAssistantAvatarKind.emojiDraft(
-        for: AssistantAvatarPreference.current
-    )
-    @State private var avatarError: String?
     @State private var launchAtLogin = false
     @State private var loginItemStatus: SMAppService.Status = .notRegistered
     @State private var importedThemeNames: [String] = CustomThemeStore.names()
@@ -279,43 +239,6 @@ struct AppSettingsView: View {
             }
 
             Section {
-                Picker(
-                    MacAppSettingsPreferenceControl.assistantAvatar.title,
-                    selection: $avatarKind
-                ) {
-                    ForEach(MacAssistantAvatarKind.allCases) { kind in
-                        Text(kind.title).tag(kind)
-                    }
-                }
-                .onChange(of: avatarKind) { _, newValue in
-                    commitAvatarKind(newValue)
-                }
-                .accessibilityIdentifier(
-                    MacAppSettingsPreferenceControl.assistantAvatar.accessibilityIdentifier
-                )
-
-                if avatarKind == .emoji {
-                    TextField("Emoji", text: $emojiDraft)
-                        .onChange(of: emojiDraft) { _, newValue in
-                            commitEmojiDraft(newValue)
-                        }
-                        .accessibilityIdentifier("mac.settings.assistantAvatarEmoji")
-                }
-
-                LabeledContent("Avatar Preview") {
-                    MacAssistantAvatarView(
-                        avatar: selectedAvatar,
-                        sessionId: "settings-avatar-preview",
-                        size: 22
-                    )
-                }
-
-                if let avatarError {
-                    Text(avatarError)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
-
                 Picker(
                     MacAppSettingsPreferenceControl.spinnerStyle.title,
                     selection: $selectedSpinnerStyle
@@ -698,10 +621,6 @@ struct AppSettingsView: View {
         useMonoMessages = FontPreferenceStore.useMonoForMessages
         selectedSpinnerStyle = SpinnerStyle.current
         selectedKeybindingMode = KeybindingPreferenceStore().mode
-        selectedAvatar = AssistantAvatarPreference.current
-        avatarKind = MacAssistantAvatarKind(avatar: selectedAvatar)
-        emojiDraft = MacAssistantAvatarKind.emojiDraft(for: selectedAvatar)
-        avatarError = nil
         screenAwakePreset = AppPreferenceStore.ScreenAwake.timeoutPreset
         voiceReplyMode = AppPreferenceStore.Voice.replyMode
     }
@@ -712,39 +631,6 @@ struct AppSettingsView: View {
             return "Keeps the display on while a session is working."
         default:
             return "Keeps the display on while a session is working, plus \(screenAwakePreset.label) after work ends."
-        }
-    }
-
-    private func commitAvatarKind(_ kind: MacAssistantAvatarKind) {
-        switch kind {
-        case .officialPi:
-            persistAvatar(.officialPi)
-        case .golGrid:
-            persistAvatar(.golGrid)
-        case .emoji:
-            commitEmojiDraft(emojiDraft)
-        }
-    }
-
-    private func commitEmojiDraft(_ rawValue: String) {
-        guard avatarKind == .emoji else { return }
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            avatarError = nil
-            return
-        }
-        persistAvatar(.emoji(trimmed))
-    }
-
-    private func persistAvatar(_ avatar: AssistantAvatarPreference) {
-        do {
-            selectedAvatar = try AssistantAvatarPreference.setCurrent(avatar)
-            avatarError = nil
-            if case .emoji(let emoji) = selectedAvatar {
-                emojiDraft = emoji
-            }
-        } catch {
-            avatarError = error.localizedDescription
         }
     }
 

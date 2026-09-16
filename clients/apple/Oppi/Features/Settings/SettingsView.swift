@@ -5,8 +5,6 @@ struct SettingsView: View {
     @Environment(ThemeStore.self) private var themeStore
 
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
-    @State private var assistantAvatar = AssistantAvatar.current
-    @State private var showAvatarPicker = false
     @State private var biometricEnabled = BiometricService.shared.isEnabled
     @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
     @State private var screenAwakePreset = AppPreferences.ScreenAwake.timeoutPreset
@@ -72,25 +70,6 @@ struct SettingsView: View {
             }
 
             Section {
-                Button {
-                    showAvatarPicker = true
-                } label: {
-                    LabeledContent("Assistant Avatar") {
-                        HStack(spacing: 10) {
-                            Text(assistantAvatarSummary)
-                                .foregroundStyle(.themeComment)
-                            AssistantAvatarPreview(
-                                avatar: assistantAvatar,
-                                sessionId: "settings-avatar-preview",
-                                size: 22
-                            )
-                        }
-                    }
-                }
-                .sheet(isPresented: $showAvatarPicker) {
-                    AvatarPickerView(avatar: $assistantAvatar)
-                }
-
                 Picker("Spinner Style", selection: $spinnerStyle) {
                     ForEach(SpinnerStyle.allCases, id: \.self) { style in
                         Text(style.displayName).tag(style)
@@ -416,17 +395,6 @@ struct SettingsView: View {
         case .server: return "Server"
         case .onDevice: return "On-device"
         case .off: return "Off"
-        }
-    }
-
-    private var assistantAvatarSummary: String {
-        switch assistantAvatar {
-        case .emoji:
-            return "Emoji"
-        case .genmoji:
-            return "Genmoji"
-        case .officialPi, .golGrid:
-            return assistantAvatar.displayName
         }
     }
 

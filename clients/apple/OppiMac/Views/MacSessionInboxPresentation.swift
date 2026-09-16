@@ -186,10 +186,10 @@ enum MacSessionInboxRowPaint: Sendable {
     }
 }
 
-/// Ordinary sessions use Pi's official identity. Saved Agents keep their
-/// authored icon so the list still distinguishes explicitly branded launches.
+/// Ordinary sessions use the Pi mark. Saved Agents keep their authored icon
+/// so the list still distinguishes explicitly branded launches.
 enum MacSessionRowIdentityPaint: Equatable, Sendable {
-    case officialPi
+    case pi
     case emoji(String)
     case symbol(String)
 
@@ -205,6 +205,6 @@ enum MacSessionRowIdentityPaint: Equatable, Sendable {
             }
         }
 
-        return .officialPi
+        return .pi
     }
 }

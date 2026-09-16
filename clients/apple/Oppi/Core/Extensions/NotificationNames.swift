@@ -1,7 +1,6 @@
 import Foundation
 
 extension Notification.Name {
-    static let assistantAvatarDidChange = Notification.Name("\(AppIdentifiers.subsystem).assistantAvatarDidChange")
     static let inviteDeepLinkTapped = Notification.Name("\(AppIdentifiers.subsystem).inviteDeepLinkTapped")
     static let inAppDeepLinkTapped = Notification.Name("\(AppIdentifiers.subsystem).inAppDeepLinkTapped")
     static let inAppDeepLinkSourceServerIDKey = "sourceServerID"

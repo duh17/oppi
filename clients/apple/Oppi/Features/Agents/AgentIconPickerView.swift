@@ -42,12 +42,8 @@ struct AgentIconPickerView: View {
                     isDecorative: true
                 ))
             },
-            genmojiPreview: { data, contentDescription, size in
-                AnyView(AssistantAvatarPreview(
-                    avatar: .genmoji(data: data, contentDescription: contentDescription),
-                    sessionId: "agent-icon-picker-genmoji",
-                    size: size
-                ))
+            genmojiPreview: { data, _, size in
+                AnyView(IconPickerGenmojiDraftPreview(data: data, size: size))
             },
             prepareGenmoji: { data, contentDescription in
                 guard let apiClient else { throw AgentIconPickerError.serverOffline }

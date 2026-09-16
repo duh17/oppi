@@ -38,6 +38,14 @@ Example:
 
 ## [Unreleased]
 
+### Changed
+
+- **Client:** Pi sessions and the pinned Pi agent always use the official Pi mark, labeled Pi.
+
+### Removed
+
+- **Client:** Removed Grid π and the assistant avatar setting. Saved Agent and workspace icons are unchanged.
+
 ## [0.49.0] - 2026-09-11
 
 Target: iOS `1.1.2` build `49`, `oppi-server@0.49.0`, and `oppi-mirror@0.49.0`.

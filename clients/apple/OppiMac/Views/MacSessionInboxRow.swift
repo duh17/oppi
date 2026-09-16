@@ -214,7 +214,7 @@ struct WorkspaceSessionSummaryRow: View {
     }
 }
 
-/// SwiftUI session identity. Ordinary sessions use the official Pi mark;
+/// SwiftUI session identity. Ordinary sessions use the Pi mark;
 /// saved-Agent sessions retain the icon authored for that Agent.
 private struct MacSessionRowIdentityIcon: View {
     let session: Session
@@ -223,12 +223,8 @@ private struct MacSessionRowIdentityIcon: View {
         let paint = MacSessionRowIdentityPaint.make(session: session)
         Group {
             switch paint {
-            case .officialPi:
-                MacAssistantAvatarView(
-                    avatar: .officialPi,
-                    sessionId: session.id,
-                    size: 20
-                )
+            case .pi:
+                MacAssistantAvatarView(size: 20)
             case .emoji(let value):
                 Text(value)
                     .font(.system(size: 12))

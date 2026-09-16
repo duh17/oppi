@@ -4,9 +4,8 @@ import Testing
 
 @Suite("Mac chat display chrome")
 struct MacChatDisplayChromeTests {
-    @Test func settingsFormExposesAvatarAndSpinnerPickers() throws {
+    @Test func settingsFormExposesSpinnerPickersWithoutAvatarChoice() throws {
         let source = try macSettingsSource()
-        #expect(source.contains("MacAppSettingsPreferenceControl.assistantAvatar.title"))
         #expect(source.contains("MacAppSettingsPreferenceControl.spinnerStyle.title"))
         #expect(source.contains("MacAppSettingsPreferenceControl.keepScreenAwake.title"))
         #expect(source.contains("MacAppSettingsPreferenceControl.keybindings.title"))
@@ -16,12 +15,12 @@ struct MacChatDisplayChromeTests {
         #expect(source.contains("MacScreenAwakeController.shared.refreshFromPreferences"))
         #expect(source.contains("Clear Local Cache"))
         #expect(source.contains("MacPastedAttachmentFileStore.clearAll"))
-        #expect(source.contains("MacAssistantAvatarKind.allCases"))
         #expect(source.contains("SpinnerStyle.allCases"))
-        #expect(source.contains("AssistantAvatarPreference.setCurrent"))
         #expect(source.contains("AppPreferenceStore.Appearance.setSpinnerStyle"))
-        #expect(source.contains("MacAssistantAvatarView("))
         #expect(source.contains("MacWorkingSpinnerView("))
+        #expect(!source.contains("Assistant Avatar"))
+        #expect(!source.contains("MacAssistantAvatarKind"))
+        #expect(!source.contains("AssistantAvatarPreference"))
         #expect(!source.contains("AvatarPickerView"))
         #expect(!source.contains("UnifiedIconPickerView"))
         #expect(!source.contains(".genmoji"))
@@ -34,7 +33,7 @@ struct MacChatDisplayChromeTests {
     @Test func timelinePaintsAssistantAvatarAndWorkingSpinner() throws {
         let source = try macTimelineSource()
         #expect(source.contains("showsAssistantAvatar: role == .assistant"))
-        #expect(source.contains("MacCurrentAssistantAvatarView("))
+        #expect(source.contains("MacAssistantAvatarView(size: 18)"))
         #expect(source.contains("MacWorkingIndicatorRow(state:"))
         #expect(source.contains("MacWorkingIndicatorRow.rowID"))
         #expect(source.contains("isBusy: Bool = false"))
@@ -50,11 +49,12 @@ struct MacChatDisplayChromeTests {
 
     @Test func chromePaintsPreferenceBackedAvatarAndSpinner() throws {
         let source = try macChromeSource()
-        #expect(source.contains("AssistantAvatarPreference"))
+        #expect(source.contains("MacOfficialPiMark"))
         #expect(source.contains("SpinnerStyle"))
         #expect(source.contains("MacBrailleSpinner"))
         #expect(source.contains("MacGameOfLifeSpinner"))
-        #expect(source.contains("SessionGridRenderer.generateCells"))
+        #expect(!source.contains("SessionGridRenderer"))
+        #expect(!source.contains("AssistantAvatarPreference"))
         #expect(!source.contains("import UIKit"))
         #expect(!source.contains("UIImage"))
         #expect(!source.contains("UIViewRepresentable"))
@@ -64,15 +64,15 @@ struct MacChatDisplayChromeTests {
         let source = try macChromeSource()
         let avatarPaint = try sourceSlice(
             named: "struct MacAssistantAvatarView: View {",
-            until: "private struct MacBrailleSpinner",
+            until: "struct MacWorkingSpinnerView: View {",
             in: source
         )
 
         #expect(avatarPaint.contains("@Environment(\\.theme) private var theme"))
         #expect(avatarPaint.contains("MacOfficialPiMark(color: theme.text.primary)"))
-        #expect(avatarPaint.contains("foreground: theme.text.primary"))
-        #expect(avatarPaint.contains("spark: theme.accent.orange"))
         #expect(avatarPaint.contains("theme.text.tertiary.opacity(0.10)"))
+        #expect(avatarPaint.contains("accessibilityLabel(\"Pi\")"))
+        #expect(!avatarPaint.contains("golGrid"))
         #expect(!avatarPaint.contains("Color.theme"))
     }
 }

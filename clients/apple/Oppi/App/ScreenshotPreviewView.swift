@@ -49,8 +49,6 @@ struct ScreenshotPreviewView: View {
             AgentIconTitleBarStressPreview()
         case "agent-icons-save-failure":
             AgentIconProofPreview(failsFirstSave: true)
-        case "assistant-avatar-picker":
-            AssistantAvatarPickerProofPreview()
         case "workspace-sidebar-git-status":
             WorkspaceSidebarGitStatusPreview()
         case "session-timeline":

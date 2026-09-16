@@ -221,7 +221,7 @@ struct AgentIconProofPreview: View {
                     .frame(height: 96)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Ordinary session uses the global assistant avatar")
+            .accessibilityLabel("Ordinary session uses the Pi mark")
             .accessibilityIdentifier("agent.proof.chat.ordinaryIdentity")
         }
         .padding()
@@ -402,8 +402,7 @@ private enum AgentIconProofSaveError: LocalizedError {
     var errorDescription: String? { "Preview server is unavailable" }
 }
 
-/// Isolated assistant-avatar sheet proof. It keeps persistence outside the
-/// fixture so Cancel can prove that an invalid draft never changes the avatar.
+/// Isolated Agents-list proof for the pinned Pi row.
 struct AgentManagementPiProofPreview: View {
     @State private var themeStore = ThemeStore()
     @Environment(\.colorScheme) private var colorScheme
@@ -418,7 +417,7 @@ struct AgentManagementPiProofPreview: View {
                         PiAgentSummaryRow()
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Pi, Official Pi avatar, Global Pi configuration")
+                    .accessibilityLabel("Pi, Global Pi configuration")
                     .accessibilityIdentifier("agents.row.pi")
 
                     Label("Reviewer", systemImage: "person.crop.circle")
@@ -448,30 +447,6 @@ struct AgentManagementPiProofPreview: View {
     private func syncSystemColorScheme() {
         guard themeStore.mode == .system else { return }
         themeStore.updateSystemColorScheme(colorScheme)
-    }
-}
-
-struct AssistantAvatarPickerProofPreview: View {
-    @State private var avatar: AssistantAvatar = .officialPi
-    @State private var isShowingPicker = false
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Button("Change Assistant Avatar") {
-                    isShowingPicker = true
-                }
-                .accessibilityIdentifier("assistant.avatarProof.open")
-
-                LabeledContent("Saved Avatar", value: avatar.accessibilityDescription)
-                    .accessibilityIdentifier("assistant.avatarProof.saved")
-            }
-            .navigationTitle("Assistant Avatar Proof")
-            .sheet(isPresented: $isShowingPicker) {
-                AvatarPickerView(avatar: $avatar)
-            }
-        }
-        .accessibilityIdentifier("screenshot.ready")
     }
 }
 #endif

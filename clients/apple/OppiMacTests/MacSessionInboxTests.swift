@@ -771,11 +771,11 @@ struct MacSessionInboxRowPresentationTests {
 
 @Suite("Mac session row identity")
 struct MacSessionRowIdentityTests {
-    @Test func ordinaryInboxAndWorkspaceRowsPaintOfficialPiIdentity() {
+    @Test func ordinaryInboxAndWorkspaceRowsPaintPiIdentity() {
         let session = makeSession(id: "session-alpha", status: .ready)
         let paint = MacSessionRowIdentityPaint.make(session: session)
 
-        #expect(paint == .officialPi)
+        #expect(paint == .pi)
     }
 
     @Test func ordinarySessionIdentityIsStableAcrossSessionIds() {
@@ -786,16 +786,16 @@ struct MacSessionRowIdentityTests {
             session: makeSession(id: "session-two", status: .ready)
         )
 
-        #expect(first == .officialPi)
-        #expect(second == .officialPi)
+        #expect(first == .pi)
+        #expect(second == .pi)
     }
 
-    @Test func agentIconWithoutAgentIdStillUsesOfficialPiIdentity() {
+    @Test func agentIconWithoutAgentIdStillUsesPiIdentity() {
         var session = makeSession(id: "plain", status: .ready)
         session.launch = SessionLaunchMetadata(agentId: nil, agentIcon: .emoji("🧘"))
         let paint = MacSessionRowIdentityPaint.make(session: session)
 
-        #expect(paint == .officialPi)
+        #expect(paint == .pi)
     }
 
     @Test func savedAgentRowsPaintLaunchEmojiInsteadOfPiIdentity() {

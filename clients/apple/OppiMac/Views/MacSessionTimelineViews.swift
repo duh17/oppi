@@ -2071,11 +2071,8 @@ private struct TimelineBubbleHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             if showsAssistantAvatar {
-                MacCurrentAssistantAvatarView(
-                    sessionId: sessionID ?? "timeline",
-                    size: 18
-                )
-                .accessibilityIdentifier("mac.timeline.assistantAvatar")
+                MacAssistantAvatarView(size: 18)
+                    .accessibilityIdentifier("mac.timeline.assistantAvatar")
             }
             Text(title)
                 .font(.caption)

@@ -25,9 +25,8 @@ enum AgentManagementRow: Equatable, Identifiable {
 }
 
 enum AgentManagementPresentation {
-    static let piAvatar = AssistantAvatar.officialPi
     static let globalSystemPromptPath = "~/.pi/agent/SYSTEM.md"
-    static let piIdentityAccessibilityLabel = "Pi, Official Pi avatar"
+    static let piIdentityAccessibilityLabel = "Pi"
     static let piDefaultPromptInUseLabel = "Pi default in use until SYSTEM.md exists"
     static let piStandardToolsSummary = "Pi standard"
     static let piToolsInheritFooter =
@@ -293,11 +292,7 @@ struct AgentManagementView: View {
 struct PiAgentSummaryRow: View {
     var body: some View {
         HStack(spacing: 12) {
-            AssistantAvatarPreview(
-                avatar: AgentManagementPresentation.piAvatar,
-                sessionId: "pi-agent-row",
-                size: 30
-            )
+            PiAvatarView(size: 30)
             .padding(4)
             .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 10))
 
@@ -337,11 +332,7 @@ struct PiAgentDetailView: View {
         List {
             Section {
                 HStack(spacing: 14) {
-                    AssistantAvatarPreview(
-                        avatar: AgentManagementPresentation.piAvatar,
-                        sessionId: "pi-agent-detail",
-                        size: 44
-                    )
+                    PiAvatarView(size: 44)
                     .padding(6)
                     .background(.themeBgHighlight, in: RoundedRectangle(cornerRadius: 14))
                     Text("Pi")

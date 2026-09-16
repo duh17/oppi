@@ -1,51 +1,18 @@
 import SwiftUI
 
-/// SwiftUI paint for the device-local assistant avatar preference.
+/// SwiftUI paint for the Pi mark used by ordinary sessions and the Pi agent.
 struct MacAssistantAvatarView: View {
-    let avatar: AssistantAvatarPreference
-    var sessionId: String = "assistant-avatar-preview"
     var size: CGFloat = 22
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Group {
-            switch avatar {
-            case .officialPi:
-                MacOfficialPiMark(color: theme.text.primary)
-            case .golGrid:
-                MacAssistantGridIcon(
-                    sessionId: sessionId,
-                    foreground: theme.text.primary,
-                    spark: theme.accent.orange
-                )
-            case .emoji(let char):
-                Text(char)
-                    .font(.system(size: size * 0.7))
-            }
-        }
-        .frame(width: size, height: size)
-        .background(
-            theme.text.tertiary.opacity(0.10),
-            in: RoundedRectangle(cornerRadius: size * 0.32, style: .continuous)
-        )
-        .accessibilityLabel(avatar.accessibilityDescription)
-    }
-}
-
-/// Reloads the persisted avatar when Settings writes a new value.
-struct MacCurrentAssistantAvatarView: View {
-    var sessionId: String
-    var size: CGFloat = 18
-
-    @State private var avatar = AssistantAvatarPreference.current
-
-    var body: some View {
-        MacAssistantAvatarView(avatar: avatar, sessionId: sessionId, size: size)
-            .onReceive(
-                NotificationCenter.default.publisher(for: AssistantAvatarPreference.didChangeNotification)
-            ) { _ in
-                avatar = AssistantAvatarPreference.current
-            }
+        MacOfficialPiMark(color: theme.text.primary)
+            .frame(width: size, height: size)
+            .background(
+                theme.text.tertiary.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: size * 0.32, style: .continuous)
+            )
+            .accessibilityLabel("Pi")
     }
 }
 
@@ -151,40 +118,6 @@ private struct MacOfficialPiMark: View {
                 Path(CGRect(x: 517.36, y: 400, width: 117.36, height: 234.72)),
                 with: .color(color)
             )
-        }
-        .accessibilityHidden(true)
-    }
-}
-
-private struct MacAssistantGridIcon: View {
-    let sessionId: String
-    let foreground: Color
-    let spark: Color
-
-    var body: some View {
-        let cells = SessionGridRenderer.generateCells(sessionId: sessionId)
-        Canvas { context, size in
-            let grid = SessionGridRenderer.gridSize
-            let cellTotal = size.width / CGFloat(grid)
-            let gap = cellTotal * 0.10
-            let cellSize = cellTotal - gap
-            let cornerRadius = cellSize * 0.24
-
-            for cell in cells {
-                let x = CGFloat(cell.col) * cellTotal + gap / 2
-                let y = CGFloat(cell.row) * cellTotal + gap / 2
-                let rect = CGRect(x: x, y: y, width: cellSize, height: cellSize)
-                let path = Path(roundedRect: rect, cornerRadius: cornerRadius)
-                let color: Color = switch cell.role {
-                case .spark:
-                    spark.opacity(0.90)
-                case .almostSpark:
-                    spark.opacity(0.30)
-                default:
-                    foreground.opacity(Double(cell.opacity))
-                }
-                context.fill(path, with: .color(color))
-            }
         }
         .accessibilityHidden(true)
     }

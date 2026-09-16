@@ -24,10 +24,10 @@ struct AgentManagementPresentationTests {
         #expect(rows[1].agentId == "reviewer")
     }
 
-    @Test func officialPiAvatarIsStaticAndIndependentOfSavedAgentIcons() {
-        #expect(AgentManagementPresentation.piAvatar == .officialPi)
+    @Test func piIdentityIsStaticAndIndependentOfSavedAgentIcons() {
         #expect(AgentManagementPresentation.globalSystemPromptPath == "~/.pi/agent/SYSTEM.md")
-        #expect(AgentManagementPresentation.piIdentityAccessibilityLabel == "Pi, Official Pi avatar")
+        #expect(AgentManagementPresentation.piIdentityAccessibilityLabel == "Pi")
+        #expect(!AgentManagementPresentation.piIdentityAccessibilityLabel.contains("Official"))
         #expect(!AgentManagementPresentation.piIdentityAccessibilityLabel.contains("Ordinary upstream Pi"))
     }
 

@@ -31,7 +31,6 @@ struct IconPickerModelTests {
 
     @Test("purpose allows only its supported media")
     func allowedMediaByPurpose() {
-        #expect(IconPickerPurpose.assistant.allowedMedia == [.emoji, .genmoji])
         #expect(IconPickerPurpose.agent.allowedMedia == [.emoji, .genmoji, .symbol])
         #expect(IconPickerPurpose.workspace.allowedMedia == [.emoji, .genmoji, .symbol])
     }

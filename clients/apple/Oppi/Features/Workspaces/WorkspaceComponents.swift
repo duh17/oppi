@@ -44,12 +44,8 @@ struct WorkspaceIconPickerView: View {
             preview: { value, size in
                 AnyView(WorkspaceIcon(icon: value, size: size))
             },
-            genmojiPreview: { data, contentDescription, size in
-                AnyView(AssistantAvatarPreview(
-                    avatar: .genmoji(data: data, contentDescription: contentDescription),
-                    sessionId: "workspace-icon-picker-genmoji",
-                    size: size
-                ))
+            genmojiPreview: { data, _, size in
+                AnyView(IconPickerGenmojiDraftPreview(data: data, size: size))
             },
             prepareGenmoji: { data, contentDescription in
                 if let uploadOperation {

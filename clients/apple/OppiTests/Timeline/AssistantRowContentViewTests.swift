@@ -67,27 +67,8 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func savedAgentBadgeNeverLoadsTheGlobalAssistantAvatar() {
+    @Test func savedAgentBadgeUsesLaunchIconInsteadOfPiIdentity() {
         let badge = SessionGridBadgeView()
-        var readCount = 0
-        var fingerprintCount = 0
-        var decodeCount = 0
-        let persistence = AssistantAvatarPersistence(
-            read: {
-                readCount += 1
-                return .init(type: "officialPi", emoji: nil, genmojiData: nil, genmojiDescription: nil)
-            },
-            fingerprint: { _ in
-                fingerprintCount += 1
-                return "unused"
-            },
-            decode: { _ in
-                decodeCount += 1
-                return nil
-            }
-        )
-        badge.assistantAvatarProvider = { persistence.snapshot }
-
         badge.configure(
             sessionId: "agent-session",
             agentId: "agent-1",
@@ -101,12 +82,11 @@ struct AssistantTimelineRowContentViewTests {
             iconAssetCache: nil
         )
 
-        #expect((readCount, fingerprintCount, decodeCount) == (0, 0, 0))
         #expect(badge.accessibilityLabel == "Saved Agent, Emoji 🧘")
     }
 
     @MainActor
-    @Test func savedAgentBadgeIgnoresAssistantAvatarChanges() async throws {
+    @Test func savedAgentBadgeLoadsGenmojiWithoutPiIdentity() async throws {
         let assetId = "ia_" + UUID().uuidString.replacingOccurrences(of: "-", with: "") + String(repeating: "A", count: 11)
         let fetchCounter = IconAssetFetchCounterForTimeline()
         let expectedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
@@ -121,11 +101,6 @@ struct AssistantTimelineRowContentViewTests {
             decode: { _, _ in (expectedImage, NSObject()) }
         )
         let badge = SessionGridBadgeView()
-        var globalAvatarProviderCount = 0
-        badge.assistantAvatarProvider = {
-            globalAvatarProviderCount += 1
-            return AssistantAvatarSnapshot(avatar: .officialPi)
-        }
         badge.configure(
             sessionId: "saved-agent-avatar-notification",
             agentId: "agent-1",
@@ -139,13 +114,7 @@ struct AssistantTimelineRowContentViewTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(imageView.image === expectedImage)
-        #expect(await fetchCounter.recordedIDs() == [assetId])
-
-        NotificationCenter.default.post(name: .assistantAvatarDidChange, object: nil)
-
-        #expect(imageView.image === expectedImage, "Assistant-avatar notifications must not rerender saved-Agent badges")
-        for _ in 0..<20 { await Task.yield() }
-        #expect(globalAvatarProviderCount == 0)
+        #expect(badge.accessibilityLabel == "Saved Agent, Agent glyph")
         #expect(await fetchCounter.recordedIDs() == [assetId])
     }
 

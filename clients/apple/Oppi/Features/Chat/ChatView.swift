@@ -2806,10 +2806,7 @@ struct ChatSessionTitleView: View {
                 case .agent:
                     agentIconView()
                 case .globalAvatar:
-                    CurrentAssistantAvatarPreview(
-                        sessionId: sessionId,
-                        size: 20
-                    )
+                    PiAvatarView(size: 20)
                 }
 
                 Text(sessionDisplayName)
