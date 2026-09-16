@@ -43,6 +43,7 @@ const SPECIAL_CONTENT_TYPES: Record<string, string> = {
   ".xml": "text/xml; charset=utf-8",
   ".csv": "text/csv; charset=utf-8",
   ".pdf": "application/pdf",
+  ".usdz": "model/vnd.usdz+zip",
 };
 
 const STREAMING_MEDIA_CONTENT_TYPES: Record<string, string> = {
@@ -280,6 +281,7 @@ export function isBrowseMediaContentType(contentType: string): boolean {
   return (
     normalized.startsWith("image/") ||
     normalized === "application/pdf" ||
+    normalized === "model/vnd.usdz+zip" ||
     isStreamingMediaContentType(normalized)
   );
 }

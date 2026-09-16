@@ -18,7 +18,7 @@ Expanded tool rows understand `details.media[]` for stored image and video attac
 
 Attachments combine structured metadata with server-owned bytes. They are not markdown URLs.
 
-Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` and `![[]]` both embed an existing Oppi-backed file when the file type is image, audio, or video. They do not address stored attachments. File `[label](path)` and `[[path]]` stay ordinary resource links. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
+Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` and `![[]]` both embed an existing Oppi-backed file when the file type is image, audio, video, or USDZ. They do not address stored attachments. File `[label](path)` and `[[path]]` stay ordinary resource links. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
 
 ## Deployment model and trust boundary
 
@@ -202,6 +202,7 @@ Markdown `![]()` and `![[]]` embed Oppi-backed images through the same origin-fi
 | `![x](http://...)`, localhost, LAN IPs | Blocked by the remote image policy.                                                                         |
 | `![x](data:...)`                       | Skipped by the markdown image resolver.                                                                     |
 | `![x](doc.pdf)`, `![[readme.md]]`      | File link. No leftover visible `!`.                                                                         |
+| `![x](https://example.com/a.usdz)`     | Fail closed. Not a remote image and not a USDZ embed.                                                       |
 
 Image-only paragraphs become standalone image views. Mixed paragraphs split into text/image/text segments. Raster images are downsampled. SVG uses the existing SVG image path on clients that implement it.
 
@@ -222,6 +223,12 @@ Workspace and session video can overlay same-directory sidecar captions (`stem(.
 Use `![[audio-file]]` or `![label](audio-file)` to embed a current workspace, worktree, session-reported, or exact owner host audio file as a compact native player strip. Use `[[audio-file]]` or `[label](audio-file)` when the file must remain an ordinary navigable link that opens the lyrics-first full-screen player.
 
 Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. Wiki audio without a transcript or sidecar shows “No lyrics”. Workspace and session audio can load same-directory sidecar lyrics (`stem(.lang)?.(lrc|vtt|srt|ass|ssa)`) on expand, not on the compact strip. Host files do not load sidecars. Voice `audio_presentation` rows keep the message transcript and do not fetch a sidecar. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with “Audio unavailable” and an open-file fallback.
+
+## Markdown inline USDZ
+
+Use `![[scene.usdz]]` or `![label](scene.usdz)` to embed a current workspace, worktree, session-reported, or exact owner host USDZ file. Use `[[scene.usdz]]` or `[label](scene.usdz)` when the file must remain an ordinary navigable link that opens the document viewer.
+
+The inline slot is reserved 1:1. Chat scroll wins until the user taps Interact; Done restores scroll. Drag orbits, pinch zooms, and two-finger pans the model. There is no auto-spin. Reduce Motion adds no decorative motion. Expand presents a separate RealityKit scene from the same downloaded file; that full-screen viewer is immediately interactive and may reset the camera to a framed default. Oppi does not embed remote USDZ URLs, `data:`, attachment IDs, `.blend`, or `.glb` through this syntax. Those targets never become a USDZ segment and do not start a fetch. Loading, error, retry, and open-file fallback stay on the slot. Export uses a static card with no fetch or GPU mount. Authenticated workspace, worktree, session, and host raw GET requests use the 50 MB image/PDF cap, write a bounded local `.usdz` file, then load asynchronously in RealityKit.
 
 ## Extension authoring API
 

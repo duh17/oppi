@@ -80,6 +80,8 @@ struct FullScreenMarkdownStressCorpusTests {
                 break
             case .audio:
                 break
+            case .usdz:
+                break
             case .codeBlock:
                 code += 1
             case .thematicBreak:
@@ -306,6 +308,11 @@ struct FullScreenMarkdownStressCorpusTests {
                 #expect(
                     visible.contains { timelineFirstView(ofType: NativeMarkdownAudioView.self, in: $0) != nil },
                     "audio item \(item) not visible as NativeMarkdownAudioView"
+                )
+            case .usdz:
+                #expect(
+                    visible.contains { timelineFirstView(ofType: NativeMarkdownUSDZView.self, in: $0) != nil },
+                    "usdz item \(item) not visible as NativeMarkdownUSDZView"
                 )
             case .geoJSONMap:
                 break

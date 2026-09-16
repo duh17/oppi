@@ -1186,6 +1186,7 @@ final class FullScreenCodeViewController: UIViewController {
                 fetchHostFile: wsContext?.fetchHostFile,
                 makeMarkdownVideoSource: wsContext?.makeMarkdownVideoSource,
                 makeMarkdownAudioSource: wsContext?.makeMarkdownAudioSource,
+                makeMarkdownUSDZFile: wsContext?.makeMarkdownUSDZFile,
                 makeTimedTextSidecar: wsContext?.makeTimedTextSidecar,
                 audioPlayer: wsContext?.audioPlayer
             )
@@ -1410,6 +1411,7 @@ final class FullScreenCodeViewController: UIViewController {
             fetchHostFile: workspaceContext?.fetchHostFile,
             makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
             makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: workspaceContext?.makeMarkdownUSDZFile,
             makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
             audioPlayer: workspaceContext?.audioPlayer
         )
@@ -1492,7 +1494,8 @@ final class FullScreenCodeViewController: UIViewController {
                     fetchHostFile: workspaceContext?.fetchHostFile,
                     makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
                     makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
-            makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
+                    makeMarkdownUSDZFile: workspaceContext?.makeMarkdownUSDZFile,
+                    makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
                     audioPlayer: workspaceContext?.audioPlayer
                 )
             } else {
@@ -1566,7 +1569,8 @@ final class FullScreenCodeViewController: UIViewController {
                     fetchHostFile: workspaceContext?.fetchHostFile,
                     makeMarkdownVideoSource: workspaceContext?.makeMarkdownVideoSource,
                     makeMarkdownAudioSource: workspaceContext?.makeMarkdownAudioSource,
-            makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
+                    makeMarkdownUSDZFile: workspaceContext?.makeMarkdownUSDZFile,
+                    makeTimedTextSidecar: workspaceContext?.makeTimedTextSidecar,
                     audioPlayer: workspaceContext?.audioPlayer
                 )
                 liveSourceMarkdownBodyView = nil

@@ -105,6 +105,15 @@ struct FileTypeDetectionTests {
         #expect(FileType.tsv.displayLabel == "TSV")
         #expect(FileType.geojson.displayLabel == "GeoJSON")
         #expect(FileType.topojson.displayLabel == "TopoJSON")
+        #expect(FileType.usdz.displayLabel == "USDZ")
+    }
+
+    @Test func detectUSDZ() {
+        #expect(FileType.detect(from: "models/scene.usdz") == .usdz)
+        #expect(FileType.detect(from: "SCENE.USDZ") == .usdz)
+        #expect(FileType.detect(from: "models/scene.usdz").previewCategory == .usdz)
+        #expect(FileType.detect(from: "scene.glb") != .usdz)
+        #expect(FileType.detect(from: "scene.blend") != .usdz)
     }
 
     // MARK: - SyntaxLanguage Detection

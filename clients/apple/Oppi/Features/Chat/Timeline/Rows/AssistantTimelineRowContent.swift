@@ -39,6 +39,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     /// Existing authenticated/range-capable source path for inline wiki audio.
     let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    let makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
     let makeTimedTextSidecar: TimedTextSidecarProvider?
     let audioPlayer: AudioPlayerService?
     /// Runway-owned artifacts are hints; nil keeps the canonical renderer.
@@ -71,6 +72,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil,
         preparedBlocks: [MarkdownBlock]? = nil,
@@ -97,6 +99,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
         self.preparedBlocks = preparedBlocks
@@ -343,6 +346,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         markdownView.fetchHostFile = configuration.fetchHostFile
         markdownView.makeMarkdownVideoSource = configuration.makeMarkdownVideoSource
         markdownView.makeMarkdownAudioSource = configuration.makeMarkdownAudioSource
+        markdownView.makeMarkdownUSDZFile = configuration.makeMarkdownUSDZFile
         markdownView.makeTimedTextSidecar = configuration.makeTimedTextSidecar
         markdownView.audioPlayer = configuration.audioPlayer
         markdownView.preparedBlocks = configuration.preparedBlocks

@@ -163,6 +163,20 @@ enum FileViewerDescriptorBuilder {
         if let media = streamingMediaDescriptor(path: path, fileType: fileType) {
             return media
         }
+        // USDZ is a zip. Route before UTF-8 so a textual header cannot become
+        // a source descriptor, and never copy bytes into `File.text`.
+        if fileType == .usdz {
+            return .file(
+                ToolContentDescriptor.File(
+                    text: "",
+                    filePath: path,
+                    fileType: .usdz,
+                    language: nil,
+                    startLine: 1,
+                    attachments: []
+                )
+            )
+        }
         if fileType == .pdf {
             return .file(
                 ToolContentDescriptor.File(
@@ -194,7 +208,7 @@ enum FileViewerDescriptorBuilder {
     /// Do not download their bytes into the descriptor.
     static func needsFileBytes(path: String) -> Bool {
         switch FileType.detect(from: path) {
-        case .audio, .video:
+        case .audio, .video, .usdz:
             return false
         default:
             return true
@@ -226,6 +240,8 @@ enum FileViewerDescriptorBuilder {
         switch fileType {
         case .image:
             return "\(name) is an image. Preview is not available in this column yet."
+        case .usdz:
+            return "\(name) is a 3D scene."
         case .binary:
             return "\(name) is a binary file."
         default:

@@ -267,6 +267,17 @@ struct FileTypeTests {
         #expect(FileType.detect(from: "font.woff2") == .binary)
     }
 
+    @Test func detectUSDZ() {
+        let ft = FileType.detect(from: "models/scene.usdz")
+        #expect(ft == .usdz)
+        #expect(ft.previewCategory == .usdz)
+        #expect(FileType.detect(from: "SCENE.USDZ") == .usdz)
+        #expect(ft.displayLabel == "USDZ")
+        #expect(ft.syntaxLanguage == nil)
+        #expect(FileType.detect(from: "scene.glb") != .usdz)
+        #expect(FileType.detect(from: "scene.blend") != .usdz)
+    }
+
     // MARK: - Dotfile detection
 
     @Test func detectGitignore() {
@@ -369,6 +380,7 @@ struct FilePreviewCategoryTests {
         #expect(FileType.detect(from: "voice.m4a").previewCategory == .audio)
         #expect(FileType.detect(from: "clip.mp4").previewCategory == .video)
         #expect(FileType.detect(from: "doc.pdf").previewCategory == .pdf)
+        #expect(FileType.detect(from: "scene.usdz").previewCategory == .usdz)
         #expect(FileType.detect(from: "archive.zip").previewCategory == .binary)
     }
 }

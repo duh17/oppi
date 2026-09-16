@@ -234,7 +234,7 @@ struct FileBrowserContentView: View {
         switch content {
         case .text:
             return !shouldUseEmbeddedFileViewer
-        case .pdf:
+        case .pdf, .usdz:
             return false
         case .loading, .sizeWarning, .error, .image, .video, .audio, .binary:
             return true
@@ -305,7 +305,10 @@ struct FileBrowserContentView: View {
         .task { await checkNetworkCost() }
         .onChange(of: filePath) { _, _ in
             activeSelection = nil
-            content = .loading
+            beginUSDZSafeLoading()
+        }
+        .onDisappear {
+            releaseLoadedUSDZHandle()
         }
     }
 
@@ -352,6 +355,12 @@ struct FileBrowserContentView: View {
                 allowsHorizontalBackSwipe: allowsHorizontalBackSwipe,
                 onBackSwipe: navigateBackToFileList
             )
+        case .usdz(let handle):
+            FileBrowserUSDZPreview(
+                fileURL: handle.url,
+                accessibilityName: currentFileName
+            )
+            .background(.themeBg)
         case .binary:
             ContentUnavailableView(
                 "Binary File",
@@ -543,7 +552,7 @@ struct FileBrowserContentView: View {
         loadedHostFilePath = nil
         timedText = .empty
         timedTextLoadFinished = false
-        content = .loading
+        beginUSDZSafeLoading()
 
         do {
             switch requestedCategory {
@@ -569,6 +578,33 @@ struct FileBrowserContentView: View {
                 loadedMediaPath = requestedPath
                 content = .audio(source)
                 await loadTimedText(api: api, path: requestedPath, kind: .audio)
+            case .usdz:
+                let data: Data
+                if source == .hostFile {
+                    let file = try await api.browseHostFileContent(
+                        path: requestedPath, controlSessionId: controlSessionId
+                    )
+                    guard isCurrentFile(requestedPath) else { return }
+                    data = file.data
+                    loadedHostFilePath = file.resolvedPath
+                } else {
+                    data = try await browseFile(api: api, path: requestedPath)
+                }
+                guard isCurrentFile(requestedPath) else { return }
+                let key = USDZLocalFileStore.cacheKey(
+                    kind: source == .hostFile ? .hostFile : .workspaceFile,
+                    workspaceID: workspaceId,
+                    sessionID: sessionId,
+                    worktreeID: worktreeId,
+                    path: requestedPath
+                )
+                let handle = try await USDZLocalFileStore.shared.store(key: key, data: data)
+                guard isCurrentFile(requestedPath) else {
+                    await USDZLocalFileStore.shared.release(handle)
+                    return
+                }
+                loadedMediaPath = requestedPath
+                content = .usdz(handle)
             case .image, .pdf, .text, .binary:
                 let data: Data
                 if source == .hostFile {
@@ -709,6 +745,9 @@ struct FileBrowserContentView: View {
                         mimeType: MediaMimeType.audioMimeType(forPathExtension:)
                     )
                 },
+                makeMarkdownUSDZFile: { embed in
+                    try await markdownUSDZFile(api: api, embed: embed)
+                },
                 makeTimedTextSidecar: { [workspaceId, worktreeId, sessionId, workspaceRuntime] mediaPath, kind, reference in
                     if case .sessionFile = source {
                         return await Self.loadTimedTextResult(
@@ -730,6 +769,54 @@ struct FileBrowserContentView: View {
                 audioPlayer: audioPlayer
             )
         )
+    }
+
+    private func markdownUSDZFile(
+        api: APIClient,
+        embed: MarkdownUSDZEmbed
+    ) async throws -> USDZLocalFileStore.Handle {
+        let path = embed.filePath
+        let data: Data
+        if case .sessionFile = source {
+            data = try await browseFile(api: api, path: path)
+        } else {
+            guard let route = MarkdownVideoMediaSourceRoute.resolve(
+                embed: embed,
+                workspaceID: workspaceId,
+                sessionID: sessionId,
+                worktreeID: worktreeId,
+                workspaceRuntime: workspaceRuntime
+            ) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            switch route {
+            case .host(let hostPath):
+                data = try await api.browseHostFile(
+                    path: hostPath,
+                    controlSessionId: controlSessionId
+                )
+            case .session(let workspaceID, let sessionID, let sessionPath):
+                data = try await api.getSessionFileData(
+                    workspaceId: workspaceID,
+                    sessionId: sessionID,
+                    path: sessionPath
+                )
+            case .workspace(let workspaceID, let workspacePath, let worktreeID):
+                data = try await api.fetchWorkspaceFile(
+                    workspaceID: workspaceID,
+                    path: workspacePath,
+                    worktreeId: worktreeID
+                )
+            }
+        }
+        let key = USDZLocalFileStore.cacheKey(
+            kind: embed.reference.kind,
+            workspaceID: embed.reference.workspaceID ?? workspaceId,
+            sessionID: embed.reference.sourceSessionID ?? sessionId,
+            worktreeID: worktreeId,
+            path: path
+        )
+        return try await USDZLocalFileStore.shared.store(key: key, data: data)
     }
 
     private func markdownMediaSource(
@@ -964,9 +1051,20 @@ struct FileBrowserContentView: View {
         fileTransitionDirection = direction
         withAnimation(FileBrowserPushTransitionPolicy.animation(reduceMotion: reduceMotion)) {
             activeSelection = nextSelection
-            content = .loading
+            beginUSDZSafeLoading()
             onNavigationSelectionChange?(nextSelection)
         }
+    }
+
+    private func beginUSDZSafeLoading() {
+        releaseLoadedUSDZHandle()
+        content = .loading
+    }
+
+    private func releaseLoadedUSDZHandle() {
+        guard case .usdz(let handle) = content else { return }
+        content = .loading
+        Task { await USDZLocalFileStore.shared.release(handle) }
     }
 
     private func navigateBackToFileList() {
@@ -1218,6 +1316,7 @@ private enum FileContentPhase: Equatable {
     case video(AuthenticatedMediaSource)
     case audio(AuthenticatedMediaSource)
     case pdf(Data)
+    case usdz(USDZLocalFileStore.Handle)
     case binary
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -1230,6 +1329,7 @@ private enum FileContentPhase: Equatable {
         case (.video(let a), .video(let b)): a.identity == b.identity
         case (.audio(let a), .audio(let b)): a.identity == b.identity
         case (.pdf(let a), .pdf(let b)): a == b
+        case (.usdz(let a), .usdz(let b)): a == b
         case (.binary, .binary): true
         default: false
         }

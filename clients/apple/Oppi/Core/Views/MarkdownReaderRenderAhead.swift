@@ -19,6 +19,7 @@ struct MarkdownReaderSegmentID: Hashable, Sendable {
         case image
         case video
         case audio
+        case usdz
         case mermaid
         case geoJSON
         case latex
@@ -35,6 +36,7 @@ extension FlatSegment {
         case .image: .image
         case .video: .video
         case .audio: .audio
+        case .usdz: .usdz
         case .mermaidDiagram: .mermaid
         case .geoJSONMap: .geoJSON
         case .latexBlock: .latex

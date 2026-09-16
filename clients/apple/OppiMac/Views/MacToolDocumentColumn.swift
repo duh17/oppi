@@ -86,6 +86,16 @@ enum MacToolDocumentColumnPaint {
         return false
     }
 
+    static func fileUsesUSDZPreview(_ file: ToolContentDescriptor.File) -> Bool {
+        if file.fileType == .usdz {
+            return true
+        }
+        if let path = file.filePath, FileType.detect(from: path) == .usdz {
+            return true
+        }
+        return false
+    }
+
 }
 
 struct MacToolDocumentDiffRow: Equatable, Sendable {
@@ -675,7 +685,14 @@ private struct MacToolDocumentFileView: View {
     var worktreeId: String?
 
     var body: some View {
-        if MacToolDocumentColumnPaint.fileUsesPDFPreview(file) {
+        if MacToolDocumentColumnPaint.fileUsesUSDZPreview(file) {
+            MacToolDocumentUSDZView(
+                file: file,
+                workspaceID: workspaceID,
+                sessionID: sessionID,
+                worktreeId: worktreeId
+            )
+        } else if MacToolDocumentColumnPaint.fileUsesPDFPreview(file) {
             MacToolDocumentPDFView(
                 file: file,
                 workspaceID: workspaceID,

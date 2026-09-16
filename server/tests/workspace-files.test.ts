@@ -289,6 +289,8 @@ describe("getContentType", () => {
     expect(getContentType(".xml", "config.xml")).toBe("text/xml; charset=utf-8");
     expect(getContentType(".csv", "data.csv")).toBe("text/csv; charset=utf-8");
     expect(getContentType(".pdf", "doc.pdf")).toBe("application/pdf");
+    expect(getContentType(".usdz", "scene.usdz")).toBe("model/vnd.usdz+zip");
+    expect(getContentType(".USDZ", "SCENE.USDZ")).toBe("model/vnd.usdz+zip");
   });
 
   test("returns video content types", () => {
@@ -362,7 +364,10 @@ describe("media content helpers", () => {
     expect(isBrowseMediaContentType("image/png")).toBe(true);
     expect(isBrowseMediaContentType("application/pdf")).toBe(true);
     expect(isBrowseMediaContentType("video/mp4")).toBe(true);
+    expect(isBrowseMediaContentType("model/vnd.usdz+zip")).toBe(true);
     expect(isBrowseMediaContentType("application/octet-stream")).toBe(false);
+    expect(isStreamingMediaContentType("model/vnd.usdz+zip")).toBe(false);
+    expect(isStreamingMediaContentType("application/pdf")).toBe(false);
   });
 });
 

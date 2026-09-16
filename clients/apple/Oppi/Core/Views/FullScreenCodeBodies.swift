@@ -1591,6 +1591,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
@@ -1606,6 +1607,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         segmentApplier.fetchHostFile = fetchHostFile
         segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
         segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource
+        segmentApplier.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar
         segmentApplier.audioPlayer = audioPlayer
     }
@@ -1625,6 +1627,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         canonicalWidth: CGFloat? = nil,
         preparesImagesForDisplay: Bool = true,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
@@ -1639,6 +1642,7 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
         segmentApplier.fetchHostFile = fetchHostFile
         segmentApplier.makeMarkdownVideoSource = makeMarkdownVideoSource
         segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource
+        segmentApplier.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar
         segmentApplier.audioPlayer = audioPlayer
         segmentApplier.preparationWidth = canonicalWidth
@@ -1877,6 +1881,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let fetchHostFile: ((_ path: String) async throws -> Data)?
     private let makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     private let makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    private let makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
     private let makeTimedTextSidecar: TimedTextSidecarProvider?
     private let audioPlayer: AudioPlayerService?
     private let maximumViewportHeight: CGFloat?
@@ -1954,6 +1959,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
@@ -1980,6 +1986,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
@@ -2648,6 +2655,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
             makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
@@ -2688,6 +2696,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
                 canonicalWidth: preparedCanonicalWidth,
                 preparesImagesForDisplay: true,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
+                makeMarkdownUSDZFile: makeMarkdownUSDZFile,
                 makeTimedTextSidecar: makeTimedTextSidecar,
                 audioPlayer: audioPlayer
             )
@@ -2835,6 +2844,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private func discardParkedVideoViews(_ views: [UIView]) {
         for view in views {
             (view as? NativeMarkdownVideoView)?.prepareForRemoval()
+            (view as? NativeMarkdownUSDZView)?.prepareForRemoval()
             view.removeFromSuperview()
         }
     }
@@ -3126,6 +3136,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
             makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
@@ -3150,6 +3161,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             canonicalWidth: canonicalWidth,
             preparesImagesForDisplay: false,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
             makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
@@ -3227,6 +3239,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             return MarkdownInlineVideoLayout.reservedHeight(forWidth: contentWidth)
         case .audio:
             return MarkdownInlineAudioLayout.reservedHeight(forWidth: contentWidth)
+        case .usdz:
+            return MarkdownInlineUSDZLayout.reservedHeight(forWidth: contentWidth)
         case .mermaidDiagram(let code):
             // Mermaid parsing is too expensive for first paint. Estimate
             // from diagram source lines; the background prefetch renders
@@ -3815,6 +3829,7 @@ extension NativeFullScreenMarkdownBody {
             case .image: "image"
             case .video: "video"
             case .audio: "audio"
+            case .usdz: "usdz"
             case .mermaidDiagram: "mermaid"
             case .geoJSONMap: "geojson"
             case .latexBlock: "latex"
@@ -3987,6 +4002,7 @@ extension NativeFullScreenMarkdownBody {
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
             makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
@@ -4007,6 +4023,7 @@ extension NativeFullScreenMarkdownBody {
             canonicalWidth: canonicalWidth,
             preparesImagesForDisplay: false,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
             makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )

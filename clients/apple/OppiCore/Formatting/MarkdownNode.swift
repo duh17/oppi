@@ -41,6 +41,9 @@ indirect enum MarkdownInline: Equatable, Sendable {
     /// Oppi-native `![[audio-file]]` / `![](audio-file)` embed. Produced by the
     /// wiki-link rewriter after origin and file-type checks succeed.
     case audioEmbed(MarkdownAudioEmbed)
+    /// Oppi-native `![[usdz-file]]` / `![](usdz-file)` embed. Produced by the
+    /// wiki-link rewriter after origin and file-type checks succeed.
+    case usdzEmbed(MarkdownUSDZEmbed)
     case softBreak
     case hardBreak
     case html(String)
@@ -61,6 +64,7 @@ func plainText(from inlines: [MarkdownInline]) -> String {
         case .image(let alt, _): return alt
         case .videoEmbed(let embed): return embed.displayLabel
         case .audioEmbed(let embed): return embed.displayLabel
+        case .usdzEmbed(let embed): return embed.displayLabel
         case .softBreak: return " "
         case .hardBreak: return "\n"
         case .html(let s): return s

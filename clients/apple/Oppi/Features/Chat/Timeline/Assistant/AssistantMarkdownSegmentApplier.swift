@@ -267,6 +267,8 @@ final class AssistantMarkdownSegmentApplier {
     private var reusableVideoViews: [ResourceReference: NativeMarkdownVideoView] = [:]
     /// Compact audio strips for `![[audio-file]]`.
     private var audioViews: [Int: NativeMarkdownAudioView] = [:]
+    /// Native inline USDZ hosts for `![[scene.usdz]]`.
+    private var usdzViews: [Int: NativeMarkdownUSDZView] = [:]
     /// References to mermaid diagram views for in-place updates.
     private var mermaidViews: [Int: NativeMermaidBlockView] = [:]
     /// References to GeoJSON/TopoJSON map views for in-place updates.
@@ -315,6 +317,9 @@ final class AssistantMarkdownSegmentApplier {
 
     /// Authenticated file-backed media resolver for `![[audio-file]]`.
     var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+
+    /// Authenticated file-backed USDZ resolver for `![[scene.usdz]]`.
+    var makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
 
     /// Workspace/session sidecar lyrics and captions. Host media stays sidecar-free.
     var makeTimedTextSidecar: TimedTextSidecarProvider?
@@ -406,6 +411,9 @@ final class AssistantMarkdownSegmentApplier {
         for view in videoViews.values where !preserved.contains(ObjectIdentifier(view)) {
             view.prepareForRemoval()
         }
+        for view in usdzViews.values {
+            view.prepareForRemoval()
+        }
 
         for view in stackView.arrangedSubviews {
             stackView.removeArrangedSubview(view)
@@ -418,6 +426,7 @@ final class AssistantMarkdownSegmentApplier {
         imageViews.removeAll()
         videoViews.removeAll()
         audioViews.removeAll()
+        usdzViews.removeAll()
         mermaidViews.removeAll()
         geoJSONViews.removeAll()
         latexViews.removeAll()
@@ -733,6 +742,18 @@ final class AssistantMarkdownSegmentApplier {
             stackView.addArrangedSubview(audioView)
             audioViews[index] = audioView
 
+        case .usdz(let embed):
+            let usdzView = NativeMarkdownUSDZView()
+            usdzView.onPreparedGeometry = onVideoPreparedGeometry
+            usdzView.apply(
+                embed: embed,
+                fileProvider: makeMarkdownUSDZFile,
+                renderingMode: config.renderingMode,
+                preferredDisplayWidth: preparationWidth
+            )
+            stackView.addArrangedSubview(usdzView)
+            usdzViews[index] = usdzView
+
         case .mermaidDiagram(let code):
             let mermaidView = NativeMermaidBlockView()
             let isOpen = isOpenStreamingCodeFence(
@@ -874,6 +895,9 @@ final class AssistantMarkdownSegmentApplier {
             if let audio = view as? NativeMarkdownAudioView {
                 audio.prepareForRemoval()
             }
+            if let usdz = view as? NativeMarkdownUSDZView {
+                usdz.prepareForRemoval()
+            }
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
@@ -886,6 +910,7 @@ final class AssistantMarkdownSegmentApplier {
             imageViews.removeValue(forKey: index)
             videoViews.removeValue(forKey: index)
             audioViews.removeValue(forKey: index)
+            usdzViews.removeValue(forKey: index)
             mermaidViews.removeValue(forKey: index)
             geoJSONViews.removeValue(forKey: index)
             latexViews.removeValue(forKey: index)
@@ -1059,6 +1084,15 @@ final class AssistantMarkdownSegmentApplier {
                     preferredDisplayWidth: preparationWidth,
                     worktreeID: config.worktreeId,
                     sidecarProvider: makeTimedTextSidecar
+                )
+
+            case .usdz(let embed):
+                usdzViews[index]?.onPreparedGeometry = onVideoPreparedGeometry
+                usdzViews[index]?.apply(
+                    embed: embed,
+                    fileProvider: makeMarkdownUSDZFile,
+                    renderingMode: config.renderingMode,
+                    preferredDisplayWidth: preparationWidth
                 )
 
             case .geoJSONMap(let code, let kind):
@@ -1581,6 +1615,7 @@ private enum SegmentSignature: Equatable {
     case image(url: URL)
     case video(reference: ResourceReference)
     case audio(reference: ResourceReference)
+    case usdz(reference: ResourceReference)
     case mermaidDiagram
     case geoJSONMap
     case latexBlock
@@ -1590,7 +1625,7 @@ private enum SegmentSignature: Equatable {
         switch self {
         case .text, .codeBlock, .mermaidDiagram, .geoJSONMap, .latexBlock:
             true
-        case .table, .thematicBreak, .image, .video, .audio:
+        case .table, .thematicBreak, .image, .video, .audio, .usdz:
             false
         }
     }
@@ -1611,6 +1646,8 @@ private enum SegmentSignature: Equatable {
             self = .video(reference: embed.reference)
         case .audio(let embed):
             self = .audio(reference: embed.reference)
+        case .usdz(let embed):
+            self = .usdz(reference: embed.reference)
         case .mermaidDiagram:
             self = .mermaidDiagram
         case .geoJSONMap:

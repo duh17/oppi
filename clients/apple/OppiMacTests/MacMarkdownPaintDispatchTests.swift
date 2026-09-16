@@ -390,6 +390,39 @@ struct MacMarkdownPaintDispatchTests {
         #expect(kinds == [.video(embed)])
     }
 
+    @Test func usdzEmbedInlineDispatchesToUSDZNotDisplayLabel() throws {
+        let embed = MarkdownUSDZEmbed(reference: ResourceReference(
+            target: "scene.usdz",
+            sourceServerID: nil,
+            workspaceID: nil,
+            sourceSessionID: nil,
+            fileCandidatePath: "/tmp/scene.usdz",
+            kind: .workspaceFile
+        ))
+        let kinds = MacMarkdownPaintDispatch.kinds(from: [
+            .paragraph([.usdzEmbed(embed)]),
+        ])
+
+        #expect(kinds == [.usdz(embed)])
+    }
+
+    @Test func wikiUSDZLinkRewritesToUSDZEmbed() throws {
+        let kinds = MacMarkdownPaintDispatch.kinds(from: "![[scene.usdz]]")
+
+        let kind = try #require(kinds.first { if case .usdz = $0 { return true }; return false })
+        guard case .usdz(let embed) = kind else {
+            Issue.record("Expected wiki USDZ embed, got \(kinds)")
+            return
+        }
+        #expect(embed.displayLabel.contains("scene.usdz") || embed.filePath.contains("scene.usdz"))
+    }
+
+    @Test func wikiUSDZFileLinkStaysAFileKind() throws {
+        let kinds = MacMarkdownPaintDispatch.kinds(from: "[[scene.usdz]]")
+        #expect(kinds.contains(.prose))
+        #expect(kinds.allSatisfy { if case .usdz = $0 { return false }; return true })
+    }
+
     @Test func wikiVideoLinkRewritesToVideoEmbed() throws {
         let kinds = MacMarkdownPaintDispatch.kinds(from: "![[demo.mp4]]")
 
@@ -548,7 +581,7 @@ struct MacMarkdownPaintDispatchTests {
                 return [(alt, source)]
             case .emphasis(let children), .strong(let children), .strikethrough(let children), .link(let children, _):
                 return images(in: children)
-            case .text, .code, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
+            case .text, .code, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html:
                 return []
             }
         }
@@ -593,7 +626,7 @@ struct MacMarkdownPaintDispatchTests {
                 return [destination].compactMap { $0 } + linkDestinations(in: children)
             case .emphasis(let children), .strong(let children), .strikethrough(let children):
                 return linkDestinations(in: children)
-            case .text, .code, .image, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
+            case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html:
                 return []
             }
         }

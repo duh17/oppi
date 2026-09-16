@@ -470,6 +470,26 @@ describe("GET/HEAD /files/raw", () => {
     expect(imageTooLarge.statusCode).toBe(413);
   });
 
+  it("serves USDZ under the 50 MB image/PDF cap, not the 10 MB octet-stream cap", async () => {
+    const root = tempRoot("oppi-hostfile-usdz-");
+    const allowed = join(root, "scene.usdz");
+    const tooLarge = join(root, "huge.usdz");
+    writeFileSync(allowed, Buffer.alloc(MAX_BROWSE_TEXT_FILE_SIZE + 1, 0x50));
+    writeFileSync(tooLarge, Buffer.alloc(MAX_BROWSE_IMAGE_FILE_SIZE + 1, 0x50));
+
+    const allowedRes = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(allowed)}`);
+    expect(allowedRes.statusCode).toBe(200);
+    expect(String(allowedRes.headers["Content-Type"] ?? allowedRes.headers["content-type"]))
+      .toBe("model/vnd.usdz+zip");
+    expect(allowedRes.body.length).toBe(MAX_BROWSE_TEXT_FILE_SIZE + 1);
+
+    const tooLargeRes = await dispatchHost(
+      "GET",
+      `/files/raw?path=${encodeURIComponent(tooLarge)}`,
+    );
+    expect(tooLargeRes.statusCode).toBe(413);
+  });
+
   it("returns the canonical realpath for a disguised tilde or symlink request", async () => {
     const root = tempRoot("oppi-hostfile-realpath-");
     const target = join(root, "secret.txt");

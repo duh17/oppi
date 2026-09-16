@@ -299,6 +299,10 @@ final class AssistantMarkdownContentView: UIView {
         didSet { segmentApplier.makeMarkdownAudioSource = makeMarkdownAudioSource }
     }
 
+    var makeMarkdownUSDZFile: MarkdownUSDZFileProvider? {
+        didSet { segmentApplier.makeMarkdownUSDZFile = makeMarkdownUSDZFile }
+    }
+
     var makeTimedTextSidecar: TimedTextSidecarProvider? {
         didSet { segmentApplier.makeTimedTextSidecar = makeTimedTextSidecar }
     }

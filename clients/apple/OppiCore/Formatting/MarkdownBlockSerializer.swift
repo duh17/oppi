@@ -110,6 +110,11 @@ enum MarkdownBlockSerializer {
                 return "![[\(embed.reference.target)|\(label)]]"
             }
             return "![[\(embed.reference.target)]]"
+        case .usdzEmbed(let embed):
+            if let label = embed.reference.visibleLabel, label != embed.reference.target {
+                return "![[\(embed.reference.target)|\(label)]]"
+            }
+            return "![[\(embed.reference.target)]]"
         case .softBreak:
             return "\n"
         case .hardBreak:

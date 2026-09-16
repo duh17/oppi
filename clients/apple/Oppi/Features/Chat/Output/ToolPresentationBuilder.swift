@@ -560,7 +560,7 @@ enum ToolPresentationBuilder {
                 startLine: startLine,
                 filePath: metadata.filePath
             )
-        case .html, .plain, .code, .pdf, .binary,
+        case .html, .plain, .code, .pdf, .usdz, .binary,
              .latex, .mermaid, .graphviz, .none:
             return .code(
                 text: text,

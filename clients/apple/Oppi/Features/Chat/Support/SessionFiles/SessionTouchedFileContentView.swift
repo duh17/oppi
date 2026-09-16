@@ -12,6 +12,7 @@ enum SessionFileFullScreenContentBuilder {
         fetchSessionFileData: ((String) async throws -> Data)?,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil,
         sessionID: String
@@ -36,6 +37,7 @@ enum SessionFileFullScreenContentBuilder {
                 fetchHostFile: fetchSessionFileData,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
+                makeMarkdownUSDZFile: makeMarkdownUSDZFile,
                 makeTimedTextSidecar: makeTimedTextSidecar,
                 audioPlayer: audioPlayer
             )
@@ -66,6 +68,7 @@ struct SessionTouchedFileContentView: View {
     @State private var fetchSessionFileData: ((String) async throws -> Data)?
     @State private var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     @State private var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    @State private var makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
     @State private var makeTimedTextSidecar: TimedTextSidecarProvider?
 
     /// Whether the UIKit file viewer is active (text content loaded).
@@ -90,7 +93,7 @@ struct SessionTouchedFileContentView: View {
 
     private var parentOwnsBackSwipe: Bool {
         switch phase {
-        case .text:
+        case .text, .usdz:
             return false
         case .loading, .error, .image, .binary:
             return true
@@ -125,6 +128,7 @@ struct SessionTouchedFileContentView: View {
             fetchSessionFileData: fetchSessionFileData,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
             makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer,
             sessionID: sessionId
@@ -169,7 +173,10 @@ struct SessionTouchedFileContentView: View {
         .task(id: currentFilePath) { await loadContent() }
         .onChange(of: filePath) { _, _ in
             activeSelection = nil
-            phase = .loading
+            beginUSDZSafeLoading()
+        }
+        .onDisappear {
+            releaseLoadedUSDZHandle()
         }
     }
 
@@ -194,6 +201,11 @@ struct SessionTouchedFileContentView: View {
             .ignoresSafeArea(edges: .top)
         case .image(let data):
             imageView(data)
+        case .usdz(let handle):
+            FileBrowserUSDZPreview(
+                fileURL: handle.url,
+                accessibilityName: currentFileName
+            )
         case .binary:
             ContentUnavailableView(
                 "Binary File",
@@ -305,6 +317,32 @@ struct SessionTouchedFileContentView: View {
                 )
             }
         }
+        makeMarkdownUSDZFile = { [api, workspaceId, sessionId, workspaceRuntime, workspaceHostMount] embed in
+            let route = SessionTouchedFileLoadRoute.resolve(
+                path: embed.filePath,
+                workspaceRuntime: workspaceRuntime,
+                hostMount: workspaceHostMount
+            )
+            let data: Data
+            switch route {
+            case .hostFile(let hostPath):
+                data = try await api.browseHostFile(path: hostPath)
+            case .sessionRaw(let rawPath):
+                data = try await api.browseSessionTouchedFile(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    path: rawPath
+                )
+            }
+            let key = USDZLocalFileStore.cacheKey(
+                kind: embed.reference.kind,
+                workspaceID: embed.reference.workspaceID ?? workspaceId,
+                sessionID: embed.reference.sourceSessionID ?? sessionId,
+                worktreeID: nil,
+                path: embed.filePath
+            )
+            return try await USDZLocalFileStore.shared.store(key: key, data: data)
+        }
         makeTimedTextSidecar = { [api, workspaceId, sessionId, workspaceRuntime, workspaceHostMount] mediaPath, kind, _ in
             let route = SessionTouchedFileLoadRoute.resolve(
                 path: mediaPath,
@@ -339,7 +377,7 @@ struct SessionTouchedFileContentView: View {
             workspaceRuntime: workspaceRuntime,
             hostMount: workspaceHostMount
         )
-        phase = .loading
+        beginUSDZSafeLoading()
         do {
             let data = try await {
                 switch route {
@@ -358,7 +396,21 @@ struct SessionTouchedFileContentView: View {
             let ext = (requestedPath as NSString).pathExtension.lowercased()
             let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tif", "tiff", "heic", "heif"]
 
-            if imageExts.contains(ext) {
+            if ext == "usdz" {
+                let key = USDZLocalFileStore.cacheKey(
+                    kind: .workspaceFile,
+                    workspaceID: workspaceId,
+                    sessionID: sessionId,
+                    worktreeID: nil,
+                    path: requestedPath
+                )
+                let handle = try await USDZLocalFileStore.shared.store(key: key, data: data)
+                guard isCurrentFile(requestedPath) else {
+                    await USDZLocalFileStore.shared.release(handle)
+                    return
+                }
+                phase = .usdz(handle)
+            } else if imageExts.contains(ext) {
                 phase = .image(data)
             } else if let text = String(data: data, encoding: .utf8) {
                 phase = .text(text)
@@ -386,8 +438,19 @@ struct SessionTouchedFileContentView: View {
         fileTransitionDirection = direction
         withAnimation(.easeInOut(duration: 0.22)) {
             activeSelection = nextSelection
-            phase = .loading
+            beginUSDZSafeLoading()
         }
+    }
+
+    private func beginUSDZSafeLoading() {
+        releaseLoadedUSDZHandle()
+        phase = .loading
+    }
+
+    private func releaseLoadedUSDZHandle() {
+        guard case .usdz(let handle) = phase else { return }
+        phase = .loading
+        Task { await USDZLocalFileStore.shared.release(handle) }
     }
 
     // MARK: - Phase
@@ -397,6 +460,7 @@ struct SessionTouchedFileContentView: View {
         case error(String)
         case text(String)
         case image(Data)
+        case usdz(USDZLocalFileStore.Handle)
         case binary
     }
 }

@@ -25,6 +25,7 @@ struct FileContentView: View {
     var fetchHostFile: ((_ path: String) async throws -> Data)? = nil
     var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil
+    var makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil
     var makeTimedTextSidecar: TimedTextSidecarProvider? = nil
     var audioPlayer: AudioPlayerService? = nil
 
@@ -44,6 +45,7 @@ struct FileContentView: View {
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
@@ -59,17 +61,19 @@ struct FileContentView: View {
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
     }
 
     var body: some View {
+        let fileType = FileType.detect(from: filePath, content: content)
         if isError {
             errorView
-        } else if content.isEmpty {
+        } else if content.isEmpty && fileType != .usdz {
             emptyView
         } else {
-            contentView(for: FileType.detect(from: filePath, content: content))
+            contentView(for: fileType)
         }
     }
 
@@ -88,6 +92,7 @@ struct FileContentView: View {
                 fetchHostFile: fetchHostFile,
                 makeMarkdownVideoSource: makeMarkdownVideoSource,
                 makeMarkdownAudioSource: makeMarkdownAudioSource,
+                makeMarkdownUSDZFile: makeMarkdownUSDZFile,
                 makeTimedTextSidecar: makeTimedTextSidecar,
                 audioPlayer: audioPlayer
             )
@@ -105,6 +110,13 @@ struct FileContentView: View {
             VideoFileView(content: content)
         case .pdf:
             PDFFileView(content: content)
+        case .usdz:
+            USDZFileView(
+                filePath: filePath,
+                workspaceID: workspaceID,
+                fetchWorkspaceFile: fetchWorkspaceFile,
+                fetchHostFile: fetchHostFile
+            )
         case .binary:
             BinaryFileView(filePath: filePath, contentLength: content.count)
         case .plain:

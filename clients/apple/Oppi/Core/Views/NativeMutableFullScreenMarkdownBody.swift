@@ -79,6 +79,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     private var fetchHostFile: ((_ path: String) async throws -> Data)?
     private var makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?
     private var makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider?
+    private var makeMarkdownUSDZFile: MarkdownUSDZFileProvider?
     private var makeTimedTextSidecar: TimedTextSidecarProvider?
     private var audioPlayer: AudioPlayerService?
 
@@ -127,6 +128,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider? = nil,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
@@ -150,6 +152,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
         self.latestContent = content
@@ -200,6 +203,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         markdownView.fetchHostFile = fetchHostFile
         markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
         markdownView.makeMarkdownAudioSource = makeMarkdownAudioSource
+        markdownView.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         markdownView.makeTimedTextSidecar = makeTimedTextSidecar
         markdownView.audioPlayer = audioPlayer
 
@@ -237,6 +241,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
             makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )
@@ -259,6 +264,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         fetchHostFile: ((_ path: String) async throws -> Data)? = nil,
         makeMarkdownVideoSource: MarkdownVideoMediaSourceProvider?,
         makeMarkdownAudioSource: MarkdownAudioMediaSourceProvider? = nil,
+        makeMarkdownUSDZFile: MarkdownUSDZFileProvider? = nil,
         makeTimedTextSidecar: TimedTextSidecarProvider? = nil,
         audioPlayer: AudioPlayerService? = nil
     ) {
@@ -290,6 +296,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         self.fetchHostFile = fetchHostFile
         self.makeMarkdownVideoSource = makeMarkdownVideoSource
         self.makeMarkdownAudioSource = makeMarkdownAudioSource
+        self.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         self.makeTimedTextSidecar = makeTimedTextSidecar
         self.audioPlayer = audioPlayer
         markdownView.fetchWorkspaceFile = fetchWorkspaceFile
@@ -297,6 +304,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
         markdownView.fetchHostFile = fetchHostFile
         markdownView.makeMarkdownVideoSource = makeMarkdownVideoSource
         markdownView.makeMarkdownAudioSource = makeMarkdownAudioSource
+        markdownView.makeMarkdownUSDZFile = makeMarkdownUSDZFile
         markdownView.makeTimedTextSidecar = makeTimedTextSidecar
         markdownView.audioPlayer = audioPlayer
 
@@ -386,6 +394,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
             fetchHostFile: fetchHostFile,
             makeMarkdownVideoSource: makeMarkdownVideoSource,
             makeMarkdownAudioSource: makeMarkdownAudioSource,
+            makeMarkdownUSDZFile: makeMarkdownUSDZFile,
             makeTimedTextSidecar: makeTimedTextSidecar,
             audioPlayer: audioPlayer
         )

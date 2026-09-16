@@ -12,6 +12,7 @@ enum FileType: Equatable {
     case audio
     case video
     case pdf
+    case usdz
     case binary
     case plain
 
@@ -106,6 +107,8 @@ enum FileType: Equatable {
             return .video
         case "pdf":
             return .pdf
+        case "usdz":
+            return .usdz
         case "bin", "gz", "zip", "tar", "bz2", "xz", "7z", "rar",
              "dmg", "iso", "img",
              "car", "nib", "mobileprovision", "p12", "cer",
@@ -178,6 +181,7 @@ enum FileType: Equatable {
         case .audio: return "Audio"
         case .video: return "Video"
         case .pdf: return "PDF"
+        case .usdz: return "USDZ"
         case .binary: return "Binary"
         case .plain: return "Text"
         case .latex: return "LaTeX"
@@ -213,7 +217,7 @@ enum FileType: Equatable {
             return .dot
         case .geojson, .topojson:
             return .json
-        case .markdown, .image, .audio, .video, .pdf, .binary, .plain, .csv, .tsv:
+        case .markdown, .image, .audio, .video, .pdf, .usdz, .binary, .plain, .csv, .tsv:
             return nil
         }
     }
@@ -226,6 +230,7 @@ enum FilePreviewCategory: Equatable {
     case audio
     case video
     case pdf
+    case usdz
     case text
     case binary
 }
@@ -241,6 +246,8 @@ extension FileType {
             return .video
         case .pdf:
             return .pdf
+        case .usdz:
+            return .usdz
         case .markdown, .html, .code, .json, .plain,
              .latex, .orgMode, .mermaid, .graphviz, .csv, .tsv,
              .geojson, .topojson:

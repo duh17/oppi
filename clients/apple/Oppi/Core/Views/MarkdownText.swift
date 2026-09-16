@@ -347,6 +347,8 @@ enum FlatSegment: Sendable {
     case video(MarkdownVideoEmbed)
     /// An Oppi-authenticated native audio embed from `![[audio-file]]` or `![](audio-file)`.
     case audio(MarkdownAudioEmbed)
+    /// An Oppi-authenticated native USDZ embed from `![[usdz-file]]` or `![](usdz-file)`.
+    case usdz(MarkdownUSDZEmbed)
     /// A mermaid diagram code block. The applier decides whether to render
     /// the diagram or show as a code block based on streaming state.
     case mermaidDiagram(code: String)
@@ -703,6 +705,15 @@ enum FlatSegment: Sendable {
                                     flushPendingText()
                                     appendSegment(.audio(embed), lineRange: lineRange)
                                     emittedAnyRenderable = true
+                                case .usdz(let embed):
+                                    if !itemHasPrefix {
+                                        textLines.append(markerForItem(itemIndex))
+                                        itemHasPrefix = true
+                                    }
+                                    flushListTextLines()
+                                    flushPendingText()
+                                    appendSegment(.usdz(embed), lineRange: lineRange)
+                                    emittedAnyRenderable = true
                                 case .image(let alt, let url):
                                     if !itemHasPrefix {
                                         textLines.append(markerForItem(itemIndex))
@@ -783,6 +794,9 @@ enum FlatSegment: Sendable {
                         case .audio(let embed):
                             flushPendingText()
                             appendSegment(.audio(embed), lineRange: lineRange)
+                        case .usdz(let embed):
+                            flushPendingText()
+                            appendSegment(.usdz(embed), lineRange: lineRange)
                         case .codeBlock, .table, .thematicBreak, .mermaidDiagram, .geoJSONMap, .latexBlock:
                             break
                         }
@@ -850,6 +864,9 @@ enum FlatSegment: Sendable {
                                 case .audio(let embed):
                                     flushPendingText()
                                     appendSegment(.audio(embed), lineRange: lineRange)
+                                case .usdz(let embed):
+                                    flushPendingText()
+                                    appendSegment(.usdz(embed), lineRange: lineRange)
                                 case .image(let alt, let url):
                                     flushPendingText()
                                     appendSegment(.image(alt: alt, url: url), lineRange: lineRange)
@@ -909,7 +926,7 @@ enum FlatSegment: Sendable {
     private static func inlinesContainPromotedMediaEmbed(_ inlines: [MarkdownInline]) -> Bool {
         inlines.contains { inline in
             switch inline {
-            case .videoEmbed, .audioEmbed:
+            case .videoEmbed, .audioEmbed, .usdzEmbed:
                 return true
             case .emphasis(let children),
                  .strong(let children),
@@ -1017,6 +1034,8 @@ enum FlatSegment: Sendable {
             case .videoEmbed(let embed):
                 result.append(embed.displayLabel)
             case .audioEmbed(let embed):
+                result.append(embed.displayLabel)
+            case .usdzEmbed(let embed):
                 result.append(embed.displayLabel)
             case .softBreak, .hardBreak:
                 result.append("\n")
@@ -1223,6 +1242,11 @@ enum FlatSegment: Sendable {
 
             case .audioEmbed(let embed):
                 var rendered = audioFallbackAttributedString(embed, palette: palette)
+                rendered.uiKit.font = bodyFont
+                result.attributed.append(rendered)
+
+            case .usdzEmbed(let embed):
+                var rendered = usdzFallbackAttributedString(embed, palette: palette)
                 rendered.uiKit.font = bodyFont
                 result.attributed.append(rendered)
 
@@ -1790,6 +1814,10 @@ enum FlatSegment: Sendable {
                 flushPendingInlines()
                 segments.append(.audio(embed))
                 promotedAnyImage = true
+            } else if case .usdzEmbed(let embed) = inline {
+                flushPendingInlines()
+                segments.append(.usdz(embed))
+                promotedAnyImage = true
             } else if case .image(let alt, let source) = inline,
                let imageURL = resolveImageURL(
                    source: source,
@@ -1840,7 +1868,7 @@ enum FlatSegment: Sendable {
                 if !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return true
                 }
-            case .image, .videoEmbed, .audioEmbed:
+            case .image, .videoEmbed, .audioEmbed, .usdzEmbed:
                 return true
             case .emphasis(let children),
                  .strong(let children),
@@ -2304,6 +2332,10 @@ enum FlatSegment: Sendable {
         embed.displayLabel
     }
 
+    private static func usdzFallbackText(_ embed: MarkdownUSDZEmbed) -> String {
+        embed.displayLabel
+    }
+
     private static func audioFallbackAttributedString(
         _ embed: MarkdownAudioEmbed,
         palette: ThemePalette
@@ -2324,6 +2356,21 @@ enum FlatSegment: Sendable {
         palette: ThemePalette
     ) -> AttributedString {
         var result = AttributedString(videoFallbackText(embed))
+        if let url = ResourceReferenceURL.make(embed.reference) {
+            result.uiKit.foregroundColor = UIColor(palette.mdLink)
+            result.underlineStyle = .single
+            result.link = url
+        } else {
+            result.uiKit.foregroundColor = UIColor(palette.comment)
+        }
+        return result
+    }
+
+    private static func usdzFallbackAttributedString(
+        _ embed: MarkdownUSDZEmbed,
+        palette: ThemePalette
+    ) -> AttributedString {
+        var result = AttributedString(usdzFallbackText(embed))
         if let url = ResourceReferenceURL.make(embed.reference) {
             result.uiKit.foregroundColor = UIColor(palette.mdLink)
             result.underlineStyle = .single
@@ -2427,6 +2474,21 @@ enum FlatSegment: Sendable {
                         sub.uiKit.foregroundColor = UIColor(palette.comment)
                     })
                 }
+            case .usdzEmbed(let embed):
+                text += usdzFallbackText(embed)
+                let end = text.utf8.count
+                if let url = ResourceReferenceURL.make(embed.reference) {
+                    let linkColor = UIColor(palette.mdLink)
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.uiKit.foregroundColor = linkColor
+                        sub.underlineStyle = .single
+                        sub.link = url
+                    })
+                } else {
+                    attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
+                        sub.uiKit.foregroundColor = UIColor(palette.comment)
+                    })
+                }
             case .softBreak, .hardBreak:
                 text += "\n"
             case .html(let raw):
@@ -2484,6 +2546,8 @@ enum FlatSegment: Sendable {
             return videoFallbackAttributedString(embed, palette: palette)
         case .audioEmbed(let embed):
             return audioFallbackAttributedString(embed, palette: palette)
+        case .usdzEmbed(let embed):
+            return usdzFallbackAttributedString(embed, palette: palette)
         case .softBreak, .hardBreak:
             return AttributedString("\n")
         case .html(let raw):
@@ -2570,7 +2634,7 @@ enum FlatSegment: Sendable {
                  .strong(let children),
                  .strikethrough(let children):
                 if containsWikiIconLink(children) { return true }
-            case .text, .code, .image, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
+            case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html:
                 continue
             }
         }
@@ -2645,6 +2709,8 @@ enum FlatSegment: Sendable {
             return videoFallbackAttributedString(embed, palette: palette)
         case .audioEmbed(let embed):
             return audioFallbackAttributedString(embed, palette: palette)
+        case .usdzEmbed(let embed):
+            return usdzFallbackAttributedString(embed, palette: palette)
         case .softBreak, .hardBreak:
             var result = AttributedString("\n")
             if let color = defaultColor {

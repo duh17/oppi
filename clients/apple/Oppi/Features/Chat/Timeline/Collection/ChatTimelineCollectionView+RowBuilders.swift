@@ -174,6 +174,17 @@ extension ChatTimelineCollectionHost.Controller {
                     )
                 }
             },
+            makeMarkdownUSDZFile: connection.map { connection in
+                { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] embed in
+                    try await connection.makeMarkdownUSDZFileWhenReady(
+                        embed: embed,
+                        workspaceId: workspaceId,
+                        sessionId: sessionId,
+                        worktreeId: firstCheckout,
+                        workspaceRuntime: sourceWorkspaceRuntime
+                    )
+                }
+            },
             makeTimedTextSidecar: connection.map { connection in
                 { [workspaceId, sessionId, firstCheckout, sourceWorkspaceRuntime] mediaPath, kind, reference in
                     await connection.loadTimedTextSidecarWhenReady(

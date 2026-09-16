@@ -115,6 +115,8 @@ struct ScreenshotPreviewView: View {
             MermaidRenderingPreview()
         case "geojson-mount-rainier":
             GeoJSONMountRainierPreview()
+        case "usdz-rendering":
+            USDZRenderingPreview()
         case "mermaid-consistency-inline":
             MermaidConsistencyPreview(expanded: false)
         case "mermaid-consistency-expanded":

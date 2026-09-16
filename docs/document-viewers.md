@@ -57,6 +57,7 @@ Git tracking does not decide whether an exact link can open. Tracked files and s
 - Source and structured text: `[[server/src/file-serving-policy.ts|File-serving policy]]` and `[[package.json|Package metadata]]`
 - Images: `[[docs/images/app-icon.png|Oppi app icon]]`
 - Audio and video: recognized files such as `.mp3`, `.wav`, `.m4a`, `.mp4`, `.mov`, and `.m3u8`
+- 3D scenes: `.usdz` files open a RealityView document viewer
 - Other recognized documents: HTML, CSS, XML, CSV, GeoJSON, TopoJSON, and PDF files
 
 Oppi selects a document or media viewer from the detected file type. An unknown binary file can be served within the file limits below, but it does not guarantee a native preview.
@@ -71,7 +72,7 @@ Fuzzy discovery uses a deterministic, bounded filesystem walk rather than Git's 
 
 The server enforces these limits:
 
-- Images and PDFs: 50 MB maximum.
+- Images, PDFs, and USDZ: 50 MB maximum.
 - Text and other non-streaming files: 10 MB maximum.
 - Audio, video, and HLS media: authenticated range streaming without the text/image size cap.
 - Exact parent-directory lookup: at most 1,000 entries. Resolution can fail when a candidate's directory has more than 1,000 siblings. Fuzzy search reports truncation when it reaches its traversal bounds.
@@ -106,11 +107,13 @@ Inline Markdown video uses bang-embed syntax. `![]()` and `![[]]` both embed an 
 
 `![[audio-file]]` and `![label](audio-file)` render a compact non-autoplaying player strip. `[[audio-file]]` remains an ordinary file link and opens the lyrics-first full-screen audio player. Remote URLs, HTML audio, `data:`, and attachment IDs are not embeds. See [Markdown inline audio](attachment-rendering.md#markdown-inline-audio).
 
+`![[scene.usdz]]` and `![label](scene.usdz)` reserve a 1:1 RealityView slot. Chat scroll wins until Interact; Done restores scroll. Expand, and `[[scene.usdz]]`, open a separate immediately interactive RealityView. Remote USDZ URLs fail closed and never become a remote image. Export uses a static card. See [Markdown inline USDZ](attachment-rendering.md#markdown-inline-usdz).
+
 ### Copyable `AGENTS.md` guidance for other projects
 
 ````markdown
 - When pointing the user to a relevant file the owner can open, use a real relative, absolute, or `~` wiki link such as `[[path/to/file.ext|Short label]]` or `[[/tmp/notes.md|Debug log]]`. Add an uppercase GitHub-style source anchor only when useful, for example `[[path/to/file.ext#L12-L18|Short label]]`.
-- When the image or SVG itself should appear inline, use `![Short description](path/to/image.png)` or `![[path/to/image.png]]`. When a real Oppi-backed video should play inline, use `![[path/to/video.mp4]]` or `![Video](path/to/video.mp4)`. Keep `[[path/to/video.mp4|Video]]` for file navigation. When a real Oppi-backed audio file should play inline, use `![[path/to/clip.m4a]]` or `![Clip](path/to/clip.m4a)`; keep `[[path/to/clip.m4a]]` as a file link that opens the full-screen player.
+- When the image or SVG itself should appear inline, use `![Short description](path/to/image.png)` or `![[path/to/image.png]]`. When a real Oppi-backed video should play inline, use `![[path/to/video.mp4]]` or `![Video](path/to/video.mp4)`. Keep `[[path/to/video.mp4|Video]]` for file navigation. When a real Oppi-backed audio file should play inline, use `![[path/to/clip.m4a]]` or `![Clip](path/to/clip.m4a)`; keep `[[path/to/clip.m4a]]` as a file link that opens the full-screen player. When a real Oppi-backed USDZ scene should orbit inline, use `![[path/to/scene.usdz]]` or `![Scene](path/to/scene.usdz)`; keep `[[path/to/scene.usdz]]` as a file link that opens the document viewer.
 - Fenced `mermaid` blocks render flowchart (also graph), sequence, class, state, ER, gantt, pie, timeline, mindmap, xyChart, journey, quadrantChart, gitGraph, sankey, and kanban. Other Mermaid types show an unsupported placeholder.
 - Fenced `geojson` and `topojson` blocks render as an interactive map with a JSON source toggle.
 - LaTeX renders inline, display, and fenced `latex` blocks.

@@ -1219,7 +1219,7 @@ final class NativeTableBlockView: UIView {
                  .strong(let children),
                  .strikethrough(let children):
                 return containsLink(children)
-            case .text, .code, .image, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
+            case .text, .code, .image, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html:
                 return false
             }
         }
@@ -1254,6 +1254,8 @@ final class NativeTableBlockView: UIView {
                 return "video:\(embed.reference.target)"
             case .audioEmbed(let embed):
                 return "audio:\(embed.reference.target)"
+            case .usdzEmbed(let embed):
+                return "usdz:\(embed.reference.target)"
             case .softBreak:
                 return "softBreak"
             case .hardBreak:
@@ -1569,6 +1571,20 @@ final class NativeTableBlockView: UIView {
                 attrs[.underlineStyle] = nil
             }
             result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
+        case .usdzEmbed(let embed):
+            var attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .paragraphStyle: paragraph,
+            ]
+            if let url = ResourceReferenceURL.make(embed.reference) {
+                attrs[.link] = url
+            } else {
+                attrs[.foregroundColor] = defaultColor
+                attrs[.underlineStyle] = nil
+            }
+            result.append(NSAttributedString(string: embed.displayLabel, attributes: attrs))
         }
     }
 
@@ -1621,6 +1637,8 @@ final class NativeTableBlockView: UIView {
             case .videoEmbed(let embed):
                 return "![[\(embed.reference.target)]]"
             case .audioEmbed(let embed):
+                return "![[\(embed.reference.target)]]"
+            case .usdzEmbed(let embed):
                 return "![[\(embed.reference.target)]]"
             }
         }.joined()

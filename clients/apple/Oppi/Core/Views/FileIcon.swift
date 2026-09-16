@@ -299,6 +299,10 @@ struct FileIcon: Equatable, Sendable {
         case "pdf":
             return Self(symbolName: "doc.richtext", tint: .red)
 
+        // USDZ
+        case "usdz":
+            return Self(symbolName: "cube", tint: .purple)
+
         // Archives
         case "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz":
             return Self(symbolName: "doc.zipper", tint: .comment)

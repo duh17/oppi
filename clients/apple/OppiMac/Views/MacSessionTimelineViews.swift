@@ -136,6 +136,7 @@ private struct MacSessionTimelineScrollView: View {
     @State private var scrollPhase: ScrollPhase = .idle
     @State private var scrollPosition = ScrollPosition(idType: String.self)
     @State private var pendingRemountTarget: MacSessionTimelineRemountTarget?
+    @State private var usdzInspectLocksScroll = false
 
     private var isAttachedToLatestRow: Bool {
         presentation?.isLiveTailAttached ?? fallbackLiveTailAttached
@@ -184,6 +185,8 @@ private struct MacSessionTimelineScrollView: View {
             .scrollPosition($scrollPosition)
             .scrollEdgeEffectStyle(.soft, for: .top)
             .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .scrollDisabled(usdzInspectLocksScroll)
+            .onPreferenceChange(MacUSDZInspectScrollLockKey.self) { usdzInspectLocksScroll = $0 }
             .background {
                 Color.clear
                     .frame(width: 1, height: 1)

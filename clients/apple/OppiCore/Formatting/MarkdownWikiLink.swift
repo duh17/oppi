@@ -252,6 +252,28 @@ struct MarkdownAudioEmbed: Hashable, Sendable {
     }
 }
 
+/// Authenticated file reference carried by a native Markdown USDZ segment.
+///
+/// Remote URLs, attachment IDs, `.blend`, and `.glb` fail origin or file-type
+/// classification before an embed is constructed.
+struct MarkdownUSDZEmbed: Hashable, Sendable {
+    let reference: ResourceReference
+
+    var displayLabel: String {
+        let label = reference.visibleLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let label, !label.isEmpty { return label }
+        return reference.target
+    }
+
+    var filePath: String {
+        reference.fileCandidatePath ?? reference.target
+    }
+}
+
+/// Resolves one policy-checked Markdown USDZ reference to a retained local file.
+/// RealityKit loading stays in the platform UI layer.
+typealias MarkdownUSDZFileProvider = (_ embed: MarkdownUSDZEmbed) async throws -> USDZLocalFileStore.Handle
+
 struct SessionResourceReference: Hashable, Sendable {
     let serverID: String
     let sessionID: String
@@ -670,7 +692,7 @@ enum ResourceReferenceURL {
 /// Supported wiki syntax:
 /// - `[[target]]`
 /// - `[[target|label]]`
-/// - `![[target]]` / `![alt](path)` embed Oppi-backed image, audio, or video
+/// - `![[target]]` / `![alt](path)` embed Oppi-backed image, audio, video, or USDZ
 ///
 /// The raw target stays unresolved. A workspace-relative file candidate travels
 /// beside it so tap-time resolution can compare that candidate with exact Oppi
@@ -1046,7 +1068,7 @@ enum MarkdownWikiLinkRewriter {
                     source: source,
                     context: context
                 ))
-            case .code, .videoEmbed, .audioEmbed, .softBreak, .hardBreak, .html:
+            case .code, .videoEmbed, .audioEmbed, .usdzEmbed, .softBreak, .hardBreak, .html:
                 result.append(inline)
             }
         }
@@ -1128,6 +1150,7 @@ enum MarkdownWikiLinkRewriter {
         case image(source: String)
         case video(MarkdownVideoEmbed)
         case audio(MarkdownAudioEmbed)
+        case usdz(MarkdownUSDZEmbed)
         case fileLink(MarkdownInline)
         case remoteImage(source: String)
         case failClosed
@@ -1151,6 +1174,8 @@ enum MarkdownWikiLinkRewriter {
             return [.videoEmbed(embed)]
         case .audio(let embed):
             return [.audioEmbed(embed)]
+        case .usdz(let embed):
+            return [.usdzEmbed(embed)]
         case .fileLink(let inline):
             return [inline]
         case .remoteImage, .failClosed:
@@ -1183,6 +1208,8 @@ enum MarkdownWikiLinkRewriter {
             return [.videoEmbed(embed)]
         case .audio(let embed):
             return [.audioEmbed(embed)]
+        case .usdz(let embed):
+            return [.usdzEmbed(embed)]
         case .fileLink(let inline):
             return [inline]
         case .remoteImage(let remoteSource):
@@ -1251,6 +1278,13 @@ enum MarkdownWikiLinkRewriter {
                 visibleLabel: visibleLabel,
                 context: context
             )))
+        case .usdz:
+            return .usdz(MarkdownUSDZEmbed(reference: embedReference(
+                rawTarget: trimmed,
+                classified: classified,
+                visibleLabel: visibleLabel,
+                context: context
+            )))
         default:
             // Markdown `![]()` is image syntax. Extensionless workspace/host
             // targets stay images so byte inspection can still choose GIF/WebP/
@@ -1270,7 +1304,7 @@ enum MarkdownWikiLinkRewriter {
     private static func remoteImageOrFailClosedAV(_ source: String) -> BangEmbedOutcome {
         let typePath = URL(string: source)?.path ?? source
         switch FileType.detect(from: typePath).previewCategory {
-        case .video, .audio:
+        case .video, .audio, .usdz:
             return .failClosed
         default:
             return .remoteImage(source: source)

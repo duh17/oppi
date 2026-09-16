@@ -110,6 +110,24 @@ enum MarkdownVideoMediaSourceRoute: Equatable {
     }
 
     static func resolve(
+        embed: MarkdownUSDZEmbed,
+        workspaceID: String?,
+        sessionID: String?,
+        worktreeID: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) -> Self? {
+        resolve(
+            filePath: embed.filePath,
+            kind: embed.reference.kind,
+            referenceWorkspaceID: embed.reference.workspaceID,
+            workspaceID: workspaceID,
+            sessionID: sessionID,
+            worktreeID: worktreeID,
+            workspaceRuntime: workspaceRuntime
+        )
+    }
+
+    static func resolve(
         filePath: String,
         kind: ResourceReferenceKind,
         referenceWorkspaceID: String?,
@@ -1076,6 +1094,65 @@ final class ServerConnection {
                 sourceFileExtension: pathExtension
             )
         }
+    }
+
+    func makeMarkdownUSDZFileWhenReady(
+        embed: MarkdownUSDZEmbed,
+        workspaceId: String?,
+        sessionId: String?,
+        worktreeId: String?,
+        workspaceRuntime: WorkspaceRuntime? = nil
+    ) async throws -> USDZLocalFileStore.Handle {
+        let apiClient = try await waitForAPIClient()
+        let currentRuntime = MarkdownVideoWorkspaceContext.runtime(
+            workspaceId: workspaceId,
+            serverId: currentServerId,
+            workspacesByServer: workspaceStore.workspacesByServer,
+            workspaces: workspaceStore.workspaces
+        )
+        let resolvedRuntime = MarkdownVideoWorkspaceContext.resolvedRuntime(
+            captured: workspaceRuntime,
+            current: currentRuntime
+        )
+        let session = sessionId.flatMap { sessionStore.session(id: $0) }
+        let resolvedWorktree = worktreeId ?? MarkdownVideoWorkspaceContext.firstCheckout(
+            session: session,
+            workspaceId: workspaceId
+        )
+        guard let route = MarkdownVideoMediaSourceRoute.resolve(
+            embed: embed,
+            workspaceID: workspaceId,
+            sessionID: sessionId,
+            worktreeID: resolvedWorktree,
+            workspaceRuntime: resolvedRuntime
+        ) else {
+            throw APIError.server(status: 404, message: "USDZ source is unavailable")
+        }
+        let data: Data
+        switch route {
+        case .host(let path):
+            data = try await apiClient.browseHostFile(path: path)
+        case .session(let workspaceID, let sessionID, let path):
+            data = try await apiClient.getSessionFileData(
+                workspaceId: workspaceID,
+                sessionId: sessionID,
+                path: path
+            )
+        case .workspace(let workspaceID, let path, let worktreeID):
+            data = try await apiClient.fetchWorkspaceFile(
+                workspaceID: workspaceID,
+                path: path,
+                worktreeId: worktreeID
+            )
+        }
+        let key = USDZLocalFileStore.cacheKey(
+            kind: embed.reference.kind,
+            workspaceID: embed.reference.workspaceID ?? workspaceId,
+            sessionID: embed.reference.sourceSessionID ?? sessionId,
+            worktreeID: resolvedWorktree,
+            path: route.path
+        )
+        return try await USDZLocalFileStore.shared.store(key: key, data: data)
     }
 
     func makeMarkdownAudioMediaSourceWhenReady(

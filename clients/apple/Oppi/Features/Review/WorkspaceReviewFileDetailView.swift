@@ -354,7 +354,7 @@ struct WorkspaceReviewFileDetailView: View {
         switch FileType.detect(from: currentFile.path, content: text) {
         case .code, .json, .plain, .graphviz:
             return true
-        case .markdown, .html, .image, .audio, .video, .pdf, .binary,
+        case .markdown, .html, .image, .audio, .video, .pdf, .usdz, .binary,
              .latex, .orgMode, .mermaid, .csv, .tsv,
              .geojson, .topojson:
             return false
