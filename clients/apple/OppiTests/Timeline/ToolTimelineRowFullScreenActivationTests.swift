@@ -640,6 +640,46 @@ struct ToolTimelineRowFullScreenActivationTests {
         harness.window.isHidden = true
     }
 
+    @Test("payload store evicts removed and cleared targets")
+    func payloadStoreEvictsRemovedTargets() {
+        let store = ChatReaderPayloadStore()
+        let first = store.store(ChatReaderPayload(content: .plainText(content: "a", filePath: "a.txt")))
+        let second = store.store(ChatReaderPayload(content: .plainText(content: "b", filePath: "b.txt")))
+        #expect(store.payload(for: first.id) != nil)
+        #expect(store.payload(for: second.id) != nil)
+
+        store.remove(first)
+        #expect(store.payload(for: first.id) == nil)
+        #expect(store.payload(for: second.id) != nil)
+
+        store.removeAll()
+        #expect(store.payload(for: second.id) == nil)
+    }
+
+    @Test("lookup from a presented controller does not steal a chat descendant install")
+    func lookupFromPresentedControllerDoesNotStealChatInstall() {
+        let harness = makeHostHarness()
+        var opened: ChatReaderPayload?
+        let collection = UICollectionView(
+            frame: harness.host.view.bounds,
+            collectionViewLayout: UICollectionViewFlowLayout()
+        )
+        harness.host.view.addSubview(collection)
+        ChatReaderOpenLookup.install({ opened = $0 }, on: collection)
+
+        let presented = UIViewController()
+        harness.host.present(presented, animated: false)
+        let didOpen = ChatReaderOpenLookup.open(
+            ChatReaderPayload(content: .plainText(content: "note", filePath: "note.txt")),
+            from: presented
+        )
+
+        #expect(!didOpen)
+        #expect(opened == nil)
+        harness.host.dismiss(animated: false)
+        harness.window.isHidden = true
+    }
+
     private struct ActivatedReader {
         let view: ToolTimelineRowContentView
         let payload: ChatReaderPayload

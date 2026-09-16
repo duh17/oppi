@@ -161,7 +161,7 @@ enum ChatReaderOpenLookup {
             if open(payload, from: node.view) {
                 return true
             }
-            current = node.parent ?? node.presentingViewController
+            current = node.parent
         }
         return false
     }
@@ -324,6 +324,10 @@ final class ChatReaderPayloadStore {
     func remove(_ target: ChatReaderNavTarget) {
         payloads[target.id] = nil
     }
+
+    func removeAll() {
+        payloads.removeAll()
+    }
 }
 
 /// Pushed reader page. Documents keep ``EmbeddedFileViewerView`` chrome.
@@ -345,6 +349,12 @@ struct ChatReaderDestinationView: View {
                 }
         }
         .toolbarVisibility(.hidden, for: .navigationBar)
+        .background {
+            OuterInteractivePopGate(allowOuterPop: nestedPath.isEmpty)
+        }
+        .onDisappear {
+            store.remove(target)
+        }
     }
 
     @ViewBuilder
@@ -359,6 +369,9 @@ struct ChatReaderDestinationView: View {
                 openLinkedFile(action)
             }
         )
+        .onDisappear {
+            store.remove(target)
+        }
     }
 
     private func openLinkedFile(_ action: LinkAction) -> Bool {
@@ -779,5 +792,62 @@ private struct PushedReaderLeaveChrome: ViewModifier {
 extension View {
     fileprivate func pushedReaderLeaveChrome(accessibilityIdentifier: String) -> some View {
         modifier(PushedReaderLeaveChrome(accessibilityIdentifier: accessibilityIdentifier))
+    }
+}
+
+/// Keep nested reader pages from being skipped by the workspace stack's pop.
+private struct OuterInteractivePopGate: UIViewControllerRepresentable {
+    var allowOuterPop: Bool
+
+    func makeUIViewController(context: Context) -> Controller {
+        Controller()
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.allowOuterPop = allowOuterPop
+        controller.apply()
+    }
+
+    final class Controller: UIViewController {
+        var allowOuterPop = true
+        private var restoredEnabled: Bool?
+
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            apply()
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            apply()
+        }
+
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            restore()
+        }
+
+        func apply() {
+            guard let recognizer = enclosingNavigationController()?.interactivePopGestureRecognizer else {
+                return
+            }
+            if restoredEnabled == nil {
+                restoredEnabled = recognizer.isEnabled
+            }
+            recognizer.isEnabled = allowOuterPop ? (restoredEnabled ?? true) : false
+        }
+
+        private func restore() {
+            guard let enabled = restoredEnabled,
+                  let recognizer = enclosingNavigationController()?.interactivePopGestureRecognizer else {
+                return
+            }
+            recognizer.isEnabled = enabled
+            restoredEnabled = nil
+        }
+
+        private func enclosingNavigationController() -> UINavigationController? {
+            navigationController ?? parent?.navigationController
+        }
     }
 }

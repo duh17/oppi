@@ -873,6 +873,7 @@ struct UIHangHarnessView: View {
                     workspaceId: "harness-workspace",
                     onFork: { _ in },
                     onOpenChatReader: { payload in
+                        chatReaderPayloadStore.removeAll()
                         chatReaderRoute = chatReaderPayloadStore.store(payload)
                     },
                     onBackSwipe: {},
@@ -907,6 +908,7 @@ struct UIHangHarnessView: View {
             ChatReaderDestinationView(target: route, store: chatReaderPayloadStore)
         }
         .environment(\.openChatReader, ChatReaderOpenAction { payload in
+            chatReaderPayloadStore.removeAll()
             chatReaderRoute = chatReaderPayloadStore.store(payload)
         })
         .onAppear {

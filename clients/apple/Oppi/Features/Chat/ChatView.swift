@@ -576,6 +576,7 @@ struct ChatView: View {
     }
 
     private func openTimelineReader(_ payload: ChatReaderPayload) {
+        chatReaderPayloadStore.removeAll()
         chatReaderRoute = chatReaderPayloadStore.store(payload)
     }
 
@@ -921,6 +922,7 @@ struct ChatView: View {
                 scrollController.cancel()
                 visibleAudioStripItemIDs = []
                 chatReaderRoute = nil
+                chatReaderPayloadStore.removeAll()
                 nowPlayingDrawerExpanded = false
                 reviewCommentDrawerExpanded = false
                 reviewCommentStashPresentation = nil
@@ -1028,6 +1030,11 @@ struct ChatView: View {
             }
             .navigationDestination(item: $chatReaderRoute) { route in
                 ChatReaderDestinationView(target: route, store: chatReaderPayloadStore)
+            }
+            .onChange(of: chatReaderRoute) { _, newRoute in
+                if newRoute == nil {
+                    chatReaderPayloadStore.removeAll()
+                }
             }
             .environment(\.openChatReader, ChatReaderOpenAction(handler: openTimelineReader))
     }
